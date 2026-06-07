@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/zgiai/zgi/api/config"
+	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
@@ -389,6 +390,7 @@ func newWorkflowRoutesTestRouterWithConversation(t *testing.T) (*gin.Engine, str
 		Scheduler:                   scheduler,
 		EngineFactory:               &graph_engine.EngineFactory{},
 		AutomationRunnerSetter:      workflowRoutesAutomationRunnerSetter{},
+		ShortLinkService:            shortlinkcap.NewServiceWithDB(db),
 	})
 	return router, webAppID, userID, conversationID
 }

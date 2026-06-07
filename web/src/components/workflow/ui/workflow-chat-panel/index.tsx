@@ -4,6 +4,7 @@ import { usePanelStackItem } from '../../hooks';
 import Chat, { useChatApi, useChatStore } from '@/components/chat';
 import {
   useApprovalForm,
+  fetchApprovalEvents,
   useSaveWorkflowDraft,
   useSubmitApprovalForm,
   useWorkflowRunEventsStream,
@@ -204,6 +205,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
     setLoadedForm: setLoadedApprovalForm,
     resetApprovalRuntime,
   } = useApprovalRuntimeEvents();
+  const approvalRuntimeStateRef = useRef(approvalRuntimeState);
   const approvalEventCursorRef = useRef(0);
   const { start: startWorkflowRunEvents, cancel: cancelWorkflowRunEvents } =
     useWorkflowRunEventsStream();
@@ -212,6 +214,10 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
   const startApprovalResumeEventStreamRef = useRef<(payload?: unknown) => void>(() => {});
   const approvalFormQuery = useApprovalForm(approvalToken, Boolean(approvalToken && !approvalForm));
   const approvalSubmitMutation = useSubmitApprovalForm(approvalToken);
+
+  useEffect(() => {
+    approvalRuntimeStateRef.current = approvalRuntimeState;
+  }, [approvalRuntimeState]);
 
   // Wire up workflow store callbacks to mirror normal run panel behavior
   const rf = useReactFlow();
@@ -1292,7 +1298,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
         case 'workflow_failed':
         case 'workflow_succeeded':
         case 'workflow_completed': {
-          const hasWaitingApprovals = Object.values(approvalRuntimeState.byKey).some(
+          const hasWaitingApprovals = Object.values(approvalRuntimeStateRef.current.byKey).some(
             entry => entry.status === 'waiting'
           );
           if (hasWaitingApprovals) {
@@ -1356,7 +1362,6 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
       }
     },
     [
-      approvalRuntimeState.byKey,
       cancelWorkflowRunEvents,
       getWorkflowRunErrorText,
       handleApprovalExpired,
@@ -1373,6 +1378,29 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
       sseCallbacks,
     ]
   );
+
+  useEffect(() => {
+    if (!approvalToken || !approvalSubmittedAction) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const events = await fetchApprovalEvents(approvalToken, {
+          after: approvalRuntimeStateRef.current.cursor,
+          limit: 100,
+        });
+        if (cancelled || events.length === 0) return;
+        events.forEach(event => {
+          dispatchApprovalEvent(event);
+        });
+      } catch {
+        // Keep waiting; the workflow resume stream may still deliver the final event.
+      }
+    }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [approvalSubmittedAction, approvalToken, dispatchApprovalEvent]);
 
   const startApprovalResumeEventStream = useCallback(
     (payload?: unknown) => {

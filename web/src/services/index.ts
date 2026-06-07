@@ -28,6 +28,7 @@ export * from './statistics.service';
 export * from './automation.service';
 export * from './content-parse.service';
 export * from './prompt.service';
+export * from './shortlink.service';
 // LLM management services
 export * from './provider.service';
 export * from './model.service';

@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	appconfig "github.com/zgiai/zgi/api/config"
+	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -125,7 +128,7 @@ func TestCreateRuntimeAnnouncementWithTokenRetryLoadsExistingOnRunNodeConflict(t
 	service := NewService(db)
 	existing := testAnnouncement("existing", "tenant-1", "run-1", "node-1", "token-a", time.Now().Add(time.Hour))
 	candidate := testAnnouncement("candidate", "tenant-1", "run-1", "node-1", "token-b", time.Now().Add(time.Hour))
-	expectAnnouncementInsert(mock, fmt.Errorf(`ERROR: duplicate key value violates unique constraint "idx_announcements_run_node"`))
+	expectAnnouncementInsert(mock, candidate, fmt.Errorf(`ERROR: duplicate key value violates unique constraint "idx_announcements_run_node"`))
 	expectRuntimeAnnouncementLoad(mock, existing)
 
 	got, err := service.createRuntimeAnnouncementWithTokenRetry(context.Background(), candidate)
@@ -152,8 +155,10 @@ func TestCreateRuntimeAnnouncementWithTokenRetryRegeneratesOnTokenConflict(t *te
 		newAnnouncementToken = originalTokenGenerator
 	})
 	candidate := testAnnouncement("candidate", "tenant-1", "run-2", "node-2", "token-a", time.Now().Add(time.Hour))
-	expectAnnouncementInsert(mock, fmt.Errorf(`ERROR: duplicate key value violates unique constraint "idx_announcements_access_token"`))
-	expectAnnouncementInsert(mock, nil)
+	expectAnnouncementInsert(mock, candidate, fmt.Errorf(`ERROR: duplicate key value violates unique constraint "idx_announcements_access_token"`))
+	retryCandidate := *candidate
+	retryCandidate.AccessToken = "token-b"
+	expectAnnouncementInsert(mock, &retryCandidate, nil)
 
 	got, err := service.createRuntimeAnnouncementWithTokenRetry(context.Background(), candidate)
 	if err != nil {
@@ -164,6 +169,62 @@ func TestCreateRuntimeAnnouncementWithTokenRetryRegeneratesOnTokenConflict(t *te
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestCreateRuntimeAnnouncementPayloadUsesShortURL(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&Announcement{}, &shortlinkcap.ShortLink{}); err != nil {
+		t.Fatalf("migrate tables: %v", err)
+	}
+	previousConfig := appconfig.GlobalConfig
+	appconfig.GlobalConfig = &appconfig.Config{
+		Console: appconfig.ConsoleConfig{WebURL: "https://zgi.example.com"},
+	}
+	t.Cleanup(func() {
+		appconfig.GlobalConfig = previousConfig
+	})
+
+	service := NewService(db)
+	announcement, err := service.CreateOrGetRuntimeAnnouncement(context.Background(), CreateRuntimeAnnouncementParams{
+		TenantID:      "tenant-1",
+		AppID:         "app-1",
+		WorkflowRunID: "run-url-1",
+		NodeID:        "node-url-1",
+		NodeTitle:     "Notice",
+		Config: NodeConfig{
+			Title:   "Notice",
+			Content: "content",
+		},
+		Rendered: "rendered",
+	})
+	if err != nil {
+		t.Fatalf("CreateOrGetRuntimeAnnouncement() error = %v", err)
+	}
+	if !strings.HasPrefix(announcement.Payload.URL, "https://zgi.example.com/") {
+		t.Fatalf("payload url = %q, want short URL", announcement.Payload.URL)
+	}
+	if announcement.Payload.AccessToken != announcement.Announcement.AccessToken {
+		t.Fatalf("payload access_token = %q, want announcement token %q", announcement.Payload.AccessToken, announcement.Announcement.AccessToken)
+	}
+	if strings.Contains(announcement.Payload.URL, announcement.Announcement.AccessToken) {
+		t.Fatalf("payload url = %q, should not expose announcement token", announcement.Payload.URL)
+	}
+	var shortLink shortlinkcap.ShortLink
+	if err := db.Where("target_kind = ? AND target_token = ?", shortlinkcap.TargetKindWorkflowAnnouncement, announcement.Announcement.AccessToken).First(&shortLink).Error; err != nil {
+		t.Fatalf("load announcement short link: %v", err)
+	}
+	if announcement.Payload.Token != shortLink.ShortToken {
+		t.Fatalf("payload token = %q, want short token %q", announcement.Payload.Token, shortLink.ShortToken)
+	}
+	if !strings.HasSuffix(announcement.Payload.URL, "/"+shortLink.ShortToken) {
+		t.Fatalf("payload url = %q, want to end with short token %q", announcement.Payload.URL, shortLink.ShortToken)
+	}
+	if shortLink.ExpiresAt == nil || !shortLink.ExpiresAt.Equal(announcement.Announcement.ExpirationTime) {
+		t.Fatalf("short link expires_at = %v, want announcement expiration %v", shortLink.ExpiresAt, announcement.Announcement.ExpirationTime)
 	}
 }
 
@@ -233,7 +294,7 @@ func testAnnouncement(id, tenantID, workflowRunID, nodeID, token string, expirat
 	}
 }
 
-func expectAnnouncementInsert(mock sqlmock.Sqlmock, resultErr error) {
+func expectAnnouncementInsert(mock sqlmock.Sqlmock, announcement *Announcement, resultErr error) {
 	mock.ExpectBegin()
 	query := regexp.QuoteMeta(`INSERT INTO "announcements"`)
 	args := []driver.Value{
@@ -260,7 +321,36 @@ func expectAnnouncementInsert(mock sqlmock.Sqlmock, resultErr error) {
 	mock.ExpectExec(query).
 		WithArgs(args...).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	expectShortLinkCreate(mock, announcement.AccessToken, announcement.ExpirationTime)
 	mock.ExpectCommit()
+}
+
+func expectShortLinkCreate(mock sqlmock.Sqlmock, targetToken string, expiresAt time.Time) {
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"short_token",
+		"target_kind",
+		"target_token",
+		"target_path",
+		"expires_at",
+		"created_at",
+		"updated_at",
+	})
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "system_short_links" WHERE target_kind = $1 AND target_token = $2 ORDER BY "system_short_links"."id" LIMIT $3`)).
+		WithArgs("workflow_announcement", targetToken, 1).
+		WillReturnRows(rows)
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO "system_short_links"`)).
+		WithArgs(
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+			"workflow_announcement",
+			targetToken,
+			"/n/"+targetToken,
+			expiresAt,
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
 func expectRuntimeAnnouncementLoad(mock sqlmock.Sqlmock, announcement *Announcement) {

@@ -1074,6 +1074,20 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
           console.warn('onTextChunk parse error', e);
         }
       },
+      onMessage: (payload: unknown) => {
+        try {
+          const text = getSensitiveOutputTextFromPayload(payload);
+          if (typeof text === 'string' && text.length > 0) {
+            throttler.append(text);
+          }
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn('onMessage parse error', e);
+        }
+      },
+      onMessageEnd: () => {
+        throttler.flush();
+      },
     }),
     [
       viewport,
