@@ -368,6 +368,11 @@ export function AIChatShell({
         : null,
     [activeConversation, activeMessages, hasActiveStreamingMessage, isSending, surface]
   );
+  const canStopPendingWorkflowInteraction = Boolean(
+    activeWorkflowApprovalRequest ||
+      (activeUserInputMessage?.status === 'waiting_question' &&
+        activeUserInputRequest?.source === AGENT_WORKFLOW_QUESTION_SOURCE)
+  );
   const messageActionsLocked = Boolean(activeWorkflowApprovalRequest);
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
 
@@ -939,6 +944,7 @@ export function AIChatShell({
           isModelInitializing={isModelInitializing}
           modelMissing={modelMissing}
           isSending={isSending}
+          canStop={canStopPendingWorkflowInteraction || isSending}
           isStopping={isStopping}
           onInputChange={setInput}
           onSend={handleSend}

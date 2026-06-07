@@ -33,6 +33,7 @@ interface AIChatInputToolbarProps {
   modelCapabilityFilter?: { features_vision: boolean };
   hasImageAttachment: boolean;
   isSending: boolean;
+  canStop?: boolean;
   isUploading: boolean;
   isStopping: boolean;
   canSend: boolean;
@@ -74,6 +75,7 @@ export function AIChatInputToolbar({
   modelCapabilityFilter,
   hasImageAttachment,
   isSending,
+  canStop,
   isUploading,
   isStopping,
   canSend,
@@ -99,6 +101,7 @@ export function AIChatInputToolbar({
   onStop,
 }: AIChatInputToolbarProps) {
   const t = useT('webapp');
+  const showStopButton = canStop ?? isSending;
 
   return (
     <div className="flex items-center justify-between gap-2 px-1">
@@ -212,7 +215,7 @@ export function AIChatInputToolbar({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
-        {isSending ? (
+        {showStopButton ? (
           <Button
             isIcon
             variant="destructive"
