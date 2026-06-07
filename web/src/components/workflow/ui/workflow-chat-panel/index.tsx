@@ -58,7 +58,10 @@ import {
 } from '@/components/workflow/approval/runtime-events';
 import { isApprovalFormAlreadySubmittedError } from '@/services/approval.service';
 import { flushWorkflowPendingEdits } from '@/components/workflow/hooks/pending-edits';
-import { useApprovalRuntimeEvents } from '@/components/workflow/approval/use-approval-runtime-events';
+import {
+  hasUnresolvedApprovalEntries,
+  useApprovalRuntimeEvents,
+} from '@/components/workflow/approval/use-approval-runtime-events';
 import { getRightPanelMotionClassName, getRightPanelMotionStyle } from '../right-panel-motion';
 import {
   appendQuestionAnswerTranscriptQuestion,
@@ -205,6 +208,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
     resetApprovalRuntime,
   } = useApprovalRuntimeEvents();
   const approvalEventCursorRef = useRef(0);
+  const approvalRuntimeStateRef = useRef(approvalRuntimeState);
   const { start: startWorkflowRunEvents, cancel: cancelWorkflowRunEvents } =
     useWorkflowRunEventsStream();
   const approvalResumeStreamActiveRef = useRef(false);
@@ -212,6 +216,10 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
   const startApprovalResumeEventStreamRef = useRef<(payload?: unknown) => void>(() => {});
   const approvalFormQuery = useApprovalForm(approvalToken, Boolean(approvalToken && !approvalForm));
   const approvalSubmitMutation = useSubmitApprovalForm(approvalToken);
+
+  useEffect(() => {
+    approvalRuntimeStateRef.current = approvalRuntimeState;
+  }, [approvalRuntimeState]);
 
   // Wire up workflow store callbacks to mirror normal run panel behavior
   const rf = useReactFlow();
@@ -1239,18 +1247,107 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
           setIsConversationPaused(false);
           setQuestionAnswerSubmitting(false);
           sseCallbacks.onNodeStarted?.(payload);
-          runnerRef.current?.onNodeStarted?.({
-            status: 'running',
-            nodeId: typeof record.node_id === 'string' ? record.node_id : undefined,
-            nodeType: typeof record.node_type === 'string' ? record.node_type : undefined,
-            title: typeof record.title === 'string' ? record.title : undefined,
-            data: { input: record.inputs },
-          });
+          {
+            const nodeInfo = {
+              status: 'running' as const,
+              nodeId: typeof record.node_id === 'string' ? record.node_id : undefined,
+              nodeType: typeof record.node_type === 'string' ? record.node_type : undefined,
+              title: typeof record.title === 'string' ? record.title : undefined,
+              data: { input: record.inputs },
+            };
+            const { loopId, loopIndex, iterationId, iterationIndex } =
+              extractWorkflowRunContainerContext(record);
+            const executionId = getWorkflowRunExecutionId(record);
+            if (loopId) {
+              const sess = loopSessionsRef.current.get(loopId);
+              const targetIndex =
+                typeof loopIndex === 'number'
+                  ? loopIndex
+                  : (sess?.activeIndex ?? activeLoopRef.current.index);
+              if (sess && typeof targetIndex === 'number') {
+                let round = sess.rounds.find(r => r.index === targetIndex);
+                if (!round) {
+                  round = { index: targetIndex, nodes: [] };
+                  sess.rounds.push(round);
+                }
+                const childKey = getWorkflowRunItemKey({
+                  executionId,
+                  nodeId: nodeInfo.nodeId,
+                  nodeType: nodeInfo.nodeType,
+                  title: nodeInfo.title,
+                });
+                const cIdx = round.nodes.findIndex(c => getWorkflowRunItemKey(c) === childKey);
+                const child = { ...nodeInfo, executionId };
+                if (cIdx >= 0) {
+                  round.nodes[cIdx] = { ...round.nodes[cIdx], ...child };
+                } else {
+                  round.nodes.push(child);
+                }
+                sess.activeIndex = targetIndex;
+                loopSessionsRef.current.set(loopId, { ...sess });
+                activeLoopRef.current = { nodeId: loopId, index: targetIndex };
+                runnerRef.current?.onNodeStarted?.({
+                  status: 'running',
+                  nodeId: sess.nodeId,
+                  nodeType: 'loop',
+                  title: sess.title,
+                  loopInputs: sess.inputs,
+                  loopRounds: sortWorkflowRunRounds(sess.rounds).map(r => ({
+                    index: r.index,
+                    nodes: sortWorkflowRunItems(r.nodes),
+                  })),
+                } as never);
+                break;
+              }
+            }
+            const active = activeIterationRef.current;
+            const targetIterationId = iterationId ?? active.nodeId;
+            const targetIterationIndex =
+              typeof iterationIndex === 'number' ? iterationIndex : active.index;
+            if (targetIterationId && targetIterationIndex !== null) {
+              const sess = iterationSessionsRef.current.get(targetIterationId);
+              if (sess) {
+                let round = sess.rounds.find(r => r.index === targetIterationIndex);
+                if (!round) {
+                  round = { index: targetIterationIndex, nodes: [] };
+                  sess.rounds.push(round);
+                }
+                const childKey = getWorkflowRunItemKey({
+                  executionId,
+                  nodeId: nodeInfo.nodeId,
+                  nodeType: nodeInfo.nodeType,
+                  title: nodeInfo.title,
+                });
+                const cIdx = round.nodes.findIndex(c => getWorkflowRunItemKey(c) === childKey);
+                const child = { ...nodeInfo, executionId };
+                if (cIdx >= 0) {
+                  round.nodes[cIdx] = { ...round.nodes[cIdx], ...child };
+                } else {
+                  round.nodes.push(child);
+                }
+                sess.activeIndex = targetIterationIndex;
+                iterationSessionsRef.current.set(targetIterationId, { ...sess });
+                runnerRef.current?.onNodeStarted?.({
+                  status: 'running',
+                  nodeId: sess.nodeId,
+                  nodeType: 'iteration',
+                  title: sess.title,
+                  iterationInputs: sess.inputs,
+                  iterationRounds: sortWorkflowRunRounds(sess.rounds).map(r => ({
+                    index: r.index,
+                    nodes: sortWorkflowRunItems(r.nodes),
+                  })),
+                } as never);
+                break;
+              }
+            }
+            runnerRef.current?.onNodeStarted?.(nodeInfo);
+          }
           break;
         case 'node_finished': {
           sseCallbacks.onNodeFinished?.(payload);
           const rawStatus = typeof record.status === 'string' ? record.status : '';
-          const status =
+          const status: 'failed' | 'paused' | 'stopped' | 'succeeded' | 'running' =
             rawStatus === 'failed'
               ? 'failed'
               : rawStatus === 'paused'
@@ -1262,7 +1359,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
                       rawStatus === 'completed'
                     ? 'succeeded'
                     : 'running';
-          runnerRef.current?.onNodeFinished?.({
+          const nodeInfo = {
             status,
             nodeId: typeof record.node_id === 'string' ? record.node_id : undefined,
             nodeType: typeof record.node_type === 'string' ? record.node_type : undefined,
@@ -1274,9 +1371,299 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
               output: record.outputs,
               modelInput: extractLlmGatewayRequest(record),
             },
-          });
+          };
+          const { loopId, loopIndex, iterationId, iterationIndex } =
+            extractWorkflowRunContainerContext(record);
+          const executionId = getWorkflowRunExecutionId(record);
+          if (loopId) {
+            const sess = loopSessionsRef.current.get(loopId);
+            const targetIndex =
+              typeof loopIndex === 'number'
+                ? loopIndex
+                : (sess?.activeIndex ?? activeLoopRef.current.index);
+            if (sess && typeof targetIndex === 'number') {
+              let round = sess.rounds.find(r => r.index === targetIndex);
+              if (!round) {
+                round = { index: targetIndex, nodes: [] };
+                sess.rounds.push(round);
+              }
+              const childKey = getWorkflowRunItemKey({
+                executionId,
+                nodeId: nodeInfo.nodeId,
+                nodeType: nodeInfo.nodeType,
+                title: nodeInfo.title,
+              });
+              const cIdx = round.nodes.findIndex(c => getWorkflowRunItemKey(c) === childKey);
+              const child = { ...nodeInfo, executionId };
+              if (cIdx >= 0) {
+                round.nodes[cIdx] = { ...round.nodes[cIdx], ...child };
+              } else {
+                round.nodes.push(child);
+              }
+              sess.activeIndex = targetIndex;
+              loopSessionsRef.current.set(loopId, { ...sess });
+              activeLoopRef.current = { nodeId: loopId, index: targetIndex };
+              runnerRef.current?.onNodeFinished?.({
+                status: 'running',
+                nodeId: sess.nodeId,
+                nodeType: 'loop',
+                title: sess.title,
+                loopInputs: sess.inputs,
+                loopRounds: sortWorkflowRunRounds(sess.rounds).map(r => ({
+                  index: r.index,
+                  nodes: sortWorkflowRunItems(r.nodes),
+                })),
+              } as never);
+              break;
+            }
+          }
+          const active = activeIterationRef.current;
+          const targetIterationId = iterationId ?? active.nodeId;
+          const targetIterationIndex =
+            typeof iterationIndex === 'number' ? iterationIndex : active.index;
+          if (targetIterationId && targetIterationIndex !== null) {
+            const sess = iterationSessionsRef.current.get(targetIterationId);
+            if (sess) {
+              let round = sess.rounds.find(r => r.index === targetIterationIndex);
+              if (!round) {
+                round = { index: targetIterationIndex, nodes: [] };
+                sess.rounds.push(round);
+              }
+              const childKey = getWorkflowRunItemKey({
+                executionId,
+                nodeId: nodeInfo.nodeId,
+                nodeType: nodeInfo.nodeType,
+                title: nodeInfo.title,
+              });
+              const cIdx = round.nodes.findIndex(c => getWorkflowRunItemKey(c) === childKey);
+              const child = { ...nodeInfo, executionId };
+              if (cIdx >= 0) {
+                round.nodes[cIdx] = { ...round.nodes[cIdx], ...child };
+              } else {
+                round.nodes.push(child);
+              }
+              sess.activeIndex = targetIterationIndex;
+              iterationSessionsRef.current.set(targetIterationId, { ...sess });
+              runnerRef.current?.onNodeFinished?.({
+                status: 'running',
+                nodeId: sess.nodeId,
+                nodeType: 'iteration',
+                title: sess.title,
+                iterationInputs: sess.inputs,
+                iterationRounds: sortWorkflowRunRounds(sess.rounds).map(r => ({
+                  index: r.index,
+                  nodes: sortWorkflowRunItems(r.nodes),
+                })),
+              } as never);
+              break;
+            }
+          }
+          runnerRef.current?.onNodeFinished?.(nodeInfo);
           break;
         }
+        case 'iteration_started':
+          sseCallbacks.onIterationStarted?.(payload);
+          {
+            const nodeId =
+              typeof record.node_id === 'string' ? (record.node_id as string) : undefined;
+            const nodeType =
+              typeof record.node_type === 'string' ? (record.node_type as string) : 'iteration';
+            const title = typeof record.title === 'string' ? (record.title as string) : nodeType;
+            const key = nodeId ?? title;
+            iterationSessionsRef.current.set(key, {
+              nodeId,
+              nodeType,
+              title,
+              inputs: record.inputs,
+              rounds: [],
+              activeIndex: null,
+            });
+            activeIterationRef.current = { nodeId: key, index: null };
+            runnerRef.current?.onNodeStarted?.({
+              status: 'running',
+              nodeId,
+              nodeType,
+              title,
+              iterationInputs: record.inputs,
+              iterationRounds: [],
+              data: { input: undefined, output: undefined },
+            } as never);
+          }
+          break;
+        case 'iteration_next':
+          sseCallbacks.onIterationNext?.(payload);
+          {
+            const nodeId =
+              typeof record.node_id === 'string' ? (record.node_id as string) : undefined;
+            const nodeType =
+              typeof record.node_type === 'string' ? (record.node_type as string) : 'iteration';
+            const title = typeof record.title === 'string' ? (record.title as string) : nodeType;
+            const index = typeof record.index === 'number' ? record.index : 0;
+            const key = nodeId ?? title;
+            const sess = iterationSessionsRef.current.get(key) ?? {
+              nodeId,
+              nodeType,
+              title,
+              rounds: [],
+            };
+            if (!sess.rounds.some(r => r.index === index)) {
+              sess.rounds.push({ index, nodes: [] });
+            }
+            sess.activeIndex = index;
+            iterationSessionsRef.current.set(key, sess);
+            activeIterationRef.current = { nodeId: key, index };
+            runnerRef.current?.onNodeStarted?.({
+              status: 'running',
+              nodeId,
+              nodeType,
+              title,
+              iterationInputs: sess.inputs,
+              iterationRounds: sortWorkflowRunRounds(sess.rounds).map(r => ({
+                index: r.index,
+                nodes: sortWorkflowRunItems(r.nodes),
+              })),
+            } as never);
+          }
+          break;
+        case 'iteration_completed':
+          sseCallbacks.onIterationCompleted?.(payload);
+          {
+            const nodeId =
+              typeof record.node_id === 'string' ? (record.node_id as string) : undefined;
+            const nodeType =
+              typeof record.node_type === 'string' ? (record.node_type as string) : 'iteration';
+            const title = typeof record.title === 'string' ? (record.title as string) : nodeType;
+            const key = nodeId ?? title;
+            const sess = iterationSessionsRef.current.get(key);
+            if (sess) {
+              sess.elapsedTime =
+                typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined;
+              sess.outputs = record.outputs;
+              sess.error = typeof record.error === 'string' ? record.error : undefined;
+              sess.rounds = sess.rounds.map(r => ({
+                ...r,
+                elapsedTime: getWorkflowRunRoundElapsedTime(r),
+              }));
+              iterationSessionsRef.current.set(key, sess);
+            }
+            activeIterationRef.current = { nodeId: null, index: null };
+            runnerRef.current?.onNodeFinished?.({
+              status: typeof record.error === 'string' && record.error ? 'failed' : 'succeeded',
+              nodeId,
+              nodeType,
+              title,
+              elapsedTime: typeof record.elapsed_time === 'number' ? record.elapsed_time : 0,
+              error: getWorkflowRunErrorText(record.error),
+              iterationOutputs: record.outputs,
+              iterationRounds: sortWorkflowRunRounds(sess?.rounds ?? []).map(r => ({
+                index: r.index,
+                nodes: sortWorkflowRunItems(r.nodes),
+                elapsedTime: r.elapsedTime,
+              })),
+              data: { input: undefined, output: undefined },
+            } as never);
+          }
+          break;
+        case 'loop_started':
+          sseCallbacks.onLoopStarted?.(payload);
+          {
+            const nodeId =
+              typeof record.node_id === 'string' ? (record.node_id as string) : undefined;
+            const nodeType = typeof record.node_type === 'string' ? (record.node_type as string) : 'loop';
+            const title = typeof record.title === 'string' ? (record.title as string) : nodeType;
+            const key = nodeId ?? title;
+            loopSessionsRef.current.set(key, {
+              nodeId,
+              nodeType,
+              title,
+              inputs: record.inputs,
+              rounds: [],
+              activeIndex: null,
+            });
+            activeLoopRef.current = { nodeId: key, index: null };
+            runnerRef.current?.onNodeStarted?.({
+              status: 'running',
+              nodeId,
+              nodeType,
+              title,
+              loopInputs: record.inputs,
+              loopRounds: [],
+              data: { input: undefined, output: undefined },
+            } as never);
+          }
+          break;
+        case 'loop_next':
+          sseCallbacks.onLoopNext?.(payload);
+          {
+            const nodeId =
+              typeof record.node_id === 'string' ? (record.node_id as string) : undefined;
+            const nodeType = typeof record.node_type === 'string' ? (record.node_type as string) : 'loop';
+            const title = typeof record.title === 'string' ? (record.title as string) : nodeType;
+            const index = typeof record.index === 'number' ? record.index : 0;
+            const key = nodeId ?? title;
+            const sess = loopSessionsRef.current.get(key) ?? {
+              nodeId,
+              nodeType,
+              title,
+              rounds: [],
+            };
+            if (!sess.rounds.some(r => r.index === index)) {
+              sess.rounds.push({ index, nodes: [] });
+            }
+            sess.activeIndex = index;
+            loopSessionsRef.current.set(key, sess);
+            activeLoopRef.current = { nodeId: key, index };
+            runnerRef.current?.onNodeStarted?.({
+              status: 'running',
+              nodeId,
+              nodeType,
+              title,
+              loopInputs: sess.inputs,
+              loopRounds: sortWorkflowRunRounds(sess.rounds).map(r => ({
+                index: r.index,
+                nodes: sortWorkflowRunItems(r.nodes),
+              })),
+            } as never);
+          }
+          break;
+        case 'loop_completed':
+          sseCallbacks.onLoopCompleted?.(payload);
+          {
+            const nodeId =
+              typeof record.node_id === 'string' ? (record.node_id as string) : undefined;
+            const nodeType = typeof record.node_type === 'string' ? (record.node_type as string) : 'loop';
+            const title = typeof record.title === 'string' ? (record.title as string) : nodeType;
+            const key = nodeId ?? title;
+            const sess = loopSessionsRef.current.get(key);
+            if (sess) {
+              sess.elapsedTime =
+                typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined;
+              sess.outputs = record.outputs;
+              sess.error = typeof record.error === 'string' ? record.error : undefined;
+              sess.rounds = sess.rounds.map(r => ({
+                ...r,
+                elapsedTime: getWorkflowRunRoundElapsedTime(r),
+              }));
+              loopSessionsRef.current.set(key, sess);
+            }
+            activeLoopRef.current = { nodeId: null, index: null };
+            runnerRef.current?.onNodeFinished?.({
+              status: typeof record.error === 'string' && record.error ? 'failed' : 'succeeded',
+              nodeId,
+              nodeType,
+              title,
+              elapsedTime: typeof record.elapsed_time === 'number' ? record.elapsed_time : 0,
+              error: getWorkflowRunErrorText(record.error),
+              loopOutputs: record.outputs,
+              loopRounds: sortWorkflowRunRounds(sess?.rounds ?? []).map(r => ({
+                index: r.index,
+                nodes: sortWorkflowRunItems(r.nodes),
+                elapsedTime: r.elapsedTime,
+              })),
+              data: { input: undefined, output: undefined },
+            } as never);
+          }
+          break;
         case 'message':
         case 'text_chunk':
           runnerRef.current?.onMessage?.(record);
@@ -1292,10 +1679,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
         case 'workflow_failed':
         case 'workflow_succeeded':
         case 'workflow_completed': {
-          const hasWaitingApprovals = Object.values(approvalRuntimeState.byKey).some(
-            entry => entry.status === 'waiting'
-          );
-          if (hasWaitingApprovals) {
+          if (hasUnresolvedApprovalEntries(approvalRuntimeStateRef.current)) {
             setIsConversationPaused(true);
             break;
           }
@@ -1356,7 +1740,6 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
       }
     },
     [
-      approvalRuntimeState.byKey,
       cancelWorkflowRunEvents,
       getWorkflowRunErrorText,
       handleApprovalExpired,
@@ -1424,6 +1807,16 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
             dispatchWorkflowRunEvent('workflow_paused', streamPayload),
           onNodeStarted: streamPayload => dispatchWorkflowRunEvent('node_started', streamPayload),
           onNodeFinished: streamPayload => dispatchWorkflowRunEvent('node_finished', streamPayload),
+          onIterationStarted: streamPayload =>
+            dispatchWorkflowRunEvent('iteration_started', streamPayload),
+          onIterationNext: streamPayload =>
+            dispatchWorkflowRunEvent('iteration_next', streamPayload),
+          onIterationCompleted: streamPayload =>
+            dispatchWorkflowRunEvent('iteration_completed', streamPayload),
+          onLoopStarted: streamPayload => dispatchWorkflowRunEvent('loop_started', streamPayload),
+          onLoopNext: streamPayload => dispatchWorkflowRunEvent('loop_next', streamPayload),
+          onLoopCompleted: streamPayload =>
+            dispatchWorkflowRunEvent('loop_completed', streamPayload),
           onWorkflowFinished: streamPayload =>
             dispatchWorkflowRunEvent('workflow_finished', streamPayload),
           onError: streamPayload => dispatchWorkflowRunEvent('error', streamPayload),

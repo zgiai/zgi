@@ -756,7 +756,9 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
         const isLoop = raw.nodeType === 'loop';
         const isContainer = isIteration || isLoop;
         const rounds = isLoop ? (raw.loopRounds ?? []) : (raw.iterationRounds ?? []);
-        const inContainerRoundsView = isContainer && isContainerRoundsView(itemKey);
+        const shouldInlineContainerRounds = isContainer && isCanvasDetailOnly;
+        const inContainerRoundsView =
+          isContainer && (shouldInlineContainerRounds || isContainerRoundsView(itemKey));
         const debugDetailsId = `${itemKey}-debug-details`;
         const hasDebugDetails =
           showDetail &&
@@ -777,7 +779,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                 raw.processData !== undefined ||
                 raw.executionMetadata !== undefined)));
         const shouldRenderDetailsArea = isContainer
-          ? isOpen(itemKey)
+          ? shouldInlineContainerRounds || isOpen(itemKey)
           : showDetail && isOpen(itemKey);
 
         return (
@@ -1367,7 +1369,9 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                     </div>
                   </button>
                 )}
-                {isContainer && inContainerRoundsView && (
+                {isContainer &&
+                  inContainerRoundsView &&
+                  !shouldInlineContainerRounds && (
                   <button
                     type="button"
                     className="inline-flex w-fit items-center gap-1 rounded-md border border-border/40 bg-muted/30 px-2 py-1 text-xs text-foreground hover:bg-muted transition-colors"
@@ -1376,11 +1380,12 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                     <ChevronLeft className="h-3 w-3" />
                     {t('agents.workflow.backToSummary')}
                   </button>
-                )}
+                  )}
                 {isContainer && inContainerRoundsView && rounds.length > 0 && (
                   <div className="grid gap-1 bg-muted shadow-md rounded-md p-1">
                     {rounds.map(round => {
                       const roundKey = `${itemKey}-round-${round.index}`;
+                      const roundOpen = shouldInlineContainerRounds || isOpen(roundKey);
                       return (
                         <div
                           key={`round-${itemKey}-${round.index}`}
@@ -1394,7 +1399,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                               <ChevronDown
                                 className={cn(
                                   'h-3.5 w-3.5 transition-transform',
-                                  isOpen(roundKey) ? '' : '-rotate-90'
+                                  roundOpen ? '' : '-rotate-90'
                                 )}
                               />
                               <span className="text-xs font-medium text-foreground">
@@ -1409,7 +1414,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                               {formatMs(round.elapsedTime ? round.elapsedTime : 0)}
                             </span>
                           </div>
-                          {isOpen(roundKey) && (
+                          {roundOpen && (
                             <div className="mt-2">
                               <WorkflowRunNodesList
                                 items={round.nodes}
