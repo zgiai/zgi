@@ -145,7 +145,7 @@ interface AIChatInputAreaProps {
   isSending: boolean;
   isStopping: boolean;
   onInputChange: (value: string) => void;
-  onSend: (files: AIChatMessageFile[], useMemory: boolean) => void;
+  onSend: (files: AIChatMessageFile[], useMemory: boolean) => boolean | Promise<boolean>;
   activeUserInputRequest?: AIChatUserInputRequest | null;
   onUserInputRequestSubmit?: (query: string, useMemory: boolean) => void;
   activeWorkflowApprovalRequest?: AIChatWorkflowApprovalRequest | null;
@@ -214,6 +214,7 @@ export function AIChatInputArea({
     null
   );
   const [useMemory, setUseMemory] = useState(false);
+  const [isPreparingSend, setIsPreparingSend] = useState(false);
   const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [ignoredUserInputRequestKey, setIgnoredUserInputRequestKey] = useState<string | null>(null);
@@ -275,6 +276,7 @@ export function AIChatInputArea({
     Boolean(input.trim()) &&
     !modelMissing &&
     !isModelInitializing &&
+    !isPreparingSend &&
     !isUploading &&
     !hasUploadError;
   const activeQuestions = useMemo(
@@ -697,11 +699,18 @@ export function AIChatInputArea({
     [allSelectableExtensions, allowedExtensions, canUseImage, imageExtensions, surface, t]
   );
 
-  const handleSend = useCallback(() => {
-    if (!input.trim() || isUploading || hasUploadError) return;
-    onSend(uploadedFiles, useMemory);
-    setAttachments([]);
-  }, [hasUploadError, input, isUploading, onSend, uploadedFiles, useMemory]);
+  const handleSend = useCallback(async () => {
+    if (!input.trim() || isPreparingSend || isUploading || hasUploadError) return;
+    setIsPreparingSend(true);
+    try {
+      const sent = await onSend(uploadedFiles, useMemory);
+      if (sent !== false) {
+        setAttachments([]);
+      }
+    } finally {
+      setIsPreparingSend(false);
+    }
+  }, [hasUploadError, input, isPreparingSend, isUploading, onSend, uploadedFiles, useMemory]);
 
   const handleWorkflowApprovalSubmit = useCallback(
     async (payload: { inputs: Record<string, unknown>; action: string }) => {
@@ -1040,9 +1049,17 @@ export function AIChatInputArea({
                   onKeyDown={event => {
                     if (event.key === 'Enter' && !event.shiftKey) {
                       if (isComposingRef.current || isComposingEnterEvent(event)) return;
-                      if (isSending || isModelInitializing || isUploading || hasUploadError) return;
+                      if (
+                        isSending ||
+                        isPreparingSend ||
+                        isModelInitializing ||
+                        isUploading ||
+                        hasUploadError
+                      ) {
+                        return;
+                      }
                       event.preventDefault();
-                      handleSend();
+                      void handleSend();
                     }
                   }}
                   placeholder={inputPlaceholder || t('chat.enterCommand')}
@@ -1074,7 +1091,7 @@ export function AIChatInputArea({
                 modelCapabilityFilter={modelCapabilityFilter}
                 hasImageAttachment={hasImageAttachment}
                 isSending={isSending}
-                isUploading={isUploading}
+                isUploading={isUploading || isPreparingSend}
                 isStopping={isStopping}
                 canSend={!hasActiveUserInputRequest && canClickSend}
                 canUseImage={canUseImage}

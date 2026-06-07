@@ -90,6 +90,7 @@ interface AIChatShellProps {
   supportsVisionOverride?: boolean;
   isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
+  beforeSend?: () => boolean | Promise<boolean>;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
   requireModel?: boolean;
@@ -158,6 +159,7 @@ export function AIChatShell({
   supportsVisionOverride,
   isModelInitializing = false,
   onModelChange,
+  beforeSend,
   variant = 'full',
   showModelSelector = true,
   requireModel = true,
@@ -449,16 +451,20 @@ export function AIChatShell({
   }, [isMobile]);
 
   const handleSend = useCallback(
-    (files: AIChatMessageFile[] = [], useMemory = false) => {
+    async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
       if (activeWorkflowApprovalRequest) {
         toast.info(t('consoleChat.workflow.approvalInputLocked'));
-        return;
+        return false;
       }
       const query = input.trim();
-      if (!query || isSending) return;
+      if (!query || isSending) return false;
       if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
-        return;
+        return false;
+      }
+      if (beforeSend) {
+        const canSend = await beforeSend();
+        if (!canSend) return false;
       }
 
       setInput('');
@@ -472,9 +478,11 @@ export function AIChatShell({
         },
         useMemory: forcedUseMemory ?? useMemory,
       });
+      return true;
     },
     [
       activeWorkflowApprovalRequest,
+      beforeSend,
       controller,
       forcedUseMemory,
       input,

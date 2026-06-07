@@ -54,7 +54,7 @@ interface AIChatInputToolbarProps {
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
   onMemoryEnabledChange: (enabled: boolean) => void;
-  onSend: () => void;
+  onSend: () => void | Promise<void>;
   onStop: () => void;
 }
 

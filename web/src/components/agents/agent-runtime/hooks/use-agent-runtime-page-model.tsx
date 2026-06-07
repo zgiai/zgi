@@ -950,6 +950,23 @@ export function useAgentRuntimePageModel(agentId: string) {
     [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, isVersionPreviewing, saveNow]
   );
 
+  const handlePreviewBeforeSend = useCallback(async () => {
+    if (!canManageAgent || isVersionPreviewing) {
+      return true;
+    }
+    if (hasAgentMemorySlotErrors) {
+      toast.error(t('toasts.fixMemorySlotsBeforeSave'));
+      return false;
+    }
+    if (isSystemPromptTooLong) {
+      toast.error(
+        t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
+      );
+      return false;
+    }
+    return saveNow({ silent: false, force: true });
+  }, [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, isVersionPreviewing, saveNow, t]);
+
   const leaveGuardNode = useAgentRuntimeLeaveGuard({
     enabled: canManageAgent && !isVersionPreviewing,
     hasUnsavedChanges: isDirty,
@@ -1064,6 +1081,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       inputPlaceholder: currentPayload.input_placeholder,
       homeBrand: agentHomeBrand,
       homeTitle: currentPayload.home_title || defaultHomeTitle,
+      beforeSend: handlePreviewBeforeSend,
       onOpenMemoryValues: () => setMemoryValuesOpen(true),
       onModelChange: handleModelChange,
       onClose: () => void handlePreviewSheetOpenChange(false),
