@@ -257,6 +257,34 @@ export function dispatchAIChatStreamEvent(
         eventId
       );
       break;
+    case 'approval_result_filled':
+      callbacks.onWorkflowNodeFinished?.(
+        {
+          ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          status: 'success',
+          node_type: 'approval',
+          title: 'Approval submitted',
+          outputs: data,
+        },
+        eventId
+      );
+      break;
+    case 'approval_expired':
+      callbacks.onWorkflowPaused?.(
+        { ...((data ?? {}) as AIChatWorkflowPausedEventData), status: 'expired' },
+        eventId
+      );
+      callbacks.onWorkflowNodeFinished?.(
+        {
+          ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          status: 'failed',
+          node_type: 'approval',
+          title: 'Approval expired',
+          outputs: data,
+        },
+        eventId
+      );
+      break;
     case 'question_answer_submitted':
       callbacks.onWorkflowNodeFinished?.(
         {
@@ -272,6 +300,12 @@ export function dispatchAIChatStreamEvent(
       break;
     case 'workflow_failed':
       callbacks.onWorkflowFailed?.((data ?? {}) as AIChatWorkflowEventData, eventId);
+      break;
+    case 'workflow_stopped':
+      callbacks.onWorkflowFinished?.(
+        { ...((data ?? {}) as AIChatWorkflowEventData), status: 'stopped' },
+        eventId
+      );
       break;
     case 'message':
       callbacks.onMessageChunk((data ?? {}) as AIChatMessageChunkEventData, eventId);

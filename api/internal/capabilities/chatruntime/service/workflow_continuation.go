@@ -299,6 +299,10 @@ func workflowContinuationStatusFromEvent(eventType string) string {
 		return "finishing"
 	case "workflow_failed", "error":
 		return workflowContinuationStatusFailed
+	case "workflow_stopped":
+		return workflowContinuationStatusFailed
+	case "approval_requested":
+		return workflowContinuationStatusWaitingApproval
 	case "question_answer_requested":
 		return workflowContinuationStatusWaitingQuestion
 	default:

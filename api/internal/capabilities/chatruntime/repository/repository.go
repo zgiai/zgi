@@ -803,7 +803,7 @@ func (r *messageRepository) UpdateStoppedAnswer(ctx context.Context, id uuid.UUI
 		return fmt.Errorf("failed to marshal stopped aichat metadata: %w", err)
 	}
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, append(activeMessageStatuses(), runtimemodel.MessageStatusStopped)).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, append(mutableMessageStatuses(), runtimemodel.MessageStatusStopped)).
 		Updates(map[string]interface{}{
 			"answer":     answer,
 			"status":     runtimemodel.MessageStatusStopped,

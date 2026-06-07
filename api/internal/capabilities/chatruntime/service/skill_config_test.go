@@ -621,6 +621,68 @@ func TestMergeWorkflowRunMetadataStoresQuestionAnswerFields(t *testing.T) {
 	}
 }
 
+func TestMergeWorkflowRunMetadataStoresApprovalLifecycleAndMessages(t *testing.T) {
+	metadata := mergeWorkflowRunMetadata(nil, "approval_result_filled", map[string]interface{}{
+		"workflow_run_id": "run-lifecycle",
+		"form_id":         "form-1",
+		"action":          "approve",
+		"inputs":          map[string]interface{}{"comment": "ok"},
+		"created_at":      10,
+	})
+	metadata = mergeWorkflowRunMetadata(metadata, "message", map[string]interface{}{
+		"workflow_run_id": "run-lifecycle",
+		"answer":          "hello",
+		"created_at":      11,
+	})
+	metadata = mergeWorkflowRunMetadata(metadata, "message_end", map[string]interface{}{
+		"workflow_run_id": "run-lifecycle",
+		"metadata":        map[string]interface{}{"usage": map[string]interface{}{"total_tokens": 3}},
+		"created_at":      12,
+	})
+
+	runs, ok := metadata["workflow_runs"].([]interface{})
+	if !ok || len(runs) != 1 {
+		t.Fatalf("workflow_runs = %#v, want one run", metadata["workflow_runs"])
+	}
+	run, _ := runs[0].(map[string]interface{})
+	result, _ := run["approval_result"].(map[string]interface{})
+	if result["form_id"] != "form-1" || result["action"] != "approve" {
+		t.Fatalf("approval_result = %#v, want submitted approval fields", result)
+	}
+	results, ok := run["approval_results"].([]interface{})
+	if !ok || len(results) != 1 {
+		t.Fatalf("approval_results = %#v, want submitted transcript", run["approval_results"])
+	}
+	messages, ok := run["messages"].([]interface{})
+	if !ok || len(messages) != 2 {
+		t.Fatalf("messages = %#v, want message and message_end events", run["messages"])
+	}
+}
+
+func TestMergeWorkflowRunMetadataStoresStoppedAndExpiredStatuses(t *testing.T) {
+	stopped := mergeWorkflowRunMetadata(nil, "workflow_stopped", map[string]interface{}{
+		"workflow_run_id": "run-stopped",
+		"status":          "stopped",
+	})
+	runs, _ := stopped["workflow_runs"].([]interface{})
+	run, _ := runs[0].(map[string]interface{})
+	if run["status"] != "stopped" {
+		t.Fatalf("run = %#v, want stopped status", run)
+	}
+
+	expired := mergeWorkflowRunMetadata(nil, "approval_expired", map[string]interface{}{
+		"workflow_run_id": "run-expired",
+		"form_id":         "form-1",
+		"reason":          "timeout",
+	})
+	runs, _ = expired["workflow_runs"].([]interface{})
+	run, _ = runs[0].(map[string]interface{})
+	approvalExpired, _ := run["approval_expired"].(map[string]interface{})
+	if run["status"] != "expired" || approvalExpired["reason"] != "timeout" {
+		t.Fatalf("run = %#v, want expired approval status", run)
+	}
+}
+
 func TestWorkflowQuestionUserInputRequestMapsChoices(t *testing.T) {
 	request := workflowQuestionUserInputRequest("conversation-1", "message-1", map[string]interface{}{
 		"workflow_run_id": "run-question",

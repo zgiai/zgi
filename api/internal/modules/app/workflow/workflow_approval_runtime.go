@@ -189,6 +189,36 @@ func (h *WorkflowHandler) ResumeQuestionAnswerWorkflow(ctx context.Context, work
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs)
 }
 
+func (h *WorkflowHandler) StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error {
+	workflowService, ok := h.workflowService.(*WorkflowService)
+	if !ok || workflowService == nil || workflowService.workflowRunLogRepo == nil {
+		return fmt.Errorf("workflow service is not available")
+	}
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" {
+		return fmt.Errorf("workflow_run_id is required")
+	}
+	run, err := workflowService.workflowRunLogRepo.GetByID(ctx, workflowRunID)
+	if err != nil {
+		return fmt.Errorf("load workflow run for stop: %w", err)
+	}
+	if err := workflowService.StopWorkflowTask(ctx, run.TenantID, run.AgentID, run.ID, accountID); err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	payload := map[string]interface{}{
+		"id":              run.ID,
+		"workflow_run_id": run.ID,
+		"workflow_id":     run.WorkflowID,
+		"status":          "stopped",
+		"error":           "Workflow stopped by user.",
+		"created_at":      now,
+	}
+	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, "workflow_stopped", payload)
+	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, workflowpause.EventWorkflowFinished, payload)
+	return nil
+}
+
 func detachWorkflowResumeState(systemInputs map[string]interface{}) (*workflowpause.State, bool) {
 	if systemInputs == nil {
 		return nil, false

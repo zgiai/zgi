@@ -37,6 +37,7 @@ type AgentsHandler struct {
 	workflowContinuationRunner interface {
 		ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
 		ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
+		StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error
 	}
 }
 
@@ -62,6 +63,7 @@ func (h *AgentsHandler) SetFileService(fileService interfaces.FileService) {
 func (h *AgentsHandler) SetWorkflowContinuationRunner(runner interface {
 	ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
 	ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
+	StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error
 }) {
 	h.workflowContinuationRunner = runner
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
@@ -414,15 +415,24 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 	if err != nil {
 		return nil, mapRepoError(err)
 	}
-	if !isActiveMessageStatus(message.Status) {
+	if !isStoppableMessageStatus(message.Status) {
 		hydrateMessageGeneratedFileURLs(message)
 		return message, nil
 	}
 
 	s.streams.Stop(id)
-	if err := s.repos.Message.MarkStopped(ctx, id); err != nil {
+	metadata := workflowContinuationMetadataWithoutUserInputRequest(message.Metadata)
+	if continuation := workflowApprovalContinuationFromMetadata(metadata); continuation.WorkflowRunID != "" {
+		metadata = mergeWorkflowRunMetadata(metadata, "workflow_stopped", map[string]interface{}{
+			"workflow_run_id": continuation.WorkflowRunID,
+			"status":          runtimemodel.MessageStatusStopped,
+			"created_at":      time.Now().Unix(),
+		})
+		metadata = workflowContinuationMetadataWithStatus(metadata, workflowContinuationStatusFailed)
+	}
+	if err := s.repos.Message.UpdateStoppedAnswer(ctx, id, message.Answer, metadata); err != nil {
 		latest, loadErr := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
-		if loadErr == nil && !isActiveMessageStatus(latest.Status) {
+		if loadErr == nil && !isStoppableMessageStatus(latest.Status) {
 			hydrateMessageGeneratedFileURLs(latest)
 			return latest, nil
 		}

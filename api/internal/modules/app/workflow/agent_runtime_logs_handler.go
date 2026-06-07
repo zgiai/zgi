@@ -349,8 +349,23 @@ func runtimeWorkflowRunEvents(value interface{}) []map[string]interface{} {
 		if approval := runtimeMap(run["approval"]); len(approval) > 0 {
 			events = append(events, runtimeWorkflowApprovalEvent(run, approval, runIndex))
 		}
+		approvalResults := runtimeSkillInvocations(run["approval_results"])
+		if len(approvalResults) == 0 {
+			if approvalResult := runtimeMap(run["approval_result"]); len(approvalResult) > 0 {
+				approvalResults = append(approvalResults, approvalResult)
+			}
+		}
+		for approvalIndex, approvalResult := range approvalResults {
+			events = append(events, runtimeWorkflowApprovalSubmittedEvent(run, approvalResult, runIndex, approvalIndex))
+		}
+		if approvalExpired := runtimeMap(run["approval_expired"]); len(approvalExpired) > 0 {
+			events = append(events, runtimeWorkflowApprovalExpiredEvent(run, approvalExpired, runIndex))
+		}
 		if question := runtimeMap(run["question_answer"]); len(question) > 0 {
 			events = append(events, runtimeWorkflowQuestionEvent(run, question, runIndex))
+		}
+		for messageIndex, message := range runtimeSkillInvocations(run["messages"]) {
+			events = append(events, runtimeWorkflowMessageEvent(run, message, runIndex, messageIndex))
 		}
 	}
 	return events
@@ -411,6 +426,38 @@ func runtimeWorkflowApprovalEvent(run map[string]interface{}, approval map[strin
 	return event
 }
 
+func runtimeWorkflowApprovalSubmittedEvent(run map[string]interface{}, approvalResult map[string]interface{}, runIndex, approvalIndex int) map[string]interface{} {
+	event := compactAgentRuntimeMap(map[string]interface{}{
+		"kind":             "workflow_approval_submitted",
+		"title":            "Workflow approval submitted",
+		"status":           "success",
+		"created_at":       firstRuntimeValue(approvalResult["created_at"], run["created_at"]),
+		"workflow_run_id":  runtimeString(run["workflow_run_id"]),
+		"workflow_id":      runtimeString(run["workflow_id"]),
+		"approval_form_id": firstRuntimeString(approvalResult["form_id"], approvalResult["approval_form_id"]),
+		"action":           firstRuntimeString(approvalResult["action"], approvalResult["action_id"]),
+		"action_label":     runtimeString(approvalResult["action_label"]),
+		"inputs":           firstRuntimeValue(approvalResult["inputs"], approvalResult["submitted_data"]),
+		"runtime_id":       workflowRuntimeID("workflow_approval_submitted", run, approvalResult, runIndex, approvalIndex),
+	})
+	return event
+}
+
+func runtimeWorkflowApprovalExpiredEvent(run map[string]interface{}, approvalExpired map[string]interface{}, runIndex int) map[string]interface{} {
+	event := compactAgentRuntimeMap(map[string]interface{}{
+		"kind":             "workflow_approval_expired",
+		"title":            "Workflow approval expired",
+		"status":           "expired",
+		"created_at":       firstRuntimeValue(approvalExpired["created_at"], approvalExpired["expired_at"], run["created_at"]),
+		"workflow_run_id":  runtimeString(run["workflow_run_id"]),
+		"workflow_id":      runtimeString(run["workflow_id"]),
+		"approval_form_id": firstRuntimeString(approvalExpired["form_id"], approvalExpired["approval_form_id"]),
+		"reason":           runtimeString(approvalExpired["reason"]),
+		"runtime_id":       workflowRuntimeID("workflow_approval_expired", run, approvalExpired, runIndex, 0),
+	})
+	return event
+}
+
 func runtimeWorkflowQuestionEvent(run map[string]interface{}, question map[string]interface{}, runIndex int) map[string]interface{} {
 	status := "pending_question"
 	if runtimeString(question["answer"]) != "" || runtimeString(question["choice_id"]) != "" || runtimeString(question["choice_label"]) != "" {
@@ -433,6 +480,23 @@ func runtimeWorkflowQuestionEvent(run map[string]interface{}, question map[strin
 		"choice_label":    runtimeString(question["choice_label"]),
 		"choice_value":    runtimeString(question["choice_value"]),
 		"runtime_id":      workflowRuntimeID("workflow_question", run, question, runIndex, 0),
+	})
+	return event
+}
+
+func runtimeWorkflowMessageEvent(run map[string]interface{}, message map[string]interface{}, runIndex, messageIndex int) map[string]interface{} {
+	event := compactAgentRuntimeMap(map[string]interface{}{
+		"kind":            "workflow_message",
+		"title":           "Workflow message",
+		"status":          "success",
+		"created_at":      firstRuntimeValue(message["created_at"], run["created_at"]),
+		"workflow_run_id": runtimeString(run["workflow_run_id"]),
+		"workflow_id":     runtimeString(run["workflow_id"]),
+		"event":           runtimeString(message["event"]),
+		"answer":          firstRuntimeString(message["answer"], message["text"]),
+		"data":            message["data"],
+		"metadata":        message["metadata"],
+		"runtime_id":      workflowRuntimeID("workflow_message", run, message, runIndex, messageIndex),
 	})
 	return event
 }
@@ -481,6 +545,15 @@ func firstRuntimeValue(values ...interface{}) interface{} {
 		return value
 	}
 	return nil
+}
+
+func firstRuntimeString(values ...interface{}) string {
+	for _, value := range values {
+		if text := runtimeString(value); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func sortAgentRuntimeEventsStable(events []map[string]interface{}) []map[string]interface{} {
@@ -577,8 +650,14 @@ func agentRuntimeEventType(event map[string]interface{}) string {
 		return "workflow_node"
 	case "workflow_approval":
 		return "workflow_approval"
+	case "workflow_approval_submitted":
+		return "workflow_approval_submitted"
+	case "workflow_approval_expired":
+		return "workflow_approval_expired"
 	case "workflow_question":
 		return "workflow_question"
+	case "workflow_message":
+		return "workflow_message"
 	case "":
 		return "agent_event"
 	default:
@@ -620,11 +699,17 @@ func agentRuntimeEventTitle(event map[string]interface{}) string {
 		return agentRuntimeWorkflowNodeTitle(event)
 	case "workflow_approval":
 		return "Workflow approval"
+	case "workflow_approval_submitted":
+		return "Workflow approval submitted"
+	case "workflow_approval_expired":
+		return "Workflow approval expired"
 	case "workflow_question":
 		if title := runtimeString(event["node_title"]); title != "" {
 			return title
 		}
 		return "Workflow question"
+	case "workflow_message":
+		return "Workflow message"
 	default:
 		return runtimeInvocationTitle(event)
 	}
@@ -651,12 +736,28 @@ func agentRuntimeEventInput(event map[string]interface{}) interface{} {
 		return sanitizeAgentRuntimeSensitiveValue(runtimeMap(event["inputs"]))
 	case "workflow_approval":
 		return sanitizeAgentRuntimeSensitiveValue(runtimeMap(event["approval_form"]))
+	case "workflow_approval_submitted":
+		return sanitizeAgentRuntimeSensitiveValue(compactAgentRuntimeMap(map[string]interface{}{
+			"approval_form_id": runtimeString(event["approval_form_id"]),
+			"action":           runtimeString(event["action"]),
+			"action_label":     runtimeString(event["action_label"]),
+			"inputs":           event["inputs"],
+		}))
+	case "workflow_approval_expired":
+		return compactAgentRuntimeMap(map[string]interface{}{
+			"approval_form_id": runtimeString(event["approval_form_id"]),
+			"reason":           runtimeString(event["reason"]),
+		})
 	case "workflow_question":
 		return sanitizeAgentRuntimeSensitiveValue(compactAgentRuntimeMap(map[string]interface{}{
 			"question": runtimeString(event["question"]),
 			"choices":  event["choices"],
 			"round":    event["round"],
 		}))
+	case "workflow_message":
+		return compactAgentRuntimeMap(map[string]interface{}{
+			"event": runtimeString(event["event"]),
+		})
 	default:
 		if arguments := runtimeMap(event["arguments"]); len(arguments) > 0 {
 			return sanitizeAgentRuntimeToolArguments(arguments)
@@ -692,6 +793,12 @@ func agentRuntimeEventOutput(event map[string]interface{}) interface{} {
 			"status":           runtimeString(event["status"]),
 		}))
 	}
+	if agentRuntimeEventType(event) == "workflow_approval_submitted" || agentRuntimeEventType(event) == "workflow_approval_expired" {
+		return sanitizeAgentRuntimeResultValue(compactAgentRuntimeMap(map[string]interface{}{
+			"status": runtimeString(event["status"]),
+			"reason": runtimeString(event["reason"]),
+		}))
+	}
 	if agentRuntimeEventType(event) == "workflow_question" {
 		return sanitizeAgentRuntimeResultValue(compactAgentRuntimeMap(map[string]interface{}{
 			"answer":       runtimeString(event["answer"]),
@@ -699,6 +806,14 @@ func agentRuntimeEventOutput(event map[string]interface{}) interface{} {
 			"choice_label": runtimeString(event["choice_label"]),
 			"choice_value": runtimeString(event["choice_value"]),
 			"status":       runtimeString(event["status"]),
+		}))
+	}
+	if agentRuntimeEventType(event) == "workflow_message" {
+		return sanitizeAgentRuntimeResultValue(compactAgentRuntimeMap(map[string]interface{}{
+			"answer":   runtimeString(event["answer"]),
+			"data":     event["data"],
+			"metadata": event["metadata"],
+			"status":   runtimeString(event["status"]),
 		}))
 	}
 	output := map[string]interface{}{}

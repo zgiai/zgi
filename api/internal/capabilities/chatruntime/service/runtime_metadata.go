@@ -202,8 +202,19 @@ func workflowRunFromEvent(eventType string, payload map[string]interface{}) map[
 	if approval := workflowApprovalFromEvent(payload); len(approval) > 0 {
 		run["approval"] = approval
 	}
-	if question := workflowQuestionAnswerFromEvent(payload); len(question) > 0 {
+	if approvalResult := workflowApprovalResultFromEvent(eventType, payload); len(approvalResult) > 0 {
+		run["approval_result"] = approvalResult
+		run["approval_results"] = []interface{}{approvalResult}
+	}
+	if approvalExpired := workflowApprovalExpiredFromEvent(eventType, payload); len(approvalExpired) > 0 {
+		run["approval_expired"] = approvalExpired
+	}
+	if question := workflowQuestionAnswerFromEvent(eventType, payload); len(question) > 0 {
 		run["question_answer"] = question
+		run["question_answers"] = []interface{}{question}
+	}
+	if message := workflowMessageFromEvent(eventType, payload); len(message) > 0 {
+		run["messages"] = []interface{}{message}
 	}
 	switch strings.TrimSpace(eventType) {
 	case "node_started":
@@ -230,10 +241,16 @@ func workflowRunStatusFromEvent(eventType string, payload map[string]interface{}
 		return "pending_approval"
 	case "approval_requested":
 		return "pending_approval"
+	case "approval_result_filled":
+		return "running"
+	case "approval_expired":
+		return "expired"
 	case "question_answer_requested":
 		return "pending_question"
 	case "question_answer_submitted":
 		return "running"
+	case "workflow_stopped":
+		return "stopped"
 	case "workflow_finished":
 		if status := firstNonEmptyString(payload["status"]); status != "" {
 			return status
@@ -300,10 +317,46 @@ func workflowApprovalFromEvent(payload map[string]interface{}) map[string]interf
 	return compactWorkflowRun(approval)
 }
 
-func workflowQuestionAnswerFromEvent(payload map[string]interface{}) map[string]interface{} {
+func workflowApprovalResultFromEvent(eventType string, payload map[string]interface{}) map[string]interface{} {
+	if strings.TrimSpace(eventType) != "approval_result_filled" {
+		return nil
+	}
+	result := map[string]interface{}{}
+	copyWorkflowFields(result, payload, "form_id", "approval_form_id", "action", "action_id", "action_label", "inputs", "submitted_data", "submitted_at", "created_at")
+	return compactWorkflowRun(result)
+}
+
+func workflowApprovalExpiredFromEvent(eventType string, payload map[string]interface{}) map[string]interface{} {
+	if strings.TrimSpace(eventType) != "approval_expired" {
+		return nil
+	}
+	expired := map[string]interface{}{}
+	copyWorkflowFields(expired, payload, "form_id", "approval_form_id", "reason", "expired_at", "created_at")
+	return compactWorkflowRun(expired)
+}
+
+func workflowQuestionAnswerFromEvent(eventType string, payload map[string]interface{}) map[string]interface{} {
+	switch strings.TrimSpace(eventType) {
+	case "question_answer_requested", "question_answer_submitted":
+	default:
+		if firstNonEmptyString(payload["question"], payload["answer"], payload["choice_id"], payload["choice_label"], payload["choice_value"]) == "" {
+			return nil
+		}
+	}
 	question := map[string]interface{}{}
 	copyWorkflowFields(question, payload, "node_id", "node_title", "question", "round", "choices", "answer", "choice_id", "choice_label", "choice_value")
 	return compactWorkflowRun(question)
+}
+
+func workflowMessageFromEvent(eventType string, payload map[string]interface{}) map[string]interface{} {
+	switch strings.TrimSpace(eventType) {
+	case "message", "text_chunk", "message_end":
+	default:
+		return nil
+	}
+	message := map[string]interface{}{"event": strings.TrimSpace(eventType)}
+	copyWorkflowFields(message, payload, "answer", "text", "data", "metadata", "created_at")
+	return compactWorkflowRun(message)
 }
 
 func workflowQuestionUserInputRequest(conversationID, messageID string, payload map[string]interface{}) map[string]interface{} {
@@ -456,13 +509,44 @@ func mergeWorkflowRun(existing map[string]interface{}, incoming map[string]inter
 			merged["nodes"] = mergeWorkflowNodes(workflowNodesFromMetadata(merged["nodes"]), workflowNodesFromMetadata(value))
 		case "approval":
 			merged["approval"] = mergeWorkflowMap(workflowRecordFromAny(merged["approval"]), workflowRecordFromAny(value))
+		case "approval_result":
+			merged["approval_result"] = mergeWorkflowMap(workflowRecordFromAny(merged["approval_result"]), workflowRecordFromAny(value))
+		case "approval_expired":
+			merged["approval_expired"] = mergeWorkflowMap(workflowRecordFromAny(merged["approval_expired"]), workflowRecordFromAny(value))
 		case "question_answer":
 			merged["question_answer"] = mergeWorkflowMap(workflowRecordFromAny(merged["question_answer"]), workflowRecordFromAny(value))
+		case "approval_results", "question_answers", "messages":
+			merged[key] = appendWorkflowRecordList(merged[key], value)
 		default:
 			merged[key] = value
 		}
 	}
 	return compactWorkflowRun(merged)
+}
+
+func appendWorkflowRecordList(existing interface{}, incoming interface{}) []interface{} {
+	out := workflowRecordListFromAny(existing)
+	for _, item := range workflowRecordListFromAny(incoming) {
+		out = append(out, item)
+	}
+	return out
+}
+
+func workflowRecordListFromAny(value interface{}) []interface{} {
+	switch typed := value.(type) {
+	case []interface{}:
+		return append([]interface{}{}, typed...)
+	case []map[string]interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, item)
+		}
+		return out
+	case map[string]interface{}:
+		return []interface{}{typed}
+	default:
+		return []interface{}{}
+	}
 }
 
 func workflowRecordFromAny(value interface{}) map[string]interface{} {
