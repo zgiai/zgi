@@ -957,6 +957,10 @@ func (s *fakeRuntimeHistoryService) UpdateWorkflowApprovalContinuationStatus(ctx
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (s *fakeRuntimeHistoryService) PauseWorkflowApprovalContinuation(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, status string) (map[string]interface{}, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (s *fakeRuntimeHistoryService) SummarizeWorkflowApprovalContinuation(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, req runtimeservice.WorkflowContinuationSummaryRequest, onChunk func(string) error) (*runtimeservice.ChatResult, error) {
 	return nil, fmt.Errorf("not implemented")
 }

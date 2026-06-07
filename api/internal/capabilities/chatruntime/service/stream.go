@@ -73,6 +73,12 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), eventCallback)
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage}, nil
 			}
+			var pendingQuestion *skillloop.WorkflowQuestionPendingError
+			if errors.As(err, &pendingQuestion) {
+				metadata := s.persistWorkflowQuestionPending(persistCtx, prepared, pendingQuestion.Payload, usage)
+				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), eventCallback)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage}, nil
+			}
 			if errors.Is(err, ErrMessageStopped) {
 				_ = s.clearPreparedRuntime(persistCtx, prepared)
 				return nil, err

@@ -108,6 +108,45 @@ func (s *service) persistWorkflowApprovalPending(ctx context.Context, prepared *
 	return metadata
 }
 
+func (s *service) persistWorkflowQuestionPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
+		return map[string]interface{}{}
+	}
+	pendingPayload := copyStringAnyMap(payload)
+	if pendingPayload == nil {
+		pendingPayload = map[string]interface{}{}
+	}
+	pendingPayload["conversation_id"] = prepared.Conversation.ID.String()
+	pendingPayload["message_id"] = prepared.Message.ID.String()
+	metadata := mergeWorkflowRunMetadata(prepared.Message.Metadata, "workflow_paused", pendingPayload)
+	metadata = mergeWorkflowRunMetadata(metadata, "question_answer_requested", pendingPayload)
+	metadata = preparedResultMetadata(metadata, usage)
+	metadata["agent_workflow_continuation"] = compactWorkflowRun(map[string]interface{}{
+		"status":          "waiting_question",
+		"workflow_run_id": firstNonEmptyString(pendingPayload["workflow_run_id"]),
+		"workflow_id":     firstNonEmptyString(pendingPayload["workflow_id"]),
+		"agent_id":        firstNonEmptyString(pendingPayload["agent_id"]),
+		"agent_type":      firstNonEmptyString(pendingPayload["agent_type"]),
+		"binding_id":      firstNonEmptyString(pendingPayload["binding_id"]),
+		"original_query":  prepared.Message.Query,
+		"resume_policy":   "same_message",
+	})
+	if request := workflowQuestionUserInputRequest(prepared.Conversation.ID.String(), prepared.Message.ID.String(), pendingPayload); len(request) > 0 {
+		metadata["user_input_request"] = request
+	}
+	prepared.Message.Metadata = metadata
+	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
+		return metadata
+	}
+	if err := s.repos.Message.UpdateWaitingQuestion(ctx, prepared.Message.ID, metadata); err != nil {
+		logger.WarnContext(ctx, "failed to mark aichat workflow question pending", "message_id", prepared.Message.ID.String(), err)
+	}
+	if err := s.repos.Conversation.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+		logger.WarnContext(ctx, "failed to finish aichat workflow question pending message", "conversation_id", prepared.Conversation.ID.String(), err)
+	}
+	return metadata
+}
+
 func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[string]interface{}) map[string]interface{} {
 	metadata := copyStringAnyMap(source)
 	if metadata == nil {
@@ -163,6 +202,9 @@ func workflowRunFromEvent(eventType string, payload map[string]interface{}) map[
 	if approval := workflowApprovalFromEvent(payload); len(approval) > 0 {
 		run["approval"] = approval
 	}
+	if question := workflowQuestionAnswerFromEvent(payload); len(question) > 0 {
+		run["question_answer"] = question
+	}
 	switch strings.TrimSpace(eventType) {
 	case "node_started":
 		run["nodes"] = []interface{}{workflowNodeFromEvent(payload, false)}
@@ -181,8 +223,17 @@ func workflowRunStatusFromEvent(eventType string, payload map[string]interface{}
 	switch strings.TrimSpace(eventType) {
 	case "workflow_started":
 		return "running"
-	case "workflow_paused", "approval_requested":
+	case "workflow_paused":
+		if workflowPausedHasQuestionReason(payload) {
+			return "pending_question"
+		}
 		return "pending_approval"
+	case "approval_requested":
+		return "pending_approval"
+	case "question_answer_requested":
+		return "pending_question"
+	case "question_answer_submitted":
+		return "running"
 	case "workflow_finished":
 		if status := firstNonEmptyString(payload["status"]); status != "" {
 			return status
@@ -196,6 +247,23 @@ func workflowRunStatusFromEvent(eventType string, payload map[string]interface{}
 		}
 		return "running"
 	}
+}
+
+func workflowPausedHasQuestionReason(payload map[string]interface{}) bool {
+	reasons, ok := payload["reasons"].([]interface{})
+	if !ok {
+		return strings.EqualFold(firstNonEmptyString(payload["reason"], payload["type"]), "question_answer_required")
+	}
+	for _, item := range reasons {
+		record, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(firstNonEmptyString(record["type"], record["reason"]), "question_answer_required") {
+			return true
+		}
+	}
+	return false
 }
 
 func workflowNodeFromEvent(payload map[string]interface{}, finished bool) map[string]interface{} {
@@ -230,6 +298,85 @@ func workflowApprovalFromEvent(payload map[string]interface{}) map[string]interf
 	approval := map[string]interface{}{}
 	copyWorkflowFields(approval, payload, "approval_form_id", "approval_token", "approval_url", "approval_form")
 	return compactWorkflowRun(approval)
+}
+
+func workflowQuestionAnswerFromEvent(payload map[string]interface{}) map[string]interface{} {
+	question := map[string]interface{}{}
+	copyWorkflowFields(question, payload, "node_id", "node_title", "question", "round", "choices", "answer", "choice_id", "choice_label", "choice_value")
+	return compactWorkflowRun(question)
+}
+
+func workflowQuestionUserInputRequest(conversationID, messageID string, payload map[string]interface{}) map[string]interface{} {
+	question := strings.TrimSpace(firstNonEmptyString(payload["question"]))
+	if question == "" {
+		return nil
+	}
+	workflowRunID := firstNonEmptyString(payload["workflow_run_id"])
+	nodeID := firstNonEmptyString(payload["node_id"])
+	round := firstNonEmptyString(payload["round"])
+	requestID := strings.Join([]string{workflowRunID, nodeID, round}, ":")
+	requestID = strings.Trim(requestID, ":")
+	if requestID == "" {
+		requestID = workflowRunID
+	}
+	item := map[string]interface{}{
+		"id":       "answer",
+		"question": question,
+	}
+	if options := workflowQuestionOptions(payload["choices"]); len(options) > 0 {
+		item["options"] = options
+	}
+	return compactWorkflowRun(map[string]interface{}{
+		"source":          "agent_workflow_question_answer",
+		"request_id":      requestID,
+		"workflow_run_id": workflowRunID,
+		"node_id":         nodeID,
+		"round":           payload["round"],
+		"conversation_id": conversationID,
+		"message_id":      messageID,
+		"questions":       []interface{}{item},
+		"created_at":      time.Now().Unix(),
+	})
+}
+
+func workflowQuestionOptions(value interface{}) []interface{} {
+	var items []interface{}
+	switch typed := value.(type) {
+	case []interface{}:
+		items = typed
+	case []map[string]interface{}:
+		items = make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, item)
+		}
+	default:
+		return nil
+	}
+	options := make([]interface{}, 0, len(items))
+	for index, item := range items {
+		record, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		label := firstNonEmptyString(record["label"], record["value"], record["id"])
+		if strings.TrimSpace(label) == "" {
+			continue
+		}
+		option := map[string]interface{}{
+			"label": label,
+			"value": firstNonEmptyString(record["value"], record["id"], label),
+		}
+		if id := firstNonEmptyString(record["id"], record["option_id"]); id != "" {
+			option["option_id"] = id
+		} else {
+			option["option_id"] = fmt.Sprintf("option_%d", index+1)
+		}
+		if description := firstNonEmptyString(record["description"]); description != "" {
+			option["description"] = description
+		}
+		options = append(options, option)
+	}
+	return options
 }
 
 func copyWorkflowFields(target map[string]interface{}, source map[string]interface{}, keys ...string) {
@@ -309,6 +456,8 @@ func mergeWorkflowRun(existing map[string]interface{}, incoming map[string]inter
 			merged["nodes"] = mergeWorkflowNodes(workflowNodesFromMetadata(merged["nodes"]), workflowNodesFromMetadata(value))
 		case "approval":
 			merged["approval"] = mergeWorkflowMap(workflowRecordFromAny(merged["approval"]), workflowRecordFromAny(value))
+		case "question_answer":
+			merged["question_answer"] = mergeWorkflowMap(workflowRecordFromAny(merged["question_answer"]), workflowRecordFromAny(value))
 		default:
 			merged[key] = value
 		}

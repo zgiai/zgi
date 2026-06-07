@@ -619,6 +619,10 @@ func runtimeWorkflowStatus(status string) string {
 	switch strings.TrimSpace(status) {
 	case runtimemodel.MessageStatusPending, runtimemodel.MessageStatusStreaming:
 		return string(dto.WorkflowRunStatusRunning)
+	case runtimemodel.MessageStatusWaitingApproval:
+		return "pending_approval"
+	case runtimemodel.MessageStatusWaitingQuestion:
+		return "pending_question"
 	case runtimemodel.MessageStatusCompleted:
 		return string(dto.WorkflowRunStatusSucceeded)
 	case runtimemodel.MessageStatusStopped:
@@ -636,6 +640,12 @@ func runtimeInvocationStatus(status string) string {
 		return string(dto.NodeStatusRunning)
 	case "success", "succeeded", "completed":
 		return string(dto.NodeStatusSucceeded)
+	case "pending_approval", "waiting_approval":
+		return "pending_approval"
+	case "pending_question", "waiting_question":
+		return "pending_question"
+	case "paused":
+		return string(dto.NodeStatusPaused)
 	case "error", "failed", "blocked":
 		return string(dto.NodeStatusFailed)
 	default:

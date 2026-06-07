@@ -50,6 +50,21 @@ func (e *WorkflowApprovalPendingError) Error() string {
 	return fmt.Sprintf("workflow approval is pending for run %s", workflowRunID)
 }
 
+type WorkflowQuestionPendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *WorkflowQuestionPendingError) Error() string {
+	if e == nil {
+		return "workflow question is pending"
+	}
+	workflowRunID := stringFromInterface(e.Payload["workflow_run_id"])
+	if workflowRunID == "" {
+		return "workflow question is pending"
+	}
+	return fmt.Sprintf("workflow question is pending for run %s", workflowRunID)
+}
+
 type Event struct {
 	Type    string
 	Payload map[string]interface{}

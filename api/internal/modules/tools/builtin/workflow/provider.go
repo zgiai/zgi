@@ -227,8 +227,8 @@ func (t *workflowTool) getWorkflowRunStatus(ctx context.Context, scope workflowS
 }
 
 func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr error, binding workflowBinding) map[string]interface{} {
-	status := normalizeWorkflowStatus(result.Status)
 	outputs := safeOutputs(result.Outputs)
+	status := normalizeWorkflowStatus(result.Status, outputs)
 	payload := map[string]interface{}{
 		"status":          status,
 		"workflow_run_id": result.WorkflowRunID,
@@ -245,6 +245,9 @@ func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr er
 	if status == "pending_approval" {
 		mergeApprovalFields(payload, result.Outputs)
 	}
+	if status == "pending_question" {
+		mergeQuestionAnswerFields(payload, result.Outputs)
+	}
 	if runErr != nil {
 		payload["status"] = "failed"
 		payload["error"] = strings.TrimSpace(runErr.Error())
@@ -253,8 +256,8 @@ func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr er
 }
 
 func workflowStatusPayload(result *automationaction.WorkflowRunStatusResult) map[string]interface{} {
-	status := normalizeWorkflowStatus(result.Status)
 	outputs := safeOutputs(result.Outputs)
+	status := normalizeWorkflowStatus(result.Status, outputs)
 	payload := map[string]interface{}{
 		"status":           status,
 		"workflow_run_id":  result.WorkflowRunID,
@@ -270,6 +273,9 @@ func workflowStatusPayload(result *automationaction.WorkflowRunStatusResult) map
 	}
 	if status == "pending_approval" {
 		mergeApprovalFields(payload, result.Outputs)
+	}
+	if status == "pending_question" {
+		mergeQuestionAnswerFields(payload, result.Outputs)
 	}
 	if strings.TrimSpace(result.Error) != "" {
 		payload["error"] = strings.TrimSpace(result.Error)
@@ -293,14 +299,85 @@ func failedWorkflowPayload(workflowRunID, workflowID, agentID string, err error)
 	return payload
 }
 
-func normalizeWorkflowStatus(status string) string {
+func normalizeWorkflowStatus(status string, outputs map[string]interface{}) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "paused":
+		if hasQuestionAnswerFields(outputs) {
+			return "pending_question"
+		}
 		return "pending_approval"
 	case "":
 		return "unknown"
 	default:
 		return strings.ToLower(strings.TrimSpace(status))
+	}
+}
+
+func hasQuestionAnswerFields(outputs map[string]interface{}) bool {
+	fields := findQuestionAnswerFields(outputs)
+	return cleanOutputText(fields["question"]) != ""
+}
+
+func mergeQuestionAnswerFields(payload map[string]interface{}, outputs map[string]interface{}) {
+	if len(outputs) == 0 {
+		return
+	}
+	fields := findQuestionAnswerFields(outputs)
+	for key, value := range fields {
+		payload[key] = value
+	}
+}
+
+func findQuestionAnswerFields(value interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	var copyFields func(map[string]interface{})
+	copyFields = func(source map[string]interface{}) {
+		copyQuestionAnswerField(out, "node_id", source, "node_id")
+		copyQuestionAnswerField(out, "node_title", source, "node_title")
+		copyQuestionAnswerField(out, "question", source, "question")
+		copyQuestionAnswerField(out, "round", source, "round")
+		copyQuestionAnswerField(out, "choices", source, "choices")
+		copyQuestionAnswerField(out, "answer", source, "answer")
+		copyQuestionAnswerField(out, "choice_id", source, "choice_id")
+		copyQuestionAnswerField(out, "choice_label", source, "choice_label")
+		copyQuestionAnswerField(out, "choice_value", source, "choice_value")
+	}
+	var walk func(interface{})
+	walk = func(current interface{}) {
+		switch typed := current.(type) {
+		case map[string]interface{}:
+			if qa, ok := typed["__question_answer"]; ok && qa != nil {
+				if record, ok := qa.(map[string]interface{}); ok {
+					copyFields(record)
+				}
+			}
+			for _, child := range typed {
+				walk(child)
+			}
+		case []interface{}:
+			for _, child := range typed {
+				walk(child)
+			}
+		}
+	}
+	walk(value)
+	return out
+}
+
+func copyQuestionAnswerField(out map[string]interface{}, target string, source map[string]interface{}, keys ...string) {
+	if _, exists := out[target]; exists {
+		return
+	}
+	for _, key := range keys {
+		value, ok := source[key]
+		if !ok || value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			continue
+		}
+		out[target] = value
+		return
 	}
 }
 

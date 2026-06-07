@@ -16,6 +16,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -26,13 +27,17 @@ import (
 )
 
 type AgentsHandler struct {
-	appService          AgentsService
-	tenantService       interfaces.WorkspaceManagementService
-	accountService      interfaces.AccountService
-	organizationService interfaces.OrganizationService
-	fileService         interfaces.FileService
-	db                  *gorm.DB
-	chatRuntimeService  runtimeservice.Service
+	appService                 AgentsService
+	tenantService              interfaces.WorkspaceManagementService
+	accountService             interfaces.AccountService
+	organizationService        interfaces.OrganizationService
+	fileService                interfaces.FileService
+	db                         *gorm.DB
+	chatRuntimeService         runtimeservice.Service
+	workflowContinuationRunner interface {
+		ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
+		ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
+	}
 }
 
 func NewAgentsHandler(appService AgentsService, tenantService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, organizationService interfaces.OrganizationService, db *gorm.DB, chatRuntimeServices ...runtimeservice.Service) *AgentsHandler {
@@ -52,6 +57,13 @@ func NewAgentsHandler(appService AgentsService, tenantService interfaces.Workspa
 
 func (h *AgentsHandler) SetFileService(fileService interfaces.FileService) {
 	h.fileService = fileService
+}
+
+func (h *AgentsHandler) SetWorkflowContinuationRunner(runner interface {
+	ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
+	ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
+}) {
+	h.workflowContinuationRunner = runner
 }
 
 func (h *AgentsHandler) GetAgentsList(c *gin.Context) {

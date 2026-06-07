@@ -31,6 +31,7 @@ type skillStepResult struct {
 	recoverable     bool
 	terminal        bool
 	pendingApproval map[string]interface{}
+	pendingQuestion map[string]interface{}
 	fatalErr        error
 }
 
@@ -183,6 +184,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if result.pendingApproval != nil {
 				return answerBuilder.String(), usage, &WorkflowApprovalPendingError{Payload: result.pendingApproval}
+			}
+			if result.pendingQuestion != nil {
+				return answerBuilder.String(), usage, &WorkflowQuestionPendingError{Payload: result.pendingQuestion}
 			}
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)

@@ -44,7 +44,12 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
-import type { AIChatConversation, AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
+import type {
+  AIChatConversation,
+  AIChatMessage,
+  AIChatMessageFile,
+  AIChatUserInputRequest,
+} from '@/services/types/aichat';
 import {
   buildChatMessageTopology,
   buildChatMessageTopologyKey,
@@ -78,6 +83,7 @@ import {
   type AIChatModelValue,
   type AIChatSuggestion,
   type AIChatWorkflowApprovalRequest,
+  type AIChatWorkflowApprovalSubmitPayload,
 } from '@/components/chat/variants/aichat/types';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
@@ -129,6 +135,7 @@ const CHAT_THEME_PRIMARY: Record<string, string> = {
   amber: '38 92% 50%',
   slate: '215 20% 45%',
 };
+const AGENT_WORKFLOW_QUESTION_SOURCE = 'agent_workflow_question_answer';
 
 function normalizeSkillIds(skillIds: string[]) {
   return Array.from(new Set(skillIds.filter(Boolean))).sort();
@@ -141,6 +148,29 @@ function areSkillIdsEqual(left: string[], right: string[]) {
     normalizedLeft.length === normalizedRight.length &&
     normalizedLeft.every((skillId, index) => skillId === normalizedRight[index])
   );
+}
+
+function resolveWorkflowQuestionAnswerInputs(
+  request: AIChatUserInputRequest,
+  fallbackQuery: string,
+  answers?: Record<string, string>
+): { query: string; question_answer_option_id?: string } | null {
+  const firstQuestion = request.questions[0];
+  if (!firstQuestion) return null;
+  const answerKey = firstQuestion.id || 'q1';
+  const rawAnswer = (answers?.[answerKey] ?? '').trim();
+  const query = rawAnswer || fallbackQuery.trim();
+  if (!query) return null;
+  const selectedOption = (firstQuestion.options ?? []).find(option => {
+    const candidates = [option.label, option.value, option.option_id]
+      .map(value => value?.trim())
+      .filter(Boolean);
+    return candidates.includes(rawAnswer) || candidates.includes(query);
+  });
+  return {
+    query: selectedOption?.label?.trim() || query,
+    question_answer_option_id: selectedOption?.option_id?.trim() || undefined,
+  };
 }
 
 /**
@@ -494,9 +524,21 @@ export function AIChatShell({
   );
 
   const handleUserInputRequestSubmit = useCallback(
-    (query: string, useMemory: boolean) => {
+    (query: string, useMemory: boolean, answers?: Record<string, string>) => {
       const trimmedQuery = query.trim();
       if (!trimmedQuery || isSending || !activeUserInputMessage) return;
+      const activeRequest = activeUserInputMessage.metadata?.user_input_request;
+      if (activeRequest?.source === AGENT_WORKFLOW_QUESTION_SOURCE) {
+        if (!controller.continueWorkflowQuestion) return;
+        const inputs = resolveWorkflowQuestionAnswerInputs(activeRequest, trimmedQuery, answers);
+        if (!inputs) return;
+        void controller.continueWorkflowQuestion(
+          activeUserInputMessage.conversation_id,
+          activeUserInputMessage.id,
+          inputs
+        );
+        return;
+      }
       if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return;
@@ -636,9 +678,13 @@ export function AIChatShell({
   );
 
   const handleWorkflowApprovalSubmit = useCallback(
-    (request: AIChatWorkflowApprovalRequest) => {
+    (request: AIChatWorkflowApprovalRequest, payload: AIChatWorkflowApprovalSubmitPayload) => {
       if (!controller.continueWorkflowApproval) return;
-      void controller.continueWorkflowApproval(request.conversationId, request.messageId);
+      void controller.continueWorkflowApproval(request.conversationId, request.messageId, {
+        approvalToken: request.approvalToken,
+        inputs: payload.inputs,
+        action: payload.action,
+      });
     },
     [controller]
   );
@@ -992,8 +1038,7 @@ function resolveActiveWorkflowApprovalRequest(
     approvalToken,
     approvalUrl: stringFromUnknown(approval?.approval_url),
     approvalFormId:
-      stringFromUnknown(approval?.approval_form_id) ||
-      stringFromUnknown(inlineApprovalForm?.id),
+      stringFromUnknown(approval?.approval_form_id) || stringFromUnknown(inlineApprovalForm?.id),
     approvalForm: inlineApprovalForm,
   };
 }

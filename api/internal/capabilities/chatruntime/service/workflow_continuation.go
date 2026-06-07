@@ -15,6 +15,7 @@ import (
 
 const (
 	workflowContinuationStatusWaitingApproval = "waiting_approval"
+	workflowContinuationStatusWaitingQuestion = "waiting_question"
 	workflowContinuationStatusContinuing      = "continuing"
 	workflowContinuationStatusSummarizing     = "summarizing"
 	workflowContinuationStatusDirectOutput    = "direct_output"
@@ -57,7 +58,7 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 	}
 	state := workflowApprovalContinuationFromMetadata(message.Metadata)
 	if state.WorkflowRunID == "" {
-		return nil, fmt.Errorf("%w: message has no pending workflow approval continuation", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: message has no pending workflow continuation", ErrInvalidInput)
 	}
 	state.ConversationID = conversation.ID
 	state.MessageID = message.ID
@@ -67,17 +68,25 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 		state.Completed = true
 		return state, nil
 	}
-	if message.Status != runtimemodel.MessageStatusWaitingApproval && message.Status != runtimemodel.MessageStatusStreaming {
-		return nil, fmt.Errorf("%w: message is not waiting for workflow approval", ErrInvalidInput)
+	if message.Status != runtimemodel.MessageStatusWaitingApproval && message.Status != runtimemodel.MessageStatusWaitingQuestion && message.Status != runtimemodel.MessageStatusStreaming {
+		return nil, fmt.Errorf("%w: message is not waiting for workflow continuation", ErrInvalidInput)
 	}
-	if message.Status == runtimemodel.MessageStatusWaitingApproval {
+	if message.Status == runtimemodel.MessageStatusWaitingApproval || message.Status == runtimemodel.MessageStatusWaitingQuestion {
+		if message.Status == runtimemodel.MessageStatusWaitingQuestion {
+			state.Metadata = workflowContinuationMetadataWithoutUserInputRequest(state.Metadata)
+		}
 		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			txRepos := repository.NewRepositories(tx)
 			if err := txRepos.Conversation.StartStreaming(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, message.ID); err != nil {
 				return err
 			}
+			if message.Status == runtimemodel.MessageStatusWaitingQuestion {
+				if err := txRepos.Message.UpdateMetadata(ctx, message.ID, state.Metadata); err != nil {
+					return err
+				}
+			}
 			return tx.Model(&runtimemodel.Message{}).
-				Where("id = ? AND deleted_at IS NULL AND status = ?", message.ID, runtimemodel.MessageStatusWaitingApproval).
+				Where("id = ? AND deleted_at IS NULL AND status IN ?", message.ID, []string{runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion}).
 				Updates(map[string]interface{}{"status": runtimemodel.MessageStatusStreaming}).Error
 		})
 		if err != nil {
@@ -123,6 +132,32 @@ func (s *service) UpdateWorkflowApprovalContinuationStatus(ctx context.Context, 
 	metadata := workflowContinuationMetadataWithStatus(continuation.Metadata, status)
 	continuation.Metadata = metadata
 	if err := s.repos.Message.UpdateMetadata(ctx, continuation.MessageID, metadata); err != nil {
+		return nil, err
+	}
+	return metadata, nil
+}
+
+func (s *service) PauseWorkflowApprovalContinuation(ctx context.Context, continuation *WorkflowApprovalContinuation, status string) (map[string]interface{}, error) {
+	if continuation == nil || continuation.MessageID == uuid.Nil || continuation.ConversationID == uuid.Nil {
+		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		status = workflowContinuationStatusWaitingApproval
+	}
+	metadata := workflowContinuationMetadataWithStatus(continuation.Metadata, status)
+	continuation.Metadata = metadata
+	switch status {
+	case workflowContinuationStatusWaitingQuestion:
+		if err := s.repos.Message.UpdateWaitingQuestion(ctx, continuation.MessageID, metadata); err != nil {
+			return nil, err
+		}
+	default:
+		if err := s.repos.Message.UpdateWaitingApproval(ctx, continuation.MessageID, metadata); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.repos.Conversation.FinishContinuationMessage(ctx, continuation.ConversationID, continuation.MessageID); err != nil {
 		return nil, err
 	}
 	return metadata, nil
@@ -209,6 +244,7 @@ func (s *service) CompleteWorkflowApprovalContinuation(ctx context.Context, cont
 	if strings.TrimSpace(status) == "" {
 		status = runtimemodel.MessageStatusCompleted
 	}
+	metadata = workflowContinuationMetadataWithoutUserInputRequest(metadata)
 	metadata = workflowContinuationMetadataWithStatus(metadata, status)
 	continuation.Metadata = metadata
 	if err := s.repos.Message.UpdateCompleted(ctx, continuation.MessageID, answer, metadata); err != nil {
@@ -228,7 +264,8 @@ func (s *service) FailWorkflowApprovalContinuation(ctx context.Context, continua
 	if message == "" {
 		message = "workflow approval continuation failed"
 	}
-	metadata := workflowContinuationMetadataWithStatus(continuation.Metadata, workflowContinuationStatusFailed)
+	metadata := workflowContinuationMetadataWithoutUserInputRequest(continuation.Metadata)
+	metadata = workflowContinuationMetadataWithStatus(metadata, workflowContinuationStatusFailed)
 	continuation.Metadata = metadata
 	if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
@@ -262,6 +299,8 @@ func workflowContinuationStatusFromEvent(eventType string) string {
 		return "finishing"
 	case "workflow_failed", "error":
 		return workflowContinuationStatusFailed
+	case "question_answer_requested":
+		return workflowContinuationStatusWaitingQuestion
 	default:
 		return workflowContinuationStatusContinuing
 	}
@@ -276,6 +315,15 @@ func workflowContinuationMetadataWithStatus(metadata map[string]interface{}, sta
 		workflowRecordFromAny(next["agent_workflow_continuation"]),
 		map[string]interface{}{"status": strings.TrimSpace(status)},
 	)
+	return next
+}
+
+func workflowContinuationMetadataWithoutUserInputRequest(metadata map[string]interface{}) map[string]interface{} {
+	next := copyStringAnyMap(metadata)
+	if next == nil {
+		return map[string]interface{}{}
+	}
+	delete(next, "user_input_request")
 	return next
 }
 

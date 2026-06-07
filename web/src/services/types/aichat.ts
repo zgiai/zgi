@@ -7,6 +7,7 @@ export type AIChatMessageStatus =
   | 'pending'
   | 'streaming'
   | 'waiting_approval'
+  | 'waiting_question'
   | 'completed'
   | 'error'
   | 'stopped';
@@ -269,6 +270,8 @@ export interface AIChatMessageMetadata {
 
 export interface AIChatUserInputOption {
   label: string;
+  value?: string;
+  option_id?: string;
   description?: string;
 }
 
@@ -280,6 +283,12 @@ export interface AIChatUserInputQuestion {
 
 export interface AIChatUserInputRequest {
   request_id?: string;
+  source?: string;
+  workflow_run_id?: string;
+  node_id?: string;
+  conversation_id?: string;
+  message_id?: string;
+  round?: string | number;
   questions: AIChatUserInputQuestion[];
   created_at?: number;
 }
@@ -644,6 +653,15 @@ export type AIChatSseEventName =
   | 'memory_update'
   | 'memory_delete'
   | 'memory_clear'
+  | 'workflow_started'
+  | 'node_started'
+  | 'node_finished'
+  | 'workflow_paused'
+  | 'approval_requested'
+  | 'question_answer_requested'
+  | 'question_answer_submitted'
+  | 'workflow_finished'
+  | 'workflow_failed'
   | 'file_parse_start'
   | 'file_parse_end'
   | 'file_parse_error'

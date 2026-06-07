@@ -110,6 +110,85 @@ func (h *WorkflowHandler) ResumeApprovalWorkflow(ctx context.Context, form *appr
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs)
 }
 
+func (h *WorkflowHandler) ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, resumeInputs map[string]interface{}) error {
+	workflowService, ok := h.workflowService.(*WorkflowService)
+	if !ok || workflowService == nil || workflowService.workflowRunLogRepo == nil {
+		return fmt.Errorf("workflow service is not available")
+	}
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" {
+		return fmt.Errorf("workflow_run_id is required")
+	}
+	run, err := workflowService.workflowRunLogRepo.GetByID(ctx, workflowRunID)
+	if err != nil {
+		return fmt.Errorf("load workflow run for question answer resume: %w", err)
+	}
+	pauseService := workflowpause.NewService(database.GetDB())
+	pauseRecord, reasons, pauseState, err := pauseService.GetActiveByWorkflowRunID(ctx, run.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow pause for question answer resume: %w", err)
+	}
+	hasQuestionReason := false
+	for _, reason := range reasons {
+		if reason.Type == workflowpause.ReasonTypeQuestionAnswerRequired {
+			hasQuestionReason = true
+			break
+		}
+	}
+	if !hasQuestionReason {
+		return fmt.Errorf("workflow run %s is not waiting for question answer", run.ID)
+	}
+	inputs := workflowRunInputs(run)
+	if pauseState.Request.Inputs != nil {
+		inputs = copyWorkflowAnyMap(pauseState.Request.Inputs)
+	}
+	for key, value := range resumeInputs {
+		inputs[key] = value
+	}
+	responseMode := pauseState.Request.ResponseMode
+	if responseMode == "" {
+		responseMode = "streaming"
+	}
+	if err := workflowService.ResumeWorkflowRunLog(ctx, run.ID); err != nil {
+		return err
+	}
+	if err := pauseService.MarkResumed(ctx, run.ID); err != nil {
+		logger.WarnContext(ctx, "failed to mark question answer pause resumed", "workflow_run_id", run.ID, err)
+	}
+	req := &dto.DraftWorkflowRunRequest{
+		Inputs:       inputs,
+		ResponseMode: responseMode,
+	}
+	runType := pauseState.RunType
+	if runType == "" {
+		runType = approvalRunType(run)
+	}
+	isDraft := run.TriggeredFrom == "debugging" || run.Version == "draft"
+	systemInputs := approvalResumeSystemInputs(run, inputs)
+	systemInputs[workflowResumeStateInputKey] = pauseState
+	systemInputs[workflowResumePauseIDInputKey] = pauseRecord.ID
+	resultChan := make(chan *WorkflowStreamEvent, 100)
+	errorChan := make(chan error, 10)
+	doneChan := make(chan map[string]interface{}, 1)
+	resumeStartedAt := time.Now()
+	startedPayload := buildWorkflowStartedEventPayload(
+		runType,
+		run.ID,
+		run.WorkflowID,
+		run.SequenceNumber,
+		systemInputs,
+		resumeStartedAt.Unix(),
+		workflowStartReasonResumption,
+	)
+	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, workflowpause.EventWorkflowStarted, startedPayload)
+	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, workflowpause.EventQuestionAnswerSubmitted, buildQuestionAnswerSubmittedEvent(run.ID, pauseState, req.Inputs))
+	go func() {
+		defer close(doneChan)
+		h.executeWorkflowStream(nil, ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
+	}()
+	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs)
+}
+
 func detachWorkflowResumeState(systemInputs map[string]interface{}) (*workflowpause.State, bool) {
 	if systemInputs == nil {
 		return nil, false

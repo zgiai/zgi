@@ -166,7 +166,9 @@ function upsertSkillInvocation(
   incoming: AIChatSkillInvocation
 ): AIChatSkillInvocation[] {
   if (incoming.runtime_id) {
-    const index = invocations.findIndex(invocation => invocation.runtime_id === incoming.runtime_id);
+    const index = invocations.findIndex(
+      invocation => invocation.runtime_id === incoming.runtime_id
+    );
     if (index >= 0) {
       const next = invocations.slice();
       next[index] = {
@@ -198,23 +200,16 @@ function upsertSkillInvocation(
   const incomingKind = incoming.kind ?? 'tool_call';
   const incomingToolName = incoming.tool_name ?? '';
   const incomingPath = incoming.path ?? '';
-  const index = [...next]
-    .reverse()
-    .findIndex(
-      invocation => {
-        const invocationKind = invocation.kind ?? 'tool_call';
-        const sameIdentity =
-          invocationKind === incomingKind &&
-          invocation.skill_id === incoming.skill_id &&
-          (invocation.tool_name ?? '') === incomingToolName &&
-          (invocation.path ?? '') === incomingPath;
+  const index = [...next].reverse().findIndex(invocation => {
+    const invocationKind = invocation.kind ?? 'tool_call';
+    const sameIdentity =
+      invocationKind === incomingKind &&
+      invocation.skill_id === incoming.skill_id &&
+      (invocation.tool_name ?? '') === incomingToolName &&
+      (invocation.path ?? '') === incomingPath;
 
-        return (
-          sameIdentity &&
-          (invocation.status === 'loading' || invocation.status === 'running')
-        );
-      }
-    );
+    return sameIdentity && (invocation.status === 'loading' || invocation.status === 'running');
+  });
 
   if (index < 0) {
     return [...next, incoming];
@@ -245,7 +240,10 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
 }
 
 function isTransientProgressItem(item: AIChatAgenticTimelineItem): boolean {
-  return item.type === 'progress_text' && (item.transient === true || Boolean(item.phase && !item.content.trim()));
+  return (
+    item.type === 'progress_text' &&
+    (item.transient === true || Boolean(item.phase && !item.content.trim()))
+  );
 }
 
 function removeTransientProgressItems(
@@ -734,9 +732,7 @@ export function applyIntermediateAnswerState(
     eventId ||
     `intermediate-${payload.created_at ?? Date.now()}-${payload.index ?? 0}`;
   const previousItem = previousStreaming?.timeline?.find(
-    (
-      item
-    ): item is Extract<AIChatAgenticTimelineItem, { type: 'intermediate_answer' }> =>
+    (item): item is Extract<AIChatAgenticTimelineItem, { type: 'intermediate_answer' }> =>
       item.type === 'intermediate_answer' && item.answer_id === answerId
   );
   const nextContent = payload.delta ? `${previousItem?.content ?? ''}${content}` : content;
@@ -769,6 +765,12 @@ export function applyUserInputRequestedState(
   }
   const request = {
     request_id: payload.request_id,
+    source: payload.source,
+    workflow_run_id: payload.workflow_run_id,
+    node_id: payload.node_id,
+    conversation_id: payload.conversation_id,
+    message_id: payload.message_id,
+    round: payload.round,
     questions: questions.map(question => ({
       ...question,
       question: question.question.trim(),
@@ -865,12 +867,7 @@ function updateMessageFileMetadata(
       return message;
     }
 
-    const files = upsertMessageFile(
-      message.metadata?.files ?? [],
-      fileId,
-      fallbackName,
-      updater
-    );
+    const files = upsertMessageFile(message.metadata?.files ?? [], fileId, fallbackName, updater);
 
     return {
       ...message,
@@ -1057,11 +1054,12 @@ export function applyWorkflowPausedState(
   payload: AIChatWorkflowPausedEventData,
   eventId?: string | null
 ): AIChatControllerState {
+  const status = normalizeWorkflowRunTimelineStatus(payload.status, 'pending_approval');
   return applyWorkflowTimelineState(
     current,
     payload,
     eventId,
-    'pending_approval',
+    status,
     mapWorkflowNodeTimelineItem({ ...payload, status: 'paused' }, true)
   );
 }
@@ -1185,7 +1183,7 @@ export function applyMessageStartState(
   const messages =
     current.messagesByConversation[payload.conversation_id] ??
     (context.previousConversationId
-      ? current.messagesByConversation[context.previousConversationId] ?? []
+      ? (current.messagesByConversation[context.previousConversationId] ?? [])
       : []);
   const existingMessage = messages.find(message => message.id === payload.message_id);
   const isReplace = payload.replace === true || context.resetAnswer === true;
@@ -1255,7 +1253,7 @@ export function applyMessageStartState(
     message_id: payload.message_id,
     answer: message.answer,
     status: 'streaming',
-    timeline: isReplace ? [] : previousStreaming?.timeline ?? [],
+    timeline: isReplace ? [] : (previousStreaming?.timeline ?? []),
     last_event_id: eventId ?? (isReplace ? undefined : previousStreaming?.last_event_id),
     replay_base_answer: isReplace ? undefined : previousStreaming?.replay_base_answer,
     replay_offset: isReplace ? undefined : previousStreaming?.replay_offset,
@@ -1265,7 +1263,8 @@ export function applyMessageStartState(
 
   return {
     ...current,
-    activeConversationId: mode === 'active' ? payload.conversation_id : current.activeConversationId,
+    activeConversationId:
+      mode === 'active' ? payload.conversation_id : current.activeConversationId,
     conversations: replaceAIChatConversation(baseConversations, nextConversation, {
       moveToTop: context.moveToTop ?? true,
     }),
@@ -1277,7 +1276,7 @@ export function applyMessageStartState(
           DEFAULT_AICHAT_MESSAGE_PAGINATION),
         total: existingMessage
           ? (nextMessagePaginationByConversation[payload.conversation_id]?.total ??
-              migratedMessages.length)
+            migratedMessages.length)
           : (nextMessagePaginationByConversation[payload.conversation_id]?.total ??
               migratedMessages.length) + 1,
       },
@@ -1538,8 +1537,7 @@ function resolveReplayChunk(
   const nextReplayOffset = replayOffset + overlap;
   return {
     appendChunk: answerChunk.slice(overlap),
-    replayBaseAnswer:
-      nextReplayOffset >= replayBaseAnswer.length ? undefined : replayBaseAnswer,
+    replayBaseAnswer: nextReplayOffset >= replayBaseAnswer.length ? undefined : replayBaseAnswer,
     replayOffset: nextReplayOffset >= replayBaseAnswer.length ? undefined : nextReplayOffset,
   };
 }
@@ -1728,7 +1726,10 @@ export function applyMessageEndState(
       ...previousStreaming,
       timeline: nextTimeline,
       status:
-        terminalStatus === 'stopped' || terminalStatus === 'error'
+        terminalStatus === 'stopped' ||
+        terminalStatus === 'error' ||
+        terminalStatus === 'waiting_approval' ||
+        terminalStatus === 'waiting_question'
           ? terminalStatus
           : 'completed',
     };

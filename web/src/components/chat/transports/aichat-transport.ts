@@ -118,6 +118,12 @@ export interface AIChatStreamCallbacks {
   onClose: () => void;
 }
 
+export interface AIChatWorkflowApprovalContinuationPayload {
+  approvalToken: string;
+  inputs: Record<string, unknown>;
+  action: string;
+}
+
 export interface AIChatRuntimeTransport {
   listConversations(params: { page: number; limit: number }): Promise<AIChatConversationListResult>;
   getConversation(conversationId: string): Promise<AIChatConversationDetail>;
@@ -156,6 +162,14 @@ export interface AIChatRuntimeTransport {
   continueWorkflowApproval?(
     conversationId: string,
     messageId: string,
+    payload: AIChatWorkflowApprovalContinuationPayload | undefined,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
+  continueWorkflowQuestion?(
+    conversationId: string,
+    messageId: string,
+    payload: { inputs: { query: string; question_answer_option_id?: string } },
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;
@@ -231,9 +245,25 @@ export function dispatchAIChatStreamEvent(
     case 'workflow_paused':
       callbacks.onWorkflowPaused?.((data ?? {}) as AIChatWorkflowPausedEventData, eventId);
       break;
+    case 'question_answer_requested':
+      callbacks.onWorkflowPaused?.(
+        { ...((data ?? {}) as AIChatWorkflowPausedEventData), status: 'pending_question' },
+        eventId
+      );
+      break;
     case 'approval_requested':
       callbacks.onWorkflowApprovalRequested?.(
         (data ?? {}) as AIChatWorkflowPausedEventData,
+        eventId
+      );
+      break;
+    case 'question_answer_submitted':
+      callbacks.onWorkflowNodeFinished?.(
+        {
+          ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          status: 'running',
+          node_type: 'question-answer',
+        },
         eventId
       );
       break;

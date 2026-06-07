@@ -201,19 +201,24 @@ export function useChatRuntimeController(options?: {
       refreshConversationSilently,
       recoverStreamingConversation,
     });
-  const { send, regenerate, replaceRootMessage, continueWorkflowApproval } =
-    useChatRuntimeMessageActions({
-      stateRef,
-      transportRef,
-      requireModel,
-      pendingStreamAbortRef,
-      streamAbortByConversationRef,
-      streamingMessageRef,
-      setControllerState,
-      markSelectionTarget,
-      refreshAccountMemoryAfterMemoryMutation,
-      eventAppliers,
-    });
+  const {
+    send,
+    regenerate,
+    replaceRootMessage,
+    continueWorkflowApproval,
+    continueWorkflowQuestion,
+  } = useChatRuntimeMessageActions({
+    stateRef,
+    transportRef,
+    requireModel,
+    pendingStreamAbortRef,
+    streamAbortByConversationRef,
+    streamingMessageRef,
+    setControllerState,
+    markSelectionTarget,
+    refreshAccountMemoryAfterMemoryMutation,
+    eventAppliers,
+  });
 
   const { switchBranch } = useChatRuntimeBranchActions({
     stateRef,
@@ -252,6 +257,7 @@ export function useChatRuntimeController(options?: {
     regenerate,
     replaceRootMessage,
     continueWorkflowApproval,
+    continueWorkflowQuestion,
     stop,
     switchBranch,
   };

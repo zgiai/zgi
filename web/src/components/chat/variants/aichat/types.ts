@@ -21,3 +21,8 @@ export interface AIChatWorkflowApprovalRequest {
   approvalFormId?: string;
   approvalForm?: ApprovalRuntimeForm | null;
 }
+
+export interface AIChatWorkflowApprovalSubmitPayload {
+  inputs: Record<string, unknown>;
+  action: string;
+}

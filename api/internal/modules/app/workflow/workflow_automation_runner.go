@@ -38,6 +38,7 @@ const (
 	automationWorkflowEventNodeFinished      = "node_finished"
 	automationWorkflowEventPaused            = "workflow_paused"
 	automationWorkflowEventApprovalRequested = "approval_requested"
+	automationWorkflowEventQuestionRequested = "question_answer_requested"
 	automationWorkflowEventFinished          = "workflow_finished"
 	automationWorkflowEventFailed            = "workflow_failed"
 )
@@ -213,12 +214,22 @@ func emitAutomationWorkflowPaused(sink automationaction.WorkflowRunEventSink, re
 	for _, snapshot := range pausedSnapshots {
 		nodeIDs = append(nodeIDs, snapshot.NodeID)
 	}
+	pauseStatus := "pending_approval"
+	pauseReason := workflowpause.ReasonTypeApprovalRequired
+	if len(pausedSnapshots) > 0 && pausedSnapshots[0].NodeType == workflowshared.QuestionAnswer {
+		pauseStatus = "pending_question"
+		pauseReason = workflowpause.ReasonTypeQuestionAnswerRequired
+	}
 	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
-		"status":       "pending_approval",
+		"status":       pauseStatus,
 		"node_ids":     nodeIDs,
 		"elapsed_time": elapsedTime,
 		"outputs":      copyWorkflowAnyMap(outputs),
-		"created_at":   time.Now().Unix(),
+		"reasons": []interface{}{map[string]interface{}{
+			"type":    pauseReason,
+			"node_id": firstPausedAutomationNodeID(pausedSnapshots),
+		}},
+		"created_at": time.Now().Unix(),
 	})
 	if len(pausedSnapshots) > 0 {
 		meta := automationWorkflowEventNodeMeta(nodeMetas, pausedSnapshots[0].NodeID, string(pausedSnapshots[0].NodeType))
@@ -227,7 +238,18 @@ func emitAutomationWorkflowPaused(sink automationaction.WorkflowRunEventSink, re
 		}
 	}
 	emitAutomationWorkflowEvent(sink, automationWorkflowEventPaused, payload)
-	emitAutomationWorkflowApprovalRequested(sink, req, workflow, workflowRunID, outputs, elapsedTime, pausedSnapshots, nodeMetas)
+	if pauseReason == workflowpause.ReasonTypeQuestionAnswerRequired {
+		emitAutomationWorkflowQuestionRequested(sink, req, workflow, workflowRunID, outputs, elapsedTime, pausedSnapshots, nodeMetas)
+	} else {
+		emitAutomationWorkflowApprovalRequested(sink, req, workflow, workflowRunID, outputs, elapsedTime, pausedSnapshots, nodeMetas)
+	}
+}
+
+func firstPausedAutomationNodeID(pausedSnapshots []graph_engine.NodeExecutionSnapshot) string {
+	if len(pausedSnapshots) == 0 {
+		return ""
+	}
+	return pausedSnapshots[0].NodeID
 }
 
 func emitAutomationWorkflowApprovalRequested(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}, elapsedTime float64, pausedSnapshots []graph_engine.NodeExecutionSnapshot, nodeMetas map[string]automationWorkflowNodeMeta) {
@@ -246,6 +268,25 @@ func emitAutomationWorkflowApprovalRequested(sink automationaction.WorkflowRunEv
 		}
 	}
 	emitAutomationWorkflowEvent(sink, automationWorkflowEventApprovalRequested, payload)
+}
+
+func emitAutomationWorkflowQuestionRequested(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}, elapsedTime float64, pausedSnapshots []graph_engine.NodeExecutionSnapshot, nodeMetas map[string]automationWorkflowNodeMeta) {
+	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
+		"status":       "pending_question",
+		"elapsed_time": elapsedTime,
+		"created_at":   time.Now().Unix(),
+	})
+	if len(pausedSnapshots) > 0 {
+		snapshot := pausedSnapshots[0]
+		meta := automationWorkflowEventNodeMeta(nodeMetas, snapshot.NodeID, string(snapshot.NodeType))
+		for key, value := range automationWorkflowNodePayload(meta) {
+			payload[key] = value
+		}
+		copyAutomationQuestionAnswerFields(payload, snapshot.Outputs)
+	}
+	if len(payload) > 0 {
+		emitAutomationWorkflowEvent(sink, automationWorkflowEventQuestionRequested, payload)
+	}
 }
 
 func emitAutomationWorkflowFinished(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}, elapsedTime float64) {
@@ -285,8 +326,12 @@ func persistAutomationWorkflowPause(ctx context.Context, req automationaction.Wo
 			continue
 		}
 		pausedNodeIDs = append(pausedNodeIDs, snapshot.NodeID)
+		reasonType := workflowpause.ReasonTypeApprovalRequired
+		if snapshot.NodeType == workflowshared.QuestionAnswer {
+			reasonType = workflowpause.ReasonTypeQuestionAnswerRequired
+		}
 		reasons = append(reasons, workflowpause.Reason{
-			Type:   workflowpause.ReasonTypeApprovalRequired,
+			Type:   reasonType,
 			NodeID: snapshot.NodeID,
 			FormID: automationApprovalFormID(snapshot.Outputs, outputs),
 		})
@@ -343,7 +388,7 @@ func persistAutomationWorkflowPause(ctx context.Context, req automationaction.Wo
 		AppID:          appID,
 		WorkflowRunID:  workflowRunID,
 		NodeID:         pausedNodeIDs[0],
-		Reason:         workflowpause.ReasonTypeApprovalRequired,
+		Reason:         reasons[0].Type,
 		ConversationID: automationWorkflowConversationID(inputs),
 		State:          pauseState,
 		Reasons:        reasons,
@@ -521,7 +566,20 @@ func mergeAutomationApprovalOutputs(outputs map[string]interface{}, snapshots []
 		return
 	}
 	for _, snapshot := range snapshots {
-		if len(snapshot.Outputs) == 0 || !isAutomationApprovalSnapshot(snapshot) {
+		if len(snapshot.Outputs) == 0 {
+			continue
+		}
+		if snapshot.NodeType == workflowshared.QuestionAnswer {
+			qa := map[string]interface{}{
+				"node_id": snapshot.NodeID,
+			}
+			copyAutomationQuestionAnswerFields(qa, snapshot.Outputs)
+			if len(qa) > 1 {
+				outputs["__question_answer"] = qa
+			}
+			continue
+		}
+		if !isAutomationApprovalSnapshot(snapshot) {
 			continue
 		}
 		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalFormIDKey, automationApprovalFormIDKey)
@@ -531,6 +589,17 @@ func mergeAutomationApprovalOutputs(outputs map[string]interface{}, snapshots []
 		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalFormIDAliasKey, automationApprovalFormIDAliasKey)
 		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalTokenAliasKey, automationApprovalTokenAliasKey)
 		copyAutomationApprovalField(outputs, snapshot.Outputs, automationApprovalFormURLAliasKey, automationApprovalFormURLAliasKey)
+	}
+}
+
+func copyAutomationQuestionAnswerFields(target map[string]interface{}, source map[string]interface{}) {
+	if target == nil || source == nil {
+		return
+	}
+	for _, key := range []string{"question", "round", "choices", "answer", "choice_id", "choice_label", "choice_value"} {
+		if value, ok := source[key]; ok && value != nil {
+			target[key] = value
+		}
 	}
 }
 

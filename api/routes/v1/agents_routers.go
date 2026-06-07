@@ -70,6 +70,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)
+	appHandler.SetWorkflowContinuationRunner(workflow.NewWorkflowHandler(workflowService, accountService, fileService, nil, enterpriseService))
 	if workflowTestService == nil {
 		workflowTestService = workflowtest.NewService(workflowtest.NewRepository(db))
 	}

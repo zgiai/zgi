@@ -59,6 +59,7 @@ import {
 import type {
   AIChatModelValue,
   AIChatWorkflowApprovalRequest,
+  AIChatWorkflowApprovalSubmitPayload,
 } from '@/components/chat/variants/aichat/types';
 
 export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
@@ -147,9 +148,16 @@ interface AIChatInputAreaProps {
   onInputChange: (value: string) => void;
   onSend: (files: AIChatMessageFile[], useMemory: boolean) => boolean | Promise<boolean>;
   activeUserInputRequest?: AIChatUserInputRequest | null;
-  onUserInputRequestSubmit?: (query: string, useMemory: boolean) => void;
+  onUserInputRequestSubmit?: (
+    query: string,
+    useMemory: boolean,
+    answers?: Record<string, string>
+  ) => void;
   activeWorkflowApprovalRequest?: AIChatWorkflowApprovalRequest | null;
-  onWorkflowApprovalSubmit?: (request: AIChatWorkflowApprovalRequest) => void;
+  onWorkflowApprovalSubmit?: (
+    request: AIChatWorkflowApprovalRequest,
+    payload: AIChatWorkflowApprovalSubmitPayload
+  ) => void;
   onStop: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
   onHeightChange?: (height: number) => void;
@@ -356,7 +364,7 @@ export function AIChatInputArea({
       if (!query.trim()) return;
       setQuestionAnswers({});
       setActiveQuestionIndex(0);
-      onUserInputRequestSubmit?.(query, useMemory);
+      onUserInputRequestSubmit?.(query, useMemory, answers);
     },
     [buildQuestionAnswersQuery, onUserInputRequestSubmit, useMemory]
   );
@@ -716,9 +724,12 @@ export function AIChatInputArea({
     async (payload: { inputs: Record<string, unknown>; action: string }) => {
       if (!activeWorkflowApprovalRequest) return;
       setSubmittedApprovalAction(payload.action);
+      if (onWorkflowApprovalSubmit) {
+        onWorkflowApprovalSubmit(activeWorkflowApprovalRequest, payload);
+        return;
+      }
       try {
         await approvalSubmitMutation.mutateAsync(payload);
-        onWorkflowApprovalSubmit?.(activeWorkflowApprovalRequest);
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : t('consoleChat.workflow.approvalSubmitFailed')

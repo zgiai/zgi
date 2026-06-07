@@ -349,6 +349,9 @@ func runtimeWorkflowRunEvents(value interface{}) []map[string]interface{} {
 		if approval := runtimeMap(run["approval"]); len(approval) > 0 {
 			events = append(events, runtimeWorkflowApprovalEvent(run, approval, runIndex))
 		}
+		if question := runtimeMap(run["question_answer"]); len(question) > 0 {
+			events = append(events, runtimeWorkflowQuestionEvent(run, question, runIndex))
+		}
 	}
 	return events
 }
@@ -404,6 +407,32 @@ func runtimeWorkflowApprovalEvent(run map[string]interface{}, approval map[strin
 		"approval_url":     runtimeString(approval["approval_url"]),
 		"approval_form":    approval["approval_form"],
 		"runtime_id":       workflowRuntimeID("workflow_approval", run, approval, runIndex, 0),
+	})
+	return event
+}
+
+func runtimeWorkflowQuestionEvent(run map[string]interface{}, question map[string]interface{}, runIndex int) map[string]interface{} {
+	status := "pending_question"
+	if runtimeString(question["answer"]) != "" || runtimeString(question["choice_id"]) != "" || runtimeString(question["choice_label"]) != "" {
+		status = "success"
+	}
+	event := compactAgentRuntimeMap(map[string]interface{}{
+		"kind":            "workflow_question",
+		"title":           "Workflow question",
+		"status":          status,
+		"created_at":      run["created_at"],
+		"workflow_run_id": runtimeString(run["workflow_run_id"]),
+		"workflow_id":     runtimeString(run["workflow_id"]),
+		"node_id":         runtimeString(question["node_id"]),
+		"node_title":      runtimeString(question["node_title"]),
+		"question":        runtimeString(question["question"]),
+		"round":           question["round"],
+		"choices":         question["choices"],
+		"answer":          runtimeString(question["answer"]),
+		"choice_id":       runtimeString(question["choice_id"]),
+		"choice_label":    runtimeString(question["choice_label"]),
+		"choice_value":    runtimeString(question["choice_value"]),
+		"runtime_id":      workflowRuntimeID("workflow_question", run, question, runIndex, 0),
 	})
 	return event
 }
@@ -548,6 +577,8 @@ func agentRuntimeEventType(event map[string]interface{}) string {
 		return "workflow_node"
 	case "workflow_approval":
 		return "workflow_approval"
+	case "workflow_question":
+		return "workflow_question"
 	case "":
 		return "agent_event"
 	default:
@@ -589,6 +620,11 @@ func agentRuntimeEventTitle(event map[string]interface{}) string {
 		return agentRuntimeWorkflowNodeTitle(event)
 	case "workflow_approval":
 		return "Workflow approval"
+	case "workflow_question":
+		if title := runtimeString(event["node_title"]); title != "" {
+			return title
+		}
+		return "Workflow question"
 	default:
 		return runtimeInvocationTitle(event)
 	}
@@ -615,6 +651,12 @@ func agentRuntimeEventInput(event map[string]interface{}) interface{} {
 		return sanitizeAgentRuntimeSensitiveValue(runtimeMap(event["inputs"]))
 	case "workflow_approval":
 		return sanitizeAgentRuntimeSensitiveValue(runtimeMap(event["approval_form"]))
+	case "workflow_question":
+		return sanitizeAgentRuntimeSensitiveValue(compactAgentRuntimeMap(map[string]interface{}{
+			"question": runtimeString(event["question"]),
+			"choices":  event["choices"],
+			"round":    event["round"],
+		}))
 	default:
 		if arguments := runtimeMap(event["arguments"]); len(arguments) > 0 {
 			return sanitizeAgentRuntimeToolArguments(arguments)
@@ -648,6 +690,15 @@ func agentRuntimeEventOutput(event map[string]interface{}) interface{} {
 			"approval_form_id": runtimeString(event["approval_form_id"]),
 			"approval_url":     runtimeString(event["approval_url"]),
 			"status":           runtimeString(event["status"]),
+		}))
+	}
+	if agentRuntimeEventType(event) == "workflow_question" {
+		return sanitizeAgentRuntimeResultValue(compactAgentRuntimeMap(map[string]interface{}{
+			"answer":       runtimeString(event["answer"]),
+			"choice_id":    runtimeString(event["choice_id"]),
+			"choice_label": runtimeString(event["choice_label"]),
+			"choice_value": runtimeString(event["choice_value"]),
+			"status":       runtimeString(event["status"]),
 		}))
 	}
 	output := map[string]interface{}{}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -30,6 +32,13 @@ type agentRuntimeContext struct {
 }
 
 const agentWorkflowContinuationMaxDuration = 35 * time.Minute
+
+type agentWorkflowContinuationRequest struct {
+	Type          string                 `json:"type"`
+	Inputs        map[string]interface{} `json:"inputs"`
+	Action        string                 `json:"action"`
+	ApprovalToken string                 `json:"approval_token"`
+}
 
 func (h *AgentsHandler) ListAgentRuntimeConversations(c *gin.Context) {
 	runtimeCtx, ok := h.agentRuntimeContext(c)
@@ -546,10 +555,64 @@ func (h *AgentsHandler) continueRuntimeWorkflowApproval(c *gin.Context, runtimeC
 	if !ok {
 		return
 	}
+	req, err := readAgentWorkflowContinuationRequest(c)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	questionContinuation := isAgentWorkflowQuestionContinuation(req)
+	approvalContinuation := isAgentWorkflowApprovalContinuation(req)
+	var resumeInputs map[string]interface{}
+	if questionContinuation || approvalContinuation {
+		if h.workflowContinuationRunner == nil {
+			h.failRuntime(c, fmt.Errorf("%w: workflow continuation runner is not configured", runtimeservice.ErrInvalidInput))
+			return
+		}
+	}
+	if questionContinuation {
+		resumeInputs = normalizeAgentWorkflowQuestionInputs(req.Inputs)
+		if len(resumeInputs) == 0 {
+			h.failRuntime(c, fmt.Errorf("%w: question answer continuation inputs are required", runtimeservice.ErrInvalidInput))
+			return
+		}
+	}
+	if approvalContinuation {
+		if strings.TrimSpace(req.ApprovalToken) == "" || strings.TrimSpace(req.Action) == "" {
+			h.failRuntime(c, fmt.Errorf("%w: approval token and action are required", runtimeservice.ErrInvalidInput))
+			return
+		}
+	}
 	continuation, err := h.chatRuntimeService.BeginWorkflowApprovalContinuation(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, messageID)
 	if err != nil {
 		h.failRuntime(c, err)
 		return
+	}
+	afterSequence := 0
+	if questionContinuation || approvalContinuation {
+		run, err := h.loadAgentWorkflowRunLog(c.Request.Context(), continuation.WorkflowRunID)
+		if err != nil {
+			h.failRuntime(c, err)
+			return
+		}
+		afterSequence = h.latestAgentWorkflowContinuationSequence(c.Request.Context(), run.TenantID, continuation.WorkflowRunID)
+	}
+	if approvalContinuation {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), agentWorkflowContinuationMaxDuration)
+			defer cancel()
+			if err := h.resumeAgentWorkflowApproval(ctx, runtimeCtx.Scope, continuation, req); err != nil {
+				h.failAgentWorkflowContinuation(ctx, continuation, err, nil)
+			}
+		}()
+	}
+	if questionContinuation {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), agentWorkflowContinuationMaxDuration)
+			defer cancel()
+			if err := h.workflowContinuationRunner.ResumeQuestionAnswerWorkflow(ctx, continuation.WorkflowRunID, resumeInputs); err != nil {
+				h.failAgentWorkflowContinuation(ctx, continuation, err, nil)
+			}
+		}()
 	}
 	setupAgentSSE(c)
 	_ = writeAgentSSE(c, "message_start", gin.H{
@@ -568,10 +631,85 @@ func (h *AgentsHandler) continueRuntimeWorkflowApproval(c *gin.Context, runtimeC
 		})
 		return
 	}
-	h.streamWorkflowApprovalContinuation(c, runtimeCtx.Scope, continuation)
+	h.streamWorkflowApprovalContinuation(c, runtimeCtx.Scope, continuation, afterSequence)
 }
 
-func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation) {
+func readAgentWorkflowContinuationRequest(c *gin.Context) (agentWorkflowContinuationRequest, error) {
+	var req agentWorkflowContinuationRequest
+	if c == nil || c.Request == nil || c.Request.Body == nil {
+		return req, nil
+	}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return req, err
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return req, nil
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return req, fmt.Errorf("invalid workflow continuation request")
+	}
+	return req, nil
+}
+
+func isAgentWorkflowQuestionContinuation(req agentWorkflowContinuationRequest) bool {
+	return strings.EqualFold(strings.TrimSpace(req.Type), "question_answer")
+}
+
+func isAgentWorkflowApprovalContinuation(req agentWorkflowContinuationRequest) bool {
+	return strings.EqualFold(strings.TrimSpace(req.Type), "approval")
+}
+
+func (h *AgentsHandler) resumeAgentWorkflowApproval(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, req agentWorkflowContinuationRequest) error {
+	if h.db == nil {
+		return errors.New("database is not available")
+	}
+	if h.workflowContinuationRunner == nil {
+		return fmt.Errorf("%w: workflow continuation runner is not configured", runtimeservice.ErrInvalidInput)
+	}
+	approvalService := approvalruntime.NewService(h.db)
+	accountID := scope.AccountID.String()
+	form, err := approvalService.SubmitByToken(ctx, strings.TrimSpace(req.ApprovalToken), approvalruntime.SubmitRequest{
+		Inputs: copyMapForAgentWorkflowContinuation(req.Inputs),
+		Action: strings.TrimSpace(req.Action),
+	}, &accountID, nil)
+	if err != nil {
+		return err
+	}
+	resumeReady, err := approvalService.ActivePauseApprovalFormsSubmitted(ctx, form.WorkflowRunID)
+	if err != nil {
+		return err
+	}
+	if !resumeReady {
+		if err := approvalService.AppendApprovalResultFilledEvent(ctx, form); err != nil {
+			logger.WarnContext(ctx, "failed to append agent workflow approval result filled event", "form_id", form.ID, err)
+		}
+		return fmt.Errorf("workflow run %s is waiting for additional approvals", continuation.WorkflowRunID)
+	}
+	return h.workflowContinuationRunner.ResumeApprovalWorkflow(ctx, form)
+}
+
+func normalizeAgentWorkflowQuestionInputs(inputs map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	query := strings.TrimSpace(stringFromAgentWorkflowContinuation(inputs["query"]))
+	if query == "" {
+		query = strings.TrimSpace(stringFromAgentWorkflowContinuation(inputs["sys.query"]))
+	}
+	if query != "" {
+		out["query"] = query
+		out["sys.query"] = query
+	}
+	optionID := strings.TrimSpace(stringFromAgentWorkflowContinuation(inputs["question_answer_option_id"]))
+	if optionID == "" {
+		optionID = strings.TrimSpace(stringFromAgentWorkflowContinuation(inputs["option_id"]))
+	}
+	if optionID != "" {
+		out["question_answer_option_id"] = optionID
+	}
+	return out
+}
+
+func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, afterSequence int) {
 	if h.db == nil {
 		h.failAgentWorkflowContinuation(context.WithoutCancel(c.Request.Context()), continuation, errors.New("database is not available"), func(eventType string, payload gin.H) error {
 			_ = writeAgentSSE(c, eventType, payload)
@@ -591,16 +729,23 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope
 		return
 	}
 	pauseService := workflowpause.NewService(h.db)
-	lastSequence := 0
+	lastSequence := afterSequence
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		terminal, nextSequence := h.drainAgentWorkflowContinuationEvents(workCtx, continuation, pauseService, run.TenantID, lastSequence, func(eventType string, payload gin.H) error {
+		terminal, waitingStatus, nextSequence := h.drainAgentWorkflowContinuationEvents(workCtx, continuation, pauseService, run.TenantID, lastSequence, func(eventType string, payload gin.H) error {
 			return writeAgentSSE(c, eventType, payload)
 		})
 		lastSequence = nextSequence
 		if terminal {
 			h.finishAgentWorkflowContinuation(workCtx, scope, continuation, func(eventType string, payload gin.H) error {
+				_ = writeAgentSSE(c, eventType, payload)
+				return nil
+			})
+			return
+		}
+		if waitingStatus != "" {
+			h.pauseAgentWorkflowContinuation(workCtx, continuation, waitingStatus, func(eventType string, payload gin.H) error {
 				_ = writeAgentSSE(c, eventType, payload)
 				return nil
 			})
@@ -627,6 +772,25 @@ func (h *AgentsHandler) streamWorkflowApprovalContinuation(c *gin.Context, scope
 	}
 }
 
+func (h *AgentsHandler) latestAgentWorkflowContinuationSequence(ctx context.Context, tenantID string, workflowRunID string) int {
+	if h.db == nil || strings.TrimSpace(tenantID) == "" || strings.TrimSpace(workflowRunID) == "" {
+		return 0
+	}
+	pauseService := workflowpause.NewService(h.db)
+	payload, err := pauseService.ListEvents(ctx, tenantID, workflowRunID, 0, 1000)
+	if err != nil {
+		logger.WarnContext(ctx, "failed to list current workflow continuation events", "workflow_run_id", workflowRunID, err)
+		return 0
+	}
+	latest := 0
+	for _, event := range payload.Events {
+		if event.Sequence > latest {
+			latest = event.Sequence
+		}
+	}
+	return latest
+}
+
 func (h *AgentsHandler) startWorkflowApprovalContinuationBackground(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, tenantID string, afterSequence int) {
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, agentWorkflowContinuationMaxDuration)
@@ -636,10 +800,14 @@ func (h *AgentsHandler) startWorkflowApprovalContinuationBackground(ctx context.
 		defer ticker.Stop()
 		lastSequence := afterSequence
 		for {
-			terminal, nextSequence := h.drainAgentWorkflowContinuationEvents(ctx, continuation, pauseService, tenantID, lastSequence, nil)
+			terminal, waitingStatus, nextSequence := h.drainAgentWorkflowContinuationEvents(ctx, continuation, pauseService, tenantID, lastSequence, nil)
 			lastSequence = nextSequence
 			if terminal {
 				h.finishAgentWorkflowContinuation(ctx, scope, continuation, nil)
+				return
+			}
+			if waitingStatus != "" {
+				h.pauseAgentWorkflowContinuation(ctx, continuation, waitingStatus, nil)
 				return
 			}
 			if h.finishAgentWorkflowContinuationIfRunTerminal(ctx, scope, continuation, nil) {
@@ -655,14 +823,15 @@ func (h *AgentsHandler) startWorkflowApprovalContinuationBackground(ctx context.
 	}()
 }
 
-func (h *AgentsHandler) drainAgentWorkflowContinuationEvents(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, pauseService *workflowpause.Service, tenantID string, afterSequence int, emit func(string, gin.H) error) (bool, int) {
+func (h *AgentsHandler) drainAgentWorkflowContinuationEvents(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, pauseService *workflowpause.Service, tenantID string, afterSequence int, emit func(string, gin.H) error) (bool, string, int) {
 	payload, err := pauseService.ListEvents(ctx, tenantID, continuation.WorkflowRunID, afterSequence, 100)
 	if err != nil {
 		logger.WarnContext(ctx, "failed to list workflow continuation events", "workflow_run_id", continuation.WorkflowRunID, err)
-		return false, afterSequence
+		return false, "", afterSequence
 	}
 	lastSequence := afterSequence
 	terminal := false
+	waitingStatus := ""
 	for _, event := range payload.Events {
 		lastSequence = event.Sequence
 		eventType := agentWorkflowContinuationEventType(event.Event)
@@ -680,14 +849,32 @@ func (h *AgentsHandler) drainAgentWorkflowContinuationEvents(ctx context.Context
 		if persistedPayload != nil {
 			data = persistedPayload
 		}
+		var userInput gin.H
+		if eventType == workflowpause.EventQuestionAnswerRequested {
+			userInput = agentWorkflowQuestionUserInputEvent(continuation, data)
+			if len(userInput) > 0 {
+				metadata := copyMapForAgentWorkflowContinuation(continuation.Metadata)
+				metadata["user_input_request"] = map[string]interface{}(userInput)
+				continuation.Metadata = metadata
+			}
+		}
 		if emit != nil {
 			_ = emit(eventType, data)
+			if len(userInput) > 0 {
+				_ = emit("user_input_requested", userInput)
+			}
 		}
 		if eventType == "workflow_finished" || eventType == "workflow_failed" {
 			terminal = true
 		}
+		if eventType == "approval_requested" {
+			waitingStatus = runtimemodel.MessageStatusWaitingApproval
+		}
+		if eventType == workflowpause.EventQuestionAnswerRequested {
+			waitingStatus = runtimemodel.MessageStatusWaitingQuestion
+		}
 	}
-	return terminal, lastSequence
+	return terminal, waitingStatus, lastSequence
 }
 
 func (h *AgentsHandler) finishAgentWorkflowContinuationIfRunTerminal(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, emit func(string, gin.H) error) bool {
@@ -769,6 +956,20 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, sco
 		"conversation_id": continuation.ConversationID.String(),
 		"message_id":      continuation.MessageID.String(),
 		"status":          runtimemodel.MessageStatusCompleted,
+		"metadata":        metadata,
+	})
+}
+
+func (h *AgentsHandler) pauseAgentWorkflowContinuation(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, status string, emit func(string, gin.H) error) {
+	metadata, err := h.chatRuntimeService.PauseWorkflowApprovalContinuation(ctx, continuation, status)
+	if err != nil {
+		h.failAgentWorkflowContinuation(ctx, continuation, err, emit)
+		return
+	}
+	emitAgentWorkflowContinuationEvent(emit, "message_end", gin.H{
+		"conversation_id": continuation.ConversationID.String(),
+		"message_id":      continuation.MessageID.String(),
+		"status":          status,
 		"metadata":        metadata,
 	})
 }
@@ -893,6 +1094,10 @@ func agentWorkflowContinuationEventType(eventType string) string {
 		return "workflow_paused"
 	case workflowpause.EventApprovalRequested:
 		return "approval_requested"
+	case workflowpause.EventQuestionAnswerRequested:
+		return workflowpause.EventQuestionAnswerRequested
+	case workflowpause.EventQuestionAnswerSubmitted:
+		return workflowpause.EventQuestionAnswerSubmitted
 	case workflowpause.EventWorkflowFinished:
 		return "workflow_finished"
 	case workflowpause.EventError:
@@ -1027,7 +1232,102 @@ func agentWorkflowContinuationWaiting(metadata map[string]interface{}) bool {
 	if !ok {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(fmt.Sprint(state["status"])), "waiting_approval")
+	status := strings.TrimSpace(fmt.Sprint(state["status"]))
+	return strings.EqualFold(status, "waiting_approval") || strings.EqualFold(status, "waiting_question")
+}
+
+func agentWorkflowQuestionUserInputEvent(continuation *runtimeservice.WorkflowApprovalContinuation, data map[string]interface{}) gin.H {
+	if continuation == nil || len(data) == 0 {
+		return nil
+	}
+	question := strings.TrimSpace(stringFromAgentWorkflowContinuation(data["question"]))
+	if question == "" {
+		return nil
+	}
+	workflowRunID := continuation.WorkflowRunID
+	if value := strings.TrimSpace(stringFromAgentWorkflowContinuation(data["workflow_run_id"])); value != "" {
+		workflowRunID = value
+	}
+	nodeID := strings.TrimSpace(stringFromAgentWorkflowContinuation(data["node_id"]))
+	round := data["round"]
+	requestID := strings.Trim(strings.Join([]string{workflowRunID, nodeID, strings.TrimSpace(fmt.Sprint(round))}, ":"), ":")
+	item := gin.H{
+		"id":       "answer",
+		"question": question,
+	}
+	if options := agentWorkflowQuestionOptions(data["choices"]); len(options) > 0 {
+		item["options"] = options
+	}
+	return gin.H{
+		"source":          "agent_workflow_question_answer",
+		"request_id":      requestID,
+		"workflow_run_id": workflowRunID,
+		"node_id":         nodeID,
+		"round":           round,
+		"conversation_id": continuation.ConversationID.String(),
+		"message_id":      continuation.MessageID.String(),
+		"questions":       []gin.H{item},
+		"created_at":      time.Now().Unix(),
+	}
+}
+
+func agentWorkflowQuestionOptions(value interface{}) []gin.H {
+	var items []interface{}
+	switch typed := value.(type) {
+	case []interface{}:
+		items = typed
+	case []map[string]interface{}:
+		items = make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, item)
+		}
+	default:
+		return nil
+	}
+	options := make([]gin.H, 0, len(items))
+	for index, item := range items {
+		record, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		label := firstNonEmptyAgentWorkflowContinuationString(record["label"], record["value"], record["id"])
+		if label == "" {
+			continue
+		}
+		optionID := firstNonEmptyAgentWorkflowContinuationString(record["id"], record["option_id"])
+		if optionID == "" {
+			optionID = fmt.Sprintf("option_%d", index+1)
+		}
+		option := gin.H{
+			"label":     label,
+			"value":     firstNonEmptyAgentWorkflowContinuationString(record["value"], optionID, label),
+			"option_id": optionID,
+		}
+		if description := firstNonEmptyAgentWorkflowContinuationString(record["description"]); description != "" {
+			option["description"] = description
+		}
+		options = append(options, option)
+	}
+	return options
+}
+
+func firstNonEmptyAgentWorkflowContinuationString(values ...interface{}) string {
+	for _, value := range values {
+		if text := strings.TrimSpace(stringFromAgentWorkflowContinuation(value)); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func stringFromAgentWorkflowContinuation(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return fmt.Sprint(value)
 }
 
 func (h *AgentsHandler) validateAgentRuntimeSkills(c *gin.Context, req dto.AgentConfigRequest) error {

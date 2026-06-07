@@ -38,7 +38,7 @@ export interface AIChatStreamingMessageState {
   conversation_id: string;
   message_id: string;
   answer: string;
-  status: 'streaming' | 'completed' | 'stopped' | 'error';
+  status: 'streaming' | 'completed' | 'waiting_approval' | 'waiting_question' | 'stopped' | 'error';
   timeline?: AIChatAgenticTimelineItem[];
   last_event_id?: string;
   replay_base_answer?: string;
@@ -203,7 +203,16 @@ export interface AIChatController {
     query?: string;
     model?: AIChatModelSelection;
   }) => Promise<void>;
-  continueWorkflowApproval?: (conversationId: string, messageId: string) => Promise<void>;
+  continueWorkflowApproval?: (
+    conversationId: string,
+    messageId: string,
+    payload?: { approvalToken: string; inputs: Record<string, unknown>; action: string }
+  ) => Promise<void>;
+  continueWorkflowQuestion?: (
+    conversationId: string,
+    messageId: string,
+    inputs: { query: string; question_answer_option_id?: string }
+  ) => Promise<void>;
   switchBranch: (messageId: string) => void;
 }
 

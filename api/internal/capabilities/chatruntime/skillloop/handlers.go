@@ -337,6 +337,11 @@ func (r *Runner) handleCallSkillTool(
 				result.pendingApproval = payload
 				return result
 			}
+			if strings.EqualFold(stringFromInterface(payload["status"]), "pending_question") {
+				result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+				result.pendingQuestion = payload
+				return result
+			}
 			if strings.EqualFold(stringFromInterface(payload["agent_type"]), "CONVERSATIONAL_WORKFLOW") &&
 				strings.EqualFold(stringFromInterface(payload["status"]), "succeeded") {
 				answer := strings.TrimSpace(stringFromInterface(payload["primary_output"]))

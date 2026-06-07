@@ -227,6 +227,9 @@ func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Sco
 	if leafMessage.Status == runtimemodel.MessageStatusWaitingApproval {
 		return ErrConversationWaitingApproval
 	}
+	if leafMessage.Status == runtimemodel.MessageStatusWaitingQuestion {
+		return ErrConversationWaitingQuestion
+	}
 	return nil
 }
 

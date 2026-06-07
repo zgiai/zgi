@@ -49,6 +49,7 @@ type MessageRepository interface {
 	UpdateCompleted(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateWaitingApproval(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
+	UpdateWaitingQuestion(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateError(ctx context.Context, id uuid.UUID, message string) error
 	MarkStopped(ctx context.Context, id uuid.UUID) error
 	UpdateStoppedAnswer(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
@@ -734,6 +735,31 @@ func (r *messageRepository) UpdateWaitingApproval(ctx context.Context, id uuid.U
 	return nil
 }
 
+func (r *messageRepository) UpdateWaitingQuestion(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal waiting question aichat message metadata: %w", err)
+	}
+	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+		Updates(map[string]interface{}{
+			"status":     runtimemodel.MessageStatusWaitingQuestion,
+			"error":      nil,
+			"metadata":   datatypes.JSON(metadataJSON),
+			"updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to mark aichat message waiting question: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (r *messageRepository) UpdateError(ctx context.Context, id uuid.UUID, message string) error {
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
 		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
@@ -895,7 +921,7 @@ func activeMessageStatuses() []string {
 }
 
 func mutableMessageStatuses() []string {
-	return []string{runtimemodel.MessageStatusPending, runtimemodel.MessageStatusStreaming, runtimemodel.MessageStatusWaitingApproval}
+	return []string{runtimemodel.MessageStatusPending, runtimemodel.MessageStatusStreaming, runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion}
 }
 
 func completableMessageStatuses() []string {

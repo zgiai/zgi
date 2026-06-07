@@ -597,6 +597,59 @@ func TestMergeWorkflowRunMetadataStoresApprovalFields(t *testing.T) {
 	}
 }
 
+func TestMergeWorkflowRunMetadataStoresQuestionAnswerFields(t *testing.T) {
+	metadata := mergeWorkflowRunMetadata(nil, "question_answer_requested", map[string]interface{}{
+		"workflow_run_id": "run-question",
+		"node_id":         "qa-node",
+		"node_type":       "question-answer",
+		"question":        "Pick one",
+		"round":           2,
+		"choices": []map[string]interface{}{
+			{"id": "yes", "label": "Yes", "value": "yes"},
+			{"id": "no", "label": "No", "value": "no"},
+		},
+	})
+
+	runs, ok := metadata["workflow_runs"].([]interface{})
+	if !ok || len(runs) != 1 {
+		t.Fatalf("workflow_runs = %#v, want one run", metadata["workflow_runs"])
+	}
+	run, _ := runs[0].(map[string]interface{})
+	question, _ := run["question_answer"].(map[string]interface{})
+	if run["status"] != "pending_question" || question["question"] != "Pick one" || question["node_id"] != "qa-node" {
+		t.Fatalf("run = %#v, want pending question with question fields", run)
+	}
+}
+
+func TestWorkflowQuestionUserInputRequestMapsChoices(t *testing.T) {
+	request := workflowQuestionUserInputRequest("conversation-1", "message-1", map[string]interface{}{
+		"workflow_run_id": "run-question",
+		"node_id":         "qa-node",
+		"question":        "Pick one",
+		"round":           1,
+		"choices": []map[string]interface{}{
+			{"id": "yes", "label": "Yes", "value": "yes"},
+		},
+	})
+
+	if request["source"] != "agent_workflow_question_answer" || request["workflow_run_id"] != "run-question" {
+		t.Fatalf("request = %#v, want agent workflow question request", request)
+	}
+	questions, ok := request["questions"].([]interface{})
+	if !ok || len(questions) != 1 {
+		t.Fatalf("questions = %#v, want one question", request["questions"])
+	}
+	question, _ := questions[0].(map[string]interface{})
+	options, ok := question["options"].([]interface{})
+	if !ok || len(options) != 1 {
+		t.Fatalf("options = %#v, want one option", question["options"])
+	}
+	option, _ := options[0].(map[string]interface{})
+	if option["option_id"] != "yes" || option["value"] != "yes" || option["label"] != "Yes" {
+		t.Fatalf("option = %#v, want stable option mapping", option)
+	}
+}
+
 func preparedTimelineTestChat() *PreparedChat {
 	return &PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
