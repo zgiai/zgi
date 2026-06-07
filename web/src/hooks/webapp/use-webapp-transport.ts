@@ -612,7 +612,11 @@ export function useWebappConversationTransport(
         case 'workflow_failed':
         case 'workflow_succeeded':
         case 'workflow_completed': {
-          if (hasUnresolvedApprovals()) {
+          const isSuccessfulTerminalEvent =
+            event.event === 'workflow_finished' ||
+            event.event === 'workflow_succeeded' ||
+            event.event === 'workflow_completed';
+          if (isSuccessfulTerminalEvent && hasUnresolvedApprovals()) {
             callbacks.onPaused?.({
               workflowRunId:
                 (typeof data.id === 'string' ? data.id : '') ||
@@ -1043,13 +1047,17 @@ export function useWebappConversationTransport(
             });
           },
           onWorkflowFinished: payload => {
-            if (hasUnresolvedApprovals()) {
+            const data = unwrap(payload);
+            const rawStatus = typeof data.status === 'string' ? data.status.toLowerCase() : '';
+            const isSuccessfulTerminalStatus = !['failed', 'error', 'stopped', 'expired'].includes(
+              rawStatus
+            );
+            if (isSuccessfulTerminalStatus && hasUnresolvedApprovals()) {
               useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
                 workflowRunId,
               });
               return;
             }
-            const data = unwrap(payload);
             const status = normalizeFinalRunStatus(data.status);
             useChatStore.getState().finalizeAiMessage(conversationId, tempKey, {
               status,
@@ -1417,8 +1425,19 @@ export function useWebappConversationTransport(
                   const terminalData = unwrap(ctx) as {
                     id?: string;
                     workflow_run_id?: string;
+                    status?: string;
                   };
-                  if (hasUnresolvedApprovals()) {
+                  const rawStatus =
+                    typeof terminalData.status === 'string'
+                      ? terminalData.status.toLowerCase()
+                      : '';
+                  const isSuccessfulTerminalStatus = ![
+                    'failed',
+                    'error',
+                    'stopped',
+                    'expired',
+                  ].includes(rawStatus);
+                  if (isSuccessfulTerminalStatus && hasUnresolvedApprovals()) {
                     callbacks.onPaused?.({
                       workflowRunId:
                         (typeof terminalData.id === 'string' ? terminalData.id : '') ||

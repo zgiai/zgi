@@ -207,6 +207,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     QuestionAnswerTranscriptItem[]
   >([]);
   const {
+    state: approvalRuntimeState,
     activeEntry: approvalEntry,
     activeForm: approvalForm,
     activeToken: approvalToken,
@@ -220,6 +221,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     setLoadedForm: setLoadedApprovalForm,
     resetApprovalRuntime,
   } = useApprovalRuntimeEvents();
+  const approvalRuntimeStateRef = useRef(approvalRuntimeState);
   const approvalFormQuery = useApprovalForm(approvalToken, Boolean(approvalToken && !approvalForm));
   const approvalSubmitMutation = useSubmitApprovalForm(approvalToken);
   const { start: startWorkflowRunEvents, cancel: cancelWorkflowRunEvents } =
@@ -229,6 +231,26 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const approvalResumeStreamActiveRef = useRef(false);
   const workflowFinishedRef = useRef(false);
   const runtimeLogSignatureRef = useRef('');
+
+  useEffect(() => {
+    approvalRuntimeStateRef.current = approvalRuntimeState;
+  }, [approvalRuntimeState]);
+
+  const hasBlockingApprovalStop = useCallback(
+    () =>
+      Object.values(approvalRuntimeStateRef.current.byKey).some(entry =>
+        ['waiting', 'submitting'].includes(entry.status)
+      ),
+    []
+  );
+
+  const isApprovalStopBlocked = useMemo(
+    () =>
+      Object.values(approvalRuntimeState.byKey).some(entry =>
+        ['waiting', 'submitting'].includes(entry.status)
+      ),
+    [approvalRuntimeState.byKey]
+  );
 
   useEffect(() => {
     const items = isHistory ? (open ? historyExecutionItems : []) : runItems;
@@ -954,6 +976,10 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   }, [runItems, setCurrentRunningNodeId, setNodeRunStatus]);
 
   const handleStop = useCallback(() => {
+    if (hasBlockingApprovalStop()) {
+      toast.info(t('nodes.approval.runtime.stopDisabled'));
+      return;
+    }
     const activeRunId = workflowRunId || runSummary?.id;
     if (!activeRunId) return;
     stopWorkflowMutation.mutate(
@@ -980,6 +1006,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   }, [
     agentId,
     cancelWorkflowRunEvents,
+    hasBlockingApprovalStop,
     handleWorkflowFinished,
     markRunningItemsStopped,
     runSummary?.elapsed_time,
@@ -987,6 +1014,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     runSummary?.outputs,
     runSummary?.total_steps,
     stopWorkflowMutation,
+    t,
     workflowRunId,
   ]);
   const setOpenValidationIssues = useWorkflowStore.use.setOpenValidationIssues();
@@ -1274,6 +1302,8 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
               isStarting={isStarting}
               isRunning={isRunning}
               isStopping={stopWorkflowMutation.isPending}
+              stopDisabled={isApprovalStopBlocked}
+              stopDisabledMessage={t('nodes.approval.runtime.stopDisabled')}
               onSubmit={onSubmit}
               onRunNoInputs={handleRunNoInputs}
               onInputChange={setLastInputs}

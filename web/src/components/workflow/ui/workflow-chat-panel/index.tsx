@@ -222,6 +222,22 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
     approvalRuntimeStateRef.current = approvalRuntimeState;
   }, [approvalRuntimeState]);
 
+  const hasBlockingApprovalStop = useCallback(
+    () =>
+      Object.values(approvalRuntimeStateRef.current.byKey).some(entry =>
+        ['waiting', 'submitting'].includes(entry.status)
+      ),
+    []
+  );
+
+  const isApprovalStopBlocked = useMemo(
+    () =>
+      Object.values(approvalRuntimeState.byKey).some(entry =>
+        ['waiting', 'submitting'].includes(entry.status)
+      ),
+    [approvalRuntimeState.byKey]
+  );
+
   // Wire up workflow store callbacks to mirror normal run panel behavior
   const rf = useReactFlow();
   const nodes = useWorkflowStore.use.nodes();
@@ -912,15 +928,24 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
         handleWorkflowPaused(payload);
       },
       onWorkflowFinished: payload => {
+        const rawStatus =
+          typeof payload.status === 'string' ? payload.status.toLowerCase() : '';
+        const shouldKeepApprovalPending =
+          !['failed', 'error', 'stopped', 'expired'].includes(rawStatus) &&
+          hasUnresolvedApprovalEntries(approvalRuntimeStateRef.current);
+        if (shouldKeepApprovalPending) {
+          setIsConversationPaused(true);
+          return;
+        }
         setIsConversationPaused(false);
         workflowFinishedRef.current = true;
         resetApprovalRuntime();
         sseCallbacks.onWorkflowFinished?.(payload);
         try {
           const status =
-            payload.status === 'failed'
+            rawStatus === 'failed' || rawStatus === 'error'
               ? 'error'
-              : payload.status === 'stopped'
+              : rawStatus === 'stopped'
                 ? 'stopped'
                 : 'completed';
           const rawError = (payload as unknown as { error?: unknown }).error;
@@ -1680,7 +1705,14 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
         case 'workflow_failed':
         case 'workflow_succeeded':
         case 'workflow_completed': {
-          if (hasUnresolvedApprovalEntries(approvalRuntimeStateRef.current)) {
+          const isSuccessfulTerminalEvent =
+            event.event === 'workflow_finished' ||
+            event.event === 'workflow_succeeded' ||
+            event.event === 'workflow_completed';
+          if (
+            isSuccessfulTerminalEvent &&
+            hasUnresolvedApprovalEntries(approvalRuntimeStateRef.current)
+          ) {
             setIsConversationPaused(true);
             break;
           }
@@ -1731,6 +1763,13 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
         case 'error':
           setIsConversationPaused(false);
           setQuestionAnswerSubmitting(false);
+          resetApprovalRuntime();
+          setQuestionAnswerPrompt(null);
+          setQuestionAnswerTranscript([]);
+          setWorkflowRunId(null);
+          workflowFinishedRef.current = true;
+          cancelWorkflowRunEvents();
+          approvalResumeStreamActiveRef.current = false;
           sseCallbacks.onError?.(payload);
           runnerRef.current?.onWorkflowFinished({
             status: 'error',
@@ -2338,6 +2377,14 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
     updateConversation,
   ]);
 
+  const handleStop = useCallback(() => {
+    if (hasBlockingApprovalStop()) {
+      toast.info(t('nodes.approval.runtime.stopDisabled'));
+      return;
+    }
+    stop();
+  }, [hasBlockingApprovalStop, stop, t]);
+
   // features already derived above
 
   // Register with panel stack like run panel (hooks must be unconditional)
@@ -2474,7 +2521,7 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
               mode="singleTest"
               conversation={{ id: convId, conversationId: chatConv?.conversationId ?? '' }}
               onSend={handleSend}
-              onStop={stop}
+              onStop={handleStop}
               features={features}
               enableUpload={features?.file_upload?.enabled ?? true}
               openingGuide={openingGuide}
@@ -2492,6 +2539,11 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
               toolbarForm={toolbarFormSpec}
               inputTopNotice={
                 questionAnswerInputNotice ||
+                (isApprovalStopBlocked ? (
+                  <div className="rounded-md border border-muted bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                    {t('nodes.approval.runtime.stopDisabled')}
+                  </div>
+                ) : null) ||
                 (precheckWarnings.length > 0 ? (
                   <WorkflowPrecheckWarningBanner
                     warnings={precheckWarnings}
