@@ -198,6 +198,12 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 		return nil, err
 	}
 	snapshot := agentConfigSnapshot(ag.ID.String(), cfg)
+	snapshot["supports_vision"] = s.resolveAgentModelSupportsVision(
+		ctx,
+		s.organizationIDForAgentWorkspace(ctx, ag.TenantID.String()),
+		stringFromSnapshot(snapshot, "model_provider"),
+		stringFromSnapshot(snapshot, "model"),
+	)
 	if err := validateAgentSystemPromptSource(stringFromSnapshot(snapshot, "system_prompt")); err != nil {
 		return nil, err
 	}
@@ -486,6 +492,9 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 		}
 	}
 	cfg := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	if _, ok := version.ConfigSnapshot["supports_vision"]; !ok {
+		cfg.SupportsVision = s.resolveAgentModelSupportsVision(ctx, organizationID, cfg.ModelProvider, cfg.Model)
+	}
 	iconURL := ""
 	if ag.IconType != nil && *ag.IconType == "image" && ag.Icon != nil && *ag.Icon != "" && s.fileService != nil {
 		if fileURL, err := s.fileService.GetFileURL(ctx, *ag.Icon); err == nil {
@@ -507,6 +516,82 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 		VersionUUID:    version.VersionUUID.String(),
 		Config:         *cfg,
 	}, nil
+}
+
+func (s *agentsService) organizationIDForAgentWorkspace(ctx context.Context, workspaceID string) string {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" || s.enterpriseService == nil {
+		return workspaceID
+	}
+	org, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, workspaceID)
+	if err != nil || org == nil {
+		return workspaceID
+	}
+	return org.ID
+}
+
+func (s *agentsService) resolveAgentModelSupportsVision(ctx context.Context, organizationID, provider, modelName string) bool {
+	provider = strings.TrimSpace(provider)
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return false
+	}
+	if s.db == nil {
+		return inferAgentModelSupportsVision(modelName)
+	}
+
+	var custom struct {
+		SupportsVision bool `gorm:"column:vision"`
+	}
+	if organizationUUID, err := uuid.Parse(strings.TrimSpace(organizationID)); err == nil && provider != "" {
+		result := s.db.WithContext(ctx).
+			Table("llm_custom_models").
+			Select("vision").
+			Where("organization_id = ? AND provider = ? AND name = ? AND is_active = ?", organizationUUID, provider, modelName, true).
+			Order("sort_order ASC, created_at DESC").
+			Limit(1).
+			Scan(&custom)
+		if result.Error == nil && result.RowsAffected > 0 {
+			return custom.SupportsVision
+		}
+	}
+
+	var global struct {
+		SupportsVision bool `gorm:"column:vision"`
+	}
+	query := s.db.WithContext(ctx).Table("llm_models").Select("vision").Where("name = ? AND is_active = ?", modelName, true)
+	if provider != "" {
+		query = query.Where("provider = ?", provider)
+	}
+	result := query.Limit(1).Scan(&global)
+	if result.Error == nil && result.RowsAffected > 0 {
+		return global.SupportsVision
+	}
+
+	return inferAgentModelSupportsVision(modelName)
+}
+
+func inferAgentModelSupportsVision(modelName string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(modelName))
+	if normalized == "" {
+		return false
+	}
+	visionMarkers := []string{
+		"vision",
+		"vis",
+		"vl",
+		"vlm",
+		"omni",
+		"multimodal",
+		"multi-modal",
+		"qvq",
+	}
+	for _, marker := range visionMarkers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *agentsService) loadAuthorizedAgentRuntimeDraft(ctx context.Context, agentID, accountID string, ensureConfig bool) (*Agent, *AgentsConfig, error) {
@@ -690,6 +775,7 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		resp.SystemPrompt = stringPtrValue(cfg.PrePrompt)
 		resp.ModelProvider = stringPtrValue(cfg.ModelProvider)
 		resp.Model = stringPtrValue(cfg.ModelVersionID)
+		resp.SupportsVision = inferAgentModelSupportsVision(resp.Model)
 		resp.UpdatedAt = cfg.UpdatedAt.Unix()
 	}
 	return resp
@@ -702,6 +788,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"system_prompt":                 resp.SystemPrompt,
 		"model_provider":                resp.ModelProvider,
 		"model":                         resp.Model,
+		"supports_vision":               resp.SupportsVision,
 		"model_parameters":              resp.ModelParameters,
 		"enabled_skill_ids":             resp.EnabledSkillIDs,
 		"use_memory":                    false,
@@ -734,6 +821,11 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.SystemPrompt = stringFromSnapshot(snapshot, "system_prompt")
 	resp.ModelProvider = stringFromSnapshot(snapshot, "model_provider")
 	resp.Model = stringFromSnapshot(snapshot, "model")
+	if supportsVision, ok := snapshot["supports_vision"].(bool); ok {
+		resp.SupportsVision = supportsVision
+	} else {
+		resp.SupportsVision = inferAgentModelSupportsVision(resp.Model)
+	}
 	if params, ok := snapshot["model_parameters"].(map[string]interface{}); ok {
 		resp.ModelParameters = params
 	}
@@ -1071,6 +1163,10 @@ func (s *agentsService) resolveAgentSuggestedQuestionsModel(ctx context.Context,
 	if model != "" {
 		return provider, model, nil
 	}
+	return s.resolveDefaultLLMModel(ctx, organizationID, "suggested questions")
+}
+
+func (s *agentsService) resolveDefaultLLMModel(ctx context.Context, organizationID, scope string) (string, string, error) {
 	if s.defaultModelResolver == nil || strings.TrimSpace(organizationID) == "" {
 		return "", "", suggestedquestions.ErrModelNotConfigured
 	}

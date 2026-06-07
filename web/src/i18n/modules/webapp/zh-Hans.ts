@@ -345,6 +345,19 @@ const messages: WebappMessages = {
       uploadDocumentTooltip: '最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',
       uploadImageTooltip:
         '图片需要搭配具备视觉能力的模型使用。最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',
+      agentDraft: {
+        imageAttachmentHint: '已上传的图片会随本次智能体调试消息一起发送。',
+        imageVisionRequired:
+          '当前智能体配置的模型不支持图片理解，请在智能体模型配置中切换为支持图片理解的模型。',
+        uploadImageTooltip:
+          '上传图片用于本次智能体调试。最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',
+      },
+      agentWebapp: {
+        imageAttachmentHint: '已上传的图片会随本次消息一起发送给应用理解。',
+        imageVisionRequired: '该应用暂未开启图片理解，请联系应用管理员。',
+        uploadImageTooltip:
+          '上传图片供该应用理解。最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',
+      },
     },
   },
   appCenter: {

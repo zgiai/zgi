@@ -741,11 +741,15 @@ func (s *agentsService) CreateAgent(ctx context.Context, tenantID string, req in
 		return nil, fmt.Errorf("agent with the same name already exists")
 	}
 
-	// Step 1: Get organization ID from workspace for quota checking.
+	// Step 1: Get organization ID from workspace for quota checking and default model resolution.
 	var groupID *uuid.UUID
+	organizationID := strings.TrimSpace(tenantID)
 	if s.enterpriseService != nil {
 		group, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, tenantID)
 		if err == nil && group != nil {
+			if strings.TrimSpace(group.ID) != "" {
+				organizationID = strings.TrimSpace(group.ID)
+			}
 			// Parse organization ID string to UUID.
 			parsedGroupID, parseErr := uuid.Parse(group.ID)
 			if parseErr == nil {
@@ -850,6 +854,12 @@ func (s *agentsService) CreateAgent(ctx context.Context, tenantID string, req in
 
 	if ag.AgentsType == "AGENT" || ag.AgentsType == "CHAT_AGENT" || ag.AgentsType == "GENERATION_AGENT" {
 		cfg := &AgentsConfig{AgentsID: ag.ID, PromptType: "simple"}
+		if provider, model, err := s.resolveDefaultLLMModel(ctx, organizationID, "agent creation"); err == nil && model != "" {
+			cfg.ModelProvider = &provider
+			cfg.ModelVersionID = &model
+		} else if err != nil && !isAgentSuggestedQuestionsConfigurationError(err) {
+			logger.WarnContext(ctx, "failed to resolve default LLM model for agent creation", "organization_id", organizationID, err)
+		}
 		if err := s.agentsRepo.CreateAgentsConfig(ctx, cfg); err != nil {
 			return nil, err
 		}
