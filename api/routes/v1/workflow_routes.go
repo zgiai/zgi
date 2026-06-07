@@ -8,6 +8,7 @@ import (
 
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	agentsHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	workflowHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/workflow"
@@ -48,6 +49,7 @@ type WorkflowRouteDeps struct {
 	Scheduler                   *pkgscheduler.Scheduler
 	EngineFactory               *graph_engine.EngineFactory
 	AutomationRunnerSetter      automationWorkflowRunnerSetter
+	ShortLinkService            shortlinkcap.Service
 }
 
 // RegisterWorkflowRoutes now uses modular services.
@@ -163,7 +165,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	apps.POST("/:agent_id/runtime-logs", agentHistoryDispatchHandler.GetRuntimeLogs)
 	apps.GET("/:agent_id/workflow-runs/:run_id/nodes", runtimeLogHandler.GetWorkflowRunNodeLogs)
 
-	approvalService := approvalruntime.NewService(deps.DB)
+	approvalService := approvalruntime.NewServiceWithShortLinkService(deps.DB, deps.ShortLinkService)
 	registerApprovalTaskHandlers(deps.TaskRegistry, deps.TaskManager, approvalService, handler)
 	registerApprovalScheduledTasks(deps.Scheduler, approvalService, handler)
 
@@ -174,7 +176,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	approvalRoutes.GET("/forms/:token/events", approvalHandler.GetRunEvents)
 	approvalRoutes.POST("/forms/:token/submit", approvalHandler.SubmitForm)
 
-	announcementService := announcementruntime.NewService(deps.DB)
+	announcementService := announcementruntime.NewServiceWithShortLinkService(deps.DB, deps.ShortLinkService)
 	registerAnnouncementScheduledTasks(deps.Scheduler, announcementService)
 	announcementHandler := announcementruntime.NewHandler(announcementService)
 	announcementRoutes := router.Group("/announcements")
@@ -276,5 +278,8 @@ func validateWorkflowRouteDeps(deps WorkflowRouteDeps) {
 	}
 	if deps.AutomationRunnerSetter == nil {
 		panic("workflow routes require automation runner setter")
+	}
+	if deps.ShortLinkService == nil {
+		panic("workflow routes require short link service")
 	}
 }

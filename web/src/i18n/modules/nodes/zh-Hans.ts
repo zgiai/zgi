@@ -204,7 +204,8 @@ const messages: NodesMessages = {
       title: '变量解析后的公告标题',
       content: '变量解析后的公告内容',
       expiration_time: '可直接展示的公告过期时间',
-      token: '用于自行拼接短链接的公告 token',
+      token: '用于短信 link_code 或短链拼接的短链短码',
+      access_token: '公告真实访问 token，用于内部 /n/{token} 链接',
       url: '公告公开链接',
     },
     questionAnswer: {

@@ -19,6 +19,7 @@ const (
 	outputContent        = "content"
 	outputExpirationTime = "expiration_time"
 	outputToken          = "token"
+	outputAccessToken    = "access_token"
 	outputURL            = "url"
 
 	expirationTimeOutputLayout = "2006-01-02 15:04:05"
@@ -140,6 +141,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 		outputContent:        payload.Content,
 		outputExpirationTime: n.formatExpirationTimeForOutput(ctx, expiration),
 		outputToken:          payload.Token,
+		outputAccessToken:    payload.AccessToken,
 		outputURL:            payload.URL,
 	}
 	return &shared.NodeRunResult{

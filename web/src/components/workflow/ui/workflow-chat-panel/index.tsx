@@ -4,6 +4,7 @@ import { usePanelStackItem } from '../../hooks';
 import Chat, { useChatApi, useChatStore } from '@/components/chat';
 import {
   useApprovalForm,
+  fetchApprovalEvents,
   useSaveWorkflowDraft,
   useSubmitApprovalForm,
   useWorkflowRunEventsStream,
@@ -207,8 +208,8 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
     setLoadedForm: setLoadedApprovalForm,
     resetApprovalRuntime,
   } = useApprovalRuntimeEvents();
-  const approvalEventCursorRef = useRef(0);
   const approvalRuntimeStateRef = useRef(approvalRuntimeState);
+  const approvalEventCursorRef = useRef(0);
   const { start: startWorkflowRunEvents, cancel: cancelWorkflowRunEvents } =
     useWorkflowRunEventsStream();
   const approvalResumeStreamActiveRef = useRef(false);
@@ -1756,6 +1757,29 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
       sseCallbacks,
     ]
   );
+
+  useEffect(() => {
+    if (!approvalToken || !approvalSubmittedAction) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const events = await fetchApprovalEvents(approvalToken, {
+          after: approvalRuntimeStateRef.current.cursor,
+          limit: 100,
+        });
+        if (cancelled || events.length === 0) return;
+        events.forEach(event => {
+          dispatchApprovalEvent(event);
+        });
+      } catch {
+        // Keep waiting; the workflow resume stream may still deliver the final event.
+      }
+    }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [approvalSubmittedAction, approvalToken, dispatchApprovalEvent]);
 
   const startApprovalResumeEventStream = useCallback(
     (payload?: unknown) => {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
+	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -219,6 +220,7 @@ type ServiceContainer struct {
 	automationDefinitionService automationdefinition.Service
 	automationWorkflowRunner    automationaction.AutomationWorkflowRunner
 	notificationSMSService      notificationsms.Service
+	shortLinkService            shortlinkcap.Service
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
@@ -906,6 +908,13 @@ func (c *ServiceContainer) GetNotificationSMSService() notificationsms.Service {
 		)
 	}
 	return c.notificationSMSService
+}
+
+func (c *ServiceContainer) GetShortLinkService() shortlinkcap.Service {
+	if c.shortLinkService == nil {
+		c.shortLinkService = shortlinkcap.NewServiceWithDB(c.db)
+	}
+	return c.shortLinkService
 }
 
 func (c *ServiceContainer) SetAutomationWorkflowRunner(runner automationaction.AutomationWorkflowRunner) {

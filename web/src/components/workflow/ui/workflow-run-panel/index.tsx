@@ -39,7 +39,7 @@ import { useWorkflowDraftPrecheck } from '@/hooks/workflow/use-workflow-precheck
 import { getWorkflowPrecheckWarnings } from '@/utils/workflow/billing';
 import { useWorkflowBillingFeedback } from '@/hooks/workflow/use-workflow-billing-feedback';
 import { toast } from 'sonner';
-import { useApprovalForm, useSubmitApprovalForm } from '@/hooks';
+import { fetchApprovalEvents, useApprovalForm, useSubmitApprovalForm } from '@/hooks';
 import {
   getApprovalEventSequence,
   parseApprovalRequestedEvent,
@@ -68,6 +68,12 @@ interface WorkflowRunPanelProps {
   onClose: () => void;
   // Current agent id for API calls
   agentId: string;
+}
+
+interface WorkflowRunEventEnvelope {
+  event?: string;
+  data?: unknown;
+  [key: string]: unknown;
 }
 
 /**
@@ -370,6 +376,18 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     return sequence !== null && sequence <= approvalEventCursorRef.current;
   }, []);
 
+  const toWorkflowRunEvent = useCallback(
+    (eventName: string, payload: unknown): WorkflowRunEventEnvelope => {
+      const record =
+        payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+      if (typeof record.event === 'string') {
+        return record;
+      }
+      return { event: eventName, data: payload };
+    },
+    []
+  );
+
   const markApprovalPausedNodes = useCallback(
     (nodeIds: string[], payload: unknown) => {
       if (nodeIds.length === 0) return;
@@ -604,6 +622,114 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     [sseCallbacks]
   );
 
+  const dispatchWorkflowRunEvent = useCallback(
+    (event: WorkflowRunEventEnvelope) => {
+      if (isStaleApprovalResumeEvent(event)) return;
+      rememberApprovalEventSequence(event);
+
+      switch (event.event) {
+        case 'workflow_started':
+          handleWorkflowStarted(event);
+          break;
+        case 'approval_requested':
+          handleApprovalRequested(event);
+          break;
+        case 'approval_result_filled':
+          handleApprovalResultFilled(event);
+          break;
+        case 'approval_expired':
+          handleApprovalExpired(event);
+          break;
+        case 'question_answer_requested':
+          handleQuestionAnswerRequested(event);
+          break;
+        case 'question_answer_submitted':
+          handleQuestionAnswerSubmitted(event);
+          break;
+        case 'workflow_paused': {
+          sseCallbacks.onWorkflowPaused?.(event);
+          const parsed = parseApprovalPausedEvent(event);
+          if (parsed.isApproval) {
+            markApprovalPausedNodes(parsed.nodeIds, event);
+            dispatchApprovalEvent('workflow_paused', event);
+            setActiveTab('results');
+            break;
+          }
+          const qaPaused = parseQuestionAnswerPausedEvent(event);
+          if (qaPaused.isQuestionAnswer) {
+            if (qaPaused.prompt) handleQuestionAnswerRequested(qaPaused.prompt);
+            markQuestionAnswerPausedNodes(qaPaused.nodeIds, event);
+            setActiveTab('inputs');
+          }
+          break;
+        }
+        case 'node_started':
+          setQuestionAnswerSubmitting(false);
+          sseCallbacks.onNodeStarted?.(event);
+          break;
+        case 'node_finished':
+          sseCallbacks.onNodeFinished?.(event);
+          break;
+        case 'text_chunk':
+          sseCallbacks.onTextChunk?.(event);
+          break;
+        case 'text_replace':
+          sseCallbacks.onTextReplace?.(event);
+          break;
+        case 'message':
+        case 'data':
+          sseCallbacks.onMessage?.(event);
+          break;
+        case 'message_end':
+          sseCallbacks.onMessageEnd?.(event);
+          break;
+        case 'workflow_finished':
+        case 'workflow_stopped':
+        case 'workflow_failed':
+        case 'workflow_succeeded':
+        case 'workflow_completed':
+          handleWorkflowFinished(event);
+          break;
+        case 'error':
+          sseCallbacks.onError?.(event);
+          break;
+        case 'iteration_started':
+          sseCallbacks.onIterationStarted?.(event);
+          break;
+        case 'iteration_next':
+          sseCallbacks.onIterationNext?.(event);
+          break;
+        case 'iteration_completed':
+          sseCallbacks.onIterationCompleted?.(event);
+          break;
+        case 'loop_started':
+          sseCallbacks.onLoopStarted?.(event);
+          break;
+        case 'loop_next':
+          sseCallbacks.onLoopNext?.(event);
+          break;
+        case 'loop_completed':
+          sseCallbacks.onLoopCompleted?.(event);
+          break;
+      }
+    },
+    [
+      dispatchApprovalEvent,
+      handleApprovalExpired,
+      handleApprovalRequested,
+      handleApprovalResultFilled,
+      handleQuestionAnswerRequested,
+      handleQuestionAnswerSubmitted,
+      handleWorkflowFinished,
+      handleWorkflowStarted,
+      isStaleApprovalResumeEvent,
+      markApprovalPausedNodes,
+      markQuestionAnswerPausedNodes,
+      rememberApprovalEventSequence,
+      sseCallbacks,
+    ]
+  );
+
   const startApprovalResumeEventStream = useCallback(
     (payload?: unknown) => {
       const runId = workflowRunId || (payload ? getWorkflowRunIdFromPayload(payload) : '');
@@ -618,104 +744,52 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       void startWorkflowRunEvents(
         runId,
         {
-          onWorkflowStarted: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) handleWorkflowStarted(streamPayload);
-          },
-          onApprovalRequested: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) handleApprovalRequested(streamPayload);
-          },
-          onApprovalResultFilled: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              handleApprovalResultFilled(streamPayload);
-            }
-          },
-          onApprovalExpired: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) handleApprovalExpired(streamPayload);
-          },
-          onQuestionAnswerRequested: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              handleQuestionAnswerRequested(streamPayload);
-            }
-          },
-          onQuestionAnswerSubmitted: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              handleQuestionAnswerSubmitted(streamPayload);
-            }
-          },
-          onWorkflowPaused: streamPayload => {
-            if (isStaleApprovalResumeEvent(streamPayload)) return;
-            rememberApprovalEventSequence(streamPayload);
-            sseCallbacks.onWorkflowPaused?.(streamPayload);
-            const parsed = parseApprovalPausedEvent(streamPayload);
-            if (parsed.isApproval) {
-              markApprovalPausedNodes(parsed.nodeIds, streamPayload);
-              dispatchApprovalEvent('workflow_paused', streamPayload);
-              setActiveTab('results');
-              return;
-            }
-            const qaPaused = parseQuestionAnswerPausedEvent(streamPayload);
-            if (qaPaused.isQuestionAnswer) {
-              if (qaPaused.prompt) handleQuestionAnswerRequested(qaPaused.prompt);
-              markQuestionAnswerPausedNodes(qaPaused.nodeIds, streamPayload);
-              setActiveTab('inputs');
-            }
-          },
-          onNodeStarted: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              sseCallbacks.onNodeStarted?.(streamPayload);
-            }
-          },
-          onNodeFinished: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              sseCallbacks.onNodeFinished?.(streamPayload);
-            }
-          },
-          onTextChunk: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              sseCallbacks.onTextChunk?.(streamPayload);
-            }
-          },
-          onTextReplace: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              sseCallbacks.onTextReplace?.(streamPayload);
-            }
-          },
-          onWorkflowFinished: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) handleWorkflowFinished(streamPayload);
-          },
-          onError: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) sseCallbacks.onError?.(streamPayload);
-          },
-          onIterationStarted: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              sseCallbacks.onIterationStarted?.(streamPayload);
-            }
-          },
-          onIterationNext: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              sseCallbacks.onIterationNext?.(streamPayload);
-            }
-          },
-          onIterationCompleted: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              sseCallbacks.onIterationCompleted?.(streamPayload);
-            }
-          },
-          onLoopStarted: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              sseCallbacks.onLoopStarted?.(streamPayload);
-            }
-          },
-          onLoopNext: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              sseCallbacks.onLoopNext?.(streamPayload);
-            }
-          },
-          onLoopCompleted: streamPayload => {
-            if (!isStaleApprovalResumeEvent(streamPayload)) {
-              sseCallbacks.onLoopCompleted?.(streamPayload);
-            }
-          },
+          onWorkflowStarted: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('workflow_started', streamPayload)),
+          onApprovalRequested: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('approval_requested', streamPayload)),
+          onApprovalResultFilled: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('approval_result_filled', streamPayload)),
+          onApprovalExpired: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('approval_expired', streamPayload)),
+          onQuestionAnswerRequested: streamPayload =>
+            dispatchWorkflowRunEvent(
+              toWorkflowRunEvent('question_answer_requested', streamPayload)
+            ),
+          onQuestionAnswerSubmitted: streamPayload =>
+            dispatchWorkflowRunEvent(
+              toWorkflowRunEvent('question_answer_submitted', streamPayload)
+            ),
+          onWorkflowPaused: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('workflow_paused', streamPayload)),
+          onNodeStarted: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('node_started', streamPayload)),
+          onNodeFinished: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('node_finished', streamPayload)),
+          onTextChunk: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('text_chunk', streamPayload)),
+          onTextReplace: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('text_replace', streamPayload)),
+          onMessage: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('message', streamPayload)),
+          onMessageEnd: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('message_end', streamPayload)),
+          onWorkflowFinished: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('workflow_finished', streamPayload)),
+          onError: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('error', streamPayload)),
+          onIterationStarted: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('iteration_started', streamPayload)),
+          onIterationNext: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('iteration_next', streamPayload)),
+          onIterationCompleted: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('iteration_completed', streamPayload)),
+          onLoopStarted: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('loop_started', streamPayload)),
+          onLoopNext: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('loop_next', streamPayload)),
+          onLoopCompleted: streamPayload =>
+            dispatchWorkflowRunEvent(toWorkflowRunEvent('loop_completed', streamPayload)),
         },
         streamParams,
         {
@@ -731,24 +805,40 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       );
     },
     [
-      dispatchApprovalEvent,
+      dispatchWorkflowRunEvent,
       getWorkflowRunIdFromPayload,
-      handleApprovalExpired,
-      handleApprovalRequested,
-      handleApprovalResultFilled,
-      handleQuestionAnswerRequested,
-      handleQuestionAnswerSubmitted,
-      handleWorkflowFinished,
-      handleWorkflowStarted,
-      isStaleApprovalResumeEvent,
-      markApprovalPausedNodes,
-      markQuestionAnswerPausedNodes,
-      rememberApprovalEventSequence,
-      sseCallbacks,
       startWorkflowRunEvents,
+      toWorkflowRunEvent,
       workflowRunId,
     ]
   );
+
+  useEffect(() => {
+    if (!approvalToken || !approvalSubmittedAction) return;
+    let cancelled = false;
+
+    const pollApprovalResumeEvents = async () => {
+      try {
+        const events = await fetchApprovalEvents(approvalToken, {
+          after: approvalEventCursorRef.current,
+          limit: 100,
+        });
+        if (cancelled || events.length === 0) return;
+        events.forEach(event => {
+          dispatchWorkflowRunEvent(event);
+        });
+      } catch {
+        // Keep waiting for the SSE stream; polling is only a resume safety net.
+      }
+    };
+
+    void pollApprovalResumeEvents();
+    const timer = window.setInterval(pollApprovalResumeEvents, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [approvalSubmittedAction, approvalToken, dispatchWorkflowRunEvent]);
 
   const handleWorkflowPaused = useCallback(
     (payload: unknown) => {

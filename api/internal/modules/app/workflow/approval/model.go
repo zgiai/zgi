@@ -9,6 +9,7 @@ type Form struct {
 	WorkflowRunID          string     `gorm:"type:varchar(255);not null;index" json:"workflow_run_id"`
 	NodeID                 string     `gorm:"type:varchar(255);not null;index" json:"node_id"`
 	NodeTitle              string     `gorm:"type:varchar(255)" json:"node_title"`
+	AccessToken            string     `gorm:"type:varchar(64);not null;uniqueIndex:idx_workflow_approval_forms_access_token" json:"access_token"`
 	FormDefinition         string     `gorm:"type:text;not null" json:"form_definition"`
 	RenderedContent        string     `gorm:"type:text;not null" json:"rendered_content"`
 	Status                 string     `gorm:"type:varchar(32);not null;default:'waiting';index" json:"status"`
@@ -49,7 +50,7 @@ type Recipient struct {
 	DeliveryID       string    `gorm:"type:uuid;not null;index" json:"delivery_id"`
 	RecipientType    string    `gorm:"type:varchar(64);not null" json:"recipient_type"`
 	RecipientPayload string    `gorm:"type:text;not null" json:"recipient_payload"`
-	AccessToken      string    `gorm:"type:varchar(64);not null;uniqueIndex" json:"access_token"`
+	AccessToken      *string   `gorm:"type:varchar(64);uniqueIndex" json:"access_token,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
