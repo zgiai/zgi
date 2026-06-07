@@ -92,6 +92,7 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 			InputPlaceholder:   "Ask",
 			SuggestedQuestions: []string{"Q1"},
 			FileUpload:         true,
+			SupportsVision:     true,
 			AgentMemoryEnabled: true,
 		},
 	})
@@ -108,6 +109,7 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 	require.NotContains(t, string(encoded), "secret-writable-table")
 	require.Contains(t, string(encoded), "Home")
 	require.Contains(t, string(encoded), "file_upload_enabled")
+	require.Contains(t, string(encoded), "supports_vision")
 	require.Contains(t, string(encoded), "agent_memory_enabled")
 }
 

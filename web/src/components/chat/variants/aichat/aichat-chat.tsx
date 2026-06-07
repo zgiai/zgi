@@ -85,6 +85,7 @@ interface AIChatShellProps {
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
   modelProps?: ModelSelectorModelProps | null;
+  supportsVisionOverride?: boolean;
   isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
   variant?: 'full' | 'embedded';
@@ -152,6 +153,7 @@ export function AIChatShell({
   controller,
   modelSelectorValue,
   modelProps,
+  supportsVisionOverride,
   isModelInitializing = false,
   onModelChange,
   variant = 'full',
@@ -838,6 +840,7 @@ export function AIChatShell({
           input={input}
           modelSelectorValue={modelSelectorValue}
           modelProps={modelProps}
+          supportsVisionOverride={supportsVisionOverride}
           isModelInitializing={isModelInitializing}
           modelMissing={modelMissing}
           isSending={isSending}

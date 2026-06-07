@@ -49,7 +49,10 @@ import {
   getUploadedAIChatFiles,
   isImageExtension,
   isVisionModel,
+  type ScopedTranslatorWithHas,
+  tAttachmentForSurface,
   toAIChatMessageFile,
+  type AIChatComposerSurface,
 } from '@/components/chat/variants/aichat/input-area-utils';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 
@@ -131,6 +134,7 @@ interface AIChatInputAreaProps {
   input: string;
   modelSelectorValue: AIChatModelValue;
   modelProps?: ModelSelectorModelProps | null;
+  supportsVisionOverride?: boolean;
   isModelInitializing?: boolean;
   modelMissing: boolean;
   isSending: boolean;
@@ -149,7 +153,7 @@ interface AIChatInputAreaProps {
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
   inputPlaceholder?: string;
-  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  surface?: AIChatComposerSurface;
 }
 
 /**
@@ -167,6 +171,7 @@ export function AIChatInputArea({
   input,
   modelSelectorValue,
   modelProps,
+  supportsVisionOverride,
   isModelInitializing = false,
   modelMissing,
   isSending,
@@ -233,7 +238,10 @@ export function AIChatInputArea({
   const hasUploadError = attachments.some(attachment => attachment.status === 'error');
   const hasImageAttachment = attachments.some(attachment => attachment.kind === 'image');
   const effectiveModelProps = modelProps ?? selectedModelProps;
-  const canUseImage = isVisionModel(effectiveModelProps);
+  const canUseImage =
+    typeof supportsVisionOverride === 'boolean'
+      ? supportsVisionOverride
+      : isVisionModel(effectiveModelProps);
   const modelCapabilityFilter = useMemo(
     () => (hasImageAttachment ? { features_vision: true } : undefined),
     [hasImageAttachment]
@@ -413,11 +421,15 @@ export function AIChatInputArea({
         return t('consoleChat.attachments.fileTooLarge', { max: sizeLimitMB });
       }
       if (kind === 'image' && !canUseImage) {
-        return t('consoleChat.attachments.imageVisionRequired');
+        return tAttachmentForSurface(
+          t as unknown as ScopedTranslatorWithHas,
+          surface,
+          'imageVisionRequired'
+        );
       }
       return null;
     },
-    [allowedExtensions, canUseImage, imageExtensions, imageMaxSizeMB, maxSizeMB, t]
+    [allowedExtensions, canUseImage, imageExtensions, imageMaxSizeMB, maxSizeMB, surface, t]
   );
 
   const uploadOneFile = useCallback(
@@ -585,11 +597,17 @@ export function AIChatInputArea({
 
   const handleImageUpload = useCallback(() => {
     if (!canUseImage) {
-      toast.info(t('consoleChat.attachments.imageVisionRequired'));
+      toast.info(
+        tAttachmentForSurface(
+          t as unknown as ScopedTranslatorWithHas,
+          surface,
+          'imageVisionRequired'
+        )
+      );
       return;
     }
     imageInputRef.current?.click();
-  }, [canUseImage, t]);
+  }, [canUseImage, surface, t]);
 
   const handleSystemFilesConfirm = useCallback(
     (files: FileItem[]) => {
@@ -624,7 +642,13 @@ export function AIChatInputArea({
             continue;
           }
           if (isImage && !canUseImage) {
-            toast.error(t('consoleChat.attachments.imageVisionRequired'));
+            toast.error(
+              tAttachmentForSurface(
+                t as unknown as ScopedTranslatorWithHas,
+                surface,
+                'imageVisionRequired'
+              )
+            );
             continue;
           }
 
@@ -646,7 +670,7 @@ export function AIChatInputArea({
         return nextItems.length > 0 ? [...current, ...nextItems] : current;
       });
     },
-    [allSelectableExtensions, allowedExtensions, canUseImage, imageExtensions, t]
+    [allSelectableExtensions, allowedExtensions, canUseImage, imageExtensions, surface, t]
   );
 
   const handleSend = useCallback(() => {
@@ -977,6 +1001,7 @@ export function AIChatInputArea({
               showMemoryToggle={showMemoryToggle}
               enableUpload={!hasActiveUserInputRequest && enableUpload}
               showFileLibraryPicker={showFileLibraryPicker}
+              surface={surface}
               onModelChange={onModelChange}
               onModelPropsChange={setSelectedModelProps}
               onUploadDocument={() => fileInputRef.current?.click()}

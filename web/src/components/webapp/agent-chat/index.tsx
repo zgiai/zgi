@@ -50,6 +50,7 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const isAuthInitialized = useAuthStore.use.isInitialized();
   const agentConfig = config.agent_config;
   const memoryEnabled = Boolean(agentConfig?.agent_memory_enabled);
+  const supportsVision = Boolean(agentConfig?.supports_vision);
   const requiresLoginForMemory =
     memoryEnabled && isAuthInitialized && !isAuthLoading && !isAuthenticated;
   const canUseFiles = Boolean(agentConfig?.file_upload_enabled && isAuthenticated);
@@ -123,6 +124,7 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       variant="full"
       showModelSelector={false}
       requireModel={false}
+      supportsVisionOverride={supportsVision}
       showMemoryToggle={false}
       enableUpload={canUseFiles}
       uploadScope={uploadScope}
