@@ -95,6 +95,7 @@ export interface WebAppWorkflowConfig {
   agent_config?: {
     agent_memory_enabled?: boolean;
     file_upload_enabled?: boolean;
+    supports_vision?: boolean;
     home_title?: string;
     input_placeholder?: string;
     suggested_questions?: string[];

@@ -264,6 +264,23 @@ func TestApplyAgentConfigRequestPersistsDatabaseBindings(t *testing.T) {
 	}
 }
 
+func TestAgentConfigSnapshotPreservesSupportsVision(t *testing.T) {
+	model := "qwen-vl-plus"
+	cfg := &AgentsConfig{
+		ModelVersionID: &model,
+	}
+
+	snapshot := agentConfigSnapshot("agent-1", cfg)
+	if snapshot["supports_vision"] != true {
+		t.Fatalf("snapshot supports_vision = %#v, want true", snapshot["supports_vision"])
+	}
+
+	fromSnapshot := agentConfigResponseFromSnapshot("agent-1", snapshot)
+	if !fromSnapshot.SupportsVision {
+		t.Fatal("fromSnapshot SupportsVision = false, want true")
+	}
+}
+
 func TestApplyAgentConfigRequestRecordsBindingActor(t *testing.T) {
 	cfg := &AgentsConfig{}
 	_, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{

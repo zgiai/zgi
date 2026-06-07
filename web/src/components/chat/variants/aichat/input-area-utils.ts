@@ -9,6 +9,8 @@ import type { UploadResponse } from '@/services/upload.service';
 import { generateClientId } from '@/utils/client-id';
 import { IMAGE_EXTENSIONS } from '@/utils/file-helpers';
 
+export type AIChatComposerSurface = 'aichat' | 'agent-draft' | 'agent-webapp';
+
 export interface ScopedTranslatorWithHas {
   (key: string, values?: Record<string, string | number | Date>): string;
   has?: (key: string) => boolean;
@@ -29,6 +31,27 @@ export function tWithFallback(
   } catch {
     return t(fallbackKey, values);
   }
+}
+
+export function tAttachmentForSurface(
+  t: ScopedTranslatorWithHas,
+  surface: AIChatComposerSurface,
+  key: string,
+  fallbackKey = key,
+  values?: Record<string, string | number | Date>
+): string {
+  const surfaceKey =
+    surface === 'agent-draft'
+      ? `consoleChat.attachments.agentDraft.${key}`
+      : surface === 'agent-webapp'
+        ? `consoleChat.attachments.agentWebapp.${key}`
+        : `consoleChat.attachments.${fallbackKey}`;
+
+  return tWithFallback(t, surfaceKey, `consoleChat.attachments.${fallbackKey}`, values);
+}
+
+export function imageAttachmentHintTranslationKey(surface: AIChatComposerSurface): string {
+  return surface === 'aichat' ? 'imageModelLocked' : 'imageAttachmentHint';
 }
 
 export function createAttachmentId(): string {

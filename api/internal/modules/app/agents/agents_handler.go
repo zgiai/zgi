@@ -805,6 +805,7 @@ func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.A
 		InputPlaceholder:   result.Config.InputPlaceholder,
 		SuggestedQuestions: result.Config.SuggestedQuestions,
 		FileUpload:         result.Config.FileUpload,
+		SupportsVision:     result.Config.SupportsVision,
 		AgentMemoryEnabled: result.Config.AgentMemoryEnabled,
 		Version:            result.Version,
 		VersionUUID:        result.VersionUUID,

@@ -288,6 +288,7 @@ type AgentConfigResponse struct {
 	SystemPrompt              string                  `json:"system_prompt"`
 	ModelProvider             string                  `json:"model_provider"`
 	Model                     string                  `json:"model"`
+	SupportsVision            bool                    `json:"supports_vision"`
 	ModelParameters           map[string]interface{}  `json:"model_parameters"`
 	EnabledSkillIDs           []string                `json:"enabled_skill_ids"`
 	UseMemory                 bool                    `json:"use_memory"`
@@ -399,6 +400,7 @@ type AgentPublicWebAppConfigResponse struct {
 	InputPlaceholder   string   `json:"input_placeholder"`
 	SuggestedQuestions []string `json:"suggested_questions"`
 	FileUpload         bool     `json:"file_upload_enabled"`
+	SupportsVision     bool     `json:"supports_vision"`
 	AgentMemoryEnabled bool     `json:"agent_memory_enabled"`
 	Version            string   `json:"version"`
 	VersionUUID        string   `json:"version_uuid"`

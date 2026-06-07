@@ -368,6 +368,20 @@ const messages = {
       uploadDocumentTooltip: 'Attach up to {count} files, {size} MB each. Supported: {types}.',
       uploadImageTooltip:
         'Attach images with a vision-capable model. Up to {count} files, {size} MB each. Supported: {types}.',
+      agentDraft: {
+        imageAttachmentHint: 'Uploaded images will be sent with this agent debug message.',
+        imageVisionRequired:
+          'The model configured for this agent does not support image understanding. Switch to a vision-capable model in the agent model settings.',
+        uploadImageTooltip:
+          'Attach images for this agent debug run. Up to {count} files, {size} MB each. Supported: {types}.',
+      },
+      agentWebapp: {
+        imageAttachmentHint: 'Uploaded images will be sent with this message for the app to understand.',
+        imageVisionRequired:
+          'This app has not enabled image understanding. Please contact the app administrator.',
+        uploadImageTooltip:
+          'Attach images for this app to understand. Up to {count} files, {size} MB each. Supported: {types}.',
+      },
     },
   },
   appCenter: {

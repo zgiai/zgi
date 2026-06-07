@@ -854,9 +854,11 @@ func (s *agentsService) CreateAgent(ctx context.Context, tenantID string, req in
 
 	if ag.AgentsType == "AGENT" || ag.AgentsType == "CHAT_AGENT" || ag.AgentsType == "GENERATION_AGENT" {
 		cfg := &AgentsConfig{AgentsID: ag.ID, PromptType: "simple"}
-		if provider, model := s.resolveDefaultLLMModel(ctx, organizationID, "agent creation"); model != "" {
+		if provider, model, err := s.resolveDefaultLLMModel(ctx, organizationID, "agent creation"); err == nil && model != "" {
 			cfg.ModelProvider = &provider
 			cfg.ModelVersionID = &model
+		} else if err != nil && !isAgentSuggestedQuestionsConfigurationError(err) {
+			logger.WarnContext(ctx, "failed to resolve default LLM model for agent creation", "organization_id", organizationID, err)
 		}
 		if err := s.agentsRepo.CreateAgentsConfig(ctx, cfg); err != nil {
 			return nil, err
