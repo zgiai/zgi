@@ -1,0 +1,9 @@
+version: 1
+profiles:
+  local:
+    include: [".kest/flow/**/*.flow.md"]
+    env: local
+    base_url: "http://127.0.0.1:2679"
+    strict: true
+    fail_fast: false
+    sync: false
