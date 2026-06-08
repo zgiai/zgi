@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
 
@@ -589,14 +590,19 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPaginationWithPermi
 			Select("1").
 			Where("workspace_members.workspace_id = datasets.workspace_id").
 			Where("workspace_members.account_id = ?", accountID).
-			Where("workspace_members.role IN ?", []string{"OWNER", "ADMIN"})
+			Where("workspace_members.role IN ?", []workspace_model.WorkspaceMemberRole{
+				workspace_model.WorkspaceRoleOwner,
+				workspace_model.WorkspaceRoleAdmin,
+			})
 
 		// 2. only_me_condition: Dataset permission is only_me and user is creator
-		onlyMeCondition := r.db.Where("permission = ? AND created_by = ?", "only_me", accountID)
+		onlyMeCondition := r.db.Where("permission = ? AND created_by = ?", model.DatasetPermissionOnlyMe, accountID)
 
 		// 3. all_team_condition: Dataset permission is all_team/all_team_members and user is member of the tenant
-
-		allTeamCondition := r.db.Where("EXISTS (?)",
+		allTeamCondition := r.db.Where("permission IN ?", []model.DatasetPermissionType{
+			model.DatasetPermissionAllTeam,
+			model.DatasetPermissionAllTeamMembers,
+		}).Where("EXISTS (?)",
 			r.db.Table("workspace_members").
 				Select("1").
 				Where("workspace_members.workspace_id = datasets.workspace_id").

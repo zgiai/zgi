@@ -373,7 +373,7 @@ var DataKnowledgeSchema = File{
     name character varying(255) NOT NULL,
     description text,
     provider character varying(255) DEFAULT 'vendor'::character varying NOT NULL,
-    permission character varying(255) DEFAULT 'only_me'::character varying NOT NULL,
+    permission character varying(255) DEFAULT 'all_team'::character varying NOT NULL,
     data_source_type character varying(255),
     indexing_technique character varying(255),
     index_struct text,

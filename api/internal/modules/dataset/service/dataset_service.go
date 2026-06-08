@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -19,9 +20,15 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"github.com/zgiai/zgi/api/pkg/vectordb"
+)
+
+var (
+	ErrDatasetAccessDenied      = errors.New("dataset access denied")
+	ErrInvalidDatasetPermission = errors.New("invalid dataset permission")
 )
 
 type DatasetService interface {
@@ -136,6 +143,7 @@ type CreateDatasetRequest struct {
 	Name                   string                 `json:"name" binding:"required"`
 	Description            *string                `json:"description"`
 	Provider               string                 `json:"provider"`
+	Permission             *string                `json:"permission"`
 	EmbeddingModel         *string                `json:"embedding_model"`
 	EmbeddingModelProvider *string                `json:"embedding_model_provider"`
 	EntityModel            *string                `json:"entity_model"`
@@ -280,6 +288,14 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 	// 	return nil, fmt.Errorf("knowledge base quota exceeded. current: %d, limit: %d", currentUsage, limit)
 	// }
 
+	permission := string(model.DatasetPermissionAllTeam)
+	if req.Permission != nil {
+		permission = model.NormalizeDatasetPermission(*req.Permission)
+	}
+	if !model.IsValidDatasetCreatePermission(permission) {
+		return nil, ErrInvalidDatasetPermission
+	}
+
 	// Convert request to model
 	dataset := &model.Dataset{
 		OrganizationID:         group.ID,
@@ -287,6 +303,7 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 		Name:                   req.Name,
 		Description:            req.Description,
 		Provider:               req.Provider,
+		Permission:             permission,
 		EmbeddingModel:         req.EmbeddingModel,
 		EmbeddingModelProvider: req.EmbeddingModelProvider,
 		EntityModel:            req.EntityModel,
@@ -519,13 +536,12 @@ func (s *datasetService) UpdateDataset(ctx context.Context, req *UpdateDatasetRe
 }
 
 func (s *datasetService) DeleteDataset(ctx context.Context, datasetID, accountID, tenantID string) error {
-	// Check permission first
-	hasPermission, err := s.CheckDatasetPermission(ctx, datasetID, accountID, tenantID)
+	hasPermission, err := s.CheckEditorPermission(ctx, datasetID, accountID, tenantID)
 	if err != nil {
 		return fmt.Errorf("failed to check permission: %w", err)
 	}
 	if !hasPermission {
-		return fmt.Errorf("access denied")
+		return ErrDatasetAccessDenied
 	}
 
 	// Step 1: Get dataset information before deletion (for recording)
@@ -764,7 +780,15 @@ func (s *datasetService) GetDatasetDocuments(ctx context.Context, datasetID stri
 }
 
 func (s *datasetService) CheckDatasetPermission(ctx context.Context, datasetID, accountID, tenantID string) (bool, error) {
-	return s.datasetRepo.CheckDatasetPermission(ctx, datasetID, accountID, tenantID)
+	dataset, err := s.datasetRepo.GetByID(ctx, datasetID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get dataset: %w", err)
+	}
+
+	return s.canReadDataset(ctx, dataset, accountID)
 }
 
 // GetDatasetsList Get datasets list (matches DatasetListApi.get)
@@ -868,29 +892,71 @@ func (s *datasetService) GetDatasetsListEx(ctx context.Context, req *GetDatasets
 }
 
 func (s *datasetService) GetDatasetWithPermissionCheck(ctx context.Context, datasetID, accountID, workspaceID string) (*model.Dataset, error) {
-	// Check permission first
-	hasPermission, err := s.CheckDatasetPermission(ctx, datasetID, accountID, workspaceID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check permission: %w", err)
-	}
-	if !hasPermission {
-		return nil, fmt.Errorf("access denied")
-	}
-
-	// Get dataset
 	dataset, err := s.datasetRepo.GetByID(ctx, datasetID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dataset: %w", err)
 	}
 
+	hasPermission, err := s.canReadDataset(ctx, dataset, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check dataset permission: %w", err)
+	}
+	if !hasPermission {
+		return nil, ErrDatasetAccessDenied
+	}
+
 	return dataset, nil
+}
+
+func (s *datasetService) canReadDataset(ctx context.Context, dataset *model.Dataset, accountID string) (bool, error) {
+	if dataset == nil {
+		return false, nil
+	}
+	if dataset.CreatedBy == accountID {
+		return true, nil
+	}
+	if s.tenantSvc != nil && s.tenantSvc.CheckPermission(ctx, dataset.WorkspaceID, accountID) {
+		return true, nil
+	}
+	if !model.IsDatasetWorkspaceVisiblePermission(dataset.Permission) {
+		return false, nil
+	}
+	if s.enterpriseService == nil {
+		return false, nil
+	}
+
+	return s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
+		ctx,
+		dataset.OrganizationID,
+		dataset.WorkspaceID,
+		accountID,
+		workspace_model.WorkspacePermissionKnowledgeBaseView,
+		workspace_model.WorkspacePermissionKnowledgeBaseManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+	)
+}
+
+func (s *datasetService) canEditDataset(ctx context.Context, dataset *model.Dataset, accountID string) bool {
+	if dataset == nil {
+		return false
+	}
+	if dataset.CreatedBy == accountID {
+		return true
+	}
+	return s.tenantSvc != nil && s.tenantSvc.CheckPermission(ctx, dataset.WorkspaceID, accountID)
 }
 
 // CheckEditorPermission checks if user has editor permission for dataset
 func (s *datasetService) CheckEditorPermission(ctx context.Context, datasetID, accountID, tenantID string) (bool, error) {
-	// For now, use the same logic as CheckDatasetPermission
-	// In a real implementation, you might have different permission levels
-	return s.CheckDatasetPermission(ctx, datasetID, accountID, tenantID)
+	dataset, err := s.datasetRepo.GetByID(ctx, datasetID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get dataset: %w", err)
+	}
+
+	return s.canEditDataset(ctx, dataset, accountID), nil
 }
 
 // EstimateIndexing estimates indexing requirements
@@ -1148,7 +1214,7 @@ func (s *datasetService) GetDatasetAppDefault(ctx context.Context, datasetID, ac
 		return nil, fmt.Errorf("failed to check permission: %w", err)
 	}
 	if !hasPermission {
-		return nil, fmt.Errorf("access denied")
+		return nil, ErrDatasetAccessDenied
 	}
 
 	// Return empty for now - this would typically return default app configuration

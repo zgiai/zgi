@@ -124,6 +124,7 @@ func createSegmentVectorTestTables(t *testing.T, db *gorm.DB) {
 			name text NOT NULL,
 			description text,
 			provider text NOT NULL,
+			permission text NOT NULL,
 			enable_graph_flow boolean,
 			created_by text NOT NULL,
 			created_at datetime,
