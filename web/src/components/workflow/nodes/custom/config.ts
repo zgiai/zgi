@@ -468,7 +468,7 @@ export const NODE_THEMES: Record<WorkflowNodeData['type'] | 'default', NodeTheme
       iconBg: NODE_ICON_TONES.agent,
     },
     miniMapColor: '#2563eb',
-    handles: 'none',
+    handles: 'both',
     resizable: false,
     autoHeight: true,
   },
@@ -515,4 +515,5 @@ export const NODE_CONFIG: Record<string, { handleKey?: string }> = {
   'create-scheduled-task': { handleKey: 'createScheduledTask' },
   'notification-sms': { handleKey: 'notificationSms' },
   announcement: { handleKey: 'announcement' },
+  'question-answer': { handleKey: 'questionAnswer' },
 };

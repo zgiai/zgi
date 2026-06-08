@@ -177,17 +177,21 @@ const CustomNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
     id,
   ]);
 
+  const shouldRenderDefaultHandles = data?.type !== 'if-else';
+  const shouldRenderDefaultSourceHandle =
+    data?.type !== 'question-answer' || questionAnswerAnswerType !== 'choice';
+
   const handles = (
     <>
       {/* For if-else, handles are rendered inline within content to align with rows */}
-      {data?.type !== 'if-else' && (
+      {shouldRenderDefaultHandles && (
         <>
           {(theme.handles === 'target' || theme.handles === 'both') && cfg?.target && (
             <CustomHandle {...cfg.target} />
           )}
-          {(theme.handles === 'source' || theme.handles === 'both') && cfg?.source && (
-            <CustomHandle {...cfg.source} />
-          )}
+          {shouldRenderDefaultSourceHandle &&
+            (theme.handles === 'source' || theme.handles === 'both') &&
+            cfg?.source && <CustomHandle {...cfg.source} />}
         </>
       )}
     </>

@@ -69,10 +69,24 @@ export default function QuestionAnswerManager({
 }: QuestionAnswerManagerProps) {
   const t = useT('nodes');
   const questionEditorRef = React.useRef<WorkflowValueEditorHandle | null>(null);
+  const extractionFieldRowKeysRef = React.useRef<string[]>([]);
+  const extractionFieldRowKeySequenceRef = React.useRef(0);
+  const createExtractionFieldRowKey = React.useCallback(() => {
+    const key = `extraction-field-${extractionFieldRowKeySequenceRef.current}`;
+    extractionFieldRowKeySequenceRef.current += 1;
+    return key;
+  }, []);
   const rawData = useNodeData<QuestionAnswerNodeData>(id);
   const updateData = useNodeDataUpdate<QuestionAnswerNodeData>(id);
   const data = React.useMemo(() => normalizeQuestionAnswerNodeData(rawData), [rawData]);
   const outputVariables = useNodeOutputVariables(id);
+
+  while (extractionFieldRowKeysRef.current.length < data.extraction_fields.length) {
+    extractionFieldRowKeysRef.current.push(createExtractionFieldRowKey());
+  }
+  if (extractionFieldRowKeysRef.current.length > data.extraction_fields.length) {
+    extractionFieldRowKeysRef.current.length = data.extraction_fields.length;
+  }
 
   const patchData = React.useCallback(
     (patch: Partial<QuestionAnswerNodeData>) => {
@@ -128,6 +142,7 @@ export default function QuestionAnswerManager({
   const removeExtractionField = React.useCallback(
     (index: number) => {
       if (readOnly) return;
+      extractionFieldRowKeysRef.current.splice(index, 1);
       updateData({
         extraction_fields: data.extraction_fields.filter((_, fieldIndex) => fieldIndex !== index),
       });
@@ -137,13 +152,14 @@ export default function QuestionAnswerManager({
 
   const addExtractionField = React.useCallback(() => {
     if (readOnly) return;
+    extractionFieldRowKeysRef.current.push(createExtractionFieldRowKey());
     updateData({
       extraction_fields: [
         ...data.extraction_fields,
         createQuestionAnswerExtractionField(data.extraction_fields),
       ],
     });
-  }, [data.extraction_fields, readOnly, updateData]);
+  }, [createExtractionFieldRowKey, data.extraction_fields, readOnly, updateData]);
 
   const setAnswerType = React.useCallback(
     (answerType: QuestionAnswerType) => {
@@ -258,64 +274,73 @@ export default function QuestionAnswerManager({
 
               <Section title={t('questionAnswer.manager.extractionFields')}>
                 <div className="space-y-2">
-                  {data.extraction_fields.map((field, index) => (
-                    <div key={`${field.name}-${index}`} className="space-y-2 rounded-md border p-2">
-                      <div className="grid grid-cols-[minmax(0,1fr)_116px_32px] gap-2">
+                  {data.extraction_fields.map((field, index) => {
+                    const rowKey = extractionFieldRowKeysRef.current[index];
+                    if (!rowKey) {
+                      throw new Error('Missing question answer extraction field row key');
+                    }
+
+                    return (
+                      <div key={rowKey} className="space-y-2 rounded-md border p-2">
+                        <div className="grid grid-cols-[minmax(0,1fr)_116px_32px] gap-2">
+                          <Input
+                            value={field.name}
+                            disabled={readOnly}
+                            placeholder={t('questionAnswer.placeholders.extractionFieldName')}
+                            onChange={event =>
+                              updateExtractionField(index, { name: event.target.value })
+                            }
+                          />
+                          <Select
+                            value={field.type}
+                            disabled={readOnly}
+                            onValueChange={value =>
+                              updateExtractionField(index, {
+                                type: value as QuestionAnswerExtractionField['type'],
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="string">String</SelectItem>
+                              <SelectItem value="number">Number</SelectItem>
+                              <SelectItem value="boolean">Boolean</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            isIcon
+                            disabled={readOnly}
+                            onClick={() => removeExtractionField(index)}
+                            aria-label={t('common.remove')}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
                         <Input
-                          value={field.name}
+                          value={field.description}
                           disabled={readOnly}
-                          placeholder={t('questionAnswer.placeholders.extractionFieldName')}
-                          onChange={event => updateExtractionField(index, { name: event.target.value })}
-                        />
-                        <Select
-                          value={field.type}
-                          disabled={readOnly}
-                          onValueChange={value =>
-                            updateExtractionField(index, {
-                              type: value as QuestionAnswerExtractionField['type'],
-                            })
+                          placeholder={t('questionAnswer.placeholders.extractionFieldDescription')}
+                          onChange={event =>
+                            updateExtractionField(index, { description: event.target.value })
                           }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="string">String</SelectItem>
-                            <SelectItem value="number">Number</SelectItem>
-                            <SelectItem value="boolean">Boolean</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          isIcon
-                          disabled={readOnly}
-                          onClick={() => removeExtractionField(index)}
-                          aria-label={t('common.remove')}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
+                        />
+                        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Checkbox
+                            checked={field.required}
+                            disabled={readOnly}
+                            onCheckedChange={checked =>
+                              updateExtractionField(index, { required: Boolean(checked) })
+                            }
+                          />
+                          {t('questionAnswer.manager.requiredField')}
+                        </label>
                       </div>
-                      <Input
-                        value={field.description}
-                        disabled={readOnly}
-                        placeholder={t('questionAnswer.placeholders.extractionFieldDescription')}
-                        onChange={event =>
-                          updateExtractionField(index, { description: event.target.value })
-                        }
-                      />
-                      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Checkbox
-                          checked={field.required}
-                          disabled={readOnly}
-                          onCheckedChange={checked =>
-                            updateExtractionField(index, { required: Boolean(checked) })
-                          }
-                        />
-                        {t('questionAnswer.manager.requiredField')}
-                      </label>
-                    </div>
-                  ))}
+                    );
+                  })}
                   <Button
                     type="button"
                     variant="outline"
