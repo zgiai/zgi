@@ -72,7 +72,11 @@ func TestAgentRuntimeRunsReturnsOnlyNewWebAppMessages(t *testing.T) {
 			"elapsed_time_ms":       123.0,
 			"system_prompt_version": "agent.v1",
 			"usage":                 map[string]interface{}{"total_tokens": 9.0},
-			"skill_step_count":      1.0,
+			"model_invocations": []interface{}{
+				map[string]interface{}{"usage": map[string]interface{}{"total_tokens": 3.0}},
+				map[string]interface{}{"total_tokens": 4.0},
+			},
+			"skill_step_count": 1.0,
 		},
 	})
 	service.addMessage(&runtimemodel.Message{
@@ -119,6 +123,9 @@ func TestAgentRuntimeRunsReturnsOnlyNewWebAppMessages(t *testing.T) {
 	}
 	if got := items[0]["answer_preview"]; got != "world" {
 		t.Fatalf("answer_preview = %#v, want world", got)
+	}
+	if got := items[0]["total_tokens"]; got != float64(7) {
+		t.Fatalf("total_tokens = %#v, want sum of model invocations 7", got)
 	}
 }
 
@@ -559,6 +566,15 @@ func TestAgentRuntimeStepsIncludeWorkflowRunEvents(t *testing.T) {
 						"approval_url":     "https://example.test/approve",
 						"approval_form":    map[string]interface{}{"title": "Approve"},
 					},
+					"approval_result": map[string]interface{}{
+						"approval_form_id": "form-1",
+						"action":           "approve",
+						"action_label":     "Approve",
+						"inputs":           map[string]interface{}{"comment": "ok"},
+					},
+					"question_answer": map[string]interface{}{
+						"answer": "workflow output",
+					},
 					"nodes": []interface{}{
 						map[string]interface{}{
 							"node_id":      "node-1",
@@ -579,8 +595,8 @@ func TestAgentRuntimeStepsIncludeWorkflowRunEvents(t *testing.T) {
 
 	items := buildAgentRuntimeSteps(message)
 
-	if len(items) != 4 {
-		t.Fatalf("items len = %d, want 4", len(items))
+	if len(items) != 2 {
+		t.Fatalf("items len = %d, want 2", len(items))
 	}
 	if items[0].Type != "workflow_run" || items[0].Title != "Workflow run: workflow-1" {
 		t.Fatalf("first item = %#v, want workflow run event", items[0])
@@ -589,21 +605,32 @@ func TestAgentRuntimeStepsIncludeWorkflowRunEvents(t *testing.T) {
 	if runInput["api_key"] != "[REDACTED]" || runInput["query"] != "run workflow" {
 		t.Fatalf("workflow run input = %#v, want sensitive fields redacted only", runInput)
 	}
-	if items[1].Type != "workflow_node" || items[1].Title != "Workflow node: Generate" {
-		t.Fatalf("second item = %#v, want workflow node event", items[1])
+	process := items[0].Process
+	nodes := process["nodes"].([]interface{})
+	if len(nodes) != 1 {
+		t.Fatalf("workflow run process nodes = %#v, want one node", nodes)
 	}
-	nodeOutput := items[1].Output.(map[string]interface{})
+	node := nodes[0].(map[string]interface{})
+	if node["node_id"] != "node-1" || node["node_type"] != "llm" {
+		t.Fatalf("workflow run node = %#v, want persisted node detail", node)
+	}
+	nodeOutput := node["outputs"].(map[string]interface{})
 	if nodeOutput["token"] != "[REDACTED]" || nodeOutput["text"] != "world" {
 		t.Fatalf("workflow node output = %#v, want sensitive fields redacted only", nodeOutput)
 	}
-	if items[2].Type != "workflow_approval" || items[2].Status != "pending_approval" {
-		t.Fatalf("third item = %#v, want workflow approval event", items[2])
+	approvals := process["approvals"].([]interface{})
+	if len(approvals) != 1 {
+		t.Fatalf("workflow run process approvals = %#v, want one approval lifecycle", approvals)
 	}
-	if items[2].Process["workflow_run_id"] != "run-1" || items[2].Process["approval_form_id"] != "form-1" {
-		t.Fatalf("workflow approval process = %#v, want workflow and approval ids", items[2].Process)
+	approval := approvals[0].(map[string]interface{})
+	if approval["status"] != "succeeded" || approval["approval_form_id"] != "form-1" {
+		t.Fatalf("workflow approval lifecycle = %#v, want succeeded form-1", approval)
 	}
-	if items[3].Type != "model_answer" {
-		t.Fatalf("final item = %#v, want model answer", items[3])
+	if _, ok := process["question_answers"]; ok {
+		t.Fatalf("workflow run process question_answers = %#v, want no fake question event", process["question_answers"])
+	}
+	if items[1].Type != "model_answer" {
+		t.Fatalf("final item = %#v, want model answer", items[1])
 	}
 }
 
@@ -949,7 +976,11 @@ func (s *fakeRuntimeHistoryService) BeginWorkflowApprovalContinuation(ctx contex
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (s *fakeRuntimeHistoryService) RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (map[string]interface{}, error) {
+func (s *fakeRuntimeHistoryService) RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*runtimeservice.StreamEvent, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) AppendWorkflowApprovalContinuationStreamEvent(ctx context.Context, continuation *runtimeservice.WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*runtimeservice.StreamEvent, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -961,7 +992,7 @@ func (s *fakeRuntimeHistoryService) PauseWorkflowApprovalContinuation(ctx contex
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (s *fakeRuntimeHistoryService) SummarizeWorkflowApprovalContinuation(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, req runtimeservice.WorkflowContinuationSummaryRequest, onChunk func(string) error) (*runtimeservice.ChatResult, error) {
+func (s *fakeRuntimeHistoryService) SummarizeWorkflowApprovalContinuation(ctx context.Context, scope runtimeservice.Scope, continuation *runtimeservice.WorkflowApprovalContinuation, req runtimeservice.WorkflowContinuationSummaryRequest, onEvent func(runtimeservice.StreamEvent) error) (*runtimeservice.ChatResult, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 

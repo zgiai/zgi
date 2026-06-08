@@ -867,11 +867,31 @@ func metadataInt(metadata map[string]interface{}, key string) int {
 }
 
 func metadataTotalTokens(metadata map[string]interface{}) int {
+	total := 0
+	for _, invocation := range runtimeSkillInvocations(metadata["model_invocations"]) {
+		if usage := runtimeMap(invocation["usage"]); len(usage) > 0 {
+			total += metadataFirstInt(usage, "total_tokens", "totalTokens", "TotalTokens")
+			continue
+		}
+		total += metadataFirstInt(invocation, "total_tokens", "totalTokens", "TotalTokens")
+	}
+	if total > 0 {
+		return total
+	}
 	usage, ok := metadata["usage"].(map[string]interface{})
 	if !ok {
 		return 0
 	}
 	return metadataInt(usage, "total_tokens")
+}
+
+func metadataFirstInt(metadata map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		if value := metadataInt(metadata, key); value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func uuidPointerString(value *uuid.UUID) *string {
