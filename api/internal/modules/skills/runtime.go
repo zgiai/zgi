@@ -853,6 +853,62 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"content": "# Report\n\nSummary...", "format": "md", "filename": "report"},
 		},
+		SkillChartGenerator + "/generate_chart": {
+			SkillID:     SkillChartGenerator,
+			ToolName:    "generate_chart",
+			Description: "Generate a downloadable SVG chart artifact from structured data after chart type, title, data mapping, and rendering style have been provided or confirmed. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution. For generic chart requests, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"chart_type":      enumStringSchema("Chart type.", []string{"radar", "bar", "line", "pie", "doughnut", "scatter", "score_distribution"}),
+					"title":           stringValueSchema("Optional chart title."),
+					"output_filename": stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"data":            chartDataSchema(),
+					"options": objectSchema(
+						map[string]interface{}{
+							"width":       numberSchema("Optional SVG width. Defaults to 900."),
+							"height":      numberSchema("Optional SVG height. Defaults to 700 for radar and 620 for bar/line."),
+							"style":       enumStringSchema("Rendering style.", []string{"simple", "business", "teaching", "comparison"}),
+							"show_values": booleanSchema("Whether to show point values. Defaults to true."),
+							"show_labels": booleanSchema("Whether to show scatter point labels. Defaults to true."),
+							"legend":      booleanSchema("Whether to show legend. Defaults to true."),
+							"grid":        booleanSchema("Whether to show grid lines. Defaults to true for bar/line."),
+						},
+						nil,
+					),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"chart_type", "data"},
+			),
+			Example: map[string]interface{}{
+				"chart_type":      "radar",
+				"title":           "Score Comparison",
+				"output_filename": "score-radar",
+				"data": map[string]interface{}{
+					"dimensions": []string{"Chinese", "Math", "English", "Physics", "Chemistry", "Biology"},
+					"max_value":  100,
+					"series": []map[string]interface{}{
+						{"name": "Class Average", "values": []int{78, 82, 80, 75, 73, 76}},
+						{"name": "Student", "values": []int{88, 92, 84, 81, 77, 86}},
+					},
+				},
+			},
+		},
+		SkillWorkReport + "/generate_file": {
+			SkillID:     SkillWorkReport,
+			ToolName:    "generate_file",
+			Description: "Generate a downloadable weekly, monthly, or work report artifact from prepared report content.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"content":   stringValueSchema("Final weekly, monthly, or work report content to write into the generated file."),
+					"format":    enumStringSchema("Output format.", []string{"txt", "md", "docx", "pdf"}),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional document title used by generated PDF files."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"content", "format"},
+			),
+			Example: map[string]interface{}{"content": "# Weekly Work Report\n\n## Summary\n\n...", "format": "md", "filename": "weekly-work-report"},
+		},
 		SkillInternalKnowledge + "/list_accessible_knowledge_bases": {
 			SkillID:     SkillInternalKnowledge,
 			ToolName:    "list_accessible_knowledge_bases",
@@ -1140,6 +1196,126 @@ func booleanSchema(description string) map[string]interface{} {
 		"type":        "boolean",
 		"description": description,
 	}
+}
+
+func arraySchema(description string, items map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "array",
+		"description": description,
+		"items":       items,
+	}
+}
+
+func chartDataSchema() map[string]interface{} {
+	series := arraySchema(
+		"Chart data series. Radar supports 1-2 series; bar and line support 1-8 series.",
+		objectSchema(
+			map[string]interface{}{
+				"name":   stringValueSchema("Series label."),
+				"values": arraySchema("Numeric values matching the selected chart labels length.", numberSchema("Score or metric value.")),
+				"color":  stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"name", "values"},
+		),
+	)
+	pieItems := arraySchema(
+		"Pie or doughnut chart items.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Slice label."),
+				"value": numberSchema("Slice value."),
+				"color": stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"label", "value"},
+		),
+	)
+	scatterPoints := arraySchema(
+		"Scatter chart points.",
+		objectSchema(
+			map[string]interface{}{
+				"x":     numberSchema("X-axis value."),
+				"y":     numberSchema("Y-axis value."),
+				"label": stringValueSchema("Optional point label."),
+				"color": stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"x", "y"},
+		),
+	)
+	scoreCountBands := arraySchema(
+		"Precomputed score distribution bands.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Band label such as 90-100."),
+				"count": numberSchema("Precomputed count for this band."),
+			},
+			[]string{"label", "count"},
+		),
+	)
+	scoreRangeBands := arraySchema(
+		"Score distribution bands used to count raw scores.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Band label such as 90-100."),
+				"min":   numberSchema("Inclusive minimum score when calculating from raw scores."),
+				"max":   numberSchema("Inclusive maximum score when calculating from raw scores."),
+			},
+			[]string{"label", "min", "max"},
+		),
+	)
+	common := map[string]interface{}{
+		"max_value": numberSchema("Optional shared maximum value. Radar defaults to 100; bar and line auto-scale when omitted."),
+		"series":    series,
+	}
+	radarProps := copySchemaProperties(common)
+	radarProps["dimensions"] = stringArrayOrCSVSchema("Radar axis labels, such as subject names. Required for radar charts.")
+	barProps := copySchemaProperties(common)
+	barProps["categories"] = stringArrayOrCSVSchema("Bar chart category labels.")
+	lineProps := copySchemaProperties(common)
+	lineProps["x_axis"] = stringArrayOrCSVSchema("Line chart x-axis labels.")
+	lineProps["categories"] = stringArrayOrCSVSchema("Line chart x-axis labels alias.")
+	pieProps := map[string]interface{}{
+		"items": pieItems,
+	}
+	scatterProps := map[string]interface{}{
+		"x_label": stringValueSchema("Optional x-axis label."),
+		"y_label": stringValueSchema("Optional y-axis label."),
+		"x_min":   numberSchema("Optional x-axis minimum."),
+		"x_max":   numberSchema("Optional x-axis maximum."),
+		"y_min":   numberSchema("Optional y-axis minimum."),
+		"y_max":   numberSchema("Optional y-axis maximum."),
+		"points":  scatterPoints,
+	}
+	distributionCountProps := map[string]interface{}{
+		"bands":     scoreCountBands,
+		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
+	}
+	distributionRangeProps := map[string]interface{}{
+		"bands":     scoreRangeBands,
+		"scores":    arraySchema("Raw score values or objects with value.", map[string]interface{}{"oneOf": []interface{}{numberSchema("Raw score value."), objectSchema(map[string]interface{}{"label": stringValueSchema("Optional score label."), "value": numberSchema("Raw score value.")}, []string{"value"})}}),
+		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
+	}
+
+	return map[string]interface{}{
+		"description": "Chart-specific data. Use dimensions for radar, categories for bar, x_axis or categories for line, items for pie/doughnut, points for scatter, and bands for score_distribution.",
+		"anyOf": []interface{}{
+			objectSchema(radarProps, []string{"dimensions", "series"}),
+			objectSchema(barProps, []string{"categories", "series"}),
+			objectSchema(lineProps, []string{"x_axis", "series"}),
+			objectSchema(lineProps, []string{"categories", "series"}),
+			objectSchema(pieProps, []string{"items"}),
+			objectSchema(scatterProps, []string{"points"}),
+			objectSchema(distributionCountProps, []string{"bands"}),
+			objectSchema(distributionRangeProps, []string{"bands", "scores"}),
+		},
+	}
+}
+
+func copySchemaProperties(input map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func stringArrayOrCSVSchema(description string) map[string]interface{} {
