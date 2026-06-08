@@ -410,6 +410,12 @@ function WorkflowTimelineRow({
   const approvalToken =
     typeof item.approval?.approval_token === 'string' ? item.approval.approval_token : '';
   const hasApproval = Boolean(approvalUrl || approvalFormId || approvalToken);
+  const approvalStatus =
+    typeof item.approval?.status === 'string' ? item.approval.status.toLowerCase() : '';
+  const showPendingApproval =
+    item.status === 'pending_approval' &&
+    hasApproval &&
+    !['submitted', 'approved', 'rejected', 'expired'].includes(approvalStatus);
 
   return (
     <div className="border-l-2 border-muted-foreground/20 pl-3">
@@ -421,7 +427,7 @@ function WorkflowTimelineRow({
         defaultOpen={item.status === 'running' || item.status === 'pending_approval'}
         className="max-w-3xl rounded-md bg-background"
       />
-      {item.status === 'pending_approval' && hasApproval ? (
+      {showPendingApproval ? (
         <WorkflowApprovalPanel
           approvalToken={approvalToken}
           approvalUrl={approvalUrl}

@@ -83,6 +83,30 @@ const isEmptyValue = (value: unknown): boolean => {
   return false;
 };
 
+const normalizeNodeRunStatus = (status: unknown): NodeRunStatus => {
+  switch (String(status ?? '').trim().toLowerCase()) {
+    case 'success':
+    case 'succeeded':
+    case 'completed':
+      return 'succeeded';
+    case 'failed':
+    case 'error':
+      return 'failed';
+    case 'stopped':
+      return 'stopped';
+    case 'paused':
+      return 'paused';
+    case 'running':
+    default:
+      return 'running';
+  }
+};
+
+const getNodesElapsedTime = (nodes: WorkflowRunNodeListItem[] | undefined): number | undefined => {
+  const total = (nodes ?? []).reduce((sum, node) => sum + (node.elapsedTime ?? 0), 0);
+  return total > 0 ? total : undefined;
+};
+
 const pickRecordKeys = (value: unknown, keys: string[]): Record<string, unknown> | undefined => {
   if (!isRecord(value)) return undefined;
   const result: Record<string, unknown> = {};
@@ -105,8 +129,43 @@ const groupWorkflowRunItems = (items: WorkflowRunNodeListItem[]): WorkflowRunNod
     groups.get(key)?.push(item);
   });
 
-  return order.map(key => ({ key, executions: groups.get(key) ?? [] }));
+  return order.map(key => ({
+    key,
+    executions: normalizeWorkflowRunGroupExecutions(groups.get(key) ?? []),
+  }));
 };
+
+const shouldMergeWorkflowNodeExecutions = (item: WorkflowRunNodeListItem | undefined): boolean =>
+  item?.nodeType === 'approval' || item?.nodeType === 'question-answer';
+
+const mergeWorkflowRunExecutionItems = (
+  executions: WorkflowRunNodeListItem[]
+): WorkflowRunNodeListItem[] => {
+  if (executions.length <= 1 || !shouldMergeWorkflowNodeExecutions(executions[0])) {
+    return executions;
+  }
+  const [first, ...rest] = executions;
+  const merged = rest.reduce<WorkflowRunNodeListItem>(
+    (current, item) => ({
+      ...current,
+      ...item,
+      status: normalizeNodeRunStatus(item.status),
+      error: item.error ?? current.error,
+      elapsedTime: item.elapsedTime ?? current.elapsedTime,
+      nodeInput: item.nodeInput ?? current.nodeInput,
+      nodeOutput: item.nodeOutput ?? current.nodeOutput,
+      modelInput: item.modelInput ?? current.modelInput,
+      processData: item.processData ?? current.processData,
+      executionMetadata: item.executionMetadata ?? current.executionMetadata,
+    }),
+    first
+  );
+  return [merged];
+};
+
+const normalizeWorkflowRunGroupExecutions = (
+  executions: WorkflowRunNodeListItem[]
+): WorkflowRunNodeListItem[] => mergeWorkflowRunExecutionItems(executions);
 
 const getNodeSummary = (
   item: WorkflowRunNodeListItem,
@@ -724,13 +783,17 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
       return next;
     });
   };
+  const isRoundOpen = (id: string, defaultOpen = false) =>
+    defaultOpen ? !openSet.has(id) : openSet.has(id);
 
   return (
     <div className={cn('relative', isCanvasDetailOnly ? 'space-y-1.5' : 'space-y-2')}>
       {groupedItems.map(group => {
         const errorOnly = Boolean(errorOnlyByNode[group.key]);
         const visibleExecutions = errorOnly
-          ? group.executions.filter(item => item.status === 'failed' || Boolean(item.error))
+          ? group.executions.filter(
+              item => normalizeNodeRunStatus(item.status) === 'failed' || Boolean(item.error)
+            )
           : group.executions;
         const executions = visibleExecutions;
         if (executions.length === 0) return null;
@@ -751,7 +814,8 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
             : undefined;
         const Icon = theme?.icon;
 
-        const statusCfg = styles[raw.status];
+        const rawStatus = normalizeNodeRunStatus(raw.status);
+        const statusCfg = styles[rawStatus];
         const isIteration = raw.nodeType === 'iteration';
         const isLoop = raw.nodeType === 'loop';
         const isContainer = isIteration || isLoop;
@@ -825,7 +889,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                   className={cn(
                     'w-5 h-5 flex items-center justify-center rounded text-white shrink-0 shadow-[0_1px_2px_rgba(0,0,0,0.1)] transition-all duration-300',
                     theme?.classNames.iconBg,
-                    raw.status === 'paused' && 'bg-warning text-white shadow-none',
+                    rawStatus === 'paused' && 'bg-warning text-white shadow-none',
                     isOpen(itemKey) ? 'ring-2 ring-background ring-offset-1 scale-105' : ''
                   )}
                   aria-label={raw.nodeType}
@@ -859,12 +923,12 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                     className={cn(
                       'w-1.5 h-1.5 rounded-full shrink-0 shadow-[0_0_4px_rgba(0,0,0,0.1)]',
                       statusCfg.dot,
-                      raw.status === 'running' && 'animate-pulse-subtle'
+                      rawStatus === 'running' && 'animate-pulse-subtle'
                     )}
                   />
-                  {raw.status === 'running' ? (
+                  {rawStatus === 'running' ? (
                     <Loader className="h-3 w-3 animate-spin text-info" />
-                  ) : raw.status === 'paused' ? null : (
+                  ) : rawStatus === 'paused' ? null : (
                     <div className={elapsedTimeClass}>
                       {formatMs(raw?.elapsedTime ? raw.elapsedTime : 0)}
                     </div>
@@ -1385,7 +1449,9 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                   <div className="grid gap-1 bg-muted shadow-md rounded-md p-1">
                     {rounds.map(round => {
                       const roundKey = `${itemKey}-round-${round.index}`;
-                      const roundOpen = shouldInlineContainerRounds || isOpen(roundKey);
+                      const roundOpen = isRoundOpen(roundKey, shouldInlineContainerRounds);
+                      const roundElapsedTime =
+                        round.elapsedTime ?? getNodesElapsedTime(round.nodes);
                       return (
                         <div
                           key={`round-${itemKey}-${round.index}`}
@@ -1411,7 +1477,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                               </span>
                             </div>
                             <span className={elapsedTimeClass}>
-                              {formatMs(round.elapsedTime ? round.elapsedTime : 0)}
+                              {formatMs(roundElapsedTime ?? 0)}
                             </span>
                           </div>
                           {roundOpen && (
@@ -1419,7 +1485,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                               <WorkflowRunNodesList
                                 items={round.nodes}
                                 showDetail={showDetail}
-                                variant={variant}
+                                variant="panel"
                               />
                             </div>
                           )}

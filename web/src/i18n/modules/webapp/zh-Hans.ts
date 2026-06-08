@@ -440,6 +440,11 @@ const messages: WebappMessages = {
     runtimeToolResultMeta: '工具消息',
     runtimeToolResultWithID: 'tool_call_id：{id}',
     runtimeToolResultSize: '{chars} 字符',
+    runtimeWorkflowInvocation: '工作流调用',
+    runtimeWorkflowApprovals: '审批处理',
+    runtimeWorkflowNodes: '节点详情',
+    runtimeWorkflowQuestions: '问答记录',
+    runtimeWorkflowMessages: '工作流输出消息',
     hiddenValues: {
       skillInstructions: '[已隐藏] Skill 执行指令',
     },

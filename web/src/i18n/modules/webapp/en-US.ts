@@ -454,6 +454,11 @@ const messages = {
     runtimeToolResultMeta: 'tool message',
     runtimeToolResultWithID: 'tool_call_id: {id}',
     runtimeToolResultSize: '{chars} chars',
+    runtimeWorkflowInvocation: 'Workflow Invocation',
+    runtimeWorkflowApprovals: 'Approval Lifecycle',
+    runtimeWorkflowNodes: 'Node Details',
+    runtimeWorkflowQuestions: 'Question Answers',
+    runtimeWorkflowMessages: 'Workflow Output Messages',
     hiddenValues: {
       skillInstructions: '[Hidden] Skill execution instructions',
     },

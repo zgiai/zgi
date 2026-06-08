@@ -47,13 +47,23 @@ function runtimeTerminalMessage(message: { event: string | null; data: unknown }
       ? (message.data as Record<string, unknown>)
       : {};
   const event = typeof record.event === 'string' ? record.event : message.event;
-  if (event === 'message_end' || event === 'error') {
+  if (event === 'error') {
     return true;
   }
   if (
     event === 'workflow_started' ||
     event === 'node_started' ||
     event === 'node_finished' ||
+    event === 'iteration_started' ||
+    event === 'iteration_next' ||
+    event === 'iteration_completed' ||
+    event === 'iteration_succeeded' ||
+    event === 'iteration_failed' ||
+    event === 'loop_started' ||
+    event === 'loop_next' ||
+    event === 'loop_completed' ||
+    event === 'loop_succeeded' ||
+    event === 'loop_failed' ||
     event === 'workflow_paused' ||
     event === 'approval_requested' ||
     event === 'workflow_finished' ||
@@ -65,7 +75,9 @@ function runtimeTerminalMessage(message: { event: string | null; data: unknown }
   return (
     data &&
     typeof data === 'object' &&
-    ['completed', 'stopped', 'error'].includes(String((data as Record<string, unknown>).status))
+    ['completed', 'stopped', 'error', 'failed'].includes(
+      String((data as Record<string, unknown>).status)
+    )
   );
 }
 

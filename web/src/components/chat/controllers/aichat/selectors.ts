@@ -53,7 +53,7 @@ function workflowString(value: unknown): string | undefined {
 
 function workflowElapsedMs(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
-    ? value * 1000
+    ? value
     : undefined;
 }
 
@@ -84,6 +84,26 @@ function normalizeWorkflowRunStatus(status: unknown): RunStatus {
     default:
       return 'running';
   }
+}
+
+function isWorkflowApprovalClosed(run: AIChatWorkflowRunMetadata): boolean {
+  const approvalStatus = String(run.approval?.status ?? '').toLowerCase();
+  return Boolean(
+    run.approval_result ||
+      run.approval_expired ||
+      approvalStatus === 'submitted' ||
+      approvalStatus === 'approved' ||
+      approvalStatus === 'rejected' ||
+      approvalStatus === 'expired'
+  );
+}
+
+function normalizePersistedWorkflowRunStatus(run: AIChatWorkflowRunMetadata): RunStatus {
+  const status = normalizeWorkflowRunStatus(run.status);
+  if (status === 'pending_approval' && isWorkflowApprovalClosed(run)) {
+    return run.approval_expired ? 'expired' : 'running';
+  }
+  return status;
 }
 
 function normalizeWorkflowNodeStatus(status: unknown): NodeInfo['status'] {
@@ -128,10 +148,32 @@ function normalizeWorkflowNodeType(value: unknown): string | undefined {
   }
 }
 
+function sumWorkflowNodeElapsedMs(nodes: NodeInfo[]): number | undefined {
+  const total = nodes.reduce((sum, node) => sum + (node.elapsedTime ?? 0), 0);
+  return total > 0 ? total : undefined;
+}
+
 function mapPersistedWorkflowNode(node: AIChatWorkflowRunNodeMetadata): NodeInfo {
   const nodeId =
     workflowString(node.node_id) ?? workflowString(node.execution_id) ?? workflowString(node.id);
   const nodeType = normalizeWorkflowNodeType(node.node_type ?? node.type);
+  const iterationRounds = (node.iteration_rounds ?? []).map((round, index) => {
+    const nodes = (round.nodes ?? []).map(mapPersistedWorkflowNode);
+    return {
+      index: typeof round.index === 'number' ? round.index : index,
+      elapsedTime: workflowElapsedMs(round.elapsed_time) ?? sumWorkflowNodeElapsedMs(nodes),
+      nodes,
+    };
+  });
+  const loopRounds = (node.loop_rounds ?? []).map((round, index) => {
+    const nodes = (round.nodes ?? []).map(mapPersistedWorkflowNode);
+    return {
+      index: typeof round.index === 'number' ? round.index : index,
+      elapsedTime: workflowElapsedMs(round.elapsed_time) ?? sumWorkflowNodeElapsedMs(nodes),
+      variables: round.variables,
+      nodes,
+    };
+  });
   return {
     status: normalizeWorkflowNodeStatus(node.status),
     error: workflowString(node.error),
@@ -149,6 +191,13 @@ function mapPersistedWorkflowNode(node: AIChatWorkflowRunNodeMetadata): NodeInfo
       input: node.inputs,
       output: node.outputs,
     },
+    iterationInputs: node.iteration_inputs,
+    iterationOutputs: node.iteration_outputs,
+    iterationRounds,
+    loopInputs: node.loop_inputs,
+    loopOutputs: node.loop_outputs,
+    loopRounds,
+    steps: typeof node.steps === 'number' ? node.steps : undefined,
   };
 }
 
@@ -162,7 +211,7 @@ function workflowTimelineFromMessage(message: AIChatMessage): AIChatAgenticTimel
         id: `history-workflow-${message.id}-${runId}-${index}`,
         type: 'workflow_run',
         workflowRunId: runId,
-        status: normalizeWorkflowRunStatus(run.status),
+        status: normalizePersistedWorkflowRunStatus(run),
         elapsedTime: workflowElapsedMs(run.elapsed_time),
         error: workflowString(run.error),
         nodes: (run.nodes ?? []).map(mapPersistedWorkflowNode),

@@ -32,7 +32,7 @@ import {
   filterLowercaseExtensions,
   formatExtensionsForDisplay,
 } from '@/utils/file-helpers';
-import { ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Loader2, Square } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Loader2 } from 'lucide-react';
 import {
   AIChatAttachmentStrip,
   AIChatDragUploadOverlay,
@@ -869,7 +869,7 @@ export function AIChatInputArea({
           ) : null}
           <div className="rounded-2xl border bg-background p-2 shadow-sm focus-within:border-primary/40">
             {hasActiveWorkflowApprovalRequest && activeWorkflowApprovalRequest ? (
-              <div className="rounded-xl border bg-warning/10 px-3 py-3">
+              <div className="rounded-xl border bg-card p-3 shadow-sm">
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2 text-sm">
                   <div className="min-w-0">
                     <div className="font-medium text-foreground">
@@ -883,33 +883,17 @@ export function AIChatInputArea({
                         : t('consoleChat.workflow.approvalInputLocked')}
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {activeWorkflowApprovalRequest.approvalUrl ? (
-                      <a
-                        className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
-                        href={activeWorkflowApprovalRequest.approvalUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {t('consoleChat.workflow.openApproval')}
-                        <ExternalLink className="size-3" />
-                      </a>
-                    ) : null}
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      className="h-7 gap-1.5 px-2 text-xs"
-                      disabled={isStopping}
-                      onClick={onStop}
+                  {activeWorkflowApprovalRequest.approvalUrl ? (
+                    <a
+                      className="inline-flex shrink-0 items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
+                      href={activeWorkflowApprovalRequest.approvalUrl}
+                      target="_blank"
+                      rel="noreferrer"
                     >
-                      {isStopping ? (
-                        <Loader2 className="size-3 animate-spin" />
-                      ) : (
-                        <Square className="size-3 fill-current" />
-                      )}
-                      {t('consoleChat.stop')}
-                    </Button>
-                  </div>
+                      {t('consoleChat.workflow.openApproval')}
+                      <ExternalLink className="size-3" />
+                    </a>
+                  ) : null}
                 </div>
                 {approvalFormQuery.isLoading ? (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -919,8 +903,7 @@ export function AIChatInputArea({
                 ) : approvalForm ? (
                   <ApprovalRuntimeForm
                     form={approvalForm}
-                    className="[&_h2]:text-sm [&_.md-viewer]:text-xs"
-                    isSubmitting={approvalSubmitMutation.isPending || isSending || isStopping}
+                    isSubmitting={approvalSubmitMutation.isPending || isSending}
                     submittedAction={submittedApprovalAction}
                     onSubmit={handleWorkflowApprovalSubmit}
                   />

@@ -237,10 +237,36 @@ export function dispatchAIChatStreamEvent(
       callbacks.onWorkflowStarted?.((data ?? {}) as AIChatWorkflowEventData, eventId);
       break;
     case 'node_started':
-      callbacks.onWorkflowNodeStarted?.((data ?? {}) as AIChatWorkflowNodeEventData, eventId);
+      callbacks.onWorkflowNodeStarted?.(
+        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        eventId
+      );
       break;
     case 'node_finished':
-      callbacks.onWorkflowNodeFinished?.((data ?? {}) as AIChatWorkflowNodeEventData, eventId);
+      callbacks.onWorkflowNodeFinished?.(
+        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        eventId
+      );
+      break;
+    case 'iteration_started':
+    case 'iteration_next':
+    case 'loop_started':
+    case 'loop_next':
+      callbacks.onWorkflowNodeStarted?.(
+        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        eventId
+      );
+      break;
+    case 'iteration_completed':
+    case 'iteration_succeeded':
+    case 'iteration_failed':
+    case 'loop_completed':
+    case 'loop_succeeded':
+    case 'loop_failed':
+      callbacks.onWorkflowNodeFinished?.(
+        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        eventId
+      );
       break;
     case 'workflow_paused':
       callbacks.onWorkflowPaused?.((data ?? {}) as AIChatWorkflowPausedEventData, eventId);

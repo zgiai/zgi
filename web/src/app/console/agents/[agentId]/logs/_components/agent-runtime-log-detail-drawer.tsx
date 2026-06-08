@@ -35,6 +35,10 @@ import { cn } from '@/lib/utils';
 import { formatDate, formatWorkflowElapsedMs } from '@/utils/format';
 import { getAgentRuntimeStepDisplay } from './agent-runtime-step-display';
 import { LogStatusBadge } from './log-status-badge';
+import WorkflowRunNodesList, {
+  type NodeRunStatus,
+  type WorkflowRunNodeListItem,
+} from '@/components/workflow/ui/workflow-run-nodes-list';
 
 interface AgentRuntimeLogDetailDrawerProps {
   open: boolean;
@@ -288,6 +292,282 @@ function DetailSection({ title, children }: { title: string; children: ReactNode
   );
 }
 
+function stringValue(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim() !== '') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeWorkflowNodeStatus(value: unknown): NodeRunStatus {
+  const status = typeof value === 'string' ? value.toLowerCase() : '';
+  if (
+    status === 'succeeded' ||
+    status === 'success' ||
+    status === 'completed' ||
+    status === 'partial-succeeded'
+  ) {
+    return 'succeeded';
+  }
+  if (status === 'running' || status === 'streaming' || status === 'pending') {
+    return 'running';
+  }
+  if (
+    status === 'paused' ||
+    status === 'waiting' ||
+    status === 'pending_approval' ||
+    status === 'waiting_approval' ||
+    status === 'pending_question' ||
+    status === 'waiting_question'
+  ) {
+    return 'paused';
+  }
+  if (status === 'stopped' || status === 'canceled' || status === 'cancelled') {
+    return 'stopped';
+  }
+  if (status === 'failed' || status === 'error') {
+    return 'failed';
+  }
+  return 'succeeded';
+}
+
+function normalizeWorkflowNodeType(value: unknown): string {
+  const nodeType = stringValue(value);
+  if (!nodeType) return 'unknown';
+  return nodeType.replaceAll('_', '-');
+}
+
+function workflowNodeRounds(value: unknown): WorkflowRunNodeListItem[] {
+  return arrayValue(value)
+    .map(mapWorkflowNodeDetail)
+    .filter((item): item is WorkflowRunNodeListItem => Boolean(item));
+}
+
+function mapWorkflowRound(value: unknown, index: number) {
+  if (!isRecord(value)) {
+    return { index, nodes: [] as WorkflowRunNodeListItem[] };
+  }
+  return {
+    index: numberValue(value.index) ?? numberValue(value.round) ?? index,
+    elapsedTime: numberValue(value.elapsed_time) ?? numberValue(value.elapsedTime) ?? undefined,
+    variables: value.variables,
+    nodes: workflowNodeRounds(value.nodes),
+  };
+}
+
+function mapWorkflowNodeDetail(value: unknown): WorkflowRunNodeListItem | null {
+  if (!isRecord(value)) return null;
+  const nodeId =
+    stringValue(value.node_id) ??
+    stringValue(value.nodeId) ??
+    stringValue(value.id) ??
+    stringValue(value.runtime_id) ??
+    'unknown-node';
+  const nodeType = normalizeWorkflowNodeType(value.node_type ?? value.nodeType ?? value.type);
+  const executionId = stringValue(value.runtime_id) ?? stringValue(value.execution_id) ?? nodeId;
+  const rawTitle = stringValue(value.title) ?? stringValue(value.node_title);
+  const item: WorkflowRunNodeListItem = {
+    executionId,
+    nodeId,
+    title: rawTitle ?? nodeType,
+    nodeType,
+    status: normalizeWorkflowNodeStatus(value.status),
+    nodeInput: value.inputs ?? value.input,
+    nodeOutput: value.outputs ?? value.output,
+    modelInput: value.model_input ?? value.modelInput,
+    processData: value.process_data ?? value.processData,
+    executionMetadata: value.execution_metadata ?? value.executionMetadata ?? value.metadata,
+    elapsedTime: numberValue(value.elapsed_time) ?? numberValue(value.elapsedTime) ?? undefined,
+    error: stringValue(value.error),
+  };
+
+  const iterationRounds = arrayValue(value.iteration_rounds ?? value.iterationRounds).map(
+    mapWorkflowRound
+  );
+  if (iterationRounds.length > 0) {
+    item.iterationRounds = iterationRounds;
+    item.iterationInputs = value.iteration_inputs ?? item.nodeInput;
+    item.iterationOutputs = value.iteration_outputs ?? item.nodeOutput;
+    item.steps = iterationRounds.length;
+  }
+
+  const loopRounds = arrayValue(value.loop_rounds ?? value.loopRounds ?? value.rounds).map(
+    mapWorkflowRound
+  );
+  if (loopRounds.length > 0) {
+    item.loopRounds = loopRounds;
+    item.loopInputs = value.loop_inputs ?? item.nodeInput;
+    item.loopOutputs = value.loop_outputs ?? item.nodeOutput;
+    item.steps = loopRounds.length;
+  }
+
+  return item;
+}
+
+function WorkflowNodeDetailsList({
+  nodes,
+  labels,
+}: {
+  nodes: unknown;
+  labels: AgentRuntimeModelInputLabels;
+}) {
+  const items = useMemo(
+    () =>
+      arrayValue(nodes)
+        .map(mapWorkflowNodeDetail)
+        .filter((item): item is WorkflowRunNodeListItem => Boolean(item)),
+    [nodes]
+  );
+
+  if (items.length === 0) {
+    return renderValue(nodes, labels);
+  }
+
+  return (
+    <div className="rounded-lg border bg-muted/20 p-2">
+      <WorkflowRunNodesList items={items} showDetail variant="panel" />
+    </div>
+  );
+}
+
+function WorkflowApprovalCards({
+  approvals,
+  labels,
+}: {
+  approvals: unknown;
+  labels: AgentRuntimeModelInputLabels;
+}) {
+  const items = arrayValue(approvals).filter(isRecord);
+  if (items.length === 0) return renderValue(approvals, labels);
+
+  return (
+    <div className="space-y-2">
+      {items.map((approval, index) => {
+        const request = isRecord(approval.request) ? approval.request : {};
+        const form = isRecord(request.approval_form) ? request.approval_form : {};
+        const results = arrayValue(approval.results).filter(isRecord);
+        const expired = approval.expired;
+        const status = stringValue(approval.status) ?? '-';
+        const title =
+          stringValue(form.node_title) ??
+          stringValue(request.node_title) ??
+          stringValue(approval.node_title) ??
+          `Approval ${index + 1}`;
+
+        return (
+          <div key={`${title}-${index}`} className="rounded-lg border bg-card p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold">{title}</div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">
+                  {stringValue(approval.approval_form_id) ??
+                    stringValue(request.approval_form_id) ??
+                    stringValue(form.id) ??
+                    '-'}
+                </div>
+              </div>
+              <LogStatusBadge status={status} />
+            </div>
+
+            {!isEmptyValue(form.content) ? (
+              <div className="mt-3 rounded-md bg-muted/40 px-3 py-2 text-sm leading-6">
+                {renderValue(form.content, labels)}
+              </div>
+            ) : null}
+
+            {results.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {results.map((result, resultIndex) => (
+                  <div key={resultIndex} className="rounded-md border bg-background p-2">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-medium">
+                        {stringValue(result.action_label) ??
+                          stringValue(result.action_id) ??
+                          stringValue(result.action) ??
+                          '-'}
+                      </span>
+                      {stringValue(result.form_id) ? (
+                        <span className="text-xs text-muted-foreground">
+                          {stringValue(result.form_id)}
+                        </span>
+                      ) : null}
+                    </div>
+                    {!isEmptyValue(result.inputs) ? (
+                      <div className="mt-2">{renderValue(result.inputs, labels)}</div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {!isEmptyValue(expired) ? (
+              <div className="mt-3 rounded-md border border-warning/30 bg-warning/10 p-2">
+                {renderValue(expired, labels)}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function WorkflowRunProcessSections({
+  step,
+  labels,
+  titles,
+}: {
+  step: AgentRuntimeStep;
+  labels: AgentRuntimeModelInputLabels;
+  titles: {
+    invocation: string;
+    approvals: string;
+    nodes: string;
+    questions: string;
+    messages: string;
+  };
+}) {
+  const process = isRecord(step.process) ? step.process : {};
+  const invocation = process.invocation;
+  const approvals = process.approvals;
+  const nodes = process.nodes;
+  const questionAnswers = process.question_answers;
+  const messages = process.messages;
+
+  return (
+    <>
+      {!isEmptyValue(invocation) ? (
+        <DetailSection title={titles.invocation}>
+          {renderValue(invocation, labels)}
+        </DetailSection>
+      ) : null}
+      {!isEmptyValue(approvals) ? (
+        <DetailSection title={titles.approvals}>
+          <WorkflowApprovalCards approvals={approvals} labels={labels} />
+        </DetailSection>
+      ) : null}
+      {!isEmptyValue(nodes) ? (
+        <DetailSection title={titles.nodes}>
+          <WorkflowNodeDetailsList nodes={nodes} labels={labels} />
+        </DetailSection>
+      ) : null}
+      {!isEmptyValue(questionAnswers) ? (
+        <DetailSection title={titles.questions}>
+          {renderValue(questionAnswers, labels)}
+        </DetailSection>
+      ) : null}
+      {!isEmptyValue(messages) ? (
+        <DetailSection title={titles.messages}>
+          {renderValue(messages, labels)}
+        </DetailSection>
+      ) : null}
+    </>
+  );
+}
+
 export function AgentRuntimeLogDetailDrawer({
   open,
   onOpenChange,
@@ -334,6 +614,16 @@ export function AgentRuntimeLogDetailDrawer({
       messageRole: role => t('appLogs.runtimeModelMessageRole', { role }),
       toolResultWithID: id => t('appLogs.runtimeToolResultWithID', { id }),
       toolResultSize: chars => t('appLogs.runtimeToolResultSize', { chars }),
+    }),
+    [t]
+  );
+  const workflowRunProcessTitles = useMemo(
+    () => ({
+      invocation: t('appLogs.runtimeWorkflowInvocation'),
+      approvals: t('appLogs.runtimeWorkflowApprovals'),
+      nodes: t('appLogs.runtimeWorkflowNodes'),
+      questions: t('appLogs.runtimeWorkflowQuestions'),
+      messages: t('appLogs.runtimeWorkflowMessages'),
     }),
     [t]
   );
@@ -394,11 +684,11 @@ export function AgentRuntimeLogDetailDrawer({
         ) : null}
 
         <div className="grid min-h-0 flex-1 grid-cols-[320px_minmax(0,1fr)] overflow-hidden">
-          <aside className="min-h-0 border-r">
-            <div className="border-b px-4 py-3 text-sm font-semibold">
+          <aside className="flex min-h-0 flex-col border-r">
+            <div className="shrink-0 border-b px-4 py-3 text-sm font-semibold">
               {t('appLogs.runtimeSteps')}
             </div>
-            <div className="h-full min-h-0 overflow-auto p-3">
+            <div className="min-h-0 flex-1 overflow-auto p-3 pb-6">
               {isLoading && steps.length === 0 ? (
                 <div className="flex items-center gap-2 p-3 text-sm text-muted-foreground">
                   <Clock className="size-4 animate-pulse" />
@@ -497,7 +787,15 @@ export function AgentRuntimeLogDetailDrawer({
                   {renderValue(selectedStep.output, modelInputLabels)}
                 </DetailSection>
 
-                {!isEmptyValue(selectedStep.process) ? (
+                {selectedStep.type === 'workflow_run' ? (
+                  <WorkflowRunProcessSections
+                    step={selectedStep}
+                    labels={modelInputLabels}
+                    titles={workflowRunProcessTitles}
+                  />
+                ) : null}
+
+                {selectedStep.type !== 'workflow_run' && !isEmptyValue(selectedStep.process) ? (
                   <DetailSection
                     title={
                       selectedStep.type === 'model_answer' || selectedStep.type === 'model_call'

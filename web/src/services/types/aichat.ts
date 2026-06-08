@@ -170,6 +170,22 @@ export interface AIChatWorkflowRunNodeMetadata {
   elapsed_time?: number;
   error?: string;
   created_at?: number;
+  iteration_inputs?: unknown;
+  iteration_outputs?: unknown;
+  iteration_rounds?: Array<{
+    index?: number;
+    nodes?: AIChatWorkflowRunNodeMetadata[];
+    elapsed_time?: number;
+  }>;
+  loop_inputs?: unknown;
+  loop_outputs?: unknown;
+  loop_rounds?: Array<{
+    index?: number;
+    nodes?: AIChatWorkflowRunNodeMetadata[];
+    elapsed_time?: number;
+    variables?: unknown;
+  }>;
+  steps?: number;
 }
 
 export interface AIChatWorkflowRunApprovalMetadata extends Record<string, unknown> {
@@ -177,6 +193,7 @@ export interface AIChatWorkflowRunApprovalMetadata extends Record<string, unknow
   approval_token?: string;
   approval_url?: string;
   approval_form?: unknown;
+  status?: string;
 }
 
 export interface AIChatWorkflowRunMetadata {
@@ -192,6 +209,8 @@ export interface AIChatWorkflowRunMetadata {
   elapsed_time?: number;
   error?: string;
   approval?: AIChatWorkflowRunApprovalMetadata;
+  approval_result?: Record<string, unknown>;
+  approval_expired?: Record<string, unknown>;
   nodes?: AIChatWorkflowRunNodeMetadata[];
   created_at?: number;
 }

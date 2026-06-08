@@ -49,6 +49,7 @@ import type {
   AIChatMessage,
   AIChatMessageFile,
   AIChatUserInputRequest,
+  AIChatWorkflowRunMetadata,
 } from '@/services/types/aichat';
 import {
   buildChatMessageTopology,
@@ -1024,10 +1025,26 @@ function resolveActiveWorkflowApprovalRequest(
   const leafMessage = messages.find(message => message.id === leafMessageId) ?? null;
   if (!leafMessage || leafMessage.status !== 'waiting_approval') return null;
   const continuation = leafMessage.metadata?.agent_workflow_continuation;
+  const continuationWorkflowRunId = stringFromRecord(continuation, 'workflow_run_id');
+  const continuationStatus = stringFromRecord(continuation, 'status');
   const workflowRuns = leafMessage.metadata?.workflow_runs ?? [];
   const runWithApproval = [...workflowRuns]
     .reverse()
-    .find(run => Boolean(resolveApprovalToken(run.approval)));
+    .find(
+      run =>
+        isActiveWorkflowApprovalRun(run, continuationWorkflowRunId, continuationStatus) &&
+        Boolean(resolveApprovalToken(run.approval))
+    );
+  const runForContinuation = continuationWorkflowRunId
+    ? workflowRuns.find(run => stringFromUnknown(run.workflow_run_id) === continuationWorkflowRunId)
+    : null;
+  if (
+    !runWithApproval &&
+    runForContinuation &&
+    !isActiveWorkflowApprovalRun(runForContinuation, continuationWorkflowRunId, continuationStatus)
+  ) {
+    return null;
+  }
   const approval = runWithApproval?.approval;
   const inlineApprovalForm = normalizeApprovalRuntimeForm(approval?.approval_form);
   const approvalToken =
@@ -1038,15 +1055,36 @@ function resolveActiveWorkflowApprovalRequest(
   return {
     conversationId: conversation.id,
     messageId: leafMessage.id,
-    workflowRunId:
-      stringFromUnknown(runWithApproval?.workflow_run_id) ||
-      stringFromRecord(continuation, 'workflow_run_id'),
+    workflowRunId: stringFromUnknown(runWithApproval?.workflow_run_id) || continuationWorkflowRunId,
     approvalToken,
     approvalUrl: stringFromUnknown(approval?.approval_url),
     approvalFormId:
       stringFromUnknown(approval?.approval_form_id) || stringFromUnknown(inlineApprovalForm?.id),
     approvalForm: inlineApprovalForm,
   };
+}
+
+function isActiveWorkflowApprovalRun(
+  run: AIChatWorkflowRunMetadata,
+  continuationWorkflowRunId: string,
+  continuationStatus: string
+): boolean {
+  const status = String(run.status ?? '').toLowerCase();
+  const runId = stringFromUnknown(run.workflow_run_id);
+  const isContinuationWaitingRun =
+    Boolean(continuationWorkflowRunId && runId === continuationWorkflowRunId) &&
+    continuationStatus === 'waiting_approval';
+  if (
+    !isContinuationWaitingRun &&
+    status !== 'pending_approval' &&
+    status !== 'waiting_approval' &&
+    status !== 'paused'
+  ) {
+    return false;
+  }
+  if (run.approval_result || run.approval_expired) return false;
+  const approvalStatus = String(run.approval?.status ?? '').toLowerCase();
+  return !['submitted', 'approved', 'rejected', 'expired'].includes(approvalStatus);
 }
 
 function stringFromUnknown(value: unknown): string {
