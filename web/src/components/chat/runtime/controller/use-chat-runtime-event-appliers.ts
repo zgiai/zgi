@@ -80,6 +80,35 @@ interface UseAIChatEventAppliersArgs {
   refreshMessagesSilently: (conversationId: string) => void;
 }
 
+function shouldRefreshConversationAfterMessageEnd(
+  current: AIChatControllerStore,
+  payload: AIChatMessageEndEventData
+): boolean {
+  const conversation = current.conversations.find(item => item.id === payload.conversation_id);
+  if (!conversation) return true;
+
+  const status = String(payload.status ?? '').toLowerCase();
+  if (
+    status === 'waiting_approval' ||
+    status === 'waiting_question' ||
+    status === 'stopped' ||
+    status === 'error' ||
+    status === 'failed'
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function shouldRefreshMessagesAfterMessageEnd(
+  current: AIChatControllerStore,
+  payload: AIChatMessageEndEventData
+): boolean {
+  const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  return !messages.some(message => message.id === payload.message_id);
+}
+
 /**
  * @hook useChatRuntimeEventAppliers
  * @description Maps ChatRuntime SSE events into controller state mutations.
@@ -341,6 +370,11 @@ export function useChatRuntimeEventAppliers({
   const applyMessageEnd = useCallback(
     (payload: AIChatMessageEndEventData, _eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
+      const shouldRefreshConversation = shouldRefreshConversationAfterMessageEnd(
+        stateRef.current,
+        payload
+      );
+      const shouldRefreshMessages = shouldRefreshMessagesAfterMessageEnd(stateRef.current, payload);
       if (streamingMessageRef.current?.messageId === payload.message_id) {
         streamingMessageRef.current = null;
       }
@@ -351,8 +385,12 @@ export function useChatRuntimeEventAppliers({
       if (backgroundConversationIdRef.current === payload.conversation_id) {
         backgroundConversationIdRef.current = null;
       }
-      refreshConversationSilently(payload.conversation_id);
-      refreshMessagesSilently(payload.conversation_id);
+      if (shouldRefreshConversation) {
+        refreshConversationSilently(payload.conversation_id);
+      }
+      if (shouldRefreshMessages) {
+        refreshMessagesSilently(payload.conversation_id);
+      }
     },
     [
       backgroundConversationIdRef,
@@ -361,6 +399,7 @@ export function useChatRuntimeEventAppliers({
       refreshConversationSilently,
       refreshMessagesSilently,
       setControllerState,
+      stateRef,
       streamingMessageRef,
     ]
   );
