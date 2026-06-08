@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -96,7 +97,7 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 	return state, nil
 }
 
-func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (map[string]interface{}, error) {
+func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error) {
 	if continuation == nil || continuation.MessageID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
@@ -118,7 +119,31 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 	if err := s.repos.Message.UpdateMetadata(ctx, continuation.MessageID, metadata); err != nil {
 		return nil, err
 	}
-	return eventPayload, nil
+	return s.AppendWorkflowApprovalContinuationStreamEvent(ctx, continuation, eventType, eventPayload)
+}
+
+func (s *service) AppendWorkflowApprovalContinuationStreamEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error) {
+	if continuation == nil || continuation.MessageID == uuid.Nil || continuation.ConversationID == uuid.Nil {
+		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
+	}
+	eventPayload := copyStringAnyMap(payload)
+	if eventPayload == nil {
+		eventPayload = map[string]interface{}{}
+	}
+	eventPayload["conversation_id"] = continuation.ConversationID.String()
+	eventPayload["message_id"] = continuation.MessageID.String()
+	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
+		eventPayload["workflow_run_id"] = continuation.WorkflowRunID
+	}
+	event := s.appendStreamEventBestEffort(ctx, continuation.MessageID, continuation.ConversationID, eventType, eventPayload)
+	if event != nil {
+		return event, nil
+	}
+	return &StreamEvent{
+		EventType: eventType,
+		Payload:   eventPayload,
+		CreatedAt: time.Now().Unix(),
+	}, nil
 }
 
 func (s *service) UpdateWorkflowApprovalContinuationStatus(ctx context.Context, continuation *WorkflowApprovalContinuation, status string) (map[string]interface{}, error) {
@@ -163,7 +188,7 @@ func (s *service) PauseWorkflowApprovalContinuation(ctx context.Context, continu
 	return metadata, nil
 }
 
-func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, scope Scope, continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest, onChunk func(string) error) (*ChatResult, error) {
+func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, scope Scope, continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest, onEvent func(StreamEvent) error) (*ChatResult, error) {
 	if continuation == nil || continuation.MessageID == uuid.Nil || continuation.ConversationID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
@@ -173,8 +198,14 @@ func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, sco
 		if err != nil {
 			return nil, err
 		}
-		if onChunk != nil && answer != "" {
-			if err := onChunk(answer); err != nil {
+		if onEvent != nil && answer != "" {
+			event, eventErr := s.AppendWorkflowApprovalContinuationStreamEvent(ctx, continuation, streamEventMessage, map[string]interface{}{
+				"answer": answer,
+			})
+			if eventErr != nil {
+				return nil, eventErr
+			}
+			if err := onEvent(*event); err != nil {
 				return nil, err
 			}
 		}
@@ -216,7 +247,7 @@ func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, sco
 	if err != nil {
 		return nil, err
 	}
-	answer, usage, err := s.collectStreamAnswer(runCtx, prepared, stream, onChunk)
+	answer, usage, err := s.collectStreamAnswerWithEvents(runCtx, prepared, stream, onEvent, nil)
 	if err != nil {
 		return nil, err
 	}

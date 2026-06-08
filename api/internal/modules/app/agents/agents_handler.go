@@ -41,6 +41,11 @@ type AgentsHandler struct {
 	}
 }
 
+type workflowContinuationStreamRunner interface {
+	ResumeApprovalWorkflowStream(ctx context.Context, form *approvalruntime.Form, onEvent func(string, map[string]interface{}) error) error
+	ResumeQuestionAnswerWorkflowStream(ctx context.Context, workflowRunID string, inputs map[string]interface{}, onEvent func(string, map[string]interface{}) error) error
+}
+
 func NewAgentsHandler(appService AgentsService, tenantService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, organizationService interfaces.OrganizationService, db *gorm.DB, chatRuntimeServices ...runtimeservice.Service) *AgentsHandler {
 	var chatRuntimeService runtimeservice.Service
 	if len(chatRuntimeServices) > 0 {

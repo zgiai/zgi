@@ -54,7 +54,9 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 
 func isWorkflowTimelineEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "workflow_started", "node_started", "node_finished", "workflow_paused", "approval_requested", "workflow_finished", "workflow_failed":
+	case "workflow_started", "node_started", "node_finished", "workflow_paused", "approval_requested", "workflow_finished", "workflow_failed",
+		"iteration_started", "iteration_next", "iteration_completed", "iteration_succeeded", "iteration_failed",
+		"loop_started", "loop_next", "loop_completed", "loop_succeeded", "loop_failed":
 		return true
 	default:
 		return false

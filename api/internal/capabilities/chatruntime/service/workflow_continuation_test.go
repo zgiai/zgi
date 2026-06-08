@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -75,6 +76,66 @@ func TestWorkflowContinuationMetadataWithStatusPreservesExistingFields(t *testin
 	}
 	if got := firstNonEmptyString(state["status"]); got != workflowContinuationStatusSummarizing {
 		t.Fatalf("status = %q, want %q", got, workflowContinuationStatusSummarizing)
+	}
+}
+
+func TestWorkflowContinuationAppendStreamEventAddsRuntimeIDs(t *testing.T) {
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	continuation := &WorkflowApprovalContinuation{
+		ConversationID: conversationID,
+		MessageID:      messageID,
+		WorkflowRunID:  "workflow-run-1",
+	}
+
+	event, err := (&service{}).AppendWorkflowApprovalContinuationStreamEvent(context.Background(), continuation, "workflow_finished", map[string]interface{}{
+		"status": "succeeded",
+	})
+	if err != nil {
+		t.Fatalf("AppendWorkflowApprovalContinuationStreamEvent() error = %v", err)
+	}
+	if event == nil {
+		t.Fatal("AppendWorkflowApprovalContinuationStreamEvent() returned nil event")
+	}
+	if event.EventType != "workflow_finished" {
+		t.Fatalf("event type = %q, want workflow_finished", event.EventType)
+	}
+	if got := firstNonEmptyString(event.Payload["conversation_id"]); got != conversationID.String() {
+		t.Fatalf("conversation_id = %q, want %q", got, conversationID.String())
+	}
+	if got := firstNonEmptyString(event.Payload["message_id"]); got != messageID.String() {
+		t.Fatalf("message_id = %q, want %q", got, messageID.String())
+	}
+	if got := firstNonEmptyString(event.Payload["workflow_run_id"]); got != "workflow-run-1" {
+		t.Fatalf("workflow_run_id = %q, want workflow-run-1", got)
+	}
+}
+
+func TestTerminalStreamEventIgnoresWaitingMessageEnd(t *testing.T) {
+	for _, status := range []string{
+		runtimemodel.MessageStatusWaitingApproval,
+		runtimemodel.MessageStatusWaitingQuestion,
+		"",
+	} {
+		if isTerminalStreamEvent(StreamEvent{
+			EventType: streamEventMessageEnd,
+			Payload:   map[string]interface{}{"status": status},
+		}) {
+			t.Fatalf("message_end status %q should not be terminal", status)
+		}
+	}
+	for _, status := range []string{
+		runtimemodel.MessageStatusCompleted,
+		runtimemodel.MessageStatusStopped,
+		runtimemodel.MessageStatusError,
+		"failed",
+	} {
+		if !isTerminalStreamEvent(StreamEvent{
+			EventType: streamEventMessageEnd,
+			Payload:   map[string]interface{}{"status": status},
+		}) {
+			t.Fatalf("message_end status %q should be terminal", status)
+		}
 	}
 }
 
