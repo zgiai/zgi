@@ -10,7 +10,7 @@ import {
   useWorkflowRunEventsStream,
 } from '@/hooks';
 import { useRunWorkflowChatDraftStream } from '@/hooks/workflow/use-run-workflow-chat-draft-stream';
-import { Clock3, History, Loader2, RotateCcw, Send, SlidersHorizontal, X } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useWorkflowStore } from '@/components/workflow/store';
 import { initialWorkflowData } from '@/components/workflow/store/initial-data';
@@ -19,16 +19,6 @@ import type { ChatAttachment } from '@/components/chat/types';
 import type { WorkflowFeatures } from '@/components/workflow/store/type';
 import { useT } from '@/i18n';
 import useWorkflowValidation from '../../hooks/use-workflow-validation';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogBody,
-  DialogFooter,
-} from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
 import { isBannerHidden, hideBanner, BannerKey } from '@/utils/ui-local';
 // Form is now managed internally by UserInput; no direct import/render here
 import type { InputVar } from '@/components/workflow/types/input-var';
@@ -79,57 +69,14 @@ import {
 } from '@/components/workflow/question-answer/question-answer-runtime-prompt';
 import { useResizableRightPanel } from '../use-resizable-right-panel';
 import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
-import WorkflowRunsDropdown from '../workflow-runs-dropdown';
 import { useActivePanel } from '../../hooks/use-active-panel';
 import type { WorkflowRunNodeListItem } from '../workflow-run-nodes-list';
 import { generateClientId } from '@/utils/client-id';
 import { buildOpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
-
-interface WorkflowChatPanelProps {
-  open: boolean;
-  temporarilyHidden?: boolean;
-  onClose: () => void;
-  agentId: string;
-  agentName?: string;
-  agentIconType?: string;
-  agentIcon?: string;
-  agentIconUrl?: string;
-}
-
-function ApprovalWaitingState({
-  loading = false,
-  submitted = false,
-}: {
-  loading?: boolean;
-  submitted?: boolean;
-}) {
-  const t = useT();
-  const Icon = loading ? Loader2 : Send;
-
-  return (
-    <div className="relative overflow-hidden rounded-xl border bg-card px-5 py-5 text-center shadow-sm">
-      <div className="mx-auto flex size-11 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 ring-1 ring-amber-500/20">
-        <Icon className={loading ? 'size-5 animate-spin' : 'size-5'} />
-      </div>
-      <div className="mt-3 text-sm font-semibold text-foreground">
-        {submitted
-          ? t('nodes.approval.runtime.submitted')
-          : loading
-            ? t('nodes.approval.runtime.paused')
-            : t('nodes.approval.runtime.requestSubmitted')}
-      </div>
-      <p className="mx-auto mt-1.5 max-w-md text-xs leading-5 text-muted-foreground">
-        {submitted
-          ? t('nodes.approval.runtime.waitingResume')
-          : t('nodes.approval.runtime.waitingForReviewer')}
-      </p>
-      <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
-        <Clock3 className="size-3.5" />
-        <span>{t('nodes.approval.runtime.waitingForReviewerStatus')}</span>
-      </div>
-    </div>
-  );
-}
+import { ApprovalWaitingState } from './components/approval-waiting-state';
+import { PanelHeader } from './components/panel-header';
+import { RunWarningDialog } from './components/run-warning-dialog';
+import type { WorkflowChatPanelProps } from './types';
 
 const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
   open,
@@ -2489,30 +2436,13 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
           e.stopPropagation();
         }}
       >
-        <div className="flex items-center justify-between border-b border-border/50 px-3 py-2">
-          <div className="font-medium">{t('agents.workflow.debugTitle')}</div>
-          <div className="flex items-center gap-2">
-            <WorkflowRunsDropdown
-              agentId={agentId}
-              query={debugRunsQuery}
-              icon={<History size={14} />}
-              tooltipLabel={t('agents.workflow.debugRuns')}
-              dropdownLabel={t('agents.workflow.debugRuns')}
-              triggerText={t('agents.workflow.debugRuns')}
-              triggerVariant="outline"
-              triggerSize="xs"
-              triggerClassName="h-7"
-              refreshOnOpen
-              onSelect={handleSelectDebugRun}
-            />
-            <Button variant="ghost" isIcon onClick={handleReset} aria-label={t('common.reset')}>
-              <RotateCcw size={16} className="text-primary" />
-            </Button>
-            <Button variant="ghost" isIcon onClick={onClose} aria-label={t('common.close')}>
-              <X size={16} className="text-primary" />
-            </Button>
-          </div>
-        </div>
+        <PanelHeader
+          agentId={agentId}
+          query={debugRunsQuery}
+          onSelectDebugRun={handleSelectDebugRun}
+          onReset={handleReset}
+          onClose={onClose}
+        />
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           <div className="flex-1 min-h-0">
             <Chat
@@ -2561,71 +2491,26 @@ const WorkflowChatPanel: React.FC<WorkflowChatPanelProps> = ({
               isRunning={isRunning}
               isStopping={isStopping}
             />
-            <Dialog open={runWarnOpen} onOpenChange={setRunWarnOpen}>
-              <DialogContent className="max-w-[440px] p-0 overflow-hidden">
-                <DialogHeader className="pb-2">
-                  <DialogTitle className="text-xl font-black tracking-tight flex items-center gap-3">
-                    <div className="h-8 w-8 bg-amber-100 text-amber-500 flex items-center justify-center rounded-lg">
-                      <span className="text-lg font-black">!</span>
-                    </div>
-                    {t('agents.workflow.runErrorsDialog.title')}
-                  </DialogTitle>
-                </DialogHeader>
-
-                <DialogBody className="py-6 space-y-6">
-                  <div className="bg-amber-50/50 p-4 rounded-2xl border border-amber-100 text-sm font-medium leading-relaxed text-neutral-600">
-                    {t('agents.workflow.runErrorsDialog.description')}
-                  </div>
-
-                  <div
-                    className="flex items-center gap-3 px-1 group cursor-pointer"
-                    onClick={() => setDontWarnAgain(!dontWarnAgain)}
-                  >
-                    <Checkbox
-                      id="wf-chat-warn-hide"
-                      checked={dontWarnAgain}
-                      onCheckedChange={v => setDontWarnAgain(Boolean(v))}
-                      className="w-5 h-5"
-                    />
-                    <Label
-                      htmlFor="wf-chat-warn-hide"
-                      className="text-sm font-bold text-neutral-500 group-hover:text-primary transition-colors cursor-pointer"
-                    >
-                      {t('agents.workflow.runErrorsDialog.dontShowAgain')}
-                    </Label>
-                  </div>
-                </DialogBody>
-
-                <DialogFooter className="bg-neutral-50/50 pt-4 pb-6 px-6 border-t font-medium">
-                  <Button
-                    variant="ghost"
-                    className="font-semibold"
-                    onClick={() => {
-                      setRunWarnOpen(false);
-                      openIssues();
-                    }}
-                  >
-                    {t('agents.workflow.runErrorsDialog.viewErrors')}
-                  </Button>
-                  <Button
-                    size="lg"
-                    className="px-10 font-bold shadow-sm"
-                    onClick={() => {
-                      if (dontWarnAgain) hideBanner(BannerKey.WorkflowRunErrorsWarning);
-                      setRunWarnOpen(false);
-                      // Execute with pending send data after closing dialog
-                      const pending = pendingSendRef.current;
-                      pendingSendRef.current = null;
-                      if (pending) {
-                        void startChatWithPrecheck(pending.items, pending.userInput);
-                      }
-                    }}
-                  >
-                    {t('agents.workflow.runErrorsDialog.continueRun')}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <RunWarningDialog
+              open={runWarnOpen}
+              dontWarnAgain={dontWarnAgain}
+              onOpenChange={setRunWarnOpen}
+              onDontWarnAgainChange={setDontWarnAgain}
+              onViewErrors={() => {
+                setRunWarnOpen(false);
+                openIssues();
+              }}
+              onContinue={() => {
+                if (dontWarnAgain) hideBanner(BannerKey.WorkflowRunErrorsWarning);
+                setRunWarnOpen(false);
+                // Execute with pending send data after closing dialog
+                const pending = pendingSendRef.current;
+                pendingSendRef.current = null;
+                if (pending) {
+                  void startChatWithPrecheck(pending.items, pending.userInput);
+                }
+              }}
+            />
           </div>
         </div>
       </div>
