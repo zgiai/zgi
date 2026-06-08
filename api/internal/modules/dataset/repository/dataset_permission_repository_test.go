@@ -76,6 +76,26 @@ func TestGetPaginatedByTenantIDsWithPermissionsAllowsWorkspaceAdmin(t *testing.T
 	assertDatasetIDs(t, datasets, []string{"private-other"})
 }
 
+func TestGetPaginatedByTenantIDsWithPermissionsKeepsCreatorOnlyMeWithoutTeamWorkspacePermission(t *testing.T) {
+	db := newDatasetPermissionTestDB(t)
+	repo := NewDatasetRepository(db)
+	ctx := context.Background()
+
+	insertWorkspaceMember(t, db, "workspace-1", "member-1", workspace_model.WorkspaceRoleNormal)
+	insertDatasetPermissionRow(t, db, "private-own", "org-1", "workspace-1", "member-1", string(model.DatasetPermissionOnlyMe), time.Now().Add(-time.Minute))
+	insertDatasetPermissionRow(t, db, "team-other", "org-1", "workspace-1", "owner-1", string(model.DatasetPermissionAllTeam), time.Now())
+
+	datasets, total, err := repo.GetPaginatedByTenantIDsWithPermissions(ctx, []string{"workspace-1"}, "member-1", false, []string{}, 1, 20, "", "DESC")
+	if err != nil {
+		t.Fatalf("get datasets: %v", err)
+	}
+
+	if total != 1 {
+		t.Fatalf("total = %d, want 1", total)
+	}
+	assertDatasetIDs(t, datasets, []string{"private-own"})
+}
+
 func newDatasetPermissionTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

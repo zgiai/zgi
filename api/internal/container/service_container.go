@@ -490,6 +490,7 @@ func (c *ServiceContainer) GetOrganizationService() interfaces.OrganizationServi
 			c.getConsoleProvider(),
 			c.GetOfficialRouteBootstrapper(),
 		)
+		c.GetDatasetService().SetOrganizationService(c.organizationService)
 	}
 	return c.organizationService
 }
@@ -555,6 +556,9 @@ func (c *ServiceContainer) GetDatasetService() dataset_service.DatasetService {
 			llmClient,
 			c.GetTaskManager(),
 		)
+		if c.organizationService != nil {
+			c.datasetService.SetOrganizationService(c.organizationService)
+		}
 	}
 	return c.datasetService
 }

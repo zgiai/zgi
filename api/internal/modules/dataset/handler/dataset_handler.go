@@ -115,7 +115,6 @@ func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 
 	// Determine tenant_id_set based on user permissions
 	var tenantIDSet map[string]bool
-	var tenantList []*workspace_model.Workspace // Using workspace_model.Workspace type
 
 	// For now, use CheckGroupAdminByWorkspace as a workaround
 	isGroupAdmin := false
@@ -141,25 +140,27 @@ func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 
 	if isGroupAdmin {
 		// Admin can see all tenants
-		tenantList = allGroupTenantList
-
-		// Create tenant ID set
 		tenantIDSet = make(map[string]bool)
-		for _, tenant := range tenantList {
+		for _, tenant := range allGroupTenantList {
 			tenantIDSet[tenant.ID] = true
 		}
 	} else {
-		// Get only user's accessible tenants in the group
-		tenantList, err = h.organizationService.GetUserAllWorkspacesInOrganization(c.Request.Context(), organizationID, accountID)
+		userMemberships, err := h.tenantService.GetUserWorkspaceMemberships(c.Request.Context(), accountID)
 		if err != nil {
 			logger.Error("Failed to get user tenants in group", err)
-			tenantList = []*workspace_model.Workspace{}
+			userMemberships = nil
 		}
 
-		// Create tenant ID set
+		groupTenantIDSet := make(map[string]bool, len(allGroupTenantList))
+		for _, tenant := range allGroupTenantList {
+			groupTenantIDSet[tenant.ID] = true
+		}
+
 		tenantIDSet = make(map[string]bool)
-		for _, tenant := range tenantList {
-			tenantIDSet[tenant.ID] = true
+		for _, membership := range userMemberships {
+			if groupTenantIDSet[membership.WorkspaceID] {
+				tenantIDSet[membership.WorkspaceID] = true
+			}
 		}
 	}
 
@@ -190,7 +191,7 @@ func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 	}
 
 	if h.organizationService != nil && !isGroupAdmin {
-		filteredTenantIDs := make([]string, 0, len(tenantIDs))
+		allTeamTenantIDs := make([]string, 0, len(tenantIDs))
 		for _, id := range tenantIDs {
 			hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
 				c.Request.Context(),
@@ -206,11 +207,10 @@ func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 				return
 			}
 			if hasPermission {
-				filteredTenantIDs = append(filteredTenantIDs, id)
+				allTeamTenantIDs = append(allTeamTenantIDs, id)
 			}
 		}
-		tenantIDs = filteredTenantIDs
-		allGroupTenantIDs = filteredTenantIDs
+		allGroupTenantIDs = allTeamTenantIDs
 	}
 
 	if len(tenantIDs) == 0 {

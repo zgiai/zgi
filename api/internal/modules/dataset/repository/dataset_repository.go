@@ -176,6 +176,10 @@ func (r *datasetRepository) GetPaginatedByTenantIDsWithPermissions(ctx context.C
 	} else {
 		queryWorkspaceIDs = tenantIDs
 	}
+	allTeamWorkspaceIDs := tenantIDs
+	if allGroupTenantIDs != nil {
+		allTeamWorkspaceIDs = allGroupTenantIDs
+	}
 
 	query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ?", queryWorkspaceIDs)
 
@@ -205,6 +209,11 @@ func (r *datasetRepository) GetPaginatedByTenantIDsWithPermissions(ctx context.C
 			model.DatasetPermissionAllTeam,
 			model.DatasetPermissionAllTeamMembers,
 		}).Where("EXISTS (?)", membershipSubquery)
+		if len(allTeamWorkspaceIDs) == 0 {
+			allTeamCondition = r.db.Where("1 = 0")
+		} else {
+			allTeamCondition = allTeamCondition.Where("datasets.workspace_id IN ?", allTeamWorkspaceIDs)
+		}
 
 		query = query.Where(
 			r.db.Where("EXISTS (?)", ownerAdminSubquery).

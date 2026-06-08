@@ -32,6 +32,7 @@ var (
 )
 
 type DatasetService interface {
+	SetOrganizationService(organizationService interfaces.OrganizationService)
 	CreateDataset(ctx context.Context, req *CreateDatasetRequest) (*model.Dataset, error)
 	GetDatasetByID(ctx context.Context, id string) (*model.Dataset, error)
 	GetDatasetsByIDs(ctx context.Context, ids []string) ([]*model.Dataset, error)
@@ -211,6 +212,10 @@ type datasetService struct {
 	db                *gorm.DB
 	quotaService      interfaces.QuotaService
 	enterpriseService interfaces.OrganizationService
+}
+
+func (s *datasetService) SetOrganizationService(organizationService interfaces.OrganizationService) {
+	s.enterpriseService = organizationService
 }
 
 // NewDatasetService creates a new DatasetService.
