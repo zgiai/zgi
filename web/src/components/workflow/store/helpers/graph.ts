@@ -597,6 +597,11 @@ export function collectForNode(node: WorkflowNode, agentType: AgentType): Upstre
           descriptionKey: 'outputDescriptions.announcement.token',
         },
         {
+          key: 'access_token',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.access_token',
+        },
+        {
           key: 'url',
           type: 'string',
           descriptionKey: 'outputDescriptions.announcement.url',

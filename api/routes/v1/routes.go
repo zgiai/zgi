@@ -21,6 +21,10 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		BootstrapService: serviceContainer.GetBootstrapService(),
 		FeatureService:   system_service.NewFeatureService(),
 	})
+	RegisterShortLinkRoutes(v1, ShortLinkRouteDeps{
+		ShortLinkService: serviceContainer.GetShortLinkService(),
+		Scheduler:        serviceContainer.GetScheduler(),
+	})
 
 	// TaskQueue debug routes removed (module deprecated)
 
@@ -179,6 +183,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		Scheduler:                   serviceContainer.GetScheduler(),
 		EngineFactory:               workflowEngineFactory,
 		AutomationRunnerSetter:      serviceContainer,
+		ShortLinkService:            serviceContainer.GetShortLinkService(),
 	})
 
 	// ---------- Agent ----------
