@@ -216,13 +216,14 @@ func (s *fileAssetChunkEditService) syncEditedChunkEmbedding(ctx context.Context
 		return nil, false, nil
 	}
 	if s.chunkEmbed != nil {
+		embeddingProvider, embeddingModel := resolveChunkEditEmbeddingModel(asset, input)
 		embeddingResult, err := s.chunkEmbed.GenerateChunkEmbedding(ctx, GenerateDocumentChunkEmbeddingInput{
 			OrganizationID:    input.OrganizationID,
 			AssetID:           asset.ID,
 			ProcessingRunID:   *asset.ProcessingRunID,
 			GenerationNo:      asset.GenerationNo,
-			EmbeddingProvider: input.EmbeddingProvider,
-			EmbeddingModel:    input.EmbeddingModel,
+			EmbeddingProvider: embeddingProvider,
+			EmbeddingModel:    embeddingModel,
 			RequestedBy:       input.UpdatedBy,
 			Chunk:             updatedChunk,
 		})
@@ -232,6 +233,20 @@ func (s *fileAssetChunkEditService) syncEditedChunkEmbedding(ctx context.Context
 		return embeddingResult, true, nil
 	}
 	return nil, false, nil
+}
+
+func resolveChunkEditEmbeddingModel(asset *model.DocumentAsset, input FileAssetChunkEditInput) (string, string) {
+	provider := strings.TrimSpace(input.EmbeddingProvider)
+	modelName := strings.TrimSpace(input.EmbeddingModel)
+	if asset != nil {
+		if asset.EmbeddingProvider != nil && strings.TrimSpace(*asset.EmbeddingProvider) != "" {
+			provider = strings.TrimSpace(*asset.EmbeddingProvider)
+		}
+		if asset.EmbeddingModel != nil && strings.TrimSpace(*asset.EmbeddingModel) != "" {
+			modelName = strings.TrimSpace(*asset.EmbeddingModel)
+		}
+	}
+	return provider, modelName
 }
 
 func (s *fileAssetChunkEditService) enqueueDatasetRefSyncsForAssetEdit(ctx context.Context, asset *model.DocumentAsset, accountID string) error {

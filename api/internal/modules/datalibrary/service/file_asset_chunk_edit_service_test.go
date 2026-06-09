@@ -14,14 +14,18 @@ func TestFileAssetChunkEditServiceUpdatesLeafChunkAndRegeneratesOnlyThatEmbeddin
 	assetID := uuid.New()
 	runID := uuid.New()
 	chunkID := uuid.New()
+	assetProvider := "asset-provider"
+	assetModel := "asset-model"
 	assetRepo := &fileAssetStateAssetRepo{
 		asset: &model.DocumentAsset{
-			ID:              assetID,
-			OrganizationID:  "org-1",
-			SourceFileID:    "file-1",
-			ProductStatus:   model.DocumentAssetProductStatusReady,
-			ProcessingRunID: &runID,
-			GenerationNo:    5,
+			ID:                assetID,
+			OrganizationID:    "org-1",
+			SourceFileID:      "file-1",
+			ProductStatus:     model.DocumentAssetProductStatusReady,
+			ProcessingRunID:   &runID,
+			GenerationNo:      5,
+			EmbeddingProvider: &assetProvider,
+			EmbeddingModel:    &assetModel,
 		},
 	}
 	chunkRepo := newFileAssetChunkEditChunkRepo([]*model.DocumentChunk{
@@ -62,8 +66,8 @@ func TestFileAssetChunkEditServiceUpdatesLeafChunkAndRegeneratesOnlyThatEmbeddin
 		Content:           &content,
 		Enabled:           &enabled,
 		UpdatedBy:         "user-1",
-		EmbeddingProvider: "provider-1",
-		EmbeddingModel:    "model-1",
+		EmbeddingProvider: "request-provider",
+		EmbeddingModel:    "request-model",
 	})
 	if err != nil {
 		t.Fatalf("UpdateCurrentFileChunk: %v", err)
@@ -82,8 +86,8 @@ func TestFileAssetChunkEditServiceUpdatesLeafChunkAndRegeneratesOnlyThatEmbeddin
 		chunkEmbed.lastInput.Chunk.ID != chunkID ||
 		chunkEmbed.lastInput.ProcessingRunID != runID ||
 		chunkEmbed.lastInput.GenerationNo != 5 ||
-		chunkEmbed.lastInput.EmbeddingProvider != "provider-1" ||
-		chunkEmbed.lastInput.EmbeddingModel != "model-1" {
+		chunkEmbed.lastInput.EmbeddingProvider != assetProvider ||
+		chunkEmbed.lastInput.EmbeddingModel != assetModel {
 		t.Fatalf("embedding input=%+v called=%d", chunkEmbed.lastInput, chunkEmbed.called)
 	}
 	if chunkRepo.updateCalls != 1 {
