@@ -125,7 +125,6 @@ const messages: DashboardMessages = {
       instructions: {
         title: '充值说明',
         scan: '请使用微信或支付宝扫描下方二维码进行充值',
-        rate: '充值金额将自动转换为美金余额（汇率：1 USD ≈ {rate} CNY）',
         arrival: '充值成功后，余额将在 5-10 分钟内到账',
       },
       qrcode: {

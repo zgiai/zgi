@@ -279,7 +279,6 @@ const messages = {
       instructions: {
         title: 'Instructions',
         scan: 'Scan the QR code below with WeChat or Alipay to recharge',
-        rate: 'Amount will be converted to USD balance (Rate: 1 USD ≈ {rate} CNY)',
         arrival: 'Balance will arrive within 5-10 minutes after successful payment',
       },
       qrcode: {
