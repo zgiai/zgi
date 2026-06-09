@@ -138,7 +138,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		documentRepoObj,
 	)
 	dataLibraryTaskDispatcher := datalibWorker.NewFileProcessTaskDispatcher(deps.TaskManager)
-	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, dataLibraryTaskDispatcher, deps.AccountService, documentServiceObj)
+	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, dataLibraryTaskDispatcher, deps.AccountService, documentServiceObj, datasetServiceObj, deps.OrganizationService)
 	dataLibraryDatasetRefSyncRunner := datalibWorker.NewDatasetRefSyncRunner(datalibWorker.DatasetRefSyncRunnerDeps{
 		Refs:       dataLibraryKBRefRepo,
 		Assets:     dataLibraryAssetRepo,

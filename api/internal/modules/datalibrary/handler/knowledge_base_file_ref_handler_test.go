@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	datasetModel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	workspaceModel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 )
 
@@ -35,7 +37,7 @@ func TestKnowledgeBaseFileRefHandlerMarksRefFailedWhenCreateEnqueueFails(t *test
 			},
 		},
 	}
-	router := newKnowledgeBaseFileRefTestRouter(refSvc, &fakeDatasetRefSyncEnqueuer{err: errors.New("queue unavailable")}, "org-1", "workspace-1", "account-1")
+	router := newKnowledgeBaseFileRefTestRouter(refSvc, &fakeDatasetRefSyncEnqueuer{err: errors.New("queue unavailable")}, "org-1", "workspace-1", "account-1", true)
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/datasets/dataset-1/file-refs", bytes.NewBufferString(`{"asset_ids":["`+assetID.String()+`"]}`))
@@ -55,9 +57,34 @@ func TestKnowledgeBaseFileRefHandlerMarksRefFailedWhenCreateEnqueueFails(t *test
 	}
 }
 
-func newKnowledgeBaseFileRefTestRouter(refSvc service.KnowledgeBaseFileRefService, enqueuer datasetFileRefSyncEnqueuer, organizationID string, workspaceID string, accountID string) *gin.Engine {
+func TestKnowledgeBaseFileRefHandlerRejectsCreateWithoutManagePermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	refSvc := &fakeKnowledgeBaseFileRefHandlerService{}
+	router := newKnowledgeBaseFileRefTestRouter(refSvc, nil, "org-1", "workspace-1", "account-1", false)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/datasets/dataset-1/file-refs", bytes.NewBufferString(`{"asset_ids":["`+uuid.NewString()+`"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if refSvc.createCalled {
+		t.Fatal("CreateRefs should not be called without knowledge base manage permission")
+	}
+}
+
+func newKnowledgeBaseFileRefTestRouter(refSvc service.KnowledgeBaseFileRefService, enqueuer datasetFileRefSyncEnqueuer, organizationID string, workspaceID string, accountID string, allowManage bool) *gin.Engine {
 	router := gin.New()
-	handler := NewKnowledgeBaseFileRefHandler(refSvc, enqueuer, nil, nil)
+	handler := NewKnowledgeBaseFileRefHandler(
+		refSvc,
+		enqueuer,
+		nil,
+		nil,
+		&fakeKnowledgeBaseFileRefDatasetReader{workspaceID: workspaceID},
+		&fakeKnowledgeBaseFileRefOrganizationService{allow: allowManage},
+	)
 	router.Use(func(c *gin.Context) {
 		if organizationID != "" {
 			util.SetOrganizationID(c, organizationID)
@@ -77,6 +104,7 @@ func newKnowledgeBaseFileRefTestRouter(refSvc service.KnowledgeBaseFileRefServic
 type fakeKnowledgeBaseFileRefHandlerService struct {
 	createResult *service.KnowledgeBaseFileRefCreateResult
 	failedReq    service.KnowledgeBaseFileRefSyncFailureRequest
+	createCalled bool
 }
 
 func (s *fakeKnowledgeBaseFileRefHandlerService) ListCandidates(ctx context.Context, req service.KnowledgeBaseFileCandidateRequest) (*service.KnowledgeBaseFileCandidateResult, error) {
@@ -88,6 +116,7 @@ func (s *fakeKnowledgeBaseFileRefHandlerService) ListRefs(ctx context.Context, r
 }
 
 func (s *fakeKnowledgeBaseFileRefHandlerService) CreateRefs(ctx context.Context, req service.KnowledgeBaseFileRefCreateRequest) (*service.KnowledgeBaseFileRefCreateResult, error) {
+	s.createCalled = true
 	return s.createResult, nil
 }
 
@@ -121,4 +150,26 @@ type fakeDatasetRefSyncEnqueuer struct {
 
 func (e *fakeDatasetRefSyncEnqueuer) EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error {
 	return e.err
+}
+
+type fakeKnowledgeBaseFileRefDatasetReader struct {
+	workspaceID string
+}
+
+func (r *fakeKnowledgeBaseFileRefDatasetReader) GetDatasetByID(ctx context.Context, datasetID string) (*datasetModel.Dataset, error) {
+	return &datasetModel.Dataset{
+		ID:          datasetID,
+		WorkspaceID: r.workspaceID,
+	}, nil
+}
+
+type fakeKnowledgeBaseFileRefOrganizationService struct {
+	allow bool
+}
+
+func (s *fakeKnowledgeBaseFileRefOrganizationService) CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspaceModel.WorkspacePermissionCode) (bool, error) {
+	if permissionCode != workspaceModel.WorkspacePermissionKnowledgeBaseManage {
+		return false, nil
+	}
+	return s.allow, nil
 }

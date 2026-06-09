@@ -7,7 +7,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	datalibService "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	datasetModel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspaceModel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -18,18 +20,35 @@ type KnowledgeBaseFileRefHandler struct {
 	dispatcher     datasetFileRefSyncEnqueuer
 	accountService interfaces.AccountService
 	documents      datasetFileRefDocumentManager
+	datasets       datasetFileRefDatasetReader
+	organization   datasetFileRefPermissionChecker
 }
 
 type datasetFileRefDocumentManager interface {
 	DeleteDocuments(ctx context.Context, datasetID string, documentIDs []string) error
 }
 
+type datasetFileRefDatasetReader interface {
+	GetDatasetByID(ctx context.Context, datasetID string) (*datasetModel.Dataset, error)
+}
+
+type datasetFileRefPermissionChecker interface {
+	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspaceModel.WorkspacePermissionCode) (bool, error)
+}
+
 type datasetFileRefSyncEnqueuer interface {
 	EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error
 }
 
-func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, dispatcher datasetFileRefSyncEnqueuer, accountService interfaces.AccountService, documents datasetFileRefDocumentManager) *KnowledgeBaseFileRefHandler {
-	return &KnowledgeBaseFileRefHandler{service: service, dispatcher: dispatcher, accountService: accountService, documents: documents}
+func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, dispatcher datasetFileRefSyncEnqueuer, accountService interfaces.AccountService, documents datasetFileRefDocumentManager, datasets datasetFileRefDatasetReader, organization datasetFileRefPermissionChecker) *KnowledgeBaseFileRefHandler {
+	return &KnowledgeBaseFileRefHandler{
+		service:        service,
+		dispatcher:     dispatcher,
+		accountService: accountService,
+		documents:      documents,
+		datasets:       datasets,
+		organization:   organization,
+	}
 }
 
 func (h *KnowledgeBaseFileRefHandler) RegisterDatasetRoutes(router *gin.RouterGroup) {
@@ -99,6 +118,9 @@ func (h *KnowledgeBaseFileRefHandler) CreateFileRefs(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+		return
+	}
 	var req createFileRefsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParams)
@@ -138,6 +160,9 @@ func (h *KnowledgeBaseFileRefHandler) RetryFileRef(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+		return
+	}
 	refID, err := uuid.Parse(c.Param("ref_id"))
 	if err != nil || refID == uuid.Nil {
 		response.Fail(c, response.ErrInvalidParams)
@@ -168,6 +193,9 @@ func (h *KnowledgeBaseFileRefHandler) RemoveFileRef(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+		return
+	}
 	refID, err := uuid.Parse(c.Param("ref_id"))
 	if err != nil || refID == uuid.Nil {
 		response.Fail(c, response.ErrInvalidParams)
@@ -196,6 +224,39 @@ func (h *KnowledgeBaseFileRefHandler) RemoveFileRef(c *gin.Context) {
 		return
 	}
 	response.Success(c, removed)
+}
+
+func (h *KnowledgeBaseFileRefHandler) requireKnowledgeBaseManage(c *gin.Context, organizationID string, datasetID string) bool {
+	accountID := util.GetAccountID(c)
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return false
+	}
+	if h.datasets == nil || h.organization == nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	dataset, err := h.datasets.GetDatasetByID(c.Request.Context(), datasetID)
+	if err != nil || dataset == nil {
+		response.Fail(c, response.ErrDatasetNotFound)
+		return false
+	}
+	hasPermission, err := h.organization.CheckWorkspacePermission(
+		c.Request.Context(),
+		organizationID,
+		dataset.WorkspaceID,
+		accountID,
+		workspaceModel.WorkspacePermissionKnowledgeBaseManage,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+	return true
 }
 
 func (h *KnowledgeBaseFileRefHandler) enqueueDatasetRefSync(ctx context.Context, organizationID string, workspaceID *string, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error {
