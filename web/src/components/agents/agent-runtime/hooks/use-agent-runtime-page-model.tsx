@@ -1023,6 +1023,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       selectedKnowledgeDatasets,
       selectedSkills,
       databaseBindings,
+      workflowBindings,
+      workflowCandidatesByBindingID,
       onChangeSystemPrompt: setSystemPrompt,
       onOpenOptimizer: () => setPromptOptimizerOpen(true),
     },

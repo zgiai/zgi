@@ -1401,6 +1401,8 @@ const messages: AgentsMessages = {
         databaseTablesCount: '已绑定 {count} 张表',
         table: '数据表',
         noTable: '暂无已绑定数据表',
+        workflow: '工作流',
+        noWorkflow: '暂无已绑定工作流',
         writableTable: '可写',
         skill: 'Skill',
         noSkill: '暂无已启用 Skill',

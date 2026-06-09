@@ -1492,6 +1492,8 @@ const messages = {
         databaseTablesCount: '{count} bound table(s)',
         table: 'Data table',
         noTable: 'No bound data table',
+        workflow: 'Workflow',
+        noWorkflow: 'No bound workflow',
         writableTable: 'Writable',
         skill: 'Skill',
         noSkill: 'No enabled Skill',
