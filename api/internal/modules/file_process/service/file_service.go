@@ -785,15 +785,6 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 			return fmt.Errorf("file %s is used by documents and cannot be deleted", fileID)
 		}
 
-		if s.assetDeletion != nil {
-			if err := s.assetDeletion.DeleteBySourceFile(ctx, file.OrganizationID, fileID); err != nil {
-				if errors.Is(err, datalibraryservice.ErrFileAssetDeletionBlocked) {
-					return fmt.Errorf("file %s is used by documents and cannot be deleted: %w", fileID, err)
-				}
-				return fmt.Errorf("failed to delete file %s asset data: %w", fileID, err)
-			}
-		}
-
 		// Get groupID from tenantID for quota recording
 		// In this system, tenantID IS the groupID
 		var groupID *uuid.UUID
@@ -810,8 +801,17 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 				return fmt.Errorf("failed to delete file %s from storage: %w", fileID, err)
 			}
 
+			if s.assetDeletion != nil {
+				if err := s.assetDeletion.DeleteBySourceFileInTx(ctx, tx, file.OrganizationID, fileID); err != nil {
+					if errors.Is(err, datalibraryservice.ErrFileAssetDeletionBlocked) {
+						return fmt.Errorf("file %s is used by documents and cannot be deleted: %w", fileID, err)
+					}
+					return fmt.Errorf("failed to delete file %s asset data: %w", fileID, err)
+				}
+			}
+
 			// Delete file record from database
-			if err := s.fileRepo.Delete(ctx, fileID); err != nil {
+			if err := s.fileRepo.WithTx(tx).Delete(ctx, fileID); err != nil {
 				return fmt.Errorf("failed to delete file %s record: %w", fileID, err)
 			}
 

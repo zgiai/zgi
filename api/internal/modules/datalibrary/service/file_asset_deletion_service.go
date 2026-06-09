@@ -32,6 +32,7 @@ func (e *FileAssetDeletionBlockedError) Is(target error) bool {
 
 type FileAssetDeletionService interface {
 	DeleteBySourceFile(ctx context.Context, organizationID string, sourceFileID string) error
+	DeleteBySourceFileInTx(ctx context.Context, tx *gorm.DB, organizationID string, sourceFileID string) error
 }
 
 type fileAssetDeletionService struct {
@@ -50,13 +51,25 @@ func (s *fileAssetDeletionService) DeleteBySourceFile(ctx context.Context, organ
 	if s == nil || s.db == nil || organizationID == "" || sourceFileID == "" {
 		return nil
 	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.deleteBySourceFile(ctx, tx, organizationID, sourceFileID)
+	})
+}
 
-	asset, err := s.findAsset(ctx, organizationID, sourceFileID)
+func (s *fileAssetDeletionService) DeleteBySourceFileInTx(ctx context.Context, tx *gorm.DB, organizationID string, sourceFileID string) error {
+	if s == nil || tx == nil || organizationID == "" || sourceFileID == "" {
+		return nil
+	}
+	return s.deleteBySourceFile(ctx, tx, organizationID, sourceFileID)
+}
+
+func (s *fileAssetDeletionService) deleteBySourceFile(ctx context.Context, db *gorm.DB, organizationID string, sourceFileID string) error {
+	asset, err := s.findAsset(ctx, db, organizationID, sourceFileID)
 	if err != nil || asset == nil {
 		return err
 	}
 
-	kbRefCount, dbRefCount, err := s.countBlockingRefs(ctx, asset)
+	kbRefCount, dbRefCount, err := s.countBlockingRefs(ctx, db, asset)
 	if err != nil {
 		return err
 	}
@@ -74,12 +87,12 @@ func (s *fileAssetDeletionService) DeleteBySourceFile(ctx context.Context, organ
 		}
 	}
 
-	return s.deleteAssetRows(ctx, asset)
+	return s.deleteAssetRows(ctx, db, asset)
 }
 
-func (s *fileAssetDeletionService) findAsset(ctx context.Context, organizationID string, sourceFileID string) (*model.DocumentAsset, error) {
+func (s *fileAssetDeletionService) findAsset(ctx context.Context, db *gorm.DB, organizationID string, sourceFileID string) (*model.DocumentAsset, error) {
 	var asset model.DocumentAsset
-	err := s.db.WithContext(ctx).
+	err := db.WithContext(ctx).
 		Where("organization_id = ? AND source_file_id = ?", organizationID, sourceFileID).
 		Order("updated_at DESC").
 		First(&asset).Error
@@ -92,9 +105,9 @@ func (s *fileAssetDeletionService) findAsset(ctx context.Context, organizationID
 	return &asset, nil
 }
 
-func (s *fileAssetDeletionService) countBlockingRefs(ctx context.Context, asset *model.DocumentAsset) (int64, int64, error) {
+func (s *fileAssetDeletionService) countBlockingRefs(ctx context.Context, db *gorm.DB, asset *model.DocumentAsset) (int64, int64, error) {
 	var kbRefCount int64
-	if err := s.db.WithContext(ctx).
+	if err := db.WithContext(ctx).
 		Model(&model.KnowledgeBaseAssetRef{}).
 		Joins("JOIN datasets ON datasets.id = data_library_knowledge_base_asset_refs.dataset_id").
 		Where("data_library_knowledge_base_asset_refs.organization_id = ? AND data_library_knowledge_base_asset_refs.asset_id = ? AND data_library_knowledge_base_asset_refs.deleted_at IS NULL", asset.OrganizationID, asset.ID).
@@ -103,7 +116,7 @@ func (s *fileAssetDeletionService) countBlockingRefs(ctx context.Context, asset 
 	}
 
 	var dbRefCount int64
-	if err := s.db.WithContext(ctx).
+	if err := db.WithContext(ctx).
 		Model(&model.DatabaseAssetRef{}).
 		Where("organization_id = ? AND asset_id = ? AND deleted_at IS NULL", asset.OrganizationID, asset.ID).
 		Count(&dbRefCount).Error; err != nil {
@@ -112,13 +125,13 @@ func (s *fileAssetDeletionService) countBlockingRefs(ctx context.Context, asset 
 	return kbRefCount, dbRefCount, nil
 }
 
-func (s *fileAssetDeletionService) deleteAssetRows(ctx context.Context, asset *model.DocumentAsset) error {
-	parseArtifactIDs, chunkArtifactSetIDs, err := s.collectArtifactIDs(ctx, asset)
+func (s *fileAssetDeletionService) deleteAssetRows(ctx context.Context, db *gorm.DB, asset *model.DocumentAsset) error {
+	parseArtifactIDs, chunkArtifactSetIDs, err := s.collectArtifactIDs(ctx, db, asset)
 	if err != nil {
 		return err
 	}
 
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		nowExpr := tx.NowFunc()
 		if err := tx.Model(&model.ProcessingRequest{}).
 			Where("asset_id = ? AND status IN ?", asset.ID, []string{
@@ -190,7 +203,7 @@ func (s *fileAssetDeletionService) deleteAssetRows(ctx context.Context, asset *m
 	})
 }
 
-func (s *fileAssetDeletionService) collectArtifactIDs(ctx context.Context, asset *model.DocumentAsset) ([]uuid.UUID, []uuid.UUID, error) {
+func (s *fileAssetDeletionService) collectArtifactIDs(ctx context.Context, db *gorm.DB, asset *model.DocumentAsset) ([]uuid.UUID, []uuid.UUID, error) {
 	parseIDs := make(map[uuid.UUID]struct{})
 	chunkSetIDs := make(map[uuid.UUID]struct{})
 	if asset.ParseArtifactID != nil && *asset.ParseArtifactID != uuid.Nil {
@@ -201,7 +214,7 @@ func (s *fileAssetDeletionService) collectArtifactIDs(ctx context.Context, asset
 	}
 
 	var versions []*model.DocumentVersion
-	if err := s.db.WithContext(ctx).Unscoped().
+	if err := db.WithContext(ctx).Unscoped().
 		Where("asset_id = ?", asset.ID).
 		Find(&versions).Error; err != nil {
 		return nil, nil, err
@@ -216,7 +229,7 @@ func (s *fileAssetDeletionService) collectArtifactIDs(ctx context.Context, asset
 	}
 
 	var chunks []*model.DocumentChunk
-	if err := s.db.WithContext(ctx).Unscoped().
+	if err := db.WithContext(ctx).Unscoped().
 		Where("asset_id = ?", asset.ID).
 		Find(&chunks).Error; err != nil {
 		return nil, nil, err
@@ -228,7 +241,7 @@ func (s *fileAssetDeletionService) collectArtifactIDs(ctx context.Context, asset
 	}
 
 	var vectorArtifacts []*model.VectorArtifact
-	if err := s.db.WithContext(ctx).Unscoped().
+	if err := db.WithContext(ctx).Unscoped().
 		Where("asset_id = ?", asset.ID).
 		Find(&vectorArtifacts).Error; err != nil {
 		return nil, nil, err
@@ -240,7 +253,7 @@ func (s *fileAssetDeletionService) collectArtifactIDs(ctx context.Context, asset
 	}
 
 	var extractionArtifacts []*model.ExtractionArtifact
-	if err := s.db.WithContext(ctx).Unscoped().
+	if err := db.WithContext(ctx).Unscoped().
 		Where("asset_id = ?", asset.ID).
 		Find(&extractionArtifacts).Error; err != nil {
 		return nil, nil, err
