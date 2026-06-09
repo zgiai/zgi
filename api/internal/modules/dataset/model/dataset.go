@@ -65,6 +65,7 @@ type Dataset struct {
 	Name                   string    `json:"name" gorm:"type:varchar(255);not null"`
 	Description            *string   `json:"description" gorm:"type:text"`
 	Provider               string    `json:"provider" gorm:"type:varchar(255);not null;default:'vendor'"`
+	Permission             string    `json:"permission" gorm:"type:varchar(255);not null;default:'all_team'"`
 	EnableGraphFlow        bool      `json:"enable_graph_flow" gorm:"default:false"` // GraphFlow switch
 	CreatedBy              string    `json:"created_by" gorm:"type:uuid;not null"`
 	CreatedAt              time.Time `json:"created_at" gorm:"not null;default:CURRENT_TIMESTAMP(0)"`
@@ -98,6 +99,40 @@ type Dataset struct {
 // TableName specifies table name
 func (Dataset) TableName() string {
 	return "datasets"
+}
+
+type DatasetPermissionType string
+
+const (
+	DatasetPermissionOnlyMe         DatasetPermissionType = "only_me"
+	DatasetPermissionAllTeam        DatasetPermissionType = "all_team"
+	DatasetPermissionAllTeamMembers DatasetPermissionType = "all_team_members"
+)
+
+func NormalizeDatasetPermission(input string) string {
+	permission := strings.TrimSpace(input)
+	if permission == "" {
+		return string(DatasetPermissionAllTeam)
+	}
+	return permission
+}
+
+func IsValidDatasetCreatePermission(input string) bool {
+	switch DatasetPermissionType(NormalizeDatasetPermission(input)) {
+	case DatasetPermissionOnlyMe, DatasetPermissionAllTeam:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsDatasetWorkspaceVisiblePermission(input string) bool {
+	switch DatasetPermissionType(strings.TrimSpace(input)) {
+	case DatasetPermissionAllTeam, DatasetPermissionAllTeamMembers:
+		return true
+	default:
+		return false
+	}
 }
 
 // GenCollectionNameByID generates collection name for vector database
