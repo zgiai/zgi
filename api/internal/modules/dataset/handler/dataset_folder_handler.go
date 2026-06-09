@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	middleware "github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"gorm.io/gorm"
 )
 
 // DatasetFolderHandler handles dataset folder-related HTTP requests
@@ -43,6 +45,17 @@ func NewDatasetFolderHandler(
 		accountService:             accountService,
 		organizationService:        enterpriseService,
 		permissionService:          permissionService,
+	}
+}
+
+func failDatasetFolderRead(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound) || strings.Contains(err.Error(), "not found"):
+		response.Fail(c, response.ErrDatasetNotFound)
+	case errors.Is(err, service.ErrDatasetAccessDenied) || strings.Contains(err.Error(), "no permission"):
+		response.Fail(c, response.ErrDatasetPermissionDenied)
+	default:
+		response.Fail(c, response.ErrSystemError)
 	}
 }
 
@@ -696,15 +709,7 @@ func (h *DatasetFolderHandler) MoveDatasetToFolder(c *gin.Context) {
 	// Check if dataset exists and user has permission to access it
 	_, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), req.DatasetID, accountID, tenantID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		if strings.Contains(err.Error(), "no permission") {
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		}
-		response.Fail(c, response.ErrSystemError)
+		failDatasetFolderRead(c, err)
 		return
 	}
 
