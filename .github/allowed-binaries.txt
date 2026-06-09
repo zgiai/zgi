@@ -6,4 +6,5 @@ docs/assets/zgi-workflow-editor-api-enrichment.png
 web/public/logo.png
 web/public/logo1.png
 web/public/logo_dark.png
+web/public/favicon.ico
 web/src/app/favicon.ico
