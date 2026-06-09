@@ -267,7 +267,9 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                     <Loader className="h-3 w-3 animate-spin text-info" />
                   ) : rawStatus === 'paused' ? null : (
                     <div className={elapsedTimeClass}>
-                      {formatMs(raw?.elapsedTime ? raw.elapsedTime : 0)}
+                      {typeof raw?.elapsedTime === 'number' && raw.elapsedTime > 0
+                        ? formatMs(raw.elapsedTime)
+                        : '-'}
                     </div>
                   )}
                 </div>
@@ -814,7 +816,9 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                               </span>
                             </div>
                             <span className={elapsedTimeClass}>
-                              {formatMs(roundElapsedTime ?? 0)}
+                              {typeof roundElapsedTime === 'number' && roundElapsedTime > 0
+                                ? formatMs(roundElapsedTime)
+                                : '-'}
                             </span>
                           </div>
                           {roundOpen && (

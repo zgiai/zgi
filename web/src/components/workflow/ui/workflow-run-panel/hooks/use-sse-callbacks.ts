@@ -15,6 +15,7 @@ import {
   getWorkflowRunCreatedAtMs,
   getWorkflowRunExecutionId,
   getWorkflowRunItemKey,
+  getWorkflowRunRoundDurationMap,
   getWorkflowRunRoundElapsedTime,
   sortWorkflowRunItems,
   sortWorkflowRunRounds,
@@ -850,12 +851,13 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
           const sessions = iterationSessionsRef.current;
           const sess = sessions.get(nodeId);
           if (sess) {
+            const roundDurations = getWorkflowRunRoundDurationMap(d, 'iteration');
             sess.elapsedTime = elapsedTimeMs;
             sess.error = error;
             sess.outputs = outputs;
             sess.rounds = sess.rounds.map(r => ({
               ...r,
-              elapsedTime: getWorkflowRunRoundElapsedTime(r),
+              elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
             }));
             sessions.set(nodeId, sess);
           }
@@ -913,6 +915,7 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
             execMeta && isRecord(execMeta.loop_variable_map)
               ? (execMeta.loop_variable_map as RecordLike)
               : undefined;
+          const roundDurations = getWorkflowRunRoundDurationMap(d, 'loop');
           const sessions = loopSessionsRef.current;
           const sess = sessions.get(nodeId);
           if (sess) {
@@ -924,7 +927,7 @@ export function useSseCallbacks(params: UseSseCallbacksParams): WorkflowRunSseCa
               const variables = variableMap?.[String(r.index)];
               return {
                 ...r,
-                elapsedTime: getWorkflowRunRoundElapsedTime(r),
+                elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
                 variables: variables ?? r.variables,
               };
             });

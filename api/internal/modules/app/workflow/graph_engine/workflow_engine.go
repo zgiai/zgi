@@ -156,6 +156,9 @@ type NodeFinishedEvent struct {
 	Outputs          map[string]any
 	Err              error
 	EdgeSourceHandle string
+	StartedAt        time.Time
+	FinishedAt       time.Time
+	ElapsedTime      time.Duration
 }
 
 // NewWorkflowEngine creates a new workflow engine

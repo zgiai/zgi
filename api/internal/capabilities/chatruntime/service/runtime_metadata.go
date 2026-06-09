@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -491,7 +492,10 @@ func valueFromMap(values map[string]interface{}, key string) interface{} {
 }
 
 func numericValueFromMap(values map[string]interface{}, key string) interface{} {
-	value := valueFromMap(values, key)
+	return numericValueFromAny(valueFromMap(values, key))
+}
+
+func numericValueFromAny(value interface{}) interface{} {
 	switch value.(type) {
 	case int, int64, int32, float64, float32, uint, uint64, uint32:
 		return value
@@ -522,6 +526,12 @@ func intValueFromAny(value interface{}) int {
 		parsed, err := typed.Int64()
 		if err == nil {
 			return int(parsed)
+		}
+		return 0
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err == nil {
+			return parsed
 		}
 		return 0
 	default:

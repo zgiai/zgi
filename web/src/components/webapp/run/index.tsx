@@ -35,6 +35,7 @@ import {
   getWorkflowRunCreatedAtMs,
   getWorkflowRunExecutionId,
   getWorkflowRunItemKey,
+  getWorkflowRunRoundDurationMap,
   getWorkflowRunRoundElapsedTime,
   sortWorkflowRunItems,
   sortWorkflowRunRounds,
@@ -945,6 +946,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         typeof d['elapsed_time'] === 'number' ? Math.max(0, d['elapsed_time'] as number) : 0;
       const error = typeof d['error'] === 'string' ? (d['error'] as string) : null;
       const outputs = d['outputs'];
+      const roundDurations = getWorkflowRunRoundDurationMap(d, 'iteration');
       const sess = iterationSessions.current.get(key) ?? {
         nodeId,
         title,
@@ -956,7 +958,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       sess.outputs = outputs;
       sess.rounds = sess.rounds.map(r => ({
         ...r,
-        elapsedTime: getWorkflowRunRoundElapsedTime(r),
+        elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
       }));
       iterationSessions.current.set(key, sess);
       activeIteration.current = { nodeId: null, index: null };
@@ -1076,6 +1078,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
               | Record<string, unknown>
               | undefined)
           : undefined;
+      const roundDurations = getWorkflowRunRoundDurationMap(d, 'loop');
       const sess = loopSessions.current.get(key) ?? {
         nodeId,
         title,
@@ -1089,7 +1092,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         const variables = variableMap?.[String(r.index)];
         return {
           ...r,
-          elapsedTime: getWorkflowRunRoundElapsedTime(r),
+          elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
           variables: variables ?? r.variables,
         };
       });

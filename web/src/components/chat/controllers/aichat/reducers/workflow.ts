@@ -17,6 +17,7 @@ import {
   getWorkflowRunCreatedAtMs,
   getWorkflowRunExecutionId,
   getWorkflowRunItemKey,
+  getWorkflowRunRoundDurationMap,
   getWorkflowRunRoundElapsedTime,
   sortWorkflowRunItems,
   sortWorkflowRunRounds
@@ -362,6 +363,35 @@ function upsertWorkflowContainerRound(
   return { ...container, loopRounds: nextRounds };
 }
 
+function applyWorkflowContainerRoundDurations(
+  container: NodeInfo,
+  payload: AIChatWorkflowEventData,
+  kind: 'iteration' | 'loop'
+): NodeInfo {
+  const durations = getWorkflowRunRoundDurationMap(payload, kind);
+  if (durations.size === 0) return container;
+  const rounds = kind === 'iteration' ? container.iterationRounds ?? [] : container.loopRounds ?? [];
+  const durationRounds: Array<{
+    index: number;
+    nodes: NodeInfo[];
+    elapsedTime?: number;
+    variables?: unknown;
+  }> = Array.from(durations.entries()).map(([index, elapsedTime]) => {
+    const existing = rounds.find(round => round.index === index);
+    return {
+      ...(existing ?? { index, nodes: [] }),
+      elapsedTime,
+    };
+  });
+  const nextRounds = sortWorkflowRunRounds(
+    durationRounds.concat(rounds.filter(round => !durations.has(round.index)))
+  );
+  if (kind === 'iteration') {
+    return { ...container, iterationRounds: nextRounds };
+  }
+  return { ...container, loopRounds: nextRounds };
+}
+
 function removeWorkflowContainerChildren(nodes: NodeInfo[]): NodeInfo[] {
   const childKeys = new Set<string>();
   const containerKeys = new Set<string>();
@@ -396,6 +426,7 @@ function upsertWorkflowNodeWithContainers(
     const previous = existingIndex >= 0 ? nodes[existingIndex] : undefined;
     let container = buildWorkflowContainerNode(previous, payload, incoming, childKind, false);
     container = upsertWorkflowContainerRound(container, payload, childKind, incoming);
+    container = applyWorkflowContainerRoundDurations(container, payload, childKind);
     const next = nodes.slice();
     if (existingIndex >= 0) next[existingIndex] = container;
     else next.push(container);
@@ -410,6 +441,7 @@ function upsertWorkflowNodeWithContainers(
     const previous = existingIndex >= 0 ? nodes[existingIndex] : undefined;
     let container = buildWorkflowContainerNode(previous, payload, incoming, lifecycleKind, finished);
     container = upsertWorkflowContainerRound(container, payload, lifecycleKind);
+    container = applyWorkflowContainerRoundDurations(container, payload, lifecycleKind);
     const next = nodes.slice();
     if (existingIndex >= 0) next[existingIndex] = container;
     else next.push(container);
@@ -597,4 +629,3 @@ export function applyWorkflowFailedState(
 ): AIChatControllerState {
   return applyWorkflowTimelineState(current, payload, eventId, 'error');
 }
-

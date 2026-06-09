@@ -2,10 +2,12 @@ package workflow
 
 import (
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 )
 
 func TestAutomationWorkflowOutputsUsesRuntimeOutputs(t *testing.T) {
@@ -133,5 +135,80 @@ func TestAutomationWorkflowOutputsDoesNotPromoteNonApprovalToken(t *testing.T) {
 
 	if _, ok := outputs["approval_token"]; ok {
 		t.Fatalf("outputs[approval_token] promoted from non-approval node")
+	}
+}
+
+func TestEmitAutomationWorkflowNodeFinishedIncludesElapsedMilliseconds(t *testing.T) {
+	startedAt := time.Unix(1700000000, 0)
+	finishedAt := startedAt.Add(1500 * time.Millisecond)
+	var got automationaction.WorkflowRunEvent
+
+	emitAutomationWorkflowNodeFinished(func(event automationaction.WorkflowRunEvent) {
+		got = event
+	}, automationWorkflowEventTestRequest(), automationWorkflowEventTestWorkflow(), "run-1", automationWorkflowNodeMeta{
+		NodeID:   "node-1",
+		NodeType: "llm",
+		Title:    "LLM",
+	}, graph_engine.NodeFinishedEvent{
+		NodeID:      "node-1",
+		NodeType:    "llm",
+		Status:      "succeeded",
+		Outputs:     map[string]any{"text": "ok"},
+		StartedAt:   startedAt,
+		FinishedAt:  finishedAt,
+		ElapsedTime: finishedAt.Sub(startedAt),
+	})
+
+	if got.Type != automationWorkflowEventNodeFinished {
+		t.Fatalf("event type = %q, want %q", got.Type, automationWorkflowEventNodeFinished)
+	}
+	if elapsed, ok := got.Payload["elapsed_time"].(float64); !ok || elapsed != 1500 {
+		t.Fatalf("elapsed_time = %#v, want 1500 ms", got.Payload["elapsed_time"])
+	}
+	if got.Payload["created_at"] != startedAt.Unix() || got.Payload["finished_at"] != finishedAt.Unix() {
+		t.Fatalf("timestamps = %#v, want started/finished unix seconds", got.Payload)
+	}
+}
+
+func TestEmitAutomationWorkflowIterationCompletedIncludesElapsedMilliseconds(t *testing.T) {
+	startedAt := time.Unix(1700000000, 0)
+	finishedAt := startedAt.Add(2200 * time.Millisecond)
+	var got automationaction.WorkflowRunEvent
+
+	emitAutomationWorkflowIterationEvent(func(event automationaction.WorkflowRunEvent) {
+		got = event
+	}, automationWorkflowEventTestRequest(), automationWorkflowEventTestWorkflow(), "run-1", map[string]automationWorkflowNodeMeta{
+		"iter-1": {NodeID: "iter-1", NodeType: "iteration", Title: "Iteration"},
+	}, &graph_engine.IterationEvent{
+		Type:      "completed",
+		NodeID:    "iter-1",
+		Index:     2,
+		StartedAt: startedAt,
+		Timestamp: finishedAt,
+		Outputs:   map[string]any{"items": 2},
+	})
+
+	if got.Type != automationWorkflowEventIterationFinished {
+		t.Fatalf("event type = %q, want %q", got.Type, automationWorkflowEventIterationFinished)
+	}
+	if elapsed, ok := got.Payload["elapsed_time"].(float64); !ok || elapsed != 2200 {
+		t.Fatalf("elapsed_time = %#v, want 2200 ms", got.Payload["elapsed_time"])
+	}
+}
+
+func automationWorkflowEventTestRequest() automationaction.WorkflowRunRequest {
+	return automationaction.WorkflowRunRequest{
+		WorkflowRef: automationaction.WorkflowRef{
+			AgentID:    "agent-1",
+			WorkflowID: "workflow-1",
+		},
+	}
+}
+
+func automationWorkflowEventTestWorkflow() *Workflow {
+	return &Workflow{
+		ID:      "workflow-1",
+		AgentID: "agent-1",
+		Version: "v1",
 	}
 }

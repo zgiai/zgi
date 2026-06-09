@@ -32,6 +32,7 @@ import {
   getWorkflowRunCreatedAtMs,
   getWorkflowRunExecutionId,
   getWorkflowRunItemKey,
+  getWorkflowRunRoundDurationMap,
   getWorkflowRunRoundElapsedTime,
   sortWorkflowRunItems,
   sortWorkflowRunRounds,
@@ -696,7 +697,8 @@ export function useWorkflowChatPanelState({
             nodeId: typeof p['node_id'] === 'string' ? (p['node_id'] as string) : undefined,
             nodeType: typeof p['node_type'] === 'string' ? (p['node_type'] as string) : undefined,
             title: typeof p['title'] === 'string' ? (p['title'] as string) : undefined,
-            elapsedTime: typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : 0,
+            elapsedTime:
+              typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : undefined,
             error: err,
             data: {
               input: p['inputs'],
@@ -1000,9 +1002,11 @@ export function useWorkflowChatPanelState({
           const nodeType =
             typeof p['node_type'] === 'string' ? (p['node_type'] as string) : 'iteration';
           const title = typeof p['title'] === 'string' ? (p['title'] as string) : nodeType;
-          const elapsed = typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : 0;
+          const elapsed =
+            typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : undefined;
           const error = typeof p['error'] === 'string' ? (p['error'] as string) : undefined;
           const outputs = p['outputs'];
+          const roundDurations = getWorkflowRunRoundDurationMap(p, 'iteration');
           const status = error ? 'failed' : 'success';
           const key = nodeId ?? title;
           const sess = iterationSessionsRef.current.get(key) ?? {
@@ -1016,7 +1020,7 @@ export function useWorkflowChatPanelState({
           sess.outputs = outputs;
           sess.rounds = sess.rounds.map(r => ({
             ...r,
-            elapsedTime: getWorkflowRunRoundElapsedTime(r),
+            elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
           }));
           iterationSessionsRef.current.set(key, sess);
           activeIterationRef.current = { nodeId: null, index: null };
@@ -1112,7 +1116,8 @@ export function useWorkflowChatPanelState({
           const nodeId = typeof p['node_id'] === 'string' ? (p['node_id'] as string) : undefined;
           const nodeType = typeof p['node_type'] === 'string' ? (p['node_type'] as string) : 'loop';
           const title = typeof p['title'] === 'string' ? (p['title'] as string) : nodeType;
-          const elapsed = typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : 0;
+          const elapsed =
+            typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : undefined;
           const statusRaw = typeof p['status'] === 'string' ? (p['status'] as string) : '';
           const isSuccess =
             statusRaw === 'success' || statusRaw === 'succeeded' || statusRaw === 'completed';
@@ -1126,6 +1131,7 @@ export function useWorkflowChatPanelState({
             execMeta && typeof execMeta['loop_variable_map'] === 'object'
               ? (execMeta['loop_variable_map'] as Record<string, unknown>)
               : undefined;
+          const roundDurations = getWorkflowRunRoundDurationMap(p, 'loop');
           const key = nodeId ?? title;
           const sess = loopSessionsRef.current.get(key) ?? {
             nodeId,
@@ -1140,7 +1146,7 @@ export function useWorkflowChatPanelState({
             const variables = variableMap?.[String(r.index)];
             return {
               ...r,
-              elapsedTime: getWorkflowRunRoundElapsedTime(r),
+              elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
               variables: variables ?? r.variables,
             };
           });
@@ -1330,7 +1336,7 @@ export function useWorkflowChatPanelState({
             nodeId: typeof record.node_id === 'string' ? record.node_id : undefined,
             nodeType: typeof record.node_type === 'string' ? record.node_type : undefined,
             title: typeof record.title === 'string' ? record.title : undefined,
-            elapsedTime: typeof record.elapsed_time === 'number' ? record.elapsed_time : 0,
+            elapsedTime: typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined,
             error: getWorkflowRunErrorText(record.error),
             data: {
               input: record.inputs,
@@ -1502,13 +1508,14 @@ export function useWorkflowChatPanelState({
             const key = nodeId ?? title;
             const sess = iterationSessionsRef.current.get(key);
             if (sess) {
+              const roundDurations = getWorkflowRunRoundDurationMap(record, 'iteration');
               sess.elapsedTime =
                 typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined;
               sess.outputs = record.outputs;
               sess.error = typeof record.error === 'string' ? record.error : undefined;
               sess.rounds = sess.rounds.map(r => ({
                 ...r,
-                elapsedTime: getWorkflowRunRoundElapsedTime(r),
+                elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
               }));
               iterationSessionsRef.current.set(key, sess);
             }
@@ -1518,7 +1525,7 @@ export function useWorkflowChatPanelState({
               nodeId,
               nodeType,
               title,
-              elapsedTime: typeof record.elapsed_time === 'number' ? record.elapsed_time : 0,
+              elapsedTime: typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined,
               error: getWorkflowRunErrorText(record.error),
               iterationOutputs: record.outputs,
               iterationRounds: sortWorkflowRunRounds(sess?.rounds ?? []).map(r => ({
@@ -1602,13 +1609,14 @@ export function useWorkflowChatPanelState({
             const key = nodeId ?? title;
             const sess = loopSessionsRef.current.get(key);
             if (sess) {
+              const roundDurations = getWorkflowRunRoundDurationMap(record, 'loop');
               sess.elapsedTime =
                 typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined;
               sess.outputs = record.outputs;
               sess.error = typeof record.error === 'string' ? record.error : undefined;
               sess.rounds = sess.rounds.map(r => ({
                 ...r,
-                elapsedTime: getWorkflowRunRoundElapsedTime(r),
+                elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
               }));
               loopSessionsRef.current.set(key, sess);
             }
@@ -1618,7 +1626,7 @@ export function useWorkflowChatPanelState({
               nodeId,
               nodeType,
               title,
-              elapsedTime: typeof record.elapsed_time === 'number' ? record.elapsed_time : 0,
+              elapsedTime: typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined,
               error: getWorkflowRunErrorText(record.error),
               loopOutputs: record.outputs,
               loopRounds: sortWorkflowRunRounds(sess?.rounds ?? []).map(r => ({

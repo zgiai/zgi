@@ -127,6 +127,124 @@ func TestMergeWorkflowRunMetadataNormalizesLoopRoundsAndPreservesTitle(t *testin
 	}
 }
 
+func TestMergeWorkflowRunMetadataAddsIterationRoundDurationsFromCompletedMetadata(t *testing.T) {
+	metadata := mergeWorkflowRunMetadata(nil, "iteration_started", map[string]interface{}{
+		"workflow_run_id": "run-iteration-durations",
+		"node_id":         "iteration-node",
+		"node_type":       "iteration",
+		"title":           "Iterate",
+		"created_at":      10,
+	})
+	metadata = mergeWorkflowRunMetadata(metadata, "iteration_next", map[string]interface{}{
+		"workflow_run_id": "run-iteration-durations",
+		"node_id":         "iteration-node",
+		"node_type":       "iteration",
+		"title":           "Iterate",
+		"index":           0,
+		"created_at":      11,
+	})
+	metadata = mergeWorkflowRunMetadata(metadata, "node_finished", map[string]interface{}{
+		"workflow_run_id": "run-iteration-durations",
+		"node_id":         "llm-node",
+		"node_type":       "llm",
+		"title":           "LLM",
+		"iteration_id":    "iteration-node",
+		"iteration_index": 0,
+		"elapsed_time":    float64(1200),
+		"outputs":         map[string]interface{}{"text": "done"},
+		"status":          "succeeded",
+		"created_at":      12,
+		"execution_id":    "llm-node:0",
+	})
+	metadata = mergeWorkflowRunMetadata(metadata, "iteration_completed", map[string]interface{}{
+		"workflow_run_id": "run-iteration-durations",
+		"node_id":         "iteration-node",
+		"node_type":       "iteration",
+		"title":           "Iterate",
+		"status":          "succeeded",
+		"elapsed_time":    float64(2500),
+		"execution_metadata": map[string]interface{}{
+			"iteration_duration_list": []float64{1500, 2300},
+			"iteration_duration_map":  map[string]float64{"0": 1400, "1": 2200},
+		},
+		"created_at": 13,
+	})
+
+	runs, ok := metadata["workflow_runs"].([]interface{})
+	if !ok || len(runs) != 1 {
+		t.Fatalf("workflow_runs = %#v, want one run", metadata["workflow_runs"])
+	}
+	run, _ := runs[0].(map[string]interface{})
+	nodes, _ := run["nodes"].([]interface{})
+	iteration, _ := nodes[0].(map[string]interface{})
+	rounds, ok := iteration["iteration_rounds"].([]interface{})
+	if !ok || len(rounds) != 2 {
+		t.Fatalf("iteration_rounds = %#v, want two rounds with durations", iteration["iteration_rounds"])
+	}
+	first, _ := rounds[0].(map[string]interface{})
+	if first["elapsed_time"] != float64(1500) {
+		t.Fatalf("first round = %#v, want elapsed_time from duration list", first)
+	}
+	children, ok := first["nodes"].([]interface{})
+	if !ok || len(children) != 1 {
+		t.Fatalf("first round nodes = %#v, want existing child preserved", first["nodes"])
+	}
+	second, _ := rounds[1].(map[string]interface{})
+	if second["index"] != 1 || second["elapsed_time"] != float64(2300) {
+		t.Fatalf("second round = %#v, want index 1 with elapsed_time", second)
+	}
+}
+
+func TestMergeWorkflowRunMetadataAddsLoopRoundDurationsFromCompletedMetadata(t *testing.T) {
+	metadata := mergeWorkflowRunMetadata(nil, "loop_started", map[string]interface{}{
+		"workflow_run_id": "run-loop-durations",
+		"node_id":         "loop-node",
+		"node_type":       "loop",
+		"title":           "Loop",
+		"created_at":      10,
+	})
+	metadata = mergeWorkflowRunMetadata(metadata, "loop_next", map[string]interface{}{
+		"workflow_run_id": "run-loop-durations",
+		"node_id":         "loop-node",
+		"node_type":       "loop",
+		"title":           "Loop",
+		"index":           1,
+		"created_at":      11,
+	})
+	metadata = mergeWorkflowRunMetadata(metadata, "loop_completed", map[string]interface{}{
+		"workflow_run_id": "run-loop-durations",
+		"node_id":         "loop-node",
+		"node_type":       "loop",
+		"title":           "Loop",
+		"status":          "succeeded",
+		"elapsed_time":    float64(3500),
+		"execution_metadata": map[string]interface{}{
+			"loop_duration_map": map[string]float64{"0": 1800, "1": 900},
+		},
+		"created_at": 13,
+	})
+
+	runs, ok := metadata["workflow_runs"].([]interface{})
+	if !ok || len(runs) != 1 {
+		t.Fatalf("workflow_runs = %#v, want one run", metadata["workflow_runs"])
+	}
+	run, _ := runs[0].(map[string]interface{})
+	nodes, _ := run["nodes"].([]interface{})
+	loop, _ := nodes[0].(map[string]interface{})
+	rounds, ok := loop["loop_rounds"].([]interface{})
+	if !ok || len(rounds) != 2 {
+		t.Fatalf("loop_rounds = %#v, want two rounds with durations", loop["loop_rounds"])
+	}
+	first, _ := rounds[0].(map[string]interface{})
+	if first["index"] != 0 || first["elapsed_time"] != float64(1800) {
+		t.Fatalf("first round = %#v, want elapsed_time from loop duration map", first)
+	}
+	second, _ := rounds[1].(map[string]interface{})
+	if second["index"] != 1 || second["elapsed_time"] != float64(900) {
+		t.Fatalf("second round = %#v, want index 1 with elapsed_time", second)
+	}
+}
+
 func TestMergeWorkflowRunMetadataKeepsTerminalWorkflowAndContainerState(t *testing.T) {
 	metadata := mergeWorkflowRunMetadata(nil, "loop_started", map[string]interface{}{
 		"workflow_run_id": "run-terminal",

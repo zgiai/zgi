@@ -5,6 +5,7 @@ import (
 	"fmt"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"sort"
 	"strings"
 	"time"
 )
@@ -272,6 +273,15 @@ func workflowContainerNodeFromEvent(payload map[string]interface{}, finished boo
 	if steps := numericValueFromMap(payload, "steps"); steps != nil {
 		node["steps"] = steps
 	}
+	if finished {
+		if rounds := workflowContainerRoundsFromExecutionMetadata(nodeType, payload); len(rounds) > 0 {
+			if nodeType == "loop" {
+				node["loop_rounds"] = rounds
+			} else {
+				node["iteration_rounds"] = rounds
+			}
+		}
+	}
 	return node
 }
 
@@ -292,6 +302,98 @@ func workflowContainerRoundNodeFromEvent(payload map[string]interface{}) map[str
 		node["iteration_rounds"] = []interface{}{compactWorkflowRun(round)}
 	}
 	return node
+}
+
+func workflowContainerRoundsFromExecutionMetadata(nodeType string, payload map[string]interface{}) []interface{} {
+	metadata := workflowRecordFromAny(payload["execution_metadata"])
+	if len(metadata) == 0 {
+		metadata = workflowRecordFromAny(payload["metadata"])
+	}
+	var durations map[int]interface{}
+	switch strings.TrimSpace(nodeType) {
+	case "iteration":
+		durations = workflowRoundDurationMapFromMetadata(metadata, "iteration_duration_map", "iteration_duration_list")
+	case "loop":
+		durations = workflowRoundDurationMapFromMetadata(metadata, "loop_duration_map", "")
+	default:
+		return nil
+	}
+	if len(durations) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(durations))
+	for index := range durations {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	rounds := make([]interface{}, 0, len(durations))
+	for _, index := range indexes {
+		round := map[string]interface{}{
+			"index":        index,
+			"elapsed_time": durations[index],
+		}
+		rounds = append(rounds, compactWorkflowRun(round))
+	}
+	return rounds
+}
+
+func workflowRoundDurationMapFromMetadata(metadata map[string]interface{}, mapKey, listKey string) map[int]interface{} {
+	durations := map[int]interface{}{}
+	if len(metadata) == 0 {
+		return durations
+	}
+	mergeWorkflowRoundDurationMap(durations, metadata[mapKey])
+	if listKey == "" {
+		return durations
+	}
+	mergeWorkflowRoundDurationList(durations, metadata[listKey])
+	return durations
+}
+
+func mergeWorkflowRoundDurationMap(target map[int]interface{}, value interface{}) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, item := range typed {
+			if elapsed := numericValueFromAny(item); elapsed != nil {
+				target[intValueFromAny(key)] = elapsed
+			}
+		}
+	case map[string]float64:
+		for key, item := range typed {
+			target[intValueFromAny(key)] = item
+		}
+	case map[string]int:
+		for key, item := range typed {
+			target[intValueFromAny(key)] = item
+		}
+	case map[string]int64:
+		for key, item := range typed {
+			target[intValueFromAny(key)] = item
+		}
+	}
+}
+
+func mergeWorkflowRoundDurationList(target map[int]interface{}, value interface{}) {
+	switch typed := value.(type) {
+	case []interface{}:
+		for index, item := range typed {
+			if elapsed := numericValueFromAny(item); elapsed != nil {
+				target[index] = elapsed
+			}
+		}
+	case []float64:
+		for index, item := range typed {
+			target[index] = item
+		}
+	case []int:
+		for index, item := range typed {
+			target[index] = item
+		}
+	case []int64:
+		for index, item := range typed {
+			target[index] = item
+		}
+	}
 }
 
 func workflowContainerRoundIndexFromPayload(nodeType string, payload map[string]interface{}) int {

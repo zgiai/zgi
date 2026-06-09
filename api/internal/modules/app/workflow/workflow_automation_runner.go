@@ -36,6 +36,14 @@ const (
 	automationWorkflowEventStarted           = "workflow_started"
 	automationWorkflowEventNodeStarted       = "node_started"
 	automationWorkflowEventNodeFinished      = "node_finished"
+	automationWorkflowEventIterationStarted  = "iteration_started"
+	automationWorkflowEventIterationNext     = "iteration_next"
+	automationWorkflowEventIterationFinished = "iteration_completed"
+	automationWorkflowEventIterationFailed   = "iteration_failed"
+	automationWorkflowEventLoopStarted       = "loop_started"
+	automationWorkflowEventLoopNext          = "loop_next"
+	automationWorkflowEventLoopFinished      = "loop_completed"
+	automationWorkflowEventLoopFailed        = "loop_failed"
 	automationWorkflowEventPaused            = "workflow_paused"
 	automationWorkflowEventApprovalRequested = "approval_requested"
 	automationWorkflowEventQuestionRequested = "question_answer_requested"
@@ -94,21 +102,30 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 
 	inputs["sys.workflow_run_id"] = workflowRunLogID
 	nodeMetas := automationWorkflowNodeMetas(graphData)
+	nodeMap := automationWorkflowNodeMap(graphData)
 	emitAutomationWorkflowStarted(req.EventSink, req, target, workflowRunLogID)
 
 	startedAt := time.Now()
 	executionResult, execErr := s.executor.ExecuteSimpleWorkflowWithRunIDAndCallbacks(runCtx, workflowRunLogID, graphData, inputs, graph_engine.EngineCallbacks{
+		Iteration: func(event *graph_engine.IterationEvent) {
+			emitAutomationWorkflowIterationEvent(req.EventSink, req, target, workflowRunLogID, nodeMetas, event)
+		},
+		Loop: func(event *graph_engine.LoopEvent) {
+			emitAutomationWorkflowLoopEvent(req.EventSink, req, target, workflowRunLogID, nodeMetas, event)
+		},
+		InternalNode: func(event *graph_engine.NodeEvent) {
+			emitAutomationWorkflowInternalNodeEvent(req.EventSink, req, target, workflowRunLogID, nodeMap, event)
+		},
 		NodeStarted: func(nodeID string, nodeType string, inputs map[string]any) {
 			meta := automationWorkflowEventNodeMeta(nodeMetas, nodeID, nodeType)
 			emitAutomationWorkflowNodeStarted(req.EventSink, req, target, workflowRunLogID, meta, inputs)
 		},
-		NodeFinished: func(nodeID string, nodeType string, status string, outputs map[string]any, edgeSourceHandle string, err error) {
-			_ = edgeSourceHandle
-			meta := automationWorkflowEventNodeMeta(nodeMetas, nodeID, nodeType)
-			emitAutomationWorkflowNodeFinished(req.EventSink, req, target, workflowRunLogID, meta, status, outputs, err)
+		NodeFinishedDetailed: func(event graph_engine.NodeFinishedEvent) {
+			meta := automationWorkflowEventNodeMeta(nodeMetas, event.NodeID, event.NodeType)
+			emitAutomationWorkflowNodeFinished(req.EventSink, req, target, workflowRunLogID, meta, event)
 		},
 	})
-	elapsedTime := time.Since(startedAt).Seconds()
+	elapsedTime := ElapsedMillisecondsSince(startedAt)
 	finalizeCtx, cancelFinalize := automationFinalizationContext(runCtx)
 	defer cancelFinalize()
 
@@ -118,7 +135,7 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 		outputs = automationWorkflowOutputs(executionResult)
 		totalSteps = len(executionResult.NodeResults)
 		if executionResult.ExecutionTime > 0 {
-			elapsedTime = executionResult.ExecutionTime.Seconds()
+			elapsedTime = durationMilliseconds(executionResult.ExecutionTime)
 		}
 	}
 
@@ -190,19 +207,175 @@ func emitAutomationWorkflowNodeStarted(sink automationaction.WorkflowRunEventSin
 	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, automationWorkflowNodePayload(meta))
 	payload["status"] = "running"
 	payload["inputs"] = copyWorkflowAnyMap(inputs)
-	payload["created_at"] = time.Now().Unix()
+	now := time.Now()
+	payload["created_at"] = now.Unix()
+	payload["created_at_ms"] = now.UnixMilli()
 	emitAutomationWorkflowEvent(sink, automationWorkflowEventNodeStarted, payload)
 }
 
-func emitAutomationWorkflowNodeFinished(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, meta automationWorkflowNodeMeta, status string, outputs map[string]any, err error) {
+func emitAutomationWorkflowNodeFinished(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, meta automationWorkflowNodeMeta, event graph_engine.NodeFinishedEvent) {
 	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, automationWorkflowNodePayload(meta))
-	payload["status"] = strings.TrimSpace(status)
-	payload["outputs"] = copyWorkflowAnyMap(outputs)
-	payload["created_at"] = time.Now().Unix()
-	if err != nil {
-		payload["error"] = err.Error()
+	payload["status"] = strings.TrimSpace(event.Status)
+	payload["outputs"] = copyWorkflowAnyMap(event.Outputs)
+	startedAt := event.StartedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	finishedAt := event.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now()
+	}
+	payload["created_at"] = startedAt.Unix()
+	payload["created_at_ms"] = startedAt.UnixMilli()
+	payload["finished_at"] = finishedAt.Unix()
+	payload["finished_at_ms"] = finishedAt.UnixMilli()
+	payload["elapsed_time"] = elapsedMillisecondsBetween(startedAt, finishedAt)
+	if event.ElapsedTime > 0 {
+		payload["elapsed_time"] = durationMilliseconds(event.ElapsedTime)
+	}
+	if event.Err != nil {
+		payload["error"] = event.Err.Error()
 	}
 	emitAutomationWorkflowEvent(sink, automationWorkflowEventNodeFinished, payload)
+}
+
+func emitAutomationWorkflowIterationEvent(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, nodeMetas map[string]automationWorkflowNodeMeta, event *graph_engine.IterationEvent) {
+	if event == nil {
+		return
+	}
+	meta := automationWorkflowEventNodeMeta(nodeMetas, event.NodeID, "iteration")
+	eventType, status := automationWorkflowContainerEventType("iteration", event.Type)
+	if eventType == "" {
+		return
+	}
+	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, automationWorkflowNodePayload(meta))
+	payload["node_type"] = "iteration"
+	delete(payload, "index")
+	payload["created_at"] = event.Timestamp.Unix()
+	payload["created_at_ms"] = event.Timestamp.UnixMilli()
+	if event.Type != "next" && !event.StartedAt.IsZero() {
+		payload["created_at"] = event.StartedAt.Unix()
+		payload["created_at_ms"] = event.StartedAt.UnixMilli()
+	}
+	switch event.Type {
+	case "started":
+		payload["metadata"] = copyWorkflowAnyMap(event.Metadata)
+		payload["inputs"] = copyWorkflowAnyMap(event.Inputs)
+		payload["inputs_truncated"] = false
+		payload["extras"] = map[string]interface{}{}
+	case "next":
+		payload["index"] = event.Index
+		payload["extras"] = map[string]interface{}{}
+	case "completed", "failed":
+		payload["outputs"] = copyWorkflowAnyMap(event.Outputs)
+		payload["outputs_truncated"] = false
+		payload["inputs"] = copyWorkflowAnyMap(event.Inputs)
+		payload["inputs_truncated"] = false
+		payload["execution_metadata"] = copyWorkflowAnyMap(event.Metadata)
+		payload["steps"] = event.Steps
+	}
+	if status != "" {
+		payload["status"] = status
+	}
+	if event.Error != "" {
+		payload["error"] = event.Error
+	}
+	if event.Type == "completed" || event.Type == "failed" {
+		payload["finished_at"] = event.Timestamp.Unix()
+		payload["finished_at_ms"] = event.Timestamp.UnixMilli()
+		payload["elapsed_time"] = elapsedMillisecondsBetween(event.StartedAt, event.Timestamp)
+	}
+	emitAutomationWorkflowEvent(sink, eventType, payload)
+}
+
+func emitAutomationWorkflowLoopEvent(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, nodeMetas map[string]automationWorkflowNodeMeta, event *graph_engine.LoopEvent) {
+	if event == nil {
+		return
+	}
+	meta := automationWorkflowEventNodeMeta(nodeMetas, event.NodeID, "loop")
+	eventType, status := automationWorkflowContainerEventType("loop", event.Type)
+	if eventType == "" {
+		return
+	}
+	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, automationWorkflowNodePayload(meta))
+	payload["node_type"] = "loop"
+	delete(payload, "index")
+	payload["created_at"] = event.Timestamp.Unix()
+	payload["created_at_ms"] = event.Timestamp.UnixMilli()
+	if event.Type != "next" && !event.StartedAt.IsZero() {
+		payload["created_at"] = event.StartedAt.Unix()
+		payload["created_at_ms"] = event.StartedAt.UnixMilli()
+	}
+	switch event.Type {
+	case "started":
+		payload["metadata"] = copyWorkflowAnyMap(event.Metadata)
+		payload["inputs"] = copyWorkflowAnyMap(event.Inputs)
+		payload["inputs_truncated"] = false
+		payload["extras"] = map[string]interface{}{}
+	case "next":
+		payload["index"] = event.Index
+		payload["pre_loop_output"] = copyWorkflowAnyMap(event.PreLoopOutput)
+		payload["extras"] = map[string]interface{}{}
+	case "completed", "failed":
+		payload["outputs"] = copyWorkflowAnyMap(event.Outputs)
+		payload["outputs_truncated"] = false
+		payload["inputs"] = copyWorkflowAnyMap(event.Inputs)
+		payload["inputs_truncated"] = false
+		payload["execution_metadata"] = copyWorkflowAnyMap(event.Metadata)
+		payload["steps"] = event.Steps
+	}
+	if status != "" {
+		payload["status"] = status
+	}
+	if event.Error != "" {
+		payload["error"] = event.Error
+	}
+	if event.Type == "completed" || event.Type == "failed" {
+		payload["finished_at"] = event.Timestamp.Unix()
+		payload["finished_at_ms"] = event.Timestamp.UnixMilli()
+		payload["elapsed_time"] = elapsedMillisecondsBetween(event.StartedAt, event.Timestamp)
+	}
+	emitAutomationWorkflowEvent(sink, eventType, payload)
+}
+
+func emitAutomationWorkflowInternalNodeEvent(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, nodeMap map[string]map[string]interface{}, event *graph_engine.NodeEvent) {
+	if event == nil {
+		return
+	}
+	nodeTitle := workflowNodeTitle(nodeMap, event.NodeID, "")
+	nodeType := workflowStreamNodeType(nodeMap, event.NodeID)
+	streamEvent := buildInternalNodeWorkflowStreamEvent(event, nodeType, nodeTitle)
+	if streamEvent == nil {
+		return
+	}
+	emitAutomationWorkflowEvent(sink, streamEvent.EventType, automationWorkflowBasePayload(req, workflow, workflowRunID, streamEvent.Data))
+}
+
+func automationWorkflowContainerEventType(containerType string, eventType string) (string, string) {
+	switch eventType {
+	case "started":
+		if containerType == "iteration" {
+			return automationWorkflowEventIterationStarted, "running"
+		}
+		return automationWorkflowEventLoopStarted, "running"
+	case "next":
+		if containerType == "iteration" {
+			return automationWorkflowEventIterationNext, ""
+		}
+		return automationWorkflowEventLoopNext, ""
+	case "completed":
+		if containerType == "iteration" {
+			return automationWorkflowEventIterationFinished, "succeeded"
+		}
+		return automationWorkflowEventLoopFinished, "succeeded"
+	case "failed":
+		if containerType == "iteration" {
+			return automationWorkflowEventIterationFailed, "failed"
+		}
+		return automationWorkflowEventLoopFailed, "failed"
+	default:
+		return "", ""
+	}
 }
 
 func emitAutomationWorkflowPaused(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, result *WorkflowExecutionResult, outputs map[string]interface{}, elapsedTime float64, nodeMetas map[string]automationWorkflowNodeMeta) {
@@ -540,7 +713,7 @@ func (s *WorkflowService) GetAutomationWorkflowRunStatus(ctx context.Context, re
 		Status:        string(run.Status),
 		Outputs:       outputs,
 		Error:         errorMessage,
-		ElapsedTime:   run.ElapsedTime,
+		ElapsedTime:   workflowRunElapsedMilliseconds(*run),
 		CreatedAtUnix: run.CreatedAt.Unix(),
 	}
 	if run.FinishedAt != nil {
@@ -898,6 +1071,27 @@ func automationWorkflowNodeMetas(graphData map[string]interface{}) map[string]au
 	}
 
 	return metas
+}
+
+func automationWorkflowNodeMap(graphData map[string]interface{}) map[string]map[string]interface{} {
+	nodeMap := make(map[string]map[string]interface{})
+	nodes, _ := graphData["nodes"].([]interface{})
+	for _, rawNode := range nodes {
+		node, ok := rawNode.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		nodeID, _ := node["id"].(string)
+		if nodeID == "" {
+			continue
+		}
+		data, _ := node["data"].(map[string]interface{})
+		if data == nil {
+			data = map[string]interface{}{}
+		}
+		nodeMap[nodeID] = data
+	}
+	return nodeMap
 }
 
 func jsonMapStringPointer(value map[string]interface{}) (*string, error) {
