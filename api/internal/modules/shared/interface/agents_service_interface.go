@@ -8,9 +8,6 @@ import (
 
 // AgentService defines the interface for agent-related operations
 type AgentsService interface {
-	GetAgentsList(ctx context.Context, accountID, tenantID string, req interface{}) (interface{}, error)
-	GetAgentsListMultipleTenants(ctx context.Context, accountID string, tenantIDs []string, req interface{}) (interface{}, error)
-	GetInternalAgentsList(ctx context.Context, accountID string, tenantIDs []string, req interface{}) (interface{}, error)
 	GetAgentsListWithPermissions(ctx context.Context, accountID string, req dto.GetAgentsListRequest) (*dto.AgentsListResponse, error)
 	GetRunnableWebApps(ctx context.Context, accountID string, req dto.GetRunnableWebAppsRequest) (*dto.RunnableWebAppsResponse, error)
 	CreateAgent(ctx context.Context, tenantID string, req interface{}, accountID string) (interface{}, error)
