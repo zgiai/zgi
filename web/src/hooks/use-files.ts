@@ -49,6 +49,9 @@ export const UPDATE_FOLDER_KEY = 'update-folder';
 export const DELETE_FOLDER_KEY = 'delete-folder';
 export const CREATE_TEXT_FILE_KEY = 'create-text-file';
 
+const isFileFolderListQuery = (queryKey: readonly unknown[]) =>
+  queryKey[0] === FILE_FOLDERS_KEY && queryKey[1] !== 'detail';
+
 interface FilesQueryScope {
   workspace_id?: string;
   workspaceId?: string;
@@ -802,7 +805,6 @@ export function useUpdateFolder(): {
 } {
   const t = useT('files');
   const queryClient = useQueryClient();
-  const currentWorkspaceId = useCurrentWorkspace()?.id;
 
   const { mutateAsync: updateFolderMutation, isPending: isUpdating } = useMutation({
     mutationFn: async ({ folderId, data }: { folderId: string; data: UpdateFolderRequest }) => {
@@ -814,16 +816,10 @@ export function useUpdateFolder(): {
       if (folderId) {
         queryClient.invalidateQueries({ queryKey: [FILE_FOLDERS_KEY, 'detail', folderId] });
       }
-      // Invalidate if unfiltered or current workspace
+      // Refresh root and nested folder lists so renamed or moved child folders update in the sidebar.
       queryClient.invalidateQueries({
         queryKey: [FILE_FOLDERS_KEY],
-        predicate: query => {
-          const key = query.queryKey;
-          if (key[0] !== FILE_FOLDERS_KEY) return false;
-          if (key[1] === 'detail') return false;
-          const tId = key[1];
-          return !tId || tId === currentWorkspaceId;
-        },
+        predicate: query => isFileFolderListQuery(query.queryKey),
       });
     },
     onError: error => {
@@ -851,7 +847,6 @@ export function useDeleteFolder(): {
 } {
   const t = useT('files');
   const queryClient = useQueryClient();
-  const currentWorkspaceId = useCurrentWorkspace()?.id;
 
   const { mutateAsync: deleteFolderMutation, isPending: isDeleting } = useMutation({
     mutationFn: async (folderId: string) => {
@@ -862,16 +857,10 @@ export function useDeleteFolder(): {
       if (folderId) {
         queryClient.removeQueries({ queryKey: [FILE_FOLDERS_KEY, 'detail', folderId] });
       }
-      // Invalidate if unfiltered or current workspace
+      // Refresh root and nested folder lists so deleted child folders disappear from the sidebar.
       queryClient.invalidateQueries({
         queryKey: [FILE_FOLDERS_KEY],
-        predicate: query => {
-          const key = query.queryKey;
-          if (key[0] !== FILE_FOLDERS_KEY) return false;
-          if (key[1] === 'detail') return false;
-          const tId = key[1];
-          return !tId || tId === currentWorkspaceId;
-        },
+        predicate: query => isFileFolderListQuery(query.queryKey),
       });
     },
     onError: error => {
