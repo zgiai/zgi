@@ -563,23 +563,8 @@ func (h *FileHandler) CreateProcessingRequest(c *gin.Context) {
 		h.businessError(c, response.ErrUnauthorized)
 		return
 	}
-	organizationID := util.GetOrganizationID(c)
-	if organizationID == "" {
-		h.businessError(c, response.ErrInvalidTenantId)
-		return
-	}
-
-	fileID := c.Param("file_id")
-	if fileID == "" {
-		h.businessError(c, response.ErrFileIdRequired)
-		return
-	}
-	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	organizationID, uploadFile, ok := h.authorizeManageDocumentFile(c)
 	if !ok {
-		return
-	}
-	if uploadFile.IsTemporary || !model.IsDocumentExtension(strings.TrimPrefix(strings.ToLower(uploadFile.Extension), ".")) {
-		h.businessError(c, response.ErrUnsupportedFileType)
 		return
 	}
 
@@ -895,7 +880,7 @@ func (h *FileHandler) UpdateFileChunk(c *gin.Context) {
 		h.businessError(c, response.ErrUnauthorized)
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizeManageDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -1050,7 +1035,7 @@ func (h *FileHandler) ResolveParseConfirmationItem(c *gin.Context) {
 		h.businessError(c, response.ErrUnauthorized)
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizeManageDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -1101,7 +1086,7 @@ func (h *FileHandler) BatchIgnoreParseConfirmationItems(c *gin.Context) {
 		h.businessError(c, response.ErrUnauthorized)
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizeManageDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -1197,6 +1182,14 @@ func (h *FileHandler) queueGenerateAfterConfirmationIfNeeded(ctx context.Context
 }
 
 func (h *FileHandler) authorizeDocumentFile(c *gin.Context) (string, *dto.UploadFile, bool) {
+	return h.authorizeDocumentFileWith(c, h.getAuthorizedFileForDownload)
+}
+
+func (h *FileHandler) authorizeManageDocumentFile(c *gin.Context) (string, *dto.UploadFile, bool) {
+	return h.authorizeDocumentFileWith(c, h.getAuthorizedFileForManage)
+}
+
+func (h *FileHandler) authorizeDocumentFileWith(c *gin.Context, authorize func(*gin.Context, string) (*dto.UploadFile, bool)) (string, *dto.UploadFile, bool) {
 	organizationID := util.GetOrganizationID(c)
 	if organizationID == "" {
 		h.businessError(c, response.ErrInvalidTenantId)
@@ -1207,7 +1200,7 @@ func (h *FileHandler) authorizeDocumentFile(c *gin.Context) (string, *dto.Upload
 		h.businessError(c, response.ErrFileIdRequired)
 		return "", nil, false
 	}
-	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	uploadFile, ok := authorize(c, fileID)
 	if !ok {
 		return "", nil, false
 	}
@@ -1854,6 +1847,10 @@ func (h *FileHandler) DownloadFile(c *gin.Context) {
 
 func (h *FileHandler) getAuthorizedFileForDownload(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileDownloadAccess(c, h.fileService, h.enterpriseService, fileID)
+}
+
+func (h *FileHandler) getAuthorizedFileForManage(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFileManageAccess(c, h.fileService, h.enterpriseService, fileID)
 }
 
 func getUploadFileWorkspaceID(uploadFile *dto.UploadFile) string {
