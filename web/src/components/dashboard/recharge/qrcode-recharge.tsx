@@ -23,15 +23,14 @@ import type { OrderStatus } from '@/services/types/pay';
 type PaymentMethod = 'wechat' | 'alipay';
 
 const RECHARGE_AMOUNTS = [
-  { cny: 100, usd: 14.29 },
-  { cny: 500, usd: 71.43 },
-  { cny: 1000, usd: 142.86 },
-  { cny: 2000, usd: 285.71 },
-  { cny: 5000, usd: 714.29 },
-  { cny: 10000, usd: 1428.57 },
+  { cny: 100 },
+  { cny: 500 },
+  { cny: 1000 },
+  { cny: 2000 },
+  { cny: 5000 },
+  { cny: 10000 },
 ];
 
-const EXCHANGE_RATE = 7.0;
 const MIN_CUSTOM_AMOUNT = 10;
 const ORDER_TIMEOUT_SECONDS = 600; // 10 minutes
 
@@ -234,12 +233,6 @@ export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
               </div>
               <ul className="space-y-1 text-xs">
                 <li>• {t('dashboard.costCenter.rechargeDialog.instructions.scan')}</li>
-                <li>
-                  •{' '}
-                  {t('dashboard.costCenter.rechargeDialog.instructions.rate', {
-                    rate: EXCHANGE_RATE.toFixed(1),
-                  })}
-                </li>
                 <li>• {t('dashboard.costCenter.rechargeDialog.instructions.arrival')}</li>
               </ul>
             </div>
@@ -252,7 +245,7 @@ export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
             {t('dashboard.costCenter.rechargeDialog.amountSelection')}
           </div>
           <div className="grid grid-cols-3 gap-3">
-            {RECHARGE_AMOUNTS.map(({ cny, usd }) => (
+            {RECHARGE_AMOUNTS.map(({ cny }) => (
               <button
                 key={cny}
                 type="button"
@@ -265,7 +258,6 @@ export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
                 )}
               >
                 <span className="text-lg font-bold">¥ {cny}</span>
-                <span className="text-xs text-muted-foreground">≈ ${usd.toFixed(2)}</span>
               </button>
             ))}
           </div>
