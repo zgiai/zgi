@@ -236,7 +236,7 @@ func (s *knowledgeBaseFileRefService) ListCandidates(ctx context.Context, req Kn
 
 	filter := datalibRepo.DocumentAssetListFilter{
 		OrganizationID:       req.OrganizationID,
-		WorkspaceID:          req.WorkspaceID,
+		WorkspaceID:          datasetWorkspaceID(dataset),
 		ActiveSourceFileOnly: true,
 		Limit:                req.Limit,
 		Offset:               req.Offset,
@@ -264,6 +264,9 @@ func (s *knowledgeBaseFileRefService) ListCandidates(ctx context.Context, req Kn
 		file := filesByID[asset.SourceFileID]
 		if file == nil || file.IsArchived {
 			skippedMissingSource++
+			continue
+		}
+		if !assetInDatasetWorkspace(dataset, asset) {
 			continue
 		}
 		if keyword := strings.TrimSpace(req.Keyword); keyword != "" && !candidateMatchesKeyword(asset, file, keyword) {
@@ -340,7 +343,7 @@ func (s *knowledgeBaseFileRefService) ListRefs(ctx context.Context, req Knowledg
 		if asset == nil {
 			continue
 		}
-		if req.WorkspaceID != nil && (asset.WorkspaceID == nil || *asset.WorkspaceID != *req.WorkspaceID) {
+		if !assetInDatasetWorkspace(dataset, asset) {
 			continue
 		}
 		file := filesByID[asset.SourceFileID]
@@ -479,7 +482,7 @@ func (s *knowledgeBaseFileRefService) RetryRef(ctx context.Context, req Knowledg
 	if asset == nil || asset.OrganizationID != req.OrganizationID {
 		return &KnowledgeBaseFileRefCreateItem{AssetID: ref.AssetID, Success: false, Reason: FileCandidateReasonNotReady}, nil
 	}
-	if req.WorkspaceID != nil && (asset.WorkspaceID == nil || *asset.WorkspaceID != *req.WorkspaceID) {
+	if !assetInDatasetWorkspace(dataset, asset) {
 		return nil, ErrKnowledgeBaseFileRefNotFound
 	}
 	reason, generationNo, err := s.evaluateAssetSyncReadiness(ctx, dataset, asset)
@@ -568,14 +571,12 @@ func (s *knowledgeBaseFileRefService) getScopedRef(ctx context.Context, req Know
 	if ref == nil || ref.OrganizationID != req.OrganizationID || ref.DatasetID != req.DatasetID {
 		return nil, ErrKnowledgeBaseFileRefNotFound
 	}
-	if req.WorkspaceID != nil {
-		asset, err := s.assets.GetAssetByID(ctx, ref.AssetID)
-		if err != nil {
-			return nil, err
-		}
-		if asset == nil || asset.WorkspaceID == nil || *asset.WorkspaceID != *req.WorkspaceID {
-			return nil, ErrKnowledgeBaseFileRefNotFound
-		}
+	asset, err := s.assets.GetAssetByID(ctx, ref.AssetID)
+	if err != nil {
+		return nil, err
+	}
+	if asset == nil || !assetInDatasetWorkspace(dataset, asset) {
+		return nil, ErrKnowledgeBaseFileRefNotFound
 	}
 	return ref, nil
 }
@@ -591,7 +592,7 @@ func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset 
 	if asset == nil || asset.OrganizationID != req.OrganizationID {
 		return nil, uuid.Nil, 0, FileCandidateReasonNotReady, nil
 	}
-	if req.WorkspaceID != nil && (asset.WorkspaceID == nil || *asset.WorkspaceID != *req.WorkspaceID) {
+	if !assetInDatasetWorkspace(dataset, asset) {
 		return nil, uuid.Nil, 0, FileCandidateReasonNotReady, nil
 	}
 	candidate, err := s.buildCandidate(ctx, dataset, asset, nil)
@@ -721,6 +722,24 @@ func validateKnowledgeBaseFileRefScope(organizationID string, datasetID string) 
 		return ErrDatasetIDRequired
 	}
 	return nil
+}
+
+func datasetWorkspaceID(dataset *datasetModel.Dataset) *string {
+	if dataset == nil || strings.TrimSpace(dataset.WorkspaceID) == "" {
+		return nil
+	}
+	return &dataset.WorkspaceID
+}
+
+func assetInDatasetWorkspace(dataset *datasetModel.Dataset, asset *datalibModel.DocumentAsset) bool {
+	if dataset == nil || asset == nil {
+		return false
+	}
+	datasetWorkspace := strings.TrimSpace(dataset.WorkspaceID)
+	if datasetWorkspace == "" {
+		return asset.WorkspaceID == nil || strings.TrimSpace(*asset.WorkspaceID) == ""
+	}
+	return asset.WorkspaceID != nil && strings.TrimSpace(*asset.WorkspaceID) == datasetWorkspace
 }
 
 func candidateMatchesKeyword(asset *datalibModel.DocumentAsset, file *fileModel.UploadFile, keyword string) bool {

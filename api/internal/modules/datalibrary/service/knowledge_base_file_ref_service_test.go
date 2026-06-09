@@ -70,6 +70,62 @@ func TestKnowledgeBaseFileRefServiceListsAddableCandidates(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBaseFileRefServiceListsCandidatesInDatasetWorkspace(t *testing.T) {
+	matchingAssetID := uuid.New()
+	otherAssetID := uuid.New()
+	workspaceID := "workspace-1"
+	otherWorkspaceID := "workspace-2"
+	svcDeps := &fakeKnowledgeBaseFileRefDeps{
+		dataset: &datasetModel.Dataset{
+			ID:             "dataset-1",
+			OrganizationID: "org-1",
+			WorkspaceID:    workspaceID,
+		},
+		assets: []*datalibModel.DocumentAsset{
+			{
+				ID:             matchingAssetID,
+				OrganizationID: "org-1",
+				WorkspaceID:    &workspaceID,
+				SourceFileID:   "file-1",
+				ProductStatus:  datalibModel.DocumentAssetProductStatusReady,
+				VectorStatus:   datalibModel.DocumentAssetVectorStatusReady,
+				GenerationNo:   1,
+			},
+			{
+				ID:             otherAssetID,
+				OrganizationID: "org-1",
+				WorkspaceID:    &otherWorkspaceID,
+				SourceFileID:   "file-2",
+				ProductStatus:  datalibModel.DocumentAssetProductStatusReady,
+				VectorStatus:   datalibModel.DocumentAssetVectorStatusReady,
+				GenerationNo:   1,
+			},
+		},
+		files: map[string]*fileModel.UploadFile{
+			"file-1": {ID: "file-1", Name: "matching.pdf"},
+			"file-2": {ID: "file-2", Name: "other.pdf"},
+		},
+		chunkCount:     1,
+		embeddingCount: 1,
+	}
+	svc := newKnowledgeBaseFileRefTestService(svcDeps)
+
+	result, err := svc.ListCandidates(context.Background(), KnowledgeBaseFileCandidateRequest{
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		Filter:         FileCandidateFilterAll,
+	})
+	if err != nil {
+		t.Fatalf("ListCandidates: %v", err)
+	}
+	if svcDeps.lastAssetFilter.WorkspaceID == nil || *svcDeps.lastAssetFilter.WorkspaceID != workspaceID {
+		t.Fatalf("asset_filter=%+v", svcDeps.lastAssetFilter)
+	}
+	if len(result.Items) != 1 || result.Items[0].AssetID != matchingAssetID {
+		t.Fatalf("items=%+v", result.Items)
+	}
+}
+
 func TestKnowledgeBaseFileRefServiceSkipsCandidateWhenSourceFileMissing(t *testing.T) {
 	assetID := uuid.New()
 	svc := newKnowledgeBaseFileRefTestService(&fakeKnowledgeBaseFileRefDeps{
@@ -244,6 +300,49 @@ func TestKnowledgeBaseFileRefServiceCreatesPendingRefs(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBaseFileRefServiceRejectsCreateWhenAssetWorkspaceDiffersFromDataset(t *testing.T) {
+	assetID := uuid.New()
+	workspaceID := "workspace-1"
+	otherWorkspaceID := "workspace-2"
+	deps := &fakeKnowledgeBaseFileRefDeps{
+		dataset: &datasetModel.Dataset{
+			ID:             "dataset-1",
+			OrganizationID: "org-1",
+			WorkspaceID:    workspaceID,
+		},
+		assets: []*datalibModel.DocumentAsset{
+			{
+				ID:             assetID,
+				OrganizationID: "org-1",
+				WorkspaceID:    &otherWorkspaceID,
+				SourceFileID:   "file-1",
+				ProductStatus:  datalibModel.DocumentAssetProductStatusReady,
+				VectorStatus:   datalibModel.DocumentAssetVectorStatusReady,
+				GenerationNo:   1,
+			},
+		},
+		chunkCount:     1,
+		embeddingCount: 1,
+	}
+	svc := newKnowledgeBaseFileRefTestService(deps)
+
+	result, err := svc.CreateRefs(context.Background(), KnowledgeBaseFileRefCreateRequest{
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		AssetIDs:       []uuid.UUID{assetID},
+		CreatedBy:      "account-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRefs: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Success || result.Items[0].Reason != FileCandidateReasonNotReady {
+		t.Fatalf("result=%+v", result)
+	}
+	if deps.created != nil {
+		t.Fatalf("created=%+v", deps.created)
+	}
+}
+
 func TestKnowledgeBaseFileRefServiceListsRefsWithAssetAndFileState(t *testing.T) {
 	assetID := uuid.New()
 	refID := uuid.New()
@@ -387,6 +486,13 @@ func TestKnowledgeBaseFileRefServiceMarksRefSyncFailed(t *testing.T) {
 			ID:             "dataset-1",
 			OrganizationID: "org-1",
 		},
+		assets: []*datalibModel.DocumentAsset{
+			{
+				ID:             assetID,
+				OrganizationID: "org-1",
+				SourceFileID:   "file-1",
+			},
+		},
 		refs: []*datalibModel.KnowledgeBaseAssetRef{
 			{
 				ID:             refID,
@@ -432,6 +538,13 @@ func TestKnowledgeBaseFileRefServiceRemovesRef(t *testing.T) {
 			ID:             "dataset-1",
 			OrganizationID: "org-1",
 		},
+		assets: []*datalibModel.DocumentAsset{
+			{
+				ID:             assetID,
+				OrganizationID: "org-1",
+				SourceFileID:   "file-1",
+			},
+		},
 		refs: []*datalibModel.KnowledgeBaseAssetRef{
 			{
 				ID:             refID,
@@ -472,6 +585,7 @@ type fakeKnowledgeBaseFileRefDeps struct {
 	pendingSyncRunID uuid.UUID
 	failedSyncRunID  uuid.UUID
 	removedRefID     uuid.UUID
+	lastAssetFilter  datalibRepo.DocumentAssetListFilter
 }
 
 func newKnowledgeBaseFileRefTestService(deps *fakeKnowledgeBaseFileRefDeps) KnowledgeBaseFileRefService {
@@ -488,6 +602,7 @@ func (f *fakeKnowledgeBaseFileRefDeps) GetAssetByID(ctx context.Context, id uuid
 }
 
 func (f *fakeKnowledgeBaseFileRefDeps) ListAssets(ctx context.Context, filter datalibRepo.DocumentAssetListFilter) ([]*datalibModel.DocumentAsset, int64, error) {
+	f.lastAssetFilter = filter
 	return f.assets, int64(len(f.assets)), nil
 }
 
