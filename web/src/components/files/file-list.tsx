@@ -21,6 +21,7 @@ import {
   Activity,
   Info,
   FileSearch,
+  FileUp,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -64,7 +65,11 @@ import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 import { fileManageService } from '@/services/file-manage.service';
 import { StartFileParseDialog } from './start-file-parse-dialog';
-import type { FileParseProviderKey } from '@/services/types/file';
+import { ReplaceDocumentDialog } from './replace-document-dialog';
+import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
+import { getFileDetailKey } from '@/hooks/file/use-file-detail';
+import { FILE_PARSE_PREVIEW_QUERY_KEY } from '@/hooks/file/use-file-parse-preview';
+import { FILE_CHUNKS_QUERY_KEY } from '@/hooks/file/use-file-chunks';
 
 function getProcessingStatus(file: FileItem): string {
   return file.processing_status || 'stored_only';
@@ -252,7 +257,9 @@ function FileListBase({
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [workspaceMoveFile, setWorkspaceMoveFile] = useState<FileItem | null>(null);
   const [startParseFile, setStartParseFile] = useState<FileItem | null>(null);
+  const [replaceDocumentFile, setReplaceDocumentFile] = useState<FileItem | null>(null);
   const [startingParseFileId, setStartingParseFileId] = useState<string | null>(null);
+  const [replacingFileId, setReplacingFileId] = useState<string | null>(null);
   const [reparsingFileId, setReparsingFileId] = useState<string | null>(null);
   const { currentOrganization } = useOrganizations();
 
@@ -341,6 +348,10 @@ function FileListBase({
     setStartParseFile(file);
   };
 
+  const handleOpenReplaceDocument = (file: FileItem) => {
+    setReplaceDocumentFile(file);
+  };
+
   const handleStartParse = async (file: FileItem, parseProvider: FileParseProviderKey) => {
     try {
       setStartingParseFileId(file.id);
@@ -376,6 +387,32 @@ function FileListBase({
       toast.error((error as { message?: string }).message || t('detail.reparse.toasts.failed'));
     } finally {
       setReparsingFileId(null);
+    }
+  };
+
+  const handleReplaceDocument = async (
+    file: FileItem,
+    replacementFile: File,
+    processingMode: FileUploadProcessingMode,
+    parseProvider: FileParseProviderKey
+  ) => {
+    try {
+      setReplacingFileId(file.id);
+      await fileManageService.replaceDocument(file.id, {
+        file: replacementFile,
+        processing_mode: processingMode,
+        parse_provider: parseProvider,
+      });
+      toast.success(t('replaceDocument.toasts.started'));
+      setReplaceDocumentFile(null);
+      queryClient.removeQueries({ queryKey: getFileDetailKey(file.id) });
+      queryClient.removeQueries({ queryKey: [FILE_PARSE_PREVIEW_QUERY_KEY, file.id] });
+      queryClient.removeQueries({ queryKey: [FILE_CHUNKS_QUERY_KEY, file.id] });
+      await queryClient.invalidateQueries({ queryKey: [FILES_QUERY_KEY] });
+    } catch (error) {
+      toast.error((error as { message?: string }).message || t('replaceDocument.toasts.failed'));
+    } finally {
+      setReplacingFileId(null);
     }
   };
 
@@ -535,6 +572,8 @@ function FileListBase({
                 const processingStatus = getEffectiveProcessingStatus(file);
                 const canStartParse = processingStatus === 'stored_only' && canRequestProcessing;
                 const canOpenFileDetail = canViewDetail && processingStatus !== 'stored_only';
+                const canReplaceDocument =
+                  !selectionMode && canManage && Boolean(file.asset_id) && !isProcessingActive(processingStatus);
 
                 return (
                   <div
@@ -623,6 +662,22 @@ function FileListBase({
                             aria-label={t('actions.preview')}
                           >
                             <Eye className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        {canReplaceDocument ? (
+                          <Button
+                            isIcon
+                            type="button"
+                            variant="ghost"
+                            className="h-8 w-8 rounded-lg"
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleOpenReplaceDocument(file);
+                            }}
+                            disabled={replacingFileId === file.id}
+                            aria-label={t('actions.replaceDocument')}
+                          >
+                            <FileUp className="h-4 w-4" />
                           </Button>
                         ) : null}
                         <Checkbox
@@ -900,8 +955,15 @@ function FileListBase({
                 canDownload && isOriginalPreviewSupported(file.extension, file.mime_type);
               const canDeleteFile = canManage && !selectionMode;
               const canMoveFile = canMoveAssets && !selectionMode;
+              const canReplaceDocument =
+                !selectionMode && canManage && Boolean(file.asset_id) && !isProcessingActive(processingStatus);
               const canShowActionsMenu =
-                canStartParse || canOpenFileDetail || canDownload || canDeleteFile || canMoveFile;
+                canStartParse ||
+                canOpenFileDetail ||
+                canDownload ||
+                canReplaceDocument ||
+                canDeleteFile ||
+                canMoveFile;
 
               return (
                 <TableRow
@@ -1084,6 +1146,19 @@ function FileListBase({
                                 </>
                               )}
 
+                              {canReplaceDocument ? (
+                                <DropdownMenuItem
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    handleOpenReplaceDocument(file);
+                                  }}
+                                  disabled={replacingFileId === file.id}
+                                >
+                                  <FileUp className="h-4 w-4 mr-2" />
+                                  {t('actions.replaceDocument')}
+                                </DropdownMenuItem>
+                              ) : null}
+
                               {/* TODO: Favorites feature temporarily disabled, may restore later
                       {file.is_favorite ? (
                         <DropdownMenuItem
@@ -1187,6 +1262,17 @@ function FileListBase({
         loading={Boolean(startParseFile && startingParseFileId === startParseFile.id)}
         onConfirm={(file, parseProvider) => {
           void handleStartParse(file, parseProvider);
+        }}
+      />
+      <ReplaceDocumentDialog
+        open={Boolean(replaceDocumentFile)}
+        onOpenChange={open => {
+          if (!open) setReplaceDocumentFile(null);
+        }}
+        file={replaceDocumentFile}
+        loading={Boolean(replaceDocumentFile && replacingFileId === replaceDocumentFile.id)}
+        onConfirm={(file, replacementFile, processingMode, parseProvider) => {
+          void handleReplaceDocument(file, replacementFile, processingMode, parseProvider);
         }}
       />
       <WorkspaceAssetMoveDialog

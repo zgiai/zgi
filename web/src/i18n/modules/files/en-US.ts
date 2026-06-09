@@ -92,6 +92,23 @@ const messages = {
     confirmParse: 'Review',
     startParse: 'Parse',
     startParsing: 'Submitting...',
+    replaceDocument: 'Update Document',
+  },
+
+  replaceDocument: {
+    title: 'Update Document',
+    description:
+      'Replace "{name}" with a new file. Existing knowledge base references will stay linked and resync after processing.',
+    newFile: 'New document',
+    selectedFile: 'Selected: {name}',
+    fileTooLarge: 'File size cannot exceed {max}MB',
+    processingHint: 'The document will be parsed and indexed immediately after replacement.',
+    storeOnlyHint: 'The old content will be invalidated. Parse this document later before using it.',
+    confirm: 'Update',
+    toasts: {
+      started: 'Document update submitted',
+      failed: 'Failed to update document',
+    },
   },
 
   preview: {

@@ -355,6 +355,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const vectorStatus = summary?.vector_status ?? asset?.vector_status ?? artifactState?.vector_status ?? file?.vector_status;
   const pendingCount =
     processing?.pending_confirmation_count ?? summary?.pending_confirmation_count ?? file?.pending_confirmation_count ?? 0;
+  const hasPendingConfirmations = pendingCount > 0;
   const chunkCount =
     processing?.chunk_count ?? summary?.chunk_count ?? asset?.chunk_count ?? file?.chunk_count ?? artifactState?.chunk_count ?? 0;
   const embeddingCount = processing?.embedding_count ?? file?.embedding_count ?? 0;
@@ -584,9 +585,18 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         <TabsList className="grid h-auto w-full grid-cols-3 overflow-hidden rounded-none border-x-0 border-t-0 bg-background p-0 text-foreground">
           <TabsTrigger
             value="preview"
-            className="min-h-[84px] justify-start gap-3 rounded-none border-0 border-r border-border px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-primary data-[state=active]:bg-background data-[state=active]:shadow-none"
+            className="min-h-[84px] justify-start gap-3 rounded-none border-0 border-r border-border px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-success data-[state=active]:bg-background data-[state=active]:text-success data-[state=active]:shadow-none"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
+            <span
+              className={cn(
+                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                hasPendingConfirmations
+                  ? 'bg-warning/10 text-warning'
+                  : activeTab === 'preview'
+                    ? 'bg-success/10 text-success'
+                    : 'bg-muted text-muted-foreground'
+              )}
+            >
               <FileText className="h-5 w-5" />
             </span>
             <span className="min-w-0">
@@ -596,9 +606,14 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           <TabsTrigger
             value="chunks"
             disabled={!chunksEnabled}
-            className="min-h-[84px] justify-start gap-3 rounded-none border-0 border-r border-border px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-primary data-[state=active]:bg-background data-[state=active]:shadow-none"
+            className="min-h-[84px] justify-start gap-3 rounded-none border-0 border-r border-border px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-success data-[state=active]:bg-background data-[state=active]:text-success data-[state=active]:shadow-none"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <span
+              className={cn(
+                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                activeTab === 'chunks' ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
+              )}
+            >
               <Layers3 className="h-5 w-5" />
             </span>
             <span className="min-w-0">
@@ -613,9 +628,14 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           <TabsTrigger
             value="qa"
             disabled={!qaEnabled}
-            className="min-h-[84px] justify-start gap-3 rounded-none border-0 px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-primary data-[state=active]:bg-background data-[state=active]:shadow-none"
+            className="min-h-[84px] justify-start gap-3 rounded-none border-0 px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-success data-[state=active]:bg-background data-[state=active]:text-success data-[state=active]:shadow-none"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <span
+              className={cn(
+                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                activeTab === 'qa' ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
+              )}
+            >
               <MessageSquareText className="h-5 w-5" />
             </span>
             <span className="min-w-0">

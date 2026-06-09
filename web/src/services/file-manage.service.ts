@@ -14,6 +14,8 @@ import type {
   FileMetadataResponse,
   UploadFileRequest,
   UploadFileResponse,
+  ReplaceDocumentRequest,
+  ReplaceDocumentResponse,
   CreateFolderRequest,
   CreateFolderResponse,
   UpdateFolderRequest,
@@ -285,6 +287,26 @@ class FileManageService extends BaseService {
     }
 
     return this.request('post', '/console/api/files/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  }
+
+  async replaceDocument(
+    fileId: string,
+    data: ReplaceDocumentRequest
+  ): Promise<ApiResponseData<ReplaceDocumentResponse>> {
+    const formData = new FormData();
+    formData.append('file', data.file);
+    if (data.processing_mode) {
+      formData.append('processing_mode', data.processing_mode);
+    }
+    if (data.parse_provider) {
+      formData.append('parse_provider', data.parse_provider);
+    }
+
+    return this.request('post', `/console/api/files/${fileId}/replacement`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },

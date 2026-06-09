@@ -319,6 +319,24 @@ func validateFileProcessingRequestState(asset *datalibrarymodel.DocumentAsset, m
 	return errFileProcessingRequestStateInvalid
 }
 
+func validateFileReplacementState(asset *datalibrarymodel.DocumentAsset) error {
+	if asset == nil {
+		return datalibraryservice.ErrDocumentAssetNotFound
+	}
+	switch asset.ProductStatus {
+	case datalibrarymodel.DocumentAssetProductStatusStoredOnly,
+		datalibrarymodel.DocumentAssetProductStatusReady,
+		datalibrarymodel.DocumentAssetProductStatusParseFailed,
+		datalibrarymodel.DocumentAssetProductStatusConfirming:
+		return nil
+	case datalibrarymodel.DocumentAssetProductStatusParsing,
+		datalibrarymodel.DocumentAssetProductStatusGenerating:
+		return errFileProcessingRequestAlreadyActive
+	default:
+		return errFileProcessingRequestStateInvalid
+	}
+}
+
 // GetUploadConfig gets file upload configuration
 // GET /files/upload
 func (h *FileHandler) GetUploadConfig(c *gin.Context) {
@@ -548,6 +566,156 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 		}
 	}
 	response.Success(c, fileResponse)
+}
+
+// ReplaceDocument replaces an existing document file in-place and optionally starts parsing.
+// POST /files/:file_id/replacement
+func (h *FileHandler) ReplaceDocument(c *gin.Context) {
+	if h.assetStateService == nil || h.fileAssetDetailService == nil || h.processingService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset processing service is not available")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		h.businessError(c, response.ErrUnauthorized)
+		return
+	}
+	organizationID, currentFile, ok := h.authorizeManageDocumentFile(c)
+	if !ok {
+		return
+	}
+	currentDetail, err := h.fileAssetDetailService.GetCurrentFileAssetDetail(c.Request.Context(), datalibraryservice.FileAssetDetailInput{
+		OrganizationID: organizationID,
+		SourceFileID:   currentFile.ID,
+	})
+	if err != nil {
+		h.handleFileAssetDetailError(c, err)
+		return
+	}
+	if err := validateFileReplacementState(currentDetail.Asset); err != nil {
+		h.handleFileProcessingRequestError(c, err)
+		return
+	}
+
+	processingMode, ok := normalizeUploadProcessingMode(c.PostForm("processing_mode"))
+	if !ok {
+		h.businessError(c, response.ErrInvalidParam)
+		return
+	}
+	parseProvider, ok := normalizeFileParseProvider(c.PostForm("parse_provider"))
+	if !ok {
+		h.businessError(c, response.ErrInvalidParam)
+		return
+	}
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		h.businessError(c, response.ErrNoFileUploaded)
+		return
+	}
+	defer file.Close()
+	if err := c.Request.ParseMultipartForm(32 << 20); err == nil {
+		if len(c.Request.MultipartForm.File) > 1 {
+			h.businessError(c, response.ErrTooManyFiles)
+			return
+		}
+	}
+	if header.Filename == "" {
+		h.businessError(c, response.ErrFilenameRequired)
+		return
+	}
+	fileExtension := strings.TrimPrefix(strings.ToLower(filepath.Ext(header.Filename)), ".")
+	if !model.IsDocumentExtension(fileExtension) {
+		h.businessError(c, response.ErrUnsupportedFileType)
+		return
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		h.businessError(c, response.ErrFileReadFailed)
+		return
+	}
+	mimeType := header.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	replacedFile, err := h.fileService.ReplaceFileContent(c.Request.Context(), currentFile.ID, header.Filename, content, mimeType, accountID, organizationID)
+	if err != nil {
+		switch err {
+		case file_model.ErrFileTooLarge:
+			h.businessError(c, response.ErrFileTooLarge)
+		case file_model.ErrUnsupportedFileType:
+			h.businessError(c, response.ErrUnsupportedFileType)
+		default:
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "storage quota exceeded") || strings.Contains(errMsg, "storage space quota insufficient") {
+				h.businessErrorWithMessage(c, response.ErrQuotaStorageExceeded, errMsg)
+			} else if strings.Contains(errMsg, "quota") {
+				h.businessErrorWithMessage(c, response.ErrQuotaExceeded, errMsg)
+			} else {
+				h.businessErrorWithMessage(c, response.ErrorCode{Code: 210002, Message: "Failed to replace file", UserVisible: true}, errMsg)
+			}
+		}
+		return
+	}
+
+	asset, err := h.assetStateService.PrepareFileReplacement(c.Request.Context(), datalibraryservice.FileReplacementInput{
+		OrganizationID: organizationID,
+		AssetID:        currentDetail.Asset.ID,
+		Title:          replacedFile.Name,
+		ContentHash:    replacedFile.Hash,
+		RequestedBy:    accountID,
+		InvalidateRefs: true,
+	})
+	if err != nil {
+		h.handleFileProcessingRequestError(c, err)
+		return
+	}
+
+	var queued *queuedFileProcessingRequest
+	if processingMode == UploadProcessingModeProcessNow {
+		queued, err = h.beginAndQueueRunProcessingRequest(
+			c.Request.Context(),
+			asset,
+			replacedFile.ID,
+			organizationID,
+			accountID,
+			datalibrarymodel.DocumentProcessingLevelVectorize,
+			FileProcessingRequestModeReparse,
+			false,
+			parseProvider,
+		)
+		if err != nil {
+			h.handleFileProcessingRequestError(c, err)
+			return
+		}
+		asset = queued.Asset
+	}
+
+	fileResponse := dto.NewFileUploadResponse(replacedFile)
+	fileResponse.ProcessingMode = processingMode
+	fileResponse.AssetID = asset.ID.String()
+	fileResponse.ProcessingStatus = asset.ProductStatus
+	fileResponse.GenerationNo = asset.GenerationNo
+	if asset.ActiveProcessingRequestID != nil {
+		fileResponse.ProcessingRequestID = asset.ActiveProcessingRequestID.String()
+	}
+	if asset.ProcessingRunID != nil {
+		fileResponse.ProcessingRunID = asset.ProcessingRunID.String()
+	}
+
+	body := gin.H{
+		"file":            fileResponse,
+		"asset":           asset,
+		"processing_mode": processingMode,
+	}
+	if queued != nil {
+		body["processing_request"] = queued.ProcessingRequest
+		body["processing_run_id"] = uuidPointerString(queued.ProcessingRunID)
+		body["generation_no"] = queued.GenerationNo
+	}
+	response.Success(c, body)
 }
 
 // CreateProcessingRequest starts parsing, reparsing, or post-confirm generation for a file asset.

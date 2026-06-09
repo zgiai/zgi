@@ -337,6 +337,10 @@ func (s *singleActiveAssetStateService) CreateOrReuseStoredAsset(ctx context.Con
 	return nil, false, nil
 }
 
+func (s *singleActiveAssetStateService) PrepareFileReplacement(ctx context.Context, input datalibraryservice.FileReplacementInput) (*model.DocumentAsset, error) {
+	return nil, nil
+}
+
 func (s *singleActiveAssetStateService) BeginProcessingRequest(ctx context.Context, input datalibraryservice.BeginProcessingRequestInput) (*datalibraryservice.BeginProcessingRequestResult, error) {
 	return nil, nil
 }

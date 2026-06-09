@@ -112,6 +112,149 @@ func (s *fileService) UploadFile(ctx context.Context, filename string, content [
 	})
 }
 
+func (s *fileService) ReplaceFileContent(ctx context.Context, fileID string, filename string, content []byte, mimeType string, userID, organizationID string) (*dto.UploadFile, error) {
+	current, err := s.fileRepo.GetByTenantAndID(ctx, organizationID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if current.IsTemporary {
+		return nil, model.ErrUnsupportedFileType
+	}
+
+	extension := strings.ToLower(filepath.Ext(filename))
+	if extension != "" {
+		extension = extension[1:]
+	}
+	if len(filename) > 200 {
+		nameWithoutExt := strings.TrimSuffix(filename, filepath.Ext(filename))
+		if len(nameWithoutExt) > 200 {
+			nameWithoutExt = nameWithoutExt[:200]
+		}
+		filename = nameWithoutExt + "." + extension
+	}
+	if !model.IsDocumentExtension(extension) {
+		return nil, model.ErrUnsupportedFileType
+	}
+
+	fileSize := int64(len(content))
+	if !s.IsFileSizeWithinLimit(extension, fileSize) {
+		return nil, model.ErrFileTooLarge
+	}
+
+	delta := fileSize - current.Size
+	var groupID *uuid.UUID
+	parsedGroupID, parseErr := uuid.Parse(organizationID)
+	if parseErr == nil {
+		groupID = &parsedGroupID
+	}
+	if delta > 0 && groupID != nil && s.quotaService != nil {
+		canProceed, currentUsage, limit, err := s.quotaService.CheckQuota(ctx, *groupID, quota_model.ResourceTypeStorage, delta)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check storage quota: %w", err)
+		}
+		if !canProceed {
+			currentGB := float64(currentUsage) / (1024 * 1024 * 1024)
+			limitGB := float64(limit) / (1024 * 1024 * 1024)
+			attemptGB := float64(delta) / (1024 * 1024 * 1024)
+			return nil, fmt.Errorf("storage quota exceeded: current=%.2fGB, limit=%.2fGB, attempt=%.2fGB",
+				currentGB, limitGB, attemptGB)
+		}
+	}
+
+	storageType := config.Current().Storage.Type
+	newKey := fmt.Sprintf("upload_files/%s/%s.%s", organizationID, uuid.New().String(), extension)
+	hash := fmt.Sprintf("%x", sha256.Sum256(content))
+	oldKey := current.Key
+
+	if err := s.storage.Save(newKey, content); err != nil {
+		return nil, fmt.Errorf("failed to save replacement file to storage: %w", err)
+	}
+
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		updates := map[string]interface{}{
+			"storage_type": storageType,
+			"key":          newKey,
+			"name":         filename,
+			"size":         fileSize,
+			"extension":    extension,
+			"mime_type":    mimeType,
+			"created_by":   userID,
+			"created_at":   time.Now(),
+			"hash":         hash,
+			"source_url":   "",
+			"content_text": nil,
+		}
+		if err := s.fileRepo.WithTx(tx).Update(ctx, fileID, updates); err != nil {
+			return fmt.Errorf("failed to update file record: %w", err)
+		}
+		if err := s.fileRepo.WithTx(tx).DeleteExtractionCaches(ctx, fileID); err != nil {
+			return fmt.Errorf("failed to clear file extraction caches: %w", err)
+		}
+
+		if delta != 0 && groupID != nil && s.quotaService != nil {
+			accountUUID, err := uuid.Parse(userID)
+			if err != nil {
+				return fmt.Errorf("failed to parse user ID: %w", err)
+			}
+			tenantUUID, err := uuid.Parse(organizationID)
+			if err != nil {
+				return fmt.Errorf("failed to parse tenant ID: %w", err)
+			}
+			operation := quota_model.OperationTypeIncrease
+			if delta < 0 {
+				operation = quota_model.OperationTypeDecrease
+			}
+			resourceName := filename
+			usageRecord := &quota_model.QuotaUsageHistory{
+				ID:            uuid.New().String(),
+				GroupID:       *groupID,
+				AccountID:     accountUUID,
+				TenantID:      &tenantUUID,
+				ResourceType:  quota_model.ResourceTypeStorage,
+				OperationType: operation,
+				Delta:         delta,
+				ResourceID:    &fileID,
+				ResourceName:  &resourceName,
+				Metadata: &quota_model.JSONMap{
+					"file_id":       fileID,
+					"file_name":     filename,
+					"old_file_size": current.Size,
+					"new_file_size": fileSize,
+					"old_key":       oldKey,
+					"new_key":       newKey,
+					"operation":     "replace_file_content",
+				},
+			}
+			if err := s.quotaService.RecordUsageInTx(ctx, tx, usageRecord); err != nil {
+				return fmt.Errorf("failed to record replacement storage usage: %w", err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		if deleteErr := s.storage.Delete(newKey); deleteErr != nil {
+			logger.Warn("Failed to delete replacement file after DB rollback", "key", newKey, "error", deleteErr.Error())
+		}
+		return nil, err
+	}
+
+	if oldKey != "" && oldKey != newKey {
+		if err := s.storage.Delete(oldKey); err != nil {
+			logger.Warn("Failed to delete old file content after replacement", "file_id", fileID, "key", oldKey, "error", err.Error())
+		}
+	}
+
+	replaced, err := s.fileRepo.GetByTenantAndID(ctx, organizationID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertToInterfaceUploadFile(replaced), nil
+}
+
 func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool, options UploadFileOptions) (*dto.UploadFile, error) {
 	// If isIcon is true, resize the image to max 200x200
 	if isIcon {

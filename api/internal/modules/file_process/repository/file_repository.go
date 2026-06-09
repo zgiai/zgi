@@ -18,6 +18,7 @@ type FileRepository interface {
 	UpdateContentText(ctx context.Context, id string, contentText string) error
 	GetExtractionCache(ctx context.Context, fileID, cacheKey string) (*file_model.FileExtractionCache, error)
 	UpsertExtractionCache(ctx context.Context, cache *file_model.FileExtractionCache) error
+	DeleteExtractionCaches(ctx context.Context, fileID string) error
 	Update(ctx context.Context, id string, updates map[string]interface{}) error
 	MarkAsUsed(ctx context.Context, id, usedBy string) error
 	ListByTenantID(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceID string, page, pageSize int, keyword, sort, extension string, startTime, endTime *time.Time) ([]*file_model.UploadFile, int64, error)
@@ -115,6 +116,12 @@ func (r *fileRepository) UpsertExtractionCache(ctx context.Context, cache *file_
 		},
 		DoUpdates: clause.AssignmentColumns([]string{"content", "source", "updated_at"}),
 	}).Create(cache).Error
+}
+
+func (r *fileRepository) DeleteExtractionCaches(ctx context.Context, fileID string) error {
+	return r.db.WithContext(ctx).
+		Where("file_id = ?", fileID).
+		Delete(&file_model.FileExtractionCache{}).Error
 }
 
 func (r *fileRepository) Update(ctx context.Context, id string, updates map[string]interface{}) error {

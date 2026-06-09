@@ -100,6 +100,8 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 
 		files.POST("/:file_id/processing-requests", fileHandler.CreateProcessingRequest)
 
+		files.POST("/:file_id/replacement", fileHandler.ReplaceDocument)
+
 		files.GET("/:file_id/detail", fileHandler.GetFileDetail)
 
 		files.GET("/:file_id/chunks", fileHandler.ListFileChunks)

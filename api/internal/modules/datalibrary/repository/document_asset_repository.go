@@ -21,6 +21,8 @@ type DocumentAssetListFilter struct {
 
 type DocumentAssetCurrentResultPatch struct {
 	OrganizationID              string
+	Title                       *string
+	ContentHash                 *string
 	ProductStatus               *string
 	ProcessingStage             *string
 	ProcessingProgress          *int
@@ -39,6 +41,9 @@ type DocumentAssetCurrentResultPatch struct {
 	RequireProcessingRunID      *uuid.UUID
 	RequireGenerationNo         *int64
 	ClearActiveProcessingRunIDs bool
+	ClearParseArtifactID        bool
+	ClearChunkArtifactSetID     bool
+	ClearEmbeddingMetadata      bool
 	ClearError                  bool
 }
 
@@ -176,6 +181,12 @@ func (r *documentAssetRepository) UpdateCurrentResult(ctx context.Context, id uu
 	if patch.ProductStatus != nil {
 		updates["product_status"] = *patch.ProductStatus
 	}
+	if patch.Title != nil {
+		updates["title"] = *patch.Title
+	}
+	if patch.ContentHash != nil {
+		updates["content_hash"] = *patch.ContentHash
+	}
 	if patch.ProcessingStage != nil {
 		updates["processing_stage"] = *patch.ProcessingStage
 	}
@@ -221,6 +232,18 @@ func (r *documentAssetRepository) UpdateCurrentResult(ctx context.Context, id uu
 	if patch.ClearActiveProcessingRunIDs {
 		updates["active_processing_request_id"] = nil
 		updates["processing_run_id"] = nil
+	}
+	if patch.ClearParseArtifactID {
+		updates["parse_artifact_id"] = nil
+	}
+	if patch.ClearChunkArtifactSetID {
+		updates["chunk_artifact_set_id"] = nil
+		updates["chunk_count"] = 0
+	}
+	if patch.ClearEmbeddingMetadata {
+		updates["embedding_provider"] = nil
+		updates["embedding_model"] = nil
+		updates["embedding_dimension"] = nil
 	}
 	if patch.ClearError {
 		updates["last_error_code"] = nil

@@ -16,6 +16,7 @@ var (
 
 type FileAssetProcessingStateService interface {
 	CreateOrReuseStoredAsset(ctx context.Context, input FileAssetCreateInput) (*model.DocumentAsset, bool, error)
+	PrepareFileReplacement(ctx context.Context, input FileReplacementInput) (*model.DocumentAsset, error)
 	BeginProcessingRequest(ctx context.Context, input BeginProcessingRequestInput) (*BeginProcessingRequestResult, error)
 	MarkParsing(ctx context.Context, input RunStateInput) (*model.DocumentAsset, error)
 	MarkConfirming(ctx context.Context, input RunStateInput) (*model.DocumentAsset, error)
@@ -31,6 +32,15 @@ type FileAssetCreateInput struct {
 	SourceFileID   string
 	ContentHash    string
 	CreatedBy      string
+}
+
+type FileReplacementInput struct {
+	OrganizationID string
+	AssetID        uuid.UUID
+	Title          string
+	ContentHash    string
+	RequestedBy    string
+	InvalidateRefs bool
 }
 
 type BeginProcessingRequestInput struct {
@@ -141,6 +151,49 @@ func (s *fileAssetProcessingStateService) CreateOrReuseStoredAsset(ctx context.C
 		return nil, false, err
 	}
 	return asset, true, nil
+}
+
+func (s *fileAssetProcessingStateService) PrepareFileReplacement(ctx context.Context, input FileReplacementInput) (*model.DocumentAsset, error) {
+	if input.OrganizationID == "" {
+		return nil, ErrOrganizationIDRequired
+	}
+	if input.AssetID == uuid.Nil {
+		return nil, ErrAssetIDRequired
+	}
+	if input.ContentHash == "" {
+		return nil, ErrContentHashRequired
+	}
+
+	status := model.DocumentAssetProductStatusStoredOnly
+	stage := model.DocumentAssetProcessingStageUpload
+	progress := 0
+	vectorStatus := model.DocumentAssetVectorStatusNone
+	updated, err := s.assets.UpdateCurrentResult(ctx, input.AssetID, repository.DocumentAssetCurrentResultPatch{
+		OrganizationID:              input.OrganizationID,
+		Title:                       &input.Title,
+		ContentHash:                 &input.ContentHash,
+		ProductStatus:               &status,
+		ProcessingStage:             &stage,
+		ProcessingProgress:          &progress,
+		VectorStatus:                &vectorStatus,
+		ClearActiveProcessingRunIDs: true,
+		ClearParseArtifactID:        true,
+		ClearChunkArtifactSetID:     true,
+		ClearEmbeddingMetadata:      true,
+		ClearError:                  true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if updated == nil || updated.OrganizationID != input.OrganizationID {
+		return nil, ErrDocumentAssetNotFound
+	}
+	if input.InvalidateRefs {
+		if err := s.invalidateDatasetRefsForAssetEdit(ctx, updated, input.RequestedBy); err != nil {
+			return nil, err
+		}
+	}
+	return updated, nil
 }
 
 func (s *fileAssetProcessingStateService) BeginProcessingRequest(ctx context.Context, input BeginProcessingRequestInput) (*BeginProcessingRequestResult, error) {

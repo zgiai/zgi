@@ -90,6 +90,22 @@ const messages: FilesMessages = {
     confirmParse: '去确认',
     startParse: '去解析',
     startParsing: '提交中...',
+    replaceDocument: '更新文档',
+  },
+
+  replaceDocument: {
+    title: '更新文档',
+    description: '用新文件替换「{name}」。已有知识库引用会保持关联，并在处理后自动同步。',
+    newFile: '新文档',
+    selectedFile: '已选择：{name}',
+    fileTooLarge: '文件大小不能超过 {max}MB',
+    processingHint: '替换后会立即解析并建立索引。',
+    storeOnlyHint: '旧内容会立即失效。请稍后手动解析该文档后再使用。',
+    confirm: '更新',
+    toasts: {
+      started: '已提交文档更新',
+      failed: '文档更新失败',
+    },
   },
 
   preview: {

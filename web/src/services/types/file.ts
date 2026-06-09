@@ -197,6 +197,21 @@ export interface UploadFileResponse {
   generation_no?: number;
 }
 
+export interface ReplaceDocumentRequest {
+  file: File;
+  processing_mode?: FileUploadProcessingMode;
+  parse_provider?: FileParseProviderKey;
+}
+
+export interface ReplaceDocumentResponse {
+  file: UploadFileResponse;
+  asset?: unknown;
+  processing_request?: unknown;
+  processing_run_id?: string;
+  generation_no?: number;
+  processing_mode: FileUploadProcessingMode;
+}
+
 /**
  * Create folder request
  */
