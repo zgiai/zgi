@@ -331,6 +331,25 @@ func TestGetWorkflowRunStatusRejectsUnboundRun(t *testing.T) {
 	}
 }
 
+func TestGetWorkflowRunStatusRejectsSameAgentDifferentWorkflow(t *testing.T) {
+	runner := &fakeWorkflowRunner{
+		status: &automationaction.WorkflowRunStatusResult{
+			WorkflowRunID: "run-2",
+			WorkflowID:    "workflow-2",
+			AgentID:       "agent-1",
+			Status:        "succeeded",
+		},
+	}
+	runtimeTool := workflowRuntimeTool(t, ToolGetWorkflowRunStatus, runner)
+
+	_, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"workflow_run_id": "run-2",
+	}, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "not part of the current Agent workflow bindings") {
+		t.Fatalf("Invoke() error = %v, want different workflow rejection", err)
+	}
+}
+
 func workflowRuntimeTool(t *testing.T, name string, runner *fakeWorkflowRunner) tools.Tool {
 	return workflowRuntimeToolWithBinding(t, name, runner, map[string]interface{}{
 		"binding_id":       "approval-flow",

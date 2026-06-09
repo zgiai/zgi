@@ -129,6 +129,52 @@ func TestAgentRuntimeRunsReturnsOnlyNewWebAppMessages(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeRunsIncludesWebAppMessagesFromEndUserAccounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, service, ids := setupRuntimeLogsHandler(t)
+
+	endUserAccountID := uuid.New()
+	webAppID := uuid.New()
+	conversationID := uuid.New()
+	service.addConversation(&runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: ids.organizationID,
+		WorkspaceID:    &ids.workspaceID,
+		AccountID:      endUserAccountID,
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &ids.agentID,
+		Title:          "webapp end user",
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &webAppID,
+	})
+	messageID := uuid.New()
+	service.addMessage(&runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "from visitor",
+		Answer:         "visible to manager",
+		Status:         runtimemodel.MessageStatusCompleted,
+		ModelName:      "gpt-test",
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "agent_id", Value: ids.agentID.String()}}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs?triggered_from=web-app", nil)
+
+	handler.GetRuntimeRuns(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	items := responseDataArray(t, recorder.Body.Bytes())
+	if len(items) != 1 || items[0]["id"] != messageID.String() {
+		t.Fatalf("items = %#v, want end-user webapp message %s", items, messageID.String())
+	}
+}
+
 func TestAgentRuntimeRunsCanFilterByConversation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, service, ids := setupRuntimeLogsHandler(t)
@@ -336,6 +382,58 @@ func TestAgentRuntimeRunDetailRejectsOtherAgentMessage(t *testing.T) {
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+}
+
+func TestAgentRuntimeRunDetailAllowsWebAppMessageFromEndUserAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, service, ids := setupRuntimeLogsHandler(t)
+
+	webAppID := uuid.New()
+	conversationID := uuid.New()
+	service.addConversation(&runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: ids.organizationID,
+		WorkspaceID:    &ids.workspaceID,
+		AccountID:      uuid.New(),
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &ids.agentID,
+		Title:          "webapp visitor",
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &webAppID,
+	})
+	messageID := uuid.New()
+	service.addMessage(&runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "visitor query",
+		Answer:         "visitor answer",
+		Status:         runtimemodel.MessageStatusCompleted,
+		ModelName:      "gpt-test",
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{
+		{Key: "agent_id", Value: ids.agentID.String()},
+		{Key: "message_id", Value: messageID.String()},
+	}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs/"+messageID.String(), nil)
+
+	handler.GetRuntimeRunDetail(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := resp["data"].(map[string]interface{})
+	if data["id"] != messageID.String() || data["query"] != "visitor query" {
+		t.Fatalf("detail = %#v, want visitor message", data)
 	}
 }
 
@@ -832,6 +930,25 @@ func (s *fakeRuntimeHistoryService) ListMessagesByCallerLogFilters(ctx context.C
 	return paginateRuntimeMessages(filtered, page, limit)
 }
 
+func (s *fakeRuntimeHistoryService) ListMessagesByCallerRuntimeLogFilters(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, source string, conversationID *uuid.UUID, queryText string, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	var filtered []*runtimemodel.Message
+	keyword := strings.ToLower(strings.TrimSpace(queryText))
+	for _, message := range s.messages {
+		conversation := s.conversations[message.ConversationID]
+		if !fakeRuntimeLogConversationMatches(scope, caller, conversation, source) {
+			continue
+		}
+		if conversationID != nil && message.ConversationID != *conversationID {
+			continue
+		}
+		if keyword != "" && !strings.Contains(strings.ToLower(message.Query), keyword) && !strings.Contains(strings.ToLower(message.Answer), keyword) {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	return paginateRuntimeMessages(filtered, page, limit)
+}
+
 func (s *fakeRuntimeHistoryService) GetMessageByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
 	for _, message := range s.messages {
 		if message.ID != id {
@@ -839,6 +956,20 @@ func (s *fakeRuntimeHistoryService) GetMessageByCaller(ctx context.Context, scop
 		}
 		conversation := s.conversations[message.ConversationID]
 		if !fakeConversationMatches(scope, caller, conversation) {
+			return nil, nil, runtimeservice.ErrNotFound
+		}
+		return message, conversation, nil
+	}
+	return nil, nil, runtimeservice.ErrNotFound
+}
+
+func (s *fakeRuntimeHistoryService) GetMessageByCallerRuntimeLog(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID, source string) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
+	for _, message := range s.messages {
+		if message.ID != id {
+			continue
+		}
+		conversation := s.conversations[message.ConversationID]
+		if !fakeRuntimeLogConversationMatches(scope, caller, conversation, source) {
 			return nil, nil, runtimeservice.ErrNotFound
 		}
 		return message, conversation, nil
@@ -860,6 +991,41 @@ func fakeConversationMatches(scope runtimeservice.Scope, caller runtimeservice.C
 		return conversation.CallerID == nil
 	}
 	return conversation.CallerID != nil && *conversation.CallerID == *caller.ID
+}
+
+func fakeRuntimeLogConversationMatches(scope runtimeservice.Scope, caller runtimeservice.Caller, conversation *runtimemodel.Conversation, source string) bool {
+	if conversation == nil {
+		return false
+	}
+	if conversation.OrganizationID != scope.OrganizationID {
+		return false
+	}
+	if scope.WorkspaceID != nil && (conversation.WorkspaceID == nil || *conversation.WorkspaceID != *scope.WorkspaceID) {
+		return false
+	}
+	if conversation.CallerType != caller.Type {
+		return false
+	}
+	if caller.ID == nil {
+		if conversation.CallerID != nil {
+			return false
+		}
+	} else if conversation.CallerID == nil || *conversation.CallerID != *caller.ID {
+		return false
+	}
+	switch strings.TrimSpace(source) {
+	case runtimemodel.ConversationSourceWebApp:
+		return conversation.Source == runtimemodel.ConversationSourceWebApp &&
+			conversation.SourceWebAppID != nil &&
+			*conversation.SourceWebAppID != uuid.Nil
+	case runtimemodel.ConversationSourceConsole:
+		return conversation.Source == runtimemodel.ConversationSourceConsole &&
+			conversation.AccountID == scope.AccountID
+	case "":
+		return conversation.AccountID == scope.AccountID
+	default:
+		return conversation.Source == source && conversation.AccountID == scope.AccountID
+	}
 }
 
 func (s *fakeRuntimeHistoryService) CreateConversation(ctx context.Context, scope runtimeservice.Scope, title string) (*runtimemodel.Conversation, error) {

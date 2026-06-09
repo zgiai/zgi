@@ -84,7 +84,7 @@ func (h *AgentRuntimeLogsHandler) GetRuntimeRuns(c *gin.Context) {
 		}
 		conversationID = &parsedConversationID
 	}
-	messages, total, err = h.chatRuntime.ListMessagesByCallerLogFilters(
+	messages, total, err = h.chatRuntime.ListMessagesByCallerRuntimeLogFilters(
 		c.Request.Context(),
 		scope,
 		runtimeCaller(agentID),
@@ -199,7 +199,10 @@ func (h *AgentRuntimeLogsHandler) runtimeMessage(c *gin.Context) (*runtimemodel.
 		response.Fail(c, response.ErrInvalidParam)
 		return nil, nil, false
 	}
-	message, conversation, err := h.chatRuntime.GetMessageByCaller(c.Request.Context(), scope, runtimeCaller(agentID), messageID)
+	message, conversation, err := h.chatRuntime.GetMessageByCallerRuntimeLog(c.Request.Context(), scope, runtimeCaller(agentID), messageID, runtimemodel.ConversationSourceWebApp)
+	if err != nil {
+		message, conversation, err = h.chatRuntime.GetMessageByCallerRuntimeLog(c.Request.Context(), scope, runtimeCaller(agentID), messageID, "")
+	}
 	if err != nil {
 		failAgentRuntimeLog(c, err)
 		return nil, nil, false

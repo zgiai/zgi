@@ -72,6 +72,14 @@ func (f fakeWaitingApprovalMessageRepo) ListByCallerLogFilterScoped(context.Cont
 	panic("not implemented")
 }
 
+func (f fakeWaitingApprovalMessageRepo) ListByCallerRuntimeLogScoped(context.Context, uuid.UUID, *uuid.UUID, uuid.UUID, string, *uuid.UUID, string, *uuid.UUID, string, int, int) ([]*runtimemodel.Message, int64, error) {
+	panic("not implemented")
+}
+
+func (f fakeWaitingApprovalMessageRepo) GetRuntimeLogScoped(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID, uuid.UUID, string, *uuid.UUID, string) (*runtimemodel.Message, error) {
+	panic("not implemented")
+}
+
 func (f fakeWaitingApprovalMessageRepo) ListBranch(context.Context, uuid.UUID, int) ([]*runtimemodel.Message, error) {
 	panic("not implemented")
 }

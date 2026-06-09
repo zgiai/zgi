@@ -18,6 +18,7 @@ type ConversationRepository interface {
 	Create(ctx context.Context, conversation *runtimemodel.Conversation) error
 	GetScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*runtimemodel.Conversation, error)
 	GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID) (*runtimemodel.Conversation, error)
+	GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Conversation, error)
 	GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 	ListScoped(ctx context.Context, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
@@ -43,6 +44,8 @@ type MessageRepository interface {
 	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Message, int64, error)
 	ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, limit, offset int) ([]*runtimemodel.Message, int64, error)
 	ListByCallerLogFilterScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error)
+	ListByCallerRuntimeLogScoped(ctx context.Context, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error)
+	GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Message, error)
 	ListBranch(ctx context.Context, leafID uuid.UUID, maxDepth int) ([]*runtimemodel.Message, error)
 	CountByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error)
 	ReplaceRootForStreaming(ctx context.Context, message *runtimemodel.Message) error
@@ -166,6 +169,19 @@ func (r *conversationRepository) GetByCallerScoped(ctx context.Context, id, orga
 	return &conversation, nil
 }
 
+func (r *conversationRepository) GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Conversation, error) {
+	var conversation runtimemodel.Conversation
+	query := applyRuntimeLogSourceFilter(applyCallerFilter(r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ? AND deleted_at IS NULL", id, organizationID), callerType, callerID), accountID, source, "")
+	if workspaceID != nil && *workspaceID != uuid.Nil {
+		query = query.Where("workspace_id = ?", *workspaceID)
+	}
+	if err := query.Take(&conversation).Error; err != nil {
+		return nil, wrapNotFound(err, "chat runtime conversation")
+	}
+	return &conversation, nil
+}
+
 func (r *conversationRepository) GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error) {
 	var conversation runtimemodel.Conversation
 	err := r.db.WithContext(ctx).
@@ -214,6 +230,42 @@ func applyCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID) *
 		return query.Where("caller_id = ?", *callerID)
 	}
 	return query.Where("caller_id IS NULL")
+}
+
+func applyRuntimeLogCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID, alias string) *gorm.DB {
+	if callerType == "" {
+		callerType = runtimemodel.ConversationCallerAIChat
+	}
+	callerTypeColumn := qualifiedColumn(alias, "caller_type")
+	callerIDColumn := qualifiedColumn(alias, "caller_id")
+	query = query.Where(callerTypeColumn+" = ?", callerType)
+	if callerID != nil && *callerID != uuid.Nil {
+		return query.Where(callerIDColumn+" = ?", *callerID)
+	}
+	return query.Where(callerIDColumn + " IS NULL")
+}
+
+func applyRuntimeLogSourceFilter(query *gorm.DB, accountID uuid.UUID, source string, alias string) *gorm.DB {
+	sourceColumn := qualifiedColumn(alias, "source")
+	sourceWebAppIDColumn := qualifiedColumn(alias, "source_web_app_id")
+	accountIDColumn := qualifiedColumn(alias, "account_id")
+	switch strings.TrimSpace(source) {
+	case runtimemodel.ConversationSourceWebApp:
+		return query.Where(sourceColumn+" = ? AND "+sourceWebAppIDColumn+" IS NOT NULL", runtimemodel.ConversationSourceWebApp)
+	case runtimemodel.ConversationSourceConsole:
+		return query.Where(sourceColumn+" = ? AND "+accountIDColumn+" = ?", runtimemodel.ConversationSourceConsole, accountID)
+	case "":
+		return query.Where(accountIDColumn+" = ?", accountID)
+	default:
+		return query.Where(sourceColumn+" = ? AND "+accountIDColumn+" = ?", source, accountID)
+	}
+}
+
+func qualifiedColumn(alias string, column string) string {
+	if strings.TrimSpace(alias) == "" {
+		return column
+	}
+	return alias + "." + column
 }
 
 func (r *conversationRepository) UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error {
@@ -485,6 +537,21 @@ func (r *messageRepository) GetScoped(ctx context.Context, id, organizationID, a
 	return &message, nil
 }
 
+func (r *messageRepository) GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Message, error) {
+	var message runtimemodel.Message
+	query := applyRuntimeLogSourceFilter(applyRuntimeLogCallerFilter(r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
+		Select("m.*").
+		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
+		Where("m.id = ? AND c.organization_id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL", id, organizationID), callerType, callerID, "c"), accountID, source, "c")
+	if workspaceID != nil && *workspaceID != uuid.Nil {
+		query = query.Where("c.workspace_id = ?", *workspaceID)
+	}
+	if err := query.Take(&message).Error; err != nil {
+		return nil, wrapNotFound(err, "aichat message")
+	}
+	return &message, nil
+}
+
 func (r *messageRepository) GetBySourceMessage(ctx context.Context, sourceMessageID uuid.UUID) (*runtimemodel.Message, error) {
 	var message runtimemodel.Message
 	err := r.db.WithContext(ctx).
@@ -572,6 +639,31 @@ func (r *messageRepository) ListByCallerLogFilterScoped(ctx context.Context, org
 	}
 	if err := query.Select("m.*").Order("m.created_at DESC, m.updated_at DESC").Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to list chat runtime messages by log filters: %w", err)
+	}
+	return messages, total, nil
+}
+
+func (r *messageRepository) ListByCallerRuntimeLogScoped(ctx context.Context, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error) {
+	var messages []*runtimemodel.Message
+	var total int64
+	query := applyRuntimeLogSourceFilter(applyRuntimeLogCallerFilter(r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
+		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
+		Where("c.organization_id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL", organizationID), callerType, callerID, "c"), accountID, source, "c")
+	if workspaceID != nil && *workspaceID != uuid.Nil {
+		query = query.Where("c.workspace_id = ?", *workspaceID)
+	}
+	if conversationID != nil && *conversationID != uuid.Nil {
+		query = query.Where("m.conversation_id = ?", *conversationID)
+	}
+	if keyword := strings.TrimSpace(queryText); keyword != "" {
+		pattern := "%" + strings.ToLower(keyword) + "%"
+		query = query.Where("(LOWER(COALESCE(m.query, '')) LIKE ? OR LOWER(COALESCE(m.answer, '')) LIKE ?)", pattern, pattern)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count chat runtime messages by runtime log filters: %w", err)
+	}
+	if err := query.Select("m.*").Order("m.created_at DESC, m.updated_at DESC").Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to list chat runtime messages by runtime log filters: %w", err)
 	}
 	return messages, total, nil
 }

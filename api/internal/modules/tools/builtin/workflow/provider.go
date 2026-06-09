@@ -520,12 +520,12 @@ func workflowOutputKeys(outputs map[string]interface{}) []string {
 }
 
 func workflowRunAllowed(result *automationaction.WorkflowRunStatusResult, bindings []workflowBinding) bool {
+	if result == nil || strings.TrimSpace(result.WorkflowID) == "" || strings.TrimSpace(result.AgentID) == "" {
+		return false
+	}
 	for _, binding := range bindings {
 		if strings.TrimSpace(binding.AgentID) != strings.TrimSpace(result.AgentID) {
 			continue
-		}
-		if binding.VersionStrategy == "" || binding.VersionStrategy == automationaction.WorkflowVersionStrategyLatestPublished {
-			return true
 		}
 		if strings.TrimSpace(binding.WorkflowID) == strings.TrimSpace(result.WorkflowID) {
 			return true

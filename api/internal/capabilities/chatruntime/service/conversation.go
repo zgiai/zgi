@@ -376,6 +376,20 @@ func (s *service) ListMessagesByCallerLogFilters(ctx context.Context, scope Scop
 	return messages, total, nil
 }
 
+func (s *service) ListMessagesByCallerRuntimeLogFilters(ctx context.Context, scope Scope, caller Caller, source string, conversationID *uuid.UUID, queryText string, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, 0, err
+	}
+	limit = clampLimit(limit, 50, 200)
+	offset := pageOffset(page, limit)
+	messages, total, err := s.repos.Message.ListByCallerRuntimeLogScoped(ctx, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), strings.TrimSpace(source), conversationID, strings.TrimSpace(queryText), limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	hydrateMessagesGeneratedFileURLs(messages)
+	return messages, total, nil
+}
+
 func (s *service) GetMessageByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, nil, err
@@ -387,6 +401,24 @@ func (s *service) GetMessageByCaller(ctx context.Context, scope Scope, caller Ca
 	conversation, err := s.GetConversationByCaller(ctx, scope, caller, message.ConversationID)
 	if err != nil {
 		return nil, nil, err
+	}
+	hydrateMessageGeneratedFileURLs(message)
+	return message, conversation, nil
+}
+
+func (s *service) GetMessageByCallerRuntimeLog(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, source string) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, nil, err
+	}
+	normalizedCallerType := normalizeCallerType(caller.Type)
+	normalizedCallerID := normalizeCallerID(caller.ID)
+	message, err := s.repos.Message.GetRuntimeLogScoped(ctx, id, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, normalizedCallerType, normalizedCallerID, strings.TrimSpace(source))
+	if err != nil {
+		return nil, nil, mapRepoError(err)
+	}
+	conversation, err := s.repos.Conversation.GetRuntimeLogScoped(ctx, message.ConversationID, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, normalizedCallerType, normalizedCallerID, strings.TrimSpace(source))
+	if err != nil {
+		return nil, nil, mapRepoError(err)
 	}
 	hydrateMessageGeneratedFileURLs(message)
 	return message, conversation, nil
