@@ -71,7 +71,7 @@ export default function DbTableCreatePage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="min-h-0 grow">
+      <div className="min-h-0 grow flex flex-col">
         {step === 1 && (
           <StepOne dataSourceId={dbId} onAnalyzeDone={setAiColumns} initialAiColumns={aiColumns} />
         )}
