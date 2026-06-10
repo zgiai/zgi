@@ -63,6 +63,7 @@ export interface AiModelSelection {
 // Scope types for AI model selection
 export type AiModelScope =
   | 'create'
+  | 'excelImport'
   | 'ingest'
   | 'biSearch'
   | 'consoleChat'

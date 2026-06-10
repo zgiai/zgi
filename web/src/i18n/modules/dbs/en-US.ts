@@ -253,6 +253,10 @@ const messages = {
   // Data ingest page under /console/db/[dbId]/table/[tableId]/data
   dataIngestPage: {
     headerTitle: 'Intelligent data extraction to table',
+    leaveProcessingConfirm:
+      'Files are still being recognized. Leaving or going back may interrupt the current page state and lose unfinished results. Leave anyway?',
+    leaveUnsavedConfirm:
+      'Recognition results have not been reviewed and committed yet. This page state will not be preserved after leaving. Leave anyway?',
   },
   // Table ingest flow components
   tableIngest: {
@@ -271,10 +275,21 @@ const messages = {
       bannerText: 'AI Recognition: AI will auto map content to table fields. {desc}',
       supportedDesc:
         'Supports PDF, Word, Excel, images, and more. Multi-file selection is supported for AI recognition.',
+      supportedDescDocumentsOnly:
+        'The current model supports document recognition. Select PDF, Word, Excel, CSV, and similar files. Images or scanned files require a vision model first.',
+      supportedDescWithImages:
+        'The current model supports document and image recognition. Select PDF, Word, Excel, CSV, images, and similar files.',
       chooseFromFiles: 'Select files from File Manager',
       selectedTitle: 'Selected Files ({count})',
       startRecognition: 'Start AI Recognition ({count} files)',
       removeFileAria: 'Remove file',
+      visionModelRequired:
+        'Images require a vision-capable model. Please choose a vision model before recognition.',
+      imageModelLocked:
+        'Images or scanned files are selected, so only vision-capable models are available. Remove image files before switching to a text-only model.',
+      imageFileSkipped:
+        'The current model does not support image understanding, so image files were not added. Please switch to a vision model first.',
+      unsupportedFileSkipped: 'Some unsupported file types were skipped. Supported now: {types}',
       pipeline: {
         fileManager: 'Store and permission files in File Manager first',
         review: 'Recognition enters review instead of writing immediately',
@@ -294,9 +309,69 @@ const messages = {
       recognizedTag: 'Recognized',
       saveToTable: 'Save to Table',
       reviewAndSave: 'Approve and Commit',
-      saveSafetyHint: 'Only validated files will be written. Invalid files stay in this review page.',
+      saveSafetyHint:
+        'Only validated files will be written. Invalid files stay in this review page.',
       saving: 'Saving...',
       reRecognize: 'Re-recognize',
+      workspaceTitle: 'Review workspace',
+      processingLeaveHint:
+        'Recognition is in progress. Keep this page open. Refreshing, closing, or going back may lose this run.',
+      unsavedLeaveHint:
+        'Recognition results only live in this review page until you approve and commit them.',
+      contentTabs: {
+        original: 'Original',
+        text: 'Recognized text',
+        details: 'Parse details',
+      },
+      fieldStats: {
+        recognized: 'Recognized {count}',
+        needs: 'Needs {count}',
+        invalid: 'Invalid {count}',
+      },
+      parseDetails: {
+        title: 'Parse path',
+        strategy: 'Strategy',
+        sourceType: 'Source type',
+        fallbackReason: 'Fallback reason',
+        contentHash: 'Content hash',
+        attempts: 'Recognition attempts',
+        attemptIndex: 'Attempt {index}',
+        noAttempts: 'No attempts yet',
+        empty: 'None',
+        durationMs: '{ms} ms',
+        durationSeconds: '{seconds}s',
+      },
+      methodLabels: {
+        fileParse: 'File parsing',
+        modelVision: 'Model vision',
+      },
+      attemptStatuses: {
+        completed: 'Completed',
+        failed: 'Failed',
+      },
+      attemptResults: {
+        content: 'Content captured',
+        records: '{count} records produced',
+        noRecords: 'No importable records',
+        emptyContent: 'No content captured',
+        error: 'Failed',
+      },
+      loadingStates: {
+        queuedTitle: 'Waiting in recognition queue',
+        queuedDesc: 'Files are processed independently, with up to 2 files running at once.',
+        fileParseTitle: 'Running file parsing',
+        fileParseDesc:
+          'The system is reading file content and extracting fields. PDFs or scanned files may take longer.',
+        fileParseSlowTitle: 'File parsing is still running',
+        fileParseSlowDesc:
+          'The parser is still processing this file. If parsing cannot produce records, the system may try model vision.',
+        visionTitle: 'Running model vision',
+        visionDesc:
+          'The selected model is reading the image or rendered PDF pages. Keep this page open.',
+        longRunningTitle: 'Recognition is still running. Do not close or refresh this page.',
+        longRunningDesc:
+          'Large PDFs, scanned files, and model vision calls can take longer. Refreshing before the response returns will lose this page state.',
+      },
       reviewSteps: {
         recognizeTitle: 'AI Recognition',
         recognizeDesc: 'Extract field values from file content',
@@ -307,14 +382,80 @@ const messages = {
       },
       fileStatus: {
         normal: 'Normal',
+        pending: 'Pending',
+        queued: 'Queued',
+        recognizing: 'Recognizing',
         success: 'Valid',
         failed: 'Invalid',
+        parseFailed: 'Parse failed',
+        validationFailed: 'Needs fields',
+        needsCompletion: 'Needs completion',
+        skipped: 'Skipped',
+      },
+      filters: {
+        all: 'All',
+        needs_action: 'Needs action',
+        failed: 'Failed',
+        ready: 'Ready',
+      },
+      stats: {
+        processing: 'Processing {count}',
+        ready: 'Ready {count}',
+        needs: 'Needs completion {count}',
+        failed: 'Failed {count}',
       },
       requiredEmptyTag: 'Required field is empty',
       validationAlert:
-        'Some files failed validation. Please complete required fields before saving.',
+        'Some files are not ready. Fix parse failures or complete required fields before saving.',
       leftFilesInvalidTip: 'Some files are invalid',
       activeFileInvalidTip: 'This file is invalid',
+      activeFileParseFailedTip: 'Current file parsing failed',
+      activeFileValidationTip: 'Fields need completion',
+      fileErrorTitle: 'File parsing failed',
+      fileWarningTitle: 'Recognition result needs review',
+      fileErrorFallback: 'No records were recognized from this file.',
+      noRecordWarning:
+        'The final model result did not return importable field records. Review the recognized content and complete fields manually if needed.',
+      promptLoadFailedTitle: 'Recognition prompt failed to load',
+      promptLoadFailedDesc: 'Unable to load the recognition prompt for this table: {error}',
+      promptEmptyDesc:
+        'The recognition prompt for this table is empty. Retry or save the prompt before recognizing files.',
+      retryPrompt: 'Retry',
+      retryCurrentFile: 'Retry current file',
+      retryCurrentWithVision: 'Use model vision on current file',
+      retryFailedFiles: 'Retry failed files',
+      reRecognizeAll: 'Re-recognize all',
+      skipCurrentFile: 'Skip',
+      removeCurrentFile: 'Remove',
+      noFailedFiles: 'There are no failed files to retry',
+      visionUnsupportedFile: 'This file cannot be retried with vision',
+      visionModelRequired: 'Switch to a model with vision support first',
+      confirmOverwriteCurrent:
+        'Retrying this file will overwrite its recognition result and manual edits. Continue?',
+      confirmOverwriteAll:
+        'Re-recognizing all files will overwrite every recognition result and manual edit. Continue?',
+      timestampInvalidTag: 'Invalid date format. Use a readable date.',
+      extractionStrategy: 'Recognized by {strategy}',
+      extractionFallback: '{reason}; switched to {strategy}',
+      sourceTypes: {
+        imageOriginal: 'Original image',
+        pdfRenderedPages: 'PDF rendered pages',
+        mineru: 'File parsing content',
+      },
+      fallbackReasons: {
+        mineruZeroRecords: 'File parsing produced no importable records',
+      },
+      mineruZeroRecordsHint:
+        'MinerU returned content but no importable record. The system attempted a vision retry. If it still fails, confirm the selected model supports vision or wait for parser improvements for scanned PDFs and PDF tables.',
+      originalImagePreview: 'Original image',
+      originalFilePreview: 'Original file preview',
+      loadingImagePreview: 'Loading original image...',
+      imagePreviewUnavailable: 'Original image preview is unavailable',
+      extractedContentPreview: 'Extracted text',
+      batchAllSuccess: 'Recognized {count} files',
+      batchPartialFailed: 'Recognized {success} of {total} files. {failed} failed.',
+      batchAllFailed: 'Failed to recognize {count} files',
+      batchRequestFailed: 'Failed to ingest files into table',
     },
   },
   schemaHealth: {
@@ -441,6 +582,7 @@ const messages = {
     preview: {
       sheets: 'Sheets',
       rows: 'Preview rows',
+      loadingSheet: 'Loading selected sheet...',
     },
     schema: {
       tableName: 'Table name',
@@ -450,18 +592,34 @@ const messages = {
       name: 'Field name',
       type: 'Type',
       required: 'Required',
+      requiredYes: 'Yes',
+      requiredNo: 'No',
+      descriptionColumn: 'Description',
       samples: 'Samples',
       import: 'Create table and import',
-      smartNamesTitle: 'AI field name recognition',
-      smartNamesDesc:
-        'Generate English semantic field names from source columns and sample values to avoid placeholders like field_2 or field_3.',
-      smartNamesAction: 'Recognize field names with AI',
+      tableInfoTitle: 'Table information',
+      smartRecognizeTitle: 'Smart recognition',
+      smartRecognizeDesc:
+        'Choose a model to suggest the table name, table description, and field names. Apply them only after review.',
+      smartRecognizeAction: 'Smart recognize',
+      recognitionDialogTitle: 'Review smart recognition result',
+      recognitionDialogDesc:
+        'Suggestions will not overwrite the current draft until you apply them.',
+      recognitionItem: 'Item',
+      recognitionCurrent: 'Current',
+      recognitionSuggested: 'Suggested',
+      recognitionTableName: 'Table name',
+      recognitionTableDescription: 'Table description',
+      recognitionSourceColumn: 'Source column',
+      recognitionEmpty: 'Empty',
+      cancelRecognition: 'Cancel',
+      applyRecognition: 'Apply recognition result',
       validation: {
         invalidTableName:
           'Table name may only contain lowercase letters, digits, and underscores, and must start with a lowercase letter.',
         duplicateFields: 'Duplicate field names exist. Fix them before importing.',
         invalidFieldNames:
-          'Field names may only contain lowercase letters, digits, and underscores, and cannot use id, uuid, created_time, or updated_time.',
+          'Field names may only contain lowercase letters, digits, and underscores, and cannot use system fields or reserved keywords.',
       },
     },
     result: {
@@ -482,6 +640,7 @@ const messages = {
     errors: {
       analyzeFailed: 'Failed to analyze spreadsheet',
       importFailed: 'Failed to import spreadsheet',
+      recognizeFailed: 'Failed to recognize spreadsheet metadata',
     },
   },
   biSearch: {

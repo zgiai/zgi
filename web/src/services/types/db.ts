@@ -181,12 +181,35 @@ export interface UpdateDbTableRecordsRequest {
 /* Batch ingest from files into a table                                       */
 /* -------------------------------------------------------------------------- */
 
+export type FileIngestExtractionMode = 'auto' | 'vision';
+
+// Request body for POST /console/api/data-dbs/ingest-file-to-table
+export interface IngestFileToTableRequest {
+  file_id: string;
+  prompt: string;
+  table_id: string;
+  model: AiModelRef;
+  extraction_mode?: FileIngestExtractionMode;
+}
+
+export interface IngestFileToTableData {
+  file_id?: string;
+  file_name?: string;
+  message: string;
+  records: DbTableRecord[];
+  columns: DbTableColumn[];
+  content?: string;
+  extraction?: FileIngestExtractionInfo;
+  error?: string;
+}
+
 // Request body for POST /console/api/data-dbs/batch-ingest-file-to-table
 export interface BatchIngestFileToTableRequest {
   file_ids: string[];
   prompt: string;
   table_id: string;
   model: AiModelRef;
+  extraction_mode?: FileIngestExtractionMode;
 }
 
 // Single file ingest result item
@@ -196,12 +219,35 @@ export interface BatchIngestResultItem {
   message: string;
   records: DbTableRecord[];
   content?: string;
+  extraction?: FileIngestExtractionInfo;
+  error?: string;
+}
+
+export interface FileIngestExtractionInfo {
+  primary_strategy?: string;
+  actual_strategy?: string;
+  fallback_reason?: string;
+  source_type?: string;
+  content_hash?: string;
+  attempts?: FileIngestAttempt[];
+}
+
+export interface FileIngestAttempt {
+  method: 'file_parse' | 'model_vision' | string;
+  status: 'completed' | 'failed' | string;
+  result?: 'content' | 'records' | 'no_records' | 'empty_content' | 'error' | string;
+  reason?: string;
+  duration_ms?: number;
+  record_count?: number;
 }
 
 // Response data payload for batch ingest API
 export interface BatchIngestFileToTableData {
   results: Record<string, BatchIngestResultItem>;
   columns: DbTableColumn[];
+  total_count?: number;
+  success_count?: number;
+  failed_count?: number;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -399,6 +445,29 @@ export interface ConfirmExcelImportRequest {
     empty_row_policy: 'skip' | 'error';
     batch_size?: number;
   };
+}
+
+export interface RecognizeExcelImportTable {
+  name: string;
+  description: string;
+}
+
+export interface RecognizeExcelImportSource {
+  file_name?: string;
+  sheet_name?: string;
+}
+
+export interface RecognizeExcelImportRequest {
+  table: RecognizeExcelImportTable;
+  source?: RecognizeExcelImportSource;
+  columns: InferredExcelColumn[];
+  model: AiModelRef;
+  operator_language?: string;
+}
+
+export interface RecognizeExcelImportData {
+  table: RecognizeExcelImportTable;
+  columns: InferredExcelColumn[];
 }
 
 export interface ExcelImportFailedItem {

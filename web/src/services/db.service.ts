@@ -17,6 +17,8 @@ import type {
   UpdateDbTableRecordsRequest,
   BatchIngestFileToTableRequest,
   BatchIngestFileToTableData,
+  IngestFileToTableRequest,
+  IngestFileToTableData,
   DbTablePrompt,
   UpdateDbTablePromptRequest,
   AnalyzeFileForTableRequest,
@@ -28,6 +30,8 @@ import type {
   AnalyzeExcelImportData,
   ConfirmExcelImportRequest,
   ConfirmExcelImportData,
+  RecognizeExcelImportRequest,
+  RecognizeExcelImportData,
   ExcelImportJob,
   ExcelImportErrorList,
 } from './types/db';
@@ -168,6 +172,17 @@ class DbService extends BaseService {
   ): Promise<ApiResponseData<DbTableColumnsPayload>> {
     return this.request('post', `/data-dbs/analyze-file-for-table`, data, {
       timeout: 300000,
+    });
+  }
+
+  /**
+   * Ingest data from one file into a table
+   */
+  ingestFileToTable(
+    data: IngestFileToTableRequest
+  ): Promise<ApiResponseData<IngestFileToTableData>> {
+    return this.request('post', `/data-dbs/ingest-file-to-table`, data, {
+      timeout: 600000,
     });
   }
 
@@ -324,6 +339,16 @@ class DbService extends BaseService {
   ): Promise<ApiResponseData<ConfirmExcelImportData>> {
     return this.request('post', `/data-dbs/${dbId}/excel-import/jobs/${jobId}/import`, data, {
       timeout: 600000,
+    });
+  }
+
+  recognizeExcelImport(
+    dbId: string,
+    jobId: string,
+    data: RecognizeExcelImportRequest
+  ): Promise<ApiResponseData<RecognizeExcelImportData>> {
+    return this.request('post', `/data-dbs/${dbId}/excel-import/jobs/${jobId}/recognize`, data, {
+      timeout: 300000,
     });
   }
 
