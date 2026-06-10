@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -57,7 +56,6 @@ func (r *RuntimeRouter) Route(input RouterInput) (*RouterDecision, error) {
 		"version":                 "v1",
 		"doc_ext":                 docExt,
 		"extracted_element_count": extractedElementCount(input.ExtractedOutput),
-		"extracted_word_count":    extractedWordCount(input.ExtractedOutput),
 	}
 
 	if input.DataSourceType != "upload_file" {
@@ -86,22 +84,24 @@ func (r *RuntimeRouter) Route(input RouterInput) (*RouterDecision, error) {
 	}
 
 	// 2. Domain Analysis Routing
-	domain := r.domainAnalyzer.Analyze(input.ExtractedOutput)
-	routeMeta["doc_domain"] = domain
-	if (domain == "resume" || domain == "invoice") && isFullDocParentChunkAllowed(input.ExtractedOutput) {
-		// Full-doc mode is only safe for short documents; longer documents can
-		// still be routed by structural profile below.
-		mode, rules := r.builder.BuildFullDocRule()
-		routeMeta["matched_by"] = "doc_domain"
-		return &RouterDecision{
-			Matched:       true,
-			RouteName:     "full_doc_model",
-			TargetDocForm: string(ParentChildIndex),
-			TargetMode:    mode,
-			TargetRules:   rules,
-			Reason:        fmt.Sprintf("matched by document domain: %s", domain),
-			RouteMeta:     routeMeta,
-		}, nil
+	extractedRunes, fullDocSizeAllowed := extractedRuneCountUpTo(input.ExtractedOutput, maxFullDocParentChunkRunes)
+	routeMeta["extracted_word_count"] = extractedRunes
+	if fullDocSizeAllowed {
+		domain := r.domainAnalyzer.Analyze(input.ExtractedOutput)
+		routeMeta["doc_domain"] = domain
+		if domain == "resume" || domain == "invoice" {
+			mode, rules := r.builder.BuildFullDocRule()
+			routeMeta["matched_by"] = "doc_domain"
+			return &RouterDecision{
+				Matched:       true,
+				RouteName:     "full_doc_model",
+				TargetDocForm: string(ParentChildIndex),
+				TargetMode:    mode,
+				TargetRules:   rules,
+				Reason:        fmt.Sprintf("matched by document domain: %s", domain),
+				RouteMeta:     routeMeta,
+			}, nil
+		}
 	}
 
 	// 3. Profile Analysis Routing (Structural Scan)
@@ -137,15 +137,52 @@ func extractedElementCount(output *dto.ExtractOutput) int {
 	return len(output.Elements)
 }
 
-func extractedWordCount(output *dto.ExtractOutput) int {
+func extractedRuneCountUpTo(output *dto.ExtractOutput, limit int) (int, bool) {
 	if output == nil {
-		return 0
+		return 0, true
 	}
-	return utf8.RuneCountInString(strings.TrimSpace(dto.ExtractOutputText(output)))
+	if limit < 0 {
+		limit = 0
+	}
+
+	if text := strings.TrimSpace(output.Markdown); text != "" {
+		return runeCountUpTo(text, limit)
+	}
+
+	count := 0
+	hasContent := false
+	for _, element := range output.Elements {
+		content := strings.TrimSpace(element.Content)
+		if content == "" {
+			continue
+		}
+		if hasContent {
+			count++
+			if count > limit {
+				return count, false
+			}
+		}
+		for range content {
+			count++
+			if count > limit {
+				return count, false
+			}
+		}
+		hasContent = true
+	}
+
+	return count, true
 }
 
-func isFullDocParentChunkAllowed(output *dto.ExtractOutput) bool {
-	return extractedWordCount(output) <= maxFullDocParentChunkRunes
+func runeCountUpTo(text string, limit int) (int, bool) {
+	count := 0
+	for range text {
+		count++
+		if count > limit {
+			return count, false
+		}
+	}
+	return count, true
 }
 
 func normalizeDocExt(docExt string) string {
