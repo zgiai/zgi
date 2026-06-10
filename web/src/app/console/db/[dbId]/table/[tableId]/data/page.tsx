@@ -3,21 +3,29 @@
 // Data ingestion page under a table – sibling to "create" page.
 // Step 1: select files; Step 2: placeholder for AI recognition & preview.
 
-import { use } from 'react';
-import { useState } from 'react';
-import Link from 'next/link';
+import { use, useCallback, useEffect } from 'react';
+import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { ChevronLeft, ArrowLeft, RefreshCcw, Sparkles } from 'lucide-react';
-import { TableIngestProgressBar } from '@/components/db/table-ingest/table-ingest-progress-bar';
+import { ChevronLeft, ArrowLeft, Sparkles, Info } from 'lucide-react';
 import { StepOne, StepTwo } from '@/components/db/table-ingest';
 import TablePromptDialog from '@/components/db/table-ingest/table-prompt-dialog';
 import { useT } from '@/i18n';
 import type { FileItem } from '@/services/types/file';
 import { ModelSelector } from '@/components/common/model-selector';
-import type { ModelSelectorValue } from '@/components/common/model-selector';
+import type {
+  ModelSelectorModelProps,
+  ModelSelectorValue,
+} from '@/components/common/model-selector';
 import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
+import {
+  isTableIngestImageFile,
+  TABLE_INGEST_ALL_EXTENSIONS,
+  TABLE_INGEST_DOCUMENT_EXTENSIONS,
+} from '@/components/db/table-ingest/file-support';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface PageProps {
   params: Promise<{ dbId: string; tableId: string }>;
@@ -28,53 +36,115 @@ type Step = 1 | 2;
 export default function DbTableDataIngestPage({ params }: PageProps) {
   const { dbId, tableId } = use(params);
   const t = useT();
+  const router = useRouter();
 
   const [step, setStep] = useState<Step>(1);
   const [selectedFiles, setSelectedFiles] = useState<FileItem[]>([]);
   const [selectedModel, setSelectedModel] = useState<{ provider: string; model: string } | null>(
     null
   );
+  const [selectedModelProps, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(
+    null
+  );
+  const [modelPreferenceChecked, setModelPreferenceChecked] = useState(false);
   const [promptOpen, setPromptOpen] = useState<boolean>(false);
-  // Nonce used to trigger re-recognition in StepTwo
-  const [reRecognitionNonce, setReRecognitionNonce] = useState<number>(0);
+  const [leaveGuard, setLeaveGuard] = useState<{
+    active: boolean;
+    reason: 'processing' | 'unsaved' | null;
+  }>({ active: false, reason: null });
 
   // Initialize model selection from saved preference or workspace default
   const user = useCurrentUser();
+  useEffect(() => {
+    if (!user?.id || modelPreferenceChecked) return;
+
+    const savedModel = getLastSelectedAiModel(user.id, 'ingest');
+    if (savedModel) {
+      setSelectedModel(savedModel);
+    }
+    setModelPreferenceChecked(true);
+  }, [modelPreferenceChecked, user?.id]);
+
   useInitializeDefaultModelByUseCase({
     useCase: 'text-chat',
     currentModel: selectedModel ?? {},
-    enabled: Boolean(user?.id && !getLastSelectedAiModel(user.id, 'ingest')),
+    enabled: modelPreferenceChecked && !selectedModel,
     onInitialize: v => {
       setSelectedModel({ provider: v.provider, model: v.model });
     },
   });
 
-  const onPrevStep = () => setStep(1);
+  const confirmLeave = useCallback(() => {
+    if (!leaveGuard.active) return true;
+    const message =
+      leaveGuard.reason === 'processing'
+        ? t('dbs.dataIngestPage.leaveProcessingConfirm')
+        : t('dbs.dataIngestPage.leaveUnsavedConfirm');
+    return window.confirm(message);
+  }, [leaveGuard.active, leaveGuard.reason, t]);
+  const handleLeaveGuardChange = useCallback(
+    (active: boolean, reason: 'processing' | 'unsaved' | null) => {
+      setLeaveGuard(prev => {
+        if (prev.active === active && prev.reason === reason) return prev;
+        return { active, reason };
+      });
+    },
+    []
+  );
+
+  const onPrevStep = () => {
+    if (!confirmLeave()) return;
+    setStep(1);
+  };
+  const selectedFilesContainImage = useMemo(
+    () => selectedFiles.some(file => isTableIngestImageFile(file)),
+    [selectedFiles]
+  );
+  const selectedModelSupportsVision = useMemo(
+    () =>
+      Boolean(
+        selectedModelProps?.endpoints?.vision ||
+          selectedModelProps?.use_cases?.includes('vision') ||
+          selectedModelProps?.input_modalities?.includes('image')
+      ),
+    [selectedModelProps]
+  );
+  const selectedModelUseCase = selectedFilesContainImage ? 'vision' : 'text-chat';
+  const modelCapabilityFilter = selectedFilesContainImage
+    ? ({ features_vision: true } as const)
+    : undefined;
+  const selectableExtensions = selectedModelSupportsVision
+    ? [...TABLE_INGEST_ALL_EXTENSIONS]
+    : [...TABLE_INGEST_DOCUMENT_EXTENSIONS];
+  const handleModelChange = useCallback(
+    (value: ModelSelectorValue) => {
+      setSelectedModel(value);
+      setSelectedModelProps(null);
+      if (user?.id) {
+        saveLastSelectedAiModel(user.id, 'ingest', {
+          provider: value.provider,
+          model: value.model,
+        });
+      }
+    },
+    [user?.id]
+  );
 
   return (
-    <div className="p-6 h-full flex flex-col w-full overflow-hidden">
-      {/* Page-specific progress bar for data ingestion */}
-      <div className="mb-4">
-        <TableIngestProgressBar
-          currentStep={step === 1 ? 1 : 3}
-          totalSteps={4}
-          allowStepNavigation
-          onStepClick={s => {
-            if (s === 1) setStep(1);
-            if (s > 1 && selectedFiles.length > 0) setStep(2);
-          }}
-        />
-      </div>
-
+    <div className="p-4 h-full flex flex-col w-full overflow-hidden">
       {/* Header with back button */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-1">
-          <Link
-            href={`/console/db/${dbId}/table/${tableId}`}
+          <button
+            type="button"
+            onClick={() => {
+              if (!confirmLeave()) return;
+              router.push(`/console/db/${dbId}/table/${tableId}`);
+            }}
             className="hover:bg-muted flex justify-center items-center w-9 h-9 rounded-md"
           >
             <ArrowLeft className="h-5 w-5" />
-          </Link>
+          </button>
           <span className="font-semibold text-lg">{t('dbs.dataIngestPage.headerTitle')}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -85,23 +155,35 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
           )}
           {/* LLM model selector for ingest – required. Placed next to prompt button. */}
           {(step === 1 || step === 2) && (
-            <div className="w-64">
-              <ModelSelector
-                modelType="text-chat"
-                value={selectedModel ?? undefined}
-                onChange={(value: ModelSelectorValue) => {
-                  setSelectedModel(value);
-                  if (user?.id) {
-                    saveLastSelectedAiModel(user.id, 'ingest', {
-                      provider: value.provider,
-                      model: value.model,
-                    });
+            <div className="flex items-center gap-1">
+              <div className="w-64">
+                <ModelSelector
+                  modelType={selectedModelUseCase}
+                  value={selectedModel ?? undefined}
+                  modelProps={selectedModelProps}
+                  onModelPropsChange={setSelectedModelProps}
+                  capabilityFilter={modelCapabilityFilter}
+                  hasError={
+                    selectedFilesContainImage &&
+                    Boolean(selectedModel) &&
+                    !selectedModelSupportsVision
                   }
-                }}
-                placeholder={t('dbs.modelSelector.placeholder', {
-                  defaultMessage: 'Select a model',
-                })}
-              />
+                  onChange={handleModelChange}
+                  placeholder={t('dbs.modelSelector.placeholder', {
+                    defaultMessage: 'Select a model',
+                  })}
+                />
+              </div>
+              {selectedFilesContainImage && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    {t('dbs.tableIngest.stepOne.imageModelLocked')}
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </div>
           )}
           <Button
@@ -111,15 +193,6 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
             <Sparkles className="h-4 w-4" />
             {t('dbs.promptDialog.title')}
           </Button>
-          {step === 2 && (
-            <Button
-              onClick={() => setReRecognitionNonce(n => n + 1)}
-              disabled={selectedFiles.length === 0 || !selectedModel}
-            >
-              <RefreshCcw className="h-4 w-4" />
-              {t('dbs.tableIngest.stepTwo.reRecognize')}
-            </Button>
-          )}
         </div>
       </div>
 
@@ -127,10 +200,15 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
         <StepOne
           onNext={files => {
             setSelectedFiles(files);
+            const hasImage = files.some(file => isTableIngestImageFile(file));
+            if (hasImage && !selectedModelSupportsVision) return;
             setStep(2);
           }}
+          onFilesChange={setSelectedFiles}
           modelSelected={Boolean(selectedModel)}
+          modelSupportsVision={selectedModelSupportsVision}
           initialFiles={selectedFiles}
+          acceptExt={selectableExtensions}
         />
       )}
 
@@ -140,7 +218,11 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
           selectedModel={selectedModel}
           dbId={dbId}
           tableId={tableId}
-          reRecognitionNonce={reRecognitionNonce}
+          modelSupportsVision={selectedModelSupportsVision}
+          onRemoveFile={fileId => {
+            setSelectedFiles(prev => prev.filter(file => file.id !== fileId));
+          }}
+          onLeaveGuardChange={handleLeaveGuardChange}
         />
       )}
 

@@ -3,46 +3,108 @@
 // Step 1: Select files from file manager
 // English comments only as required. Strict types, no any.
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { FileCheck2, FolderOpen, ListChecks, ShieldCheck, Trash2 } from 'lucide-react';
+import { AlertCircle, FileCheck2, FolderOpen, ListChecks, ShieldCheck, Trash2 } from 'lucide-react';
 import FileSelectorDialog from '@/components/files/file-selector-dialog';
 import type { FileItem } from '@/services/types/file';
 import { useT } from '@/i18n';
 import { formatFileSize } from '@/utils/format';
 import { FileIcon } from '@/components/ui/file-icon';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { formatExtensionsForDisplay } from '@/utils/file-helpers';
+import { toast } from 'sonner';
+import {
+  isTableIngestAllowedFile,
+  isTableIngestImageFile,
+  TABLE_INGEST_DOCUMENT_EXTENSIONS,
+} from '@/components/db/table-ingest/file-support';
 
 export interface IngestStepOneProps {
   onNext: (files: FileItem[]) => void;
+  onFilesChange?: (files: FileItem[]) => void;
   modelSelected: boolean;
+  modelSupportsVision?: boolean;
   initialFiles?: FileItem[];
+  acceptExt?: string[];
 }
 
-const StepOne: React.FC<IngestStepOneProps> = ({ onNext, modelSelected, initialFiles = [] }) => {
+const StepOne: React.FC<IngestStepOneProps> = ({
+  onNext,
+  onFilesChange,
+  modelSelected,
+  modelSupportsVision = false,
+  initialFiles = [],
+  acceptExt = [...TABLE_INGEST_DOCUMENT_EXTENSIONS],
+}) => {
   const t = useT('dbs');
   const MAX_COUNT = 5;
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selected, setSelected] = useState<FileItem[]>(initialFiles);
 
+  useEffect(() => {
+    setSelected(initialFiles);
+  }, [initialFiles]);
+
   const count = selected.length;
-  const supportedDesc = useMemo(() => t('tableIngest.stepOne.supportedDesc'), [t]);
+  const hasImageFile = useMemo(() => selected.some(file => isTableIngestImageFile(file)), [selected]);
+  const visionModelRequired = hasImageFile && !modelSupportsVision;
+  const nextDisabled = count === 0 || !modelSelected || visionModelRequired;
+  const supportedDesc = useMemo(
+    () =>
+      modelSupportsVision
+        ? t('tableIngest.stepOne.supportedDescWithImages')
+        : t('tableIngest.stepOne.supportedDescDocumentsOnly'),
+    [modelSupportsVision, t]
+  );
+  const acceptedTypesLabel = useMemo(
+    () => formatExtensionsForDisplay(acceptExt).join(' / '),
+    [acceptExt]
+  );
 
   const openDialog = useCallback(() => setDialogOpen(true), []);
 
   const removeFile = useCallback((fileId: string) => {
-    setSelected(prev => prev.filter(f => f.id !== fileId));
-  }, []);
+    setSelected(prev => {
+      const next = prev.filter(f => f.id !== fileId);
+      onFilesChange?.(next);
+      return next;
+    });
+  }, [onFilesChange]);
 
-  const onConfirmFiles = useCallback((files: FileItem[]) => {
-    setSelected(files);
-  }, []);
+  const onConfirmFiles = useCallback(
+    (files: FileItem[]) => {
+      const acceptedFiles = files.filter(file =>
+        isTableIngestAllowedFile(file, modelSupportsVision)
+      );
+      const rejectedImageCount = files.filter(
+        file => isTableIngestImageFile(file) && !modelSupportsVision
+      ).length;
+      const rejectedUnsupportedCount = files.length - acceptedFiles.length - rejectedImageCount;
+
+      if (rejectedImageCount > 0) {
+        toast.error(t('tableIngest.stepOne.imageFileSkipped'));
+      }
+      if (rejectedUnsupportedCount > 0) {
+        toast.error(
+          t('tableIngest.stepOne.unsupportedFileSkipped', {
+            types: acceptedTypesLabel,
+          })
+        );
+      }
+
+      setSelected(acceptedFiles);
+      onFilesChange?.(acceptedFiles);
+    },
+    [acceptedTypesLabel, modelSupportsVision, onFilesChange, t]
+  );
 
   const handleNext = useCallback(() => {
-    if (selected.length === 0 || !modelSelected) return;
+    if (nextDisabled) return;
     onNext(selected);
-  }, [onNext, selected, modelSelected]);
+  }, [nextDisabled, onNext, selected]);
 
   return (
     <div className="h-0 grow flex flex-col gap-4">
@@ -133,9 +195,15 @@ const StepOne: React.FC<IngestStepOneProps> = ({ onNext, modelSelected, initialF
               </div>
             </>
           )}
+          {visionModelRequired && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{t('tableIngest.stepOne.visionModelRequired')}</AlertDescription>
+            </Alert>
+          )}
         </div>
         <div className="flex justify-center">
-          <Button onClick={handleNext} disabled={count === 0 || !modelSelected}>
+          <Button onClick={handleNext} disabled={nextDisabled}>
             {t('tableIngest.stepOne.startRecognition', { count })}
           </Button>
         </div>
@@ -148,6 +216,14 @@ const StepOne: React.FC<IngestStepOneProps> = ({ onNext, modelSelected, initialF
         onConfirm={onConfirmFiles}
         initSelectedFiles={selected}
         maxCount={MAX_COUNT}
+        acceptExt={acceptExt}
+        footerExtra={
+          !modelSupportsVision ? (
+            <div className="text-xs text-muted-foreground">
+              {t('tableIngest.stepOne.imageModelLocked')}
+            </div>
+          ) : undefined
+        }
       />
     </div>
   );

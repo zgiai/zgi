@@ -14,6 +14,8 @@ import {
   Type,
   type BatchIngestFileToTableRequest,
   type BatchIngestFileToTableData,
+  type IngestFileToTableRequest,
+  type IngestFileToTableData,
 } from '@/services/types/db';
 import { useT } from '@/i18n';
 import { DB_KEYS } from '@/hooks/query-keys';
@@ -61,7 +63,23 @@ const normalizeColumnType = (value: unknown): Type => {
 export interface UseBatchIngestFileToTableReturn {
   ingest: (
     payload: BatchIngestFileToTableRequest
-  ) => Promise<{ columns: DbTableColumn[]; results: BatchIngestFileToTableData['results'] }>;
+  ) => Promise<{
+    columns: DbTableColumn[];
+    results: BatchIngestFileToTableData['results'];
+    totalCount: number;
+    successCount: number;
+    failedCount: number;
+  }>;
+  isPending: boolean;
+}
+
+export interface UseIngestFileToTableReturn {
+  ingestFile: (
+    payload: IngestFileToTableRequest
+  ) => Promise<{
+    columns: DbTableColumn[];
+    result: IngestFileToTableData;
+  }>;
   isPending: boolean;
 }
 
@@ -70,7 +88,7 @@ export function useBatchIngestFileToTable(
   tableId: string
 ): UseBatchIngestFileToTableReturn {
   const queryClient = useQueryClient();
-  const t = useT();
+  const t = useT('dbs');
 
   const { mutateAsync, isPending } = useMutation<
     ApiResponseData<BatchIngestFileToTableData>,
@@ -99,19 +117,51 @@ export function useBatchIngestFileToTable(
         }
       );
 
-      toast.success(t('common.success'));
+      const results = incoming?.results ?? {};
+      const totalCount = incoming?.total_count ?? Object.keys(results).length;
+      const failedCount =
+        incoming?.failed_count ??
+        Object.values(results).filter(item => item.error || (item.records ?? []).length === 0)
+          .length;
+      const successCount = incoming?.success_count ?? Math.max(0, totalCount - failedCount);
+
+      if (totalCount > 0 && successCount === 0) {
+        toast.error(t('tableIngest.stepTwo.batchAllFailed', { count: totalCount }));
+      } else if (failedCount > 0) {
+        toast.warning(
+          t('tableIngest.stepTwo.batchPartialFailed', {
+            success: successCount,
+            total: totalCount,
+            failed: failedCount,
+          })
+        );
+      } else {
+        toast.success(t('tableIngest.stepTwo.batchAllSuccess', { count: successCount }));
+      }
     },
     onError: err => {
-      toast.error((err as Error)?.message || 'Failed to ingest files into table');
+      toast.error((err as Error)?.message || t('tableIngest.stepTwo.batchRequestFailed'));
     },
   });
 
   const ingest = useCallback(
     async (
       payload: BatchIngestFileToTableRequest
-    ): Promise<{ columns: DbTableColumn[]; results: BatchIngestFileToTableData['results'] }> => {
+    ): Promise<{
+      columns: DbTableColumn[];
+      results: BatchIngestFileToTableData['results'];
+      totalCount: number;
+      successCount: number;
+      failedCount: number;
+    }> => {
       const res = await mutateAsync(payload);
       const results = res?.data?.results ?? {};
+      const totalCount = res?.data?.total_count ?? Object.keys(results).length;
+      const failedCount =
+        res?.data?.failed_count ??
+        Object.values(results).filter(item => item.error || (item.records ?? []).length === 0)
+          .length;
+      const successCount = res?.data?.success_count ?? Math.max(0, totalCount - failedCount);
       const normalizedColumns: DbTableColumn[] = Array.isArray(res?.data?.columns)
         ? (res?.data?.columns ?? []).map(c => ({
             ...c,
@@ -119,10 +169,82 @@ export function useBatchIngestFileToTable(
             is_system_field: Boolean(c.is_system_field),
           }))
         : [];
-      return { columns: normalizedColumns, results };
+      return { columns: normalizedColumns, results, totalCount, successCount, failedCount };
     },
     [mutateAsync]
   );
 
   return { ingest, isPending };
+}
+
+export function useIngestFileToTable(
+  dbId: string,
+  tableId: string
+): UseIngestFileToTableReturn {
+  const queryClient = useQueryClient();
+  const t = useT('dbs');
+
+  const { mutateAsync, isPending } = useMutation<
+    ApiResponseData<IngestFileToTableData>,
+    unknown,
+    IngestFileToTableRequest
+  >({
+    mutationFn: variables => dbService.ingestFileToTable(variables),
+    onSuccess: response => {
+      const incoming = response?.data;
+      const normalizedColumns: DbTableColumn[] = Array.isArray(incoming?.columns)
+        ? (incoming?.columns ?? []).map(c => ({
+            ...c,
+            type: normalizeColumnType((c as { type?: unknown }).type),
+            is_system_field: Boolean(c.is_system_field),
+          }))
+        : [];
+
+      void queryClient.invalidateQueries({ queryKey: getTableColumnsKeyWithSystem(dbId, tableId) });
+      queryClient.setQueryData<ApiResponseData<DbTableColumnsPayload>>(
+        getTableColumnsKeyNoSystem(dbId, tableId),
+        {
+          code: response.code,
+          message: response.message,
+          data: { columns: normalizedColumns.filter(c => !c.is_system_field) },
+        }
+      );
+    },
+    onError: err => {
+      toast.error((err as Error)?.message || t('tableIngest.stepTwo.batchRequestFailed'));
+    },
+  });
+
+  const ingestFile = useCallback(
+    async (
+      payload: IngestFileToTableRequest
+    ): Promise<{
+      columns: DbTableColumn[];
+      result: IngestFileToTableData;
+    }> => {
+      const res = await mutateAsync(payload);
+      const normalizedColumns: DbTableColumn[] = Array.isArray(res?.data?.columns)
+        ? (res?.data?.columns ?? []).map(c => ({
+            ...c,
+            type: normalizeColumnType((c as { type?: unknown }).type),
+            is_system_field: Boolean(c.is_system_field),
+          }))
+        : [];
+      return {
+        columns: normalizedColumns,
+        result: {
+          ...(res?.data ?? {
+            message: '',
+            records: [],
+            columns: [],
+          }),
+          columns: normalizedColumns,
+          records: res?.data?.records ?? [],
+        },
+      };
+    },
+    [mutateAsync]
+  );
+
+  return { ingestFile, isPending };
 }
