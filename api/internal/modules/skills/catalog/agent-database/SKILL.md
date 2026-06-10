@@ -13,7 +13,7 @@ tools:
   - insert_table_records
   - update_table_records
   - delete_table_records
-max_calls_per_turn: 12
+max_calls_per_turn: 40
 timeout_seconds: 30
 display:
   icon: database
