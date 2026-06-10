@@ -47,6 +47,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-preview-url';
 import {
   isTableIngestImageFile,
@@ -201,6 +202,10 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   const [filter, setFilter] = useState<FileFilter>('all');
   const [contentTab, setContentTab] = useState<ContentTab>('text');
   const [now, setNow] = useState(() => Date.now());
+  const [overwriteConfirm, setOverwriteConfirm] = useState<{
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const fileStatesRef = useRef(fileStates);
   useEffect(() => {
@@ -477,10 +482,13 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     });
   }, []);
 
-  const confirmOverwrite = useCallback(
-    (fileIds: string[], message: string) => {
-      if (!hasOverwriteRisk(fileIds)) return true;
-      return window.confirm(message);
+  const runWithOverwriteConfirm = useCallback(
+    (fileIds: string[], message: string, action: () => void) => {
+      if (!hasOverwriteRisk(fileIds)) {
+        action();
+        return;
+      }
+      setOverwriteConfirm({ message, onConfirm: action });
     },
     [hasOverwriteRisk]
   );
@@ -595,17 +603,18 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
           return;
         }
       }
-      if (!confirmOverwrite([activeFileId], t('tableIngest.stepTwo.confirmOverwriteCurrent'))) return;
-      void runRecognitionForFile(activeFileId, mode, true);
+      runWithOverwriteConfirm([activeFileId], t('tableIngest.stepTwo.confirmOverwriteCurrent'), () => {
+        void runRecognitionForFile(activeFileId, mode, true);
+      });
     },
     [
       activeFileCanUseVision,
       activeFileId,
       activeImageBlockedByVision,
-      confirmOverwrite,
       effectiveVisionStatus,
       modelSupportsVision,
       runRecognitionForFile,
+      runWithOverwriteConfirm,
       t,
     ]
   );
@@ -620,10 +629,11 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   }, [getEffectiveStatus, runRecognitionForFiles, selectedFileIds, t]);
 
   const retryAllFiles = useCallback(() => {
-    if (!confirmOverwrite(selectedFileIds, t('tableIngest.stepTwo.confirmOverwriteAll'))) return;
-    setTsDrafts({});
-    void runRecognitionForFiles(selectedFileIds, 'auto', true);
-  }, [confirmOverwrite, runRecognitionForFiles, selectedFileIds, t]);
+    runWithOverwriteConfirm(selectedFileIds, t('tableIngest.stepTwo.confirmOverwriteAll'), () => {
+      setTsDrafts({});
+      void runRecognitionForFiles(selectedFileIds, 'auto', true);
+    });
+  }, [runRecognitionForFiles, runWithOverwriteConfirm, selectedFileIds, t]);
 
   const skipCurrentFile = useCallback(() => {
     if (!activeFileId) return;
@@ -992,16 +1002,6 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     onLeaveGuardChange?.(Boolean(leaveGuardReason), leaveGuardReason);
     return () => onLeaveGuardChange?.(false, null);
   }, [leaveGuardReason, onLeaveGuardChange]);
-
-  useEffect(() => {
-    if (!leaveGuardReason) return;
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [leaveGuardReason]);
 
   const onSave = async () => {
     const validFiles = selectedFiles.filter(file => getEffectiveStatus(fileStates[file.id]) === 'success');
@@ -1793,6 +1793,21 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={Boolean(overwriteConfirm)}
+        onOpenChange={open => {
+          if (!open) setOverwriteConfirm(null);
+        }}
+        title={t('tableIngest.stepTwo.overwriteConfirmTitle')}
+        description={overwriteConfirm?.message}
+        cancelText={t('tableIngest.stepTwo.keepCurrentResult')}
+        confirmText={t('tableIngest.stepTwo.overwriteConfirmAction')}
+        variant="warning"
+        onConfirm={() => {
+          overwriteConfirm?.onConfirm();
+          setOverwriteConfirm(null);
+        }}
+      />
     </>
   );
 };

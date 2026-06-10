@@ -257,6 +257,16 @@ const messages = {
       'Files are still being recognized. Leaving or going back may interrupt the current page state and lose unfinished results. Leave anyway?',
     leaveUnsavedConfirm:
       'Recognition results have not been reviewed and committed yet. This page state will not be preserved after leaving. Leave anyway?',
+    leaveGuard: {
+      processingTitle: 'Recognition is still running',
+      processingDescription:
+        'Files are still being recognized. Leaving this review page will interrupt pending work and unfinished recognition results will be lost.',
+      unsavedTitle: 'Leave without committing results?',
+      unsavedDescription:
+        'Recognition results only live in this review page until you approve and commit them. Leaving now will discard the current review state.',
+      continueReview: 'Keep reviewing',
+      leaveAndDiscard: 'Leave and discard',
+    },
   },
   // Table ingest flow components
   tableIngest: {
@@ -458,6 +468,9 @@ const messages = {
         'Retrying this file will overwrite its recognition result and manual edits. Continue?',
       confirmOverwriteAll:
         'Re-recognizing all files will overwrite every recognition result and manual edit. Continue?',
+      overwriteConfirmTitle: 'Overwrite recognition result?',
+      overwriteConfirmAction: 'Retry and overwrite',
+      keepCurrentResult: 'Keep current result',
       timestampInvalidTag: 'Invalid date format. Use a readable date.',
       extractionStrategy: 'Recognized by {strategy}',
       extractionFallback: '{reason}; switched to {strategy}',

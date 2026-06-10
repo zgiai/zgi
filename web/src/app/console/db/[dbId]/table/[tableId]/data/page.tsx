@@ -25,6 +25,7 @@ import {
   isTableIngestImageFile,
   TABLE_INGEST_ALL_EXTENSIONS,
 } from '@/components/db/table-ingest/file-support';
+import { useTableIngestLeaveGuard } from '@/components/db/table-ingest/use-table-ingest-leave-guard';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface PageProps {
@@ -77,14 +78,6 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
     },
   });
 
-  const confirmLeave = useCallback(() => {
-    if (!leaveGuard.active) return true;
-    const message =
-      leaveGuard.reason === 'processing'
-        ? t('dbs.dataIngestPage.leaveProcessingConfirm')
-        : t('dbs.dataIngestPage.leaveUnsavedConfirm');
-    return window.confirm(message);
-  }, [leaveGuard.active, leaveGuard.reason, t]);
   const handleLeaveGuardChange = useCallback(
     (active: boolean, reason: 'processing' | 'unsaved' | null) => {
       setLeaveGuard(prev => {
@@ -94,10 +87,13 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
     },
     []
   );
+  const { leaveGuardDialog, confirmNavigation } = useTableIngestLeaveGuard({
+    enabled: leaveGuard.active,
+    reason: leaveGuard.reason,
+  });
 
   const onPrevStep = () => {
-    if (!confirmLeave()) return;
-    setStep(1);
+    confirmNavigation(() => setStep(1));
   };
   const selectedFilesContainImage = useMemo(
     () => selectedFiles.some(file => isTableIngestImageFile(file)),
@@ -149,8 +145,7 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
           <button
             type="button"
             onClick={() => {
-              if (!confirmLeave()) return;
-              router.push(`/console/db/${dbId}/table/${tableId}`);
+              confirmNavigation(() => router.push(`/console/db/${dbId}/table/${tableId}`));
             }}
             className="hover:bg-muted flex justify-center items-center w-9 h-9 rounded-md"
           >
@@ -246,6 +241,7 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
         dbId={dbId}
         tableId={tableId}
       />
+      {leaveGuardDialog}
     </div>
   );
 }

@@ -241,6 +241,16 @@ const messages: DbsMessages = {
       '文件仍在识别中，离开或返回会中断当前页面的结果展示，未完成的结果可能丢失。确定要离开吗？',
     leaveUnsavedConfirm:
       '当前识别结果尚未审核入库，离开后这些页面状态不会保存。确定要离开吗？',
+    leaveGuard: {
+      processingTitle: '文件仍在识别中',
+      processingDescription:
+        '文件仍在识别中，离开当前审核页会中断待完成的识别任务，未完成的识别结果将丢失。',
+      unsavedTitle: '离开并丢弃当前识别结果？',
+      unsavedDescription:
+        '识别结果仅保留在当前审核页，完成审核入库前离开会丢弃当前审核状态。',
+      continueReview: '继续审核',
+      leaveAndDiscard: '离开并丢弃',
+    },
   },
   tableIngest: {
     progress: {
@@ -419,6 +429,9 @@ const messages: DbsMessages = {
       imageVisionReadyHint: '已选择 {count} 个图片文件，将使用模型视觉进行识别。',
       confirmOverwriteCurrent: '重试当前文件会覆盖该文件现有识别结果和人工修改，是否继续？',
       confirmOverwriteAll: '重新识别全部会覆盖所有文件现有识别结果和人工修改，是否继续？',
+      overwriteConfirmTitle: '覆盖当前识别结果？',
+      overwriteConfirmAction: '重试并覆盖',
+      keepCurrentResult: '保留当前结果',
       timestampInvalidTag: '日期格式无效，请使用可读日期',
       extractionStrategy: '识别来源：{strategy}',
       extractionFallback: '{reason}，已换用 {strategy}',
