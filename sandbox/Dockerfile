@@ -68,6 +68,7 @@ WORKDIR /app
 COPY --from=builder /out/zgi-sandbox /usr/local/bin/zgi-sandbox
 COPY --chmod=755 scripts/build-dependency-profile /usr/local/bin/zgi-sandbox-build-dependency-profile
 COPY --chmod=755 scripts/docker-entrypoint /usr/local/bin/zgi-sandbox-docker-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/zgi-sandbox-build-dependency-profile /usr/local/bin/zgi-sandbox-docker-entrypoint
 
 RUN useradd --system --create-home --home-dir /home/zgi --shell /usr/sbin/nologin zgi && \
     mkdir -p /opt/zgi/prebuilt-dependency-rootfs && \
