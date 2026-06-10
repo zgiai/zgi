@@ -61,3 +61,7 @@ export function isTableIngestAllowedFile(file: IngestFileLike, allowImages: bool
 
   return allowed.includes(extension);
 }
+
+export function isTableIngestSupportedFile(file: IngestFileLike): boolean {
+  return isTableIngestAllowedFile(file, true);
+}

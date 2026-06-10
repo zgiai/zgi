@@ -13,19 +13,23 @@ import { useT } from '@/i18n';
 import { formatFileSize } from '@/utils/format';
 import { FileIcon } from '@/components/ui/file-icon';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { formatExtensionsForDisplay } from '@/utils/file-helpers';
 import { toast } from 'sonner';
 import {
-  isTableIngestAllowedFile,
   isTableIngestImageFile,
+  isTableIngestSupportedFile,
   TABLE_INGEST_DOCUMENT_EXTENSIONS,
 } from '@/components/db/table-ingest/file-support';
+
+export type ModelVisionCapabilityStatus = 'checking' | 'vision' | 'textOnly';
 
 export interface IngestStepOneProps {
   onNext: (files: FileItem[]) => void;
   onFilesChange?: (files: FileItem[]) => void;
   modelSelected: boolean;
   modelSupportsVision?: boolean;
+  modelVisionCapabilityStatus?: ModelVisionCapabilityStatus;
   initialFiles?: FileItem[];
   acceptExt?: string[];
 }
@@ -35,6 +39,7 @@ const StepOne: React.FC<IngestStepOneProps> = ({
   onFilesChange,
   modelSelected,
   modelSupportsVision = false,
+  modelVisionCapabilityStatus,
   initialFiles = [],
   acceptExt = [...TABLE_INGEST_DOCUMENT_EXTENSIONS],
 }) => {
@@ -50,8 +55,12 @@ const StepOne: React.FC<IngestStepOneProps> = ({
 
   const count = selected.length;
   const hasImageFile = useMemo(() => selected.some(file => isTableIngestImageFile(file)), [selected]);
-  const visionModelRequired = hasImageFile && !modelSupportsVision;
-  const nextDisabled = count === 0 || !modelSelected || visionModelRequired;
+  const effectiveVisionStatus: ModelVisionCapabilityStatus =
+    modelVisionCapabilityStatus ?? (modelSupportsVision ? 'vision' : 'textOnly');
+  const visionCapabilityChecking = hasImageFile && effectiveVisionStatus === 'checking';
+  const visionModelRequired = hasImageFile && effectiveVisionStatus === 'textOnly';
+  const nextDisabled =
+    count === 0 || !modelSelected || visionCapabilityChecking || visionModelRequired;
   const supportedDesc = useMemo(
     () =>
       modelSupportsVision
@@ -76,17 +85,9 @@ const StepOne: React.FC<IngestStepOneProps> = ({
 
   const onConfirmFiles = useCallback(
     (files: FileItem[]) => {
-      const acceptedFiles = files.filter(file =>
-        isTableIngestAllowedFile(file, modelSupportsVision)
-      );
-      const rejectedImageCount = files.filter(
-        file => isTableIngestImageFile(file) && !modelSupportsVision
-      ).length;
-      const rejectedUnsupportedCount = files.length - acceptedFiles.length - rejectedImageCount;
+      const acceptedFiles = files.filter(file => isTableIngestSupportedFile(file));
+      const rejectedUnsupportedCount = files.length - acceptedFiles.length;
 
-      if (rejectedImageCount > 0) {
-        toast.error(t('tableIngest.stepOne.imageFileSkipped'));
-      }
       if (rejectedUnsupportedCount > 0) {
         toast.error(
           t('tableIngest.stepOne.unsupportedFileSkipped', {
@@ -98,7 +99,7 @@ const StepOne: React.FC<IngestStepOneProps> = ({
       setSelected(acceptedFiles);
       onFilesChange?.(acceptedFiles);
     },
-    [acceptedTypesLabel, modelSupportsVision, onFilesChange, t]
+    [acceptedTypesLabel, onFilesChange, t]
   );
 
   const handleNext = useCallback(() => {
@@ -168,17 +169,29 @@ const StepOne: React.FC<IngestStepOneProps> = ({
                 </div>
               </div>
               <div className="space-y-2 overflow-auto">
-                {selected.map(file => (
-                  <div
-                    key={file.id}
-                    className="flex items-center justify-between rounded-md border shadow-sm px-3 py-2"
-                  >
+                {selected.map(file => {
+                  const isImage = isTableIngestImageFile(file);
+                  return (
+                    <div
+                      key={file.id}
+                      className="flex items-center justify-between rounded-md border shadow-sm px-3 py-2"
+                    >
                     <div className="flex items-center gap-3 overflow-hidden">
                       <FileIcon filename={file.name} className="shrink-0" />
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{file.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {formatFileSize(file.size)}
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="truncate text-sm font-medium">{file.name}</div>
+                          {isImage && effectiveVisionStatus !== 'vision' ? (
+                            <Badge variant="secondary" className="shrink-0 text-warning">
+                              {effectiveVisionStatus === 'checking'
+                                ? t('tableIngest.stepOne.visionCheckingBadge')
+                                : t('tableIngest.stepOne.needsVisionBadge')}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                          <span>{formatFileSize(file.size)}</span>
+                          {isImage ? <span>{t('tableIngest.stepOne.imageFileHint')}</span> : null}
                         </div>
                       </div>
                     </div>
@@ -190,10 +203,19 @@ const StepOne: React.FC<IngestStepOneProps> = ({
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
             </>
+          )}
+          {visionCapabilityChecking && (
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {t('tableIngest.stepOne.visionCapabilityChecking')}
+              </AlertDescription>
+            </Alert>
           )}
           {visionModelRequired && (
             <Alert variant="destructive">
@@ -218,9 +240,11 @@ const StepOne: React.FC<IngestStepOneProps> = ({
         maxCount={MAX_COUNT}
         acceptExt={acceptExt}
         footerExtra={
-          !modelSupportsVision ? (
+          effectiveVisionStatus !== 'vision' ? (
             <div className="text-xs text-muted-foreground">
-              {t('tableIngest.stepOne.imageModelLocked')}
+              {effectiveVisionStatus === 'checking'
+                ? t('tableIngest.stepOne.visionCapabilityChecking')
+                : t('tableIngest.stepOne.imageModelLocked')}
             </div>
           ) : undefined
         }

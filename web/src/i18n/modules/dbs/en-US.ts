@@ -285,11 +285,16 @@ const messages = {
       removeFileAria: 'Remove file',
       visionModelRequired:
         'Images require a vision-capable model. Please choose a vision model before recognition.',
+      visionCapabilityChecking:
+        'Checking whether the selected model supports image input. Please wait.',
       imageModelLocked:
         'Images or scanned files are selected, so only vision-capable models are available. Remove image files before switching to a text-only model.',
       imageFileSkipped:
         'The current model does not support image understanding, so image files were not added. Please switch to a vision model first.',
       unsupportedFileSkipped: 'Some unsupported file types were skipped. Supported now: {types}',
+      needsVisionBadge: 'Needs model vision',
+      visionCheckingBadge: 'Checking model',
+      imageFileHint: 'Images are recognized with model vision',
       pipeline: {
         fileManager: 'Store and permission files in File Manager first',
         review: 'Recognition enters review instead of writing immediately',
@@ -404,6 +409,18 @@ const messages = {
         needs: 'Needs completion {count}',
         failed: 'Failed {count}',
       },
+      statusNotice: {
+        processing:
+          '{count} files are being recognized. Keep this page open; completed files update one by one.',
+        imageChecking:
+          '{count} image files are selected. Checking whether the current model supports image input.',
+        imageBlocked:
+          '{count} image files are selected, but the current model does not support image input. Switch to model vision before recognition.',
+        imageReady: '{count} image files are selected and will use model vision.',
+        needsAction:
+          '{count} files are not ready. Fix failed files or complete required fields before saving.',
+        unsaved: 'Recognition results only live in this review page until you approve and commit.',
+      },
       requiredEmptyTag: 'Required field is empty',
       validationAlert:
         'Some files are not ready. Fix parse failures or complete required fields before saving.',
@@ -429,7 +446,14 @@ const messages = {
       removeCurrentFile: 'Remove',
       noFailedFiles: 'There are no failed files to retry',
       visionUnsupportedFile: 'This file cannot be retried with vision',
+      visionCapabilityChecking:
+        'Checking whether the selected model supports image input. Please wait.',
       visionModelRequired: 'Switch to a model with vision support first',
+      imageVisionCheckingHint:
+        '{count} image files are selected. The system is checking whether the current model supports vision before starting image recognition.',
+      imageVisionBlockedHint:
+        '{count} image files are selected, but the current model does not support image input. Switch to model vision before recognition.',
+      imageVisionReadyHint: '{count} image files are selected and will use model vision.',
       confirmOverwriteCurrent:
         'Retrying this file will overwrite its recognition result and manual edits. Continue?',
       confirmOverwriteAll:

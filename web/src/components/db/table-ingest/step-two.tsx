@@ -29,6 +29,7 @@ import type {
   FileIngestExtractionMode,
   GetDbTableRecordsParams,
 } from '@/services/types/db';
+import type { ModelVisionCapabilityStatus } from '@/components/db/table-ingest/step-one';
 import { Type } from '@/services/types/db';
 import { useCreateDbTableRecords } from '@/hooks/db/use-db-table-records';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -58,6 +59,7 @@ export interface IngestStepTwoProps {
   dbId: string;
   tableId: string;
   modelSupportsVision?: boolean;
+  modelVisionCapabilityStatus?: ModelVisionCapabilityStatus;
   onRemoveFile?: (fileId: string) => void;
   onLeaveGuardChange?: (active: boolean, reason: 'processing' | 'unsaved' | null) => void;
 }
@@ -185,6 +187,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   dbId,
   tableId,
   modelSupportsVision = false,
+  modelVisionCapabilityStatus,
   onRemoveFile,
   onLeaveGuardChange,
 }) => {
@@ -221,12 +224,20 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
 
   const selectedFileIds = useMemo(() => selectedFiles.map(f => f.id), [selectedFiles]);
   const selectedFileIdsKey = useMemo(() => selectedFileIds.join('|'), [selectedFileIds]);
+  const selectedImageFiles = useMemo(
+    () => selectedFiles.filter(file => isTableIngestImageFile(file)),
+    [selectedFiles]
+  );
+  const effectiveVisionStatus: ModelVisionCapabilityStatus =
+    modelVisionCapabilityStatus ?? (modelSupportsVision ? 'vision' : 'textOnly');
+  const imageFilesBlocked = selectedImageFiles.length > 0 && effectiveVisionStatus !== 'vision';
   const firstSelectedFileId = selectedFiles[0]?.id;
   const activeState = activeFileId ? fileStates[activeFileId] : undefined;
   const activeFile = activeState?.file || selectedFiles.find(file => file.id === activeFileId);
   const activeFileIsImage = Boolean(activeFile && isTableIngestImageFile(activeFile));
   const activeFileIsPDF = isPdfFile(activeFile);
   const activeFileCanUseVision = activeFileIsImage || activeFileIsPDF;
+  const activeImageBlockedByVision = activeFileIsImage && effectiveVisionStatus !== 'vision';
   const activePreviewableOriginal = activeFileIsImage || activeFileIsPDF;
 
   const {
@@ -504,6 +515,10 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   );
 
   const initialRunKeyRef = useRef('');
+  const fileStatesReady = useMemo(
+    () => selectedFileIds.length > 0 && selectedFileIds.every(id => Boolean(fileStates[id])),
+    [fileStates, selectedFileIds]
+  );
   const initialRunKey = useMemo(
     () =>
       JSON.stringify({
@@ -519,7 +534,15 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   );
 
   useEffect(() => {
-    if (promptLoading || promptUnavailable || selectedFileIds.length === 0) return;
+    if (
+      promptLoading ||
+      promptUnavailable ||
+      selectedFileIds.length === 0 ||
+      !fileStatesReady ||
+      imageFilesBlocked
+    ) {
+      return;
+    }
     if (initialRunKeyRef.current === initialRunKey) return;
     initialRunKeyRef.current = initialRunKey;
     setColumns([]);
@@ -527,6 +550,8 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     void runRecognitionForFiles(selectedFileIds, 'auto', true);
   }, [
     initialRunKey,
+    fileStatesReady,
+    imageFilesBlocked,
     promptLoading,
     promptUnavailable,
     runRecognitionForFiles,
@@ -552,6 +577,14 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   const retryCurrent = useCallback(
     (mode: FileIngestExtractionMode) => {
       if (!activeFileId) return;
+      if (activeImageBlockedByVision) {
+        toast.error(
+          effectiveVisionStatus === 'checking'
+            ? t('tableIngest.stepTwo.visionCapabilityChecking')
+            : t('tableIngest.stepTwo.visionModelRequired')
+        );
+        return;
+      }
       if (mode === 'vision') {
         if (!activeFileCanUseVision) {
           toast.error(t('tableIngest.stepTwo.visionUnsupportedFile'));
@@ -568,7 +601,9 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     [
       activeFileCanUseVision,
       activeFileId,
+      activeImageBlockedByVision,
       confirmOverwrite,
+      effectiveVisionStatus,
       modelSupportsVision,
       runRecognitionForFile,
       t,
@@ -887,6 +922,65 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     [fileStates, getEffectiveStatus, selectedFiles]
   );
   const leaveGuardReason = hasProcessingFiles ? 'processing' : hasUnsavedResults ? 'unsaved' : null;
+  const statusNotice = useMemo(() => {
+    if (promptUnavailable) return null;
+    if (hasProcessingFiles) {
+      return {
+        variant: 'default' as const,
+        message: t('tableIngest.stepTwo.statusNotice.processing', {
+          count: stats.processing,
+        }),
+      };
+    }
+    if (imageFilesBlocked) {
+      return {
+        variant: effectiveVisionStatus === 'checking' ? ('default' as const) : ('destructive' as const),
+        message:
+          effectiveVisionStatus === 'checking'
+            ? t('tableIngest.stepTwo.statusNotice.imageChecking', {
+                count: selectedImageFiles.length,
+              })
+            : t('tableIngest.stepTwo.statusNotice.imageBlocked', {
+                count: selectedImageFiles.length,
+              }),
+      };
+    }
+    if (anyFileFailed) {
+      return {
+        variant: stats.failed > 0 ? ('destructive' as const) : ('default' as const),
+        message: t('tableIngest.stepTwo.statusNotice.needsAction', {
+          count: stats.needs + stats.failed,
+        }),
+      };
+    }
+    if (selectedImageFiles.length > 0 && effectiveVisionStatus === 'vision') {
+      return {
+        variant: 'default' as const,
+        message: t('tableIngest.stepTwo.statusNotice.imageReady', {
+          count: selectedImageFiles.length,
+        }),
+      };
+    }
+    if (hasUnsavedResults) {
+      return {
+        variant: 'default' as const,
+        message: t('tableIngest.stepTwo.statusNotice.unsaved'),
+      };
+    }
+    return null;
+  }, [
+    anyFileFailed,
+    effectiveVisionStatus,
+    hasProcessingFiles,
+    hasUnsavedResults,
+    imageFilesBlocked,
+    promptUnavailable,
+    selectedImageFiles.length,
+    stats.failed,
+    stats.needs,
+    stats.processing,
+    t,
+  ]);
 
   useEffect(() => {
     if (!hasProcessingFiles) return;
@@ -1004,31 +1098,19 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
             <RotateCcw className="h-4 w-4" />
             {t('tableIngest.stepTwo.retryFailedFiles')}
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={retryAllFiles} disabled={promptUnavailable || selectedFiles.length === 0}>
+          <Button type="button" variant="outline" size="sm" onClick={retryAllFiles} disabled={promptUnavailable || selectedFiles.length === 0 || imageFilesBlocked}>
             <RefreshCcw className="h-4 w-4" />
             {t('tableIngest.stepTwo.reRecognizeAll')}
           </Button>
         </div>
       </div>
 
-      {!promptUnavailable && hasProcessingFiles ? (
-        <Alert className="mb-2 text-sm">
+      {statusNotice ? (
+        <Alert className="mb-2 text-sm" variant={statusNotice.variant}>
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{t('tableIngest.stepTwo.processingLeaveHint')}</AlertDescription>
+          <AlertDescription>{statusNotice.message}</AlertDescription>
         </Alert>
       ) : null}
-      {!promptUnavailable && !hasProcessingFiles && hasUnsavedResults ? (
-        <Alert className="mb-2 text-sm">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{t('tableIngest.stepTwo.unsavedLeaveHint')}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      {!promptUnavailable && anyFileFailed && (
-        <Alert className="mb-2 text-sm" variant={stats.failed > 0 ? 'destructive' : 'default'}>
-          <AlertDescription>{t('tableIngest.stepTwo.validationAlert')}</AlertDescription>
-        </Alert>
-      )}
       {promptUnavailable ? (
         <Alert className="mb-2 text-sm" variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -1420,7 +1502,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                       isIcon
                       aria-label={t('tableIngest.stepTwo.retryCurrentFile')}
                       onClick={() => retryCurrent('auto')}
-                      disabled={!activeFileId || promptUnavailable}
+                      disabled={!activeFileId || promptUnavailable || activeImageBlockedByVision}
                     >
                       <RefreshCcw className="h-4 w-4" />
                     </Button>
@@ -1439,14 +1521,16 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                       isIcon
                       aria-label={t('tableIngest.stepTwo.retryCurrentWithVision')}
                       onClick={() => retryCurrent('vision')}
-                      disabled={!activeFileId || promptUnavailable || !modelSupportsVision}
+                      disabled={!activeFileId || promptUnavailable || effectiveVisionStatus !== 'vision'}
                     >
                       <Eye className="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom">
-                    {modelSupportsVision
+                    {effectiveVisionStatus === 'vision'
                       ? t('tableIngest.stepTwo.retryCurrentWithVision')
+                      : effectiveVisionStatus === 'checking'
+                        ? t('tableIngest.stepTwo.visionCapabilityChecking')
                       : t('tableIngest.stepTwo.visionModelRequired')}
                   </TooltipContent>
                 </Tooltip>
