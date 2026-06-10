@@ -912,15 +912,57 @@ func (c *WeaviateClient) DeleteObjectsByField(ctx context.Context, className, fi
 		"output": "minimal",
 	}
 
+	totalMatches := 0
+	totalSuccessful := 0
+
+	for {
+		result, err := c.deleteObjectsByFieldBatch(ctx, payload, className, fieldName)
+		if err != nil {
+			return err
+		}
+		if result.MissingClass {
+			return nil
+		}
+		if result.Results.Failed > 0 {
+			return fmt.Errorf("weaviate delete failed for %d objects", result.Results.Failed)
+		}
+		if result.Results.Matches == 0 {
+			logger.Info("Objects deleted by field", map[string]interface{}{
+				"class":            className,
+				"field_name":       fieldName,
+				"total_matches":    totalMatches,
+				"total_successful": totalSuccessful,
+			})
+			return nil
+		}
+		if result.Results.Successful == 0 {
+			return fmt.Errorf("weaviate delete matched %d objects but deleted none", result.Results.Matches)
+		}
+
+		totalMatches += result.Results.Matches
+		totalSuccessful += result.Results.Successful
+	}
+}
+
+type weaviateBatchDeleteResult struct {
+	MissingClass bool
+	Results      struct {
+		Failed     int `json:"failed"`
+		Matches    int `json:"matches"`
+		Successful int `json:"successful"`
+	} `json:"results"`
+}
+
+func (c *WeaviateClient) deleteObjectsByFieldBatch(ctx context.Context, payload map[string]interface{}, className, fieldName string) (*weaviateBatchDeleteResult, error) {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal batch delete request: %w", err)
+		return nil, fmt.Errorf("failed to marshal batch delete request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1/batch/objects/delete", c.endpoint)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	url := fmt.Sprintf("%s/v1/batch/objects", c.endpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -930,7 +972,7 @@ func (c *WeaviateClient) DeleteObjectsByField(ctx context.Context, className, fi
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to delete objects in weaviate: %w", err)
+		return nil, fmt.Errorf("failed to delete objects in weaviate: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -942,39 +984,20 @@ func (c *WeaviateClient) DeleteObjectsByField(ctx context.Context, className, fi
 				"field_name":  fieldName,
 				"status_code": resp.StatusCode,
 			})
-			return nil
+			return &weaviateBatchDeleteResult{MissingClass: true}, nil
 		}
-		return fmt.Errorf("weaviate delete returned status code: %d, response: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("weaviate delete returned status code: %d, response: %s", resp.StatusCode, string(body))
 	}
 
-	var result struct {
-		Results struct {
-			Failed     int `json:"failed"`
-			Matches    int `json:"matches"`
-			Successful int `json:"successful"`
-		} `json:"results"`
-	}
+	var result weaviateBatchDeleteResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("failed to decode delete response: %w", err)
-	}
-	if result.Results.Failed > 0 {
-		return fmt.Errorf("weaviate delete failed for %d objects", result.Results.Failed)
+		return nil, fmt.Errorf("failed to decode delete response: %w", err)
 	}
 
-	logger.Info("Objects deleted by field", map[string]interface{}{
-		"class":      className,
-		"field_name": fieldName,
-		"matches":    result.Results.Matches,
-		"successful": result.Results.Successful,
-	})
-
-	return nil
+	return &result, nil
 }
 
 func isWeaviateMissingClassResponse(statusCode int, body []byte) bool {
-	if statusCode == http.StatusNotFound {
-		return true
-	}
 	if statusCode < http.StatusBadRequest || statusCode >= http.StatusInternalServerError {
 		return false
 	}
