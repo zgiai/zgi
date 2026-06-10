@@ -8,7 +8,7 @@ runtime_type: tool
 tools:
   - list_accessible_knowledge_bases
   - retrieve_knowledge
-max_calls_per_turn: 6
+max_calls_per_turn: 20
 timeout_seconds: 30
 display:
   icon: library

@@ -7,7 +7,7 @@ provider_id: knowledge
 runtime_type: tool
 tools:
   - retrieve_agent_knowledge
-max_calls_per_turn: 3
+max_calls_per_turn: 20
 timeout_seconds: 30
 display:
   icon: library

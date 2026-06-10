@@ -24,8 +24,8 @@ func TestKnowledgeSystemSkillsExposeExpectedTools(t *testing.T) {
 	if got := toolNames(internal.Tools); !sameStrings(got, []string{"list_accessible_knowledge_bases", "retrieve_knowledge"}) {
 		t.Fatalf("internal knowledge tools = %v", got)
 	}
-	if internal.Metadata.MaxCallsPerTurn != 6 {
-		t.Fatalf("internal knowledge max calls = %d, want 6", internal.Metadata.MaxCallsPerTurn)
+	if internal.Metadata.MaxCallsPerTurn != 20 {
+		t.Fatalf("internal knowledge max calls = %d, want 20", internal.Metadata.MaxCallsPerTurn)
 	}
 	if internal.Metadata.Display.Label["zh_Hans"] != "内部知识库" {
 		t.Fatalf("internal knowledge zh label = %q", internal.Metadata.Display.Label["zh_Hans"])
@@ -37,8 +37,8 @@ func TestKnowledgeSystemSkillsExposeExpectedTools(t *testing.T) {
 	if got := toolNames(agent.Tools); !sameStrings(got, []string{"retrieve_agent_knowledge"}) {
 		t.Fatalf("agent knowledge tools = %v", got)
 	}
-	if agent.Metadata.MaxCallsPerTurn != 3 {
-		t.Fatalf("agent knowledge max calls = %d, want 3", agent.Metadata.MaxCallsPerTurn)
+	if agent.Metadata.MaxCallsPerTurn != 20 {
+		t.Fatalf("agent knowledge max calls = %d, want 20", agent.Metadata.MaxCallsPerTurn)
 	}
 	if agent.Metadata.Display.Label["zh_Hans"] != "智能体知识库" {
 		t.Fatalf("agent knowledge zh label = %q", agent.Metadata.Display.Label["zh_Hans"])
@@ -70,12 +70,18 @@ func TestDatabaseSystemSkillsExposeExpectedTools(t *testing.T) {
 	if got := toolNames(internal.Tools); !sameStrings(got, expectedTools) {
 		t.Fatalf("internal database tools = %v", got)
 	}
+	if internal.Metadata.MaxCallsPerTurn != 40 {
+		t.Fatalf("internal database max calls = %d, want 40", internal.Metadata.MaxCallsPerTurn)
+	}
 	agent, ok := resolved.Get(SkillAgentDatabase)
 	if !ok {
 		t.Fatalf("agent database skill was not resolved")
 	}
 	if got := toolNames(agent.Tools); !sameStrings(got, expectedTools) {
 		t.Fatalf("agent database tools = %v", got)
+	}
+	if agent.Metadata.MaxCallsPerTurn != 40 {
+		t.Fatalf("agent database max calls = %d, want 40", agent.Metadata.MaxCallsPerTurn)
 	}
 }
 
