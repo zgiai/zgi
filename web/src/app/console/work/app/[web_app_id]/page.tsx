@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useRunnableWebApps } from '@/hooks/agent/use-runnable-webapps';
 import { useWebAppConfig } from '@/hooks/webapp/use-webapp';
 import { useT } from '@/i18n/translations';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { isWebAppNotPublishedError } from '@/utils/webapp/errors';
 import { detectWebappMode } from '@/utils/webapp/helpers';
 
@@ -24,7 +25,15 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
   const t = useT('webapp');
   const resolvedParams = use(params);
   const webAppId = resolvedParams.web_app_id;
-  const { items, isLoading: isListLoading } = useRunnableWebApps();
+  const currentWorkspace = useCurrentWorkspace();
+  const workspaceId = currentWorkspace?.id ?? null;
+  const recentStorageKey = workspaceId
+    ? `${RECENT_WEBAPP_STORAGE_KEY}:${workspaceId}`
+    : RECENT_WEBAPP_STORAGE_KEY;
+  const { items, isLoading: isListLoading } = useRunnableWebApps({
+    workspaceId,
+    enabled: !!workspaceId,
+  });
   const { data, error: configError, isLoading: isConfigLoading } = useWebAppConfig(webAppId);
 
   const isRunnable = useMemo(
@@ -35,11 +44,11 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
   useEffect(() => {
     if (!isRunnable || typeof window === 'undefined') return;
 
-    const current = window.localStorage.getItem(RECENT_WEBAPP_STORAGE_KEY);
+    const current = window.localStorage.getItem(recentStorageKey);
     const ids = current ? (JSON.parse(current) as string[]) : [];
     const nextIds = [webAppId, ...ids.filter(id => id !== webAppId)].slice(0, 6);
-    window.localStorage.setItem(RECENT_WEBAPP_STORAGE_KEY, JSON.stringify(nextIds));
-  }, [isRunnable, webAppId]);
+    window.localStorage.setItem(recentStorageKey, JSON.stringify(nextIds));
+  }, [isRunnable, recentStorageKey, webAppId]);
 
   if (isListLoading || isConfigLoading) {
     return (
