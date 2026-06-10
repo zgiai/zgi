@@ -153,43 +153,73 @@ type AnalyzeFileForTableRequest struct {
 
 // IngestFileToTableRequest defines the request for ingesting file content into a table
 type IngestFileToTableRequest struct {
-	FileID  string     `json:"file_id" binding:"required"`
-	TableID string     `json:"table_id" binding:"required"`
-	Prompt  *string    `json:"prompt,omitempty"`
-	Model   *ModelSpec `json:"model,omitempty"`
+	FileID         string     `json:"file_id" binding:"required"`
+	TableID        string     `json:"table_id" binding:"required"`
+	Prompt         *string    `json:"prompt,omitempty"`
+	Model          *ModelSpec `json:"model,omitempty"`
+	ExtractionMode string     `json:"extraction_mode,omitempty"`
 }
 
 // IngestFileToTableResponse defines the response for ingesting file to table
 type IngestFileToTableResponse struct {
-	Records []map[string]interface{} `json:"records"`
-	Columns []TableColumn            `json:"columns"`
-	Message string                   `json:"message"`
-	Content string                   `json:"content,omitempty"`
+	FileID     string                    `json:"file_id,omitempty"`
+	FileName   string                    `json:"file_name,omitempty"`
+	Records    []map[string]interface{}  `json:"records"`
+	Columns    []TableColumn             `json:"columns"`
+	Message    string                    `json:"message"`
+	Content    string                    `json:"content,omitempty"`
+	Extraction *FileIngestExtractionInfo `json:"extraction,omitempty"`
+	Error      *string                   `json:"error,omitempty"`
 }
 
 // BatchIngestFileToTableRequest defines the request for ingesting multiple files content into a table
 type BatchIngestFileToTableRequest struct {
-	FileIDs []string   `json:"file_ids" binding:"required"`
-	TableID string     `json:"table_id" binding:"required"`
-	Prompt  *string    `json:"prompt,omitempty"`
-	Model   *ModelSpec `json:"model,omitempty"`
+	FileIDs        []string   `json:"file_ids" binding:"required"`
+	TableID        string     `json:"table_id" binding:"required"`
+	Prompt         *string    `json:"prompt,omitempty"`
+	Model          *ModelSpec `json:"model,omitempty"`
+	ExtractionMode string     `json:"extraction_mode,omitempty"`
 }
 
 // BatchIngestFileToTableResponse defines the response for ingesting multiple files to table
 type BatchIngestFileToTableResponse struct {
-	Results map[string]FileIngestResult `json:"results"`
-	Columns []TableColumn               `json:"columns"`
-	Message string                      `json:"message"`
+	Results      map[string]FileIngestResult `json:"results"`
+	Columns      []TableColumn               `json:"columns"`
+	Message      string                      `json:"message"`
+	TotalCount   int                         `json:"total_count"`
+	SuccessCount int                         `json:"success_count"`
+	FailedCount  int                         `json:"failed_count"`
 }
 
 // FileIngestResult represents the result of ingesting a single file
 type FileIngestResult struct {
-	FileID   string                   `json:"file_id"`
-	FileName string                   `json:"file_name"`
-	Records  []map[string]interface{} `json:"records"`
-	Message  string                   `json:"message"`
-	Content  string                   `json:"content,omitempty"`
-	Error    *string                  `json:"error,omitempty"`
+	FileID     string                    `json:"file_id"`
+	FileName   string                    `json:"file_name"`
+	Records    []map[string]interface{}  `json:"records"`
+	Message    string                    `json:"message"`
+	Content    string                    `json:"content,omitempty"`
+	Extraction *FileIngestExtractionInfo `json:"extraction,omitempty"`
+	Error      *string                   `json:"error,omitempty"`
+}
+
+// FileIngestExtractionInfo describes the parser path used before field extraction.
+type FileIngestExtractionInfo struct {
+	PrimaryStrategy string              `json:"primary_strategy,omitempty"`
+	ActualStrategy  string              `json:"actual_strategy,omitempty"`
+	FallbackReason  string              `json:"fallback_reason,omitempty"`
+	SourceType      string              `json:"source_type,omitempty"`
+	ContentHash     string              `json:"content_hash,omitempty"`
+	Attempts        []FileIngestAttempt `json:"attempts,omitempty"`
+}
+
+// FileIngestAttempt describes one user-visible extraction attempt in a file ingest run.
+type FileIngestAttempt struct {
+	Method      string `json:"method"`
+	Status      string `json:"status"`
+	Result      string `json:"result,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	DurationMS  int64  `json:"duration_ms,omitempty"`
+	RecordCount int    `json:"record_count,omitempty"`
 }
 
 // DataSourceResponse represents data source response DTO

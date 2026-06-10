@@ -1067,6 +1067,9 @@ func mapType(it contentItem) (string, string) {
 }
 
 func extractText(it contentItem) string {
+	if strings.TrimSpace(it.ImgPath) != "" {
+		return "[figure]"
+	}
 	if s := strings.TrimSpace(it.Text); s != "" {
 		return s
 	}
@@ -1080,9 +1083,6 @@ func extractText(it contentItem) string {
 		if caption := firstString(it.ChartCaption); caption != "" {
 			return caption
 		}
-	}
-	if it.ImgPath != "" {
-		return "[figure]"
 	}
 	if it.Type == "table" {
 		return "[table]"

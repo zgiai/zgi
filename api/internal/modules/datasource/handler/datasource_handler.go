@@ -1637,6 +1637,10 @@ func (h *DataSourceHandler) GetTablePrompt(c *gin.Context) {
 	// Get prompt for table
 	prompt, err := h.service.GetTablePrompt(c.Request.Context(), tableID, lang)
 	if err != nil {
+		if service.IsDataSourceTableNotFound(err) {
+			response.Fail(c, response.ErrNotFound)
+			return
+		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
@@ -1972,6 +1976,7 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.POST("/data-dbs/analyze-file-for-table", h.AnalyzeFileForTable)
 	authWithTenant.POST("/data-dbs/:id/excel-import/analyze", h.AnalyzeExcelImport)
 	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id", h.GetExcelImportJob)
+	authWithTenant.POST("/data-dbs/:id/excel-import/jobs/:job_id/recognize", h.RecognizeExcelImportFields)
 	authWithTenant.POST("/data-dbs/:id/excel-import/jobs/:job_id/import", h.ConfirmExcelImport)
 	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id/errors", h.ListExcelImportErrors)
 

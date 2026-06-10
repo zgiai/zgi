@@ -604,7 +604,7 @@ func (c *ServiceContainer) GetDataSourceService() service.DataSourceService {
 		tableRepo := repository.NewPostgresTableRepository(c.db)
 		promptRepo := repository.NewPostgresPromptRepository(c.db)
 		sqlOperationRepo := repository.NewPostgresSQLOperationRepository(c.db)
-		c.dataSourceService = service.NewDataSourceService(dataSourceRepo, tableRepo, promptRepo, sqlOperationRepo, c.GetAccountService(), c.GetFileService(), c.GetOrganizationService(), c.GetResourcePermissionService(), c.GetQuotaService(), c.GetLLMClient(), c.db)
+		c.dataSourceService = service.NewDataSourceService(dataSourceRepo, tableRepo, promptRepo, sqlOperationRepo, c.GetAccountService(), c.GetFileService(), c.GetOrganizationService(), c.GetResourcePermissionService(), c.GetQuotaService(), c.GetLLMClient(), c.GetDefaultModelService(), c.db)
 	}
 
 	return c.dataSourceService

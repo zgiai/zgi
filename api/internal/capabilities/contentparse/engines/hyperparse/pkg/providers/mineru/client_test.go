@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"testing"
+
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 )
 
 func TestMineruToDocumentResult_Shape(t *testing.T) {
@@ -91,6 +93,51 @@ func TestMineruToDocumentResult_ImageAssetsAndChartFigure(t *testing.T) {
 	}
 	if chunk.Payload["chart_caption"] == nil {
 		t.Fatalf("expected chart caption payload, got %#v", chunk.Payload)
+	}
+}
+
+func TestMineruToDocumentResult_TableWithImagePathUsesFigureContent(t *testing.T) {
+	resp := &parseResponse{
+		TaskID:  "task-table-image",
+		Backend: "pipeline",
+		Results: map[string]fileResults{
+			"sample": {
+				MdContent:   "![table](images/table.png)",
+				ContentList: `[{"type":"table","table_body":"| A |\n|---|\n| 1 |","img_path":"images/table.png","table_caption":["Amount table"],"bbox":[10,20,500,600],"page_idx":0}]`,
+			},
+		},
+	}
+
+	doc, err := mineruToDocumentResult("sample.pdf", resp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(doc.Chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(doc.Chunks))
+	}
+	chunk := doc.Chunks[0]
+	if chunk.Type != "figure" {
+		t.Fatalf("expected table image to map to figure, got %q", chunk.Type)
+	}
+	if chunk.Text != "[figure]" {
+		t.Fatalf("expected figure text placeholder, got %q", chunk.Text)
+	}
+	if chunk.Markdown != "![figure](images/table.png)" {
+		t.Fatalf("unexpected figure markdown: %q", chunk.Markdown)
+	}
+	if chunk.Payload["table_body"] == "" {
+		t.Fatalf("expected original table body in payload for diagnostics, got %#v", chunk.Payload)
+	}
+	extractcommon.EnrichStructuredOutput(doc)
+	if doc.ExtractOutput == nil || len(doc.ExtractOutput.Elements) != 1 {
+		t.Fatalf("expected structured figure output, got %#v", doc.ExtractOutput)
+	}
+	element := doc.ExtractOutput.Elements[0]
+	if element.Type != "figure" || element.Content != "[figure]" {
+		t.Fatalf("expected figure element without table text, got %+v", element)
+	}
+	if element.Metadata["markdown"] != "![figure](images/table.png)" {
+		t.Fatalf("expected figure markdown metadata, got %#v", element.Metadata)
 	}
 }
 
