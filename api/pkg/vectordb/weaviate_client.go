@@ -890,34 +890,34 @@ func (c *WeaviateClient) DeleteObjectsByField(ctx context.Context, className, fi
 	if c.endpoint == "" {
 		return fmt.Errorf("weaviate endpoint not configured")
 	}
-
-	// GraphQL mutation for batch deletion
-	deleteMutation := map[string]interface{}{
-		"query": fmt.Sprintf(`mutation {
-			BatchDelete%s: DeleteObjects(
-				input: {
-					class: "%s"
-					where: {
-						operator: Equal
-						path: ["%s"]
-						valueText: "%s"
-					}
-				}
-			) {
-				matches {
-					totalCount
-				}
-				output
-			}
-		}`, className, className, fieldName, fieldValue),
+	if strings.TrimSpace(className) == "" {
+		return fmt.Errorf("weaviate class name is required")
+	}
+	if strings.TrimSpace(fieldName) == "" {
+		return fmt.Errorf("weaviate field name is required")
+	}
+	if strings.TrimSpace(fieldValue) == "" {
+		return fmt.Errorf("weaviate field value is required")
 	}
 
-	jsonData, err := json.Marshal(deleteMutation)
+	payload := map[string]interface{}{
+		"match": map[string]interface{}{
+			"class": className,
+			"where": map[string]interface{}{
+				"operator":  "Equal",
+				"path":      []string{fieldName},
+				"valueText": fieldValue,
+			},
+		},
+		"output": "minimal",
+	}
+
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal delete mutation: %w", err)
+		return fmt.Errorf("failed to marshal batch delete request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1/graphql", c.endpoint)
+	url := fmt.Sprintf("%s/v1/batch/objects/delete", c.endpoint)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -936,21 +936,55 @@ func (c *WeaviateClient) DeleteObjectsByField(ctx context.Context, className, fi
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if isWeaviateMissingClassResponse(resp.StatusCode, body) {
+			logger.Info("Weaviate class missing during field delete; treating as already clean", map[string]interface{}{
+				"class":       className,
+				"field_name":  fieldName,
+				"status_code": resp.StatusCode,
+			})
+			return nil
+		}
 		return fmt.Errorf("weaviate delete returned status code: %d, response: %s", resp.StatusCode, string(body))
 	}
 
-	var result map[string]interface{}
+	var result struct {
+		Results struct {
+			Failed     int `json:"failed"`
+			Matches    int `json:"matches"`
+			Successful int `json:"successful"`
+		} `json:"results"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return fmt.Errorf("failed to decode delete response: %w", err)
+	}
+	if result.Results.Failed > 0 {
+		return fmt.Errorf("weaviate delete failed for %d objects", result.Results.Failed)
 	}
 
 	logger.Info("Objects deleted by field", map[string]interface{}{
 		"class":      className,
 		"field_name": fieldName,
-		"result":     result,
+		"matches":    result.Results.Matches,
+		"successful": result.Results.Successful,
 	})
 
 	return nil
+}
+
+func isWeaviateMissingClassResponse(statusCode int, body []byte) bool {
+	if statusCode == http.StatusNotFound {
+		return true
+	}
+	if statusCode < http.StatusBadRequest || statusCode >= http.StatusInternalServerError {
+		return false
+	}
+
+	message := strings.ToLower(string(body))
+	return strings.Contains(message, "class") &&
+		(strings.Contains(message, "not found") ||
+			strings.Contains(message, "not exist") ||
+			strings.Contains(message, "does not exist") ||
+			strings.Contains(message, "could not find"))
 }
 
 // DeleteObjectByID deletes a single object by its ID
