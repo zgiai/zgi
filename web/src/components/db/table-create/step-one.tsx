@@ -254,9 +254,9 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
   }, [aiColumns]);
 
   return (
-    <div className="flex h-0 grow border rounded-md overflow-hidden">
+    <div className="flex h-full min-h-0 border rounded-md overflow-hidden">
       {/* Left – prompt + file */}
-      <div className="w-[420px] p-6 border-r flex flex-col gap-4">
+      <div className="w-[420px] min-h-0 p-6 border-r flex flex-col gap-4 overflow-y-auto">
         {/* Model Selector */}
         <div className="space-y-2">
           <label className="text-sm font-medium">
@@ -432,7 +432,7 @@ export default function StepOne({ dataSourceId, onAnalyzeDone, initialAiColumns 
       </div>
 
       {/* Right – preview + analysis result */}
-      <div className="flex-1 p-4 h-full space-y-4 overflow-y-auto">
+      <div className="flex-1 min-h-0 p-4 h-full space-y-4 overflow-y-auto">
         {/* File Markdown preview */}
         {referenceEnabled && selectedFile?.id && (
           <div className="rounded-md border p-3 max-h-[280px] overflow-auto">

@@ -71,11 +71,13 @@ export default function DbTableCreatePage({ params }: PageProps) {
         </div>
       </div>
 
-      {step === 1 && (
-        <StepOne dataSourceId={dbId} onAnalyzeDone={setAiColumns} initialAiColumns={aiColumns} />
-      )}
+      <div className="min-h-0 grow">
+        {step === 1 && (
+          <StepOne dataSourceId={dbId} onAnalyzeDone={setAiColumns} initialAiColumns={aiColumns} />
+        )}
 
-      {step === 2 && <StepTwo dbId={dbId} tableId={tableId} aiColumns={aiColumns} />}
+        {step === 2 && <StepTwo dbId={dbId} tableId={tableId} aiColumns={aiColumns} />}
+      </div>
     </div>
   );
 }
