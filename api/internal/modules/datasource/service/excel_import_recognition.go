@@ -42,13 +42,15 @@ type excelFieldRecognitionLLMResponse struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 	} `json:"table"`
-	Columns []struct {
-		SourceColumnIndex int    `json:"source_column_index"`
-		SourceColumn      string `json:"source_column"`
-		Name              string `json:"name"`
-		DisplayName       string `json:"display_name"`
-		Description       string `json:"description"`
-	} `json:"columns"`
+	Columns []excelFieldRecognitionLLMResponseColumn `json:"columns"`
+}
+
+type excelFieldRecognitionLLMResponseColumn struct {
+	SourceColumnIndex int    `json:"source_column_index"`
+	SourceColumn      string `json:"source_column"`
+	Name              string `json:"name"`
+	DisplayName       string `json:"display_name"`
+	Description       string `json:"description"`
 }
 
 func (s *dataSourceService) RecognizeExcelImportFields(ctx context.Context, organizationID, dataSourceID, accountID, jobID string, req dto.RecognizeExcelImportRequest) (dto.RecognizeExcelImportData, error) {
@@ -234,10 +236,15 @@ func normalizeExcelRecognitionResult(req dto.RecognizeExcelImportRequest, llmRes
 		result.Table.Description = strings.TrimSpace(req.Table.Description)
 	}
 
+	modelColumnsBySourceIndex, err := excelRecognitionColumnsBySourceIndex(req.Columns, llmResult.Columns)
+	if err != nil {
+		return dto.RecognizeExcelImportData{}, err
+	}
+
 	used := make(map[string]int, len(req.Columns))
 	result.Columns = make([]dto.InferredExcelColumn, 0, len(req.Columns))
 	for i, inputCol := range req.Columns {
-		modelCol := llmResult.Columns[i]
+		modelCol := modelColumnsBySourceIndex[inputCol.SourceColumnIndex]
 		nextCol := inputCol
 		nextCol.Name = uniqueExcelRecognitionFieldName(sanitizeExcelRecognitionFieldName(modelCol.Name, inputCol.Name, i), used)
 		if displayName := strings.TrimSpace(modelCol.DisplayName); displayName != "" {
@@ -252,6 +259,38 @@ func normalizeExcelRecognitionResult(req dto.RecognizeExcelImportRequest, llmRes
 		result.Columns = append(result.Columns, nextCol)
 	}
 	return result, nil
+}
+
+func excelRecognitionColumnsBySourceIndex(inputColumns []dto.InferredExcelColumn, modelColumns []excelFieldRecognitionLLMResponseColumn) (map[int]excelFieldRecognitionLLMResponseColumn, error) {
+	expectedBySourceIndex := make(map[int]dto.InferredExcelColumn, len(inputColumns))
+	for _, inputCol := range inputColumns {
+		if _, exists := expectedBySourceIndex[inputCol.SourceColumnIndex]; exists {
+			return nil, fmt.Errorf("field recognition input has duplicate source_column_index %d", inputCol.SourceColumnIndex)
+		}
+		expectedBySourceIndex[inputCol.SourceColumnIndex] = inputCol
+	}
+
+	modelBySourceIndex := make(map[int]excelFieldRecognitionLLMResponseColumn, len(modelColumns))
+	for _, modelCol := range modelColumns {
+		inputCol, exists := expectedBySourceIndex[modelCol.SourceColumnIndex]
+		if !exists {
+			return nil, fmt.Errorf("field recognition returned unexpected source_column_index %d", modelCol.SourceColumnIndex)
+		}
+		if _, duplicate := modelBySourceIndex[modelCol.SourceColumnIndex]; duplicate {
+			return nil, fmt.Errorf("field recognition returned duplicate source_column_index %d", modelCol.SourceColumnIndex)
+		}
+		if modelSource := strings.TrimSpace(modelCol.SourceColumn); modelSource != "" && strings.TrimSpace(inputCol.SourceColumn) != "" && modelSource != strings.TrimSpace(inputCol.SourceColumn) {
+			return nil, fmt.Errorf("field recognition source_column mismatch for index %d: got %q, want %q", modelCol.SourceColumnIndex, modelSource, strings.TrimSpace(inputCol.SourceColumn))
+		}
+		modelBySourceIndex[modelCol.SourceColumnIndex] = modelCol
+	}
+
+	for _, inputCol := range inputColumns {
+		if _, exists := modelBySourceIndex[inputCol.SourceColumnIndex]; !exists {
+			return nil, fmt.Errorf("field recognition missing source_column_index %d", inputCol.SourceColumnIndex)
+		}
+	}
+	return modelBySourceIndex, nil
 }
 
 func sanitizeExcelRecognitionTableName(raw, fallback string) string {

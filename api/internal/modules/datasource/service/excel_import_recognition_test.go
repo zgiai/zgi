@@ -25,34 +25,10 @@ func TestNormalizeExcelRecognitionResultSanitizesNames(t *testing.T) {
 	llmResult.Table.Name = "2026 合同表"
 	llmResult.Table.Description = "合同台账"
 	llmResult.Columns = append(llmResult.Columns,
-		struct {
-			SourceColumnIndex int    `json:"source_column_index"`
-			SourceColumn      string `json:"source_column"`
-			Name              string `json:"name"`
-			DisplayName       string `json:"display_name"`
-			Description       string `json:"description"`
-		}{Name: "id", DisplayName: "合同编号", Description: "合同或订单编号"},
-		struct {
-			SourceColumnIndex int    `json:"source_column_index"`
-			SourceColumn      string `json:"source_column"`
-			Name              string `json:"name"`
-			DisplayName       string `json:"display_name"`
-			Description       string `json:"description"`
-		}{Name: "customer name", DisplayName: "客户名称", Description: "客户公司名称"},
-		struct {
-			SourceColumnIndex int    `json:"source_column_index"`
-			SourceColumn      string `json:"source_column"`
-			Name              string `json:"name"`
-			DisplayName       string `json:"display_name"`
-			Description       string `json:"description"`
-		}{Name: "customer-name", DisplayName: "客户联系人", Description: "客户侧联系人"},
-		struct {
-			SourceColumnIndex int    `json:"source_column_index"`
-			SourceColumn      string `json:"source_column"`
-			Name              string `json:"name"`
-			DisplayName       string `json:"display_name"`
-			Description       string `json:"description"`
-		}{Name: "", DisplayName: "备注", Description: ""},
+		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 0, SourceColumn: "合同编号", Name: "id", DisplayName: "合同编号", Description: "合同或订单编号"},
+		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 1, SourceColumn: "客户名称", Name: "customer name", DisplayName: "客户名称", Description: "客户公司名称"},
+		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 2, SourceColumn: "客户联系人", Name: "customer-name", DisplayName: "客户联系人", Description: "客户侧联系人"},
+		excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 3, SourceColumn: "备注", Name: "", DisplayName: "备注", Description: ""},
 	)
 
 	result, err := normalizeExcelRecognitionResult(req, llmResult, nil)
@@ -86,13 +62,7 @@ func TestNormalizeExcelRecognitionResultRejectsColumnCountMismatch(t *testing.T)
 		},
 	}
 	var llmResult excelFieldRecognitionLLMResponse
-	llmResult.Columns = append(llmResult.Columns, struct {
-		SourceColumnIndex int    `json:"source_column_index"`
-		SourceColumn      string `json:"source_column"`
-		Name              string `json:"name"`
-		DisplayName       string `json:"display_name"`
-		Description       string `json:"description"`
-	}{Name: "a"})
+	llmResult.Columns = append(llmResult.Columns, excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 0, SourceColumn: "A", Name: "a"})
 
 	_, err := normalizeExcelRecognitionResult(req, llmResult, nil)
 	if err == nil || !strings.Contains(err.Error(), "returned 1 columns, want 2") {
@@ -109,13 +79,7 @@ func TestNormalizeExcelRecognitionResultAvoidsExistingTableNames(t *testing.T) {
 	}
 	var llmResult excelFieldRecognitionLLMResponse
 	llmResult.Table.Name = "invoice_records"
-	llmResult.Columns = append(llmResult.Columns, struct {
-		SourceColumnIndex int    `json:"source_column_index"`
-		SourceColumn      string `json:"source_column"`
-		Name              string `json:"name"`
-		DisplayName       string `json:"display_name"`
-		Description       string `json:"description"`
-	}{Name: "invoice_no"})
+	llmResult.Columns = append(llmResult.Columns, excelFieldRecognitionLLMResponseColumn{SourceColumnIndex: 0, SourceColumn: "Invoice No", Name: "invoice_no"})
 
 	result, err := normalizeExcelRecognitionResult(req, llmResult, map[string]struct{}{
 		"invoice_records":   {},
@@ -126,5 +90,52 @@ func TestNormalizeExcelRecognitionResultAvoidsExistingTableNames(t *testing.T) {
 	}
 	if got, want := result.Table.Name, "invoice_records_3"; got != want {
 		t.Fatalf("table name = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeExcelRecognitionResultMatchesColumnsBySourceIndex(t *testing.T) {
+	req := dto.RecognizeExcelImportRequest{
+		Table: dto.RecognizeExcelImportTable{Name: "contracts"},
+		Columns: []dto.InferredExcelColumn{
+			{SourceColumnIndex: 10, SourceColumn: "合同编号", Name: "field_1", Type: "text"},
+			{SourceColumnIndex: 11, SourceColumn: "客户名称", Name: "field_2", Type: "text"},
+			{SourceColumnIndex: 12, SourceColumn: "开票日期", Name: "field_3", Type: "timestamp"},
+		},
+	}
+	var llmResult excelFieldRecognitionLLMResponse
+	llmResult.Table.Name = "contracts"
+	llmResult.Columns = []excelFieldRecognitionLLMResponseColumn{
+		{SourceColumnIndex: 12, SourceColumn: "开票日期", Name: "issue_date"},
+		{SourceColumnIndex: 10, SourceColumn: "合同编号", Name: "contract_no"},
+		{SourceColumnIndex: 11, SourceColumn: "客户名称", Name: "customer_name"},
+	}
+
+	result, err := normalizeExcelRecognitionResult(req, llmResult, nil)
+	if err != nil {
+		t.Fatalf("normalizeExcelRecognitionResult returned error: %v", err)
+	}
+	wantNames := []string{"contract_no", "customer_name", "issue_date"}
+	for i, want := range wantNames {
+		if got := result.Columns[i].Name; got != want {
+			t.Fatalf("column %d name = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestNormalizeExcelRecognitionResultRejectsSourceColumnMismatch(t *testing.T) {
+	req := dto.RecognizeExcelImportRequest{
+		Table: dto.RecognizeExcelImportTable{Name: "contracts"},
+		Columns: []dto.InferredExcelColumn{
+			{SourceColumnIndex: 0, SourceColumn: "合同编号", Name: "contract_no", Type: "text"},
+		},
+	}
+	var llmResult excelFieldRecognitionLLMResponse
+	llmResult.Columns = []excelFieldRecognitionLLMResponseColumn{
+		{SourceColumnIndex: 0, SourceColumn: "客户名称", Name: "customer_name"},
+	}
+
+	_, err := normalizeExcelRecognitionResult(req, llmResult, nil)
+	if err == nil || !strings.Contains(err.Error(), "source_column mismatch") {
+		t.Fatalf("error = %v, want source column mismatch", err)
 	}
 }
