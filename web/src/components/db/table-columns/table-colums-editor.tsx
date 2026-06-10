@@ -52,8 +52,16 @@ export default function TableColumnsEditor({
 }: TableColumnsEditorProps) {
   const t = useT('dbs');
 
+  const validationColumns = useMemo(
+    () => columns.filter(c => !(disableSystemFields && c.is_system_field)),
+    [columns, disableSystemFields]
+  );
+
   // Duplicate names detection (case-insensitive, ignore empty while editing)
-  const duplicateNameSet = useMemo(() => getDuplicateDbColumnNames(columns), [columns]);
+  const duplicateNameSet = useMemo(
+    () => getDuplicateDbColumnNames(validationColumns),
+    [validationColumns]
+  );
 
   const hasDuplicateNames = useMemo(
     () => Array.from(duplicateNameSet.values()).length > 0,
@@ -62,10 +70,10 @@ export default function TableColumnsEditor({
 
   const hasInvalidNames = useMemo(
     () =>
-      columns.some(
+      validationColumns.some(
         c => isInvalidDbColumnName(c.name || '') || isReservedDbColumnName(c.name || '')
       ),
-    [columns]
+    [validationColumns]
   );
 
   // Report validation state to parent if requested
@@ -95,9 +103,9 @@ export default function TableColumnsEditor({
       {columns.map((col, index) => {
         const isSystem = disableSystemFields && Boolean(col.is_system_field);
         const lowerName = (col.name || '').trim().toLowerCase();
-        const isDup = lowerName.length > 0 && duplicateNameSet.has(lowerName);
-        const invalidFormat = isInvalidDbColumnName(col.name || '');
-        const isReserved = isReservedDbColumnName(col.name || '');
+        const isDup = !isSystem && lowerName.length > 0 && duplicateNameSet.has(lowerName);
+        const invalidFormat = !isSystem && isInvalidDbColumnName(col.name || '');
+        const isReserved = !isSystem && isReservedDbColumnName(col.name || '');
         const isInvalid = invalidFormat || isReserved;
         return (
           <TableRow key={col.id || `row-${index}`}>
