@@ -16,6 +16,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -26,13 +27,23 @@ import (
 )
 
 type AgentsHandler struct {
-	appService          AgentsService
-	tenantService       interfaces.WorkspaceManagementService
-	accountService      interfaces.AccountService
-	organizationService interfaces.OrganizationService
-	fileService         interfaces.FileService
-	db                  *gorm.DB
-	chatRuntimeService  runtimeservice.Service
+	appService                 AgentsService
+	tenantService              interfaces.WorkspaceManagementService
+	accountService             interfaces.AccountService
+	organizationService        interfaces.OrganizationService
+	fileService                interfaces.FileService
+	db                         *gorm.DB
+	chatRuntimeService         runtimeservice.Service
+	workflowContinuationRunner interface {
+		ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
+		ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
+		StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error
+	}
+}
+
+type workflowContinuationStreamRunner interface {
+	ResumeApprovalWorkflowStream(ctx context.Context, form *approvalruntime.Form, onEvent func(string, map[string]interface{}) error) error
+	ResumeQuestionAnswerWorkflowStream(ctx context.Context, workflowRunID string, inputs map[string]interface{}, onEvent func(string, map[string]interface{}) error) error
 }
 
 func NewAgentsHandler(appService AgentsService, tenantService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, organizationService interfaces.OrganizationService, db *gorm.DB, chatRuntimeServices ...runtimeservice.Service) *AgentsHandler {
@@ -52,6 +63,14 @@ func NewAgentsHandler(appService AgentsService, tenantService interfaces.Workspa
 
 func (h *AgentsHandler) SetFileService(fileService interfaces.FileService) {
 	h.fileService = fileService
+}
+
+func (h *AgentsHandler) SetWorkflowContinuationRunner(runner interface {
+	ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
+	ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
+	StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error
+}) {
+	h.workflowContinuationRunner = runner
 }
 
 func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
@@ -358,6 +377,21 @@ func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) ListAgentWorkflowBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx := agentRuntimeRequestContext(c, accountID)
+	result, err := h.appService.ListAgentWorkflowBindingCandidates(ctx, c.Param("agent_id"), accountID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) ListAgentMemorySlots(c *gin.Context) {
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {
@@ -486,6 +520,7 @@ func (h *AgentsHandler) GenerateAgentSuggestedQuestions(c *gin.Context) {
 	ctx := agentRuntimeRequestContext(c, accountID)
 	result, err := h.appService.GenerateAgentSuggestedQuestions(ctx, c.Param("agent_id"), accountID, &req)
 	if err != nil {
+		logger.ErrorContext(c.Request.Context(), "failed to generate agent suggested questions", "agent_id", c.Param("agent_id"), err)
 		if isAgentSuggestedQuestionsConfigurationError(err) {
 			response.FailWithMessage(c, response.ErrConfigError, "Please configure a default LLM model before generating suggested questions.")
 			return
@@ -582,6 +617,9 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 			"status":          status,
 			"metadata":        gin.H{},
 		})
+		return
+	}
+	if agentWorkflowContinuationWaiting(result.Metadata) {
 		return
 	}
 	_ = writeAgentSSE(c, "message_end", gin.H{
@@ -904,6 +942,9 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 			"status":          status,
 			"metadata":        gin.H{},
 		})
+		return
+	}
+	if agentWorkflowContinuationWaiting(result.Metadata) {
 		return
 	}
 	_ = writeAgentSSE(c, "message_end", gin.H{

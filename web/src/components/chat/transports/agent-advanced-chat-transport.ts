@@ -9,7 +9,10 @@ import type {
 import { agentService } from '@/services/agent.service';
 import type { NodeInfo } from '@/components/chat/types';
 import { normalizeMessageRunStatus } from '@/components/chat/types';
-import { extractLlmGatewayRequest } from '@/utils/workflow/run-events';
+import {
+  extractLlmGatewayRequest,
+  getWorkflowRunRoundDurationMap,
+} from '@/utils/workflow/run-events';
 
 /**
  * AgentAdvancedChatTransport
@@ -434,37 +437,32 @@ export class AgentAdvancedChatTransport implements ConversationTransport {
           const nodeId = typeof p['node_id'] === 'string' ? (p['node_id'] as string) : undefined;
           const nodeType = typeof p['node_type'] === 'string' ? (p['node_type'] as string) : 'loop';
           const title = typeof p['title'] === 'string' ? (p['title'] as string) : nodeType;
-          const elapsed = typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : 0;
+          const elapsed =
+            typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : undefined;
           const status = typeof p['status'] === 'string' ? (p['status'] as string) : '';
           const isSuccess =
             status === 'success' || status === 'succeeded' || status === 'completed';
           const error = typeof p['error'] === 'string' ? (p['error'] as string) : undefined;
           const outputs = p['outputs'];
           const execMeta = p['execution_metadata'] as unknown;
-          const durMap: Record<string, number> | undefined =
-            execMeta && typeof execMeta === 'object'
-              ? ((execMeta as Record<string, unknown>)['loop_duration_map'] as
-                  | Record<string, number>
-                  | undefined)
-              : undefined;
           const variableMap: Record<string, unknown> | undefined =
             execMeta && typeof execMeta === 'object'
               ? ((execMeta as Record<string, unknown>)['loop_variable_map'] as
                   | Record<string, unknown>
                   | undefined)
               : undefined;
+          const roundDurations = getWorkflowRunRoundDurationMap(p, 'loop');
           const key = nodeId ?? title;
           const sess = loopSessions.get(key) ?? { nodeId, nodeType, title, rounds: [] };
           sess.elapsedTime = elapsed;
           sess.error = error;
           sess.outputs = outputs;
-          if (durMap && typeof durMap === 'object') {
+          if (roundDurations.size > 0 || variableMap) {
             sess.rounds = sess.rounds.map(r => {
-              const v = durMap[String(r.index)];
               const variables = variableMap?.[String(r.index)];
               return {
                 ...r,
-                elapsedTime: typeof v === 'number' ? v : r.elapsedTime,
+                elapsedTime: roundDurations.get(r.index) ?? r.elapsedTime,
                 variables: variables ?? r.variables,
               };
             });

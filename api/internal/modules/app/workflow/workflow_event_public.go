@@ -30,6 +30,205 @@ type workflowRunEventRecord struct {
 	data      map[string]interface{}
 }
 
+type workflowRunEventHandler func(eventType string, data map[string]interface{}, stored *workflowpause.RunEventPayload) error
+
+type workflowRunEventDispatcher struct {
+	tenantID        string
+	appID           string
+	workflowRunID   string
+	persistMessages bool
+	onEvent         workflowRunEventHandler
+	containers      map[string]workflowRunContainerState
+	pending         []workflowRunEventRecord
+}
+
+type workflowRunContainerState struct {
+	started bool
+	rounds  map[int]bool
+}
+
+func newWorkflowRunEventDispatcher(tenantID, appID, workflowRunID string, persistMessages bool, onEvent workflowRunEventHandler) *workflowRunEventDispatcher {
+	if workflowRunID == "" {
+		return nil
+	}
+	return &workflowRunEventDispatcher{
+		tenantID:        tenantID,
+		appID:           appID,
+		workflowRunID:   workflowRunID,
+		persistMessages: persistMessages,
+		onEvent:         onEvent,
+		containers:      map[string]workflowRunContainerState{},
+	}
+}
+
+func (d *workflowRunEventDispatcher) Dispatch(ctx context.Context, eventType string, data map[string]interface{}) {
+	if d == nil || eventType == "" {
+		return
+	}
+	record := workflowRunEventRecord{eventType: eventType, data: sanitizeWorkflowEventData(data)}
+	if d.shouldBuffer(record) {
+		d.pending = append(d.pending, record)
+		return
+	}
+	d.dispatchNow(ctx, record)
+	d.flushPending(ctx, false)
+}
+
+func (d *workflowRunEventDispatcher) Close(ctx context.Context) {
+	if d == nil {
+		return
+	}
+	d.flushPending(ctx, false)
+	if len(d.pending) > 0 {
+		logger.WarnContext(ctx, "dropping unmatched workflow container child events", "workflow_run_id", d.workflowRunID, "count", len(d.pending))
+		d.pending = nil
+	}
+}
+
+func (d *workflowRunEventDispatcher) shouldBuffer(record workflowRunEventRecord) bool {
+	containerID, index, ok := workflowRunEventContainerContext(record)
+	if !ok {
+		return false
+	}
+	state, exists := d.containers[containerID]
+	if !exists || !state.started {
+		return true
+	}
+	if index == nil {
+		return false
+	}
+	return !state.rounds[*index]
+}
+
+func (d *workflowRunEventDispatcher) flushPending(ctx context.Context, force bool) {
+	if len(d.pending) == 0 {
+		return
+	}
+	remaining := d.pending[:0]
+	for _, record := range d.pending {
+		if !force && d.shouldBuffer(record) {
+			remaining = append(remaining, record)
+			continue
+		}
+		d.dispatchNow(ctx, record)
+	}
+	d.pending = remaining
+}
+
+func (d *workflowRunEventDispatcher) dispatchNow(ctx context.Context, record workflowRunEventRecord) {
+	if d == nil {
+		return
+	}
+	d.observeContainerLifecycle(record)
+	publicData := sanitizeWorkflowEventData(record.data)
+	var stored *workflowpause.RunEventPayload
+	if d.shouldPersist(record.eventType) {
+		stored = appendWorkflowRunEventPayload(ctx, d.tenantID, d.appID, d.workflowRunID, record.eventType, publicData)
+		if stored != nil {
+			publicData = copyWorkflowEventDataWithSequence(publicData, stored.Sequence)
+		}
+	}
+	if d.onEvent != nil {
+		if err := d.onEvent(record.eventType, publicData, stored); err != nil {
+			logger.WarnContext(ctx, "workflow run event handler failed", "workflow_run_id", d.workflowRunID, "event_type", record.eventType, err)
+		}
+	}
+}
+
+func (d *workflowRunEventDispatcher) shouldPersist(eventType string) bool {
+	if eventType == workflowEventAnswerSnapshotReady {
+		return false
+	}
+	if eventType == workflowEventMessage && !d.persistMessages {
+		return false
+	}
+	return true
+}
+
+func (d *workflowRunEventDispatcher) observeContainerLifecycle(record workflowRunEventRecord) {
+	id := workflowContainerLifecycleID(record)
+	if id == "" {
+		return
+	}
+	state := d.containers[id]
+	if state.rounds == nil {
+		state.rounds = map[int]bool{}
+	}
+	switch record.eventType {
+	case "iteration_started", "loop_started":
+		state.started = true
+	case "iteration_next", "loop_next":
+		state.started = true
+		if index, ok := workflowLifecycleRoundIndex(record); ok {
+			state.rounds[index] = true
+		}
+	}
+	d.containers[id] = state
+}
+
+func workflowLifecycleRoundIndex(record workflowRunEventRecord) (int, bool) {
+	switch record.eventType {
+	case "iteration_next":
+		if index, ok := workflowEventInt(record.data["iteration_index"]); ok {
+			return index, true
+		}
+		return workflowEventInt(record.data["index"])
+	case "loop_next":
+		if index, ok := workflowEventInt(record.data["loop_index"]); ok {
+			return index, true
+		}
+		index, ok := workflowEventInt(record.data["index"])
+		if !ok {
+			return 0, false
+		}
+		if index > 0 {
+			return index - 1, true
+		}
+		return index, true
+	default:
+		return 0, false
+	}
+}
+
+func workflowRunEventContainerContext(record workflowRunEventRecord) (string, *int, bool) {
+	if record.eventType == "iteration_started" || record.eventType == "iteration_next" ||
+		record.eventType == "iteration_completed" || record.eventType == "iteration_succeeded" ||
+		record.eventType == "iteration_failed" || record.eventType == "loop_started" ||
+		record.eventType == "loop_next" || record.eventType == "loop_completed" ||
+		record.eventType == "loop_succeeded" || record.eventType == "loop_failed" {
+		return "", nil, false
+	}
+	if id := workflowEventString(record.data["loop_id"]); id != "" {
+		return "loop:" + id, workflowEventIndexPointer(record.data["loop_index"]), true
+	}
+	if id := workflowEventString(record.data["iteration_id"]); id != "" {
+		return "iteration:" + id, workflowEventIndexPointer(record.data["iteration_index"]), true
+	}
+	return "", nil, false
+}
+
+func workflowEventIndexPointer(value interface{}) *int {
+	index, ok := workflowEventInt(value)
+	if !ok {
+		return nil
+	}
+	return &index
+}
+
+func workflowContainerLifecycleID(record workflowRunEventRecord) string {
+	switch record.eventType {
+	case "iteration_started", "iteration_next", "iteration_completed", "iteration_succeeded", "iteration_failed":
+		if id := workflowEventString(firstWorkflowValue(record.data["node_id"], record.data["id"])); id != "" {
+			return "iteration:" + id
+		}
+	case "loop_started", "loop_next", "loop_completed", "loop_succeeded", "loop_failed":
+		if id := workflowEventString(firstWorkflowValue(record.data["node_id"], record.data["id"])); id != "" {
+			return "loop:" + id
+		}
+	}
+	return ""
+}
+
 func newWorkflowRunEventRecorder(tenantID, appID, workflowRunID string) *workflowRunEventRecorder {
 	if workflowRunID == "" {
 		return nil
@@ -75,19 +274,26 @@ func (r *workflowRunEventRecorder) run() {
 }
 
 func appendWorkflowRunEvent(ctx context.Context, tenantID, appID, workflowRunID, eventType string, data map[string]interface{}) {
+	appendWorkflowRunEventPayload(ctx, tenantID, appID, workflowRunID, eventType, data)
+}
+
+func appendWorkflowRunEventPayload(ctx context.Context, tenantID, appID, workflowRunID, eventType string, data map[string]interface{}) *workflowpause.RunEventPayload {
 	if workflowRunID == "" || eventType == "" {
-		return
+		return nil
 	}
 	service := workflowpause.NewService(database.GetDB())
-	if err := service.AppendEvent(ctx, workflowpause.AppendEventParams{
+	stored, err := service.AppendEventPayload(ctx, workflowpause.AppendEventParams{
 		TenantID:      tenantID,
 		AppID:         appID,
 		WorkflowRunID: workflowRunID,
 		EventType:     eventType,
 		EventData:     sanitizeWorkflowEventData(data),
-	}); err != nil {
+	})
+	if err != nil {
 		logger.WarnContext(ctx, "failed to append workflow run event", "workflow_run_id", workflowRunID, "event_type", eventType, err)
+		return nil
 	}
+	return stored
 }
 
 func sendWorkflowSSEEvent(ctx context.Context, w http.ResponseWriter, eventType string, data map[string]interface{}) {
@@ -164,6 +370,53 @@ func sanitizeWorkflowEventData(input map[string]interface{}) map[string]interfac
 		output[key] = sanitizeWorkflowEventValue(value)
 	}
 	return output
+}
+
+func copyWorkflowEventDataWithSequence(input map[string]interface{}, sequence int) map[string]interface{} {
+	out := sanitizeWorkflowEventData(input)
+	if sequence > 0 {
+		out["sequence"] = sequence
+	}
+	return out
+}
+
+func firstWorkflowValue(values ...interface{}) interface{} {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func workflowEventString(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return fmt.Sprint(value)
+}
+
+func workflowEventInt(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case float32:
+		return int(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		return int(parsed), err == nil
+	default:
+		return 0, false
+	}
 }
 
 func sanitizeWorkflowEventValue(value interface{}) interface{} {

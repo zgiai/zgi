@@ -2,10 +2,6 @@ package agents
 
 import (
 	"errors"
-	"fmt"
-	"strconv"
-	"strings"
-
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
@@ -13,10 +9,11 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"strconv"
+	"strings"
 )
 
 type agentRuntimeContext struct {
@@ -153,6 +150,14 @@ func (h *AgentsHandler) RegenerateWebAppAgentRuntimeMessage(c *gin.Context) {
 	h.regenerateRuntimeMessage(c, runtimeCtx)
 }
 
+func (h *AgentsHandler) ContinueWebAppAgentRuntimeWorkflowApproval(c *gin.Context) {
+	runtimeCtx, ok := h.webAppAgentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	h.continueRuntimeWorkflowApproval(c, runtimeCtx)
+}
+
 func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext, bool) {
 	if h.chatRuntimeService == nil {
 		response.Fail(c, response.ErrSystemError)
@@ -277,6 +282,9 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		DatabaseBindings:          agentDatabaseRuntimeBindings(cfg.DatabaseBindings),
 		DatabaseBoundByAccountID:  cfg.DatabaseBoundByAccountID,
 		DatabaseBoundAtUnix:       cfg.DatabaseBoundAtUnix,
+		WorkflowBindings:          agentWorkflowRuntimeBindings(cfg.WorkflowBindings),
+		WorkflowBoundByAccountID:  cfg.WorkflowBoundByAccountID,
+		WorkflowBoundAtUnix:       cfg.WorkflowBoundAtUnix,
 		UseMemory:                 false,
 		AgentMemoryEnabled:        cfg.AgentMemoryEnabled,
 		AgentMemorySlots:          agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
@@ -296,6 +304,47 @@ func agentDatabaseRuntimeBindings(bindings []dto.AgentDatabaseBinding) []runtime
 			DataSourceID:     strings.TrimSpace(binding.DataSourceID),
 			TableIDs:         append([]string(nil), binding.TableIDs...),
 			WritableTableIDs: append([]string(nil), binding.WritableTableIDs...),
+		})
+	}
+	return out
+}
+
+func agentWorkflowRuntimeBindings(bindings []dto.AgentWorkflowBinding) []runtimeservice.AgentWorkflowBinding {
+	out := make([]runtimeservice.AgentWorkflowBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		if strings.TrimSpace(binding.BindingID) == "" || strings.TrimSpace(binding.AgentID) == "" || strings.TrimSpace(binding.WorkflowID) == "" {
+			continue
+		}
+		out = append(out, runtimeservice.AgentWorkflowBinding{
+			BindingID:       strings.TrimSpace(binding.BindingID),
+			Label:           strings.TrimSpace(binding.Label),
+			Description:     strings.TrimSpace(binding.Description),
+			AgentID:         strings.TrimSpace(binding.AgentID),
+			WorkflowID:      strings.TrimSpace(binding.WorkflowID),
+			AgentType:       strings.TrimSpace(binding.AgentType),
+			VersionStrategy: strings.TrimSpace(binding.VersionStrategy),
+			VersionUUID:     strings.TrimSpace(binding.VersionUUID),
+			TimeoutSeconds:  binding.TimeoutSeconds,
+			StartInputs:     agentWorkflowRuntimeStartInputs(binding.StartInputs),
+			RequiredInputs:  append([]string(nil), binding.RequiredInputs...),
+			DefaultInputKey: strings.TrimSpace(binding.DefaultInputKey),
+		})
+	}
+	return out
+}
+
+func agentWorkflowRuntimeStartInputs(inputs []dto.AgentWorkflowStartInput) []runtimeservice.AgentWorkflowStartInput {
+	out := make([]runtimeservice.AgentWorkflowStartInput, 0, len(inputs))
+	for _, input := range inputs {
+		variable := strings.TrimSpace(input.Variable)
+		if variable == "" {
+			continue
+		}
+		out = append(out, runtimeservice.AgentWorkflowStartInput{
+			Variable: variable,
+			Label:    strings.TrimSpace(input.Label),
+			Type:     strings.TrimSpace(input.Type),
+			Required: input.Required,
 		})
 	}
 	return out
@@ -440,6 +489,13 @@ func (h *AgentsHandler) stopRuntimeConversation(c *gin.Context, runtimeCtx agent
 		h.failRuntime(c, err)
 		return
 	}
+	if result != nil && result.Message != nil && h.workflowContinuationRunner != nil {
+		if workflowRunID := agentWorkflowContinuationRunIDFromMetadata(result.Message.Metadata); workflowRunID != "" {
+			if err := h.workflowContinuationRunner.StopWorkflowContinuation(c.Request.Context(), workflowRunID, runtimeCtx.Scope.AccountID.String()); err != nil {
+				logger.WarnContext(c.Request.Context(), "failed to stop agent workflow continuation", "workflow_run_id", workflowRunID, err)
+			}
+		}
+	}
 	response.Success(c, runtimeStopConversationResponse(result))
 }
 
@@ -471,155 +527,13 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 	}
 }
 
-func (h *AgentsHandler) regenerateRuntimeMessage(c *gin.Context, runtimeCtx agentRuntimeContext) {
-	messageID, ok := uuidParam(c, "message_id")
-	if !ok {
-		return
-	}
-	var req runtimedto.RegenerateMessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-	prepared, err := h.chatRuntimeService.PrepareConfiguredRootRegeneration(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, runtimeCtx.RunConfig, messageID, req)
-	if err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	h.runPreparedAgentStream(c, prepared)
-}
-
-func (h *AgentsHandler) runPreparedAgentStream(c *gin.Context, prepared *runtimeservice.PreparedChat) {
-	setupAgentSSE(c)
-	_ = writeAgentSSE(c, "message_start", gin.H{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"parent_id":       uuidPtrToString(prepared.Message.ParentID),
-		"title":           prepared.Conversation.Title,
-		"model":           prepared.Message.ModelName,
-		"replace":         prepared.ReplaceRoot,
-		"created_at":      prepared.Message.CreatedAt.Unix(),
-	})
-	result, err := h.chatRuntimeService.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
-		return writeAgentSSE(c, "message", gin.H{
-			"conversation_id": prepared.Conversation.ID.String(),
-			"message_id":      prepared.Message.ID.String(),
-			"answer":          chunk,
-		})
-	}, func(event runtimeservice.StreamEvent) error {
-		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
-	})
-	if err != nil {
-		status := runtimemodel.MessageStatusError
-		if errors.Is(err, runtimeservice.ErrMessageStopped) {
-			status = runtimemodel.MessageStatusStopped
-		}
-		if runtimeservice.IsFinalizedStreamError(err) {
-			return
-		}
-		_ = writeAgentSSE(c, "error", runtimeservice.BuildStreamErrorPayload(prepared, err))
-		_ = writeAgentSSE(c, "message_end", gin.H{
-			"conversation_id": prepared.Conversation.ID.String(),
-			"message_id":      prepared.Message.ID.String(),
-			"status":          status,
-			"metadata":        gin.H{},
-		})
-		return
-	}
-	_ = writeAgentSSE(c, "message_end", gin.H{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"status":          runtimemodel.MessageStatusCompleted,
-		"metadata": gin.H{
-			"usage": result.Metadata["usage"],
-		},
-	})
-}
-
-func (h *AgentsHandler) validateAgentRuntimeSkills(c *gin.Context, req dto.AgentConfigRequest) error {
-	skillIDs := req.EnabledSkillIDs
-	if h.chatRuntimeService == nil || len(skillIDs) == 0 {
-		return nil
-	}
-	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
-	if err != nil {
-		return fmt.Errorf("unauthorized")
-	}
-	organizationID, err := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
-	if err != nil {
-		return fmt.Errorf("unauthorized")
-	}
-	scope := runtimeservice.Scope{
-		OrganizationID: organizationID,
-		AccountID:      accountID,
-	}
-	skillsMetadata, err := h.chatRuntimeService.ListSkills(c.Request.Context(), scope)
-	if err != nil {
-		return err
-	}
-	metadataByID := make(map[string]runtimedto.SkillResponse, len(skillsMetadata))
-	for _, item := range skillsMetadata {
-		metadataByID[strings.ToLower(strings.TrimSpace(item.ID))] = skillResponseFromMetadata(item)
-	}
-	for _, raw := range skillIDs {
-		id := strings.ToLower(strings.TrimSpace(raw))
-		if id == "" {
-			continue
-		}
-		if skills.IsHiddenSystemSkill(id) {
-			continue
-		}
-		metadata, ok := metadataByID[id]
-		if !ok {
-			return fmt.Errorf("skill %s is not found", id)
-		}
-		if !skillResponseSupportsCaller(metadata, runtimemodel.ConversationCallerAgent) {
-			return fmt.Errorf("skill %s is not available for agent", id)
-		}
-		if skillResponseRequires(metadata, "agent_knowledge") && len(req.KnowledgeDatasetIDs) == 0 {
-			return fmt.Errorf("skill %s requires configured knowledge datasets", id)
-		}
-		if skillResponseRequires(metadata, "agent_database") && len(normalizeAgentDatabaseBindings(req.DatabaseBindings)) == 0 {
-			return fmt.Errorf("skill %s requires configured database bindings", id)
-		}
-	}
-	return nil
-}
-
-func skillResponseFromMetadata(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillResponse {
-	return runtimedto.SkillResponse{
-		SkillID:          metadata.ID,
-		SupportedCallers: metadata.SupportedCallers,
-		RequiredConfig:   metadata.RequiredConfig,
-	}
-}
-
-func skillResponseSupportsCaller(metadata runtimedto.SkillResponse, callerType string) bool {
-	if len(metadata.SupportedCallers) == 0 {
-		return true
-	}
-	for _, caller := range metadata.SupportedCallers {
-		if strings.EqualFold(strings.TrimSpace(caller), callerType) {
-			return true
-		}
-	}
-	return false
-}
-
-func skillResponseRequires(metadata runtimedto.SkillResponse, requirement string) bool {
-	for _, value := range metadata.RequiredConfig {
-		if strings.EqualFold(strings.TrimSpace(value), requirement) {
-			return true
-		}
-	}
-	return false
-}
-
 func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, runtimeservice.ErrNotFound):
 		response.Fail(c, response.ErrNotFound)
 	case errors.Is(err, runtimeservice.ErrInvalidInput):
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+	case errors.Is(err, runtimeservice.ErrConversationWaitingApproval):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, agentmemory.ErrInvalidInput):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())

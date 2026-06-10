@@ -6,7 +6,7 @@ export const TOKEN_REGEX_GLOBAL = /\{\{#([^.#}]+)(?:\.([^#}]+))?#\}\}/g;
 export const TOKEN_REGEX_SINGLE = /\{\{#([^.#}]+)(?:\.([^#}]+))?#\}\}/;
 
 const ZGI_BLOCK_REGEX_GLOBAL =
-  /<zgi:(slot|knowledge|skill|database|table)\b([^>]*)>([\s\S]*?)<\/zgi:(slot|knowledge|skill|database|table)>/g;
+  /<zgi:(slot|knowledge|skill|database|table|workflow)\b([^>]*)>([\s\S]*?)<\/zgi:(slot|knowledge|skill|database|table|workflow)>/g;
 const ZGI_ATTR_REGEX = /([a-zA-Z_][\w-]*)="([^"]*)"/g;
 
 export interface ValueTransformOptions {
@@ -101,7 +101,12 @@ function parseInlineTokens(line: string, options?: ValueTransformOptions): JSONC
         contentNodes.push({ type: 'text', text: match });
       } else if (kind === 'slot') {
         contentNodes.push(slotToInlineNode(attrs, label));
-      } else if (kind === 'knowledge' || kind === 'database' || kind === 'table') {
+      } else if (
+        kind === 'knowledge' ||
+        kind === 'database' ||
+        kind === 'table' ||
+        kind === 'workflow'
+      ) {
         contentNodes.push({
           type: 'variableToken',
           attrs: {
@@ -194,7 +199,8 @@ export function getTemplateAwareCharacterCount(
       kind === 'knowledge' ||
       kind === 'skill' ||
       kind === 'database' ||
-      kind === 'table'
+      kind === 'table' ||
+      kind === 'workflow'
     ) {
       count += characterLength(decodeTemplateText(rawContent));
     } else {
@@ -249,7 +255,8 @@ export function docToValue(json: JSONContent): string {
           (sourceId === 'knowledge' ||
             sourceId === 'skill' ||
             sourceId === 'database' ||
-            sourceId === 'table')
+            sourceId === 'table' ||
+            sourceId === 'workflow')
         ) {
           return `<zgi:${sourceId} id="${encodeTemplateAttribute(key)}">${encodeTemplateText(label)}</zgi:${sourceId}>`;
         }

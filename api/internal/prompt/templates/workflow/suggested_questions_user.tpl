@@ -1,6 +1,6 @@
 {{.LanguageInstruction}}
 
-Generate {{.Count}} suggested questions for this workflow context.
+Generate {{.Count}} suggested first questions for this {{.ApplicationKind}}.
 
-Workflow context:
+Application context:
 {{.WorkflowContextJSON}}

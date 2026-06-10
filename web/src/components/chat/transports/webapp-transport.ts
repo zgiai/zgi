@@ -20,6 +20,7 @@ import {
   getWorkflowRunCreatedAtMs,
   getWorkflowRunExecutionId,
   getWorkflowRunItemKey,
+  getWorkflowRunRoundDurationMap,
   getWorkflowRunRoundElapsedTime,
   sortWorkflowRunItems,
   sortWorkflowRunRounds,
@@ -705,9 +706,11 @@ export class WebappConversationTransport implements ConversationTransport {
           const nodeType =
             typeof p['node_type'] === 'string' ? (p['node_type'] as string) : 'iteration';
           const title = typeof p['title'] === 'string' ? (p['title'] as string) : nodeType;
-          const elapsed = typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : 0;
+          const elapsed =
+            typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : undefined;
           const error = typeof p['error'] === 'string' ? (p['error'] as string) : undefined;
           const outputs = p['outputs'];
+          const roundDurations = getWorkflowRunRoundDurationMap(p, 'iteration');
           const key = nodeId ?? title;
           const sess = iterationSessions.get(key) ?? { nodeId, nodeType, title, rounds: [] };
           sess.elapsedTime = elapsed;
@@ -715,7 +718,7 @@ export class WebappConversationTransport implements ConversationTransport {
           sess.outputs = outputs;
           sess.rounds = sess.rounds.map(r => ({
             ...r,
-            elapsedTime: getWorkflowRunRoundElapsedTime(r),
+            elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
           }));
           iterationSessions.set(key, sess);
           activeIteration = { nodeId: null, index: null };
@@ -788,7 +791,8 @@ export class WebappConversationTransport implements ConversationTransport {
           const nodeId = typeof p['node_id'] === 'string' ? (p['node_id'] as string) : undefined;
           const nodeType = typeof p['node_type'] === 'string' ? (p['node_type'] as string) : 'loop';
           const title = typeof p['title'] === 'string' ? (p['title'] as string) : nodeType;
-          const elapsed = typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : 0;
+          const elapsed =
+            typeof p['elapsed_time'] === 'number' ? (p['elapsed_time'] as number) : undefined;
           const status = typeof p['status'] === 'string' ? (p['status'] as string) : '';
           const isSuccess =
             status === 'success' || status === 'succeeded' || status === 'completed';
@@ -801,6 +805,7 @@ export class WebappConversationTransport implements ConversationTransport {
                   | Record<string, unknown>
                   | undefined)
               : undefined;
+          const roundDurations = getWorkflowRunRoundDurationMap(p, 'loop');
           const key = nodeId ?? title;
           const sess = loopSessions.get(key) ?? { nodeId, nodeType, title, rounds: [] };
           sess.elapsedTime = elapsed;
@@ -810,7 +815,7 @@ export class WebappConversationTransport implements ConversationTransport {
             const variables = variableMap?.[String(r.index)];
             return {
               ...r,
-              elapsedTime: getWorkflowRunRoundElapsedTime(r),
+              elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
               variables: variables ?? r.variables,
             };
           });

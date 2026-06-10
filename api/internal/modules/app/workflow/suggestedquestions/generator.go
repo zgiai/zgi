@@ -84,6 +84,9 @@ func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*Generat
 		},
 		Temperature: &temperature,
 		MaxTokens:   &maxTokens,
+		ResponseFormat: &adapter.ResponseFormat{
+			Type: "json_object",
+		},
 	}
 
 	appCtx := &client.AppContext{
@@ -96,6 +99,10 @@ func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*Generat
 	}
 
 	resp, err := g.llmClient.AppChat(timeoutCtx, appCtx, chatReq)
+	if err != nil && isResponseFormatUnsupportedError(err) {
+		chatReq.ResponseFormat = nil
+		resp, err = g.llmClient.AppChat(timeoutCtx, appCtx, chatReq)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -122,4 +129,18 @@ func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*Generat
 		Provider:  provider,
 		Model:     model,
 	}, nil
+}
+
+func isResponseFormatUnsupportedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "response_format") &&
+		(strings.Contains(message, "unsupported") ||
+			strings.Contains(message, "not support") ||
+			strings.Contains(message, "not_supported") ||
+			strings.Contains(message, "invalid parameter") ||
+			strings.Contains(message, "invalid_param") ||
+			strings.Contains(message, "不支持"))
 }

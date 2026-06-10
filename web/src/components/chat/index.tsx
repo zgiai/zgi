@@ -120,6 +120,7 @@ interface AIChatVariantProps {
   supportsVisionOverride?: boolean;
   isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
+  beforeSend?: () => boolean | Promise<boolean>;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
   requireModel?: boolean;

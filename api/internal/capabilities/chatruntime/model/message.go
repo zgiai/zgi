@@ -7,11 +7,13 @@ import (
 )
 
 const (
-	MessageStatusPending   = "pending"
-	MessageStatusStreaming = "streaming"
-	MessageStatusCompleted = "completed"
-	MessageStatusError     = "error"
-	MessageStatusStopped   = "stopped"
+	MessageStatusPending         = "pending"
+	MessageStatusStreaming       = "streaming"
+	MessageStatusWaitingApproval = "waiting_approval"
+	MessageStatusWaitingQuestion = "waiting_question"
+	MessageStatusCompleted       = "completed"
+	MessageStatusError           = "error"
+	MessageStatusStopped         = "stopped"
 
 	MessageBillingReasonSourceAIChat = "aichat"
 )

@@ -24,6 +24,7 @@ interface AgentRuntimePreviewPanelProps {
   surfaceMode?: 'inline' | 'sheet';
   onOpenMemoryValues: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
+  beforeSend?: () => boolean | Promise<boolean>;
   onClose?: () => void;
 }
 
@@ -40,6 +41,7 @@ export function AgentRuntimePreviewPanel({
   surfaceMode = 'inline',
   onOpenMemoryValues,
   onModelChange,
+  beforeSend,
   onClose,
 }: AgentRuntimePreviewPanelProps) {
   const t = useT('agents.agentRuntime');
@@ -92,6 +94,7 @@ export function AgentRuntimePreviewPanel({
           modelSelectorValue={modelSelectorValue}
           modelProps={modelProps}
           onModelChange={onModelChange}
+          beforeSend={beforeSend}
           variant="embedded"
           showModelSelector={false}
           showMemoryToggle={false}

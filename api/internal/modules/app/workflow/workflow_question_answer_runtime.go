@@ -269,10 +269,11 @@ func questionAnswerSubmittedOptionID(inputs map[string]interface{}) string {
 	return ""
 }
 
-func restoreQuestionAnswerResumeInputs(pool *graphentities.VariablePool, systemInputs map[string]interface{}, requestInputs map[string]interface{}) {
+func restoreQuestionAnswerResumeInputs(pool *graphentities.VariablePool, systemInputs map[string]interface{}, requestInputs map[string]interface{}, state *workflowpause.State) {
 	if pool == nil {
 		return
 	}
+	restoreQuestionAnswerPausedOutputs(pool, state)
 	if pool.UserInputs == nil {
 		pool.UserInputs = make(map[string]interface{})
 	}
@@ -296,6 +297,33 @@ func restoreQuestionAnswerResumeInputs(pool *graphentities.VariablePool, systemI
 	}
 	if optionID != "" {
 		pool.UserInputs["question_answer_option_id"] = optionID
+	}
+}
+
+func restoreQuestionAnswerPausedOutputs(pool *graphentities.VariablePool, state *workflowpause.State) {
+	if pool == nil || state == nil {
+		return
+	}
+	nodeIDs := append([]string(nil), state.ExecutorState.PausedNodeIDs...)
+	if len(nodeIDs) == 0 && strings.TrimSpace(state.ExecutorState.PausedNodeID) != "" {
+		nodeIDs = append(nodeIDs, strings.TrimSpace(state.ExecutorState.PausedNodeID))
+	}
+	for _, nodeID := range nodeIDs {
+		nodeID = strings.TrimSpace(nodeID)
+		if nodeID == "" {
+			continue
+		}
+		outputs := state.ExecutorState.ExecutionOutputs[nodeID]
+		if len(outputs) == 0 {
+			outputs = state.VariablePool.Variables[nodeID]
+		}
+		for key, value := range outputs {
+			key = strings.TrimSpace(key)
+			if key == "" || pool.Get([]string{nodeID, key}) != nil {
+				continue
+			}
+			pool.Add([]string{nodeID, key}, value)
+		}
 	}
 }
 

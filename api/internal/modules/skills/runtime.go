@@ -909,6 +909,9 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillAgentDatabase + "/insert_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "insert_table_records", "Insert records into an Agent-bound database table."),
 		SkillAgentDatabase + "/update_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "update_table_records", "Update records in an Agent-bound database table. Each record must include id."),
 		SkillAgentDatabase + "/delete_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "delete_table_records", "Delete records from an Agent-bound database table. Each record must include id."),
+		SkillAgentWorkflow + "/list_agent_workflows":         workflowListContract(),
+		SkillAgentWorkflow + "/run_agent_workflow":           workflowRunContract(),
+		SkillAgentWorkflow + "/get_workflow_run_status":      workflowRunStatusContract(),
 		SkillTime + "/current_time": {
 			SkillID:     SkillTime,
 			ToolName:    "current_time",
@@ -1046,6 +1049,55 @@ func databaseMutateRecordsContract(skillID string, toolName string, description 
 			[]string{"data_source_id", "table_id", "records"},
 		),
 		Example: map[string]interface{}{"data_source_id": "database-id", "table_id": "table-id", "records": []map[string]interface{}{{"id": "record-id"}}},
+	}
+}
+
+func workflowListContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentWorkflow,
+		ToolName:    "list_agent_workflows",
+		Description: "Fallback/debug list of workflows bound to the current Agent. Prefer the injected available_workflows context when it is present.",
+		Schema:      objectSchema(map[string]interface{}{}, nil),
+		Example:     map[string]interface{}{},
+	}
+}
+
+func workflowRunContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentWorkflow,
+		ToolName:    "run_agent_workflow",
+		Description: "Run an Agent-bound workflow by binding_id. Do not pass workflow_id directly. Set inputs.query to the user's current request. After a succeeded run, final answers must use primary_output or outputs and must not invent workflow output.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"binding_id": stringValueSchema("Workflow binding ID from injected available_workflows, or from list_agent_workflows if the injected list is missing or ambiguous."),
+				"inputs": map[string]interface{}{
+					"type":                 "object",
+					"description":          "Workflow input object. Include query with the user's current request unless the binding's input_schema, required_inputs, or default_input_key says otherwise; the runtime also forwards query as sys.query.",
+					"additionalProperties": true,
+					"properties": map[string]interface{}{
+						"query": stringValueSchema("The user's current request or instruction to pass into the workflow."),
+					},
+					"required": []string{"query"},
+				},
+			},
+			[]string{"binding_id", "inputs"},
+		),
+		Example: map[string]interface{}{"binding_id": "approval-flow", "inputs": map[string]interface{}{"query": "Approve refund request #123"}},
+	}
+}
+
+func workflowRunStatusContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentWorkflow,
+		ToolName:    "get_workflow_run_status",
+		Description: "Query the status and available outputs for an Agent-bound workflow run.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"workflow_run_id": stringValueSchema("Workflow run ID returned by run_agent_workflow."),
+			},
+			[]string{"workflow_run_id"},
+		),
+		Example: map[string]interface{}{"workflow_run_id": "workflow-run-id"},
 	}
 }
 
@@ -1302,7 +1354,7 @@ func normalizeSkillCallers(id string, source string, callers []string) []string 
 	switch normalizeSkillID(id) {
 	case SkillInternalKnowledge, SkillInternalDatabase:
 		return []string{SkillCallerAIChat}
-	case SkillAgentKnowledge, SkillAgentDatabase:
+	case SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow:
 		return []string{SkillCallerAgent}
 	default:
 		return []string{SkillCallerAIChat, SkillCallerAgent}
@@ -1328,6 +1380,9 @@ func normalizeSkillRequiredConfig(id string, required []string) []string {
 	}
 	if len(out) == 0 && normalizeSkillID(id) == SkillAgentDatabase {
 		out = append(out, SkillRequiredConfigAgentDatabase)
+	}
+	if len(out) == 0 && normalizeSkillID(id) == SkillAgentWorkflow {
+		out = append(out, SkillRequiredConfigAgentWorkflow)
 	}
 	sort.Strings(out)
 	return out

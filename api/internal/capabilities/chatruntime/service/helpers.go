@@ -68,6 +68,12 @@ func isActiveMessageStatus(status string) bool {
 	return status == runtimemodel.MessageStatusPending || status == runtimemodel.MessageStatusStreaming
 }
 
+func isStoppableMessageStatus(status string) bool {
+	return isActiveMessageStatus(status) ||
+		status == runtimemodel.MessageStatusWaitingApproval ||
+		status == runtimemodel.MessageStatusWaitingQuestion
+}
+
 func floatValue(value interface{}) (float64, bool) {
 	switch typed := value.(type) {
 	case float64:

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -80,6 +81,40 @@ func TestEffectiveAgentSkillIDsSkipsDatabaseWithoutBindings(t *testing.T) {
 	}
 }
 
+func TestEffectiveAgentSkillIDsAutoAddsHiddenWorkflow(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillAgentWorkflow, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentWorkflow}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{skills.SkillCalculator},
+		catalog,
+		&RunConfig{WorkflowBindings: []AgentWorkflowBinding{{BindingID: "approval-flow", AgentID: "agent-1", WorkflowID: "workflow-1"}}},
+	)
+	want := []string{skills.SkillAgentWorkflow, skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestEffectiveAgentSkillIDsSkipsWorkflowWithoutBindings(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillAgentWorkflow, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentWorkflow}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{skills.SkillCalculator, skills.SkillAgentWorkflow},
+		catalog,
+		&RunConfig{},
+	)
+	want := []string{skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
 func TestEffectiveAgentSkillIDsDoesNotAutoAddHiddenAgentMemory(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillAgentMemory, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
@@ -145,6 +180,9 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 		DatabaseBindings:          []AgentDatabaseBinding{{DataSourceID: "db-1", TableIDs: []string{"table-1"}}},
 		DatabaseBoundByAccountID:  "database-binder",
 		DatabaseBoundAtUnix:       456,
+		WorkflowBindings:          []AgentWorkflowBinding{{BindingID: "approval-flow", AgentID: "agent-1", WorkflowID: "workflow-1"}},
+		WorkflowBoundByAccountID:  "workflow-binder",
+		WorkflowBoundAtUnix:       789,
 	})
 
 	if params["organization_id"] != organizationID.String() || params["workspace_id"] != workspaceID.String() {
@@ -159,6 +197,56 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	if params["database_binding_grant"] != true || params["database_bound_by_account_id"] != "database-binder" || params["database_bound_at_unix"] != int64(456) {
 		t.Fatalf("database grant params = %#v", params)
 	}
+	if params["workflow_binding_grant"] != true || params["workflow_bound_by_account_id"] != "workflow-binder" || params["workflow_bound_at_unix"] != int64(789) {
+		t.Fatalf("workflow grant params = %#v", params)
+	}
+	if bindings, ok := params["workflow_bindings"].([]AgentWorkflowBinding); !ok || len(bindings) != 1 || bindings[0].BindingID != "approval-flow" {
+		t.Fatalf("workflow bindings param = %#v", params["workflow_bindings"])
+	}
+}
+
+func TestAgentWorkflowAvailableBindingsMessageInjectsSafeContext(t *testing.T) {
+	message, ok := agentWorkflowAvailableBindingsMessage([]AgentWorkflowBinding{{
+		BindingID:       "task-flow",
+		Label:           "Task flow",
+		Description:     "Runs a task workflow",
+		AgentID:         "agent-1",
+		WorkflowID:      "workflow-1",
+		AgentType:       "WORKFLOW",
+		VersionStrategy: "latest_published",
+		TimeoutSeconds:  10,
+		StartInputs: []AgentWorkflowStartInput{{
+			Variable: "task",
+			Label:    "Task",
+			Type:     "string",
+			Required: true,
+		}},
+	}})
+
+	if !ok {
+		t.Fatal("agentWorkflowAvailableBindingsMessage() returned no message")
+	}
+	content, ok := message.Content.(string)
+	if !ok {
+		t.Fatalf("message content type = %T, want string", message.Content)
+	}
+	for _, want := range []string{
+		"available_workflows",
+		`"binding_id":"task-flow"`,
+		`"label":"Task flow"`,
+		`"agent_type":"WORKFLOW"`,
+		`"default_input_key":"task"`,
+		`"required_inputs":["task"]`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("message content missing %q: %s", want, content)
+		}
+	}
+	for _, forbidden := range []string{"workflow-1", "agent-1"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("message content exposed %q: %s", forbidden, content)
+		}
+	}
 }
 
 func TestVisibleSkillMetadataHidesRuntimeManagedSkills(t *testing.T) {
@@ -166,6 +254,7 @@ func TestVisibleSkillMetadataHidesRuntimeManagedSkills(t *testing.T) {
 		{ID: skills.SkillInternalKnowledge},
 		{ID: skills.SkillAgentKnowledge},
 		{ID: skills.SkillAgentDatabase},
+		{ID: skills.SkillAgentWorkflow},
 		{ID: skills.SkillAgentMemory},
 		{ID: skills.SkillUserMemory},
 		{ID: skills.SkillCalculator},
@@ -420,6 +509,69 @@ func TestProcessTimelineRecorderAggregatesIntermediateAnswerChunks(t *testing.T)
 	invocation := onlyTimelineInvocation(t, prepared)
 	if invocation["status"] != "success" || invocation["message"] != "hello world" {
 		t.Fatalf("invocation = %#v, want aggregated successful intermediate answer", invocation)
+	}
+}
+
+func TestProcessTimelineRecorderPersistsWorkflowRunEvents(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+
+	recorder.RecordEvent("workflow_started", map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"workflow_run_id": "run-1",
+		"workflow_id":     "workflow-1",
+		"status":          "running",
+		"created_at":      10,
+	})
+	recorder.RecordEvent("node_started", map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"workflow_run_id": "run-1",
+		"node_id":         "node-1",
+		"node_type":       "answer",
+		"node_title":      "Answer",
+		"inputs":          map[string]interface{}{"query": "hello"},
+		"status":          "running",
+		"created_at":      11,
+	})
+	recorder.RecordEvent("node_finished", map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"workflow_run_id": "run-1",
+		"node_id":         "node-1",
+		"node_type":       "answer",
+		"node_title":      "Answer",
+		"outputs":         map[string]interface{}{"answer": "done"},
+		"status":          "succeeded",
+		"elapsed_time":    0.2,
+		"created_at":      12,
+	})
+	recorder.RecordEvent("workflow_finished", map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"workflow_run_id": "run-1",
+		"status":          "succeeded",
+		"outputs":         map[string]interface{}{"answer": "done"},
+		"elapsed_time":    0.3,
+		"created_at":      13,
+	})
+
+	runs, ok := prepared.Message.Metadata["workflow_runs"].([]interface{})
+	if !ok || len(runs) != 1 {
+		t.Fatalf("workflow_runs = %#v, want one persisted run", prepared.Message.Metadata["workflow_runs"])
+	}
+	run, _ := runs[0].(map[string]interface{})
+	if run["workflow_run_id"] != "run-1" || run["status"] != "succeeded" || run["outputs"] == nil {
+		t.Fatalf("run = %#v, want succeeded run with outputs", run)
+	}
+	nodes, ok := run["nodes"].([]interface{})
+	if !ok || len(nodes) != 1 {
+		t.Fatalf("nodes = %#v, want one merged node", run["nodes"])
+	}
+	node, _ := nodes[0].(map[string]interface{})
+	if node["status"] != "succeeded" || node["inputs"] == nil || node["outputs"] == nil {
+		t.Fatalf("node = %#v, want inputs and outputs preserved", node)
 	}
 }
 

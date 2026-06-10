@@ -16,6 +16,7 @@ import {
 } from '@/components/chat/controllers/aichat';
 import {
   dispatchAIChatStreamEvent,
+  type AIChatWorkflowApprovalContinuationPayload,
   type AIChatConversationDetail,
   type AIChatConversationListResult,
   type AIChatMessageListResult,
@@ -46,14 +47,37 @@ function runtimeTerminalMessage(message: { event: string | null; data: unknown }
       ? (message.data as Record<string, unknown>)
       : {};
   const event = typeof record.event === 'string' ? record.event : message.event;
-  if (event === 'message_end' || event === 'error') {
+  if (event === 'error') {
     return true;
+  }
+  if (
+    event === 'workflow_started' ||
+    event === 'node_started' ||
+    event === 'node_finished' ||
+    event === 'iteration_started' ||
+    event === 'iteration_next' ||
+    event === 'iteration_completed' ||
+    event === 'iteration_succeeded' ||
+    event === 'iteration_failed' ||
+    event === 'loop_started' ||
+    event === 'loop_next' ||
+    event === 'loop_completed' ||
+    event === 'loop_succeeded' ||
+    event === 'loop_failed' ||
+    event === 'workflow_paused' ||
+    event === 'approval_requested' ||
+    event === 'workflow_finished' ||
+    event === 'workflow_failed'
+  ) {
+    return false;
   }
   const data = record.data && typeof record.data === 'object' ? record.data : record;
   return (
     data &&
     typeof data === 'object' &&
-    ['completed', 'stopped', 'error'].includes(String((data as Record<string, unknown>).status))
+    ['completed', 'stopped', 'error', 'failed'].includes(
+      String((data as Record<string, unknown>).status)
+    )
   );
 }
 
@@ -226,6 +250,82 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
         query: {
           message_id: params.messageId,
           after_id: params.afterId,
+        },
+        abortSignal,
+        isTerminalMessage: runtimeTerminalMessage,
+        onMessage: message =>
+          dispatchAIChatStreamEvent(
+            String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
+            (message.data as AIChatSseEnvelope | undefined)?.data ?? message.data,
+            message.id,
+            callbacks
+          ),
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      }
+    );
+  }
+
+  continueWorkflowApproval(
+    conversationId: string,
+    messageId: string,
+    payload: AIChatWorkflowApprovalContinuationPayload | undefined,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return this.client.sse<
+      AIChatSseEnvelope,
+      | Record<string, never>
+      | {
+          type: 'approval';
+          approval_token: string;
+          action: string;
+          inputs: Record<string, unknown>;
+        }
+    >(
+      `${this.runtimeBasePath}/conversations/${conversationId}/messages/${messageId}/workflow-continuation`,
+      {
+        method: 'POST',
+        body: payload
+          ? {
+              type: 'approval',
+              approval_token: payload.approvalToken,
+              action: payload.action,
+              inputs: payload.inputs,
+            }
+          : {},
+        abortSignal,
+        isTerminalMessage: runtimeTerminalMessage,
+        onMessage: message =>
+          dispatchAIChatStreamEvent(
+            String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
+            (message.data as AIChatSseEnvelope | undefined)?.data ?? message.data,
+            message.id,
+            callbacks
+          ),
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      }
+    );
+  }
+
+  continueWorkflowQuestion(
+    conversationId: string,
+    messageId: string,
+    payload: { inputs: { query: string; question_answer_option_id?: string } },
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return this.client.sse<
+      AIChatSseEnvelope,
+      { type: 'question_answer'; inputs: { query: string; question_answer_option_id?: string } }
+    >(
+      `${this.runtimeBasePath}/conversations/${conversationId}/messages/${messageId}/workflow-continuation`,
+      {
+        method: 'POST',
+        body: {
+          type: 'question_answer',
+          inputs: payload.inputs,
         },
         abortSignal,
         isTerminalMessage: runtimeTerminalMessage,

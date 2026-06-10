@@ -688,7 +688,8 @@ const WorkflowValueEditor = forwardRef<WorkflowValueEditorHandle, WorkflowValueE
           (item.sourceId === 'knowledge' ||
             item.sourceId === 'skill' ||
             item.sourceId === 'database' ||
-            item.sourceId === 'table')
+            item.sourceId === 'table' ||
+            item.sourceId === 'workflow')
             ? 'zgi'
             : '',
       }),

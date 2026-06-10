@@ -143,7 +143,7 @@ func (h *WorkflowHandler) executeWorkflowStream(c *gin.Context, ctx context.Cont
 			if req != nil {
 				requestInputs = req.Inputs
 			}
-			restoreQuestionAnswerResumeInputs(sharedVariablePool, systemInputs, requestInputs)
+			restoreQuestionAnswerResumeInputs(sharedVariablePool, systemInputs, requestInputs, resumeState)
 		}
 		if answerCoordinator != nil {
 			if err := answerCoordinator.RestorePauseSnapshot(resumeState.AnswerOutput); err != nil {

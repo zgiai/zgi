@@ -8,9 +8,9 @@ import (
 )
 
 func TestAgentPromptEffectiveLengthIncludesDatabaseAndTableBlocks(t *testing.T) {
-	source := `A <zgi:database id="db-1">Orders DB</zgi:database> B <zgi:table id="db-1:tbl-1">Orders</zgi:table>`
+	source := `A <zgi:database id="db-1">Orders DB</zgi:database> B <zgi:table id="db-1:tbl-1">Orders</zgi:table> C <zgi:workflow id="wf-1">Refund Flow</zgi:workflow>`
 
-	if got, want := agentPromptEffectiveLength(source), len([]rune("A Orders DB B Orders")); got != want {
+	if got, want := agentPromptEffectiveLength(source), len([]rune("A Orders DB B Orders C Refund Flow")); got != want {
 		t.Fatalf("agentPromptEffectiveLength() = %d, want %d", got, want)
 	}
 }
@@ -61,6 +61,40 @@ func TestRenderAgentPromptTableVariableSupportsDatabaseScopedKey(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rendered table summary missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderAgentPromptWorkflowVariableIncludesBoundWorkflowSummary(t *testing.T) {
+	got := renderAgentPromptWorkflowVariable("binding-1", map[string]dto.AgentWorkflowBinding{
+		"binding-1": {
+			BindingID:       "binding-1",
+			Label:           "Refund Review",
+			Description:     "Routes refund requests through approval and fulfillment.",
+			AgentType:       "WORKFLOW",
+			VersionStrategy: "latest_published",
+			DefaultInputKey: "query",
+			StartInputs: []dto.AgentWorkflowStartInput{
+				{Variable: "query", Label: "Customer request", Type: "string", Required: true},
+				{Variable: "amount", Label: "Refund amount", Type: "number"},
+			},
+		},
+	})
+
+	for _, want := range []string{
+		"Bound workflow: Refund Review",
+		"Binding ID: binding-1",
+		"Workflow type: WORKFLOW",
+		"Description: Routes refund requests through approval and fulfillment.",
+		"Version: latest_published",
+		"Default input: query",
+		"Required inputs: query",
+		"- query - Customer request (string) [required]",
+		"- amount - Refund amount (number)",
+		"Call this workflow through the agent-workflow skill with this binding_id.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered workflow summary missing %q:\n%s", want, got)
 		}
 	}
 }

@@ -160,7 +160,7 @@ export function formatMs(ms: number): string {
 }
 
 export function formatWorkflowElapsedMs(elapsedMs?: number | null): string {
-  if (elapsedMs === undefined || elapsedMs === null || elapsedMs <= 0) return '0ms';
+  if (elapsedMs === undefined || elapsedMs === null || elapsedMs <= 0) return '-';
   return formatMs(elapsedMs);
 }
 
