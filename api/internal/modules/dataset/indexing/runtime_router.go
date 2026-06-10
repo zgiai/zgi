@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 )
+
+const maxFullDocParentChunkRunes = 2000
 
 // RouterInput is the normalized input for runtime routing.
 type RouterInput struct {
@@ -54,6 +57,7 @@ func (r *RuntimeRouter) Route(input RouterInput) (*RouterDecision, error) {
 		"version":                 "v1",
 		"doc_ext":                 docExt,
 		"extracted_element_count": extractedElementCount(input.ExtractedOutput),
+		"extracted_word_count":    extractedWordCount(input.ExtractedOutput),
 	}
 
 	if input.DataSourceType != "upload_file" {
@@ -84,8 +88,9 @@ func (r *RuntimeRouter) Route(input RouterInput) (*RouterDecision, error) {
 	// 2. Domain Analysis Routing
 	domain := r.domainAnalyzer.Analyze(input.ExtractedOutput)
 	routeMeta["doc_domain"] = domain
-	if domain == "resume" || domain == "invoice" {
-		// Full-Doc model without character limit for resume/invoice
+	if (domain == "resume" || domain == "invoice") && isFullDocParentChunkAllowed(input.ExtractedOutput) {
+		// Full-doc mode is only safe for short documents; longer documents can
+		// still be routed by structural profile below.
 		mode, rules := r.builder.BuildFullDocRule()
 		routeMeta["matched_by"] = "doc_domain"
 		return &RouterDecision{
@@ -130,6 +135,17 @@ func extractedElementCount(output *dto.ExtractOutput) int {
 		return 0
 	}
 	return len(output.Elements)
+}
+
+func extractedWordCount(output *dto.ExtractOutput) int {
+	if output == nil {
+		return 0
+	}
+	return utf8.RuneCountInString(strings.TrimSpace(dto.ExtractOutputText(output)))
+}
+
+func isFullDocParentChunkAllowed(output *dto.ExtractOutput) bool {
+	return extractedWordCount(output) <= maxFullDocParentChunkRunes
 }
 
 func normalizeDocExt(docExt string) string {
