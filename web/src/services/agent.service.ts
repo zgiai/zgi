@@ -69,10 +69,15 @@ class AgentService extends BaseService {
   getRunnableWebApps(
     params?: RunnableWebAppsParams
   ): Promise<ApiResponseData<RunnableWebAppsData>> {
-    return this.request<ApiResponseData<RunnableWebAppsData>>('get', '/agents/runnable-webapps', {
-      params,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return this.request<ApiResponseData<RunnableWebAppsData>>(
+      'get',
+      '/agents/runnable-webapps',
+      undefined,
+      {
+        params,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   }
 
   /**
