@@ -164,6 +164,148 @@ func TestSchedulePlannerSystemSkillMetadata(t *testing.T) {
 	}
 }
 
+func TestContentSummarySystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillContentSummary})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillContentSummary)
+	if !ok {
+		t.Fatalf("content summary skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if len(doc.Tools) != 0 {
+		t.Fatalf("tools = %v, want none", doc.Tools)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected content summary not to have scripts")
+	}
+	if !strings.Contains(doc.Metadata.Description, "TL;DR") || !strings.Contains(doc.Metadata.Description, "action items") {
+		t.Fatalf("description does not include expected summary triggers: %q", doc.Metadata.Description)
+	}
+	if !strings.Contains(doc.Metadata.WhenToUse, "already available") || !strings.Contains(doc.Metadata.WhenToUse, "file-generator") {
+		t.Fatalf("when_to_use does not include routing boundaries: %q", doc.Metadata.WhenToUse)
+	}
+	if !strings.Contains(doc.Instructions, "Read, parse, extract, or inspect uploaded files directly.") {
+		t.Fatalf("instructions missing uploaded-file boundary")
+	}
+	if !strings.Contains(doc.Instructions, "If the user uploads a file and asks to summarize") {
+		t.Fatalf("instructions missing uploaded-file summary boundary")
+	}
+	if !strings.Contains(doc.Instructions, "Language Rules") || !strings.Contains(doc.Instructions, "For Chinese requests, do not use English structural labels") {
+		t.Fatalf("instructions missing language consistency rules")
+	}
+	if len(doc.Metadata.References) != 5 {
+		t.Fatalf("references = %#v, want 5 content summary references", doc.Metadata.References)
+	}
+	for _, path := range []string{"general-summary.md", "action-items.md", "risks-conclusions.md", "meeting-notes.md", "requirements-summary.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
+func TestEmailWritingSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillEmailWriting})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillEmailWriting)
+	if !ok {
+		t.Fatalf("email writing skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if len(doc.Tools) != 0 {
+		t.Fatalf("tools = %v, want none", doc.Tools)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected email writing not to have scripts")
+	}
+	for _, trigger := range []string{"business emails", "customer follow-up emails", "meeting invitations", "reminders", "email polishing"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) {
+			t.Fatalf("description missing trigger %q: %q", trigger, doc.Metadata.Description)
+		}
+	}
+	for _, boundary := range []string{"Do not send emails", "generate attachments", "invent commitments"} {
+		if !strings.Contains(doc.Metadata.WhenToUse, boundary) {
+			t.Fatalf("when_to_use missing boundary %q: %q", boundary, doc.Metadata.WhenToUse)
+		}
+	}
+	for _, required := range []string{
+		"call `request_user_input` instead of writing a normal Markdown clarification",
+		"Use placeholders for missing non-critical facts instead of inventing them.",
+		"Do not claim the email has been sent, scheduled, saved, or attached.",
+		"Do not invent prices, discounts, refunds, compensation, deadlines, legal statements, contract terms, delivery commitments, or approval status.",
+		"Do not summarize away user-provided requirements.",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 8 {
+		t.Fatalf("references = %#v, want 8 email writing references", doc.Metadata.References)
+	}
+	for _, path := range []string{"business-email.md", "follow-up-email.md", "meeting-invitation.md", "reminder-email.md", "apology-explanation.md", "announcement-email.md", "report-delivery.md", "polish-existing-draft.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
+func TestMultiDocumentCompareSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillMultiDocumentCompare})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillMultiDocumentCompare)
+	if !ok {
+		t.Fatalf("multi-document compare skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if len(doc.Tools) != 0 {
+		t.Fatalf("tools = %v, want none", doc.Tools)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected multi-document compare not to have scripts")
+	}
+	for _, trigger := range []string{"合同对比", "PRD对比", "供应商方案比较", "新增删除修改", "conflict clauses"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) {
+			t.Fatalf("description missing trigger %q: %q", trigger, doc.Metadata.Description)
+		}
+	}
+	if !strings.Contains(doc.Metadata.WhenToUse, "system document parser") || !strings.Contains(doc.Metadata.WhenToUse, "file-generator") {
+		t.Fatalf("when_to_use does not include parser/export boundaries: %q", doc.Metadata.WhenToUse)
+	}
+	for _, required := range []string{
+		"Directly read, parse, extract, or inspect uploaded files or file bytes.",
+		"system document parser",
+		"Do not replace legal review",
+		"Every comparison conclusion must be grounded in document source text",
+		"Language Rules",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 6 {
+		t.Fatalf("references = %#v, want 6 multi-document compare references", doc.Metadata.References)
+	}
+	for _, path := range []string{"generic-comparison.md", "version-diff.md", "clause-conflict.md", "vendor-comparison.md", "requirements-diff.md", "policy-comparison.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
 func TestChartGeneratorSystemSkillMetadata(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillChartGenerator})
