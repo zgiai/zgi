@@ -61,7 +61,8 @@ func TestPersistMinerUImagesRewritesMarkdownAndPayload(t *testing.T) {
 			},
 		},
 		ImageAssets: map[string]string{
-			"chart.jpg": "data:image/jpeg;base64,aGVsbG8=",
+			"chart.jpg":        "data:image/jpeg;base64,aGVsbG8=",
+			"images/chart.jpg": "data:image/jpeg;base64,aGVsbG8=",
 		},
 	}
 
@@ -69,7 +70,7 @@ func TestPersistMinerUImagesRewritesMarkdownAndPayload(t *testing.T) {
 		t.Fatalf("persist mineru images: %v", err)
 	}
 	if len(store.files) != 1 {
-		t.Fatalf("expected one stored image, got %d", len(store.files))
+		t.Fatalf("expected duplicate aliases to store one image, got %d", len(store.files))
 	}
 	var storedKey string
 	for key, data := range store.files {
