@@ -11,7 +11,7 @@ tools:
   - generate_pdf
   - generate_pptx
 max_calls_per_turn: 5
-timeout_seconds: 5
+timeout_seconds: 60
 display:
   icon: file-plus
   category: productivity
