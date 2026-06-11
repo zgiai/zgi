@@ -260,6 +260,16 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		httpStatus = http.StatusServiceUnavailable
 		checks["runtime"] = "error"
 	}
+	for _, profile := range s.config.RequiredDependencyProfiles {
+		checkName := "dependency_profile:" + profile
+		if _, err := s.policy.ValidateDependencyProfileForLanguage(profile, ""); err != nil {
+			status = "not_ready"
+			httpStatus = http.StatusServiceUnavailable
+			checks[checkName] = "error"
+			continue
+		}
+		checks[checkName] = "ok"
+	}
 
 	writeJSON(w, httpStatus, map[string]any{
 		"status":      status,

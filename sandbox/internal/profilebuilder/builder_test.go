@@ -96,6 +96,70 @@ func TestBuildSupportsRelativeSourceAndOutputDirs(t *testing.T) {
 	}
 }
 
+func TestBuildEmitsReadyManifestFromDisabledSource(t *testing.T) {
+	sourceDir := t.TempDir()
+	profileDir := filepath.Join(sourceDir, "disabled-profile")
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		t.Fatalf("create profile: %v", err)
+	}
+	manifest := `{
+		"name":"disabled-profile",
+		"version":"2026.05.31",
+		"status":"disabled",
+		"enabled":false,
+		"owner_scope":"global",
+		"languages":["python3"],
+		"base_runtime":"preview-process",
+		"checksum":"profile-source:disabled-profile:2026.05.31",
+		"estimated_size_bytes":1,
+		"required_files":["manifest.json"]
+	}`
+	if err := os.WriteFile(filepath.Join(profileDir, "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	result, err := Build(Options{
+		ProfileName: "disabled-profile",
+		SourceDir:   sourceDir,
+		OutputDir:   t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("build disabled source profile: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(result.OutputDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read built manifest: %v", err)
+	}
+	var built struct {
+		Status  string `json:"status"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.Unmarshal(raw, &built); err != nil {
+		t.Fatalf("parse built manifest: %v", err)
+	}
+	if built.Status != "ready" || !built.Enabled {
+		t.Fatalf("expected built profile artifact to be ready and enabled, got %s", string(raw))
+	}
+}
+
+func TestManagedOfficePackagesUsesAllowedBundleNames(t *testing.T) {
+	packages := managedOfficePackages([]string{"python3", "nodejs"})
+	raw, err := json.Marshal(packages)
+	if err != nil {
+		t.Fatalf("marshal packages: %v", err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `"ecosystem":"python3"`) || !strings.Contains(text, `"ecosystem":"nodejs"`) {
+		t.Fatalf("expected python and node managed packages, got %s", text)
+	}
+	if !strings.Contains(text, `"name":"office-tools"`) || !strings.Contains(text, `"version":"managed"`) {
+		t.Fatalf("expected managed office-tools packages, got %s", text)
+	}
+	if strings.Contains(text, "libreoffice") || strings.Contains(text, "openpyxl") || strings.Contains(text, "pptxgenjs") {
+		t.Fatalf("expected implementation packages to be hidden from policy manifest, got %s", text)
+	}
+}
+
 func TestBuildRejectsProfileSourceSymlink(t *testing.T) {
 	sourceDir := t.TempDir()
 	profileDir := filepath.Join(sourceDir, "bad-profile")
@@ -128,6 +192,55 @@ func TestBuildRejectsProfileSourceSymlink(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "contains symlink") {
 		t.Fatalf("expected symlink rejection, got %v", err)
+	}
+}
+
+func TestMaterializeSymlinksCopiesInternalTargets(t *testing.T) {
+	if os.Getenv("OS") == "Windows_NT" {
+		t.Skip("symlink creation may require elevated privileges on Windows")
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "venv", "lib"), 0o755); err != nil {
+		t.Fatalf("create target dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "venv", "lib", "module.py"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+	if err := os.Symlink("lib", filepath.Join(root, "venv", "lib64")); err != nil {
+		t.Fatalf("create internal symlink: %v", err)
+	}
+
+	if err := materializeSymlinks(root); err != nil {
+		t.Fatalf("materialize internal symlink: %v", err)
+	}
+	info, err := os.Lstat(filepath.Join(root, "venv", "lib64"))
+	if err != nil {
+		t.Fatalf("stat materialized path: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Fatalf("expected materialized directory, got mode=%s", info.Mode())
+	}
+	if raw, err := os.ReadFile(filepath.Join(root, "venv", "lib64", "module.py")); err != nil || string(raw) != "ok" {
+		t.Fatalf("expected copied target content, raw=%q err=%v", string(raw), err)
+	}
+}
+
+func TestMaterializeSymlinksRejectsEscapingTargets(t *testing.T) {
+	if os.Getenv("OS") == "Windows_NT" {
+		t.Skip("symlink creation may require elevated privileges on Windows")
+	}
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("write outside target: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "leak")); err != nil {
+		t.Fatalf("create escaping symlink: %v", err)
+	}
+
+	err := materializeSymlinks(root)
+	if err == nil || !strings.Contains(err.Error(), "escapes output directory") {
+		t.Fatalf("expected escaping symlink rejection, got %v", err)
 	}
 }
 

@@ -16,3 +16,4 @@ Use this reference when `format` is `docx` or `word`.
 - Each line becomes a simple Word paragraph.
 - Use DOCX when the user asks for Word, an editable document, or a formal document file.
 - Do not promise Markdown rendering, custom styles, tables, images, headers, footers, sections, or page layout controls.
+- If the user asks for fonts, font sizes, paragraph alignment, page margins, page breaks, or simple tables, use `generate_docx` with `format-docx-rich.md` instead.

@@ -654,6 +654,7 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 		ArtifactTimeoutSeconds:       artifactTimeout,
 		CleanupTimeoutSeconds:        cleanupTimeout,
 		EnableNetwork:                enableNetwork,
+		SystemOfficeProfile:          source.string("skill-office", envCodeExecutionSystemOfficeProfile),
 		MaxNumber:                    maxNumber,
 		MinNumber:                    minNumber,
 		MaxStringLength:              maxStringLength,

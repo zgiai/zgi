@@ -165,6 +165,7 @@ func TestFromEnvReadsDependencyProfileBuildLimits(t *testing.T) {
 	t.Setenv("ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND", "/usr/local/bin/zgi-dependency-builder --mode safe")
 	t.Setenv("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_ENABLED", "false")
 	t.Setenv("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_INTERVAL_SECONDS", "9")
+	t.Setenv("ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES", "skill-office, skill-office,system-web")
 
 	cfg := FromEnv()
 
@@ -182,6 +183,9 @@ func TestFromEnvReadsDependencyProfileBuildLimits(t *testing.T) {
 	}
 	if cfg.DependencyBuildWorkerIntervalSeconds != 9 {
 		t.Fatalf("expected dependency build worker interval 9, got %d", cfg.DependencyBuildWorkerIntervalSeconds)
+	}
+	if strings.Join(cfg.RequiredDependencyProfiles, ",") != "skill-office,system-web" {
+		t.Fatalf("expected required dependency profiles, got %#v", cfg.RequiredDependencyProfiles)
 	}
 }
 
@@ -258,6 +262,7 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 		DependencyProfileBuildTimeoutSeconds:       120,
 		DependencyBuildWorkerEnabled:               true,
 		DependencyBuildWorkerIntervalSeconds:       2,
+		RequiredDependencyProfiles:                 []string{"skill-office"},
 		EgressProxyMaxBodyBytes:                    2048,
 	}
 
@@ -316,6 +321,10 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	}
 	if snapshot["dependency_build_worker_interval_seconds"] != 2 {
 		t.Fatalf("expected dependency build worker interval, got %#v", snapshot["dependency_build_worker_interval_seconds"])
+	}
+	requiredProfiles, ok := snapshot["required_dependency_profiles"].([]string)
+	if !ok || strings.Join(requiredProfiles, ",") != "skill-office" {
+		t.Fatalf("expected required dependency profiles, got %#v", snapshot["required_dependency_profiles"])
 	}
 	if snapshot["egress_proxy_max_body_bytes"] != int64(2048) {
 		t.Fatalf("expected egress proxy body limit, got %#v", snapshot["egress_proxy_max_body_bytes"])
@@ -560,7 +569,7 @@ func validStartupConfig() Config {
 		MaxArtifactManifestBytes:                   0,
 		MaxArtifactBytesPerOrganization:            0,
 		MaxDependencyProfilesPerOrganization:       0,
-		MaxDependencyProfileSizeBytes:              512 * 1024 * 1024,
+		MaxDependencyProfileSizeBytes:              1024 * 1024 * 1024,
 		DependencyProfileBuildTimeoutSeconds:       600,
 		DependencyBuildWorkerEnabled:               true,
 		DependencyBuildWorkerIntervalSeconds:       2,

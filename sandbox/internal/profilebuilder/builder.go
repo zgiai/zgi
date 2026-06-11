@@ -123,6 +123,9 @@ func Build(opts Options) (Result, error) {
 	if err := verifyNode(tmpDir); err != nil {
 		return result, err
 	}
+	if err := materializeSymlinks(tmpDir); err != nil {
+		return result, err
+	}
 
 	checksum, size, err := checksumDir(tmpDir)
 	if err != nil {
@@ -133,8 +136,15 @@ func Build(opts Options) (Result, error) {
 	result.SizeBytes = size
 	result.VerificationPassed = true
 
+	builtProfile := profile
+	builtProfile.Status = "ready"
+	builtProfile.Enabled = true
+	builtProfile.EstimatedSizeBytes = size
+	if builtProfile.Name == "skill-office" {
+		builtProfile.Packages = managedOfficePackages(builtProfile.Languages)
+	}
 	manifest := builtManifest{
-		Profile: profile,
+		Profile: builtProfile,
 		Build: buildMetadata{
 			Checksum:           checksum,
 			SizeBytes:          size,
@@ -164,6 +174,25 @@ func Build(opts Options) (Result, error) {
 	}
 	cleanup = false
 	return result, nil
+}
+
+func managedOfficePackages(languages []string) []profilecatalog.Package {
+	packages := make([]profilecatalog.Package, 0, 2)
+	if slices.Contains(languages, "python3") {
+		packages = append(packages, profilecatalog.Package{
+			Ecosystem: "python3",
+			Name:      "office-tools",
+			Version:   "managed",
+		})
+	}
+	if slices.Contains(languages, "nodejs") {
+		packages = append(packages, profilecatalog.Package{
+			Ecosystem: "nodejs",
+			Name:      "office-tools",
+			Version:   "managed",
+		})
+	}
+	return packages
 }
 
 func findProfile(profiles []profilecatalog.Profile, name string) (profilecatalog.Profile, bool) {
@@ -268,12 +297,143 @@ func copyFile(source, target string, mode os.FileMode) error {
 	return out.Close()
 }
 
+func materializeSymlinks(root string) error {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	var links []string
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			links = append(links, path)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	slices.SortFunc(links, func(a, b string) int {
+		return strings.Count(b, string(os.PathSeparator)) - strings.Count(a, string(os.PathSeparator))
+	})
+	for _, link := range links {
+		if err := materializeOneSymlink(root, link); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func materializeOneSymlink(root string, link string) error {
+	target, err := resolveSymlinkTarget(link)
+	if err != nil {
+		return fmt.Errorf("resolve profile symlink %s: %w", relativePath(root, link), err)
+	}
+	if !pathWithin(root, target) {
+		return fmt.Errorf("profile symlink escapes output directory: %s", relativePath(root, link))
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(link); err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return copyTreeNoSymlinks(root, target, link)
+	}
+	return copyFile(target, link, info.Mode().Perm())
+}
+
+func resolveSymlinkTarget(link string) (string, error) {
+	target, err := os.Readlink(link)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(link), target)
+	}
+	return filepath.EvalSymlinks(target)
+}
+
+func copyTreeNoSymlinks(root string, source string, target string) error {
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			resolved, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return fmt.Errorf("resolve profile symlink %s: %w", relativePath(root, path), err)
+			}
+			resolved, err = filepath.Abs(resolved)
+			if err != nil {
+				return err
+			}
+			if !pathWithin(root, resolved) {
+				return fmt.Errorf("profile symlink escapes output directory: %s", relativePath(root, path))
+			}
+			resolvedInfo, err := os.Stat(resolved)
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(source, path)
+			if err != nil {
+				return err
+			}
+			dst := filepath.Join(target, rel)
+			if resolvedInfo.IsDir() {
+				return copyTreeNoSymlinks(root, resolved, dst)
+			}
+			return copyFile(resolved, dst, resolvedInfo.Mode().Perm())
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(target, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(dst, info.Mode().Perm())
+		}
+		return copyFile(path, dst, info.Mode().Perm())
+	})
+}
+
+func pathWithin(root string, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func relativePath(root string, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
+}
+
 func buildPython(profileDir string) error {
 	lockfile := filepath.Join(profileDir, "requirements.lock")
 	if !fileExists(lockfile) {
 		return nil
 	}
-	if err := run(profileDir, "python3", "-m", "venv", filepath.Join(profileDir, "venv")); err != nil {
+	if err := run(profileDir, "python3", "-m", "venv", "--copies", filepath.Join(profileDir, "venv")); err != nil {
 		return err
 	}
 	python := filepath.Join(profileDir, "venv", "bin", "python")

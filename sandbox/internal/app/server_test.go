@@ -117,6 +117,48 @@ func TestReadyEndpointReportsStoreFailure(t *testing.T) {
 	}
 }
 
+func TestReadyEndpointRequiresConfiguredDependencyProfiles(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.RequiredDependencyProfiles = []string{"skill-office"}
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"dependency_profile:skill-office":"error"`) {
+		t.Fatalf("expected dependency profile error check, got %s", rr.Body.String())
+	}
+}
+
+func TestReadyEndpointPassesWithRequiredDependencyProfileArtifact(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DependencyRootFSDir = t.TempDir()
+	cfg.RequiredDependencyProfiles = []string{"skill-office"}
+	writeServerDependencyProfileArtifact(t, cfg.DependencyRootFSDir, "skill-office")
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"dependency_profile:skill-office":"ok"`) {
+		t.Fatalf("expected dependency profile ok check, got %s", rr.Body.String())
+	}
+}
+
 func TestReadyEndpointRejectsNonGet(t *testing.T) {
 	server, err := NewServer(testConfig(t))
 	if err != nil {

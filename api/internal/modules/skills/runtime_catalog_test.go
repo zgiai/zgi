@@ -376,6 +376,9 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		required []string
 	}{
 		{SkillFileGenerator, "generate_file", []string{"content", "format"}},
+		{SkillFileGenerator, "generate_docx", []string{"document"}},
+		{SkillFileGenerator, "generate_pdf", []string{"html"}},
+		{SkillFileGenerator, "generate_pptx", []string{"presentation"}},
 		{SkillChartGenerator, "generate_chart", []string{"chart_type", "data"}},
 		{SkillWorkReport, "generate_file", []string{"content", "format"}},
 		{SkillInternalKnowledge, "retrieve_knowledge", []string{"query", "dataset_ids"}},
