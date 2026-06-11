@@ -3,6 +3,7 @@ import type { ApiResponseData } from './types/common';
 import type {
   Organization,
   OrganizationList,
+  MemberList,
   Role,
   RoleMemberList,
   CreateRoleRequest,
@@ -22,6 +23,8 @@ import type {
   WorkspaceAssetMovePreviewResponse,
   WorkspaceAssetMoveRequest,
   WorkspaceAssetMoveResponse,
+  OrganizationUpdateRequest,
+  OrganizationMemberRoleUpdateRequest,
 } from './types/organization';
 
 export type * from './types/organization';
@@ -45,6 +48,41 @@ class OrganizationService extends BaseService {
       '/organizations/',
       undefined,
       { params }
+    );
+    return response.data;
+  }
+
+  async updateOrganization(organizationId: string, data: OrganizationUpdateRequest) {
+    const response = await this.request<ApiResponseData<Organization>>(
+      'patch',
+      `/organizations/info/${organizationId}`,
+      data
+    );
+    return response.data;
+  }
+
+  async getCurrentOrganizationMembers(params?: {
+    page?: number | string;
+    limit?: number | string;
+    keyword?: string;
+  }) {
+    const response = await this.request<ApiResponseData<MemberList>>(
+      'get',
+      '/organizations/current/members',
+      undefined,
+      { params }
+    );
+    return response.data;
+  }
+
+  async updateCurrentOrganizationMemberRole(
+    memberId: string,
+    data: OrganizationMemberRoleUpdateRequest
+  ) {
+    const response = await this.request<ApiResponseData<{ result: 'success' }>>(
+      'patch',
+      `/organizations/current/members/${memberId}/organization-role`,
+      data
     );
     return response.data;
   }

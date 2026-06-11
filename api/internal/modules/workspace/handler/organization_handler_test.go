@@ -1,11 +1,15 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -20,6 +24,9 @@ type fakeOrganizationService struct {
 	interfaces.OrganizationService
 	getWorkspaceMemberPermissionsFn  func(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error)
 	getOrganizationWorkspaceDetailFn func(ctx context.Context, organizationID, workspaceID, accountID string) (*shared_dto.OrganizationWorkspaceResponse, error)
+	updateOrganizationFn             func(ctx context.Context, organizationID, accountID string, req *shared_dto.UpdateOrganizationRequest) (*model.Organization, error)
+	updateCurrentMemberRoleFn        func(ctx context.Context, operatorID, memberID string, role model.OrganizationRole) error
+	updateMemberInfoFn               func(ctx context.Context, req *shared_dto.UpdateOrganizationMemberRequest) error
 }
 
 func (f fakeOrganizationService) GetWorkspaceMemberPermissions(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error) {
@@ -34,6 +41,27 @@ func (f fakeOrganizationService) GetOrganizationWorkspaceDetail(ctx context.Cont
 		return f.getOrganizationWorkspaceDetailFn(ctx, organizationID, workspaceID, accountID)
 	}
 	return nil, nil
+}
+
+func (f fakeOrganizationService) UpdateOrganization(ctx context.Context, organizationID, accountID string, req *shared_dto.UpdateOrganizationRequest) (*model.Organization, error) {
+	if f.updateOrganizationFn != nil {
+		return f.updateOrganizationFn(ctx, organizationID, accountID, req)
+	}
+	return nil, nil
+}
+
+func (f fakeOrganizationService) UpdateCurrentOrganizationMemberRole(ctx context.Context, operatorID, memberID string, role model.OrganizationRole) error {
+	if f.updateCurrentMemberRoleFn != nil {
+		return f.updateCurrentMemberRoleFn(ctx, operatorID, memberID, role)
+	}
+	return nil
+}
+
+func (f fakeOrganizationService) UpdateMemberInfo(ctx context.Context, req *shared_dto.UpdateOrganizationMemberRequest) error {
+	if f.updateMemberInfoFn != nil {
+		return f.updateMemberInfoFn(ctx, req)
+	}
+	return nil
 }
 
 type fakeWorkspaceManagementService struct {
@@ -190,6 +218,218 @@ func TestGetOrganizationWorkspaceMemberDetailByIDReturnsHasMobile(t *testing.T) 
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), `"has_mobile":true`)
+}
+
+func TestPatchOrganizationReturnsUpdatedOrganization(t *testing.T) {
+	t.Parallel()
+
+	shortName := "Acme"
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			updateOrganizationFn: func(ctx context.Context, organizationID, accountID string, req *shared_dto.UpdateOrganizationRequest) (*model.Organization, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "acc-1", accountID)
+				require.Equal(t, "Acme Corporation", req.Name)
+				require.NotNil(t, req.ShortName)
+				require.Equal(t, shortName, *req.ShortName)
+				return &model.Organization{
+					ID:        organizationID,
+					Name:      req.Name,
+					ShortName: req.ShortName,
+					Status:    model.OrganizationStatusActive,
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+				}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPatch, "/organizations/info/org-1")
+	c.Set("account_id", "acc-1")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"name":"Acme Corporation","short_name":"Acme"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.PatchOrganization(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"name":"Acme Corporation"`)
+	require.Contains(t, recorder.Body.String(), `"short_name":"Acme"`)
+}
+
+func TestPatchOrganizationMapsExpectedErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+	}{
+		{
+			name:     "invalid name",
+			err:      workspace_service.ErrInvalidOrganizationName,
+			wantCode: response.ErrInvalidParam.Code,
+		},
+		{
+			name:     "not found",
+			err:      workspace_service.ErrOrganizationNotFound,
+			wantCode: response.ErrOrganizationNotFound.Code,
+		},
+		{
+			name:     "duplicate name",
+			err:      workspace_service.ErrOrganizationNameExists,
+			wantCode: response.ErrOrganizationExists.Code,
+		},
+		{
+			name:     "permission denied",
+			err:      workspace_service.ErrOrganizationPermissionDenied,
+			wantCode: response.ErrPermissionDenied.Code,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler := &OrganizationHandler{
+				organizationService: fakeOrganizationService{
+					updateOrganizationFn: func(ctx context.Context, organizationID, accountID string, req *shared_dto.UpdateOrganizationRequest) (*model.Organization, error) {
+						return nil, tt.err
+					},
+				},
+			}
+
+			c, recorder := newOrganizationHandlerTestContext(http.MethodPatch, "/organizations/info/org-1")
+			c.Set("account_id", "acc-1")
+			c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+			c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"name":"Acme"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			handler.PatchOrganization(c)
+
+			var resp response.Response
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+			require.Equal(t, strconv.Itoa(tt.wantCode), resp.Code)
+		})
+	}
+}
+
+func TestUpdateCurrentOrganizationMemberRoleReturnsSuccess(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			updateCurrentMemberRoleFn: func(ctx context.Context, operatorID, memberID string, role model.OrganizationRole) error {
+				require.Equal(t, "owner-1", operatorID)
+				require.Equal(t, "member-1", memberID)
+				require.Equal(t, model.OrganizationRoleAdmin, role)
+				return nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPatch, "/organizations/current/members/member-1/organization-role")
+	c.Set("account_id", "owner-1")
+	c.Params = gin.Params{{Key: "member_id", Value: "member-1"}}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"role":"admin"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateCurrentOrganizationMemberRole(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"result":"success"`)
+}
+
+func TestUpdateCurrentOrganizationMemberRoleMapsExpectedErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+	}{
+		{
+			name:     "invalid role",
+			err:      workspace_service.ErrInvalidOrganizationMemberRole,
+			wantCode: response.ErrInvalidParam.Code,
+		},
+		{
+			name:     "owner immutable",
+			err:      workspace_service.ErrOrganizationOwnerRoleImmutable,
+			wantCode: response.ErrInvalidParam.Code,
+		},
+		{
+			name:     "inactive member",
+			err:      workspace_service.ErrOrganizationMemberNotActive,
+			wantCode: response.ErrInvalidParam.Code,
+		},
+		{
+			name:     "member not found",
+			err:      workspace_service.ErrOrganizationMemberNotFound,
+			wantCode: response.ErrMemberNotFound.Code,
+		},
+		{
+			name:     "permission denied",
+			err:      workspace_service.ErrOrganizationPermissionDenied,
+			wantCode: response.ErrPermissionDenied.Code,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler := &OrganizationHandler{
+				organizationService: fakeOrganizationService{
+					updateCurrentMemberRoleFn: func(ctx context.Context, operatorID, memberID string, role model.OrganizationRole) error {
+						return tt.err
+					},
+				},
+			}
+
+			c, recorder := newOrganizationHandlerTestContext(http.MethodPatch, "/organizations/current/members/member-1/organization-role")
+			c.Set("account_id", "owner-1")
+			c.Params = gin.Params{{Key: "member_id", Value: "member-1"}}
+			c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"role":"admin"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			handler.UpdateCurrentOrganizationMemberRole(c)
+
+			var resp response.Response
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+			require.Equal(t, strconv.Itoa(tt.wantCode), resp.Code)
+		})
+	}
+}
+
+func TestUpdateOrganizationMemberRejectsRoleUpdates(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			updateMemberInfoFn: func(ctx context.Context, req *shared_dto.UpdateOrganizationMemberRequest) error {
+				called = true
+				return nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPut, "/organizations/org-1/members/member-1")
+	c.Set("account_id", "owner-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "member_id", Value: "member-1"},
+	}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"role":"admin"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateOrganizationMember(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.False(t, called)
 }
 
 func newOrganizationHandlerTestContext(method, target string) (*gin.Context, *httptest.ResponseRecorder) {
