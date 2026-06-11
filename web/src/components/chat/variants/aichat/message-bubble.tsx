@@ -37,6 +37,7 @@ import {
   UserMessageToolbar,
 } from '@/components/chat/variants/aichat/message-toolbars';
 import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
+import { MarkdownImage } from '@/components/common/markdown-image';
 import { isOriginalPreviewImage } from '@/utils/file-helpers';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import {
@@ -110,49 +111,23 @@ function generatedFilePreviewUrl(file: AIChatGeneratedFile): string {
   return file.url || '';
 }
 
-function escapeMarkdownImageAlt(value: string): string {
-  return value
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/\\/g, '\\\\')
-    .replace(/\[/g, '\\[')
-    .replace(/\]/g, '\\]');
-}
-
-function generatedFileImagePreviewMarkdown(file: AIChatGeneratedFile): string | null {
-  const previewUrl = generatedFilePreviewUrl(file);
-  if (!previewUrl || !isOriginalPreviewImage(file.extension, file.mime_type)) {
-    return null;
-  }
-
-  return `![${escapeMarkdownImageAlt(file.filename)}](${previewUrl})`;
-}
-
-function appendGeneratedImagePreviewsToAnswer(
+function generatedImagePreviewFiles(
   answer: string,
   generatedFiles: AIChatGeneratedFile[],
-  shouldAppend: boolean
-): string {
-  if (!shouldAppend || generatedFiles.length === 0) {
-    return answer;
+  shouldShow: boolean
+): AIChatGeneratedFile[] {
+  if (!shouldShow || generatedFiles.length === 0) {
+    return [];
   }
 
-  const previews = generatedFiles
-    .filter(file => {
-      const previewUrl = generatedFilePreviewUrl(file);
-      if (!previewUrl) return false;
-      if (answer.includes(previewUrl)) return false;
-      if (file.download_url && answer.includes(file.download_url)) return false;
-      return true;
-    })
-    .map(generatedFileImagePreviewMarkdown)
-    .filter((preview): preview is string => Boolean(preview));
-
-  if (previews.length === 0) {
-    return answer;
-  }
-
-  const trimmedAnswer = answer.trimEnd();
-  return [trimmedAnswer, previews.join('\n\n')].filter(Boolean).join('\n\n');
+  return generatedFiles.filter(file => {
+    const previewUrl = generatedFilePreviewUrl(file);
+    if (!previewUrl) return false;
+    if (!isOriginalPreviewImage(file.extension, file.mime_type)) return false;
+    if (answer.includes(previewUrl)) return false;
+    if (file.download_url && answer.includes(file.download_url)) return false;
+    return true;
+  });
 }
 
 interface AIChatHistoryImagePreviewProps {
@@ -317,6 +292,30 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   );
 }
 
+interface AIChatGeneratedImagePreviewsProps {
+  files: AIChatGeneratedFile[];
+}
+
+function AIChatGeneratedImagePreviews({ files }: AIChatGeneratedImagePreviewsProps) {
+  if (files.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 flex max-w-full flex-col items-start gap-3">
+      {files.map(file => (
+        <MarkdownImage
+          key={file.file_id || generatedFilePreviewUrl(file)}
+          src={generatedFilePreviewUrl(file)}
+          alt={file.filename}
+          className="block max-w-full"
+          imageClassName="max-w-full"
+        />
+      ))}
+    </div>
+  );
+}
+
 function AIChatUserInputRequestCard({ request }: { request: AIChatUserInputRequest }) {
   const t = useT('webapp');
   const questions = (request.questions ?? []).filter(question => question.question?.trim());
@@ -421,12 +420,12 @@ export function AIChatMessageBubble({
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
   const files = message.metadata?.files ?? EMPTY_MESSAGE_FILES;
   const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
-  const displayAnswerWithGeneratedImagePreviews = useMemo(
-    () => appendGeneratedImagePreviewsToAnswer(displayAnswer, generatedFiles, !isSensitiveBlocked),
+  const generatedImagePreviewFilesForDisplay = useMemo(
+    () => generatedImagePreviewFiles(displayAnswer, generatedFiles, !isSensitiveBlocked),
     [displayAnswer, generatedFiles, isSensitiveBlocked]
   );
+  const hasGeneratedImagePreviews = generatedImagePreviewFilesForDisplay.length > 0;
   const answer = displayAnswer.trim();
-  const renderedAnswer = displayAnswerWithGeneratedImagePreviews.trim();
   const userInputRequest = hideUserInputRequest ? undefined : message.metadata?.user_input_request;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
@@ -620,24 +619,26 @@ export function AIChatMessageBubble({
             />
           ) : null}
 
-          {renderedAnswer ? (
+          {answer ? (
             <div className="prose prose-sm min-w-0 max-w-full dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
               <MarkdownViewer
                 className="md-viewer min-w-0 max-w-full break-words"
-                content={displayAnswerWithGeneratedImagePreviews}
+                content={displayAnswer}
                 isStreaming={isStreaming}
                 renderIdentity={message.id}
               />
             </div>
-          ) : isStreaming && !hasTimeline && !userInputRequest ? (
+          ) : isStreaming && !hasTimeline && !userInputRequest && !hasGeneratedImagePreviews ? (
             <div className="space-y-2 pt-1">
               <Skeleton className="h-4 w-2/3" />
               <Skeleton className="h-4 w-1/2" />
               <Skeleton className="h-4 w-3/4" />
             </div>
-          ) : isStopped ? (
+          ) : isStopped && !hasGeneratedImagePreviews ? (
             <div className="text-sm text-muted-foreground">{t('consoleChat.stopped')}</div>
           ) : null}
+
+          <AIChatGeneratedImagePreviews files={generatedImagePreviewFilesForDisplay} />
 
           {generatedFiles.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-2">
