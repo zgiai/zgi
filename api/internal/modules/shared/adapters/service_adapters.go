@@ -666,6 +666,10 @@ func (a *AccountServiceAdapter) UpdateAccountContext(ctx context.Context, accoun
 	return a.accountService.UpdateAccountContext(ctx, accountID, organizationID, workspaceID)
 }
 
+func (a *AccountServiceAdapter) EnsureAccountContextForWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error) {
+	return a.accountService.EnsureAccountContextForWorkspace(ctx, accountID, organizationID, workspaceID)
+}
+
 func (a *AccountServiceAdapter) IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
 	return a.accountService.IsOrganizationAdminOrOwner(ctx, organizationID, accountID)
 }
