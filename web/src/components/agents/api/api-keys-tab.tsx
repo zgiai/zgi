@@ -174,7 +174,7 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
     try {
       setTogglingId(keyId);
       await agentService.updateAgentApiKey(agentId, keyId, {
-        status: checked ? 'active' : 'revoked',
+        status: checked ? 'active' : 'inactive',
       });
       await refetch();
     } finally {
@@ -281,6 +281,8 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
                   <TableCell>
                     {k.status === 'active' ? (
                       <Badge>{t('agents.apiKeys.active')}</Badge>
+                    ) : k.status === 'inactive' ? (
+                      <Badge variant="secondary">{t('agents.apiKeys.inactive')}</Badge>
                     ) : (
                       <Badge variant="destructive">{t('agents.apiKeys.revoked')}</Badge>
                     )}
@@ -303,15 +305,17 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
                             <Edit className="h-4 w-4 mr-2" /> {t('common.edit')}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={() => {
-                              setDeleteId(k.id);
-                              setDeleteOpen(true);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" /> {t('common.delete')}
-                          </DropdownMenuItem>
+                          {k.status !== 'revoked' ? (
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => {
+                                setDeleteId(k.id);
+                                setDeleteOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" /> {t('common.delete')}
+                            </DropdownMenuItem>
+                          ) : null}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>

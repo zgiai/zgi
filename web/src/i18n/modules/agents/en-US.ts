@@ -44,7 +44,9 @@ const messages = {
   conversationsDescription: 'Manage conversations and chat history',
   settingsTitle: 'Settings',
   settingsDescription: 'Configure agent settings and parameters',
+  apiGroupTitle: 'API',
   apiTitle: 'API',
+  apiDocsNavTitle: 'API Docs',
   apiDescription: 'External API configuration and management',
 
   // Agent management
@@ -844,6 +846,7 @@ const messages = {
       actions: 'Actions',
     },
     active: 'Active',
+    inactive: 'Inactive',
     revoked: 'Revoked',
     noExpiry: 'No expiry',
     editTitle: 'Edit API Key',
@@ -860,7 +863,7 @@ const messages = {
     creating: 'Creating…',
     deleteConfirm: {
       title: 'Confirm Delete',
-      description: 'This action cannot be undone. Delete this API Key?',
+      description: 'This API Key will be permanently disabled and hidden from the list. Delete it?',
     },
     validation: {
       missingName: 'Please enter a name',
