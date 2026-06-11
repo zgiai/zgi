@@ -1519,6 +1519,7 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 	var req struct {
 		Name         string  `json:"name" binding:"required"`
 		Email        string  `json:"email" binding:"required,email"`
+		WorkspaceID  string  `json:"workspace_id" binding:"required"`
 		DepartmentID *string `json:"department_id,omitempty"`
 		SendEmail    *bool   `json:"send_email,omitempty"`
 	}
@@ -1529,6 +1530,24 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	if workspaceID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	workspace, err := h.workspaceManagementService.GetWorkspaceByID(ctx, workspaceID)
+	if err != nil || workspace == nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
+	if workspace.OrganizationID == nil || *workspace.OrganizationID != organizationID {
+		response.Fail(c, response.ErrWorkspaceNotInOrganization)
+		return
+	}
+	if workspace.Status != model.WorkspaceStatusNormal {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
 
 	var deptID string
 	var respDeptID string
@@ -1613,6 +1632,27 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 		}
 	}
 
+	existingWorkspaceRole, err := h.workspaceManagementService.GetUserRole(ctx, account.ID, workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if existingWorkspaceRole == nil {
+		if err := h.workspaceManagementService.AddMember(ctx, &interfaces.AddMemberRequest{
+			WorkspaceID: workspaceID,
+			AccountID:   account.ID,
+			Role:        model.WorkspaceRoleNormal,
+		}); err != nil && !strings.Contains(err.Error(), "already a member") {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+	}
+
+	if _, _, err := h.accountService.EnsureAccountContextForWorkspace(ctx, account.ID, organizationID, workspaceID); err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
 	if deptID != "" {
 		_, err = h.departmentService.AddMemberToDepartment(ctx, organizationID, deptID, account.ID)
 		if err != nil {
@@ -1684,6 +1724,10 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 			"id":   respDeptID,
 			"name": respDeptName,
 		},
+		"workspace": gin.H{
+			"id":   workspace.ID,
+			"name": workspace.Name,
+		},
 	})
 }
 
@@ -1703,15 +1747,16 @@ func (h *OrganizationHandler) InviteCurrentOrganizationMember(c *gin.Context) {
 		Email        string  `json:"email" binding:"required,email"`
 		Name         string  `json:"name" binding:"required"`
 		Password     string  `json:"password"`
+		WorkspaceID  string  `json:"workspace_id" binding:"required"`
 		DepartmentID *string `json:"department_id,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
-
-	department, ok := h.validateInviteDepartment(c, organizationID, req.DepartmentID)
-	if !ok {
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	if workspaceID == "" {
+		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 
@@ -1723,22 +1768,15 @@ func (h *OrganizationHandler) InviteCurrentOrganizationMember(c *gin.Context) {
 	result, err := h.organizationService.InviteCurrentOrganizationMember(c.Request.Context(), &shared_dto.InviteCurrentOrganizationMemberRequest{
 		OrganizationID:    organizationID,
 		OperatorAccountID: accountID,
+		WorkspaceID:       workspaceID,
 		Email:             req.Email,
 		Name:              strings.TrimSpace(req.Name),
 		Password:          password,
+		DepartmentID:      req.DepartmentID,
 	})
 	if err != nil {
 		handleCurrentOrganizationMemberAdminError(c, err)
 		return
-	}
-	if department != nil {
-		if !h.addCurrentOrganizationMemberToDepartment(c, organizationID, department.ID, result.AccountID) {
-			return
-		}
-		result.Department = &shared_dto.MemberDepartmentInfo{
-			ID:   department.ID,
-			Name: department.Name,
-		}
 	}
 
 	response.Success(c, result)
@@ -1843,6 +1881,12 @@ func handleCurrentOrganizationMemberAdminError(c *gin.Context, err error) {
 		response.Fail(c, response.ErrPermissionDenied)
 	case errors.Is(err, workspace_service.ErrOrganizationMemberNotFound):
 		response.Fail(c, response.ErrAccountNotFound)
+	case errors.Is(err, workspace_service.ErrOrganizationInviteWorkspaceInvalid):
+		response.Fail(c, response.ErrWorkspaceNotInOrganization)
+	case errors.Is(err, workspace_service.ErrDepartmentNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"code": "DepartmentNotFound", "message": err.Error()})
+	case errors.Is(err, workspace_service.ErrMemberAlreadyInDept):
+		c.JSON(http.StatusBadRequest, gin.H{"code": "MemberAlreadyInDepartment", "message": err.Error()})
 	default:
 		response.Fail(c, response.ErrSystemError)
 	}

@@ -300,9 +300,11 @@ type AddOrganizationMemberRequest struct {
 type InviteCurrentOrganizationMemberRequest struct {
 	OrganizationID    string
 	OperatorAccountID string
+	WorkspaceID       string
 	Email             string
 	Name              string
 	Password          string
+	DepartmentID      *string
 }
 
 type InviteCurrentOrganizationMemberResponse struct {
@@ -315,9 +317,15 @@ type InviteCurrentOrganizationMemberResponse struct {
 	AlreadyMember   bool                   `json:"already_member"`
 	PasswordApplied bool                   `json:"password_applied"`
 	Department      *MemberDepartmentInfo  `json:"department,omitempty"`
+	Workspace       *MemberWorkspaceInfo   `json:"workspace,omitempty"`
 }
 
 type MemberDepartmentInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type MemberWorkspaceInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
