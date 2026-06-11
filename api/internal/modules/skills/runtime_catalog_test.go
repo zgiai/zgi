@@ -306,6 +306,106 @@ func TestMultiDocumentCompareSystemSkillMetadata(t *testing.T) {
 	}
 }
 
+func TestResumeScreeningSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillResumeScreening})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillResumeScreening)
+	if !ok {
+		t.Fatalf("resume screening skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if len(doc.Tools) != 0 {
+		t.Fatalf("tools = %v, want none", doc.Tools)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected resume screening not to have scripts")
+	}
+	for _, trigger := range []string{"简历初筛", "JD匹配", "岗位匹配", "面试问题", "resume screening"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) {
+			t.Fatalf("description missing trigger %q: %q", trigger, doc.Metadata.Description)
+		}
+	}
+	if !strings.Contains(doc.Metadata.WhenToUse, "system document parser") || !strings.Contains(doc.Metadata.WhenToUse, "file-generator") {
+		t.Fatalf("when_to_use does not include parser/export boundaries: %q", doc.Metadata.WhenToUse)
+	}
+	for _, required := range []string{
+		"Directly read, parse, extract, or inspect uploaded resume files or file bytes.",
+		"Make final hiring, rejection, compensation, title, or ranking decisions.",
+		"Do not use gender, age, marital or childbearing status",
+		"If no JD is provided, do not output job-fit level",
+		"Mark missing or unclear resume information as `简历未体现`",
+		"Every screening conclusion must be grounded in resume source text",
+		"Language Rules",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 5 {
+		t.Fatalf("references = %#v, want 5 resume screening references", doc.Metadata.References)
+	}
+	for _, path := range []string{"resume-summary.md", "jd-match.md", "screening-criteria.md", "interview-questions.md", "talent-pool-entry.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
+func TestImageGeneratorSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillImageGenerator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillImageGenerator)
+	if !ok {
+		t.Fatalf("image generator skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypeTool {
+		t.Fatalf("runtime type = %q, want tool", doc.Metadata.RuntimeType)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected image generator not to have scripts")
+	}
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"generate_image", "edit_image"}) {
+		t.Fatalf("tools = %v, want generate_image and edit_image", got)
+	}
+	for _, tool := range doc.Tools {
+		if tool.ProviderType != "builtin" || tool.ProviderID != "image_generator" {
+			t.Fatalf("tool provider = %s/%s, want builtin/image_generator", tool.ProviderType, tool.ProviderID)
+		}
+	}
+	for _, trigger := range []string{"generate image", "text to image", "image variant", "image edit", "background change"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) {
+			t.Fatalf("description missing trigger %q: %q", trigger, doc.Metadata.Description)
+		}
+	}
+	for _, required := range []string{
+		"request_user_input",
+		"specific living person's likeness",
+		"copyright, trademark, portrait rights, and brand compliance",
+		"Do not handle OCR, image recognition, table extraction, or screenshot diagnosis",
+		"prompt-plus-reference-URL regeneration",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 7 {
+		t.Fatalf("references = %#v, want 7 image generator references", doc.Metadata.References)
+	}
+	for _, path := range []string{"text-to-image.md", "reference-variant.md", "image-edit.md", "marketing-material.md", "poster-concept.md", "product-scene.md", "style-guide.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
 func TestChartGeneratorSystemSkillMetadata(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillChartGenerator})
@@ -531,6 +631,7 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 		SkillFileGenerator,
 		SkillChartGenerator,
 		SkillIntentRouter,
+		SkillImageGenerator,
 		SkillWorkReport,
 		SkillInternalDatabase,
 		SkillInternalKnowledge,
@@ -561,6 +662,8 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		{SkillFileGenerator, "generate_pptx", []string{"presentation"}},
 		{SkillChartGenerator, "generate_chart", []string{"chart_type", "data"}},
 		{SkillIntentRouter, "route_intent", []string{"user_input", "intent_id", "task_type", "confidence", "recommended_action", "evidence", "normalized_request"}},
+		{SkillImageGenerator, "generate_image", []string{"prompt"}},
+		{SkillImageGenerator, "edit_image", []string{"image", "edit_instruction"}},
 		{SkillWorkReport, "generate_file", []string{"content", "format"}},
 		{SkillInternalKnowledge, "retrieve_knowledge", []string{"query", "dataset_ids"}},
 		{SkillAgentKnowledge, "retrieve_agent_knowledge", []string{"query"}},
@@ -643,6 +746,7 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		SkillFileGenerator,
 		SkillChartGenerator,
 		SkillIntentRouter,
+		SkillImageGenerator,
 		SkillWorkReport,
 		SkillInternalDatabase,
 		SkillInternalKnowledge,

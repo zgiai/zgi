@@ -1018,6 +1018,49 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 				"normalized_request": "Generate a DOCX file from the current report.",
 			},
 		},
+		SkillImageGenerator + "/generate_image": {
+			SkillID:     SkillImageGenerator,
+			ToolName:    "generate_image",
+			Description: "Generate downloadable image files from a text prompt. Supports style, aspect ratio, count, negative prompt, and optional current-user reference image URL guidance. Reference images are passed as signed URLs in the prompt, not as structured image inputs. For generic image requests, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"prompt":          stringValueSchema("Required image description. Include subject, scene, composition, intended use, and constraints."),
+					"style":           imageStyleSchema(),
+					"aspect_ratio":    imageAspectRatioSchema(),
+					"count":           numberSchema("Number of candidate images. Must be an integer from 1 to 4."),
+					"negative_prompt": stringValueSchema("Optional elements, styles, or risks to avoid."),
+					"reference_image": imageFileObjectSchema("Optional current-user reference image file object or file ID. The tool places a signed URL in the prompt for loose visual guidance; it is not a structured image input."),
+					"filename":        stringValueSchema("Optional base filename. Do not include path separators or an extension."),
+					"lifecycle":       enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"provider":        stringValueSchema("Optional explicit image model provider. Usually omit this and use the default image generation model."),
+					"model":           stringValueSchema("Optional explicit image generation model. Usually omit this and use the default image generation model."),
+				},
+				[]string{"prompt"},
+			),
+			Example: map[string]interface{}{"prompt": "A clean product concept image of a smart desk lamp on a white studio background", "style": "product", "aspect_ratio": "1:1", "count": 1},
+		},
+		SkillImageGenerator + "/edit_image": {
+			SkillID:     SkillImageGenerator,
+			ToolName:    "edit_image",
+			Description: "Create prompt-plus-reference-URL variants or edit-style regenerated images from a current-user reference image and instruction. This is not precise in-place editing and does not pass structured image input to the provider. For ambiguous edits, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"image":            imageFileObjectSchema("Required current-user reference image file object or file ID. The tool places a signed URL in the prompt for loose visual guidance; it is not a structured image input."),
+					"edit_instruction": stringValueSchema("Required edit or variant instruction. State what to change, preserve, and avoid."),
+					"edit_type":        enumStringSchema("Edit type.", []string{"auto", "variant", "background", "color", "add_element", "remove_element", "style_transfer"}),
+					"style":            imageStyleSchema(),
+					"aspect_ratio":     imageAspectRatioSchema(),
+					"count":            numberSchema("Number of candidate images. Must be an integer from 1 to 4."),
+					"negative_prompt":  stringValueSchema("Optional elements, styles, or risks to avoid."),
+					"filename":         stringValueSchema("Optional base filename. Do not include path separators or an extension."),
+					"lifecycle":        enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"provider":         stringValueSchema("Optional explicit image model provider. Usually omit this and use the default image generation model."),
+					"model":            stringValueSchema("Optional explicit image generation model. Usually omit this and use the default image generation model."),
+				},
+				[]string{"image", "edit_instruction"},
+			),
+			Example: map[string]interface{}{"image": map[string]interface{}{"upload_file_id": "file-id"}, "edit_instruction": "Change the background to a bright office scene and keep the main product shape", "edit_type": "background", "count": 1},
+		},
 		SkillWorkReport + "/generate_file": {
 			SkillID:     SkillWorkReport,
 			ToolName:    "generate_file",
@@ -1314,6 +1357,161 @@ func enumStringSchema(description string, values []string) map[string]interface{
 		schema["enum"] = values
 	}
 	return schema
+}
+
+func arraySchema(description string, items map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "array",
+		"description": description,
+		"items":       items,
+	}
+}
+
+func chartDataSchema() map[string]interface{} {
+	series := arraySchema(
+		"Chart data series. Radar supports 1-2 series; bar and line support 1-8 series.",
+		objectSchema(
+			map[string]interface{}{
+				"name":   stringValueSchema("Series label."),
+				"values": arraySchema("Numeric values matching the selected chart labels length.", numberSchema("Score or metric value.")),
+				"color":  stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"name", "values"},
+		),
+	)
+	pieItems := arraySchema(
+		"Pie or doughnut chart items.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Slice label."),
+				"value": numberSchema("Slice value."),
+				"color": stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"label", "value"},
+		),
+	)
+	scatterPoints := arraySchema(
+		"Scatter chart points.",
+		objectSchema(
+			map[string]interface{}{
+				"x":     numberSchema("X-axis value."),
+				"y":     numberSchema("Y-axis value."),
+				"label": stringValueSchema("Optional point label."),
+				"color": stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"x", "y"},
+		),
+	)
+	scoreCountBands := arraySchema(
+		"Precomputed score distribution bands.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Band label such as 90-100."),
+				"count": numberSchema("Precomputed count for this band."),
+			},
+			[]string{"label", "count"},
+		),
+	)
+	scoreRangeBands := arraySchema(
+		"Score distribution bands used to count raw scores.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Band label such as 90-100."),
+				"min":   numberSchema("Inclusive minimum score when calculating from raw scores."),
+				"max":   numberSchema("Inclusive maximum score when calculating from raw scores."),
+			},
+			[]string{"label", "min", "max"},
+		),
+	)
+	common := map[string]interface{}{
+		"max_value": numberSchema("Optional shared maximum value. Radar defaults to 100; bar and line auto-scale when omitted."),
+		"series":    series,
+	}
+	radarProps := copySchemaProperties(common)
+	radarProps["dimensions"] = stringArrayOrCSVSchema("Radar axis labels, such as subject names. Required for radar charts.")
+	barProps := copySchemaProperties(common)
+	barProps["categories"] = stringArrayOrCSVSchema("Bar chart category labels.")
+	lineProps := copySchemaProperties(common)
+	lineProps["x_axis"] = stringArrayOrCSVSchema("Line chart x-axis labels.")
+	lineProps["categories"] = stringArrayOrCSVSchema("Line chart x-axis labels alias.")
+	pieProps := map[string]interface{}{
+		"items": pieItems,
+	}
+	scatterProps := map[string]interface{}{
+		"x_label": stringValueSchema("Optional x-axis label."),
+		"y_label": stringValueSchema("Optional y-axis label."),
+		"x_min":   numberSchema("Optional x-axis minimum."),
+		"x_max":   numberSchema("Optional x-axis maximum."),
+		"y_min":   numberSchema("Optional y-axis minimum."),
+		"y_max":   numberSchema("Optional y-axis maximum."),
+		"points":  scatterPoints,
+	}
+	distributionCountProps := map[string]interface{}{
+		"bands":     scoreCountBands,
+		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
+	}
+	distributionRangeProps := map[string]interface{}{
+		"bands": scoreRangeBands,
+		"scores": arraySchema("Raw score values or objects with value.", map[string]interface{}{"oneOf": []interface{}{
+			numberSchema("Raw score value."),
+			objectSchema(map[string]interface{}{
+				"label": stringValueSchema("Optional score label."),
+				"value": numberSchema("Raw score value."),
+			}, []string{"value"}),
+		}}),
+		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
+	}
+
+	return map[string]interface{}{
+		"description": "Chart-specific data. Use dimensions for radar, categories for bar, x_axis or categories for line, items for pie/doughnut, points for scatter, and bands for score_distribution.",
+		"anyOf": []interface{}{
+			objectSchema(radarProps, []string{"dimensions", "series"}),
+			objectSchema(barProps, []string{"categories", "series"}),
+			objectSchema(lineProps, []string{"x_axis", "series"}),
+			objectSchema(lineProps, []string{"categories", "series"}),
+			objectSchema(pieProps, []string{"items"}),
+			objectSchema(scatterProps, []string{"points"}),
+			objectSchema(distributionCountProps, []string{"bands"}),
+			objectSchema(distributionRangeProps, []string{"bands", "scores"}),
+		},
+	}
+}
+
+func copySchemaProperties(input map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func imageStyleSchema() map[string]interface{} {
+	return enumStringSchema("Visual style. Defaults to auto.", []string{"auto", "realistic", "illustration", "flat", "3d", "guofeng", "tech", "poster", "product", "icon", "cover"})
+}
+
+func imageAspectRatioSchema() map[string]interface{} {
+	return enumStringSchema("Image aspect ratio. Defaults to 1:1.", []string{"1:1", "16:9", "9:16", "4:3"})
+}
+
+func imageFileObjectSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"description": description + " Supported formats: PNG, JPG, JPEG, WEBP.",
+		"anyOf": []interface{}{
+			stringValueSchema("File object encoded as JSON, or a file ID string."),
+			map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"upload_file_id": stringValueSchema("Uploaded file ID."),
+					"file_id":        stringValueSchema("Uploaded file ID."),
+					"id":             stringValueSchema("Uploaded file ID."),
+					"related_id":     stringValueSchema("Related uploaded file ID."),
+					"name":           stringValueSchema("Optional filename."),
+					"mime_type":      stringValueSchema("Optional MIME type."),
+				},
+				"additionalProperties": true,
+			},
+		},
+	}
 }
 
 func booleanSchema(description string) map[string]interface{} {

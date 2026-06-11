@@ -17,6 +17,8 @@ const (
 	SkillContentSummary       = "content-summary"
 	SkillEmailWriting         = "email-writing"
 	SkillMultiDocumentCompare = "multi-document-compare"
+	SkillResumeScreening      = "resume-screening"
+	SkillImageGenerator       = "image-generator"
 	SkillInternalKnowledge    = "internal-knowledge"
 	SkillAgentKnowledge       = "agent-knowledge"
 	SkillInternalDatabase     = "internal-database"
