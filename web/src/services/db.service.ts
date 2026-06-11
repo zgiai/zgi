@@ -19,6 +19,10 @@ import type {
   BatchIngestFileToTableData,
   IngestFileToTableRequest,
   IngestFileToTableData,
+  ParseFileForTableIngestRequest,
+  ParseFileForTableIngestData,
+  ExtractTextToTableRecordsRequest,
+  ExtractTextToTableRecordsData,
   DbTablePrompt,
   UpdateDbTablePromptRequest,
   AnalyzeFileForTableRequest,
@@ -172,6 +176,28 @@ class DbService extends BaseService {
   ): Promise<ApiResponseData<DbTableColumnsPayload>> {
     return this.request('post', `/data-dbs/analyze-file-for-table`, data, {
       timeout: 300000,
+    });
+  }
+
+  /**
+   * Parse one file into text content for table ingestion
+   */
+  parseFileForTableIngest(
+    data: ParseFileForTableIngestRequest
+  ): Promise<ApiResponseData<ParseFileForTableIngestData>> {
+    return this.request('post', `/data-dbs/parse-file-for-table-ingest`, data, {
+      timeout: 600000,
+    });
+  }
+
+  /**
+   * Extract table records from parsed text content
+   */
+  extractTextToTableRecords(
+    data: ExtractTextToTableRecordsRequest
+  ): Promise<ApiResponseData<ExtractTextToTableRecordsData>> {
+    return this.request('post', `/data-dbs/extract-text-to-table-records`, data, {
+      timeout: 600000,
     });
   }
 

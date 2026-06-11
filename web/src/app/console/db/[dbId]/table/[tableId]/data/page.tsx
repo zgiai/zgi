@@ -3,13 +3,11 @@
 // Data ingestion page under a table – sibling to "create" page.
 // Step 1: select files; Step 2: placeholder for AI recognition & preview.
 
-import { use, useCallback, useEffect } from 'react';
-import { useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { ChevronLeft, ArrowLeft, Sparkles, Info } from 'lucide-react';
+import { ChevronLeft, ArrowLeft, Sparkles } from 'lucide-react';
 import { StepOne, StepTwo } from '@/components/db/table-ingest';
-import type { ModelVisionCapabilityStatus } from '@/components/db/table-ingest/step-one';
 import TablePromptDialog from '@/components/db/table-ingest/table-prompt-dialog';
 import { useT } from '@/i18n';
 import type { FileItem } from '@/services/types/file';
@@ -21,12 +19,8 @@ import type {
 import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
-import {
-  isTableIngestImageFile,
-  TABLE_INGEST_ALL_EXTENSIONS,
-} from '@/components/db/table-ingest/file-support';
+import { TABLE_INGEST_ALL_EXTENSIONS } from '@/components/db/table-ingest/file-support';
 import { useTableIngestLeaveGuard } from '@/components/db/table-ingest/use-table-ingest-leave-guard';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface PageProps {
   params: Promise<{ dbId: string; tableId: string }>;
@@ -47,7 +41,6 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
   const [selectedModelProps, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(
     null
   );
-  const [modelPropsPending, setModelPropsPending] = useState(false);
   const [modelPreferenceChecked, setModelPreferenceChecked] = useState(false);
   const [promptOpen, setPromptOpen] = useState<boolean>(false);
   const [leaveGuard, setLeaveGuard] = useState<{
@@ -63,7 +56,6 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
     const savedModel = getLastSelectedAiModel(user.id, 'ingest');
     if (savedModel) {
       setSelectedModel(savedModel);
-      setModelPropsPending(true);
     }
     setModelPreferenceChecked(true);
   }, [modelPreferenceChecked, user?.id]);
@@ -74,7 +66,6 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
     enabled: modelPreferenceChecked && !selectedModel,
     onInitialize: v => {
       setSelectedModel({ provider: v.provider, model: v.model });
-      setModelPropsPending(true);
     },
   });
 
@@ -95,38 +86,14 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
   const onPrevStep = () => {
     confirmNavigation(() => setStep(1));
   };
-  const selectedFilesContainImage = useMemo(
-    () => selectedFiles.some(file => isTableIngestImageFile(file)),
-    [selectedFiles]
-  );
-  const selectedModelSupportsVision = useMemo(
-    () =>
-      Boolean(
-        selectedModelProps?.endpoints?.vision ||
-          selectedModelProps?.use_cases?.includes('vision') ||
-          selectedModelProps?.input_modalities?.includes('image')
-      ),
-    [selectedModelProps]
-  );
-  const selectedModelVisionCapabilityStatus = useMemo<ModelVisionCapabilityStatus>(() => {
-    if (!selectedModel) return 'checking';
-    if (modelPropsPending) return 'checking';
-    return selectedModelSupportsVision ? 'vision' : 'textOnly';
-  }, [modelPropsPending, selectedModel, selectedModelSupportsVision]);
-  const selectedModelUseCase = selectedFilesContainImage ? 'vision' : 'text-chat';
-  const modelCapabilityFilter = selectedFilesContainImage
-    ? ({ features_vision: true } as const)
-    : undefined;
   const selectableExtensions = [...TABLE_INGEST_ALL_EXTENSIONS];
   const handleModelPropsChange = useCallback((props: ModelSelectorModelProps | null) => {
     setSelectedModelProps(props);
-    setModelPropsPending(false);
   }, []);
   const handleModelChange = useCallback(
     (value: ModelSelectorValue) => {
       setSelectedModel(value);
       setSelectedModelProps(null);
-      setModelPropsPending(true);
       if (user?.id) {
         saveLastSelectedAiModel(user.id, 'ingest', {
           provider: value.provider,
@@ -164,32 +131,16 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
             <div className="flex items-center gap-1">
               <div className="w-64">
                 <ModelSelector
-                  modelType={selectedModelUseCase}
+                  modelType="text-chat"
                   value={selectedModel ?? undefined}
                   modelProps={selectedModelProps}
                   onModelPropsChange={handleModelPropsChange}
-                  capabilityFilter={modelCapabilityFilter}
-                  hasError={
-                    selectedFilesContainImage &&
-                    Boolean(selectedModel) &&
-                    selectedModelVisionCapabilityStatus === 'textOnly'
-                  }
                   onChange={handleModelChange}
                   placeholder={t('dbs.modelSelector.placeholder', {
                     defaultMessage: 'Select a model',
                   })}
                 />
               </div>
-              {selectedFilesContainImage && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Info className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-xs">
-                    {t('dbs.tableIngest.stepOne.imageModelLocked')}
-                  </TooltipContent>
-                </Tooltip>
-              )}
             </div>
           )}
           <Button
@@ -206,14 +157,10 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
         <StepOne
           onNext={files => {
             setSelectedFiles(files);
-            const hasImage = files.some(file => isTableIngestImageFile(file));
-            if (hasImage && selectedModelVisionCapabilityStatus !== 'vision') return;
             setStep(2);
           }}
           onFilesChange={setSelectedFiles}
           modelSelected={Boolean(selectedModel)}
-          modelSupportsVision={selectedModelSupportsVision}
-          modelVisionCapabilityStatus={selectedModelVisionCapabilityStatus}
           initialFiles={selectedFiles}
           acceptExt={selectableExtensions}
         />
@@ -225,8 +172,6 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
           selectedModel={selectedModel}
           dbId={dbId}
           tableId={tableId}
-          modelSupportsVision={selectedModelSupportsVision}
-          modelVisionCapabilityStatus={selectedModelVisionCapabilityStatus}
           onRemoveFile={fileId => {
             setSelectedFiles(prev => prev.filter(file => file.id !== fileId));
           }}

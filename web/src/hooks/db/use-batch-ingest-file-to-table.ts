@@ -16,6 +16,10 @@ import {
   type BatchIngestFileToTableData,
   type IngestFileToTableRequest,
   type IngestFileToTableData,
+  type ParseFileForTableIngestRequest,
+  type ParseFileForTableIngestData,
+  type ExtractTextToTableRecordsRequest,
+  type ExtractTextToTableRecordsData,
 } from '@/services/types/db';
 import { useT } from '@/i18n';
 import { DB_KEYS } from '@/hooks/query-keys';
@@ -79,6 +83,23 @@ export interface UseIngestFileToTableReturn {
   ) => Promise<{
     columns: DbTableColumn[];
     result: IngestFileToTableData;
+  }>;
+  isPending: boolean;
+}
+
+export interface UseParseFileForTableIngestReturn {
+  parseFile: (
+    payload: ParseFileForTableIngestRequest
+  ) => Promise<ParseFileForTableIngestData>;
+  isPending: boolean;
+}
+
+export interface UseExtractTextToTableRecordsReturn {
+  extractRecords: (
+    payload: ExtractTextToTableRecordsRequest
+  ) => Promise<{
+    columns: DbTableColumn[];
+    result: ExtractTextToTableRecordsData;
   }>;
   isPending: boolean;
 }
@@ -175,6 +196,105 @@ export function useBatchIngestFileToTable(
   );
 
   return { ingest, isPending };
+}
+
+export function useParseFileForTableIngest(): UseParseFileForTableIngestReturn {
+  const t = useT('dbs');
+  const { mutateAsync, isPending } = useMutation<
+    ApiResponseData<ParseFileForTableIngestData>,
+    unknown,
+    ParseFileForTableIngestRequest
+  >({
+    mutationFn: variables => dbService.parseFileForTableIngest(variables),
+    onError: err => {
+      toast.error((err as Error)?.message || t('tableIngest.stepTwo.parseRequestFailed'));
+    },
+  });
+
+  const parseFile = useCallback(
+    async (payload: ParseFileForTableIngestRequest): Promise<ParseFileForTableIngestData> => {
+      const res = await mutateAsync(payload);
+      return {
+        ...(res?.data ?? {}),
+        message: res?.data?.message ?? '',
+      };
+    },
+    [mutateAsync]
+  );
+
+  return { parseFile, isPending };
+}
+
+export function useExtractTextToTableRecords(
+  dbId: string,
+  tableId: string
+): UseExtractTextToTableRecordsReturn {
+  const queryClient = useQueryClient();
+  const t = useT('dbs');
+
+  const { mutateAsync, isPending } = useMutation<
+    ApiResponseData<ExtractTextToTableRecordsData>,
+    unknown,
+    ExtractTextToTableRecordsRequest
+  >({
+    mutationFn: variables => dbService.extractTextToTableRecords(variables),
+    onSuccess: response => {
+      const incoming = response?.data;
+      const normalizedColumns: DbTableColumn[] = Array.isArray(incoming?.columns)
+        ? (incoming?.columns ?? []).map(c => ({
+            ...c,
+            type: normalizeColumnType((c as { type?: unknown }).type),
+            is_system_field: Boolean(c.is_system_field),
+          }))
+        : [];
+
+      void queryClient.invalidateQueries({ queryKey: getTableColumnsKeyWithSystem(dbId, tableId) });
+      queryClient.setQueryData<ApiResponseData<DbTableColumnsPayload>>(
+        getTableColumnsKeyNoSystem(dbId, tableId),
+        {
+          code: response.code,
+          message: response.message,
+          data: { columns: normalizedColumns.filter(c => !c.is_system_field) },
+        }
+      );
+    },
+    onError: err => {
+      toast.error((err as Error)?.message || t('tableIngest.stepTwo.recognitionRequestFailed'));
+    },
+  });
+
+  const extractRecords = useCallback(
+    async (
+      payload: ExtractTextToTableRecordsRequest
+    ): Promise<{
+      columns: DbTableColumn[];
+      result: ExtractTextToTableRecordsData;
+    }> => {
+      const res = await mutateAsync(payload);
+      const normalizedColumns: DbTableColumn[] = Array.isArray(res?.data?.columns)
+        ? (res?.data?.columns ?? []).map(c => ({
+            ...c,
+            type: normalizeColumnType((c as { type?: unknown }).type),
+            is_system_field: Boolean(c.is_system_field),
+          }))
+        : [];
+      return {
+        columns: normalizedColumns,
+        result: {
+          ...(res?.data ?? {
+            message: '',
+            records: [],
+            columns: [],
+          }),
+          columns: normalizedColumns,
+          records: res?.data?.records ?? [],
+        },
+      };
+    },
+    [mutateAsync]
+  );
+
+  return { extractRecords, isPending };
 }
 
 export function useIngestFileToTable(

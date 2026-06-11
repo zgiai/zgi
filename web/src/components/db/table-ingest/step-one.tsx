@@ -6,30 +6,24 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { AlertCircle, FileCheck2, FolderOpen, ListChecks, ShieldCheck, Trash2 } from 'lucide-react';
+import { FileCheck2, FolderOpen, ListChecks, ShieldCheck, Trash2 } from 'lucide-react';
 import FileSelectorDialog from '@/components/files/file-selector-dialog';
 import type { FileItem } from '@/services/types/file';
 import { useT } from '@/i18n';
 import { formatFileSize } from '@/utils/format';
 import { FileIcon } from '@/components/ui/file-icon';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { formatExtensionsForDisplay } from '@/utils/file-helpers';
 import { toast } from 'sonner';
 import {
   isTableIngestImageFile,
   isTableIngestSupportedFile,
-  TABLE_INGEST_DOCUMENT_EXTENSIONS,
+  TABLE_INGEST_ALL_EXTENSIONS,
 } from '@/components/db/table-ingest/file-support';
-
-export type ModelVisionCapabilityStatus = 'checking' | 'vision' | 'textOnly';
 
 export interface IngestStepOneProps {
   onNext: (files: FileItem[]) => void;
   onFilesChange?: (files: FileItem[]) => void;
   modelSelected: boolean;
-  modelSupportsVision?: boolean;
-  modelVisionCapabilityStatus?: ModelVisionCapabilityStatus;
   initialFiles?: FileItem[];
   acceptExt?: string[];
 }
@@ -38,10 +32,8 @@ const StepOne: React.FC<IngestStepOneProps> = ({
   onNext,
   onFilesChange,
   modelSelected,
-  modelSupportsVision = false,
-  modelVisionCapabilityStatus,
   initialFiles = [],
-  acceptExt = [...TABLE_INGEST_DOCUMENT_EXTENSIONS],
+  acceptExt = [...TABLE_INGEST_ALL_EXTENSIONS],
 }) => {
   const t = useT('dbs');
   const MAX_COUNT = 5;
@@ -54,20 +46,8 @@ const StepOne: React.FC<IngestStepOneProps> = ({
   }, [initialFiles]);
 
   const count = selected.length;
-  const hasImageFile = useMemo(() => selected.some(file => isTableIngestImageFile(file)), [selected]);
-  const effectiveVisionStatus: ModelVisionCapabilityStatus =
-    modelVisionCapabilityStatus ?? (modelSupportsVision ? 'vision' : 'textOnly');
-  const visionCapabilityChecking = hasImageFile && effectiveVisionStatus === 'checking';
-  const visionModelRequired = hasImageFile && effectiveVisionStatus === 'textOnly';
-  const nextDisabled =
-    count === 0 || !modelSelected || visionCapabilityChecking || visionModelRequired;
-  const supportedDesc = useMemo(
-    () =>
-      modelSupportsVision
-        ? t('tableIngest.stepOne.supportedDescWithImages')
-        : t('tableIngest.stepOne.supportedDescDocumentsOnly'),
-    [modelSupportsVision, t]
-  );
+  const nextDisabled = count === 0 || !modelSelected;
+  const supportedDesc = t('tableIngest.stepOne.supportedDesc');
   const acceptedTypesLabel = useMemo(
     () => formatExtensionsForDisplay(acceptExt).join(' / '),
     [acceptExt]
@@ -181,13 +161,6 @@ const StepOne: React.FC<IngestStepOneProps> = ({
                       <div className="min-w-0">
                         <div className="flex min-w-0 items-center gap-2">
                           <div className="truncate text-sm font-medium">{file.name}</div>
-                          {isImage && effectiveVisionStatus !== 'vision' ? (
-                            <Badge variant="secondary" className="shrink-0 text-warning">
-                              {effectiveVisionStatus === 'checking'
-                                ? t('tableIngest.stepOne.visionCheckingBadge')
-                                : t('tableIngest.stepOne.needsVisionBadge')}
-                            </Badge>
-                          ) : null}
                         </div>
                         <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                           <span>{formatFileSize(file.size)}</span>
@@ -209,20 +182,6 @@ const StepOne: React.FC<IngestStepOneProps> = ({
               </div>
             </>
           )}
-          {visionCapabilityChecking && (
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                {t('tableIngest.stepOne.visionCapabilityChecking')}
-              </AlertDescription>
-            </Alert>
-          )}
-          {visionModelRequired && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{t('tableIngest.stepOne.visionModelRequired')}</AlertDescription>
-            </Alert>
-          )}
         </div>
         <div className="flex justify-center">
           <Button onClick={handleNext} disabled={nextDisabled}>
@@ -239,15 +198,6 @@ const StepOne: React.FC<IngestStepOneProps> = ({
         initSelectedFiles={selected}
         maxCount={MAX_COUNT}
         acceptExt={acceptExt}
-        footerExtra={
-          effectiveVisionStatus !== 'vision' ? (
-            <div className="text-xs text-muted-foreground">
-              {effectiveVisionStatus === 'checking'
-                ? t('tableIngest.stepOne.visionCapabilityChecking')
-                : t('tableIngest.stepOne.imageModelLocked')}
-            </div>
-          ) : undefined
-        }
       />
     </div>
   );

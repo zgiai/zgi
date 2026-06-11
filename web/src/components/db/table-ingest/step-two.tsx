@@ -11,9 +11,7 @@ import {
   AlertCircle,
   Check,
   CheckCircle,
-  Eye,
   FileSearch,
-  ImageIcon,
   LoaderCircle,
   RefreshCcw,
   RotateCcw,
@@ -21,78 +19,99 @@ import {
   XCircle,
 } from 'lucide-react';
 import type {
-  BatchIngestResultItem,
   DbTableColumn,
   DbTableRecord,
-  FileIngestAttempt,
   FileIngestExtractionInfo,
-  FileIngestExtractionMode,
+  FileIngestFieldExtraction,
+  FileIngestFieldMatch,
   GetDbTableRecordsParams,
 } from '@/services/types/db';
-import type { ModelVisionCapabilityStatus } from '@/components/db/table-ingest/step-one';
 import { Type } from '@/services/types/db';
 import { useCreateDbTableRecords } from '@/hooks/db/use-db-table-records';
-import MarkdownViewer from '@/components/common/markdown-viewer';
-import { MarkdownImage } from '@/components/common/markdown-image';
 import { Switch } from '@/components/ui/switch';
 import { formatDateTimeLocalInput } from '@/utils/date-input';
 import { useT } from '@/i18n';
 import { useDbTablePrompt } from '@/hooks/db/use-db-table-prompt';
-import { useIngestFileToTable } from '@/hooks/db/use-batch-ingest-file-to-table';
+import {
+  useExtractTextToTableRecords,
+  useParseFileForTableIngest,
+} from '@/hooks/db/use-batch-ingest-file-to-table';
 import type { FileItem } from '@/services/types/file';
+import { fileManageService } from '@/services/file-manage.service';
 import { FileIcon } from '@/components/ui/file-icon';
 import { formatFileSize } from '@/utils/format';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-preview-url';
+import { isOriginalPreviewSupported } from '@/utils/file-helpers';
 import {
-  isTableIngestImageFile,
-  normalizeIngestExtension,
-} from '@/components/db/table-ingest/file-support';
+  FileEvidenceViewer,
+  type FileEvidenceViewerLabels,
+} from '@/components/content-parse/file-evidence-viewer';
 
 export interface IngestStepTwoProps {
   selectedFiles: FileItem[];
   selectedModel: { provider: string; model: string };
   dbId: string;
   tableId: string;
-  modelSupportsVision?: boolean;
-  modelVisionCapabilityStatus?: ModelVisionCapabilityStatus;
   onRemoveFile?: (fileId: string) => void;
   onLeaveGuardChange?: (active: boolean, reason: 'processing' | 'unsaved' | null) => void;
 }
 
 type RecognitionStatus = 'idle' | 'queued' | 'recognizing' | 'success' | 'warning' | 'failed' | 'skipped';
 type FileFilter = 'all' | 'needs_action' | 'failed' | 'ready';
-type ContentTab = 'original' | 'text' | 'details';
+type ContentTab = 'original' | 'text';
+type RecognitionMode = 'auto';
+type TableIngestStage = 'parse' | 'recognition';
 
 interface RecognitionAttempt {
   id: string;
-  mode: FileIngestExtractionMode;
+  mode: RecognitionMode;
   status: RecognitionStatus;
   content: string;
   records: DbTableRecord[];
   error?: string;
   warning?: string;
   extraction?: FileIngestExtractionInfo;
+  fieldExtraction?: FileIngestFieldExtraction;
   createdAt: number;
 }
 
 interface FileRecognitionState {
   file: FileItem;
   status: RecognitionStatus;
-  requestedMode: FileIngestExtractionMode;
+  requestedMode: RecognitionMode;
+  activeStage?: TableIngestStage;
   activeAttemptId?: string;
   attempts: RecognitionAttempt[];
+  parse: {
+    status: RecognitionStatus;
+    content: string;
+    extraction?: FileIngestExtractionInfo;
+    error?: string;
+    requestId?: string;
+    startedAt?: number;
+  };
+  recognition: {
+    status: RecognitionStatus;
+    records: DbTableRecord[];
+    values: DbTableRecord;
+    fieldExtraction?: FileIngestFieldExtraction;
+    error?: string;
+    warning?: string;
+    requestId?: string;
+    startedAt?: number;
+    sourceContentHash?: string;
+  };
   content: string;
   records: DbTableRecord[];
   values: DbTableRecord;
   error?: string;
   warning?: string;
   extraction?: FileIngestExtractionInfo;
+  fieldExtraction?: FileIngestFieldExtraction;
   dirty: boolean;
   requestId?: string;
   requestStartedAt?: number;
@@ -132,6 +151,53 @@ const IngestLoadingBlock: React.FC<{
   </div>
 );
 
+const IngestRecoveryCard: React.FC<{
+  title: string;
+  hint: string;
+  detailsLabel: string;
+  details?: string;
+  retryLabel: string;
+  onRetry?: () => void;
+  compact?: boolean;
+}> = ({ title, hint, detailsLabel, details, retryLabel, onRetry, compact = false }) => (
+  <div
+    role="alert"
+    className={cn(
+      'rounded-md border border-warning/35 bg-warning/5 text-sm',
+      compact ? 'p-3' : 'p-4'
+    )}
+  >
+    <div className="flex gap-3">
+      <div
+        className={cn(
+          'mt-0.5 flex shrink-0 items-center justify-center rounded-md bg-warning/15 text-warning',
+          compact ? 'h-7 w-7' : 'h-8 w-8'
+        )}
+      >
+        <AlertCircle className="h-4 w-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="font-medium text-foreground">{title}</div>
+        <div className="mt-1 leading-6 text-muted-foreground">{hint}</div>
+        {onRetry ? (
+          <Button type="button" size="sm" variant="outline" className="mt-3" onClick={onRetry}>
+            <RefreshCcw className="h-4 w-4" />
+            {retryLabel}
+          </Button>
+        ) : null}
+        {details ? (
+          <details className="mt-3 text-xs text-muted-foreground">
+            <summary className="cursor-pointer select-none">{detailsLabel}</summary>
+            <div className="mt-2 whitespace-pre-wrap break-words rounded border bg-background/80 p-2 font-mono leading-5">
+              {details}
+            </div>
+          </details>
+        ) : null}
+      </div>
+    </div>
+  </div>
+);
+
 const NUMERIC_ONLY_PATTERN = /^-?\d+(?:\.\d+)?$/;
 
 function isValidTimestampRecordValue(value: DbTableRecord[keyof DbTableRecord]): boolean {
@@ -141,12 +207,63 @@ function isValidTimestampRecordValue(value: DbTableRecord[keyof DbTableRecord]):
   return formatDateTimeLocalInput(trimmed) !== '';
 }
 
-function isPdfFile(file?: FileItem): boolean {
-  if (!file) return false;
-  return (
-    normalizeIngestExtension(file.extension) === 'pdf' ||
-    file.mime_type?.toLowerCase() === 'application/pdf'
-  );
+function normalizeRecognizedValue(
+  value: DbTableRecord[keyof DbTableRecord],
+  type: Type
+): DbTableRecord[keyof DbTableRecord] {
+  if (value === null || typeof value === 'undefined') return null;
+  switch (type) {
+    case Type.Integer:
+    case Type.Numeric: {
+      if (typeof value === 'number') return Number.isNaN(value) ? null : value;
+      const text = String(value).trim().replace(/,/g, '');
+      if (!NUMERIC_ONLY_PATTERN.test(text)) return null;
+      const num = Number(text);
+      if (Number.isNaN(num)) return null;
+      return type === Type.Integer && !Number.isInteger(num) ? null : num;
+    }
+    case Type.Boolean: {
+      if (typeof value === 'boolean') return value;
+      const text = String(value).trim().toLowerCase();
+      if (['true', 'yes', '1', '是'].includes(text)) return true;
+      if (['false', 'no', '0', '否'].includes(text)) return false;
+      return null;
+    }
+    case Type.Timestamp: {
+      const text = String(value).trim();
+      return isValidTimestampRecordValue(text) ? text : null;
+    }
+    case Type.Text:
+    default:
+      return value;
+  }
+}
+
+function normalizeRecognizedRecord(record: DbTableRecord, columns: DbTableColumn[]): DbTableRecord {
+  return columns.reduce((acc, col) => {
+    acc[col.name] = normalizeRecognizedValue(
+      record[col.name] as DbTableRecord[keyof DbTableRecord],
+      col.type
+    );
+    return acc;
+  }, { ...record } as DbTableRecord);
+}
+
+function hasFieldMatchRawValue(match?: FileIngestFieldMatch): boolean {
+  const raw = match?.raw_value ?? match?.value;
+  return raw !== null && typeof raw !== 'undefined' && String(raw).trim().length > 0;
+}
+
+function formatFieldMatchValue(value: unknown): string {
+  if (value === null || typeof value === 'undefined') return '';
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch (_err) {
+      return String(value);
+    }
+  }
+  return String(value);
 }
 
 function createInitialFileState(file: FileItem): FileRecognitionState {
@@ -155,30 +272,19 @@ function createInitialFileState(file: FileItem): FileRecognitionState {
     status: 'idle',
     requestedMode: 'auto',
     attempts: [],
+    parse: {
+      status: 'idle',
+      content: '',
+    },
+    recognition: {
+      status: 'idle',
+      records: [],
+      values: {} as DbTableRecord,
+    },
     content: '',
     records: [],
     values: {} as DbTableRecord,
     dirty: false,
-  };
-}
-
-function toResultItem(result: {
-  file_id?: string;
-  file_name?: string;
-  message: string;
-  records: DbTableRecord[];
-  content?: string;
-  extraction?: FileIngestExtractionInfo;
-  error?: string;
-}): BatchIngestResultItem {
-  return {
-    file_id: result.file_id || '',
-    file_name: result.file_name || '',
-    message: result.message,
-    records: result.records || [],
-    content: result.content,
-    extraction: result.extraction,
-    error: result.error,
   };
 }
 
@@ -187,8 +293,6 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   selectedModel,
   dbId,
   tableId,
-  modelSupportsVision = false,
-  modelVisionCapabilityStatus,
   onRemoveFile,
   onLeaveGuardChange,
 }) => {
@@ -206,6 +310,12 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     message: string;
     onConfirm: () => void;
   } | null>(null);
+  const [originalPreview, setOriginalPreview] = useState<{
+    fileId?: string;
+    url: string;
+    loading: boolean;
+    error: string | null;
+  }>({ url: '', loading: false, error: null });
 
   const fileStatesRef = useRef(fileStates);
   useEffect(() => {
@@ -222,40 +332,91 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     gcTime: 600_000,
   });
 
-  const { ingestFile } = useIngestFileToTable(dbId, tableId);
+  const { parseFile } = useParseFileForTableIngest();
+  const { extractRecords } = useExtractTextToTableRecords(dbId, tableId);
 
   const listParams: GetDbTableRecordsParams = { limit: 20, offset: 0, order: 'id DESC' };
   const { createRecords, isPending: saving } = useCreateDbTableRecords(dbId, tableId, listParams);
 
   const selectedFileIds = useMemo(() => selectedFiles.map(f => f.id), [selectedFiles]);
   const selectedFileIdsKey = useMemo(() => selectedFileIds.join('|'), [selectedFileIds]);
-  const selectedImageFiles = useMemo(
-    () => selectedFiles.filter(file => isTableIngestImageFile(file)),
-    [selectedFiles]
-  );
-  const effectiveVisionStatus: ModelVisionCapabilityStatus =
-    modelVisionCapabilityStatus ?? (modelSupportsVision ? 'vision' : 'textOnly');
-  const imageFilesBlocked = selectedImageFiles.length > 0 && effectiveVisionStatus !== 'vision';
   const firstSelectedFileId = selectedFiles[0]?.id;
   const activeState = activeFileId ? fileStates[activeFileId] : undefined;
   const activeFile = activeState?.file || selectedFiles.find(file => file.id === activeFileId);
-  const activeFileIsImage = Boolean(activeFile && isTableIngestImageFile(activeFile));
-  const activeFileIsPDF = isPdfFile(activeFile);
-  const activeFileCanUseVision = activeFileIsImage || activeFileIsPDF;
-  const activeImageBlockedByVision = activeFileIsImage && effectiveVisionStatus !== 'vision';
-  const activePreviewableOriginal = activeFileIsImage || activeFileIsPDF;
+  const activePreviewableOriginal = Boolean(
+    activeFile && isOriginalPreviewSupported(activeFile.extension, activeFile.mime_type)
+  );
+  const activeOriginalPreviewFile = activeFile
+    ? {
+        id: activeFile.id,
+        name: activeFile.name,
+        extension: activeFile.extension,
+        mimeType: activeFile.mime_type,
+        size: activeFile.size,
+      }
+    : null;
 
-  const {
-    previewUrl: activeOriginalPreviewUrl,
-    isLoading: activeOriginalPreviewLoading,
-    error: activeOriginalPreviewError,
-  } = useFileOriginalPreviewUrl(activeFile?.id, {
-    enabled: activePreviewableOriginal && Boolean(activeFile?.id),
-  });
+  const activeOriginalPreviewUrl = originalPreview.fileId === activeFile?.id ? originalPreview.url : '';
+  const activeOriginalPreviewLoading =
+    originalPreview.fileId === activeFile?.id ? originalPreview.loading : false;
+  const activeOriginalPreviewError =
+    originalPreview.fileId === activeFile?.id ? originalPreview.error : null;
 
   useEffect(() => {
     setContentTab(activePreviewableOriginal ? 'original' : 'text');
   }, [activeFileId, activePreviewableOriginal]);
+
+  useEffect(() => {
+    if (!activePreviewableOriginal || !activeFile?.id) {
+      setOriginalPreview({ url: '', loading: false, error: null });
+      return;
+    }
+
+    let cancelled = false;
+    let objectUrl = '';
+
+    setOriginalPreview({
+      fileId: activeFile.id,
+      url: '',
+      loading: true,
+      error: null,
+    });
+
+    fileManageService
+      .downloadFile(activeFile.id)
+      .then(blob => {
+        objectUrl = URL.createObjectURL(blob);
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setOriginalPreview({
+          fileId: activeFile.id,
+          url: objectUrl,
+          loading: false,
+          error: null,
+        });
+      })
+      .catch(error => {
+        if (cancelled) return;
+        setOriginalPreview({
+          fileId: activeFile.id,
+          url: '',
+          loading: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Failed to load original preview',
+        });
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [activeFile?.id, activePreviewableOriginal]);
 
   const promptUnavailable =
     Boolean(promptError) || (!promptLoading && !String(prompt || '').trim());
@@ -320,12 +481,23 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   const getEffectiveStatus = useCallback(
     (state?: FileRecognitionState): RecognitionStatus => {
       if (!state) return 'idle';
+      if (state.status === 'skipped') return 'skipped';
+      if (state.parse.status === 'queued' || state.parse.status === 'recognizing') {
+        return state.parse.status;
+      }
+      if (state.parse.status === 'failed') return 'failed';
+      if (
+        state.recognition.status === 'queued' ||
+        state.recognition.status === 'recognizing' ||
+        state.recognition.status === 'failed'
+      ) {
+        return state.recognition.status;
+      }
       if (
         state.status === 'idle' ||
         state.status === 'queued' ||
         state.status === 'recognizing' ||
-        state.status === 'failed' ||
-        state.status === 'skipped'
+        state.status === 'failed'
       ) {
         return state.status;
       }
@@ -338,66 +510,39 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     [columns.length, hasInvalidTimestampValue, requiredFieldsComplete]
   );
 
-  const applyResultToFile = useCallback(
-    (
-      fileId: string,
-      requestId: string,
-      mode: FileIngestExtractionMode,
-      item: BatchIngestResultItem
-    ) => {
-      const content = item.content || '';
-      const records = item.records || [];
-      const firstRecord = (records[0] || {}) as DbTableRecord;
-      const error =
-        item.error || (records.length === 0 && !content ? item.message || t('tableIngest.stepTwo.fileErrorFallback') : undefined);
-      const warning =
-        !error && records.length === 0
-          ? item.message || t('tableIngest.stepTwo.noRecordWarning')
-          : undefined;
-      const status: RecognitionStatus = error ? 'failed' : records.length > 0 ? 'success' : 'warning';
-      const attempt: RecognitionAttempt = {
-        id: requestId,
-        mode,
-        status,
-        content,
-        records,
-        error,
-        warning,
-        extraction: item.extraction,
-        createdAt: Date.now(),
-      };
-
-      setFileStates(prev => {
-        const current = prev[fileId];
-        if (!current || current.requestId !== requestId) return prev;
-        return {
-          ...prev,
-          [fileId]: {
-            ...current,
-            status,
-            requestedMode: mode,
-            activeAttemptId: requestId,
-            attempts: [...current.attempts, attempt],
-            content,
-            records,
-            values: firstRecord,
-            error,
-            warning,
-            extraction: item.extraction,
-            dirty: false,
-            requestId: undefined,
-            requestStartedAt: undefined,
-          },
-        };
-      });
-    },
-    [t]
-  );
-
   const runRecognitionForFile = useCallback(
-    async (fileId: string, mode: FileIngestExtractionMode, reset = false) => {
+    async (fileId: string, content?: string, contentHash?: string, reset = false) => {
       if (promptUnavailable) return;
-      const requestId = `${fileId}:${mode}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+      const currentState = fileStatesRef.current[fileId];
+      const sourceContent = typeof content === 'string' ? content : currentState?.parse.content || currentState?.content || '';
+      const sourceContentHash =
+        contentHash || currentState?.parse.extraction?.content_hash || currentState?.extraction?.content_hash || '';
+      if (!sourceContent.trim()) {
+        const message = t('tableIngest.stepTwo.noParsedContentForRecognition');
+        setFileStates(prev => {
+          const current = prev[fileId];
+          if (!current) return prev;
+          return {
+            ...prev,
+            [fileId]: {
+              ...current,
+              status: 'failed',
+              activeStage: 'recognition',
+              error: message,
+              warning: undefined,
+              recognition: {
+                ...current.recognition,
+                status: 'failed',
+                error: message,
+                warning: undefined,
+              },
+            },
+          };
+        });
+        return;
+      }
+
+      const requestId = `${fileId}:recognition:${Date.now()}:${Math.random().toString(36).slice(2)}`;
       setFileStates(prev => {
         const current = prev[fileId];
         if (!current) return prev;
@@ -406,39 +551,109 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
           [fileId]: {
             ...current,
             status: 'recognizing',
-            requestedMode: mode,
-            content: reset ? '' : current.content,
+            requestedMode: 'auto',
+            activeStage: 'recognition',
             records: reset ? [] : current.records,
             values: reset ? ({} as DbTableRecord) : current.values,
             error: undefined,
             warning: undefined,
             dirty: reset ? false : current.dirty,
-            requestId,
-            requestStartedAt: Date.now(),
+            recognition: {
+              ...current.recognition,
+              status: 'recognizing',
+              records: reset ? [] : current.recognition.records,
+              values: reset ? ({} as DbTableRecord) : current.recognition.values,
+              error: undefined,
+              warning: undefined,
+              requestId,
+              startedAt: Date.now(),
+              sourceContentHash,
+            },
           },
         };
       });
 
       try {
-        const { columns: nextColumns, result } = await ingestFile({
+        const { columns: nextColumns, result } = await extractRecords({
           file_id: fileId,
+          content: sourceContent,
+          content_hash: sourceContentHash,
           prompt: prompt || '',
           table_id: tableId,
           model: { provider: selectedModel.provider, name: selectedModel.model },
-          extraction_mode: mode,
         });
         if (nextColumns.length > 0) {
           setColumns(nextColumns.filter(c => !c.is_system_field));
         }
-        applyResultToFile(fileId, requestId, mode, toResultItem(result));
+        const recognitionColumns =
+          nextColumns.length > 0 ? nextColumns.filter(c => !c.is_system_field) : columns;
+        const records = (result.records || []).map(record =>
+          normalizeRecognizedRecord(record as DbTableRecord, recognitionColumns)
+        );
+        const firstRecord = (records[0] || {}) as DbTableRecord;
+        const error = result.error;
+        const warning =
+          !error && records.length === 0
+            ? result.message || t('tableIngest.stepTwo.noRecordWarning')
+            : undefined;
+        const status: RecognitionStatus = error ? 'failed' : records.length > 0 ? 'success' : 'warning';
+        const responseHash = result.content_hash || sourceContentHash;
+
+        setFileStates(prev => {
+          const current = prev[fileId];
+          if (!current || current.recognition.requestId !== requestId) return prev;
+          const currentHash = current.parse.extraction?.content_hash || current.extraction?.content_hash || '';
+          if (currentHash && responseHash && currentHash !== responseHash) return prev;
+
+          const attempt: RecognitionAttempt = {
+            id: requestId,
+            mode: 'auto',
+            status,
+            content: current.content,
+            records,
+            error,
+            warning,
+            extraction: current.extraction,
+            fieldExtraction: result.field_extraction,
+            createdAt: Date.now(),
+          };
+          return {
+            ...prev,
+            [fileId]: {
+              ...current,
+              status,
+              activeStage: 'recognition',
+              activeAttemptId: requestId,
+              attempts: [...current.attempts, attempt],
+              records,
+              values: firstRecord,
+              error,
+              warning,
+              fieldExtraction: result.field_extraction,
+              dirty: false,
+              recognition: {
+                ...current.recognition,
+                status,
+                records,
+                values: firstRecord,
+                fieldExtraction: result.field_extraction,
+                error,
+                warning,
+                requestId: undefined,
+                startedAt: undefined,
+                sourceContentHash: responseHash,
+              },
+            },
+          };
+        });
       } catch (err) {
         const message = (err as Error)?.message || t('tableIngest.stepTwo.fileErrorFallback');
         setFileStates(prev => {
           const current = prev[fileId];
-          if (!current || current.requestId !== requestId) return prev;
+          if (!current || current.recognition.requestId !== requestId) return prev;
           const attempt: RecognitionAttempt = {
             id: requestId,
-            mode,
+            mode: 'auto',
             status: 'failed',
             content: current.content,
             records: current.records,
@@ -451,20 +666,27 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
             [fileId]: {
               ...current,
               status: 'failed',
+              activeStage: 'recognition',
               error: message,
               warning: undefined,
               attempts: [...current.attempts, attempt],
               activeAttemptId: requestId,
-              requestId: undefined,
-              requestStartedAt: undefined,
+              recognition: {
+                ...current.recognition,
+                status: 'failed',
+                error: message,
+                warning: undefined,
+                requestId: undefined,
+                startedAt: undefined,
+              },
             },
           };
         });
       }
     },
     [
-      applyResultToFile,
-      ingestFile,
+      columns,
+      extractRecords,
       prompt,
       promptUnavailable,
       selectedModel.model,
@@ -472,6 +694,140 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
       tableId,
       t,
     ]
+  );
+
+  const runParseForFile = useCallback(
+    async (fileId: string, reset = false) => {
+      const requestId = `${fileId}:parse:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+      setFileStates(prev => {
+        const current = prev[fileId];
+        if (!current) return prev;
+        return {
+          ...prev,
+          [fileId]: {
+            ...current,
+            status: 'recognizing',
+            activeStage: 'parse',
+            content: reset ? '' : current.content,
+            records: reset ? [] : current.records,
+            values: reset ? ({} as DbTableRecord) : current.values,
+            error: undefined,
+            warning: undefined,
+            extraction: reset ? undefined : current.extraction,
+            fieldExtraction: reset ? undefined : current.fieldExtraction,
+            dirty: reset ? false : current.dirty,
+            parse: {
+              ...current.parse,
+              status: 'recognizing',
+              content: reset ? '' : current.parse.content,
+              error: undefined,
+              requestId,
+              startedAt: Date.now(),
+              extraction: reset ? undefined : current.parse.extraction,
+            },
+            recognition: {
+              ...current.recognition,
+              status: reset ? 'idle' : current.recognition.status,
+              records: reset ? [] : current.recognition.records,
+              values: reset ? ({} as DbTableRecord) : current.recognition.values,
+              error: reset ? undefined : current.recognition.error,
+              warning: reset ? undefined : current.recognition.warning,
+              fieldExtraction: reset ? undefined : current.recognition.fieldExtraction,
+              requestId: reset ? undefined : current.recognition.requestId,
+              startedAt: reset ? undefined : current.recognition.startedAt,
+              sourceContentHash: reset ? undefined : current.recognition.sourceContentHash,
+            },
+          },
+        };
+      });
+
+      try {
+        const result = await parseFile({
+          file_id: fileId,
+          table_id: tableId,
+        });
+        const content = result.content || '';
+        const error =
+          result.error || (!content ? result.message || t('tableIngest.stepTwo.fileErrorFallback') : undefined);
+        const status: RecognitionStatus = error ? 'failed' : 'success';
+        setFileStates(prev => {
+          const current = prev[fileId];
+          if (!current || current.parse.requestId !== requestId) return prev;
+          const attempt: RecognitionAttempt = {
+            id: requestId,
+            mode: 'auto',
+            status,
+            content,
+            records: current.records,
+            error,
+            extraction: result.extraction,
+            fieldExtraction: current.fieldExtraction,
+            createdAt: Date.now(),
+          };
+          return {
+            ...prev,
+            [fileId]: {
+              ...current,
+              status,
+              activeStage: 'parse',
+              activeAttemptId: requestId,
+              attempts: [...current.attempts, attempt],
+              content,
+              error,
+              warning: undefined,
+              extraction: result.extraction,
+              parse: {
+                status,
+                content,
+                extraction: result.extraction,
+                error,
+                requestId: undefined,
+                startedAt: undefined,
+              },
+            },
+          };
+        });
+        if (!error) {
+          await runRecognitionForFile(fileId, content, result.extraction?.content_hash, reset);
+        }
+      } catch (err) {
+        const message = (err as Error)?.message || t('tableIngest.stepTwo.fileErrorFallback');
+        setFileStates(prev => {
+          const current = prev[fileId];
+          if (!current || current.parse.requestId !== requestId) return prev;
+          const attempt: RecognitionAttempt = {
+            id: requestId,
+            mode: 'auto',
+            status: 'failed',
+            content: current.content,
+            records: current.records,
+            error: message,
+            extraction: current.extraction,
+            createdAt: Date.now(),
+          };
+          return {
+            ...prev,
+            [fileId]: {
+              ...current,
+              status: 'failed',
+              activeStage: 'parse',
+              error: message,
+              warning: undefined,
+              attempts: [...current.attempts, attempt],
+              activeAttemptId: requestId,
+              parse: {
+                ...current.parse,
+                status: 'failed',
+                error: message,
+                requestId: undefined,
+                startedAt: undefined,
+              },
+            },
+          };
+        });
+      }
+    },
+    [parseFile, runRecognitionForFile, tableId, t]
   );
 
   const hasOverwriteRisk = useCallback((fileIds: string[]) => {
@@ -493,8 +849,8 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     [hasOverwriteRisk]
   );
 
-  const runRecognitionForFiles = useCallback(
-    async (fileIds: string[], mode: FileIngestExtractionMode, reset = false) => {
+  const runFullRecognitionForFiles = useCallback(
+    async (fileIds: string[], reset = false) => {
       const ids = fileIds.filter(id => Boolean(fileStatesRef.current[id]));
       if (ids.length === 0) return;
       setFileStates(prev => {
@@ -502,7 +858,13 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         ids.forEach(id => {
           const current = next[id];
           if (!current) return;
-          next[id] = { ...current, status: 'queued', requestedMode: mode };
+          next[id] = {
+            ...current,
+            status: 'queued',
+            requestedMode: 'auto',
+            activeStage: 'parse',
+            parse: { ...current.parse, status: 'queued' },
+          };
         });
         return next;
       });
@@ -514,12 +876,12 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
           while (cursor < ids.length) {
             const fileId = ids[cursor];
             cursor += 1;
-            await runRecognitionForFile(fileId, mode, reset);
+            await runParseForFile(fileId, reset);
           }
         })
       );
     },
-    [runRecognitionForFile]
+    [runParseForFile]
   );
 
   const initialRunKeyRef = useRef('');
@@ -531,14 +893,9 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     () =>
       JSON.stringify({
         tableId,
-        prompt: prompt || '',
-        model: {
-          provider: selectedModel.provider,
-          name: selectedModel.model,
-        },
         fileIds: selectedFileIdsKey,
       }),
-    [prompt, selectedFileIdsKey, selectedModel.model, selectedModel.provider, tableId]
+    [selectedFileIdsKey, tableId]
   );
 
   useEffect(() => {
@@ -546,8 +903,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
       promptLoading ||
       promptUnavailable ||
       selectedFileIds.length === 0 ||
-      !fileStatesReady ||
-      imageFilesBlocked
+      !fileStatesReady
     ) {
       return;
     }
@@ -555,14 +911,13 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     initialRunKeyRef.current = initialRunKey;
     setColumns([]);
     setTsDrafts({});
-    void runRecognitionForFiles(selectedFileIds, 'auto', true);
+    void runFullRecognitionForFiles(selectedFileIds, true);
   }, [
     initialRunKey,
     fileStatesReady,
-    imageFilesBlocked,
     promptLoading,
     promptUnavailable,
-    runRecognitionForFiles,
+    runFullRecognitionForFiles,
     selectedFileIds,
   ]);
 
@@ -576,64 +931,67 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         [activeFileId]: {
           ...current,
           values: { ...current.values, [col.name]: v },
+          recognition: {
+            ...current.recognition,
+            values: { ...current.recognition.values, [col.name]: v },
+          },
           dirty: true,
         },
       };
     });
   };
 
-  const retryCurrent = useCallback(
-    (mode: FileIngestExtractionMode) => {
-      if (!activeFileId) return;
-      if (activeImageBlockedByVision) {
-        toast.error(
-          effectiveVisionStatus === 'checking'
-            ? t('tableIngest.stepTwo.visionCapabilityChecking')
-            : t('tableIngest.stepTwo.visionModelRequired')
-        );
-        return;
-      }
-      if (mode === 'vision') {
-        if (!activeFileCanUseVision) {
-          toast.error(t('tableIngest.stepTwo.visionUnsupportedFile'));
-          return;
-        }
-        if (!modelSupportsVision) {
-          toast.error(t('tableIngest.stepTwo.visionModelRequired'));
-          return;
-        }
-      }
-      runWithOverwriteConfirm([activeFileId], t('tableIngest.stepTwo.confirmOverwriteCurrent'), () => {
-        void runRecognitionForFile(activeFileId, mode, true);
-      });
-    },
-    [
-      activeFileCanUseVision,
-      activeFileId,
-      activeImageBlockedByVision,
-      effectiveVisionStatus,
-      modelSupportsVision,
-      runRecognitionForFile,
-      runWithOverwriteConfirm,
-      t,
-    ]
-  );
+  const retryParseCurrent = useCallback(() => {
+    if (!activeFileId) return;
+    runWithOverwriteConfirm([activeFileId], t('tableIngest.stepTwo.confirmOverwriteParseCurrent'), () => {
+      void runParseForFile(activeFileId, true);
+    });
+  }, [activeFileId, runParseForFile, runWithOverwriteConfirm, t]);
 
-  const retryFailedFiles = useCallback(() => {
-    const failedIds = selectedFileIds.filter(id => getEffectiveStatus(fileStatesRef.current[id]) === 'failed');
+  const retryRecognitionCurrent = useCallback(() => {
+    if (!activeFileId) return;
+    runWithOverwriteConfirm([activeFileId], t('tableIngest.stepTwo.confirmOverwriteRecognitionCurrent'), () => {
+      void runRecognitionForFile(activeFileId, undefined, undefined, true);
+    });
+  }, [activeFileId, runRecognitionForFile, runWithOverwriteConfirm, t]);
+
+  const reprocessCurrent = useCallback(() => {
+    if (!activeFileId) return;
+    runWithOverwriteConfirm([activeFileId], t('tableIngest.stepTwo.confirmOverwriteCurrent'), () => {
+      void runParseForFile(activeFileId, true);
+    });
+  }, [activeFileId, runParseForFile, runWithOverwriteConfirm, t]);
+
+  const retryParseFailedFiles = useCallback(() => {
+    const failedIds = selectedFileIds.filter(id => fileStatesRef.current[id]?.parse.status === 'failed');
     if (failedIds.length === 0) {
-      toast.info(t('tableIngest.stepTwo.noFailedFiles'));
+      toast.info(t('tableIngest.stepTwo.noParseFailedFiles'));
       return;
     }
-    void runRecognitionForFiles(failedIds, 'auto', true);
-  }, [getEffectiveStatus, runRecognitionForFiles, selectedFileIds, t]);
+    void runFullRecognitionForFiles(failedIds, true);
+  }, [runFullRecognitionForFiles, selectedFileIds, t]);
+
+  const retryRecognitionFailedFiles = useCallback(() => {
+    const failedIds = selectedFileIds.filter(
+      id =>
+        fileStatesRef.current[id]?.recognition.status === 'failed' &&
+        fileStatesRef.current[id]?.parse.status !== 'failed'
+    );
+    if (failedIds.length === 0) {
+      toast.info(t('tableIngest.stepTwo.noRecognitionFailedFiles'));
+      return;
+    }
+    failedIds.forEach(id => {
+      void runRecognitionForFile(id, undefined, undefined, true);
+    });
+  }, [runRecognitionForFile, selectedFileIds, t]);
 
   const retryAllFiles = useCallback(() => {
     runWithOverwriteConfirm(selectedFileIds, t('tableIngest.stepTwo.confirmOverwriteAll'), () => {
       setTsDrafts({});
-      void runRecognitionForFiles(selectedFileIds, 'auto', true);
+      void runFullRecognitionForFiles(selectedFileIds, true);
     });
-  }, [runRecognitionForFiles, runWithOverwriteConfirm, selectedFileIds, t]);
+  }, [runFullRecognitionForFiles, runWithOverwriteConfirm, selectedFileIds, t]);
 
   const skipCurrentFile = useCallback(() => {
     if (!activeFileId) return;
@@ -647,6 +1005,15 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
           status: 'skipped',
           error: undefined,
           warning: undefined,
+          parse: {
+            ...current.parse,
+            error: undefined,
+          },
+          recognition: {
+            ...current.recognition,
+            error: undefined,
+            warning: undefined,
+          },
           requestId: undefined,
           requestStartedAt: undefined,
         },
@@ -660,100 +1027,37 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   }, [activeFileId, onRemoveFile]);
 
   const activeValues = useMemo(
-    () => activeState?.values || ({} as DbTableRecord),
-    [activeState?.values]
+    () => activeState?.recognition.values || activeState?.values || ({} as DbTableRecord),
+    [activeState?.recognition.values, activeState?.values]
   );
-  const activeContent = activeState?.content || '';
-  const activeError = activeState?.error || '';
-  const activeWarning = activeState?.warning || '';
-  const activeExtraction = activeState?.extraction;
+  const activeContent = activeState?.parse.content || activeState?.content || '';
+  const activeParseError = activeState?.parse.error || '';
+  const activeRecognitionError = activeState?.recognition.error || '';
+  const activeError = activeParseError || activeRecognitionError || activeState?.error || '';
+  const activeWarning = activeState?.recognition.warning || activeState?.warning || '';
   const activeEffectiveStatus = getEffectiveStatus(activeState);
   const activeRecognizing = activeEffectiveStatus === 'queued' || activeEffectiveStatus === 'recognizing';
-  const activeBackendAttempts = activeExtraction?.attempts || [];
+  const activeProcessingStage = activeState?.activeStage;
+  const activeErrorStage: TableIngestStage | undefined = activeParseError
+    ? 'parse'
+    : activeRecognitionError
+      ? 'recognition'
+      : activeState?.activeStage;
   const activeElapsedMs =
-    activeState?.requestStartedAt && activeRecognizing
-      ? Math.max(0, now - activeState.requestStartedAt)
+    activeRecognizing
+      ? Math.max(
+          0,
+          now -
+            (activeProcessingStage === 'parse'
+              ? activeState?.parse.startedAt || now
+              : activeState?.recognition.startedAt || now)
+        )
       : 0;
-
-  const attemptMethodLabel = useCallback(
-    (method?: string) => {
-      switch (method) {
-        case 'model_vision':
-        case 'vision':
-          return t('tableIngest.stepTwo.methodLabels.modelVision');
-        case 'file_parse':
-        case 'mineru':
-        case 'hyper_parse_mineru':
-          return t('tableIngest.stepTwo.methodLabels.fileParse');
-        default:
-          return method || t('tableIngest.stepTwo.parseDetails.empty');
-      }
-    },
-    [t]
-  );
 
   const extractionMethodLabel = useCallback(
     (extraction?: FileIngestExtractionInfo) => {
       if (!extraction) return '';
-      if (
-        extraction.actual_strategy === 'vision' ||
-        extraction.source_type === 'image_original' ||
-        extraction.source_type === 'pdf_rendered_pages'
-      ) {
-        return t('tableIngest.stepTwo.methodLabels.modelVision');
-      }
       return t('tableIngest.stepTwo.methodLabels.fileParse');
-    },
-    [t]
-  );
-
-  const attemptResultLabel = useCallback(
-    (attempt: FileIngestAttempt) => {
-      if (attempt.status === 'failed') return t('tableIngest.stepTwo.attemptResults.error');
-      switch (attempt.result) {
-        case 'records':
-          return t('tableIngest.stepTwo.attemptResults.records', {
-            count: attempt.record_count || 0,
-          });
-        case 'no_records':
-          return t('tableIngest.stepTwo.attemptResults.noRecords');
-        case 'empty_content':
-          return t('tableIngest.stepTwo.attemptResults.emptyContent');
-        case 'content':
-          return t('tableIngest.stepTwo.attemptResults.content');
-        case 'error':
-          return t('tableIngest.stepTwo.attemptResults.error');
-        default:
-          return attempt.result || t('tableIngest.stepTwo.parseDetails.empty');
-      }
-    },
-    [t]
-  );
-
-  const attemptStatusLabel = useCallback(
-    (status?: string) => {
-      switch (status) {
-        case 'completed':
-          return t('tableIngest.stepTwo.attemptStatuses.completed');
-        case 'failed':
-          return t('tableIngest.stepTwo.attemptStatuses.failed');
-        default:
-          return status || t('tableIngest.stepTwo.parseDetails.empty');
-      }
-    },
-    [t]
-  );
-
-  const formatAttemptDuration = useCallback(
-    (durationMs?: number) => {
-      const ms = Number(durationMs || 0);
-      if (!ms) return '';
-      if (ms >= 1000) {
-        return t('tableIngest.stepTwo.parseDetails.durationSeconds', {
-          seconds: Math.round(ms / 1000),
-        });
-      }
-      return t('tableIngest.stepTwo.parseDetails.durationMs', { ms });
     },
     [t]
   );
@@ -765,15 +1069,6 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         desc: t('tableIngest.stepTwo.loadingStates.queuedDesc'),
       };
     }
-    if (activeState?.requestedMode === 'vision') {
-      return {
-        title: t('tableIngest.stepTwo.loadingStates.visionTitle'),
-        desc:
-          activeElapsedMs > 30_000
-            ? t('tableIngest.stepTwo.loadingStates.longRunningDesc')
-            : t('tableIngest.stepTwo.loadingStates.visionDesc'),
-      };
-    }
     if (activeElapsedMs > 30_000) {
       return {
         title: t('tableIngest.stepTwo.loadingStates.longRunningTitle'),
@@ -782,53 +1077,121 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     }
     if (activeElapsedMs > 10_000) {
       return {
-        title: t('tableIngest.stepTwo.loadingStates.fileParseSlowTitle'),
-        desc: t('tableIngest.stepTwo.loadingStates.fileParseSlowDesc'),
+        title:
+          activeProcessingStage === 'recognition'
+            ? t('tableIngest.stepTwo.loadingStates.textRecognitionSlowTitle')
+            : t('tableIngest.stepTwo.loadingStates.fileParseSlowTitle'),
+        desc:
+          activeProcessingStage === 'recognition'
+            ? t('tableIngest.stepTwo.loadingStates.textRecognitionSlowDesc')
+            : t('tableIngest.stepTwo.loadingStates.fileParseSlowDesc'),
       };
     }
     return {
-      title: t('tableIngest.stepTwo.loadingStates.fileParseTitle'),
-      desc: t('tableIngest.stepTwo.loadingStates.fileParseDesc'),
+      title:
+        activeProcessingStage === 'recognition'
+          ? t('tableIngest.stepTwo.loadingStates.textRecognitionTitle')
+          : t('tableIngest.stepTwo.loadingStates.fileParseTitle'),
+      desc:
+        activeProcessingStage === 'recognition'
+          ? t('tableIngest.stepTwo.loadingStates.textRecognitionDesc')
+          : t('tableIngest.stepTwo.loadingStates.fileParseDesc'),
     };
-  }, [activeEffectiveStatus, activeElapsedMs, activeState?.requestedMode, t]);
+  }, [activeEffectiveStatus, activeElapsedMs, activeProcessingStage, t]);
 
-  const activeFallbackReasonLabel =
-    activeExtraction?.fallback_reason === 'mineru_zero_records'
-      ? t('tableIngest.stepTwo.fallbackReasons.mineruZeroRecords')
-      : activeExtraction?.fallback_reason;
-  const activeExtractionMethodLabel = extractionMethodLabel(activeExtraction);
-  const activeExtractionBaseLabel = activeExtractionMethodLabel
-    ? activeFallbackReasonLabel && activeExtraction?.fallback_reason !== 'none'
-      ? t('tableIngest.stepTwo.extractionFallback', {
-          strategy: activeExtractionMethodLabel,
-          reason: activeFallbackReasonLabel,
-        })
-      : t('tableIngest.stepTwo.extractionStrategy', {
-          strategy: activeExtractionMethodLabel,
-        })
-    : '';
-  const activeExtractionSourceLabel =
-    activeExtraction?.source_type === 'image_original'
-      ? t('tableIngest.stepTwo.sourceTypes.imageOriginal')
-      : activeExtraction?.source_type === 'pdf_rendered_pages'
-        ? t('tableIngest.stepTwo.sourceTypes.pdfRenderedPages')
-        : activeExtraction?.source_type === 'mineru'
-          ? t('tableIngest.stepTwo.sourceTypes.mineru')
-          : activeExtraction?.source_type;
-  const activeExtractionLabel = [activeExtractionBaseLabel, activeExtractionSourceLabel]
-    .filter(Boolean)
-    .join(' · ');
-  const activeExtractionDebugTitle = [
-    activeExtractionLabel,
-    activeFileId ? `file_id: ${activeFileId}` : '',
-    activeExtraction?.content_hash ? `content_hash: ${activeExtraction.content_hash}` : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
   const activeErrorHint =
-    activeExtraction?.fallback_reason === 'mineru_zero_records'
-      ? t('tableIngest.stepTwo.mineruZeroRecordsHint')
-      : '';
+    activeErrorStage === 'parse'
+      ? t('tableIngest.stepTwo.parseErrorRetryHint')
+      : t('tableIngest.stepTwo.recognitionErrorRetryHint');
+  const suppressRequiredErrors = Boolean(activeError && !activeState?.dirty);
+
+  const statusLabel = useCallback(
+    (status: RecognitionStatus): string => {
+      switch (status) {
+        case 'queued':
+          return t('tableIngest.stepTwo.fileStatus.queued');
+        case 'recognizing':
+          return t('tableIngest.stepTwo.fileStatus.recognizing');
+        case 'success':
+          return t('tableIngest.stepTwo.fileStatus.success');
+        case 'warning':
+          return t('tableIngest.stepTwo.fileStatus.needsCompletion');
+        case 'failed':
+          return t('tableIngest.stepTwo.fileStatus.parseFailed');
+        case 'skipped':
+          return t('tableIngest.stepTwo.fileStatus.skipped');
+        case 'idle':
+        default:
+          return t('tableIngest.stepTwo.fileStatus.pending');
+      }
+    },
+    [t]
+  );
+
+  const statusClass = useCallback(
+    (status: RecognitionStatus) =>
+      cn(
+        status === 'success' && 'text-success',
+        status === 'failed' && 'text-destructive',
+        status === 'warning' && 'text-warning',
+        (status === 'queued' || status === 'recognizing') && 'text-highlight'
+      ),
+    []
+  );
+
+  const stageStatusLabel = useCallback(
+    (state?: FileRecognitionState): string => {
+      if (!state) return statusLabel('idle');
+      if (state.status === 'skipped') return statusLabel('skipped');
+      if (state.parse.status === 'queued' || state.parse.status === 'recognizing') {
+        return t('tableIngest.stepTwo.stageStatus.fileParsing');
+      }
+      if (state.parse.status === 'failed') {
+        return t('tableIngest.stepTwo.stageStatus.fileParseFailed');
+      }
+      if (state.recognition.status === 'queued' || state.recognition.status === 'recognizing') {
+        return t('tableIngest.stepTwo.stageStatus.textRecognizing');
+      }
+      if (state.recognition.status === 'failed') {
+        return t('tableIngest.stepTwo.stageStatus.textRecognitionFailed');
+      }
+      if (state.recognition.status === 'warning') {
+        return t('tableIngest.stepTwo.stageStatus.textRecognitionNeedsCompletion');
+      }
+      if (getEffectiveStatus(state) === 'success') {
+        return t('tableIngest.stepTwo.stageStatus.ready');
+      }
+      if (state.parse.status === 'success') {
+        return t('tableIngest.stepTwo.stageStatus.fileParsed');
+      }
+      return statusLabel(state.status);
+    },
+    [getEffectiveStatus, statusLabel, t]
+  );
+
+  const evidenceViewerLabels = useMemo<FileEvidenceViewerLabels>(
+    () => ({
+      title: t('tableIngest.stepTwo.previewPanelTitle'),
+      tabs: {
+        original: t('tableIngest.stepTwo.contentTabs.original'),
+        text: t('tableIngest.stepTwo.contentTabs.text'),
+      },
+      originalPreviewAlt: activeFile?.name || t('tableIngest.stepTwo.originalFilePreview'),
+      loadingOriginalPreview: t('tableIngest.stepTwo.loadingImagePreview'),
+      originalPreviewUnavailable: t('tableIngest.stepTwo.imagePreviewUnavailable'),
+      promptLoadFailedTitle: t('tableIngest.stepTwo.promptLoadFailedTitle'),
+      retryPrompt: t('tableIngest.stepTwo.retryPrompt'),
+      fileErrorTitle: t('tableIngest.stepTwo.fileErrorTitle'),
+      fileWarningTitle: t('tableIngest.stepTwo.fileWarningTitle'),
+      fileErrorDetails: t('tableIngest.stepTwo.fileErrorDetails'),
+      retryFileParse:
+        activeErrorStage === 'parse'
+          ? t('tableIngest.stepTwo.retryFileParse')
+          : t('tableIngest.stepTwo.retryTextRecognition'),
+      noPreview: t('tableIngest.stepTwo.noPreview'),
+    }),
+    [activeErrorStage, activeFile?.name, t]
+  );
 
   const highlightTerms = useMemo(() => {
     const set = new Set<string>();
@@ -848,12 +1211,52 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   }, [activeValues]);
 
   const recognizedForColumn = (col: DbTableColumn): boolean => {
-    const source = activeState?.records[0];
-    const value = source?.[col.name];
-    if (col.type === Type.Timestamp) {
-      return isValidTimestampRecordValue(value as DbTableRecord[keyof DbTableRecord]);
+    return hasRequiredValue(activeValues?.[col.name] as DbTableRecord[keyof DbTableRecord], col.type);
+  };
+
+  const fieldMatchForColumn = (col: DbTableColumn): FileIngestFieldMatch | undefined => {
+    const fields = activeState?.fieldExtraction?.records?.[0]?.fields || [];
+    return fields.find(
+      field =>
+        field.column_id === col.id ||
+        field.column_id === col.name ||
+        field.column_name === col.name
+    );
+  };
+
+  const fieldStatusForColumn = (col: DbTableColumn) => {
+    const match = fieldMatchForColumn(col);
+    const recognized = recognizedForColumn(col);
+    if (recognized && match?.normalization_status === 'normalized') {
+      return {
+        status: 'normalized',
+        label: t('tableIngest.stepTwo.fieldValueStatus.normalized'),
+        className: 'text-highlight',
+        match,
+      };
     }
-    return typeof value !== 'undefined' && value !== null && String(value).trim().length > 0;
+    if (recognized) {
+      return {
+        status: 'recognized',
+        label: t('tableIngest.stepTwo.recognizedTag'),
+        className: 'text-green-600',
+        match,
+      };
+    }
+    if (hasFieldMatchRawValue(match)) {
+      return {
+        status: 'needs_confirmation',
+        label: t('tableIngest.stepTwo.fieldValueStatus.needsConfirmation'),
+        className: 'text-warning',
+        match,
+      };
+    }
+    return {
+      status: 'not_recognized',
+      label: t('tableIngest.stepTwo.notRecognized'),
+      className: 'text-muted-foreground',
+      match,
+    };
   };
 
   const fieldReviewStats = useMemo(() => {
@@ -902,9 +1305,16 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         if (status === 'success') acc.ready += 1;
         if (status === 'warning') acc.needs += 1;
         if (status === 'failed') acc.failed += 1;
+        if (fileStates[file.id]?.parse.status === 'failed') acc.parseFailed += 1;
+        if (
+          fileStates[file.id]?.recognition.status === 'failed' &&
+          fileStates[file.id]?.parse.status !== 'failed'
+        ) {
+          acc.recognitionFailed += 1;
+        }
         return acc;
       },
-      { processing: 0, ready: 0, needs: 0, failed: 0 }
+      { processing: 0, ready: 0, needs: 0, failed: 0, parseFailed: 0, recognitionFailed: 0 }
     );
   }, [fileStates, getEffectiveStatus, selectedFiles]);
 
@@ -942,32 +1352,11 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         }),
       };
     }
-    if (imageFilesBlocked) {
-      return {
-        variant: effectiveVisionStatus === 'checking' ? ('default' as const) : ('destructive' as const),
-        message:
-          effectiveVisionStatus === 'checking'
-            ? t('tableIngest.stepTwo.statusNotice.imageChecking', {
-                count: selectedImageFiles.length,
-              })
-            : t('tableIngest.stepTwo.statusNotice.imageBlocked', {
-                count: selectedImageFiles.length,
-              }),
-      };
-    }
     if (anyFileFailed) {
       return {
-        variant: stats.failed > 0 ? ('destructive' as const) : ('default' as const),
+        variant: 'default' as const,
         message: t('tableIngest.stepTwo.statusNotice.needsAction', {
           count: stats.needs + stats.failed,
-        }),
-      };
-    }
-    if (selectedImageFiles.length > 0 && effectiveVisionStatus === 'vision') {
-      return {
-        variant: 'default' as const,
-        message: t('tableIngest.stepTwo.statusNotice.imageReady', {
-          count: selectedImageFiles.length,
         }),
       };
     }
@@ -980,12 +1369,9 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     return null;
   }, [
     anyFileFailed,
-    effectiveVisionStatus,
     hasProcessingFiles,
     hasUnsavedResults,
-    imageFilesBlocked,
     promptUnavailable,
-    selectedImageFiles.length,
     stats.failed,
     stats.needs,
     stats.processing,
@@ -1049,34 +1435,6 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     }
   };
 
-  const statusLabel = (status: RecognitionStatus): string => {
-    switch (status) {
-      case 'queued':
-        return t('tableIngest.stepTwo.fileStatus.queued');
-      case 'recognizing':
-        return t('tableIngest.stepTwo.fileStatus.recognizing');
-      case 'success':
-        return t('tableIngest.stepTwo.fileStatus.success');
-      case 'warning':
-        return t('tableIngest.stepTwo.fileStatus.needsCompletion');
-      case 'failed':
-        return t('tableIngest.stepTwo.fileStatus.parseFailed');
-      case 'skipped':
-        return t('tableIngest.stepTwo.fileStatus.skipped');
-      case 'idle':
-      default:
-        return t('tableIngest.stepTwo.fileStatus.pending');
-    }
-  };
-
-  const statusClass = (status: RecognitionStatus) =>
-    cn(
-      status === 'success' && 'text-success',
-      status === 'failed' && 'text-destructive',
-      status === 'warning' && 'text-warning',
-      (status === 'queued' || status === 'recognizing') && 'text-highlight'
-    );
-
   return (
     <>
       <div className="mb-2 flex min-h-10 flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-xs">
@@ -1094,11 +1452,27 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
           {t('tableIngest.stepTwo.stats.failed', { count: stats.failed })}
         </Badge>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={retryFailedFiles} disabled={promptUnavailable || stats.failed === 0}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={retryParseFailedFiles}
+            disabled={promptUnavailable || stats.parseFailed === 0}
+          >
             <RotateCcw className="h-4 w-4" />
-            {t('tableIngest.stepTwo.retryFailedFiles')}
+            {t('tableIngest.stepTwo.retryParseFailedFiles')}
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={retryAllFiles} disabled={promptUnavailable || selectedFiles.length === 0 || imageFilesBlocked}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={retryRecognitionFailedFiles}
+            disabled={promptUnavailable || stats.recognitionFailed === 0}
+          >
+            <RotateCcw className="h-4 w-4" />
+            {t('tableIngest.stepTwo.retryRecognitionFailedFiles')}
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={retryAllFiles} disabled={promptUnavailable || selectedFiles.length === 0}>
             <RefreshCcw className="h-4 w-4" />
             {t('tableIngest.stepTwo.reRecognizeAll')}
           </Button>
@@ -1106,7 +1480,13 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
       </div>
 
       {statusNotice ? (
-        <Alert className="mb-2 text-sm" variant={statusNotice.variant}>
+        <Alert
+          className={cn(
+            'mb-2 text-sm',
+            anyFileFailed && !hasProcessingFiles && 'border-warning/35 bg-warning/5'
+          )}
+          variant={statusNotice.variant}
+        >
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{statusNotice.message}</AlertDescription>
         </Alert>
@@ -1189,7 +1569,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
                       <span className="text-muted-foreground">{formatFileSize(file.size)}</span>
-                      <span className={statusClass(status)}>{statusLabel(status)}</span>
+                      <span className={statusClass(status)}>{stageStatusLabel(state)}</span>
                       {extractionSource ? (
                         <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">
                           {extractionSource}
@@ -1217,253 +1597,78 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         </div>
 
         <div className="min-w-0 flex flex-col overflow-hidden">
-          <Tabs
-            value={contentTab}
-            onValueChange={value => setContentTab(value as ContentTab)}
-            className="flex h-full min-h-0 flex-col"
-          >
-            <div className="flex items-center gap-2 border-b px-3 py-2 text-sm font-medium">
-              <span className="shrink-0">{t('tableIngest.stepTwo.previewPanelTitle')}</span>
-              <TabsList className="h-8 rounded-md p-0.5">
-                <TabsTrigger
-                  value="original"
-                  disabled={!activePreviewableOriginal}
-                  className="h-6 rounded px-2 text-xs"
-                >
-                  {t('tableIngest.stepTwo.contentTabs.original')}
-                </TabsTrigger>
-                <TabsTrigger value="text" className="h-6 rounded px-2 text-xs">
-                  {t('tableIngest.stepTwo.contentTabs.text')}
-                </TabsTrigger>
-                <TabsTrigger value="details" className="h-6 rounded px-2 text-xs">
-                  {t('tableIngest.stepTwo.contentTabs.details')}
-                </TabsTrigger>
-              </TabsList>
-              {activeExtractionLabel ? (
-                <Badge
-                  variant="secondary"
-                  className="ml-auto max-w-[320px] truncate"
-                  title={activeExtractionDebugTitle}
-                >
-                  {activeExtractionLabel}
-                </Badge>
-              ) : null}
-            </div>
-
-            <TabsContent value="original" className="m-0 min-h-0 flex-1 overflow-auto p-3">
-              <div className="flex h-full min-h-[420px] items-center justify-center overflow-hidden rounded-md border bg-muted/20">
-                {activeOriginalPreviewLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                    <span>{t('tableIngest.stepTwo.loadingImagePreview')}</span>
-                  </div>
-                ) : activeOriginalPreviewUrl && activeFileIsImage ? (
-                  <MarkdownImage
-                    src={activeOriginalPreviewUrl}
-                    alt={activeFile?.name || t('tableIngest.stepTwo.originalFilePreview')}
-                    className="h-full w-full justify-center"
-                    frameClassName="flex h-full min-h-[420px] w-full items-center justify-center border-0 bg-transparent"
-                    imageClassName="max-h-full w-full object-contain"
-                  />
-                ) : activeOriginalPreviewUrl && activeFileIsPDF ? (
-                  <iframe
-                    title={activeFile?.name || t('tableIngest.stepTwo.originalFilePreview')}
-                    src={activeOriginalPreviewUrl}
-                    className="h-full min-h-[520px] w-full border-0 bg-background"
-                  />
-                ) : (
-                  <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
-                    <ImageIcon className="h-5 w-5" />
-                    <span>
-                      {activeOriginalPreviewError ||
-                        t('tableIngest.stepTwo.imagePreviewUnavailable')}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </TabsContent>
-
-            <TabsContent value="text" className="m-0 min-h-0 flex-1 overflow-auto p-3">
-              {promptUnavailable ? (
-                <Alert variant="destructive" className="max-w-3xl">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    <div className="font-medium">
-                      {t('tableIngest.stepTwo.promptLoadFailedTitle')}
-                    </div>
-                    <div className="mt-1 break-words">
-                      {promptError
-                        ? t('tableIngest.stepTwo.promptLoadFailedDesc', {
-                            error: promptUnavailableMessage,
-                          })
-                        : promptUnavailableMessage}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="mt-3"
-                      disabled={promptLoading}
-                      onClick={() => void refetchPrompt()}
-                    >
-                      {t('tableIngest.stepTwo.retryPrompt')}
-                    </Button>
-                  </AlertDescription>
-                </Alert>
-              ) : activeRecognizing && !activeContent ? (
-                <IngestLoadingBlock
-                  title={activeLoadingCopy.title}
-                  desc={activeLoadingCopy.desc}
-                />
-              ) : (
-                <div className="space-y-3">
-                  {activeError ? (
-                    <Alert variant="destructive" className="max-w-3xl">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription>
-                        <div className="font-medium">{t('tableIngest.stepTwo.fileErrorTitle')}</div>
-                        <div className="mt-1 break-words">{activeError}</div>
-                        {activeErrorHint ? (
-                          <div className="mt-2 text-xs leading-5">{activeErrorHint}</div>
-                        ) : null}
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Button type="button" size="sm" variant="outline" onClick={() => retryCurrent('auto')}>
-                            <RefreshCcw className="h-4 w-4" />
-                            {t('tableIngest.stepTwo.retryCurrentFile')}
-                          </Button>
-                          {activeFileCanUseVision ? (
-                            <Button type="button" size="sm" variant="outline" onClick={() => retryCurrent('vision')} disabled={!modelSupportsVision}>
-                              <Eye className="h-4 w-4" />
-                              {t('tableIngest.stepTwo.retryCurrentWithVision')}
-                            </Button>
-                          ) : null}
-                        </div>
-                      </AlertDescription>
-                    </Alert>
-                  ) : null}
-                  {activeWarning ? (
-                    <Alert className="max-w-3xl border-warning/40 bg-warning/10 text-warning">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription>
-                        <div className="font-medium">
-                          {t('tableIngest.stepTwo.fileWarningTitle')}
-                        </div>
-                        <div className="mt-1 break-words">{activeWarning}</div>
-                        {activeErrorHint ? (
-                          <div className="mt-2 text-xs leading-5">{activeErrorHint}</div>
-                        ) : null}
-                      </AlertDescription>
-                    </Alert>
-                  ) : null}
-                  {activeContent ? (
-                    <MarkdownViewer content={activeContent} highlights={highlightTerms} />
-                  ) : (
-                    <div className="text-sm text-muted-foreground">
-                      {t('tableIngest.stepTwo.noPreview')}
-                    </div>
-                  )}
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="details" className="m-0 min-h-0 flex-1 overflow-auto p-3">
-              <div className="space-y-3 text-sm">
-                <div className="rounded-md border bg-muted/20 p-3">
-                  <div className="font-medium">{t('tableIngest.stepTwo.parseDetails.title')}</div>
-                  <div className="mt-3 grid gap-2 text-xs">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-muted-foreground">
-                        {t('tableIngest.stepTwo.parseDetails.strategy')}
-                      </span>
-                      <span className="truncate font-medium">
-                        {activeExtractionMethodLabel || t('tableIngest.stepTwo.parseDetails.empty')}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-muted-foreground">
-                        {t('tableIngest.stepTwo.parseDetails.sourceType')}
-                      </span>
-                      <span className="truncate font-medium">
-                        {activeExtraction?.source_type || t('tableIngest.stepTwo.parseDetails.empty')}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-muted-foreground">
-                        {t('tableIngest.stepTwo.parseDetails.fallbackReason')}
-                      </span>
-                      <span className="truncate font-medium">
-                        {activeExtraction?.fallback_reason || t('tableIngest.stepTwo.parseDetails.empty')}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-muted-foreground">
-                        {t('tableIngest.stepTwo.parseDetails.contentHash')}
-                      </span>
-                      <span className="max-w-[360px] truncate font-mono">
-                        {activeExtraction?.content_hash || t('tableIngest.stepTwo.parseDetails.empty')}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-md border bg-background p-3">
-                  <div className="font-medium">{t('tableIngest.stepTwo.parseDetails.attempts')}</div>
-                  <div className="mt-3 space-y-2">
-                    {activeBackendAttempts.length > 0 ? (
-                      activeBackendAttempts.map((attempt, index) => (
-                        <div key={`${attempt.method}:${index}`} className="flex items-center justify-between gap-3 rounded border px-2 py-1.5 text-xs">
-                          <div className="min-w-0">
-                            <div className="font-medium">
-                              {attemptMethodLabel(attempt.method)}
-                            </div>
-                            <div className="truncate text-muted-foreground">
-                              {[
-                                attemptStatusLabel(attempt.status),
-                                attemptResultLabel(attempt),
-                                formatAttemptDuration(attempt.duration_ms),
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </div>
-                          </div>
-                          <Badge variant="secondary" className={attempt.status === 'failed' ? 'text-destructive' : 'text-success'}>
-                            {attemptResultLabel(attempt)}
-                          </Badge>
-                        </div>
-                      ))
-                    ) : (activeState?.attempts || []).length > 0 ? (
-                      activeState?.attempts.map((attempt, index) => (
-                        <div key={attempt.id} className="flex items-center justify-between gap-3 rounded border px-2 py-1.5 text-xs">
-                          <div className="min-w-0">
-                            <div className="font-medium">
-                              {t('tableIngest.stepTwo.parseDetails.attemptIndex', {
-                                index: index + 1,
-                              })}
-                            </div>
-                            <div className="truncate text-muted-foreground">
-                              {[
-                                attemptMethodLabel(attempt.mode === 'vision' ? 'model_vision' : 'file_parse'),
-                                statusLabel(attempt.status),
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </div>
-                          </div>
-                          <Badge variant="secondary" className={statusClass(attempt.status)}>
-                            {statusLabel(attempt.status)}
-                          </Badge>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-xs text-muted-foreground">
-                        {t('tableIngest.stepTwo.parseDetails.noAttempts')}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </TabsContent>
-          </Tabs>
+          <FileEvidenceViewer
+            tab={contentTab}
+            onTabChange={setContentTab}
+            labels={evidenceViewerLabels}
+            headerActions={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={reprocessCurrent}
+                disabled={!activeFileId || promptUnavailable}
+              >
+                <RotateCcw className="h-4 w-4" />
+                {t('tableIngest.stepTwo.reRecognize')}
+              </Button>
+            }
+            original={{
+              enabled: activePreviewableOriginal,
+              file: activeOriginalPreviewFile,
+              url: activeOriginalPreviewUrl,
+              loading: activeOriginalPreviewLoading,
+              error: activeOriginalPreviewError || undefined,
+            }}
+            promptIssue={
+              promptUnavailable
+                ? {
+                    message: promptError
+                      ? t('tableIngest.stepTwo.promptLoadFailedDesc', {
+                          error: promptUnavailableMessage,
+                        })
+                      : promptUnavailableMessage,
+                    loading: promptLoading,
+                    onRetry: () => void refetchPrompt(),
+                  }
+                : undefined
+            }
+            loading={
+              activeRecognizing && !activeContent
+                ? {
+                    active: true,
+                    title: activeLoadingCopy.title,
+                    description: activeLoadingCopy.desc,
+                    render: (
+                      <IngestLoadingBlock
+                        title={activeLoadingCopy.title}
+                        desc={activeLoadingCopy.desc}
+                      />
+                    ),
+                  }
+                : undefined
+            }
+            error={
+              activeError
+                ? {
+                    message: activeError,
+                    hint: activeErrorHint,
+                    onRetryFileParse:
+                      activeErrorStage === 'parse' ? retryParseCurrent : retryRecognitionCurrent,
+                  }
+                : undefined
+            }
+            warning={
+              activeWarning
+                ? {
+                    message: activeWarning,
+                    hint: activeErrorHint,
+                  }
+                : undefined
+            }
+            content={activeContent}
+            highlights={highlightTerms}
+          />
         </div>
 
         <div className="min-w-0 flex flex-col border-l overflow-hidden">
@@ -1472,7 +1677,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
               <span>{t('tableIngest.stepTwo.fieldsPanelTitle')}</span>
               {activeEffectiveStatus ? (
                 <span className={cn('text-xs ml-auto', statusClass(activeEffectiveStatus))}>
-                  {statusLabel(activeEffectiveStatus)}
+                  {stageStatusLabel(activeState)}
                 </span>
               ) : null}
             </div>
@@ -1500,41 +1705,17 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                       size="sm"
                       variant="outline"
                       isIcon
-                      aria-label={t('tableIngest.stepTwo.retryCurrentFile')}
-                      onClick={() => retryCurrent('auto')}
-                      disabled={!activeFileId || promptUnavailable || activeImageBlockedByVision}
+                      aria-label={t('tableIngest.stepTwo.retryTextRecognition')}
+                      onClick={retryRecognitionCurrent}
+                      disabled={!activeFileId || promptUnavailable || !activeContent}
                     >
                       <RefreshCcw className="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom">
-                    {t('tableIngest.stepTwo.retryCurrentFile')}
+                    {t('tableIngest.stepTwo.retryTextRecognition')}
                   </TooltipContent>
                 </Tooltip>
-              {activeFileCanUseVision ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      isIcon
-                      aria-label={t('tableIngest.stepTwo.retryCurrentWithVision')}
-                      onClick={() => retryCurrent('vision')}
-                      disabled={!activeFileId || promptUnavailable || effectiveVisionStatus !== 'vision'}
-                    >
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    {effectiveVisionStatus === 'vision'
-                      ? t('tableIngest.stepTwo.retryCurrentWithVision')
-                      : effectiveVisionStatus === 'checking'
-                        ? t('tableIngest.stepTwo.visionCapabilityChecking')
-                      : t('tableIngest.stepTwo.visionModelRequired')}
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -1593,30 +1774,42 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                   </div>
                 </AlertDescription>
               </Alert>
-            ) : activeRecognizing && !activeContent ? (
+            ) : activeRecognizing ? (
               <IngestLoadingBlock
                 title={activeLoadingCopy.title}
                 desc={activeLoadingCopy.desc}
                 compact
               />
             ) : activeError && columns.length === 0 ? (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  <div className="font-medium">{t('tableIngest.stepTwo.fileErrorTitle')}</div>
-                  <div className="mt-1 break-words">{activeError}</div>
-                </AlertDescription>
-              </Alert>
+              <IngestRecoveryCard
+                title={t('tableIngest.stepTwo.fileErrorTitle')}
+                hint={activeErrorHint}
+                detailsLabel={t('tableIngest.stepTwo.fileErrorDetails')}
+                details={activeError}
+                retryLabel={
+                  activeErrorStage === 'parse'
+                    ? t('tableIngest.stepTwo.retryFileParse')
+                    : t('tableIngest.stepTwo.retryTextRecognition')
+                }
+                onRetry={activeErrorStage === 'parse' ? retryParseCurrent : retryRecognitionCurrent}
+                compact
+              />
             ) : (
               <>
                 {activeError ? (
-                  <Alert variant="destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>
-                      <div className="font-medium">{t('tableIngest.stepTwo.fileErrorTitle')}</div>
-                      <div className="mt-1 break-words">{activeError}</div>
-                    </AlertDescription>
-                  </Alert>
+                  <IngestRecoveryCard
+                    title={t('tableIngest.stepTwo.fileErrorTitle')}
+                    hint={activeErrorHint}
+                    detailsLabel={t('tableIngest.stepTwo.fileErrorDetails')}
+                    details={activeError}
+                    retryLabel={
+                      activeErrorStage === 'parse'
+                        ? t('tableIngest.stepTwo.retryFileParse')
+                        : t('tableIngest.stepTwo.retryTextRecognition')
+                    }
+                    onRetry={activeErrorStage === 'parse' ? retryParseCurrent : retryRecognitionCurrent}
+                    compact
+                  />
                 ) : null}
                 {activeWarning ? (
                   <Alert className="border-warning/40 bg-warning/10 text-warning">
@@ -1628,10 +1821,15 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                   </Alert>
                 ) : null}
                 {columns.map(col => {
-                  const recognized = recognizedForColumn(col);
+                  const fieldStatus = fieldStatusForColumn(col);
+                  const recognized = fieldStatus.status === 'recognized' || fieldStatus.status === 'normalized';
                   const val = (activeValues?.[col.name] ?? '') as DbTableRecord[keyof DbTableRecord];
                   const cellKey = `${String(activeFileId || '')}:${col.name}`;
+                  const rawValue = fieldStatus.match?.raw_value ?? fieldStatus.match?.value;
+                  const normalizedValue =
+                    fieldStatus.match?.normalized_value ?? fieldStatus.match?.value;
                   const invalidRequired =
+                    !suppressRequiredErrors &&
                     col.is_required &&
                     !hasRequiredValue(val as DbTableRecord[keyof DbTableRecord], col.type);
                   const invalidTimestamp =
@@ -1675,12 +1873,10 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                           </label>
                         )}
                         <span
-                          className={`inline-flex items-center gap-1 text-xs ${recognized ? 'text-green-600' : 'text-muted-foreground'}`}
+                          className={`inline-flex items-center gap-1 text-xs ${fieldStatus.className}`}
                         >
                           {recognized ? <Check className="h-3 w-3" /> : null}
-                          {recognized
-                            ? t('tableIngest.stepTwo.recognizedTag')
-                            : t('tableIngest.stepTwo.notRecognized')}
+                          {fieldStatus.label}
                         </span>
                       </div>
 
@@ -1771,6 +1967,22 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                       ) : invalidRequired ? (
                         <div className="text-xs text-destructive">
                           {t('tableIngest.stepTwo.requiredEmptyTag')}
+                        </div>
+                      ) : null}
+                      {fieldStatus.status === 'normalized' &&
+                      formatFieldMatchValue(rawValue) !== formatFieldMatchValue(normalizedValue) ? (
+                        <div className="text-xs leading-5 text-muted-foreground">
+                          {t('tableIngest.stepTwo.fieldValueStatus.normalizedHint', {
+                            raw: formatFieldMatchValue(rawValue),
+                            value: formatFieldMatchValue(normalizedValue),
+                          })}
+                        </div>
+                      ) : fieldStatus.status === 'needs_confirmation' ? (
+                        <div className="text-xs leading-5 text-warning">
+                          {t('tableIngest.stepTwo.fieldValueStatus.candidateHint', {
+                            raw: formatFieldMatchValue(rawValue),
+                            type: col.type,
+                          })}
                         </div>
                       ) : null}
                     </div>

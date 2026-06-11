@@ -181,15 +181,49 @@ export interface UpdateDbTableRecordsRequest {
 /* Batch ingest from files into a table                                       */
 /* -------------------------------------------------------------------------- */
 
-export type FileIngestExtractionMode = 'auto' | 'vision';
-
 // Request body for POST /console/api/data-dbs/ingest-file-to-table
 export interface IngestFileToTableRequest {
   file_id: string;
   prompt: string;
   table_id: string;
   model: AiModelRef;
-  extraction_mode?: FileIngestExtractionMode;
+}
+
+export type TableIngestStage = 'parse' | 'recognition';
+
+export interface ParseFileForTableIngestRequest {
+  file_id: string;
+  table_id: string;
+}
+
+export interface ParseFileForTableIngestData {
+  file_id?: string;
+  file_name?: string;
+  message: string;
+  content?: string;
+  extraction?: FileIngestExtractionInfo;
+  stage?: TableIngestStage;
+  error?: string;
+}
+
+export interface ExtractTextToTableRecordsRequest {
+  file_id?: string;
+  table_id: string;
+  content: string;
+  content_hash?: string;
+  prompt: string;
+  model: AiModelRef;
+}
+
+export interface ExtractTextToTableRecordsData {
+  file_id?: string;
+  message: string;
+  records: DbTableRecord[];
+  columns: DbTableColumn[];
+  field_extraction?: FileIngestFieldExtraction;
+  content_hash?: string;
+  stage?: TableIngestStage;
+  error?: string;
 }
 
 export interface IngestFileToTableData {
@@ -200,6 +234,8 @@ export interface IngestFileToTableData {
   columns: DbTableColumn[];
   content?: string;
   extraction?: FileIngestExtractionInfo;
+  field_extraction?: FileIngestFieldExtraction;
+  stage?: TableIngestStage;
   error?: string;
 }
 
@@ -209,7 +245,6 @@ export interface BatchIngestFileToTableRequest {
   prompt: string;
   table_id: string;
   model: AiModelRef;
-  extraction_mode?: FileIngestExtractionMode;
 }
 
 // Single file ingest result item
@@ -220,6 +255,8 @@ export interface BatchIngestResultItem {
   records: DbTableRecord[];
   content?: string;
   extraction?: FileIngestExtractionInfo;
+  field_extraction?: FileIngestFieldExtraction;
+  stage?: TableIngestStage;
   error?: string;
 }
 
@@ -233,12 +270,33 @@ export interface FileIngestExtractionInfo {
 }
 
 export interface FileIngestAttempt {
-  method: 'file_parse' | 'model_vision' | string;
+  method: 'file_parse' | string;
   status: 'completed' | 'failed' | string;
   result?: 'content' | 'records' | 'no_records' | 'empty_content' | 'error' | string;
   reason?: string;
   duration_ms?: number;
   record_count?: number;
+}
+
+export interface FileIngestFieldExtraction {
+  records?: FileIngestRecordExtraction[];
+}
+
+export interface FileIngestRecordExtraction {
+  fields?: FileIngestFieldMatch[];
+}
+
+export interface FileIngestFieldMatch {
+  column_id: string;
+  column_name?: string;
+  value?: unknown;
+  raw_value?: unknown;
+  normalized_value?: unknown;
+  normalization_status?: 'valid' | 'normalized' | 'invalid' | 'empty' | string;
+  normalization_reason?: string;
+  evidence?: string;
+  confidence?: number;
+  reason?: string;
 }
 
 // Response data payload for batch ingest API

@@ -285,26 +285,12 @@ const messages = {
       bannerText: 'AI Recognition: AI will auto map content to table fields. {desc}',
       supportedDesc:
         'Supports PDF, Word, Excel, images, and more. Multi-file selection is supported for AI recognition.',
-      supportedDescDocumentsOnly:
-        'The current model supports document recognition. Select PDF, Word, Excel, CSV, and similar files. Images or scanned files require a vision model first.',
-      supportedDescWithImages:
-        'The current model supports document and image recognition. Select PDF, Word, Excel, CSV, images, and similar files.',
       chooseFromFiles: 'Select files from File Manager',
       selectedTitle: 'Selected Files ({count})',
       startRecognition: 'Start AI Recognition ({count} files)',
       removeFileAria: 'Remove file',
-      visionModelRequired:
-        'Images require a vision-capable model. Please choose a vision model before recognition.',
-      visionCapabilityChecking:
-        'Checking whether the selected model supports image input. Please wait.',
-      imageModelLocked:
-        'Images or scanned files are selected, so only vision-capable models are available. Remove image files before switching to a text-only model.',
-      imageFileSkipped:
-        'The current model does not support image understanding, so image files were not added. Please switch to a vision model first.',
       unsupportedFileSkipped: 'Some unsupported file types were skipped. Supported now: {types}',
-      needsVisionBadge: 'Needs model vision',
-      visionCheckingBadge: 'Checking model',
-      imageFileHint: 'Images are recognized with model vision',
+      imageFileHint: 'Images are processed by file parsing',
       pipeline: {
         fileManager: 'Store and permission files in File Manager first',
         review: 'Recognition enters review instead of writing immediately',
@@ -343,6 +329,13 @@ const messages = {
         needs: 'Needs {count}',
         invalid: 'Invalid {count}',
       },
+      fieldValueStatus: {
+        normalized: 'Converted',
+        needsConfirmation: 'Needs confirmation',
+        normalizedHint: 'Converted from "{raw}" to "{value}".',
+        candidateHint:
+          'The model found "{raw}", but this field expects {type}. Review and fill it manually.',
+      },
       parseDetails: {
         title: 'Parse path',
         strategy: 'Strategy',
@@ -358,7 +351,6 @@ const messages = {
       },
       methodLabels: {
         fileParse: 'File parsing',
-        modelVision: 'Model vision',
       },
       attemptStatuses: {
         completed: 'Completed',
@@ -379,13 +371,24 @@ const messages = {
           'The system is reading file content and extracting fields. PDFs or scanned files may take longer.',
         fileParseSlowTitle: 'File parsing is still running',
         fileParseSlowDesc:
-          'The parser is still processing this file. If parsing cannot produce records, the system may try model vision.',
-        visionTitle: 'Running model vision',
-        visionDesc:
-          'The selected model is reading the image or rendered PDF pages. Keep this page open.',
+          'The parser is still processing this file. Images, scanned files, and large PDFs may take longer.',
+        textRecognitionTitle: 'Running text recognition',
+        textRecognitionDesc:
+          'The system is extracting table field values from the parsed text and table schema.',
+        textRecognitionSlowTitle: 'Text recognition is still running',
+        textRecognitionSlowDesc: 'The model is producing field results. Keep this page open.',
         longRunningTitle: 'Recognition is still running. Do not close or refresh this page.',
         longRunningDesc:
-          'Large PDFs, scanned files, and model vision calls can take longer. Refreshing before the response returns will lose this page state.',
+          'Large PDFs, scanned files, and image parsing can take longer. Refreshing before the response returns will lose this page state.',
+      },
+      stageStatus: {
+        fileParsing: 'File parsing',
+        fileParsed: 'File parsed / waiting for text recognition',
+        fileParseFailed: 'File parsing failed',
+        textRecognizing: 'File parsed / text recognition running',
+        textRecognitionFailed: 'File parsed / text recognition failed',
+        textRecognitionNeedsCompletion: 'File parsed / needs completion',
+        ready: 'File parsed / ready',
       },
       reviewSteps: {
         recognizeTitle: 'AI Recognition',
@@ -422,13 +425,8 @@ const messages = {
       statusNotice: {
         processing:
           '{count} files are being recognized. Keep this page open; completed files update one by one.',
-        imageChecking:
-          '{count} image files are selected. Checking whether the current model supports image input.',
-        imageBlocked:
-          '{count} image files are selected, but the current model does not support image input. Switch to model vision before recognition.',
-        imageReady: '{count} image files are selected and will use model vision.',
         needsAction:
-          '{count} files are not ready. Fix failed files or complete required fields before saving.',
+          '{count} files are not ready. If recognition did not finish, it may be a temporary model response or parsing service issue. Try retrying first, or complete required fields before saving.',
         unsaved: 'Recognition results only live in this review page until you approve and commit.',
       },
       requiredEmptyTag: 'Required field is empty',
@@ -438,34 +436,44 @@ const messages = {
       activeFileInvalidTip: 'This file is invalid',
       activeFileParseFailedTip: 'Current file parsing failed',
       activeFileValidationTip: 'Fields need completion',
-      fileErrorTitle: 'File parsing failed',
+      fileErrorTitle: 'Recognition did not finish',
       fileWarningTitle: 'Recognition result needs review',
+      fileErrorRetryHint:
+        'The file content is kept here, and retrying often works. This can happen when the model returns an unexpected format, the network is unstable, or the parsing service is temporarily unavailable. If it still fails, try again later or switch models.',
+      parseErrorRetryHint:
+        'File parsing has not produced usable text yet. Retry file parsing first; text recognition will continue after parsing succeeds.',
+      recognitionErrorRetryHint:
+        'The parsed file text is kept here, so you usually only need to retry text recognition. This can happen when the model returns an unexpected format, the network is unstable, or the model service is temporarily unavailable.',
+      fileErrorDetails: 'View technical details',
       fileErrorFallback: 'No records were recognized from this file.',
       noRecordWarning:
         'The final model result did not return importable field records. Review the recognized content and complete fields manually if needed.',
+      noParsedContentForRecognition:
+        'This file does not have parsed content for text recognition yet. Retry file parsing first.',
       promptLoadFailedTitle: 'Recognition prompt failed to load',
       promptLoadFailedDesc: 'Unable to load the recognition prompt for this table: {error}',
       promptEmptyDesc:
         'The recognition prompt for this table is empty. Retry or save the prompt before recognizing files.',
       retryPrompt: 'Retry',
       retryCurrentFile: 'Retry current file',
-      retryCurrentWithVision: 'Use model vision on current file',
       retryFailedFiles: 'Retry failed files',
+      retryFileParse: 'Retry file parsing',
+      retryTextRecognition: 'Re-extract fields',
+      reprocessCurrentFile: 'Re-recognize current file',
+      retryParseFailedFiles: 'Retry parse failures',
+      retryRecognitionFailedFiles: 'Retry field extraction failures',
       reRecognizeAll: 'Re-recognize all',
       skipCurrentFile: 'Skip',
       removeCurrentFile: 'Remove',
       noFailedFiles: 'There are no failed files to retry',
-      visionUnsupportedFile: 'This file cannot be retried with vision',
-      visionCapabilityChecking:
-        'Checking whether the selected model supports image input. Please wait.',
-      visionModelRequired: 'Switch to a model with vision support first',
-      imageVisionCheckingHint:
-        '{count} image files are selected. The system is checking whether the current model supports vision before starting image recognition.',
-      imageVisionBlockedHint:
-        '{count} image files are selected, but the current model does not support image input. Switch to model vision before recognition.',
-      imageVisionReadyHint: '{count} image files are selected and will use model vision.',
+      noParseFailedFiles: 'There are no file parsing failures to retry',
+      noRecognitionFailedFiles: 'There are no field extraction failures to retry',
       confirmOverwriteCurrent:
         'Retrying this file will overwrite its recognition result and manual edits. Continue?',
+      confirmOverwriteParseCurrent:
+        'Retrying file parsing will read the file again and overwrite parsed text, field results, and manual edits for this file. Continue?',
+      confirmOverwriteRecognitionCurrent:
+        'Re-extracting fields will reuse the current parsed text and overwrite field results and manual edits for this file. Continue?',
       confirmOverwriteAll:
         'Re-recognizing all files will overwrite every recognition result and manual edit. Continue?',
       overwriteConfirmTitle: 'Overwrite recognition result?',
@@ -475,15 +483,8 @@ const messages = {
       extractionStrategy: 'Recognized by {strategy}',
       extractionFallback: '{reason}; switched to {strategy}',
       sourceTypes: {
-        imageOriginal: 'Original image',
-        pdfRenderedPages: 'PDF rendered pages',
         mineru: 'File parsing content',
       },
-      fallbackReasons: {
-        mineruZeroRecords: 'File parsing produced no importable records',
-      },
-      mineruZeroRecordsHint:
-        'MinerU returned content but no importable record. The system attempted a vision retry. If it still fails, confirm the selected model supports vision or wait for parser improvements for scanned PDFs and PDF tables.',
       originalImagePreview: 'Original image',
       originalFilePreview: 'Original file preview',
       loadingImagePreview: 'Loading original image...',
@@ -493,6 +494,8 @@ const messages = {
       batchPartialFailed: 'Recognized {success} of {total} files. {failed} failed.',
       batchAllFailed: 'Failed to recognize {count} files',
       batchRequestFailed: 'Failed to ingest files into table',
+      parseRequestFailed: 'File parsing request failed',
+      recognitionRequestFailed: 'Text recognition request failed',
     },
   },
   schemaHealth: {
