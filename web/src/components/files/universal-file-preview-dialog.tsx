@@ -88,6 +88,148 @@ export interface UniversalFilePreviewDialogProps {
   isDownloading?: boolean;
 }
 
+export interface UniversalFilePreviewContentProps {
+  file: UniversalFilePreviewDescriptor | null;
+  previewUrl?: string;
+  isLoading?: boolean;
+  error?: string | null;
+  className?: string;
+}
+
+export function UniversalFilePreviewContent({
+  file,
+  previewUrl,
+  isLoading = false,
+  error = null,
+  className,
+}: UniversalFilePreviewContentProps) {
+  const t = useT('files');
+  const isSupported = isOriginalPreviewSupported(file?.extension, file?.mimeType);
+  const isImage = isOriginalPreviewImage(file?.extension, file?.mimeType);
+  const isPdf = isOriginalPreviewPdf(file?.extension, file?.mimeType);
+  const previewKind = getOriginalPreviewKind(file?.extension, file?.mimeType);
+
+  if (!file) {
+    return (
+      <div className={cn('h-full min-h-[360px]', className)}>
+        <PreviewMessage
+          icon={<AlertCircle className="h-5 w-5" />}
+          title={t('preview.noFileSelected')}
+        />
+      </div>
+    );
+  }
+
+  if (!isSupported) {
+    return (
+      <div className={cn('h-full min-h-[360px]', className)}>
+        <PreviewMessage
+          icon={<AlertCircle className="h-5 w-5" />}
+          title={t('preview.unsupportedTitle')}
+          description={t('preview.unsupportedDescription')}
+        />
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className={cn('h-full min-h-[360px]', className)}>
+        <PreviewMessage
+          icon={<Loader2 className="h-5 w-5 animate-spin" />}
+          title={t('preview.loading')}
+        />
+      </div>
+    );
+  }
+
+  if (error || !previewUrl) {
+    return (
+      <div className={cn('h-full min-h-[360px]', className)}>
+        <PreviewMessage
+          icon={<AlertCircle className="h-5 w-5" />}
+          title={error || t('preview.unavailableTitle')}
+          description={t('preview.downloadOnlyDescription')}
+        />
+      </div>
+    );
+  }
+
+  if (isImage) {
+    return (
+      <div
+        className={cn(
+          'flex h-full min-h-0 items-center justify-center overflow-auto bg-muted/30 p-4',
+          className
+        )}
+      >
+        <img
+          src={previewUrl}
+          alt={file.name}
+          className="max-h-full max-w-full object-contain"
+        />
+      </div>
+    );
+  }
+
+  if (previewKind === 'office') {
+    return (
+      <div className={cn('h-full min-h-0', className)}>
+        <OfficePreview file={file} previewUrl={previewUrl} />
+      </div>
+    );
+  }
+
+  if (previewKind === 'csv') {
+    return (
+      <div className={cn('h-full min-h-0', className)}>
+        <CsvPreview previewUrl={previewUrl} />
+      </div>
+    );
+  }
+
+  if (previewKind === 'html') {
+    return (
+      <div className={cn('h-full min-h-0', className)}>
+        <HtmlPreview previewUrl={previewUrl} title={file.name} />
+      </div>
+    );
+  }
+
+  if (isPdf) {
+    return (
+      <iframe
+        src={previewUrl}
+        title={file.name}
+        referrerPolicy="no-referrer"
+        className={cn('h-full min-h-[60vh] w-full border-0 bg-background', className)}
+      />
+    );
+  }
+
+  if (previewKind === 'browser') {
+    return (
+      <iframe
+        src={previewUrl}
+        title={file.name}
+        sandbox=""
+        referrerPolicy="no-referrer"
+        className={cn('h-full min-h-[60vh] w-full border-0 bg-background', className)}
+      />
+    );
+  }
+
+  return (
+    <div className={cn('h-full min-h-[360px]', className)}>
+      <PreviewMessage
+        icon={<AlertCircle className="h-5 w-5" />}
+        title={t('preview.unsupportedTitle')}
+        description={t('preview.unsupportedDescription')}
+      />
+    </div>
+  );
+}
+
 /**
  * @component UniversalFilePreviewDialog
  * @category Feature
@@ -157,11 +299,9 @@ export function UniversalFilePreviewDialog({
     file?.previewUrl
   );
   const downloadUrl = firstNonEmptyString(previewSession?.downloadUrl, file?.downloadUrl);
-  const isSupported = isOriginalPreviewSupported(activeFile?.extension, activeFile?.mimeType);
   const extension = activeFile?.extension?.replace(/^\./, '').toUpperCase() || '';
   const title = activeFile?.name || t('preview.title');
   const isImage = isOriginalPreviewImage(activeFile?.extension, activeFile?.mimeType);
-  const isPdf = isOriginalPreviewPdf(activeFile?.extension, activeFile?.mimeType);
   const previewKind = getOriginalPreviewKind(activeFile?.extension, activeFile?.mimeType);
   const htmlExternalOpenUrl = previewKind === 'html' ? resolvedPreviewUrl : '';
   const canOpenHtmlExternally = Boolean(htmlExternalOpenUrl);
@@ -169,101 +309,6 @@ export function UniversalFilePreviewDialog({
   const openHtmlInNewTab = () => {
     if (!htmlExternalOpenUrl) return;
     window.open(htmlExternalOpenUrl, '_blank', 'noopener,noreferrer');
-  };
-
-  const renderPreview = () => {
-    if (!activeFile) {
-      return (
-        <PreviewMessage
-          icon={<AlertCircle className="h-5 w-5" />}
-          title={t('preview.noFileSelected')}
-        />
-      );
-    }
-
-    if (!isSupported) {
-      return (
-        <PreviewMessage
-          icon={<AlertCircle className="h-5 w-5" />}
-          title={t('preview.unsupportedTitle')}
-          description={t('preview.unsupportedDescription')}
-        />
-      );
-    }
-
-    if (isLoading) {
-      return (
-        <PreviewMessage
-          icon={<Loader2 className="h-5 w-5 animate-spin" />}
-          title={t('preview.loading')}
-        />
-      );
-    }
-
-    if (error || !resolvedPreviewUrl) {
-      return (
-        <PreviewMessage
-          icon={<AlertCircle className="h-5 w-5" />}
-          title={error || t('preview.unavailableTitle')}
-          description={t('preview.downloadOnlyDescription')}
-        />
-      );
-    }
-
-    if (isImage) {
-      return (
-        <div className="flex h-full min-h-0 items-center justify-center overflow-auto bg-muted/30 p-4">
-          <img
-            src={resolvedPreviewUrl}
-            alt={activeFile.name}
-            className="max-h-full max-w-full object-contain"
-          />
-        </div>
-      );
-    }
-
-    if (previewKind === 'office') {
-      return <OfficePreview file={activeFile} previewUrl={resolvedPreviewUrl} />;
-    }
-
-    if (previewKind === 'csv') {
-      return <CsvPreview previewUrl={resolvedPreviewUrl} />;
-    }
-
-    if (previewKind === 'html') {
-      return <HtmlPreview previewUrl={resolvedPreviewUrl} title={activeFile.name} />;
-    }
-
-    if (isPdf) {
-      return (
-        <iframe
-          src={resolvedPreviewUrl}
-          title={activeFile.name}
-          referrerPolicy="no-referrer"
-          className="h-full min-h-[60vh] w-full border-0 bg-background"
-        />
-      );
-    }
-
-    if (previewKind === 'browser') {
-      return (
-        <iframe
-          src={resolvedPreviewUrl}
-          title={activeFile.name}
-          sandbox=""
-          referrerPolicy="no-referrer"
-          className="h-full min-h-[60vh] w-full border-0 bg-background"
-        />
-      );
-    }
-
-    return (
-      <PreviewMessage
-        icon={<AlertCircle className="h-5 w-5" />}
-        title={t('preview.unsupportedTitle')}
-        description={t('preview.unsupportedDescription')}
-      />
-    );
   };
 
   return (
@@ -284,7 +329,14 @@ export function UniversalFilePreviewDialog({
             </div>
           </DialogHeader>
 
-          <DialogBody className="min-h-0 overflow-hidden p-0">{renderPreview()}</DialogBody>
+          <DialogBody className="min-h-0 overflow-hidden p-0">
+            <UniversalFilePreviewContent
+              file={activeFile}
+              previewUrl={resolvedPreviewUrl}
+              isLoading={isLoading}
+              error={error}
+            />
+          </DialogBody>
 
           <DialogFooter className="border-t px-5 py-3">
             {canOpenHtmlExternally ? (
