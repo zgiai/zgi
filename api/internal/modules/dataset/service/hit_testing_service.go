@@ -329,6 +329,9 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 		ElapsedTime:    float64(elapsed.Microseconds()) / 1000.0,
 		GraphExecution: execution,
 	}
+	if err := normalizeHitTestingResponseKnowledgeImageURLs(response, config.Current().App.FilesURL); err != nil {
+		return nil, err
+	}
 
 	// Save query and results to database using DatasetQueryService
 	hitCount := len(records)
@@ -964,6 +967,9 @@ func (s *hitTestingService) ExternalRetrieve(ctx context.Context, dataset *datas
 			}
 		}
 		response.Records = append(response.Records, record)
+	}
+	if err := normalizeHitTestingResponseKnowledgeImageURLs(response, config.Current().App.FilesURL); err != nil {
+		return nil, err
 	}
 
 	return response, nil
