@@ -69,11 +69,14 @@ const messages: FilesMessages = {
     noFileSelected: '未选择文件',
     unsupportedTitle: '暂不支持预览该文件',
     unsupportedDescription: '当前支持图片、PDF、HTML、轻量文本类文件、DOCX 和 XLSX 原文件预览。',
+    unsupportedFormatTitle: '{format} 文件暂不支持预览',
+    unsupportedFormatDescription: '当前暂不支持预览 {format} 格式文件。请下载文件后在本地查看。',
     openInNewTab: '新窗口打开',
     unavailableTitle: '无法预览该文件',
     downloadOnlyDescription: '请下载文件后在本地查看。',
     htmlLimitedTitle: 'HTML 正在以隔离模式预览',
-    htmlLimitedDescription: '页面脚本可用于动画效果，表单、弹窗、网络请求、嵌入框架和页面跳转仍会被阻止。',
+    htmlLimitedDescription:
+      '页面脚本可用于动画效果，表单、弹窗、网络请求、嵌入框架和页面跳转仍会被阻止。',
     htmlOpenRiskTitle: '在新标签页打开原始 HTML？',
     htmlOpenRiskDescription:
       '新标签页会在隔离预览之外加载原始 HTML 文件。该页面可能执行脚本、跳转页面或访问外部资源。请仅在信任该文件时继续。',
