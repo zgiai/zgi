@@ -113,6 +113,102 @@ func TestAgentWorkflowSystemSkillExposeExpectedTools(t *testing.T) {
 	}
 }
 
+func TestWorkReportSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillWorkReport})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillWorkReport)
+	if !ok {
+		t.Fatalf("work report skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypeHybrid {
+		t.Fatalf("runtime type = %q, want hybrid", doc.Metadata.RuntimeType)
+	}
+	if got := doc.Metadata.Display.Label["zh_Hans"]; got != "周报月报生成" {
+		t.Fatalf("zh label = %q", got)
+	}
+	if got := doc.Metadata.Display.WhenToUse["zh_Hans"]; got != "当用户需要生成周报、月报、工作总结、项目进展汇报或管理汇报时使用。" {
+		t.Fatalf("zh when_to_use = %q", got)
+	}
+	if got := doc.Metadata.Display.Tags["zh_Hans"]; !sameStrings(got, []string{"周报", "月报", "工作总结"}) {
+		t.Fatalf("zh tags = %v", got)
+	}
+}
+
+func TestSchedulePlannerSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillSchedulePlanner})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillSchedulePlanner)
+	if !ok {
+		t.Fatalf("schedule planner skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if len(doc.Tools) != 0 {
+		t.Fatalf("tools = %v, want none", doc.Tools)
+	}
+	if got := doc.Metadata.Display.Label["zh_Hans"]; got != "日程规划" {
+		t.Fatalf("zh label = %q", got)
+	}
+	if got := doc.Metadata.Display.WhenToUse["zh_Hans"]; got != "用于规划每日安排、每周计划、任务排期、会议议程、学习计划或工作负载。" {
+		t.Fatalf("zh when_to_use = %q", got)
+	}
+	if got := doc.Metadata.Display.Tags["zh_Hans"]; !sameStrings(got, []string{"日程", "计划", "效率"}) {
+		t.Fatalf("zh tags = %v", got)
+	}
+}
+
+func TestChartGeneratorSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillChartGenerator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillChartGenerator)
+	if !ok {
+		t.Fatalf("chart generator skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypeTool {
+		t.Fatalf("runtime type = %q, want tool", doc.Metadata.RuntimeType)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected chart generator not to have scripts")
+	}
+	if doc.Metadata.ScriptsSupported {
+		t.Fatalf("scripts supported = true for builtin chart generator")
+	}
+	tool, ok := findSkillTool(*doc, "generate_chart")
+	if !ok {
+		t.Fatalf("expected generate_chart tool")
+	}
+	if tool.ProviderType != "builtin" || tool.ProviderID != "chart_generator" {
+		t.Fatalf("tool provider = %s/%s, want builtin/chart_generator", tool.ProviderType, tool.ProviderID)
+	}
+	if got := doc.Metadata.Display.Label["zh_Hans"]; got != "图表生成器" {
+		t.Fatalf("zh label = %q", got)
+	}
+	if got := doc.Metadata.Display.WhenToUse["zh_Hans"]; got != "当回答需要生成图表文件时使用。" {
+		t.Fatalf("zh when_to_use = %q", got)
+	}
+	if got := doc.Metadata.Display.Tags["zh_Hans"]; !sameStrings(got, []string{"图表", "可视化", "数据"}) {
+		t.Fatalf("zh tags = %v", got)
+	}
+	if len(doc.Metadata.References) != 7 {
+		t.Fatalf("references = %#v, want 7 chart references", doc.Metadata.References)
+	}
+	for _, path := range []string{"chart-radar.md", "chart-bar.md", "chart-line.md", "chart-pie.md", "chart-doughnut.md", "chart-scatter.md", "chart-score-distribution.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
 func TestAgentMemorySystemSkillIsNotLoadable(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	_, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillAgentMemory})
@@ -254,6 +350,8 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 		SkillAgentDatabase,
 		SkillCalculator,
 		SkillFileGenerator,
+		SkillChartGenerator,
+		SkillWorkReport,
 		SkillInternalDatabase,
 		SkillInternalKnowledge,
 		SkillTime,
@@ -278,6 +376,8 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		required []string
 	}{
 		{SkillFileGenerator, "generate_file", []string{"content", "format"}},
+		{SkillChartGenerator, "generate_chart", []string{"chart_type", "data"}},
+		{SkillWorkReport, "generate_file", []string{"content", "format"}},
 		{SkillInternalKnowledge, "retrieve_knowledge", []string{"query", "dataset_ids"}},
 		{SkillAgentKnowledge, "retrieve_agent_knowledge", []string{"query"}},
 		{SkillInternalDatabase, "query_table_records", []string{"data_source_id", "table_id"}},
@@ -307,6 +407,49 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 	}
 }
 
+func TestChartGeneratorContractSupportsBarAndLinePayloads(t *testing.T) {
+	expected := ExpectedSkillToolArguments(SkillChartGenerator, "generate_chart")
+	if expected == nil {
+		t.Fatalf("ExpectedSkillToolArguments() = nil")
+	}
+	schema, ok := expected["schema"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema type = %T, want map[string]interface{}", expected["schema"])
+	}
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema.properties missing")
+	}
+	dataSchema, ok := properties["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("data schema missing")
+	}
+	if hasRequired(dataSchema, "dimensions") {
+		t.Fatalf("top-level data schema should not require dimensions: %#v", dataSchema)
+	}
+	branches, ok := dataSchema["anyOf"].([]interface{})
+	if !ok || len(branches) < 7 {
+		t.Fatalf("data anyOf = %#v, want radar/bar/line/pie/scatter/distribution branches", dataSchema["anyOf"])
+	}
+	for _, required := range []string{"dimensions", "categories", "x_axis", "items", "points", "bands"} {
+		if findSchemaWithRequired(branches, required) == nil {
+			t.Fatalf("data schema branch requiring %s not found: %#v", required, branches)
+		}
+	}
+	if findSchemaWithRequired(branches, "scores") == nil {
+		t.Fatalf("data schema branch requiring scores not found: %#v", branches)
+	}
+	for _, rawBranch := range branches {
+		branch, ok := rawBranch.(map[string]interface{})
+		if !ok || !hasRequired(branch, "bands") {
+			continue
+		}
+		if branchAllowsLabelOnlyBands(branch) {
+			t.Fatalf("score distribution bands schema allows label-only bands: %#v", branch)
+		}
+	}
+}
+
 func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	skillIDs := []string{
@@ -314,6 +457,8 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		SkillAgentDatabase,
 		SkillCalculator,
 		SkillFileGenerator,
+		SkillChartGenerator,
+		SkillWorkReport,
 		SkillInternalDatabase,
 		SkillInternalKnowledge,
 		SkillTime,
@@ -385,6 +530,45 @@ func findSchemaWithRequired(schemas []interface{}, required string) map[string]i
 		}
 	}
 	return nil
+}
+
+func branchAllowsLabelOnlyBands(branch map[string]interface{}) bool {
+	properties, ok := branch["properties"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	bands, ok := properties["bands"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	items, ok := bands["items"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	required, ok := items["required"].([]string)
+	if !ok {
+		values, ok := items["required"].([]interface{})
+		if !ok {
+			return true
+		}
+		required = make([]string, 0, len(values))
+		for _, value := range values {
+			text, _ := value.(string)
+			if text != "" {
+				required = append(required, text)
+			}
+		}
+	}
+	return len(required) == 1 && required[0] == "label"
+}
+
+func hasReference(references []SkillReference, path string) bool {
+	for _, reference := range references {
+		if reference.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 func hasRequired(schema map[string]interface{}, required string) bool {

@@ -12,6 +12,7 @@ import (
 
 	// Import to trigger init() registration
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
+	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/chartgenerator"
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
@@ -98,6 +99,7 @@ func TestToolManager_ListBuiltinProviders(t *testing.T) {
 	require.GreaterOrEqual(t, len(providers), 2)
 	assert.True(t, hasProvider(providers, "time"))
 	assert.True(t, hasProvider(providers, "calculator"))
+	assert.True(t, hasProvider(providers, "chart_generator"))
 	assert.True(t, hasProvider(providers, "file_generator"))
 }
 
