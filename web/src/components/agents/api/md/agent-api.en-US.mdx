@@ -1,0 +1,144 @@
+# Agent API
+
+Use this API to call the latest published version of this Agent from an external system.
+The endpoint only supports streaming responses.
+
+<div>
+  ### Base URL
+  <CodeGroup title="Code">
+    ```plaintext
+    {apibase}
+    ```
+  </CodeGroup>
+
+  ### Authentication
+
+  Send the Agent API Key in the `Authorization` header. `Bearer` is preferred.
+  `X-API-Key` is also supported for compatibility.
+
+  <CodeGroup title="Code">
+    ```plaintext
+    Authorization: Bearer {API_KEY}
+    ```
+  </CodeGroup>
+
+  Keep API Keys on your server side. Do not expose them in browser code or public clients.
+</div>
+
+---
+
+<Heading
+  url='/agents/chat'
+  method='POST'
+  title='Send Chat Message'
+  name='#Create-Agent-Chat-Message'
+/>
+
+<Row>
+  <Col>
+    Create a new message for the published Agent runtime.
+
+    ### Request Body
+
+    <Properties>
+      <Property name='query' type='string' propKey='query'>
+        Required. User input for the Agent.
+      </Property>
+      <Property name='response_mode' type='string' propKey='response_mode'>
+        Optional. Defaults to `streaming`. Only `streaming` is supported.
+      </Property>
+      <Property name='conversation_id' type='string' propKey='conversation_id'>
+        Optional. Pass a previous `conversation_id` to continue a conversation.
+      </Property>
+      <Property name='parent_id' type='string' propKey='parent_id'>
+        Optional. Parent message id for continuing from a specific message.
+      </Property>
+      <Property name='file_ids' type='array[string]' propKey='file_ids'>
+        Optional. Uploaded file ids attached to this message.
+      </Property>
+      <Property name='parameters' type='object' propKey='parameters'>
+        Optional. Runtime parameters for configured variables.
+      </Property>
+      <Property name='use_memory' type='boolean' propKey='use_memory'>
+        Optional. Whether to use memory for this request.
+      </Property>
+      <Property name='user' type='string' propKey='user'>
+        Optional. External caller id for tracing.
+      </Property>
+    </Properties>
+
+    Request values such as `model` and `provider` are ignored. The Agent always uses the latest published configuration.
+
+    ### Streaming Response
+
+    The response `Content-Type` is `text/event-stream`.
+    Supported events:
+
+    - `message_start`
+    - `message`
+    - `message_end`
+    - `error`
+
+    ### Errors
+
+    - `400`: invalid parameters or non-streaming `response_mode`
+    - `401`: missing, invalid, inactive, expired, or revoked API Key
+    - `404`: Agent has no published version or cannot be found
+    - `500`: internal service error
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request" tag="POST" label="/agents/chat" targetCode={`curl --location --no-buffer '{apibase}/agents/chat' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "query": "Hello, please answer in one sentence.",\n  "response_mode": "streaming",\n  "parameters": {},\n  "use_memory": false,\n  "user": "external-user-1"\n}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/agents/chat' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "query": "Hello, please answer in one sentence.",
+      "response_mode": "streaming",
+      "parameters": {},
+      "use_memory": false,
+      "user": "external-user-1"
+    }'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Alternative Auth" tag="POST" label="/agents/chat" targetCode={`curl --location --no-buffer '{apibase}/agents/chat' \\\n--header 'Content-Type: application/json' \\\n--header 'X-API-Key: {api_key}' \\\n--data '{\n  "query": "Hello",\n  "response_mode": "streaming"\n}'`}>
+
+    ```bash {{ title: 'cURL with X-API-Key' }}
+    curl --location --no-buffer '{apibase}/agents/chat' \
+    --header 'Content-Type: application/json' \
+    --header 'X-API-Key: {api_key}' \
+    --data '{
+      "query": "Hello",
+      "response_mode": "streaming"
+    }'
+    ```
+
+    </CodeGroup>
+
+    ### Response Example
+
+    <CodeGroup title="Response">
+    ```text {{ title: 'SSE' }}
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"...","message_id":"...","model":"deepseek-chat"}}
+
+    event: message
+    data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"Hello"}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"...","message_id":"...","status":"completed","metadata":{"usage":{"total_tokens":123}}}}
+    ```
+    </CodeGroup>
+  </Col>
+</Row>
+
+## Notes
+
+- This API runs the latest published Agent version.
+- Draft Agent configuration is not available through this endpoint.
+- Workflow and chat-workflow apps use their own workflow API endpoints.
+- Blocking mode, rate limits, IP allow lists, and precise token accounting are not part of the first version.

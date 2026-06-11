@@ -1,0 +1,144 @@
+# Agent API
+
+使用该接口可以让外部系统调用当前 Agent 的最新发布版本。
+该接口仅支持流式响应。
+
+<div>
+  ### Base URL
+  <CodeGroup title="代码">
+    ```plaintext
+    {apibase}
+    ```
+  </CodeGroup>
+
+  ### 鉴权
+
+  在 `Authorization` 请求头中传入 Agent API Key，推荐使用 `Bearer`。
+  为了兼容已有系统，也支持 `X-API-Key`。
+
+  <CodeGroup title="代码">
+    ```plaintext
+    Authorization: Bearer {API_KEY}
+    ```
+  </CodeGroup>
+
+  请只在服务端保存和使用 API Key，不要暴露在浏览器代码或公开客户端中。
+</div>
+
+---
+
+<Heading
+  url='/agents/chat'
+  method='POST'
+  title='发送聊天消息'
+  name='#Create-Agent-Chat-Message'
+/>
+
+<Row>
+  <Col>
+    为已发布的 Agent runtime 创建一条新的用户消息。
+
+    ### 请求体
+
+    <Properties>
+      <Property name='query' type='string' propKey='query'>
+        必填。用户输入内容。
+      </Property>
+      <Property name='response_mode' type='string' propKey='response_mode'>
+        可选。默认值为 `streaming`。当前仅支持 `streaming`。
+      </Property>
+      <Property name='conversation_id' type='string' propKey='conversation_id'>
+        可选。传入已有 `conversation_id` 可以继续同一轮对话。
+      </Property>
+      <Property name='parent_id' type='string' propKey='parent_id'>
+        可选。指定父消息 id，用于从某条消息继续对话。
+      </Property>
+      <Property name='file_ids' type='array[string]' propKey='file_ids'>
+        可选。随本次消息附加的已上传文件 id。
+      </Property>
+      <Property name='parameters' type='object' propKey='parameters'>
+        可选。传给已配置变量的运行参数。
+      </Property>
+      <Property name='use_memory' type='boolean' propKey='use_memory'>
+        可选。本次请求是否使用记忆。
+      </Property>
+      <Property name='user' type='string' propKey='user'>
+        可选。外部调用方标识，用于追踪。
+      </Property>
+    </Properties>
+
+    请求中的 `model`、`provider` 等字段会被忽略。Agent 始终使用最新发布版本中的配置。
+
+    ### 流式响应
+
+    响应 `Content-Type` 为 `text/event-stream`。
+    支持以下事件：
+
+    - `message_start`
+    - `message`
+    - `message_end`
+    - `error`
+
+    ### 错误
+
+    - `400`：请求参数错误，或 `response_mode` 不是 `streaming`
+    - `401`：API Key 缺失、错误、已停用、已过期或已撤销
+    - `404`：Agent 不存在，或没有发布版本
+    - `500`：服务内部错误
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求" tag="POST" label="/agents/chat" targetCode={`curl --location --no-buffer '{apibase}/agents/chat' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "query": "你好，请用一句话回答。",\n  "response_mode": "streaming",\n  "parameters": {},\n  "use_memory": false,\n  "user": "external-user-1"\n}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/agents/chat' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "query": "你好，请用一句话回答。",
+      "response_mode": "streaming",
+      "parameters": {},
+      "use_memory": false,
+      "user": "external-user-1"
+    }'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="备用鉴权方式" tag="POST" label="/agents/chat" targetCode={`curl --location --no-buffer '{apibase}/agents/chat' \\\n--header 'Content-Type: application/json' \\\n--header 'X-API-Key: {api_key}' \\\n--data '{\n  "query": "你好",\n  "response_mode": "streaming"\n}'`}>
+
+    ```bash {{ title: '使用 X-API-Key 的 cURL' }}
+    curl --location --no-buffer '{apibase}/agents/chat' \
+    --header 'Content-Type: application/json' \
+    --header 'X-API-Key: {api_key}' \
+    --data '{
+      "query": "你好",
+      "response_mode": "streaming"
+    }'
+    ```
+
+    </CodeGroup>
+
+    ### 响应示例
+
+    <CodeGroup title="响应">
+    ```text {{ title: 'SSE' }}
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"...","message_id":"...","model":"deepseek-chat"}}
+
+    event: message
+    data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"Hello"}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"...","message_id":"...","status":"completed","metadata":{"usage":{"total_tokens":123}}}}
+    ```
+    </CodeGroup>
+  </Col>
+</Row>
+
+## 注意事项
+
+- 该接口始终运行 Agent 的最新发布版本。
+- 草稿配置不能通过该接口调用。
+- Workflow 和 Chat Workflow 应用使用各自的 workflow API endpoint。
+- blocking 模式、限流、IP 白名单和精确 token 统计不属于第一版能力。

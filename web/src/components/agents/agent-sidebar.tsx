@@ -71,9 +71,26 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
 
     if (routeAccess.canShowApiKeys) {
       items.push({
-        title: t('agents.apiKeys.navTitle'),
-        href: `/console/agents/${agentId}/api`,
+        title: t('agents.apiGroupTitle'),
+        href: `/console/agents/${agentId}/api/keys`,
         icon: KeyRound,
+        isActive: currentPathname => currentPathname.startsWith(`/console/agents/${agentId}/api`),
+        children: [
+          {
+            title: t('agents.apiKeys.navTitle'),
+            href: `/console/agents/${agentId}/api/keys`,
+            icon: KeyRound,
+            isActive: currentPathname =>
+              currentPathname === `/console/agents/${agentId}/api/keys`,
+          },
+          {
+            title: t('agents.apiDocsNavTitle'),
+            href: `/console/agents/${agentId}/api/docs`,
+            icon: BookOpen,
+            isActive: currentPathname =>
+              currentPathname === `/console/agents/${agentId}/api/docs`,
+          },
+        ],
       });
     }
 

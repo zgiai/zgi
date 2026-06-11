@@ -2,6 +2,8 @@
 
 import React, { useRef } from 'react';
 import { AgentType } from '@/services/types/agent';
+import AgentApiDocsEn from '@/components/agents/api/md/agent-api.en-US.mdx';
+import AgentApiDocsZh from '@/components/agents/api/md/agent-api.zh-Hans.mdx';
 import WorkflowApiDocs from '@/components/agents/api/md/workflow-api.mdx';
 import ChatWorkflowApiDocs from '@/components/agents/api/md/chat-workflow-api.mdx';
 import { MDXProvider } from '@mdx-js/react';
@@ -21,6 +23,7 @@ import MDComponents, {
 import { FloatingToc } from '@/components/agents/api/ui/floating-toc';
 import { ApiDocsProvider } from '@/components/agents/api/ui/api-docs-context';
 import { API_URL } from '@/lib/config';
+import { useLocale } from '@/hooks/use-locale';
 
 interface ApiDocsTabProps {
   agentType: AgentType | null | undefined;
@@ -28,6 +31,7 @@ interface ApiDocsTabProps {
 
 export default function ApiDocsTab({ agentType }: ApiDocsTabProps) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const { locale } = useLocale();
 
   const components = {
     CodeGroup,
@@ -50,16 +54,24 @@ export default function ApiDocsTab({ agentType }: ApiDocsTabProps) {
     code: InlineCode,
   };
 
-  const renderDocs = () =>
-    agentType === AgentType.WORKFLOW ? (
+  const isAgentRuntime = agentType === AgentType.AGENT;
+  const apiBase = isAgentRuntime ? API_URL + '/api/v1' : API_URL + '/v1/api';
+
+  const renderDocs = () => {
+    if (isAgentRuntime) {
+      const AgentApiDocs = locale === 'zh-Hans' ? AgentApiDocsZh : AgentApiDocsEn;
+      return <AgentApiDocs components={components} />;
+    }
+    return agentType === AgentType.WORKFLOW ? (
       <WorkflowApiDocs components={components} />
     ) : (
       <ChatWorkflowApiDocs components={components} />
     );
+  };
 
   return (
     <div className="p-4 space-y-4">
-      <ApiDocsProvider apibase={API_URL + '/v1/api'}>
+      <ApiDocsProvider apibase={apiBase}>
         <div ref={contentRef} className="prose dark:prose-invert max-w-5xl mx-auto text-[14px]">
           <MDXProvider components={components}>{renderDocs()}</MDXProvider>
         </div>

@@ -36,6 +36,10 @@ export function supportsWorkflowDetailPages(agentType: AgentDetailType): boolean
   return isWorkflowRuntimeType(agentType);
 }
 
+export function supportsAgentApiKeyPages(agentType: AgentDetailType): boolean {
+  return isAgentRuntimeType(agentType) || isWorkflowRuntimeType(agentType);
+}
+
 export function canShowWorkflowDetailPages(
   agentType: AgentDetailType,
   permissions: AgentDetailRoutePermissions
@@ -47,7 +51,7 @@ export function canShowAgentApiKeys(
   agentType: AgentDetailType,
   permissions: AgentDetailRoutePermissions
 ): boolean {
-  return canShowWorkflowDetailPages(agentType, permissions);
+  return supportsAgentApiKeyPages(agentType) && permissions.canManage;
 }
 
 export function canShowAgentRuntimeLogs(
@@ -71,6 +75,7 @@ export function getAgentDetailRouteAccess(
 ) {
   const supportsWorkflowPages = supportsWorkflowDetailPages(agentType);
   const canManageWorkflowPages = supportsWorkflowPages && permissions.canManage;
+  const canManageApiKeys = canShowAgentApiKeys(agentType, permissions);
 
   return {
     editHref: getAgentDetailEditHref(agentId, agentType),
@@ -78,7 +83,7 @@ export function getAgentDetailRouteAccess(
     canManage: permissions.canManage,
     canEditRuntime: permissions.canManage,
     supportsWorkflowPages,
-    canShowApiKeys: canManageWorkflowPages,
+    canShowApiKeys: canManageApiKeys,
     canShowRuntimeLogs: canManageWorkflowPages,
     canShowBatchTest: canManageWorkflowPages,
   };
