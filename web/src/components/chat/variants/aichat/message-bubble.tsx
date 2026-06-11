@@ -37,6 +37,7 @@ import {
   UserMessageToolbar,
 } from '@/components/chat/variants/aichat/message-toolbars';
 import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
+import { isOriginalPreviewImage } from '@/utils/file-helpers';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   getAIChatMessageErrorInput,
@@ -69,6 +70,9 @@ interface AIChatMessageBubbleProps {
   showSkillEventDetails?: boolean;
 }
 
+const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
+const EMPTY_GENERATED_FILES: AIChatGeneratedFile[] = [];
+
 function formatAIChatTime(timestamp: number): string {
   if (!timestamp) return '';
 
@@ -100,6 +104,55 @@ function formatFileSize(size: number): string {
 function formatGeneratedFileExtension(file: AIChatGeneratedFile): string {
   const extension = file.extension || file.filename.split('.').pop() || '';
   return extension.replace(/^\./, '').toUpperCase();
+}
+
+function generatedFilePreviewUrl(file: AIChatGeneratedFile): string {
+  return file.url || '';
+}
+
+function escapeMarkdownImageAlt(value: string): string {
+  return value
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\\/g, '\\\\')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]');
+}
+
+function generatedFileImagePreviewMarkdown(file: AIChatGeneratedFile): string | null {
+  const previewUrl = generatedFilePreviewUrl(file);
+  if (!previewUrl || !isOriginalPreviewImage(file.extension, file.mime_type)) {
+    return null;
+  }
+
+  return `![${escapeMarkdownImageAlt(file.filename)}](${previewUrl})`;
+}
+
+function appendGeneratedImagePreviewsToAnswer(
+  answer: string,
+  generatedFiles: AIChatGeneratedFile[],
+  shouldAppend: boolean
+): string {
+  if (!shouldAppend || generatedFiles.length === 0) {
+    return answer;
+  }
+
+  const previews = generatedFiles
+    .filter(file => {
+      const previewUrl = generatedFilePreviewUrl(file);
+      if (!previewUrl) return false;
+      if (answer.includes(previewUrl)) return false;
+      if (file.download_url && answer.includes(file.download_url)) return false;
+      return true;
+    })
+    .map(generatedFileImagePreviewMarkdown)
+    .filter((preview): preview is string => Boolean(preview));
+
+  if (previews.length === 0) {
+    return answer;
+  }
+
+  const trimmedAnswer = answer.trimEnd();
+  return [trimmedAnswer, previews.join('\n\n')].filter(Boolean).join('\n\n');
 }
 
 interface AIChatHistoryImagePreviewProps {
@@ -355,7 +408,6 @@ export function AIChatMessageBubble({
     message.metadata?.sensitiveOutputBlocked === true ||
     isSensitiveOutputBlockedValue(message.answer);
   const displayAnswer = isSensitiveBlocked ? tCommon('sensitiveOutput.blocked') : message.answer;
-  const answer = displayAnswer.trim();
   const hasParent = Boolean(message.parent_id);
   const branchCount = branchNavigation?.total ?? 1;
   const canCreateBranch = hasParent && branchCount < MAX_AICHAT_BRANCHES;
@@ -367,8 +419,14 @@ export function AIChatMessageBubble({
   const toolbarVisibility = isLastMessage
     ? 'opacity-100'
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
-  const files = message.metadata?.files ?? [];
-  const generatedFiles = message.metadata?.generated_files ?? [];
+  const files = message.metadata?.files ?? EMPTY_MESSAGE_FILES;
+  const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
+  const displayAnswerWithGeneratedImagePreviews = useMemo(
+    () => appendGeneratedImagePreviewsToAnswer(displayAnswer, generatedFiles, !isSensitiveBlocked),
+    [displayAnswer, generatedFiles, isSensitiveBlocked]
+  );
+  const answer = displayAnswer.trim();
+  const renderedAnswer = displayAnswerWithGeneratedImagePreviews.trim();
   const userInputRequest = hideUserInputRequest ? undefined : message.metadata?.user_input_request;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
@@ -562,11 +620,11 @@ export function AIChatMessageBubble({
             />
           ) : null}
 
-          {answer ? (
+          {renderedAnswer ? (
             <div className="prose prose-sm min-w-0 max-w-full dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
               <MarkdownViewer
                 className="md-viewer min-w-0 max-w-full break-words"
-                content={displayAnswer}
+                content={displayAnswerWithGeneratedImagePreviews}
                 isStreaming={isStreaming}
                 renderIdentity={message.id}
               />
