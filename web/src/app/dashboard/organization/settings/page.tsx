@@ -2,11 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Building2, Search, Save, ShieldCheck, UserPlus, X } from 'lucide-react';
+import { Search, Save, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,7 +18,6 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import type { Member } from '@/services/types/organization';
 
 const ORGANIZATION_NAME_MAX_LENGTH = 255;
-const ORGANIZATION_SHORT_NAME_MAX_LENGTH = 100;
 
 export default function OrganizationSettingsPage() {
   const t = useT('dashboard');
@@ -31,9 +29,7 @@ export default function OrganizationSettingsPage() {
     isUpdatingCurrentOrganizationMemberRole,
   } = useOrganizationActions();
   const [name, setName] = useState('');
-  const [shortName, setShortName] = useState('');
   const [nameError, setNameError] = useState('');
-  const [shortNameError, setShortNameError] = useState('');
   const [memberKeyword, setMemberKeyword] = useState('');
   const [adminToDemote, setAdminToDemote] = useState<Member | null>(null);
   const debouncedMemberKeyword = useDebouncedValue(memberKeyword, 300);
@@ -71,18 +67,13 @@ export default function OrganizationSettingsPage() {
 
   useEffect(() => {
     setName(currentOrganization?.name ?? '');
-    setShortName(currentOrganization?.short_name ?? '');
     setNameError('');
-    setShortNameError('');
-  }, [currentOrganization?.id, currentOrganization?.name, currentOrganization?.short_name]);
+  }, [currentOrganization?.id, currentOrganization?.name]);
 
-  const isDirty =
-    name.trim() !== (currentOrganization?.name ?? '') ||
-    shortName.trim() !== (currentOrganization?.short_name ?? '');
+  const isDirty = name.trim() !== (currentOrganization?.name ?? '');
 
   const validate = () => {
     const nextName = name.trim();
-    const nextShortName = shortName.trim();
     if (!nextName) {
       setNameError(t('organization.validation.nameRequired'));
       return false;
@@ -91,25 +82,17 @@ export default function OrganizationSettingsPage() {
       setNameError(t('organization.validation.nameTooLong', { max: ORGANIZATION_NAME_MAX_LENGTH }));
       return false;
     }
-    if (nextShortName.length > ORGANIZATION_SHORT_NAME_MAX_LENGTH) {
-      setShortNameError(
-        t('organization.validation.nameTooLong', { max: ORGANIZATION_SHORT_NAME_MAX_LENGTH })
-      );
-      return false;
-    }
     return true;
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setNameError('');
-    setShortNameError('');
     if (!canEdit || !validate()) {
       return;
     }
     await updateOrganization({
       name: name.trim(),
-      short_name: shortName.trim(),
     });
   };
 
@@ -140,143 +123,133 @@ export default function OrganizationSettingsPage() {
 
   if (isLoading && !currentOrganization) {
     return (
-      <div className="min-h-full bg-bg-canvas px-6 py-6 text-foreground md:px-8 lg:px-10">
-        <div className="mx-auto max-w-4xl space-y-5">
-          <Skeleton className="h-20 rounded-lg" />
-          <Skeleton className="h-80 rounded-lg" />
+      <div className="flex h-full flex-col space-y-5 overflow-hidden bg-bg-canvas/50 p-4 text-foreground lg:p-6">
+        <div className="shrink-0 space-y-2">
+          <Skeleton className="h-8 w-40 rounded-lg" />
+          <Skeleton className="h-4 w-80 rounded" />
         </div>
+        <Skeleton className="h-64 rounded-xl" />
+        <Skeleton className="min-h-0 flex-1 rounded-xl" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-full bg-bg-canvas px-6 py-6 text-foreground md:px-8 lg:px-10">
-      <div className="mx-auto max-w-4xl space-y-5">
-        <header className="border-b border-border/70 pb-5">
-          <div className="mb-3 flex size-10 items-center justify-center rounded-lg border border-border/80 bg-background">
-            <Building2 className="size-5 text-muted-foreground" />
+    <div className="flex h-full flex-col space-y-5 overflow-auto bg-bg-canvas/50 p-4 text-foreground lg:p-6">
+      <header className="shrink-0">
+        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
+          {t('organization.settings.title')}
+        </h1>
+        <p className="mt-1 max-w-2xl text-sm text-text-secondary">
+          {t('organization.settings.subtitle')}
+        </p>
+      </header>
+
+      <section className="shrink-0 overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm">
+        <div className="border-b border-border/60 px-5 py-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight text-text-primary">
+                {t('organization.settings.profileTitle')}
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t('organization.settings.profileDescription')}
+              </p>
+            </div>
+            <Badge variant={canEdit ? 'info' : 'secondary'} className="w-fit font-medium">
+              {t('organization.settings.currentRole')}:{' '}
+              {currentOrganization?.organization_role ?? '-'}
+            </Badge>
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">
-            {t('organization.settings.title')}
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            {t('organization.settings.subtitle')}
-          </p>
-        </header>
+        </div>
 
-        <Card className="border-border/80 shadow-sm">
-          <CardHeader>
-            <CardTitle>{t('organization.settings.profileTitle')}</CardTitle>
-            <CardDescription>{t('organization.settings.profileDescription')}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-6" onSubmit={handleSubmit}>
-              <div className="grid gap-5 md:grid-cols-2">
-                <div className="space-y-2.5">
-                  <Label htmlFor="organization-name">{t('organization.settings.name')}</Label>
-                  <Input
-                    id="organization-name"
-                    value={name}
-                    onChange={event => {
-                      setName(event.target.value);
-                      if (nameError) setNameError('');
-                    }}
-                    placeholder={t('organization.settings.namePlaceholder')}
-                    maxLength={ORGANIZATION_NAME_MAX_LENGTH}
-                    disabled={!canEdit || isUpdatingOrganization}
-                    errorText={nameError}
-                    showCharacterCount
-                  />
-                </div>
-                <div className="space-y-2.5">
-                  <Label htmlFor="organization-short-name">
-                    {t('organization.settings.shortName')}
-                  </Label>
-                  <Input
-                    id="organization-short-name"
-                    value={shortName}
-                    onChange={event => {
-                      setShortName(event.target.value);
-                      if (shortNameError) setShortNameError('');
-                    }}
-                    placeholder={t('organization.settings.shortNamePlaceholder')}
-                    maxLength={ORGANIZATION_SHORT_NAME_MAX_LENGTH}
-                    disabled={!canEdit || isUpdatingOrganization}
-                    errorText={shortNameError}
-                    showCharacterCount
-                  />
-                </div>
-              </div>
+        <form className="space-y-5 p-5" onSubmit={handleSubmit}>
+          <div className="max-w-2xl space-y-2.5">
+            <Label htmlFor="organization-name">{t('organization.settings.name')}</Label>
+            <Input
+              id="organization-name"
+              value={name}
+              onChange={event => {
+                setName(event.target.value);
+                if (nameError) setNameError('');
+              }}
+              placeholder={t('organization.settings.namePlaceholder')}
+              maxLength={ORGANIZATION_NAME_MAX_LENGTH}
+              disabled={!canEdit || isUpdatingOrganization}
+              errorText={nameError}
+              showCharacterCount
+              className="h-10 rounded-md bg-bg-canvas/50 shadow-none transition-all focus:border-primary/40 focus:ring-0"
+            />
+          </div>
 
-              <div className="rounded-lg border border-border/80 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-                <span>{t('organization.settings.currentRole')}: </span>
-                <span className="font-medium text-foreground">
-                  {currentOrganization?.organization_role ?? '-'}
+          {!canEdit ? (
+            <div className="max-w-2xl rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
+              {t('organization.settings.noPermission')}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end border-t border-border/60 pt-4">
+            <Button
+              type="submit"
+              disabled={!canEdit || !isDirty || isUpdatingOrganization}
+              className="h-10 gap-2 rounded-md px-4 font-medium"
+            >
+              <Save className="size-4" />
+              {isUpdatingOrganization
+                ? t('organization.settings.saving')
+                : t('organization.settings.save')}
+            </Button>
+          </div>
+        </form>
+      </section>
+
+      {isOwner ? (
+        <section className="min-h-[420px] overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-border/60 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-text-primary">
+                <ShieldCheck className="size-5 shrink-0 text-primary" />
+                {t('organization.settings.adminManagement.title')}
+              </h2>
+              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                {t('organization.settings.adminManagement.description')}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              {isFetchingMembers ? (
+                <span className="text-xs text-muted-foreground">
+                  {t('organization.settings.adminManagement.refreshing')}
                 </span>
-              </div>
-
-              {!canEdit ? (
-                <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
-                  {t('organization.settings.noPermission')}
-                </div>
               ) : null}
+              <Badge variant="info" className="font-medium">
+                {t('organization.settings.adminManagement.adminCount', {
+                  count: admins.length,
+                })}
+              </Badge>
+            </div>
+          </div>
 
-              <div className="flex justify-end">
-                <Button
-                  type="submit"
-                  disabled={!canEdit || !isDirty || isUpdatingOrganization}
-                  className="gap-2"
-                >
-                  <Save className="size-4" />
-                  {isUpdatingOrganization
-                    ? t('organization.settings.saving')
-                    : t('organization.settings.save')}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-
-        {isOwner ? (
-          <Card className="border-border/80 shadow-sm">
-            <CardHeader>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <ShieldCheck className="size-5 text-primary" />
-                    {t('organization.settings.adminManagement.title')}
-                  </CardTitle>
-                  <CardDescription>
-                    {t('organization.settings.adminManagement.description')}
-                  </CardDescription>
-                </div>
-                <Badge variant="info">
-                  {t('organization.settings.adminManagement.adminCount', {
-                    count: admins.length,
-                  })}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-6">
+          <div className="grid min-h-0 gap-0 lg:grid-cols-[minmax(0,1fr)_minmax(340px,420px)]">
+            <div className="space-y-6 p-5">
               <div className="space-y-3">
-                <div className="text-sm font-medium text-foreground">
+                <div className="text-sm font-semibold text-foreground">
                   {t('organization.settings.adminManagement.ownerTitle')}
                 </div>
-                <div className="space-y-2 rounded-lg border border-border/80 bg-muted/20 p-3">
+                <div className="overflow-hidden rounded-lg border border-border/80">
                   {owners.length > 0 ? (
                     owners.map(owner => (
                       <div
                         key={owner.id}
-                        className="flex items-center justify-between gap-3 rounded-md bg-background px-3 py-2"
+                        className="flex items-center justify-between gap-3 bg-background px-4 py-3"
                       >
                         {renderMemberIdentity(owner)}
-                        <Badge variant="warning">
+                        <Badge variant="warning" className="shrink-0 font-medium">
                           {t('organization.settings.adminManagement.ownerBadge')}
                         </Badge>
                       </div>
                     ))
                   ) : (
-                    <div className="text-sm text-muted-foreground">
+                    <div className="px-4 py-6 text-sm text-muted-foreground">
                       {t('organization.settings.adminManagement.noOwner')}
                     </div>
                   )}
@@ -284,34 +257,31 @@ export default function OrganizationSettingsPage() {
               </div>
 
               <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium text-foreground">
-                    {t('organization.settings.adminManagement.adminTitle')}
-                  </div>
-                  {isFetchingMembers ? (
-                    <span className="text-xs text-muted-foreground">
-                      {t('organization.settings.adminManagement.refreshing')}
-                    </span>
-                  ) : null}
+                <div className="text-sm font-semibold text-foreground">
+                  {t('organization.settings.adminManagement.adminTitle')}
                 </div>
-                <div className="space-y-2">
+                <div className="overflow-hidden rounded-lg border border-border/80">
                   {isLoadingMembers ? (
                     <>
-                      <Skeleton className="h-14 rounded-lg" />
-                      <Skeleton className="h-14 rounded-lg" />
+                      <div className="border-b border-border/60 px-4 py-3">
+                        <Skeleton className="h-10 rounded-lg" />
+                      </div>
+                      <div className="px-4 py-3">
+                        <Skeleton className="h-10 rounded-lg" />
+                      </div>
                     </>
                   ) : admins.length > 0 ? (
                     admins.map(admin => (
                       <div
                         key={admin.id}
-                        className="flex flex-col gap-3 rounded-lg border border-border/80 bg-background px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                        className="flex flex-col gap-3 border-b border-border/60 bg-background px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
                       >
                         {renderMemberIdentity(admin)}
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="gap-2 self-start sm:self-auto"
+                          className="h-8 gap-2 self-start rounded-md sm:self-auto"
                           disabled={isUpdatingCurrentOrganizationMemberRole}
                           onClick={() => setAdminToDemote(admin)}
                         >
@@ -321,14 +291,16 @@ export default function OrganizationSettingsPage() {
                       </div>
                     ))
                   ) : (
-                    <div className="rounded-lg border border-dashed border-border/80 px-4 py-6 text-sm text-muted-foreground">
+                    <div className="px-4 py-6 text-sm text-muted-foreground">
                       {t('organization.settings.adminManagement.emptyAdmins')}
                     </div>
                   )}
                 </div>
               </div>
+            </div>
 
-              <div className="space-y-3">
+            <aside className="border-t border-border/60 bg-muted/20 p-5 lg:border-l lg:border-t-0">
+              <div className="space-y-4">
                 <Label htmlFor="organization-admin-search">
                   {t('organization.settings.adminManagement.addTitle')}
                 </Label>
@@ -339,21 +311,22 @@ export default function OrganizationSettingsPage() {
                     value={memberKeyword}
                     onChange={event => setMemberKeyword(event.target.value)}
                     placeholder={t('organization.settings.adminManagement.searchPlaceholder')}
-                    className="pl-9"
+                    className="h-10 rounded-md bg-background pl-9 shadow-none transition-all focus:border-primary/40 focus:ring-0"
                   />
                 </div>
-                <div className="space-y-2">
+
+                <div className="overflow-hidden rounded-lg border border-border/80 bg-background">
                   {candidateMembers.length > 0 ? (
                     candidateMembers.map(member => (
                       <div
                         key={member.id}
-                        className="flex flex-col gap-3 rounded-lg border border-border/80 bg-background px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                        className="flex flex-col gap-3 border-b border-border/60 px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between lg:flex-col lg:items-stretch xl:flex-row xl:items-center"
                       >
                         {renderMemberIdentity(member)}
                         <Button
                           type="button"
                           size="sm"
-                          className="gap-2 self-start sm:self-auto"
+                          className="h-8 gap-2 self-start rounded-md sm:self-auto lg:self-start xl:self-auto"
                           disabled={isUpdatingCurrentOrganizationMemberRole}
                           onClick={() => handlePromoteAdmin(member)}
                         >
@@ -363,16 +336,16 @@ export default function OrganizationSettingsPage() {
                       </div>
                     ))
                   ) : (
-                    <div className="rounded-lg border border-dashed border-border/80 px-4 py-6 text-sm text-muted-foreground">
+                    <div className="px-4 py-8 text-sm text-muted-foreground">
                       {t('organization.settings.adminManagement.emptyCandidates')}
                     </div>
                   )}
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        ) : null}
-      </div>
+            </aside>
+          </div>
+        </section>
+      ) : null}
 
       <ConfirmDialog
         open={!!adminToDemote}

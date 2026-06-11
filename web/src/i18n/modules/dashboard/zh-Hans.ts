@@ -487,13 +487,11 @@ const messages: DashboardMessages = {
   organization: {
     settings: {
       title: '组织设置',
-      subtitle: '管理当前组织的资料与展示名称。',
+      subtitle: '管理当前组织的资料与管理员权限。',
       profileTitle: '组织资料',
-      profileDescription: '这些名称会显示在组织切换器、仪表盘和组织成员视图中。',
+      profileDescription: '该名称会显示在组织切换器、仪表盘和组织成员视图中。',
       name: '组织名称',
       namePlaceholder: '请输入组织名称',
-      shortName: '组织简称',
-      shortNamePlaceholder: '可选的展示简称',
       currentRole: '当前角色',
       noPermission: '只有组织所有者和管理员可以更新组织设置。',
       save: '保存修改',

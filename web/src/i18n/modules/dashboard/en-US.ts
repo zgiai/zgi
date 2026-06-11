@@ -496,14 +496,12 @@ const messages = {
   organization: {
     settings: {
       title: 'Organization Settings',
-      subtitle: 'Manage the current organization profile and display name.',
+      subtitle: 'Manage the current organization profile and administrator access.',
       profileTitle: 'Profile',
       profileDescription:
-        'These names are shown in the organization switcher, dashboard, and organization member views.',
+        'This name is shown in the organization switcher, dashboard, and organization member views.',
       name: 'Organization name',
       namePlaceholder: 'Enter organization name',
-      shortName: 'Short name',
-      shortNamePlaceholder: 'Optional display name',
       currentRole: 'Current role',
       noPermission: 'Only organization owners and administrators can update organization settings.',
       save: 'Save changes',
