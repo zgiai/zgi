@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuthStore } from '@/store/auth-store';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { dashboardService } from '@/services';
 import { AlertCircle, ArrowRight, CheckCircle2, Circle, RefreshCw } from 'lucide-react';
 
@@ -116,7 +116,6 @@ export default function ConsolePage() {
   const locale = useLocale();
   const { user } = useAuthStore();
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
   const { data: statsData, isLoading, refetch, isRefetching } = useDashboardStats();
   const {
     data: recentWorkItems = [],
@@ -131,9 +130,7 @@ export default function ConsolePage() {
   });
   const stats = statsData?.data;
   const isAdminOrOwner = ['owner', 'admin'].includes(user?.organization_role || '');
-  const workspaceLabel = isOrganizationMode
-    ? t('navigation.personalSpace')
-    : currentWorkspace?.name || t('navigation.switchWorkspace');
+  const workspaceLabel = currentWorkspace?.name || t('navigation.switchWorkspace');
   const visibleRecentWorkItems = recentWorkItems.slice(0, RECENT_WORK_LIMIT);
   const dateFormatter = useMemo(
     () =>

@@ -6,12 +6,7 @@ import { ChevronRight, FilePlus2, Info, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import {
-  WorkspaceSelector,
-  type WorkspaceSelectorValue,
-} from '@/components/common/workspace-selector';
 import { useT } from '@/i18n';
-import { useIsOrganizationMode } from '@/store/workspace-store';
 import { AGENT_TEMPLATES } from './template-manifest';
 import { TemplateCard } from './template-card';
 import { TemplatePreview } from './template-preview';
@@ -49,8 +44,6 @@ export function TemplateGalleryDialog({
   const t = useT();
   const templateT = t as TemplateTranslator;
   const locale = useLocale();
-  const isOrganizationMode = useIsOrganizationMode();
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
   const [activeCategory, setActiveCategory] = useState<AgentTemplateCategoryId>('recommended');
   const [kindFilter, setKindFilter] = useState<AgentTemplateKindFilter>('all');
   const [query, setQuery] = useState('');
@@ -58,10 +51,10 @@ export function TemplateGalleryDialog({
   const [creatingTemplateId, setCreatingTemplateId] = useState<string | null>(null);
   const { createFromTemplate } = useCreateAgentFromTemplate();
 
-  const effectiveWorkspaceId = isOrganizationMode ? selectedWorkspace?.id : workspaceId;
+  const effectiveWorkspaceId = workspaceId;
   const isCreating = creatingTemplateId !== null;
   const kindOptions = useMemo(() => getAvailableTemplateKindFilters(AGENT_TEMPLATES), []);
-  const isCreateDisabled = isCreating || (isOrganizationMode && !effectiveWorkspaceId);
+  const isCreateDisabled = isCreating || !effectiveWorkspaceId;
   const previewTemplate = useMemo(
     () => AGENT_TEMPLATES.find(template => template.id === previewTemplateId),
     [previewTemplateId]
@@ -142,7 +135,6 @@ export function TemplateGalleryDialog({
       if (!nextOpen && isCreating) return;
       if (!nextOpen) {
         resetTemplateNavigation();
-        setSelectedWorkspace(undefined);
       }
       onOpenChange(nextOpen);
     },
@@ -233,17 +225,6 @@ export function TemplateGalleryDialog({
               onKindFilterChange={handleKindFilterChange}
               onQueryChange={handleQueryChange}
             />
-            {isOrganizationMode ? (
-              <div className="w-full shrink-0 sm:w-64">
-                <WorkspaceSelector
-                  value={selectedWorkspace}
-                  placeholder={templateT('agents.form.workspacePlaceholder')}
-                  autoSelectFirst
-                  disabled={isCreating}
-                  onChange={setSelectedWorkspace}
-                />
-              </div>
-            ) : null}
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">

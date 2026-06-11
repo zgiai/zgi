@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Plus, RefreshCw, Loader2, Search, Atom, Upload } from 'lucide-react';
+import { Plus, RefreshCw, Loader2, Search, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,9 +19,8 @@ import ImportAgentDialog from '@/components/agents/import-agent-dialog';
 import { TemplateGalleryDialog } from '@/components/agents/templates';
 
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-import { useCurrentWorkspace, useWorkspaceStore } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ShieldAlert } from 'lucide-react';
-import { PersonalSpaceEmptyState } from '@/components/common/personal-space-empty-state';
 import { AgentEmptyElement, AgentEmptySearchResults } from '@/components/agents/empty-element';
 
 export default function AgentsPage() {
@@ -33,9 +32,6 @@ export default function AgentsPage() {
   const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canView = hasPermission('agent.view');
   const canManage = hasPermission('agent.manage');
-
-  // Organization view mode detection
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
 
   const PAGE_SIZE = 20;
   const queryClient = useQueryClient();
@@ -206,14 +202,7 @@ export default function AgentsPage() {
               query={debouncedSearchKeyword}
               onClearSearch={() => setSearchKeyword('')}
             />
-          ) : isOrganizationMode && !canManage ? (
-            // Organization view without create permission - show specialized empty state guidance
-            <PersonalSpaceEmptyState
-              moduleType="agents"
-              icon={<Atom className="w-8 h-8 text-muted-foreground" />}
-            />
           ) : (
-            // Workspace mode, or organization admins/owners with create permission
             <AgentEmptyElement
               actions={
                 canManage

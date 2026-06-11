@@ -19,11 +19,7 @@ import { cn } from '@/lib/utils';
 import { useFileFolders } from '@/hooks/use-files';
 import { fileManageService } from '@/services/file-manage.service';
 import { FolderTreeNode } from './folder-tree-node';
-import {
-  WorkspaceSelector,
-  type WorkspaceSelectorValue,
-} from '@/components/common/workspace-selector';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store';
+import { useCurrentWorkspace } from '@/store';
 
 /**
  * Upload mode type
@@ -93,11 +89,9 @@ export function UploadDialog({
 }: UploadDialogProps) {
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
-  const effectiveWorkspaceId = isOrganizationMode ? selectedWorkspace?.id : currentWorkspace?.id;
+  const effectiveWorkspaceId = currentWorkspace?.id;
   const { folders, isLoading: isFoldersLoading } = useFileFolders(effectiveWorkspaceId, {
-    enabled: !isOrganizationMode || !!effectiveWorkspaceId,
+    enabled: !!effectiveWorkspaceId,
   });
 
   // Local state
@@ -144,12 +138,6 @@ export function UploadDialog({
     };
   }, [folders, initialFolderId, open]);
 
-  const handleWorkspaceChange = useCallback((workspace: WorkspaceSelectorValue) => {
-    setSelectedWorkspace(workspace);
-    setSelectedFolderId('');
-    setExpandedFolders(new Set());
-  }, []);
-
   // Toggle folder expand/collapse
   const handleToggleExpand = useCallback((folderId: string) => {
     setExpandedFolders(prev => {
@@ -177,22 +165,20 @@ export function UploadDialog({
     // Reset state after confirm
     setAddMode('file');
     setSelectedFolderId('');
-    setSelectedWorkspace(undefined);
   };
 
   // Handle cancel
   const handleCancel = () => {
     onOpenChange(false);
     // Reset state after a short delay to avoid visual glitch
-    setTimeout(() => {
-      setAddMode('file');
-      setSelectedFolderId('');
-      setSelectedWorkspace(undefined);
-      setExpandedFolders(new Set());
-    }, 200);
+      setTimeout(() => {
+        setAddMode('file');
+        setSelectedFolderId('');
+        setExpandedFolders(new Set());
+      }, 200);
   };
 
-  const canContinue = !isOrganizationMode || !!effectiveWorkspaceId;
+  const canContinue = !!effectiveWorkspaceId;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -227,23 +213,11 @@ export function UploadDialog({
             </RadioCardGroup>
           </div>
 
-          {isOrganizationMode ? (
-            <div className="space-y-3">
-              <Label className="text-sm font-semibold">{t('files.upload.workspaceLabel')}</Label>
-              <WorkspaceSelector
-                value={selectedWorkspace}
-                placeholder={t('files.upload.workspacePlaceholder')}
-                autoSelectFirst
-                onChange={handleWorkspaceChange}
-              />
-            </div>
-          ) : null}
-
           {/* Storage Location Selection */}
           <div className="space-y-3">
             <Label className="text-sm font-semibold">{t('files.upload.storageLocation')}</Label>
             <div className="border rounded-xl bg-neutral-50/50 p-2 max-h-[280px] overflow-y-auto shadow-inner">
-              {isOrganizationMode && !effectiveWorkspaceId ? (
+              {!effectiveWorkspaceId ? (
                 <div className="px-3 py-6 text-center text-sm text-muted-foreground">
                   {t('files.upload.workspaceRequired')}
                 </div>

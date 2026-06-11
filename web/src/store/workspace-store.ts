@@ -15,6 +15,8 @@ export interface Workspace {
   name: string;
 }
 
+export type WorkspaceContextStatus = 'loading' | 'ready' | 'workspace_required';
+
 /**
  * Permission state for current context
  */
@@ -32,20 +34,24 @@ export interface PermissionState {
 interface WorkspaceState {
   // Available workspaces list
   workspaces: Workspace[];
-  // Currently selected workspace (null when in organization mode or no workspace selected)
+  // Currently selected workspace (null only while loading or when workspace is required)
   currentWorkspace: Workspace | null;
-  // Organization view: true = no concrete workspace context selected
-  // In this mode, non-admin users have no edit permissions
+  // Explicit console workspace context state.
+  contextStatus: WorkspaceContextStatus;
+  // Legacy compatibility: true means no concrete workspace context is usable.
   isOrganizationMode: boolean;
   // Current permission state
   permissionState: PermissionState;
   // Actions
   setWorkspaces: (workspaces: Workspace[]) => void;
   setCurrentWorkspace: (workspace: Workspace | null) => void;
+  setContextStatus: (status: WorkspaceContextStatus) => void;
   setOrganizationMode: (isOrganizationMode: boolean) => void;
   setPermissions: (permissions: PermissionState) => void;
   clearPermissions: () => void;
-  // Switch to organization mode (clears current workspace)
+  // Mark console business features as requiring a workspace.
+  markWorkspaceRequired: () => void;
+  // Legacy alias for markWorkspaceRequired.
   enterOrganizationMode: () => void;
   // Switch to a specific workspace (exits organization mode)
   selectWorkspace: (workspace: Workspace) => void;
@@ -71,31 +77,49 @@ const useWorkspaceStoreBase = create<WorkspaceState>()(
     (set, get) => ({
       workspaces: [],
       currentWorkspace: null,
+      contextStatus: 'loading',
       isOrganizationMode: true,
       permissionState: defaultPermissionState,
       _hasHydrated: false,
       setWorkspaces: workspaces => set({ workspaces }),
-      setCurrentWorkspace: workspace => set({ currentWorkspace: workspace }),
-      setOrganizationMode: isOrganizationMode => set({ isOrganizationMode }),
+      setCurrentWorkspace: workspace =>
+        set({
+          currentWorkspace: workspace,
+          contextStatus: workspace ? 'ready' : 'workspace_required',
+          isOrganizationMode: !workspace,
+        }),
+      setContextStatus: contextStatus =>
+        set({
+          contextStatus,
+          isOrganizationMode: contextStatus !== 'ready',
+        }),
+      setOrganizationMode: isOrganizationMode =>
+        set({
+          isOrganizationMode,
+          contextStatus: isOrganizationMode ? 'workspace_required' : 'ready',
+        }),
       setPermissions: permissions => set({ permissionState: permissions }),
       clearPermissions: () => set({ permissionState: defaultPermissionState }),
       setHasHydrated: state => set({ _hasHydrated: state }),
-      enterOrganizationMode: () =>
+      markWorkspaceRequired: () =>
         set({
+          contextStatus: 'workspace_required',
           isOrganizationMode: true,
           currentWorkspace: null,
           permissionState: defaultPermissionState,
         }),
+      enterOrganizationMode: () => get().markWorkspaceRequired(),
       selectWorkspace: workspace =>
         set({
+          contextStatus: 'ready',
           isOrganizationMode: false,
           currentWorkspace: workspace,
           permissionState: defaultPermissionState,
         }),
       // Permission helpers
       hasPermission: (permission: PermissionCode) => {
-        const { isOrganizationMode, permissionState } = get();
-        if (isOrganizationMode) {
+        const { contextStatus, permissionState } = get();
+        if (contextStatus === 'workspace_required') {
           const { organizationRole } = permissionState;
           if (organizationRole === 'owner' || organizationRole === 'admin') {
             return true;
@@ -105,8 +129,8 @@ const useWorkspaceStoreBase = create<WorkspaceState>()(
         return permissionState.permissions.includes(permission);
       },
       hasAnyPermission: (permissions: PermissionCode[]) => {
-        const { isOrganizationMode, permissionState } = get();
-        if (isOrganizationMode) {
+        const { contextStatus, permissionState } = get();
+        if (contextStatus === 'workspace_required') {
           const { organizationRole } = permissionState;
           if (organizationRole === 'owner' || organizationRole === 'admin') {
             return permissions.length > 0;
@@ -116,8 +140,8 @@ const useWorkspaceStoreBase = create<WorkspaceState>()(
         return permissions.some(p => permissionState.permissions.includes(p));
       },
       hasAllPermissions: (permissions: PermissionCode[]) => {
-        const { isOrganizationMode, permissionState } = get();
-        if (isOrganizationMode) {
+        const { contextStatus, permissionState } = get();
+        if (contextStatus === 'workspace_required') {
           const { organizationRole } = permissionState;
           if (organizationRole === 'owner' || organizationRole === 'admin') {
             return permissions.every(p => ALL_PERMISSION_CODES.includes(p));
@@ -138,6 +162,7 @@ const useWorkspaceStoreBase = create<WorkspaceState>()(
       name: 'workspace-storage',
       partialize: state => ({
         currentWorkspace: state.currentWorkspace,
+        contextStatus: state.contextStatus,
         isOrganizationMode: state.isOrganizationMode,
         // Note: permissions are NOT persisted - they should be refetched
       }),
@@ -153,6 +178,7 @@ export const useWorkspaceStore = createSelectors(useWorkspaceStoreBase);
 // Convenience hooks
 export const useCurrentWorkspace = () => useWorkspaceStore.use.currentWorkspace();
 export const useWorkspaces = () => useWorkspaceStore.use.workspaces();
+export const useWorkspaceContextStatus = () => useWorkspaceStore.use.contextStatus();
 export const useIsOrganizationMode = () => useWorkspaceStore.use.isOrganizationMode();
 export const usePermissions = () => useWorkspaceStore.use.permissionState();
 export const useHasHydrated = () => useWorkspaceStore.use._hasHydrated();

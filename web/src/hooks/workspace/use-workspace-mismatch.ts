@@ -10,15 +10,14 @@ import { useWorkspaceStore } from '@/store/workspace-store';
  */
 export function useWorkspaceMismatch(targetWorkspaceId: string) {
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
 
   const isMismatch = useMemo(() => {
     // No target workspace ID means we can't determine mismatch yet (loading state)
     if (!targetWorkspaceId) return false;
 
-    // In organization view, always show sidebar - no mismatch
-    // The WorkspaceMismatchGuard handles content access control separately
-    if (isOrganizationMode) {
+    // While the shell is resolving or requiring workspace context, let the guard/shell decide.
+    if (contextStatus !== 'ready') {
       return false;
     }
 
@@ -27,7 +26,7 @@ export function useWorkspaceMismatch(targetWorkspaceId: string) {
 
     // Workspace doesn't match
     return true;
-  }, [targetWorkspaceId, isOrganizationMode, currentWorkspace?.id]);
+  }, [targetWorkspaceId, contextStatus, currentWorkspace?.id]);
 
   return { isMismatch };
 }

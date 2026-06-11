@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Plus, RefreshCw, LibraryBig, ShieldAlert, WandSparkles } from 'lucide-react';
+import { Plus, RefreshCw, ShieldAlert, WandSparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -14,7 +14,7 @@ import { usePrompts, useCreatePrompt } from '@/hooks/prompt/use-prompts';
 import { PromptFormDialog } from '@/components/prompts/prompt-form-dialog';
 import { PromptOptimizerDialog } from '@/components/prompts/prompt-optimizer-dialog';
 import { PromptPlaygroundPanel } from '@/components/prompts/prompt-playground-panel';
-import { useCurrentWorkspace, useWorkspaceStore } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 
 function matchesLocale(currentLocale: string, promptLocale: string): boolean {
@@ -37,7 +37,6 @@ export default function PromptsPage() {
   const { locale } = useLocale();
   const searchParams = useSearchParams();
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
   const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canView = hasPermission('agent.view');
   const canManage = hasPermission('agent.manage');
@@ -157,18 +156,9 @@ export default function PromptsPage() {
               <p className="text-sm text-muted-foreground">{t('tabs.libraryDescription')}</p>
             </section>
             {empty ? (
-              isOrganizationMode && !canManage ? (
-                <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
-                  <div className="flex items-center justify-center mb-3">
-                    <LibraryBig className="w-8 h-8 text-muted-foreground" />
-                  </div>
-                  {t('states.empty')}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
-                  {t('states.empty')}
-                </div>
-              )
+              <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
+                {t('states.empty')}
+              </div>
             ) : (
               <div className="space-y-8">
                 {(['official', 'workspace', 'personal'] as const).map(source =>

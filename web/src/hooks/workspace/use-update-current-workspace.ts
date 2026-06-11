@@ -15,30 +15,24 @@ import { clearProfileClientCache } from '@/utils/client-cache';
 export function useUpdateCurrentWorkspace() {
   const queryClient = useQueryClient();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
   const selectWorkspace = useWorkspaceStore.use.selectWorkspace();
-  const enterOrganizationMode = useWorkspaceStore.use.enterOrganizationMode();
+  const markWorkspaceRequired = useWorkspaceStore.use.markWorkspaceRequired();
 
   return useMutation({
-    mutationFn: async (workspace: Workspace | null) => {
-      // workspace === null means Organization View.
-      // Pass empty string instead of null for Organization View.
+    mutationFn: async (workspace: Workspace) => {
       return accountService.updateContext({
-        current_workspace_id: workspace?.id ?? '',
+        current_workspace_id: workspace.id,
       });
     },
-    onMutate: async (workspace: Workspace | null) => {
+    onMutate: async (workspace: Workspace) => {
       // Optimistically update local store
       const previousWorkspace = currentWorkspace;
-      const previousIsOrganizationMode = isOrganizationMode;
+      const previousContextStatus = contextStatus;
 
-      if (workspace) {
-        selectWorkspace(workspace);
-      } else {
-        enterOrganizationMode();
-      }
+      selectWorkspace(workspace);
 
-      return { previousWorkspace, previousIsOrganizationMode };
+      return { previousWorkspace, previousContextStatus };
     },
     onSuccess: async (_data, workspace) => {
       // Ensure next profile fetch hits network instead of stale client cache
@@ -49,15 +43,15 @@ export function useUpdateCurrentWorkspace() {
       // With the refactored query keys, all workspace data starts with ['workspace']
       await queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.all });
       sessionManager.broadcastContextChanged({
-        currentWorkspaceId: workspace?.id ?? null,
+        currentWorkspaceId: workspace.id,
       });
     },
     onError: (error, _workspace, context) => {
       console.error('Failed to update current workspace in profile:', error);
       // Rollback on error
       if (context) {
-        if (context.previousIsOrganizationMode) {
-          enterOrganizationMode();
+        if (context.previousContextStatus === 'workspace_required') {
+          markWorkspaceRequired();
         } else if (context.previousWorkspace) {
           selectWorkspace(context.previousWorkspace);
         }

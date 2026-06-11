@@ -76,7 +76,8 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
 
   // Permission checking
   const { hasPermission } = useAccountPermissions();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
+  const isWorkspaceRequired = contextStatus === 'workspace_required';
   const isDebugFocusMode = useWorkflowDebugFocusMode();
 
   // Collapsed state persisted via ui-local helpers
@@ -201,8 +202,8 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
       .map(group => {
         let filteredItems = group.items;
 
-        // Special handling for management group in organization view
-        if (group.key === 'management' && isOrganizationMode) {
+        // Hide workspace management when the console has no usable workspace.
+        if (group.key === 'management' && isWorkspaceRequired) {
           filteredItems = filteredItems.filter(item => item.href !== '/console/workspace');
         }
 
@@ -212,7 +213,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
         }
 
         // Filter by permissions outside organization view
-        if (!isOrganizationMode) {
+        if (!isWorkspaceRequired) {
           filteredItems = filteredItems.filter(item => {
             if (!item.permission) return true;
             return hasPermission(item.permission);
@@ -222,7 +223,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
         return { ...group, items: filteredItems };
       })
       .filter(group => group.items.length > 0);
-  }, [isOrganizationMode, hasPermission, allNavGroups]);
+  }, [isWorkspaceRequired, hasPermission, allNavGroups]);
 
   const rootRouteItems = React.useMemo(
     (): RootRouteItem[] => [
@@ -461,7 +462,8 @@ export function ConsoleMobileSidebar({
   const pathname = usePathname();
   const t = useT('navigation');
   const { hasPermission } = useAccountPermissions();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
+  const isWorkspaceRequired = contextStatus === 'workspace_required';
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
     work: true,
     resources: true,
@@ -553,7 +555,7 @@ export function ConsoleMobileSidebar({
       .map(group => {
         let items = group.items;
 
-        if (group.key === 'management' && isOrganizationMode) {
+        if (group.key === 'management' && isWorkspaceRequired) {
           items = items.filter(item => item.href !== '/console/workspace');
         }
 
@@ -561,14 +563,14 @@ export function ConsoleMobileSidebar({
           items = items.filter(item => item.href !== '/console/settings');
         }
 
-        if (!isOrganizationMode) {
+        if (!isWorkspaceRequired) {
           items = items.filter(item => !item.permission || hasPermission(item.permission));
         }
 
         return { ...group, items };
       })
       .filter(group => group.items.length > 0);
-  }, [hasPermission, isOrganizationMode, t]);
+  }, [hasPermission, isWorkspaceRequired, t]);
 
   const closeSidebar = () => onOpenChange(false);
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));

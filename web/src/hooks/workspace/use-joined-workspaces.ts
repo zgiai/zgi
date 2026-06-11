@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { workspaceService } from '@/services/workspace.service';
+import { accountService } from '@/services/account.service';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -10,6 +11,8 @@ import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { useAuthStore } from '@/store/auth-store';
 import type { WorkspaceManagementList } from '@/services/types/workspace';
+import { sessionManager } from '@/lib/auth/session-manager';
+import { clearProfileClientCache } from '@/utils/client-cache';
 
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
 
@@ -33,10 +36,11 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
   const { currentOrganization } = useOrganizations();
   const setWorkspaces = useWorkspaceStore.use.setWorkspaces();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
-  const enterOrganizationMode = useWorkspaceStore.use.enterOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
+  const markWorkspaceRequired = useWorkspaceStore.use.markWorkspaceRequired();
   const selectWorkspace = useWorkspaceStore.use.selectWorkspace();
   const user = useAuthStore.use.user();
+  const autoPersistedWorkspaceIdRef = useRef<string | null>(null);
 
   const organizationId = currentOrganization?.id ?? null;
 
@@ -99,6 +103,10 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     retry: false,
   });
 
+  useEffect(() => {
+    autoPersistedWorkspaceIdRef.current = null;
+  }, [organizationId]);
+
   // 1. Sync workspaces to store and handle fallback logic
   useEffect(() => {
     if (!syncToStore || !responseData?.data) return;
@@ -110,16 +118,19 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
 
     setWorkspaces(transformedWorkspaces);
 
-    // If we are not in organization mode, ensure the selected workspace is still valid.
-    // If it's missing or no longer in the list, fallback to Organization View.
-    if (!isOrganizationMode) {
-      if (!currentWorkspace) {
-        enterOrganizationMode();
-      } else {
-        const stillInWorkspace = transformedWorkspaces.find(w => w.id === currentWorkspace.id);
-        if (!stillInWorkspace) {
-          enterOrganizationMode();
-        }
+    if (transformedWorkspaces.length === 0) {
+      if (contextStatus !== 'workspace_required' || currentWorkspace) {
+        markWorkspaceRequired();
+      }
+      return;
+    }
+
+    if (currentWorkspace) {
+      const stillInWorkspace = transformedWorkspaces.find(w => w.id === currentWorkspace.id);
+      if (!stillInWorkspace) {
+        selectWorkspace(transformedWorkspaces[0]);
+      } else if (contextStatus !== 'ready') {
+        selectWorkspace(stillInWorkspace);
       }
     }
   }, [
@@ -127,8 +138,9 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     syncToStore,
     setWorkspaces,
     currentWorkspace,
-    isOrganizationMode,
-    enterOrganizationMode,
+    contextStatus,
+    markWorkspaceRequired,
+    selectWorkspace,
   ]);
 
   // 2. Synchronize from user profile ONLY when the profile's workspace ID changes
@@ -146,20 +158,69 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
         name: w.name,
       }));
 
-      // if profileWorkspaceId is not null or empty string
       if (profileWorkspaceId && profileWorkspaceId !== '') {
         const profileWorkspace = workspaces.find(w => w.id === profileWorkspaceId);
         if (profileWorkspace) {
           selectWorkspace(profileWorkspace);
+          autoPersistedWorkspaceIdRef.current = null;
         } else {
-          enterOrganizationMode();
+          const fallbackWorkspace = workspaces[0];
+          if (fallbackWorkspace) {
+            selectWorkspace(fallbackWorkspace);
+            if (autoPersistedWorkspaceIdRef.current !== fallbackWorkspace.id) {
+              autoPersistedWorkspaceIdRef.current = fallbackWorkspace.id;
+              void accountService
+                .updateContext({ current_workspace_id: fallbackWorkspace.id })
+                .then(async () => {
+                  clearProfileClientCache();
+                  await useAuthStore.getState().refreshProfile();
+                  sessionManager.broadcastContextChanged({
+                    currentWorkspaceId: fallbackWorkspace.id,
+                  });
+                })
+                .catch(error => {
+                  autoPersistedWorkspaceIdRef.current = null;
+                  console.error('Failed to persist fallback workspace:', error);
+                });
+            }
+          } else {
+            markWorkspaceRequired();
+          }
         }
       } else {
-        enterOrganizationMode();
+        const fallbackWorkspace = workspaces[0];
+        if (fallbackWorkspace) {
+          selectWorkspace(fallbackWorkspace);
+          if (autoPersistedWorkspaceIdRef.current !== fallbackWorkspace.id) {
+            autoPersistedWorkspaceIdRef.current = fallbackWorkspace.id;
+            void accountService
+              .updateContext({ current_workspace_id: fallbackWorkspace.id })
+              .then(async () => {
+                clearProfileClientCache();
+                await useAuthStore.getState().refreshProfile();
+                sessionManager.broadcastContextChanged({
+                  currentWorkspaceId: fallbackWorkspace.id,
+                });
+              })
+              .catch(error => {
+                autoPersistedWorkspaceIdRef.current = null;
+                console.error('Failed to persist fallback workspace:', error);
+              });
+          }
+        } else {
+          markWorkspaceRequired();
+        }
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.current_workspace_id, responseData?.data, syncToStore]);
+  }, [
+    user,
+    user?.current_workspace_id,
+    responseData?.data,
+    syncToStore,
+    currentWorkspace?.id,
+    selectWorkspace,
+    markWorkspaceRequired,
+  ]);
 
   // Show error toast if query fails
   useEffect(() => {

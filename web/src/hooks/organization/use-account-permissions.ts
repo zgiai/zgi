@@ -41,7 +41,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   const t = useT('navigation');
   const setPermissions = useWorkspaceStore.use.setPermissions();
   const clearPermissions = useWorkspaceStore.use.clearPermissions();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const user = useAuthStore.use.user();
 
@@ -61,8 +61,9 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   const effectiveWorkspaceId =
     workspaceId === 'current' && currentWorkspace ? currentWorkspace.id : workspaceId;
 
-  // Skip query when in org mode (no workspace context)
-  const shouldSkip = skipInOrgMode && isOrganizationMode;
+  const isWorkspaceRequired = contextStatus === 'workspace_required';
+  // Skip query when no workspace context is usable.
+  const shouldSkip = skipInOrgMode && isWorkspaceRequired;
 
   const {
     data: permissionsData,
@@ -91,8 +92,8 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
     if (!syncToStore) return;
 
     if (shouldSkip) {
-      if (isOrganizationMode) {
-        // Sync organization role and derived permissions in organization view.
+      if (isWorkspaceRequired) {
+        // Sync organization role and derived permissions for the restricted no-workspace state.
         setPermissions({
           organizationRole: organizationRoleFromProfile as PermissionState['organizationRole'],
           workspaceRole: null,
@@ -120,7 +121,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
     shouldSkip,
     setPermissions,
     clearPermissions,
-    isOrganizationMode,
+    isWorkspaceRequired,
     organizationRoleFromProfile,
     organizationViewPermissions,
   ]);
@@ -132,10 +133,10 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   }, [error, t]);
 
   return {
-    permissions: isOrganizationMode
+    permissions: isWorkspaceRequired
       ? organizationViewPermissions
       : (permissionsData?.permissions ?? []),
-    organizationRole: isOrganizationMode
+    organizationRole: isWorkspaceRequired
       ? organizationRoleFromProfile
       : (permissionsData?.organization_role ?? null),
     workspaceRole: permissionsData?.workspace_role ?? null,
@@ -146,7 +147,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
     refetch,
     // Helper functions with type-safe permission codes
     hasPermission: (permission: PermissionCode) => {
-      if (isOrganizationMode) {
+      if (isWorkspaceRequired) {
         if (isOrgAdmin) {
           return true;
         }
@@ -155,7 +156,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
       return permissionsData?.permissions.includes(permission) ?? false;
     },
     hasAnyPermission: (permissions: PermissionCode[]) => {
-      if (isOrganizationMode) {
+      if (isWorkspaceRequired) {
         if (isOrgAdmin) {
           return permissions.length > 0;
         }
@@ -164,7 +165,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
       return permissions.some(p => permissionsData?.permissions.includes(p) ?? false);
     },
     hasAllPermissions: (permissions: PermissionCode[]) => {
-      if (isOrganizationMode) {
+      if (isWorkspaceRequired) {
         if (isOrgAdmin) {
           return permissions.every(p => ALL_PERMISSION_CODES.includes(p));
         }
@@ -173,7 +174,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
       return permissions.every(p => permissionsData?.permissions.includes(p) ?? false);
     },
     isAdmin: () => {
-      const gRole = isOrganizationMode
+      const gRole = isWorkspaceRequired
         ? organizationRoleFromProfile
         : (permissionsData?.organization_role ?? null);
       return gRole === 'owner' || gRole === 'admin';

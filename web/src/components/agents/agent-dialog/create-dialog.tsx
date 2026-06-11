@@ -39,11 +39,7 @@ import {
 import type { ApiResponseData } from '@/services/types/common';
 import { useCreateAgent } from '@/hooks/agent/use-agents';
 import { Bot, MessageSquareQuote, Workflow } from 'lucide-react';
-import {
-  WorkspaceSelector,
-  type WorkspaceSelectorValue,
-} from '@/components/common/workspace-selector';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 
 interface CreateAgentDialogProps {
@@ -58,10 +54,8 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
 
   const createMutation = useCreateAgent();
   const currentWorkspaceFromStore = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
 
   const [iconValue, setIconValue] = useState<IconValue>(createTextIconValue('', ICON_BG));
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
 
   const baseSchema = useMemo(
     () =>
@@ -125,11 +119,10 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
   const resetFormState = () => {
     form.reset();
     setIconValue(createTextIconValue('', ICON_BG));
-    setSelectedWorkspace(undefined);
   };
 
   const onSubmit = (data: CreateFormDataLocal) => {
-    const workspaceId = isOrganizationMode ? selectedWorkspace?.id : currentWorkspaceFromStore?.id;
+    const workspaceId = currentWorkspaceFromStore?.id;
 
     if (!workspaceId) {
       form.setError('workspace_id', {
@@ -270,31 +263,6 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                       </FormItem>
                     )}
                   />
-
-                  {isOrganizationMode ? (
-                    <FormField
-                      control={form.control}
-                      name="workspace_id"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>{t('form.workspace')}</FormLabel>
-                          <FormControl>
-                            <WorkspaceSelector
-                              value={selectedWorkspace}
-                              placeholder={t('form.workspacePlaceholder')}
-                              autoSelectFirst
-                              onChange={workspace => {
-                                setSelectedWorkspace(workspace);
-                                field.onChange(workspace.id);
-                                form.clearErrors('workspace_id');
-                              }}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  ) : null}
 
                   <FormField
                     control={form.control}
