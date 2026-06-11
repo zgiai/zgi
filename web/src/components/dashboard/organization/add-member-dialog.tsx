@@ -22,6 +22,10 @@ import { useInviteLink } from '@/hooks/organization/use-invite-link';
 import { useMemberActions } from '@/hooks/organization/use-member-actions';
 import { useJoinRequests } from '@/hooks/organization/use-join-requests';
 import { DepartmentTreeItemDropdown } from '@/components/dashboard/organization/department-tree-item-dropdown';
+import {
+  WorkspaceSelector,
+  type WorkspaceSelectorValue,
+} from '@/components/common/workspace-selector';
 import { Skeleton } from '@/components/ui/skeleton';
 import { IS_CLOUD } from '@/lib/config';
 import { cn } from '@/lib/utils';
@@ -71,6 +75,7 @@ export function AddMemberDialog({
   const [memberEmail, setMemberEmail] = useState('');
   const [emailError, setEmailError] = useState('');
   const [memberPassword, setMemberPassword] = useState('');
+  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [sendNotification, setSendNotification] = useState(false);
   const [directAddSelectOpen, setDirectAddSelectOpen] = useState(false);
@@ -116,6 +121,7 @@ export function AddMemberDialog({
     const nextDepartmentId = defaultDepartmentId ?? '';
     setSelectedDepartment(nextDepartmentId);
     setInviteLinkDepartmentId(nextDepartmentId);
+    setSelectedWorkspace(undefined);
   }, [defaultDepartmentId, open]);
 
   // Expand first level by default when select opens
@@ -191,6 +197,7 @@ export function AddMemberDialog({
   const handleDirectAdd = async () => {
     const trimmedName = memberName.trim();
     const trimmedEmail = memberEmail.trim();
+    const workspaceId = selectedWorkspace?.id;
     let hasError = false;
 
     if (!trimmedName) {
@@ -217,7 +224,12 @@ export function AddMemberDialog({
       hasError = true;
     }
 
-    if (hasError) return;
+    if (!workspaceId) {
+      toast.error(t('organization.contacts.unassignedWorkspace'));
+      hasError = true;
+    }
+
+    if (hasError || !workspaceId) return;
 
     try {
       // If organization root is selected, pass empty string or handle as appropriate
@@ -228,6 +240,7 @@ export function AddMemberDialog({
           name: trimmedName,
           member_name: trimmedName,
           email: trimmedEmail,
+          workspace_id: workspaceId,
           department_id: deptId,
           send_email: sendNotification,
         });
@@ -236,6 +249,7 @@ export function AddMemberDialog({
         await adminRegisterMember({
           name: trimmedName,
           email: trimmedEmail,
+          workspace_id: workspaceId,
           ...(trimmedPassword ? { password: trimmedPassword } : {}),
           ...(deptId ? { department_id: deptId } : {}),
         });
@@ -247,6 +261,7 @@ export function AddMemberDialog({
       setMemberEmail('');
       setEmailError('');
       setMemberPassword('');
+      setSelectedWorkspace(undefined);
       setSelectedDepartment('');
       setSendNotification(false);
       onOpenChange(false);
@@ -543,6 +558,19 @@ export function AddMemberDialog({
                 )}
 
                 <div className="space-y-2">
+                  <Label className="text-sm font-bold text-foreground ml-1">
+                    {t('organization.contacts.workspaces')}
+                  </Label>
+                  <WorkspaceSelector
+                    value={selectedWorkspace}
+                    onChange={setSelectedWorkspace}
+                    placeholder={t('organization.contacts.assignWorkspace')}
+                    autoSelectFirst
+                    className="h-12 rounded-xl"
+                  />
+                </div>
+
+                <div className="space-y-2">
                   <Label
                     htmlFor="member-department"
                     className="text-sm font-bold text-foreground ml-1"
@@ -775,6 +803,7 @@ export function AddMemberDialog({
                   activeTab === 'direct-add' &&
                   (!memberName ||
                     !memberEmail ||
+                    !selectedWorkspace?.id ||
                     (IS_CLOUD && !selectedDepartment) ||
                     isAddingMember ||
                     isAdminRegisteringMember)

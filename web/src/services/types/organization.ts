@@ -116,6 +116,7 @@ export interface UpdateRoleInfoRequest {
 export interface DirectAddMemberRequest {
   name: string;
   email: string;
+  workspace_id: string;
   department_id: string;
   send_email: boolean;
   member_name?: string;
@@ -124,6 +125,7 @@ export interface DirectAddMemberRequest {
 export interface AdminRegisterMemberRequest {
   name: string;
   email: string;
+  workspace_id: string;
   password?: string;
   department_id?: string;
 }
@@ -138,6 +140,10 @@ export interface AdminRegisterMemberResponse {
   already_member: boolean;
   password_applied: boolean;
   department?: {
+    id: string;
+    name: string;
+  };
+  workspace?: {
     id: string;
     name: string;
   };
