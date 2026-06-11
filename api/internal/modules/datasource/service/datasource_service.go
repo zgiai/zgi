@@ -19,6 +19,7 @@ import (
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
+	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
 	excelimportmodel "github.com/zgiai/zgi/api/internal/modules/datasource/model/excelimport"
@@ -38,6 +39,11 @@ import (
 )
 
 var errDataSourceTableNotFound = errors.New("data source table not found")
+
+const (
+	fileIngestStageParse       = "parse"
+	fileIngestStageRecognition = "recognition"
+)
 
 func fileIngestContentHash(content string) string {
 	if strings.TrimSpace(content) == "" {
@@ -81,9 +87,6 @@ func updateFileIngestAttemptResult(extraction *databaseIngestionExtractionResult
 }
 
 func fileIngestAttemptMethodForExtraction(extraction databaseIngestionExtractionResult) string {
-	if extraction.ActualStrategy == databaseIngestionStrategyVision {
-		return databaseIngestionAttemptMethodModelVision
-	}
 	return databaseIngestionAttemptMethodFileParse
 }
 
@@ -125,6 +128,8 @@ type DataSourceService interface {
 	// File analysis for table structure
 	AnalyzeFileForTable(ctx context.Context, dataSourceID, accountID, fileID string, description *string, modelSpec *dto.ModelSpec) (dto.AnalyzeFileForTableResponse, error)
 	// File ingestion into table
+	ParseFileForTableIngest(ctx context.Context, organizationID, accountID string, req dto.ParseFileForTableIngestRequest) (dto.ParseFileForTableIngestResponse, error)
+	ExtractTextToTableRecords(ctx context.Context, organizationID, accountID string, req dto.ExtractTextToTableRecordsRequest) (dto.ExtractTextToTableRecordsResponse, error)
 	IngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.IngestFileToTableRequest) (dto.IngestFileToTableResponse, error)
 	BatchIngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.BatchIngestFileToTableRequest) (dto.BatchIngestFileToTableResponse, error)
 
@@ -159,7 +164,16 @@ type dataSourceService struct {
 	quotaService              interfaces.QuotaService
 	llmClient                 llmclient.LLMClient
 	defaultModelResolver      defaultmodelsvc.DefaultModelResolver
+	contentParseService       contracts.ContentParseService
 	db                        *gorm.DB
+}
+
+type DataSourceServiceOption func(*dataSourceService)
+
+func WithContentParseService(contentParseService contracts.ContentParseService) DataSourceServiceOption {
+	return func(s *dataSourceService) {
+		s.contentParseService = contentParseService
+	}
 }
 
 type databaseIngestionTableContext struct {
@@ -169,13 +183,13 @@ type databaseIngestionTableContext struct {
 }
 
 // NewDataSourceService creates a new DataSourceService
-func NewDataSourceService(repo repository.DataSourceRepository, tableRepo repository.TableRepository, promptRepo repository.PromptRepository, sqlOperationRepo repository.SQLOperationRepository, accountService interfaces.AccountService, fileService interfaces.FileService, organizationService interfaces.OrganizationService, resourcePermissionService interfaces.ResourcePermissionService, quotaService interfaces.QuotaService, llmClient llmclient.LLMClient, defaultModelResolver defaultmodelsvc.DefaultModelResolver, db *gorm.DB) DataSourceService {
+func NewDataSourceService(repo repository.DataSourceRepository, tableRepo repository.TableRepository, promptRepo repository.PromptRepository, sqlOperationRepo repository.SQLOperationRepository, accountService interfaces.AccountService, fileService interfaces.FileService, organizationService interfaces.OrganizationService, resourcePermissionService interfaces.ResourcePermissionService, quotaService interfaces.QuotaService, llmClient llmclient.LLMClient, defaultModelResolver defaultmodelsvc.DefaultModelResolver, db *gorm.DB, options ...DataSourceServiceOption) DataSourceService {
 	sqlBaseClient, err := sql_base.NewSQLBaseClient()
 	if err != nil {
 		panic("failed to create postgres meta client: " + err.Error())
 	}
 
-	return &dataSourceService{
+	svc := &dataSourceService{
 		repo:                      repo,
 		tableRepo:                 tableRepo,
 		promptRepo:                promptRepo,
@@ -190,6 +204,12 @@ func NewDataSourceService(repo repository.DataSourceRepository, tableRepo reposi
 		defaultModelResolver:      defaultModelResolver,
 		db:                        db,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(svc)
+		}
+	}
+	return svc
 }
 
 // CreateDataSource creates a new data source
@@ -1898,7 +1918,7 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 		}
 
 		// Get file content with database ingestion extraction settings.
-		extraction, err := s.extractDatabaseIngestionFileContent(ctx, organizationID, accountID, fileID, modelSpec)
+		extraction, err := s.extractDatabaseIngestionFileContent(ctx, accountID, fileID)
 		if err != nil {
 			return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to get file content: %w", err)
 		}
@@ -2073,43 +2093,17 @@ func (s *dataSourceService) extractJSONContent(content string) (string, error) {
 	return "", fmt.Errorf("could not find matching closing bracket for json")
 }
 
-// IngestFileToTable ingests file content into a table
-func (s *dataSourceService) IngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.IngestFileToTableRequest) (dto.IngestFileToTableResponse, error) {
-	tableCtx, err := s.prepareDatabaseIngestionTable(ctx, organizationID, req.TableID)
-	if err != nil {
-		return dto.IngestFileToTableResponse{}, err
-	}
-
-	result := s.processDatabaseIngestionFile(ctx, tableCtx, accountID, req.TableID, req.FileID, req.Prompt, req.Model, req.ExtractionMode)
-	logDatabaseIngestionFileResult(ctx, req.TableID, result)
-	return dto.IngestFileToTableResponse{
-		FileID:     result.FileID,
-		FileName:   result.FileName,
-		Records:    result.Records,
-		Columns:    tableCtx.Columns.Columns,
-		Message:    result.Message,
-		Content:    result.Content,
-		Extraction: result.Extraction,
-		Error:      result.Error,
-	}, nil
-}
-
 // convertFileContentToRecords converts file content to table records using LLM
-func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, tenantID, accountID, content string, columns dto.GetTableColumnsResponse, userPrompt *string, modelSpec *dto.ModelSpec) ([]map[string]interface{}, error) {
-	// Create column descriptions for prompt
-	var columnDescriptions strings.Builder
-	for _, col := range columns.Columns {
-		desc := "N/A"
-		if col.Description != nil {
-			desc = *col.Description
-		}
-		columnDescriptions.WriteString(fmt.Sprintf("- %s (%s): %s (IsRequired: %v)\n", col.Name, col.Type, desc, col.IsRequired))
+func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, tenantID, accountID, content string, columns dto.GetTableColumnsResponse, userPrompt *string, modelSpec *dto.ModelSpec) ([]map[string]interface{}, *dto.FileIngestFieldExtraction, error) {
+	columnSchema, err := buildFileConversionColumnSchema(columns)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Get prompt template
 	tmpl, err := prompt.GetTemplate(prompt.DatasourceFileConversion)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get prompt template: %w", err)
+		return nil, nil, fmt.Errorf("failed to get prompt template: %w", err)
 	}
 
 	// Prepare template data
@@ -2118,7 +2112,7 @@ func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, ten
 		Content string
 		Prompt  *string
 	}{
-		Columns: columnDescriptions.String(),
+		Columns: columnSchema,
 		Content: content,
 		Prompt:  userPrompt,
 	}
@@ -2126,7 +2120,7 @@ func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, ten
 	// Render prompt
 	promptText, err := tmpl.Render(templateData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to render prompt template: %w", err)
+		return nil, nil, fmt.Errorf("failed to render prompt template: %w", err)
 	}
 
 	// Build model slug from modelSpec
@@ -2145,42 +2139,30 @@ func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, ten
 	// Call LLM via client
 	resp, err := s.llmClient.Chat(ctx, tenantID, chatReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert content with LLM: %w", err)
+		return nil, nil, fmt.Errorf("failed to convert content with LLM: %w", err)
 	}
 
 	if resp == nil || len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("failed to convert content with LLM: empty response")
+		return nil, nil, fmt.Errorf("failed to convert content with LLM: empty response")
 	}
 
 	generatedContent, _ := resp.Choices[0].Message.Content.(string)
 	if generatedContent == "" {
-		return nil, fmt.Errorf("failed to convert content with LLM: empty result")
+		return nil, nil, fmt.Errorf("failed to convert content with LLM: empty result")
 	}
 
 	// Extract pure JSON content from the LLM response
 	cleanContent, err := s.extractJSONContent(generatedContent)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract JSON from LLM response: %w", err)
+		return nil, nil, fmt.Errorf("failed to extract JSON from LLM response: %w", err)
 	}
 
-	// Parse the generated JSON
-	var records []map[string]interface{}
-	if err := json.Unmarshal([]byte(cleanContent), &records); err != nil {
-		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
+	records, fieldExtraction, err := normalizeFileConversionOutput(cleanContent, columns)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
 
-	// Normalize records against table structure. Required-field completeness is a
-	// review concern in the UI; do not turn a partial record into a system error.
-	for i, record := range records {
-		for _, col := range columns.Columns {
-			if _, exists := record[col.Name]; !exists {
-				record[col.Name] = nil
-			}
-		}
-		records[i] = record
-	}
-
-	return records, nil
+	return records, fieldExtraction, nil
 }
 
 func (s *dataSourceService) prepareDatabaseIngestionTable(ctx context.Context, organizationID, tableID string) (databaseIngestionTableContext, error) {
@@ -2213,130 +2195,207 @@ func (s *dataSourceService) prepareDatabaseIngestionTable(ctx context.Context, o
 	}, nil
 }
 
-func (s *dataSourceService) processDatabaseIngestionFile(ctx context.Context, tableCtx databaseIngestionTableContext, accountID, tableID, fileID string, prompt *string, modelSpec *dto.ModelSpec, extractionMode string) dto.FileIngestResult {
+// ParseFileForTableIngest parses a file into text content for table ingestion review.
+func (s *dataSourceService) ParseFileForTableIngest(ctx context.Context, organizationID, accountID string, req dto.ParseFileForTableIngestRequest) (dto.ParseFileForTableIngestResponse, error) {
+	if _, err := s.prepareDatabaseIngestionTable(ctx, organizationID, req.TableID); err != nil {
+		return dto.ParseFileForTableIngestResponse{}, err
+	}
+	result := s.parseDatabaseIngestionFileForTable(ctx, accountID, req.FileID)
+	logDatabaseIngestionFileParseResult(ctx, req.TableID, result)
+	return result, nil
+}
+
+// ExtractTextToTableRecords recognizes table records from previously parsed content.
+func (s *dataSourceService) ExtractTextToTableRecords(ctx context.Context, organizationID, accountID string, req dto.ExtractTextToTableRecordsRequest) (dto.ExtractTextToTableRecordsResponse, error) {
+	tableCtx, err := s.prepareDatabaseIngestionTable(ctx, organizationID, req.TableID)
+	if err != nil {
+		return dto.ExtractTextToTableRecordsResponse{}, err
+	}
+	result := s.extractDatabaseIngestionTextToRecords(ctx, tableCtx, accountID, req)
+	logDatabaseIngestionTextRecognitionResult(ctx, req.TableID, req.Model, result)
+	return result, nil
+}
+
+// IngestFileToTable ingests file content into a table.
+func (s *dataSourceService) IngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.IngestFileToTableRequest) (dto.IngestFileToTableResponse, error) {
+	tableCtx, err := s.prepareDatabaseIngestionTable(ctx, organizationID, req.TableID)
+	if err != nil {
+		return dto.IngestFileToTableResponse{}, err
+	}
+
+	result := s.processDatabaseIngestionFile(ctx, tableCtx, accountID, req.TableID, req.FileID, req.Prompt, req.Model)
+	logDatabaseIngestionFileResult(ctx, req.TableID, result)
+	return dto.IngestFileToTableResponse{
+		FileID:          result.FileID,
+		FileName:        result.FileName,
+		Records:         result.Records,
+		Columns:         tableCtx.Columns.Columns,
+		Message:         result.Message,
+		Content:         result.Content,
+		Extraction:      result.Extraction,
+		FieldExtraction: result.FieldExtraction,
+		Stage:           result.Stage,
+		Error:           result.Error,
+	}, nil
+}
+
+func (s *dataSourceService) parseDatabaseIngestionFileForTable(ctx context.Context, accountID, fileID string) dto.ParseFileForTableIngestResponse {
 	fileInfo, err := s.fileService.GetFileByID(ctx, fileID)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to get file info: %v", err)
-		return dto.FileIngestResult{
+		return dto.ParseFileForTableIngestResponse{
 			FileID:  fileID,
-			Records: nil,
+			Message: "",
+			Stage:   fileIngestStageParse,
 			Error:   &errMsg,
 		}
 	}
 
-	extraction, err := s.extractDatabaseIngestionFileInfoContent(ctx, tableCtx.LLMOrganizationID, accountID, fileInfo, modelSpec, extractionMode)
+	extraction, err := s.extractDatabaseIngestionFileInfoContent(ctx, accountID, fileInfo)
 	content := extraction.Content
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to get file content: %v", err)
-		return dto.FileIngestResult{
+		return dto.ParseFileForTableIngestResponse{
 			FileID:     fileID,
 			FileName:   fileInfo.Name,
-			Records:    nil,
 			Message:    "",
 			Content:    content,
 			Extraction: fileIngestExtractionInfo(extraction, content),
+			Stage:      fileIngestStageParse,
 			Error:      &errMsg,
 		}
 	}
 
-	records, err := s.convertFileContentToRecords(ctx, tableCtx.LLMOrganizationID, accountID, content, tableCtx.Columns, prompt, modelSpec)
-	if err != nil {
-		updateFileIngestAttemptResult(&extraction, fileIngestAttemptMethodForExtraction(extraction), databaseIngestionAttemptResultError, err.Error(), 0)
-		errMsg := fmt.Sprintf("failed to convert file content to records: %v", err)
-		return dto.FileIngestResult{
-			FileID:     fileID,
-			FileName:   fileInfo.Name,
-			Records:    nil,
-			Message:    "",
-			Content:    content,
-			Extraction: fileIngestExtractionInfo(extraction, content),
-			Error:      &errMsg,
+	return dto.ParseFileForTableIngestResponse{
+		FileID:     fileID,
+		FileName:   fileInfo.Name,
+		Message:    "Successfully parsed file content",
+		Content:    content,
+		Extraction: fileIngestExtractionInfo(extraction, content),
+		Stage:      fileIngestStageParse,
+	}
+}
+
+func (s *dataSourceService) extractDatabaseIngestionTextToRecords(ctx context.Context, tableCtx databaseIngestionTableContext, accountID string, req dto.ExtractTextToTableRecordsRequest) dto.ExtractTextToTableRecordsResponse {
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		errMsg := "parsed content is empty"
+		return dto.ExtractTextToTableRecordsResponse{
+			FileID:      req.FileID,
+			Records:     nil,
+			Columns:     tableCtx.Columns.Columns,
+			Message:     "",
+			ContentHash: req.ContentHash,
+			Stage:       fileIngestStageRecognition,
+			Error:       &errMsg,
 		}
 	}
-	if len(records) > 0 {
-		updateFileIngestAttemptResult(&extraction, fileIngestAttemptMethodForExtraction(extraction), databaseIngestionAttemptResultRecords, "", len(records))
+
+	contentHash := fileIngestContentHash(req.Content)
+	records, fieldExtraction, err := s.convertFileContentToRecords(ctx, tableCtx.LLMOrganizationID, accountID, req.Content, tableCtx.Columns, req.Prompt, req.Model)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to convert file content to records: %v", err)
+		return dto.ExtractTextToTableRecordsResponse{
+			FileID:      req.FileID,
+			Records:     nil,
+			Columns:     tableCtx.Columns.Columns,
+			Message:     "",
+			ContentHash: contentHash,
+			Stage:       fileIngestStageRecognition,
+			Error:       &errMsg,
+		}
+	}
+
+	message := fmt.Sprintf("Successfully parsed %d records from file", len(records))
+	if len(records) == 0 {
+		message = "no records recognized from file"
+	}
+	return dto.ExtractTextToTableRecordsResponse{
+		FileID:          req.FileID,
+		Records:         records,
+		Columns:         tableCtx.Columns.Columns,
+		Message:         message,
+		FieldExtraction: fieldExtraction,
+		ContentHash:     contentHash,
+		Stage:           fileIngestStageRecognition,
+	}
+}
+
+func (s *dataSourceService) processDatabaseIngestionFile(ctx context.Context, tableCtx databaseIngestionTableContext, accountID, tableID, fileID string, prompt *string, modelSpec *dto.ModelSpec) dto.FileIngestResult {
+	parseResult := s.parseDatabaseIngestionFileForTable(ctx, accountID, fileID)
+	logDatabaseIngestionFileParseResult(ctx, tableID, parseResult)
+	if parseResult.Error != nil {
+		return dto.FileIngestResult{
+			FileID:     parseResult.FileID,
+			FileName:   parseResult.FileName,
+			Records:    nil,
+			Message:    "",
+			Content:    parseResult.Content,
+			Extraction: parseResult.Extraction,
+			Stage:      fileIngestStageParse,
+			Error:      parseResult.Error,
+		}
+	}
+
+	recognitionResult := s.extractDatabaseIngestionTextToRecords(ctx, tableCtx, accountID, dto.ExtractTextToTableRecordsRequest{
+		FileID:  fileID,
+		TableID: tableID,
+		Content: parseResult.Content,
+		ContentHash: func() string {
+			if parseResult.Extraction == nil {
+				return ""
+			}
+			return parseResult.Extraction.ContentHash
+		}(),
+		Prompt: prompt,
+		Model:  modelSpec,
+	})
+	logDatabaseIngestionTextRecognitionResult(ctx, tableID, modelSpec, recognitionResult)
+	extraction := databaseIngestionExtractionInfoFromDTO(parseResult.Extraction)
+	if recognitionResult.Error != nil {
+		updateFileIngestAttemptResult(&extraction, fileIngestAttemptMethodForExtraction(extraction), databaseIngestionAttemptResultError, *recognitionResult.Error, 0)
+		return dto.FileIngestResult{
+			FileID:     fileID,
+			FileName:   parseResult.FileName,
+			Records:    nil,
+			Message:    "",
+			Content:    parseResult.Content,
+			Extraction: fileIngestExtractionInfo(extraction, parseResult.Content),
+			Stage:      fileIngestStageRecognition,
+			Error:      recognitionResult.Error,
+		}
+	}
+
+	if len(recognitionResult.Records) > 0 {
+		updateFileIngestAttemptResult(&extraction, fileIngestAttemptMethodForExtraction(extraction), databaseIngestionAttemptResultRecords, "", len(recognitionResult.Records))
 	} else {
 		updateFileIngestAttemptResult(&extraction, fileIngestAttemptMethodForExtraction(extraction), databaseIngestionAttemptResultNoRecords, "no_records_recognized", 0)
 	}
 
-	if shouldRetryDatabaseIngestionPDFWithVision(fileInfo, extraction, records) {
-		visionStarted := time.Now()
-		visionContent, visionErr := s.extractDatabaseIngestionPDFWithVision(ctx, tableCtx.LLMOrganizationID, accountID, fileInfo, modelSpec)
-		if visionErr != nil {
-			extraction.Attempts = append(extraction.Attempts, databaseIngestionAttempt(
-				databaseIngestionAttemptMethodModelVision,
-				databaseIngestionAttemptStatusFailed,
-				databaseIngestionAttemptResultError,
-				visionErr.Error(),
-				visionStarted,
-				0,
-			))
-			errMsg := fmt.Sprintf("no records recognized from file; vision retry failed: %v", visionErr)
-			extraction.FallbackReason = databaseIngestionFallbackZeroRecords
-			return dto.FileIngestResult{
-				FileID:     fileID,
-				FileName:   fileInfo.Name,
-				Records:    []map[string]interface{}{},
-				Message:    errMsg,
-				Content:    content,
-				Extraction: fileIngestExtractionInfo(extraction, content),
-				Error:      nil,
-			}
-		}
-		extraction.Attempts = append(extraction.Attempts, databaseIngestionAttempt(
-			databaseIngestionAttemptMethodModelVision,
-			databaseIngestionAttemptStatusCompleted,
-			databaseIngestionAttemptResultContent,
-			"",
-			visionStarted,
-			0,
-		))
-
-		visionRecords, convertVisionErr := s.convertFileContentToRecords(ctx, tableCtx.LLMOrganizationID, accountID, visionContent, tableCtx.Columns, prompt, modelSpec)
-		extraction.FallbackReason = databaseIngestionFallbackZeroRecords
-		extraction.ActualStrategy = databaseIngestionStrategyVision
-		extraction.SourceType = databaseIngestionSourcePDFRendered
-		if convertVisionErr != nil {
-			updateFileIngestAttemptResult(&extraction, databaseIngestionAttemptMethodModelVision, databaseIngestionAttemptResultError, convertVisionErr.Error(), 0)
-			errMsg := fmt.Sprintf("no records recognized from file; vision retry failed to convert content: %v", convertVisionErr)
-			return dto.FileIngestResult{
-				FileID:     fileID,
-				FileName:   fileInfo.Name,
-				Records:    []map[string]interface{}{},
-				Message:    errMsg,
-				Content:    visionContent,
-				Extraction: fileIngestExtractionInfo(extraction, visionContent),
-				Error:      nil,
-			}
-		}
-		if len(visionRecords) == 0 {
-			updateFileIngestAttemptResult(&extraction, databaseIngestionAttemptMethodModelVision, databaseIngestionAttemptResultNoRecords, "no_records_recognized", 0)
-			errMsg := "no records recognized from file; vision retry produced no records"
-			return dto.FileIngestResult{
-				FileID:     fileID,
-				FileName:   fileInfo.Name,
-				Records:    []map[string]interface{}{},
-				Message:    errMsg,
-				Content:    visionContent,
-				Extraction: fileIngestExtractionInfo(extraction, visionContent),
-				Error:      nil,
-			}
-		}
-		updateFileIngestAttemptResult(&extraction, databaseIngestionAttemptMethodModelVision, databaseIngestionAttemptResultRecords, "", len(visionRecords))
-
-		content = visionContent
-		records = visionRecords
-	}
-
 	return normalizeFileIngestResult(dto.FileIngestResult{
-		FileID:     fileID,
-		FileName:   fileInfo.Name,
-		Records:    records,
-		Message:    fmt.Sprintf("Successfully parsed %d records from file", len(records)),
-		Content:    content,
-		Extraction: fileIngestExtractionInfo(extraction, content),
-		Error:      nil,
+		FileID:          fileID,
+		FileName:        parseResult.FileName,
+		Records:         recognitionResult.Records,
+		Message:         recognitionResult.Message,
+		Content:         parseResult.Content,
+		Extraction:      fileIngestExtractionInfo(extraction, parseResult.Content),
+		FieldExtraction: recognitionResult.FieldExtraction,
+		Stage:           fileIngestStageRecognition,
+		Error:           nil,
 	})
+}
+
+func databaseIngestionExtractionInfoFromDTO(info *dto.FileIngestExtractionInfo) databaseIngestionExtractionResult {
+	if info == nil {
+		return databaseIngestionExtractionResult{}
+	}
+	return databaseIngestionExtractionResult{
+		PrimaryStrategy: info.PrimaryStrategy,
+		ActualStrategy:  info.ActualStrategy,
+		FallbackReason:  info.FallbackReason,
+		SourceType:      info.SourceType,
+		Attempts:        append([]dto.FileIngestAttempt(nil), info.Attempts...),
+	}
 }
 
 func normalizeFileIngestResult(result dto.FileIngestResult) dto.FileIngestResult {
@@ -2351,6 +2410,55 @@ func normalizeFileIngestResult(result dto.FileIngestResult) dto.FileIngestResult
 		}
 	}
 	return result
+}
+
+func logDatabaseIngestionFileParseResult(ctx context.Context, tableID string, result dto.ParseFileForTableIngestResponse) {
+	contentHash := ""
+	sourceType := ""
+	var attempts []dto.FileIngestAttempt
+	if result.Extraction != nil {
+		contentHash = result.Extraction.ContentHash
+		sourceType = result.Extraction.SourceType
+		attempts = result.Extraction.Attempts
+	}
+	errorMessage := ""
+	if result.Error != nil {
+		errorMessage = *result.Error
+	}
+	logger.InfoContext(ctx, "database ingestion file parse stage completed",
+		"table_id", tableID,
+		"file_id", result.FileID,
+		"file_name", result.FileName,
+		"stage", fileIngestStageParse,
+		"error", errorMessage,
+		"content_chars", len([]rune(result.Content)),
+		"content_hash", contentHash,
+		"source_type", sourceType,
+		"attempts", attempts,
+	)
+}
+
+func logDatabaseIngestionTextRecognitionResult(ctx context.Context, tableID string, modelSpec *dto.ModelSpec, result dto.ExtractTextToTableRecordsResponse) {
+	errorMessage := ""
+	if result.Error != nil {
+		errorMessage = *result.Error
+	}
+	modelName := ""
+	modelProvider := ""
+	if modelSpec != nil {
+		modelName = modelSpec.Name
+		modelProvider = modelSpec.Provider
+	}
+	logger.InfoContext(ctx, "database ingestion text recognition stage completed",
+		"table_id", tableID,
+		"file_id", result.FileID,
+		"stage", fileIngestStageRecognition,
+		"error", errorMessage,
+		"record_count", len(result.Records),
+		"content_hash", result.ContentHash,
+		"model_provider", modelProvider,
+		"model_name", modelName,
+	)
 }
 
 func logDatabaseIngestionFileResult(ctx context.Context, tableID string, result dto.FileIngestResult) {
@@ -2373,6 +2481,7 @@ func logDatabaseIngestionFileResult(ctx context.Context, tableID string, result 
 			"table_id", tableID,
 			"file_id", result.FileID,
 			"file_name", result.FileName,
+			"stage", result.Stage,
 			"record_count", len(result.Records),
 			"content_chars", len([]rune(result.Content)),
 			"content_hash", contentHash,
@@ -2393,6 +2502,7 @@ func logDatabaseIngestionFileResult(ctx context.Context, tableID string, result 
 		"table_id", tableID,
 		"file_id", result.FileID,
 		"file_name", result.FileName,
+		"stage", result.Stage,
 		"error", errorMessage,
 		"record_count", len(result.Records),
 		"content_chars", len([]rune(result.Content)),
@@ -2437,7 +2547,7 @@ func (s *dataSourceService) BatchIngestFileToTable(ctx context.Context, organiza
 			// Release semaphore when done
 			defer func() { <-semaphore }()
 
-			fileResult := s.processDatabaseIngestionFile(ctx, tableCtx, accountID, req.TableID, id, req.Prompt, req.Model, req.ExtractionMode)
+			fileResult := s.processDatabaseIngestionFile(ctx, tableCtx, accountID, req.TableID, id, req.Prompt, req.Model)
 			resultChan <- result{
 				fileID: id,
 				result: fileResult,
