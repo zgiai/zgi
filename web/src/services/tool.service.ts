@@ -5,8 +5,9 @@ import type { BuiltinToolsResponse } from './types/tool';
 /**
  * ToolService
  * ---------------------------------------------------------------------------
- * Fetches builtin tool providers and their tools for the current workspace.
- * API Reference: GET /console/api/workspaces/current/tools/builtin
+ * Fetches tool providers available in the current organization, including
+ * system builtin tools and organization-installed plugin-runner tools.
+ * API Reference: GET /console/api/tools/builtin
  */
 class ToolService extends BaseService {
   constructor() {
@@ -17,8 +18,8 @@ class ToolService extends BaseService {
   }
 
   /**
-   * Get builtin tool providers and tools for the current workspace
-   * GET /console/api/workspaces/current/tools/builtin
+   * Get available tool providers and tools for the current organization.
+   * GET /console/api/tools/builtin
    */
   getBuiltinTools(): Promise<ApiResponseData<BuiltinToolsResponse>> {
     return this.request('get', '/tools/builtin');

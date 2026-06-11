@@ -9,7 +9,6 @@ import (
 	pluginmodel "github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
 	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
-	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -97,9 +96,9 @@ type BuiltinOptionResponse struct {
 	Label tools.I18nText `json:"label"`
 }
 
-// ListBuiltinProviders returns all builtin tool providers
-// @Summary List builtin tool providers
-// @Description Retrieves all system-provided builtin tool providers with their tools and parameters
+// ListBuiltinProviders returns all tool providers available in the current organization.
+// @Summary List available tool providers
+// @Description Retrieves system-provided builtin tool providers and plugin-runner providers installed in the current organization
 // @Tags Builtin Tools
 // @Produce json
 // @Success 200 {object} response.Response{data=[]BuiltinProviderResponse} "List of builtin providers"
@@ -138,14 +137,7 @@ func (h *BuiltinToolsHandler) ListBuiltinProviders(c *gin.Context) {
 		var declarations []pluginmodel.PluginDeclaration
 		var err error
 
-		// Admin/Owner are treated as subscribed to all organization installations.
-		if middleware.IsOrganizationAdminOrOwner(c) {
-			declarations, err = h.accountInstallationService.ListDeclarationsByTenant(c.Request.Context(), organizationID)
-		} else {
-			if h.memberSubscriptionService != nil {
-				declarations, err = h.memberSubscriptionService.ListSubscribedDeclarations(c.Request.Context(), organizationID, accountID)
-			}
-		}
+		declarations, err = h.accountInstallationService.ListDeclarationsByTenant(c.Request.Context(), organizationID)
 
 		if err != nil {
 			logger.Warn("Failed to get plugin declarations", "error", err)
@@ -162,7 +154,7 @@ func (h *BuiltinToolsHandler) ListBuiltinProviders(c *gin.Context) {
 	response.Success(c, responses)
 }
 
-// GetBuiltinProvider returns a specific builtin provider
+// GetBuiltinProvider returns a specific available provider.
 // @Summary Get builtin provider by name
 // @Description Retrieves a specific builtin tool provider by its name (supports both builtin and plugin_runner types)
 // @Tags Builtin Tools
@@ -209,26 +201,12 @@ func (h *BuiltinToolsHandler) GetBuiltinProvider(c *gin.Context) {
 			return
 		}
 
-		if middleware.IsOrganizationAdminOrOwner(c) {
-			declaration, err := h.accountInstallationService.GetDeclarationByProviderName(c.Request.Context(), organizationID, providerName)
-			if err == nil && declaration != nil {
-				providerResp := h.convertDeclarationToResponse(*declaration)
-				logger.Info("Successfully retrieved plugin provider", "provider", providerName, "type", "plugin_runner")
-				response.Success(c, providerResp)
-				return
-			}
-		} else if h.memberSubscriptionService != nil {
-			declarations, err := h.memberSubscriptionService.ListSubscribedDeclarations(c.Request.Context(), organizationID, accountID)
-			if err == nil {
-				for _, decl := range declarations {
-					if decl.Provider.Name == providerName {
-						providerResp := h.convertDeclarationToResponse(decl)
-						logger.Info("Successfully retrieved subscribed plugin provider", "provider", providerName, "type", "plugin_runner")
-						response.Success(c, providerResp)
-						return
-					}
-				}
-			}
+		declaration, err := h.accountInstallationService.GetDeclarationByProviderName(c.Request.Context(), organizationID, providerName)
+		if err == nil && declaration != nil {
+			providerResp := h.convertDeclarationToResponse(*declaration)
+			logger.Info("Successfully retrieved plugin provider", "provider", providerName, "type", "plugin_runner")
+			response.Success(c, providerResp)
+			return
 		}
 	}
 
