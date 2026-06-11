@@ -2846,8 +2846,11 @@ func (h *OrganizationHandler) GetCurrentOrganizationMembers(c *gin.Context) {
 	}
 
 	// Call service to get paginated data
-	search := c.Query("search")
-	pagination, err := h.organizationService.GetOrganizationMembersPaginated(c.Request.Context(), organizationID, page, limit, search)
+	keyword := c.Query("keyword")
+	if keyword == "" {
+		keyword = c.Query("search")
+	}
+	pagination, err := h.organizationService.GetOrganizationMembersPaginated(c.Request.Context(), organizationID, page, limit, keyword)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
@@ -4174,6 +4177,7 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 		organization.PUT("/", h.UpdateOrganization)
 		organization.DELETE("/", h.DeleteOrganization)
 
+		organization.GET("/current/members", h.GetCurrentOrganizationMembers)
 		organization.POST("/current/members/invite", h.InviteCurrentOrganizationMember)
 		organization.POST("/current/members/reset-password", h.ResetCurrentOrganizationMemberPassword)
 		organization.PATCH("/current/members/:member_id/organization-role", h.UpdateCurrentOrganizationMemberRole)

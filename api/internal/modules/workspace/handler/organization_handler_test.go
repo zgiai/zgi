@@ -27,6 +27,9 @@ type fakeOrganizationService struct {
 	updateOrganizationFn             func(ctx context.Context, organizationID, accountID string, req *shared_dto.UpdateOrganizationRequest) (*model.Organization, error)
 	updateCurrentMemberRoleFn        func(ctx context.Context, operatorID, memberID string, role model.OrganizationRole) error
 	updateMemberInfoFn               func(ctx context.Context, req *shared_dto.UpdateOrganizationMemberRequest) error
+	getByIDFn                        func(ctx context.Context, organizationID string) (*model.Organization, error)
+	checkAnyManagedWorkspaceFn       func(ctx context.Context, organizationID, accountID string) (bool, error)
+	getMembersPaginatedFn            func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error)
 }
 
 func (f fakeOrganizationService) GetWorkspaceMemberPermissions(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error) {
@@ -62,6 +65,27 @@ func (f fakeOrganizationService) UpdateMemberInfo(ctx context.Context, req *shar
 		return f.updateMemberInfoFn(ctx, req)
 	}
 	return nil
+}
+
+func (f fakeOrganizationService) GetByID(ctx context.Context, organizationID string) (*model.Organization, error) {
+	if f.getByIDFn != nil {
+		return f.getByIDFn(ctx, organizationID)
+	}
+	return &model.Organization{ID: organizationID, Status: model.OrganizationStatusActive}, nil
+}
+
+func (f fakeOrganizationService) CheckAnyManagedWorkspacePermission(ctx context.Context, organizationID, accountID string) (bool, error) {
+	if f.checkAnyManagedWorkspaceFn != nil {
+		return f.checkAnyManagedWorkspaceFn(ctx, organizationID, accountID)
+	}
+	return true, nil
+}
+
+func (f fakeOrganizationService) GetOrganizationMembersPaginated(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+	if f.getMembersPaginatedFn != nil {
+		return f.getMembersPaginatedFn(ctx, organizationID, page, limit, keyword)
+	}
+	return &shared_dto.OrganizationMemberPaginationResponse{}, nil
 }
 
 type fakeWorkspaceManagementService struct {
@@ -430,6 +454,63 @@ func TestUpdateOrganizationMemberRejectsRoleUpdates(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.False(t, called)
+}
+
+func TestGetCurrentOrganizationMembersUsesKeyword(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			getMembersPaginatedFn: func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, 2, page)
+				require.Equal(t, 5, limit)
+				require.Equal(t, "alice", keyword)
+				return &shared_dto.OrganizationMemberPaginationResponse{
+					Data: []*shared_dto.OrganizationMemberWithExtensionResponse{
+						{
+							ID:               "member-1",
+							Name:             "Alice",
+							Email:            "alice@example.com",
+							Status:           "active",
+							OrganizationRole: model.OrganizationRoleNormal,
+						},
+					},
+					Page:  2,
+					Limit: 5,
+					Total: 1,
+				}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/current/members?page=2&limit=5&keyword=alice")
+	c.Set("account_id", "owner-1")
+	c.Set("organization_id", "org-1")
+	c.Set("tenant_id", "org-1")
+
+	handler.GetCurrentOrganizationMembers(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"email":"alice@example.com"`)
+}
+
+func TestOrganizationRoutesRegisterCurrentMembersList(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := &OrganizationHandler{organizationService: fakeOrganizationService{}}
+
+	handler.RegisterRoutes(router.Group(""))
+
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodGet && route.Path == "/organizations/current/members" {
+			return
+		}
+	}
+
+	t.Fatalf("GET /organizations/current/members route was not registered")
 }
 
 func newOrganizationHandlerTestContext(method, target string) (*gin.Context, *httptest.ResponseRecorder) {
