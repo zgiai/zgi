@@ -21,11 +21,12 @@ func TestParseArtifactQualityServiceBuildsConfirmationItems(t *testing.T) {
 	svc := NewParseArtifactQualityService(&parseArtifactQualityItemRepo{})
 
 	items, err := svc.BuildConfirmationItems(ParseArtifactQualityInput{
-		OrganizationID:  "org-1",
-		AssetID:         assetID,
-		ProcessingRunID: runID,
-		GenerationNo:    2,
-		CreatedBy:       "account-1",
+		OrganizationID:      "org-1",
+		AssetID:             assetID,
+		ProcessingRunID:     runID,
+		GenerationNo:        2,
+		CreatedBy:           "account-1",
+		SourceFileExtension: "pdf",
 		Artifact: &contracts.ParseArtifact{
 			ArtifactID: "artifact-1",
 			Elements: []contracts.ParsedElement{
@@ -101,10 +102,11 @@ func TestParseArtifactQualityServiceCreatesConfirmationItems(t *testing.T) {
 	repo := &parseArtifactQualityItemRepo{}
 	svc := NewParseArtifactQualityService(repo)
 	result, err := svc.CreateConfirmationItems(context.Background(), ParseArtifactQualityInput{
-		OrganizationID:  "org-1",
-		AssetID:         uuid.New(),
-		ProcessingRunID: uuid.New(),
-		GenerationNo:    1,
+		OrganizationID:     "org-1",
+		AssetID:            uuid.New(),
+		ProcessingRunID:    uuid.New(),
+		GenerationNo:       1,
+		SourceFileMimeType: "application/pdf",
 		Artifact: &contracts.ParseArtifact{
 			Elements: []contracts.ParsedElement{
 				{ID: "text-1", Type: "text", Content: "needs review", Confidence: &confidence},
@@ -115,6 +117,32 @@ func TestParseArtifactQualityServiceCreatesConfirmationItems(t *testing.T) {
 		t.Fatalf("CreateConfirmationItems: %v", err)
 	}
 	if result.PendingCount != 1 || len(repo.created) != 1 {
+		t.Fatalf("result=%+v created=%d", result, len(repo.created))
+	}
+}
+
+func TestParseArtifactQualityServiceSkipsNonPDFConfirmationItems(t *testing.T) {
+	confidence := 0.5
+	repo := &parseArtifactQualityItemRepo{}
+	svc := NewParseArtifactQualityService(repo)
+
+	result, err := svc.CreateConfirmationItems(context.Background(), ParseArtifactQualityInput{
+		OrganizationID:      "org-1",
+		AssetID:             uuid.New(),
+		ProcessingRunID:     uuid.New(),
+		GenerationNo:        1,
+		SourceFileExtension: "docx",
+		SourceFileMimeType:  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		Artifact: &contracts.ParseArtifact{
+			Elements: []contracts.ParsedElement{
+				{ID: "text-1", Type: "text", Content: "needs review", Confidence: &confidence},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateConfirmationItems: %v", err)
+	}
+	if result.PendingCount != 0 || len(repo.created) != 0 {
 		t.Fatalf("result=%+v created=%d", result, len(repo.created))
 	}
 }

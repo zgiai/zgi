@@ -47,7 +47,29 @@ interface FileVisualParseReviewPanelProps {
   isReparsing?: boolean;
 }
 
-type FilesTranslator = (key: string, values?: Record<string, unknown>) => string;
+type FilesTranslator = ((key: string, values?: Record<string, unknown>) => string) & {
+  has?: (key: string) => boolean;
+};
+
+const reviewReasonTranslationKeys = {
+  low_confidence_text: 'detail.parseReview.reviewReasons.lowConfidenceText',
+  low_confidence_table: 'detail.parseReview.reviewReasons.lowConfidenceTable',
+  low_confidence_image_ocr: 'detail.parseReview.reviewReasons.lowConfidenceImageOcr',
+  review_required: 'detail.parseReview.reviewReasons.reviewRequired',
+  ocr_fallback: 'detail.parseReview.reviewReasons.ocrFallback',
+  local_vlm_fallback: 'detail.parseReview.reviewReasons.vlmFallback',
+  table_structure_risk: 'detail.parseReview.reviewReasons.tableStructureRisk',
+} as const;
+
+const reviewReasonFallbacks: Record<keyof typeof reviewReasonTranslationKeys, string> = {
+  low_confidence_text: '文本识别置信度较低',
+  low_confidence_table: '表格识别置信度较低',
+  low_confidence_image_ocr: '图片文字识别置信度较低',
+  review_required: '需要人工确认',
+  ocr_fallback: '已使用 OCR 兜底解析',
+  local_vlm_fallback: '已使用视觉模型兜底解析',
+  table_structure_risk: '表格结构可能需要确认',
+};
 
 function confidenceLabel(value?: number) {
   if (value === undefined || value === null) return '-';
@@ -168,6 +190,27 @@ function elementTypeLabel(type: string | undefined, t: FilesTranslator) {
     default:
       return type || t('detail.parseReview.types.element');
   }
+}
+
+function reviewReasonLabel(reason: string, t: FilesTranslator) {
+  const normalized = reason.trim();
+  const translationKey = reviewReasonTranslationKeys[
+    normalized as keyof typeof reviewReasonTranslationKeys
+  ];
+  if (!translationKey) return normalized;
+  if (!t.has || t.has(translationKey)) {
+    return t(translationKey);
+  }
+  return reviewReasonFallbacks[normalized as keyof typeof reviewReasonFallbacks];
+}
+
+function reviewReasonText(reason: string | undefined, t: FilesTranslator) {
+  if (!reason) return '';
+  return reason
+    .split(',')
+    .map(item => reviewReasonLabel(item, t))
+    .filter(Boolean)
+    .join('、');
 }
 
 export function FileVisualParseReviewPanel({
@@ -378,11 +421,6 @@ export function FileVisualParseReviewPanel({
             </div>
           ) : shouldUseOriginalPreviewFallback ? (
             <div className="flex h-full min-h-0 flex-col">
-              {sourcePreview.error ? (
-                <div className="shrink-0 border-b border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-                  {t('detail.parseReview.sourcePreviewUnavailable')}
-                </div>
-              ) : null}
               <div className="min-h-0 flex-1">
                 <UniversalFilePreviewContent
                   file={{
@@ -452,46 +490,48 @@ export function FileVisualParseReviewPanel({
         </div>
 
         <div className="max-h-[calc(100vh-430px)] min-h-[560px] overflow-y-auto p-4">
-          <div className="mb-4 rounded-md border border-warning/30 bg-warning/5 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
-                  <TriangleAlert className="h-5 w-5" />
-                </span>
-                <div className="min-w-0">
-                  <div className="text-base font-semibold text-foreground">
-                    {t('detail.parseReview.pendingReviewTitle', { count: pendingCount })}
+          {pendingCount > 0 ? (
+            <div className="mb-4 rounded-md border border-warning/30 bg-warning/5 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
+                    <TriangleAlert className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-base font-semibold text-foreground">
+                      {t('detail.parseReview.pendingReviewTitle', { count: pendingCount })}
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {t('detail.parseReview.pendingReviewDescription')}
+                    </p>
                   </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t('detail.parseReview.pendingReviewDescription')}
-                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={jumpToNextPending}
+                    disabled={pendingElements.length === 0}
+                  >
+                    {t('detail.parseReview.jumpNext')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void batchIgnoreConfirmations({})}
+                    disabled={pendingElements.length === 0 || isMutating}
+                  >
+                    {isBatchIgnoring ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <ShieldCheck className="h-4 w-4" />
+                    )}
+                    {t('detail.parseReview.batchIgnore')}
+                  </Button>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={jumpToNextPending}
-                  disabled={pendingElements.length === 0}
-                >
-                  {t('detail.parseReview.jumpNext')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void batchIgnoreConfirmations({})}
-                  disabled={pendingElements.length === 0 || isMutating}
-                >
-                  {isBatchIgnoring ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <ShieldCheck className="h-4 w-4" />
-                  )}
-                  {t('detail.parseReview.batchIgnore')}
-                </Button>
-              </div>
             </div>
-          </div>
+          ) : null}
 
           {elements.length === 0 ? (
             <EmptyReviewState />
@@ -555,6 +595,7 @@ function VisualReviewCard({
   const editValue = confirmation
     ? editedContent ?? confirmationContent(confirmation)
     : '';
+  const reasonText = reviewReasonText(confirmation?.review_reason, t as FilesTranslator);
 
   return (
     <article
@@ -576,7 +617,7 @@ function VisualReviewCard({
           <span className="ml-auto" />
           {confirmation ? (
             <Badge variant={confirmationStatusVariant(confirmation.status)}>
-            {statusLabel(confirmation.status, t as FilesTranslator)}
+              {statusLabel(confirmation.status, t as FilesTranslator)}
             </Badge>
           ) : null}
         </div>
@@ -591,10 +632,10 @@ function VisualReviewCard({
         {content || t('detail.parseReview.emptyContent')}
       </div>
 
-      {confirmation?.review_reason ? (
+      {isPending && reasonText ? (
         <div className="mt-3 flex gap-2 rounded-md border border-warning/20 bg-warning/5 p-3 text-sm text-warning">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{confirmation.review_reason}</span>
+          <span>{reasonText}</span>
         </div>
       ) : null}
 

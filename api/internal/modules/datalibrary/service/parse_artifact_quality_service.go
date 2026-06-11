@@ -35,13 +35,15 @@ type ParseArtifactQualityService interface {
 }
 
 type ParseArtifactQualityInput struct {
-	OrganizationID  string
-	WorkspaceID     *string
-	AssetID         uuid.UUID
-	ProcessingRunID uuid.UUID
-	GenerationNo    int64
-	CreatedBy       string
-	Artifact        *contracts.ParseArtifact
+	OrganizationID      string
+	WorkspaceID         *string
+	AssetID             uuid.UUID
+	ProcessingRunID     uuid.UUID
+	GenerationNo        int64
+	CreatedBy           string
+	SourceFileExtension string
+	SourceFileMimeType  string
+	Artifact            *contracts.ParseArtifact
 }
 
 type ParseArtifactQualityResult struct {
@@ -87,6 +89,9 @@ func (s *parseArtifactQualityService) BuildConfirmationItems(input ParseArtifact
 	if input.Artifact == nil {
 		return nil, ErrParseArtifactRequired
 	}
+	if !isPDFParseQualitySource(input.SourceFileExtension, input.SourceFileMimeType) {
+		return []*model.ParseConfirmationItem{}, nil
+	}
 
 	items := make([]*model.ParseConfirmationItem, 0)
 	for index, element := range input.Artifact.Elements {
@@ -111,6 +116,15 @@ func (s *parseArtifactQualityService) BuildConfirmationItems(input ParseArtifact
 		})
 	}
 	return items, nil
+}
+
+func isPDFParseQualitySource(extension string, mimeType string) bool {
+	normalizedExtension := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(extension)), ".")
+	if normalizedExtension == "pdf" {
+		return true
+	}
+	normalizedMimeType := strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+	return normalizedMimeType == "application/pdf"
 }
 
 func parseElementReviewReasons(element contracts.ParsedElement) []string {

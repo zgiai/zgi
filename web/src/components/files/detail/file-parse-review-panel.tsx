@@ -24,6 +24,30 @@ interface FileParseReviewPanelProps {
   compact?: boolean;
 }
 
+type FilesTranslator = ((key: string, values?: Record<string, unknown>) => string) & {
+  has?: (key: string) => boolean;
+};
+
+const reviewReasonTranslationKeys = {
+  low_confidence_text: 'detail.parseReview.reviewReasons.lowConfidenceText',
+  low_confidence_table: 'detail.parseReview.reviewReasons.lowConfidenceTable',
+  low_confidence_image_ocr: 'detail.parseReview.reviewReasons.lowConfidenceImageOcr',
+  review_required: 'detail.parseReview.reviewReasons.reviewRequired',
+  ocr_fallback: 'detail.parseReview.reviewReasons.ocrFallback',
+  local_vlm_fallback: 'detail.parseReview.reviewReasons.vlmFallback',
+  table_structure_risk: 'detail.parseReview.reviewReasons.tableStructureRisk',
+} as const;
+
+const reviewReasonFallbacks: Record<keyof typeof reviewReasonTranslationKeys, string> = {
+  low_confidence_text: '文本识别置信度较低',
+  low_confidence_table: '表格识别置信度较低',
+  low_confidence_image_ocr: '图片文字识别置信度较低',
+  review_required: '需要人工确认',
+  ocr_fallback: '已使用 OCR 兜底解析',
+  local_vlm_fallback: '已使用视觉模型兜底解析',
+  table_structure_risk: '表格结构可能需要确认',
+};
+
 function getConfirmationStatusVariant(status?: string) {
   switch (status) {
     case 'pending':
@@ -56,6 +80,27 @@ function confirmationContent(confirmation: FileParsePreviewConfirmation) {
     confirmation.original_content ||
     ''
   );
+}
+
+function reviewReasonLabel(reason: string, t: FilesTranslator) {
+  const normalized = reason.trim();
+  const translationKey = reviewReasonTranslationKeys[
+    normalized as keyof typeof reviewReasonTranslationKeys
+  ];
+  if (!translationKey) return normalized;
+  if (!t.has || t.has(translationKey)) {
+    return t(translationKey);
+  }
+  return reviewReasonFallbacks[normalized as keyof typeof reviewReasonFallbacks];
+}
+
+function reviewReasonText(reason: string | undefined, t: FilesTranslator) {
+  if (!reason) return '';
+  return reason
+    .split(',')
+    .map(item => reviewReasonLabel(item, t))
+    .filter(Boolean)
+    .join('、');
 }
 
 function ParseReviewSkeleton() {
@@ -255,6 +300,7 @@ function ParseReviewElement({
         return confirmation?.status || '-';
     }
   })();
+  const reasonText = reviewReasonText(confirmation?.review_reason, t as FilesTranslator);
 
   return (
     <article
@@ -279,8 +325,8 @@ function ParseReviewElement({
               </Badge>
             ) : null}
           </div>
-          {confirmation?.review_reason ? (
-            <p className="mt-2 text-sm text-warning">{confirmation.review_reason}</p>
+          {isPending && reasonText ? (
+            <p className="mt-2 text-sm text-warning">{reasonText}</p>
           ) : null}
         </div>
       </div>

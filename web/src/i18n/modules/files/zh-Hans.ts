@@ -45,6 +45,8 @@ const messages: FilesMessages = {
       toasts: {
         started: '已提交解析请求',
         failed: '解析请求提交失败',
+        batchStarted: '已提交 {count} 个解析请求',
+        batchFailed: '{count} 个解析请求提交失败',
       },
     },
   },
@@ -84,6 +86,8 @@ const messages: FilesMessages = {
     removeFromFavorites: '取消收藏',
     bulkDelete: '批量删除',
     batchParse: '批量解析',
+    batchParsing: '提交中...',
+    batchParseNoStoredOnly: '所选文件中没有可解析的仅存储文件。',
     batchMove: '批量移动',
     batchUnavailable: '该批量能力需要后端接口支持，当前暂不可用。',
     deleting: '删除中...',
@@ -302,6 +306,15 @@ const messages: FilesMessages = {
         kept: '已保留',
         edited: '已修改',
         ignored: '已忽略',
+      },
+      reviewReasons: {
+        lowConfidenceText: '文本识别置信度较低',
+        lowConfidenceTable: '表格识别置信度较低',
+        lowConfidenceImageOcr: '图片文字识别置信度较低',
+        reviewRequired: '解析器标记需人工确认',
+        ocrFallback: '使用了 OCR 兜底识别',
+        vlmFallback: '使用了视觉模型兜底识别',
+        tableStructureRisk: '表格结构可能不完整',
       },
       toasts: {
         resolved: '确认项已处理',

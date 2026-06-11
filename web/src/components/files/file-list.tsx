@@ -17,7 +17,6 @@ import {
   CalendarDays,
   HardDrive,
   Link2,
-  MoveRight,
   Activity,
   Info,
   FileSearch,
@@ -61,8 +60,6 @@ import { Badge } from '@/components/ui/badge';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { FilePreviewDialog } from './file-preview-dialog';
 import { isOriginalPreviewSupported } from '@/utils/file-helpers';
-import { useOrganizations } from '@/hooks/organization/use-organizations';
-import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 import { fileManageService } from '@/services/file-manage.service';
 import { StartFileParseDialog } from './start-file-parse-dialog';
 import { ReplaceDocumentDialog } from './replace-document-dialog';
@@ -255,24 +252,21 @@ function FileListBase({
   const { downloadFile, isDownloading } = useDownloadFile();
   const { deleteFiles, isDeleting } = useDeleteFiles();
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
-  const [workspaceMoveFile, setWorkspaceMoveFile] = useState<FileItem | null>(null);
   const [startParseFile, setStartParseFile] = useState<FileItem | null>(null);
   const [replaceDocumentFile, setReplaceDocumentFile] = useState<FileItem | null>(null);
   const [startingParseFileId, setStartingParseFileId] = useState<string | null>(null);
+  const [isBatchParsing, setIsBatchParsing] = useState(false);
   const [replacingFileId, setReplacingFileId] = useState<string | null>(null);
   const [reparsingFileId, setReparsingFileId] = useState<string | null>(null);
-  const { currentOrganization } = useOrganizations();
 
   // Permission checks
   const { hasPermission } = useAccountPermissions();
   const canDownload = hasPermission('file.download');
   const canManage = hasPermission('file.manage');
   const canUpload = hasPermission('file.upload_create');
-  const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
   const canViewDetail = !selectionMode;
   const canRequestProcessing = !selectionMode && (canManage || canUpload || canDownload);
-  const hasAnyAction =
-    canViewDetail || canRequestProcessing || canDownload || canManage || canMoveAssets;
+  const hasAnyAction = canViewDetail || canRequestProcessing || canDownload || canManage;
   const emptyDescription = mobileEmptyDescription
     ? mobileEmptyDescription
     : canUpload
@@ -370,6 +364,42 @@ function FileListBase({
       );
     } finally {
       setStartingParseFileId(null);
+    }
+  };
+
+  const handleBatchParse = async () => {
+    if (selectedStoredOnlyCount === 0 || isBatchParsing) return;
+    const targets = files.filter(
+      file => selectedFiles.includes(file.id) && getProcessingStatus(file) === 'stored_only'
+    );
+    if (targets.length === 0) return;
+
+    setIsBatchParsing(true);
+    try {
+      const results = await Promise.allSettled(
+        targets.map(file =>
+          fileManageService.createProcessingRequest(file.id, {
+            mode: 'parse_now',
+            target_level: 'vectorize',
+            force: false,
+            parse_provider: 'auto',
+          })
+        )
+      );
+      const failedCount = results.filter(result => result.status === 'rejected').length;
+      const successCount = targets.length - failedCount;
+      if (successCount > 0) {
+        toast.success(t('fileList.startParseDialog.toasts.batchStarted', { count: successCount }));
+      }
+      if (failedCount > 0) {
+        toast.error(t('fileList.startParseDialog.toasts.batchFailed', { count: failedCount }));
+      }
+      if (successCount > 0) {
+        onSelectionChange?.(selectedFiles.filter(id => !targets.some(file => file.id === id)));
+      }
+      await queryClient.invalidateQueries({ queryKey: [FILES_QUERY_KEY] });
+    } finally {
+      setIsBatchParsing(false);
     }
   };
 
@@ -807,25 +837,15 @@ function FileListBase({
               type="button"
               size="sm"
               className="h-8 rounded-md px-3 text-xs"
-              disabled
-              title={t('actions.batchUnavailable')}
+              onClick={handleBatchParse}
+              disabled={selectedStoredOnlyCount === 0 || isBatchParsing}
+              title={selectedStoredOnlyCount === 0 ? t('actions.batchParseNoStoredOnly') : undefined}
             >
               <FileSearch className="h-4 w-4" />
-              {t('actions.batchParse')}
+              {isBatchParsing ? t('actions.batchParsing') : t('actions.batchParse')}
               {selectedStoredOnlyCount > 0 ? (
                 <span className="ml-1 text-[11px] opacity-80">{selectedStoredOnlyCount}</span>
               ) : null}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-md px-3 text-xs shadow-none"
-              disabled
-              title={t('actions.batchUnavailable')}
-            >
-              <MoveRight className="h-4 w-4" />
-              {t('actions.batchMove')}
             </Button>
             {canManage ? (
               <Button
@@ -954,7 +974,6 @@ function FileListBase({
               const canPreviewOriginal =
                 canDownload && isOriginalPreviewSupported(file.extension, file.mime_type);
               const canDeleteFile = canManage && !selectionMode;
-              const canMoveFile = canMoveAssets && !selectionMode;
               const canReplaceDocument =
                 !selectionMode && canManage && Boolean(file.asset_id) && !isProcessingActive(processingStatus);
               const canShowActionsMenu =
@@ -962,8 +981,7 @@ function FileListBase({
                 canOpenFileDetail ||
                 canDownload ||
                 canReplaceDocument ||
-                canDeleteFile ||
-                canMoveFile;
+                canDeleteFile;
 
               return (
                 <TableRow
@@ -1198,17 +1216,6 @@ function FileListBase({
                                   {t('actions.delete')}
                                 </DropdownMenuItem>
                               ) : null}
-                              {canMoveFile ? (
-                                <DropdownMenuItem
-                                  onClick={e => {
-                                    e.stopPropagation();
-                                    setWorkspaceMoveFile(file);
-                                  }}
-                                >
-                                  <MoveRight className="h-4 w-4 mr-2" />
-                                  {common('assetMove.title')}
-                                </DropdownMenuItem>
-                              ) : null}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         ) : null}
@@ -1274,15 +1281,6 @@ function FileListBase({
         onConfirm={(file, replacementFile, processingMode, parseProvider) => {
           void handleReplaceDocument(file, replacementFile, processingMode, parseProvider);
         }}
-      />
-      <WorkspaceAssetMoveDialog
-        open={Boolean(workspaceMoveFile)}
-        onOpenChange={open => {
-          if (!open) setWorkspaceMoveFile(null);
-        }}
-        assetType="file"
-        assetId={workspaceMoveFile?.id ?? ''}
-        assetName={workspaceMoveFile?.name}
       />
     </div>
   );

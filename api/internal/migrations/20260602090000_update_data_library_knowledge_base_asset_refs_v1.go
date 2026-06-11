@@ -2,11 +2,11 @@ package migrations
 
 import mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 
-const migration20260602090000ID = "20260602090000_update_data_library_knowledge_base_asset_refs_v1"
+const migrationUpdateDataLibraryKnowledgeBaseAssetRefsV1ID = "20260602090000_update_data_library_knowledge_base_asset_refs_v1"
 
 func init() {
 	registerSchemaMigration(
-		migration20260602090000ID,
+		migrationUpdateDataLibraryKnowledgeBaseAssetRefsV1ID,
 		upUpdateDataLibraryKnowledgeBaseAssetRefsV1,
 		downUpdateDataLibraryKnowledgeBaseAssetRefsV1,
 	)

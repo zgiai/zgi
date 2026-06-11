@@ -161,13 +161,15 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 	}
 
 	quality, err := r.quality.CreateConfirmationItems(ctx, datalibraryservice.ParseArtifactQualityInput{
-		OrganizationID:  request.OrganizationID,
-		WorkspaceID:     asset.WorkspaceID,
-		AssetID:         asset.ID,
-		ProcessingRunID: runID,
-		GenerationNo:    generationNo,
-		CreatedBy:       request.RequestedBy,
-		Artifact:        artifact,
+		OrganizationID:      request.OrganizationID,
+		WorkspaceID:         asset.WorkspaceID,
+		AssetID:             asset.ID,
+		ProcessingRunID:     runID,
+		GenerationNo:        generationNo,
+		CreatedBy:           request.RequestedBy,
+		SourceFileExtension: uploadFile.Extension,
+		SourceFileMimeType:  uploadFile.MimeType,
+		Artifact:            artifact,
 	})
 	if err != nil {
 		return r.failRequest(ctx, request, asset, "quality_check_failed", err)

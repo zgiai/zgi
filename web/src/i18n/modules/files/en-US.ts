@@ -46,6 +46,8 @@ const messages = {
       toasts: {
         started: 'Parse request submitted',
         failed: 'Failed to submit parse request',
+        batchStarted: '{count} parse requests submitted',
+        batchFailed: '{count} parse requests failed to submit',
       },
     },
   },
@@ -85,6 +87,8 @@ const messages = {
     removeFromFavorites: 'Remove from Favorites',
     bulkDelete: 'Batch Delete',
     batchParse: 'Batch Parse',
+    batchParsing: 'Submitting...',
+    batchParseNoStoredOnly: 'No selected stored-only files can be parsed.',
     batchMove: 'Batch Move',
     batchUnavailable:
       'This batch capability requires backend API support and is not available yet.',
@@ -316,6 +320,15 @@ const messages = {
         kept: 'Kept',
         edited: 'Edited',
         ignored: 'Ignored',
+      },
+      reviewReasons: {
+        lowConfidenceText: 'Low text recognition confidence',
+        lowConfidenceTable: 'Low table recognition confidence',
+        lowConfidenceImageOcr: 'Low image OCR confidence',
+        reviewRequired: 'Parser marked this for human review',
+        ocrFallback: 'OCR fallback was used',
+        vlmFallback: 'Vision model fallback was used',
+        tableStructureRisk: 'Table structure may be incomplete',
       },
       toasts: {
         resolved: 'Review item resolved',
