@@ -62,6 +62,11 @@ func New(
 		}
 	}
 
+	workspaceID := strings.TrimSpace(graphInitParams.WorkspaceID)
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(graphInitParams.TenantID)
+	}
+
 	return &Node{
 		NodeStruct: base.NodeStruct{
 			InstanceID: id,
@@ -72,7 +77,7 @@ func New(
 			APPID:             graphInitParams.AppID,
 			WorkflowType:      string(graphInitParams.WorkflowType),
 			WorkflowID:        graphInitParams.WorkflowID,
-			WorkspaceID:       graphInitParams.TenantID,
+			WorkspaceID:       workspaceID,
 			OrganizationID:    graphInitParams.OrganizationID,
 			UserFrom:          string(graphInitParams.UserFrom),
 			UserID:            graphInitParams.UserID,

@@ -245,6 +245,60 @@ func TestWorkflowChainStartCallDatabaseEnd(t *testing.T) {
 	}
 }
 
+func TestNewPrefersCanonicalWorkspaceIDForAuditScope(t *testing.T) {
+	mockClient := &fakeSQLBase{
+		executeFunc: func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
+			return &sql_base.QueryResult{
+				RowsAffected: 0,
+				Columns:      []string{},
+				Rows:         [][]any{},
+			}, nil
+		},
+	}
+
+	nodeConfig := map[string]any{
+		"id": "call-db-node",
+		"data": map[string]any{
+			"data_source": map[string]any{
+				"id":   "pg-main",
+				"name": "main",
+				"type": "postgres",
+			},
+			"manual_sql": "SELECT 1",
+			"execution": map[string]any{
+				"timeout_seconds": 5,
+				"max_retries":     0,
+			},
+		},
+	}
+	initParams := entities.GraphInitParams{
+		TenantID:       "legacy-workspace",
+		WorkspaceID:    "canonical-workspace",
+		OrganizationID: "organization-1",
+		AppID:          "app-1",
+		WorkflowType:   entities.WorkflowTypeWorkflow,
+		WorkflowID:     "workflow-1",
+		GraphConfig:    map[string]any{},
+		UserID:         "user-1",
+		UserFrom:       entities.UserFromAccount,
+		InvokeFrom:     entities.InvokeFromDebugger,
+	}
+
+	node, err := New("call-instance", nodeConfig, initParams, &entities.Graph{}, entities.NewGraphRuntimeStateWithDefaults(), nil, mockClient)
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
+
+	runNode(t, context.Background(), node)
+
+	if mockClient.auditCtx == nil {
+		t.Fatal("audit context should be passed to sql base")
+	}
+	if mockClient.auditCtx.WorkspaceID != "canonical-workspace" {
+		t.Fatalf("workspace_id = %s, want canonical-workspace", mockClient.auditCtx.WorkspaceID)
+	}
+}
+
 func TestEnsureQuotedIdentifiers(t *testing.T) {
 	tableName := "zgi_base_tbl_183d2908-7e0c-4d14-81a0-d95e7c14fc09"
 	testCases := []struct {

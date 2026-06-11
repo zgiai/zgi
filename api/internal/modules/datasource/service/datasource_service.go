@@ -98,6 +98,7 @@ type dataSourceService struct {
 	promptRepo                repository.PromptRepository
 	sqlOperationRepo          repository.SQLOperationRepository
 	sqlBase                   sql_base.SQLBase
+	sqlAuditRecorder          audit.Recorder
 	accountService            interfaces.AccountService
 	fileService               interfaces.FileService
 	organizationService       interfaces.OrganizationService
@@ -109,7 +110,8 @@ type dataSourceService struct {
 
 // NewDataSourceService creates a new DataSourceService
 func NewDataSourceService(repo repository.DataSourceRepository, tableRepo repository.TableRepository, promptRepo repository.PromptRepository, sqlOperationRepo repository.SQLOperationRepository, accountService interfaces.AccountService, fileService interfaces.FileService, organizationService interfaces.OrganizationService, resourcePermissionService interfaces.ResourcePermissionService, quotaService interfaces.QuotaService, llmClient llmclient.LLMClient, db *gorm.DB) DataSourceService {
-	sqlBaseClient, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(audit.NewAsyncRecorder(sqlOperationRepo)))
+	sqlAuditRecorder := audit.NewAsyncRecorder(sqlOperationRepo)
+	sqlBaseClient, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(sqlAuditRecorder))
 	if err != nil {
 		panic("failed to create postgres meta client: " + err.Error())
 	}
@@ -120,6 +122,7 @@ func NewDataSourceService(repo repository.DataSourceRepository, tableRepo reposi
 		promptRepo:                promptRepo,
 		sqlOperationRepo:          sqlOperationRepo,
 		sqlBase:                   sqlBaseClient,
+		sqlAuditRecorder:          sqlAuditRecorder,
 		accountService:            accountService,
 		fileService:               fileService,
 		organizationService:       organizationService,
@@ -128,6 +131,13 @@ func NewDataSourceService(repo repository.DataSourceRepository, tableRepo reposi
 		llmClient:                 llmClient,
 		db:                        db,
 	}
+}
+
+func (s *dataSourceService) Close(ctx context.Context) error {
+	if s == nil || s.sqlAuditRecorder == nil {
+		return nil
+	}
+	return s.sqlAuditRecorder.Close(ctx)
 }
 
 // CreateDataSource creates a new data source

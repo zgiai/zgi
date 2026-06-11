@@ -623,6 +623,26 @@ func (c *ServiceContainer) GetSQLAuditRecorder() audit.Recorder {
 	return c.sqlAuditRecorder
 }
 
+func (c *ServiceContainer) CloseSQLAuditRecorder(ctx context.Context) error {
+	if c == nil || c.sqlAuditRecorder == nil {
+		return nil
+	}
+	return c.sqlAuditRecorder.Close(ctx)
+}
+
+func (c *ServiceContainer) CloseDataSourceSQLAuditRecorder(ctx context.Context) error {
+	if c == nil || c.dataSourceService == nil {
+		return nil
+	}
+	closer, ok := c.dataSourceService.(interface {
+		Close(context.Context) error
+	})
+	if !ok {
+		return nil
+	}
+	return closer.Close(ctx)
+}
+
 func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
 	if c.sqlBase == nil {
 		client, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(c.GetSQLAuditRecorder()))
