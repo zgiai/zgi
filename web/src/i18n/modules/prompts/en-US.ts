@@ -101,10 +101,17 @@ const messages = {
     title: 'Optimize prompt',
     description:
       'Use the built-in optimizer to rewrite a raw prompt into stronger, production-ready prompt variants.',
+    inputPanelLabel: 'Input & settings',
+    inputPanelDescription: 'Review the prompt, edit request, and optimization settings in order.',
+    settingsPanelLabel: 'Optimization settings',
+    settingsPanelDescription: 'Choose the model, target, length guardrail, and variable protection.',
+    waitingTitle: 'Waiting for optimization',
+    errorStateTitle: 'Optimization did not finish',
+    errorStateDescription: 'Adjust the input or settings, then start optimization again.',
     goalLabel: 'Optimization goal',
     sourceLabel: 'Raw prompt',
     sourceHelpDescription:
-      'Paste the prompt you want to improve here, then click an optimization goal to run it.',
+      'Paste the prompt you want to improve here, choose a goal, then start optimization.',
     prefilledSourceDescription:
       'If content is already loaded here, you can edit it directly before running the optimizer.',
     resetSource: 'Restore original',
@@ -124,12 +131,21 @@ const messages = {
     variantHint:
       'You will get one stronger result. If it is not ideal, adjust the goal or run it again.',
     copy: 'Copy result',
+    copyPartial: 'Copy partial result',
     apply: 'Apply result',
     run: 'Optimize now',
     rerun: 'Retry optimization',
     running: 'Optimizing...',
     runningDescription: 'Generating a better prompt with the hidden optimizer...',
-    emptyState: 'Enter a raw prompt and click an optimization goal to generate an improved result.',
+    emptyState: 'Enter a raw prompt, choose an optimization goal, then start optimization.',
+    editInstructionLabel: 'Edit request',
+    editInstructionDescription:
+      'Optional. Tell the AI what to strengthen, shorten, preserve, or change this time.',
+    editInstructionPlaceholder:
+      'For example: only strengthen tool-use rules, keep the existing structure, make the tone more formal, shorten to 800 characters',
+    targetMaxChars: 'Target result: no more than {count} characters',
+    truncatedWarning:
+      'The optimization result was cut off by the model output limit. Shorten the edit request or retry optimization; truncated results cannot be applied.',
     progress: {
       title: 'Optimization progress',
       steps: {

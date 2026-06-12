@@ -118,6 +118,8 @@ export interface PromptOptimizeRequest {
   model?: string;
   prompt_id?: string;
   language?: string;
+  edit_instruction?: string;
+  target_max_chars?: number;
 }
 
 export interface PromptOptimizeResult {
@@ -127,6 +129,9 @@ export interface PromptOptimizeResult {
   run_id: string;
   output: string;
   variants: Record<PromptOptimizerVariant, string>;
+  truncated?: boolean;
+  finish_reason?: string;
+  target_max_chars?: number;
 }
 
 export interface PromptPlaygroundRequest {
