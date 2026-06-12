@@ -37,6 +37,8 @@ import {
   UserMessageToolbar,
 } from '@/components/chat/variants/aichat/message-toolbars';
 import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
+import { MarkdownImage } from '@/components/common/markdown-image';
+import { isOriginalPreviewImage } from '@/utils/file-helpers';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   getAIChatMessageErrorInput,
@@ -69,6 +71,9 @@ interface AIChatMessageBubbleProps {
   showSkillEventDetails?: boolean;
 }
 
+const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
+const EMPTY_GENERATED_FILES: AIChatGeneratedFile[] = [];
+
 function formatAIChatTime(timestamp: number): string {
   if (!timestamp) return '';
 
@@ -100,6 +105,29 @@ function formatFileSize(size: number): string {
 function formatGeneratedFileExtension(file: AIChatGeneratedFile): string {
   const extension = file.extension || file.filename.split('.').pop() || '';
   return extension.replace(/^\./, '').toUpperCase();
+}
+
+function generatedFilePreviewUrl(file: AIChatGeneratedFile): string {
+  return file.url || '';
+}
+
+function generatedImagePreviewFiles(
+  answer: string,
+  generatedFiles: AIChatGeneratedFile[],
+  shouldShow: boolean
+): AIChatGeneratedFile[] {
+  if (!shouldShow || generatedFiles.length === 0) {
+    return [];
+  }
+
+  return generatedFiles.filter(file => {
+    const previewUrl = generatedFilePreviewUrl(file);
+    if (!previewUrl) return false;
+    if (!isOriginalPreviewImage(file.extension, file.mime_type)) return false;
+    if (answer.includes(previewUrl)) return false;
+    if (file.download_url && answer.includes(file.download_url)) return false;
+    return true;
+  });
 }
 
 interface AIChatHistoryImagePreviewProps {
@@ -264,6 +292,30 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   );
 }
 
+interface AIChatGeneratedImagePreviewsProps {
+  files: AIChatGeneratedFile[];
+}
+
+function AIChatGeneratedImagePreviews({ files }: AIChatGeneratedImagePreviewsProps) {
+  if (files.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 flex max-w-full flex-col items-start gap-3">
+      {files.map(file => (
+        <MarkdownImage
+          key={file.file_id || generatedFilePreviewUrl(file)}
+          src={generatedFilePreviewUrl(file)}
+          alt={file.filename}
+          className="block max-w-full"
+          imageClassName="max-w-full"
+        />
+      ))}
+    </div>
+  );
+}
+
 function AIChatUserInputRequestCard({ request }: { request: AIChatUserInputRequest }) {
   const t = useT('webapp');
   const questions = (request.questions ?? []).filter(question => question.question?.trim());
@@ -355,7 +407,6 @@ export function AIChatMessageBubble({
     message.metadata?.sensitiveOutputBlocked === true ||
     isSensitiveOutputBlockedValue(message.answer);
   const displayAnswer = isSensitiveBlocked ? tCommon('sensitiveOutput.blocked') : message.answer;
-  const answer = displayAnswer.trim();
   const hasParent = Boolean(message.parent_id);
   const branchCount = branchNavigation?.total ?? 1;
   const canCreateBranch = hasParent && branchCount < MAX_AICHAT_BRANCHES;
@@ -367,8 +418,14 @@ export function AIChatMessageBubble({
   const toolbarVisibility = isLastMessage
     ? 'opacity-100'
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
-  const files = message.metadata?.files ?? [];
-  const generatedFiles = message.metadata?.generated_files ?? [];
+  const files = message.metadata?.files ?? EMPTY_MESSAGE_FILES;
+  const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
+  const generatedImagePreviewFilesForDisplay = useMemo(
+    () => generatedImagePreviewFiles(displayAnswer, generatedFiles, !isSensitiveBlocked),
+    [displayAnswer, generatedFiles, isSensitiveBlocked]
+  );
+  const hasGeneratedImagePreviews = generatedImagePreviewFilesForDisplay.length > 0;
+  const answer = displayAnswer.trim();
   const userInputRequest = hideUserInputRequest ? undefined : message.metadata?.user_input_request;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
@@ -571,15 +628,17 @@ export function AIChatMessageBubble({
                 renderIdentity={message.id}
               />
             </div>
-          ) : isStreaming && !hasTimeline && !userInputRequest ? (
+          ) : isStreaming && !hasTimeline && !userInputRequest && !hasGeneratedImagePreviews ? (
             <div className="space-y-2 pt-1">
               <Skeleton className="h-4 w-2/3" />
               <Skeleton className="h-4 w-1/2" />
               <Skeleton className="h-4 w-3/4" />
             </div>
-          ) : isStopped ? (
+          ) : isStopped && !hasGeneratedImagePreviews ? (
             <div className="text-sm text-muted-foreground">{t('consoleChat.stopped')}</div>
           ) : null}
+
+          <AIChatGeneratedImagePreviews files={generatedImagePreviewFilesForDisplay} />
 
           {generatedFiles.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-2">
