@@ -934,6 +934,42 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 				"filename":     "quarterly-report",
 			},
 		},
+		SkillSensitiveRedaction + "/redact_text": {
+			SkillID:     SkillSensitiveRedaction,
+			ToolName:    "redact_text",
+			Description: "Detect and redact sensitive information from text. Use only after source text or parsed document content is available. Never pass unredacted content to file generation; call this tool first.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"text":     stringValueSchema("Source text to redact. Required. Do not pass binary file contents."),
+					"level":    enumStringSchema("Redaction level. Defaults to medium. Use high for external sharing, model training, logs, contracts, resumes, HR data, or customer data.", []string{"low", "medium", "high"}),
+					"strategy": enumStringSchema("Redaction strategy. Defaults to auto. Secrets, tokens, passwords, and private keys are fully hidden even under partial strategy.", []string{"auto", "partial", "full", "label"}),
+					"preserve_rules": objectSchema(
+						map[string]interface{}{
+							"keep_last_digits":  numberSchema("How many trailing digits to keep for partial masking. Must be 0-8. Defaults to 4."),
+							"keep_email_domain": booleanSchema("Whether to keep email domains during partial masking. Defaults to true."),
+							"keep_city":         booleanSchema("Whether to keep city-level address context during partial masking. Defaults to false."),
+							"keep_url_domain":   booleanSchema("Whether to keep URL domain/path while redacting sensitive query parameters. Defaults to true."),
+						},
+						nil,
+					),
+					"entity_types": map[string]interface{}{
+						"description": "Optional entity type filter. Omit to scan all supported types.",
+						"oneOf": []interface{}{
+							arraySchema("Entity types to scan.", enumStringSchema("Entity type.", []string{"phone", "email", "id_card", "bank_card", "address", "name", "customer_name", "company", "order_id", "contract_id", "secret", "token", "password", "private_key", "ip", "url_parameter"})),
+							stringValueSchema("Comma-separated entity types or JSON array string."),
+						},
+					},
+					"locale":             enumStringSchema("Locale hint. Defaults to auto.", []string{"auto", "zh-CN", "en-US"}),
+					"include_field_list": booleanSchema("Whether to return redacted field summaries. Defaults to true. Field summaries never contain complete original sensitive values."),
+				},
+				[]string{"text"},
+			),
+			Example: map[string]interface{}{
+				"text":     "Name: Zhang San, phone: 13812345678, token=abcdef1234567890",
+				"level":    "high",
+				"strategy": "auto",
+			},
+		},
 		SkillChartGenerator + "/generate_chart": {
 			SkillID:     SkillChartGenerator,
 			ToolName:    "generate_chart",

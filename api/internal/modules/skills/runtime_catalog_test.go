@@ -208,6 +208,55 @@ func TestContentSummarySystemSkillMetadata(t *testing.T) {
 	}
 }
 
+func TestSensitiveRedactionSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillSensitiveRedaction})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillSensitiveRedaction)
+	if !ok {
+		t.Fatalf("sensitive redaction skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypeHybrid {
+		t.Fatalf("runtime type = %q, want hybrid", doc.Metadata.RuntimeType)
+	}
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"redact_text"}) {
+		t.Fatalf("tools = %v, want redact_text", got)
+	}
+	tool, ok := findSkillTool(*doc, "redact_text")
+	if !ok {
+		t.Fatalf("expected redact_text tool")
+	}
+	if tool.ProviderType != "builtin" || tool.ProviderID != "sensitive_redaction" {
+		t.Fatalf("tool provider = %s/%s, want builtin/sensitive_redaction", tool.ProviderType, tool.ProviderID)
+	}
+	for _, trigger := range []string{"PII redaction", "手机号脱敏", "Token 脱敏", "password redaction", "privacy cleanup"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) {
+			t.Fatalf("description missing trigger %q: %q", trigger, doc.Metadata.Description)
+		}
+	}
+	for _, required := range []string{
+		"Do not directly read, parse, extract, OCR, or inspect uploaded files or images.",
+		"call `redact_text`",
+		"Do not show complete original sensitive values in the final answer.",
+		"pass only the redacted content to `file-generator`",
+		"rule-based redaction may miss context-dependent",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 5 {
+		t.Fatalf("references = %#v, want 5 sensitive redaction references", doc.Metadata.References)
+	}
+	for _, path := range []string{"personal-identifiers.md", "business-identifiers.md", "secrets-technical.md", "redaction-strategies.md", "document-export.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
 func TestEmailWritingSystemSkillMetadata(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillEmailWriting})
@@ -252,6 +301,56 @@ func TestEmailWritingSystemSkillMetadata(t *testing.T) {
 		t.Fatalf("references = %#v, want 8 email writing references", doc.Metadata.References)
 	}
 	for _, path := range []string{"business-email.md", "follow-up-email.md", "meeting-invitation.md", "reminder-email.md", "apology-explanation.md", "announcement-email.md", "report-delivery.md", "polish-existing-draft.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
+func TestDecisionSupportSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillDecisionSupport})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillDecisionSupport)
+	if !ok {
+		t.Fatalf("decision support skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if len(doc.Tools) != 0 {
+		t.Fatalf("tools = %v, want none", doc.Tools)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected decision support not to have scripts")
+	}
+	for _, trigger := range []string{"technical choice", "prioritization", "risk-benefit", "option comparison", "decision review"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) {
+			t.Fatalf("description missing trigger %q: %q", trigger, doc.Metadata.Description)
+		}
+	}
+	for _, boundary := range []string{"does not read, write, update, delete, or manage agent memory itself", "structured decision support only"} {
+		if !strings.Contains(doc.Metadata.WhenToUse, boundary) {
+			t.Fatalf("when_to_use missing boundary %q: %q", boundary, doc.Metadata.WhenToUse)
+		}
+	}
+	for _, required := range []string{
+		"call `request_user_input` instead of writing a normal Markdown clarification",
+		"Agent memory is a lower-layer capability.",
+		"Do not read, write, update, delete, or manage memory through this skill.",
+		"Do not invent market data, customer commitments, costs, dates, team capacity, legal terms, financial numbers, security facts, or contract clauses.",
+		"route that downstream task to the appropriate skill",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 6 {
+		t.Fatalf("references = %#v, want 6 decision support references", doc.Metadata.References)
+	}
+	for _, path := range []string{"product-feature-decision.md", "technical-choice.md", "project-prioritization.md", "customer-solution.md", "management-decision.md", "decision-review.md"} {
 		if !hasReference(doc.Metadata.References, path) {
 			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
 		}
@@ -400,6 +499,56 @@ func TestImageGeneratorSystemSkillMetadata(t *testing.T) {
 		t.Fatalf("references = %#v, want 7 image generator references", doc.Metadata.References)
 	}
 	for _, path := range []string{"text-to-image.md", "reference-variant.md", "image-edit.md", "marketing-material.md", "poster-concept.md", "product-scene.md", "style-guide.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
+func TestTicketRoutingSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillTicketRouting})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillTicketRouting)
+	if !ok {
+		t.Fatalf("ticket routing skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if len(doc.Tools) != 0 {
+		t.Fatalf("tools = %v, want none", doc.Tools)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected ticket routing not to have scripts")
+	}
+	for _, trigger := range []string{"ticket routing", "ticket triage", "issue classification", "urgency", "department routing", "workspace routing"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) {
+			t.Fatalf("description missing trigger %q: %q", trigger, doc.Metadata.Description)
+		}
+	}
+	if !strings.Contains(doc.Metadata.WhenToUse, "routing recommendations only") || !strings.Contains(doc.Metadata.WhenToUse, "file-generator") {
+		t.Fatalf("when_to_use does not include routing/export boundaries: %q", doc.Metadata.WhenToUse)
+	}
+	for _, required := range []string{
+		"does not perform real ticket creation, dispatch",
+		"Do not invent workspace IDs",
+		"request_user_input",
+		"需人工确认",
+		"信息不足，需补充确认",
+		"Do not claim a ticket was dispatched",
+		"Language Rules",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 6 {
+		t.Fatalf("references = %#v, want 6 ticket routing references", doc.Metadata.References)
+	}
+	for _, path := range []string{"generic-routing.md", "property-service.md", "enterprise-department-routing.md", "urgency-level.md", "customer-reply.md", "workspace-mapping.md"} {
 		if !hasReference(doc.Metadata.References, path) {
 			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
 		}
@@ -629,6 +778,7 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 		SkillAgentDatabase,
 		SkillCalculator,
 		SkillFileGenerator,
+		SkillSensitiveRedaction,
 		SkillChartGenerator,
 		SkillIntentRouter,
 		SkillImageGenerator,
@@ -660,6 +810,7 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		{SkillFileGenerator, "generate_docx", []string{"document"}},
 		{SkillFileGenerator, "generate_pdf", []string{"html"}},
 		{SkillFileGenerator, "generate_pptx", []string{"presentation"}},
+		{SkillSensitiveRedaction, "redact_text", []string{"text"}},
 		{SkillChartGenerator, "generate_chart", []string{"chart_type", "data"}},
 		{SkillIntentRouter, "route_intent", []string{"user_input", "intent_id", "task_type", "confidence", "recommended_action", "evidence", "normalized_request"}},
 		{SkillImageGenerator, "generate_image", []string{"prompt"}},
@@ -744,6 +895,7 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		SkillAgentDatabase,
 		SkillCalculator,
 		SkillFileGenerator,
+		SkillSensitiveRedaction,
 		SkillChartGenerator,
 		SkillIntentRouter,
 		SkillImageGenerator,
