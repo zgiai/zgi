@@ -279,6 +279,106 @@ func TestParsePPTXDocumentSpecNormalizesAndRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestParsePPTXDocumentSpecAppliesSafeAutoLayout(t *testing.T) {
+	raw := `{
+  "slides": [
+    {"elements": [
+      {"type": "title", "text": "活动背景", "style": {"font_size": 30}},
+      {"type": "text", "text": "围绕线下活动的参与动机、传播节奏和现场转化进行说明。", "style": {"font_size": 20}},
+      {"type": "text", "text": "通过分层触达提升报名质量，并在活动后沉淀可复用内容。", "style": {"font_size": 20}}
+    ]}
+  ]
+}`
+	spec, normalized, err := parsePPTXDocumentSpec(raw)
+	require.NoError(t, err)
+	require.Contains(t, normalized, `"x":0.6`)
+
+	elements := spec.Slides[0].Elements
+	require.Len(t, elements, 3)
+	for idx := range elements {
+		require.NotNil(t, elements[idx].X, "element %d x", idx)
+		require.NotNil(t, elements[idx].Y, "element %d y", idx)
+		require.NotNil(t, elements[idx].W, "element %d w", idx)
+		require.NotNil(t, elements[idx].H, "element %d h", idx)
+	}
+	require.Greater(t, *elements[1].Y, *elements[0].Y+*elements[0].H)
+	require.Greater(t, *elements[2].Y, *elements[1].Y+*elements[1].H)
+}
+
+func TestParsePPTXDocumentSpecAllowsVisibleBleedShapes(t *testing.T) {
+	_, normalized, err := parsePPTXDocumentSpec(`{
+  "slides": [
+    {"elements": [
+      {"type": "shape", "fill_color": "F59E0B", "x": -0.4, "y": -0.2, "w": 2.2, "h": 0.35}
+    ]}
+  ]
+}`)
+	require.NoError(t, err)
+	require.Contains(t, normalized, `"x":-0.4`)
+	require.Contains(t, normalized, `"y":-0.2`)
+}
+
+func TestParsePPTXDocumentSpecWrapsLongChineseText(t *testing.T) {
+	raw := `{
+  "slides": [
+    {"elements": [
+      {"type": "text", "text": "` + strings.Repeat("雨天社交新主张", 20) + `", "x": 0.8, "y": 1, "w": 7.5, "h": 4, "style": {"font_size": 16}}
+    ]}
+  ]
+}`
+	spec, normalized, err := parsePPTXDocumentSpec(raw)
+	require.NoError(t, err)
+
+	element := spec.Slides[0].Elements[0]
+	require.Contains(t, element.Text, "\n")
+	require.Contains(t, normalized, `\n`)
+	measure := measurePPTXText(element.Text, &element, spec.DefaultStyle, *element.W, false)
+	require.LessOrEqual(t, measure.LongestLineUnits, measure.LineCapacity+pptxLayoutEpsilon)
+	require.LessOrEqual(t, measure.EstimatedHeight, *element.H+pptxFitHeightSlack(*element.H))
+}
+
+func TestParsePPTXDocumentSpecRejectsBadLayout(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "off canvas",
+			raw:  `{"slides":[{"elements":[{"type":"shape","fill_color":"F59E0B","x":-1.5,"y":0,"w":0.5,"h":0.5}]}]}`,
+			want: "must be at least partially visible",
+		},
+		{
+			name: "overlap",
+			raw:  `{"slides":[{"elements":[{"type":"text","text":"first","x":1,"y":1,"w":4,"h":1},{"type":"text","text":"second","x":1.5,"y":1.2,"w":4,"h":1}]}]}`,
+			want: "overlaps",
+		},
+		{
+			name: "content outside slide",
+			raw:  `{"slides":[{"elements":[{"type":"text","text":"too low","x":1,"y":7.1,"w":4,"h":0.8}]}]}`,
+			want: "content box must fit within the slide bounds",
+		},
+		{
+			name: "explicit text overflow",
+			raw:  `{"slides":[{"elements":[{"type":"text","text":"` + strings.Repeat("雨天社交新主张", 40) + `","x":0.8,"y":1,"w":3.5,"h":0.6,"style":{"font_size":18}}]}]}`,
+			want: "text does not fit",
+		},
+		{
+			name: "auto text overflow",
+			raw:  `{"slides":[{"elements":[{"type":"text","text":"` + strings.Repeat("超长中文内容用于验证自动布局无法塞进单页时会提示拆分。", 80) + `","style":{"font_size":24}}]}]}`,
+			want: "content box must fit within the slide bounds",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := parsePPTXDocumentSpec(tt.raw)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
 func TestBuildHTMLPDFDocumentWrapsHTMLAndCSS(t *testing.T) {
 	document := buildHTMLPDFDocument("<main><h1>Hello</h1></main>", "@page { size: A4; }", "Report <Draft>")
 	require.Contains(t, document, `Content-Security-Policy`)
@@ -340,6 +440,11 @@ func TestRenderPPTXUsesSandbox(t *testing.T) {
 	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXSpecPath], "Styled Deck")
 	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], "pptxgenjs")
 	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], "createRequire")
+	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], "wrapTextForBox")
+	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], "opts.lineSpacingMultiple = merged.line_spacing")
+	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], "opts.lineSpacingMultiple = element.line_spacing")
+	require.NotContains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], "opts.lineSpacing = merged.line_spacing")
+	require.NotContains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], "opts.lineSpacing = element.line_spacing")
 	require.Contains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], `pptx.lang = spec.language || "en-US"`)
 	require.NotContains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], `pptx.lang = "zh-CN"`)
 	require.NotContains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], `import pptxgen from "pptxgenjs"`)
