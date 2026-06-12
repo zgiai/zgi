@@ -29,7 +29,7 @@ func NewEditImageTool(tenantID string, fileService ReferenceImageFileService, ll
 		},
 		Description: tools.ToolDescription{
 			Human: tools.I18nText{"en_US": "Create reference-image variants or edit-style regenerated images.", "zh_Hans": "Create reference-image variants or edit-style regenerated images."},
-			LLM:   "Create prompt-plus-reference-URL variants or edit-style regenerated images from a current-user reference image and instruction. Supports background, color, add_element, remove_element, style_transfer, and variant requests as regeneration guidance only. This is not precise in-place editing and does not pass structured image input to the provider. For ambiguous edits, call request_user_input before this tool. Do not use for OCR, image understanding, illegal/sexual/graphic/infringing imagery, or specific living-person likeness generation.",
+			LLM:   "Create prompt-plus-reference-URL variants or edit-style regenerated images from a current-user reference image and instruction. Supports background, color, add_element, remove_element, style_transfer, and variant requests as regeneration guidance only. This is not precise in-place editing and does not pass structured image input to the provider. For casual, vague, incomplete, or non-professional edit requests, use prompt-professionalizer before this tool; for ambiguous edits, call request_user_input before this tool. Do not use for OCR, image understanding, illegal/sexual/graphic/infringing imagery, or specific living-person likeness generation.",
 		},
 		Parameters: imageGenerationParameters(true),
 		OutputType: "file",

@@ -10,6 +10,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	architecturediagrampkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/architecturediagram"
 	calculatorpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
 	filegeneratorpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
 	intentrouterpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/intentrouter"
@@ -448,6 +449,23 @@ func TestRuntime_ValidateCatalog_AcceptsIntentRouterSkill(t *testing.T) {
 	}
 }
 
+func TestRuntime_ValidateCatalog_AcceptsArchitectureDiagramSkill(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeArchitectureDiagramSkill(t, catalogDir)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	if err := runtime.ValidateCatalog(context.Background()); err != nil {
+		t.Fatalf("ValidateCatalog() error = %v", err)
+	}
+	contract, ok := skills.SkillToolArgumentContractFor("architecture-diagram-generator", "generate_architecture_diagram")
+	if !ok {
+		t.Fatal("architecture diagram contract missing")
+	}
+	if contract.Schema["properties"] == nil || !strings.Contains(fmt.Sprintf("%#v", contract.Schema), "comparison_matrix") || !strings.Contains(fmt.Sprintf("%#v", contract.Schema), "entities") {
+		t.Fatalf("architecture diagram contract = %#v, want diagram type and data branches", contract.Schema)
+	}
+}
+
 func TestRuntime_ValidateCatalog_RejectsMissingTool(t *testing.T) {
 	catalogDir := t.TempDir()
 	timeDir := filepath.Join(catalogDir, "time")
@@ -531,6 +549,9 @@ func newSkillRuntimeFromCatalog(t *testing.T, catalogDir string) *skills.Runtime
 	if err := manager.RegisterProvider(calculatorpkg.NewProvider()); err != nil {
 		t.Fatalf("RegisterProvider() error = %v", err)
 	}
+	if err := manager.RegisterProvider(architecturediagrampkg.NewProvider()); err != nil {
+		t.Fatalf("RegisterProvider() error = %v", err)
+	}
 	if err := manager.RegisterProvider(filegeneratorpkg.NewProvider()); err != nil {
 		t.Fatalf("RegisterProvider() error = %v", err)
 	}
@@ -570,6 +591,11 @@ func writeFileGeneratorSkill(t *testing.T, catalogDir string) {
 func writeIntentRouterSkill(t *testing.T, catalogDir string) {
 	t.Helper()
 	writeSkillMarkdown(t, catalogDir, "intent-router", testIntentRouterSkillMarkdown())
+}
+
+func writeArchitectureDiagramSkill(t *testing.T, catalogDir string) {
+	t.Helper()
+	writeSkillMarkdown(t, catalogDir, "architecture-diagram-generator", testArchitectureDiagramSkillMarkdown())
 }
 
 func writeSkillMarkdown(t *testing.T, catalogDir string, skillID string, markdown string) {
@@ -732,6 +758,26 @@ timeout_seconds: 5
 # Intent Router Skill
 
 Always load this skill before routing ambiguous user requests.
+`
+}
+
+func testArchitectureDiagramSkillMarkdown() string {
+	return `---
+name: architecture-diagram-generator
+description: Generate technical architecture diagrams.
+when_to_use: Use for system architecture, Agent architecture, data flow, flowchart, matrix, sequence, state, and ER diagrams.
+provider_type: builtin
+provider_id: architecture_diagram_generator
+runtime_type: tool
+tools:
+  - generate_architecture_diagram
+max_calls_per_turn: 3
+timeout_seconds: 10
+---
+
+# Architecture Diagram Generator Skill
+
+Always load this skill before generating architecture diagrams.
 `
 }
 

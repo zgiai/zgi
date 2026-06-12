@@ -490,6 +490,8 @@ func TestImageGeneratorSystemSkillMetadata(t *testing.T) {
 		"copyright, trademark, portrait rights, and brand compliance",
 		"Do not handle OCR, image recognition, table extraction, or screenshot diagnosis",
 		"prompt-plus-reference-URL regeneration",
+		"prompt-professionalizer",
+		"Direct tool calls are allowed only when the prompt and key parameters are already complete",
 	} {
 		if !strings.Contains(doc.Instructions, required) {
 			t.Fatalf("instructions missing %q", required)
@@ -555,6 +557,126 @@ func TestTicketRoutingSystemSkillMetadata(t *testing.T) {
 	}
 }
 
+func TestPromptProfessionalizerSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillPromptProfessionalizer})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillPromptProfessionalizer)
+	if !ok {
+		t.Fatalf("prompt professionalizer skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if len(doc.Tools) != 0 {
+		t.Fatalf("tools = %v, want none", doc.Tools)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected prompt professionalizer not to have scripts")
+	}
+	for _, trigger := range []string{"optimize prompt", "professional prompt", "image prompt", "video prompt", "architecture diagram prompt", "data visualization prompt", "chart prompt"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) {
+			t.Fatalf("description missing trigger %q: %q", trigger, doc.Metadata.Description)
+		}
+	}
+	if !strings.Contains(doc.Metadata.WhenToUse, "does not directly generate images") || !strings.Contains(doc.Metadata.WhenToUse, "corresponding skill or tool") || !strings.Contains(doc.Metadata.WhenToUse, "required preflight step before professional generation tools") {
+		t.Fatalf("when_to_use does not include downstream tool boundaries: %q", doc.Metadata.WhenToUse)
+	}
+	for _, required := range []string{
+		"Preflight Requirement",
+		"image-generator",
+		"architecture-diagram-generator",
+		"chart-generator",
+		"request_user_input",
+		"Do not directly call downstream generation tools",
+		"Before professional generation tools, use this skill as the required preflight",
+		"Do not invent facts, data fields, metrics, dimensions, technical modules",
+		"默认假设",
+		"Do not simply polish wording",
+		"Language Rules",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 6 {
+		t.Fatalf("references = %#v, want 6 prompt professionalizer references", doc.Metadata.References)
+	}
+	for _, path := range []string{"image-prompt.md", "video-prompt.md", "architecture-diagram-prompt.md", "data-visualization-prompt.md", "general-prompt-optimization.md", "clarification-rules.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
+func TestArchitectureDiagramSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillArchitectureDiagram})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillArchitectureDiagram)
+	if !ok {
+		t.Fatalf("architecture diagram skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypeTool {
+		t.Fatalf("runtime type = %q, want tool", doc.Metadata.RuntimeType)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected architecture diagram not to have scripts")
+	}
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"generate_architecture_diagram"}) {
+		t.Fatalf("tools = %v, want generate_architecture_diagram", got)
+	}
+	tool, ok := findSkillTool(*doc, "generate_architecture_diagram")
+	if !ok {
+		t.Fatalf("expected generate_architecture_diagram tool")
+	}
+	if tool.ProviderType != "builtin" || tool.ProviderID != "architecture_diagram_generator" {
+		t.Fatalf("tool provider = %s/%s, want builtin/architecture_diagram_generator", tool.ProviderType, tool.ProviderID)
+	}
+	if got := doc.Metadata.Display.Label["zh_Hans"]; got != "架构图生成器" {
+		t.Fatalf("zh label = %q", got)
+	}
+	if got := doc.Metadata.Display.Description["zh_Hans"]; got != "根据自然语言或结构化数据生成 SVG 和 HTML 技术架构图。" {
+		t.Fatalf("zh description = %q", got)
+	}
+	if got := doc.Metadata.Display.WhenToUse["zh_Hans"]; got != "当回答需要生成技术架构图文件时使用。" {
+		t.Fatalf("zh when_to_use = %q", got)
+	}
+	if got := doc.Metadata.Display.Tags["zh_Hans"]; !sameStrings(got, []string{"架构图", "技术图", "可视化"}) {
+		t.Fatalf("zh tags = %v", got)
+	}
+	for _, trigger := range []string{"system diagram", "AI Agent architecture", "data flow diagram", "sequence diagram", "ER diagram"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) && !strings.Contains(doc.Metadata.WhenToUse, trigger) {
+			t.Fatalf("metadata missing trigger %q: description=%q when_to_use=%q", trigger, doc.Metadata.Description, doc.Metadata.WhenToUse)
+		}
+	}
+	for _, required := range []string{
+		"request_user_input",
+		"Read exactly one reference document",
+		"Generate SVG and HTML artifacts only",
+		"Do not promise PNG, PDF",
+		"Unsupported diagram types must be reported as unsupported",
+		"prompt-professionalizer",
+		"Direct tool calls are allowed only when the diagram type, content, and key rendering requirements are already complete",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 8 {
+		t.Fatalf("references = %#v, want 8 architecture diagram references", doc.Metadata.References)
+	}
+	for _, path := range []string{"diagram-system-architecture.md", "diagram-agent-architecture.md", "diagram-data-flow.md", "diagram-flowchart.md", "diagram-comparison-matrix.md", "diagram-sequence.md", "diagram-state.md", "diagram-er.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
 func TestChartGeneratorSystemSkillMetadata(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillChartGenerator})
@@ -589,6 +711,18 @@ func TestChartGeneratorSystemSkillMetadata(t *testing.T) {
 	}
 	if got := doc.Metadata.Display.Tags["zh_Hans"]; !sameStrings(got, []string{"图表", "可视化", "数据"}) {
 		t.Fatalf("zh tags = %v", got)
+	}
+	for _, required := range []string{
+		"request_user_input",
+		"Read exactly one reference document",
+		"Generate SVG artifacts only",
+		"Unsupported chart types must be reported as unsupported",
+		"prompt-professionalizer",
+		"Direct tool calls are allowed only when the chart type, data mapping, title or purpose, and key rendering requirements are already complete",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
 	}
 	if len(doc.Metadata.References) != 7 {
 		t.Fatalf("references = %#v, want 7 chart references", doc.Metadata.References)
@@ -627,6 +761,45 @@ func TestIntentRouterSystemSkillMetadata(t *testing.T) {
 		if !hasReference(doc.Metadata.References, path) {
 			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
 		}
+	}
+}
+
+func TestProfessionalGenerationSkillsAutoIncludePromptProfessionalizer(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	for _, skillID := range []string{SkillImageGenerator, SkillArchitectureDiagram, SkillChartGenerator} {
+		t.Run(skillID, func(t *testing.T) {
+			resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{skillID})
+			if err != nil {
+				t.Fatalf("ResolveEnabledSkills() error = %v", err)
+			}
+			if _, ok := resolved.Get(skillID); !ok {
+				t.Fatalf("requested skill %s was not resolved", skillID)
+			}
+			if _, ok := resolved.Get(SkillPromptProfessionalizer); !ok {
+				t.Fatalf("%s did not auto-include %s", skillID, SkillPromptProfessionalizer)
+			}
+		})
+	}
+}
+
+func TestProfessionalGenerationToolsRequirePromptProfessionalizerPreflight(t *testing.T) {
+	for _, tt := range []struct {
+		skillID  string
+		toolName string
+	}{
+		{SkillImageGenerator, "generate_image"},
+		{SkillImageGenerator, "edit_image"},
+		{SkillArchitectureDiagram, "generate_architecture_diagram"},
+		{SkillChartGenerator, "generate_chart"},
+	} {
+		t.Run(tt.skillID+"/"+tt.toolName, func(t *testing.T) {
+			if !RequiresPromptProfessionalizerPreflight(tt.skillID, tt.toolName) {
+				t.Fatalf("RequiresPromptProfessionalizerPreflight() = false, want true")
+			}
+		})
+	}
+	if RequiresPromptProfessionalizerPreflight(SkillCalculator, "evaluate_expression") {
+		t.Fatalf("calculator should not require prompt professionalizer preflight")
 	}
 }
 
@@ -781,6 +954,7 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 		SkillSensitiveRedaction,
 		SkillChartGenerator,
 		SkillIntentRouter,
+		SkillArchitectureDiagram,
 		SkillImageGenerator,
 		SkillWorkReport,
 		SkillInternalDatabase,
@@ -813,6 +987,7 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		{SkillSensitiveRedaction, "redact_text", []string{"text"}},
 		{SkillChartGenerator, "generate_chart", []string{"chart_type", "data"}},
 		{SkillIntentRouter, "route_intent", []string{"user_input", "intent_id", "task_type", "confidence", "recommended_action", "evidence", "normalized_request"}},
+		{SkillArchitectureDiagram, "generate_architecture_diagram", []string{"diagram_type", "data"}},
 		{SkillImageGenerator, "generate_image", []string{"prompt"}},
 		{SkillImageGenerator, "edit_image", []string{"image", "edit_instruction"}},
 		{SkillWorkReport, "generate_file", []string{"content", "format"}},
@@ -898,6 +1073,7 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		SkillSensitiveRedaction,
 		SkillChartGenerator,
 		SkillIntentRouter,
+		SkillArchitectureDiagram,
 		SkillImageGenerator,
 		SkillWorkReport,
 		SkillInternalDatabase,
@@ -1027,6 +1203,23 @@ func hasRequired(schema map[string]interface{}, required string) bool {
 			if value == required {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func hasAnyOfRequired(schema map[string]interface{}, required string) bool {
+	rawBranches, ok := schema["anyOf"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, rawBranch := range rawBranches {
+		branch, ok := rawBranch.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if hasRequired(branch, required) {
+			return true
 		}
 	}
 	return false

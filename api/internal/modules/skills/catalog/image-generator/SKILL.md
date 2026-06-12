@@ -1,7 +1,7 @@
 ---
 name: image-generator
 description: Generate image assets from text prompts or create reference-image variants and edit-style regenerated images for article illustrations, poster concepts, product concept art, marketing materials, ecommerce product scenes, illustrations, icons, and cover drafts. Use when the user asks for 生成图片, 图片生成, 文生图, 文章配图, 活动海报草图, 产品概念图, 营销素材, 插画生成, 图标草案, 封面草案, 电商商品场景图, 参考图生成, 图片变体, 换背景, 改颜色, 加元素, 去元素, generate image, text to image, image variant, image edit, background change, color change, add element, or remove element.
-when_to_use: Use this skill when the answer should include generated image files from a prompt or reference-image edit request. Use generate_image for text-to-image and prompt-based candidates. Use edit_image for reference-image variants, background changes, color changes, adding elements, removing elements, and style transfer requests. Do not use this skill for OCR, image understanding, table extraction, screenshot diagnosis, or image-to-text analysis. For generic image generation requests, call request_user_input before generating.
+when_to_use: Use this skill when the answer should include generated image files from a prompt or reference-image edit request. Use generate_image for text-to-image and prompt-based candidates. Use edit_image for reference-image variants, background changes, color changes, adding elements, removing elements, and style transfer requests. Do not use this skill for OCR, image understanding, table extraction, screenshot diagnosis, or image-to-text analysis. For casual, vague, incomplete, or non-professional image generation requests, first route through prompt-professionalizer to optimize the prompt, then call this skill with the optimized prompt. For generic image generation requests, call request_user_input before generating.
 provider_type: builtin
 provider_id: image_generator
 runtime_type: tool
@@ -47,12 +47,13 @@ Important: the current backend does not pass reference images as structured imag
 ## Workflow
 
 1. Determine whether the user wants text-to-image generation or reference-image editing/variants.
-2. If the request is generic, call `request_user_input` before calling any image tool.
-3. Read exactly one reference document for the selected task or use case.
-4. Build a concise generation prompt that includes subject, scene, composition, style, color, lighting, intended use, and prohibited elements when provided.
-5. Choose or confirm aspect ratio and number of candidates.
-6. Call `call_skill_tool` with `tool_name` set to `generate_image` or `edit_image`.
-7. In the final answer, mention the generated file names, usage notes, and any copyright or brand compliance reminder. Do not paste raw image bytes or base64.
+2. If the user request is casual, vague, incomplete, or not already written as a professional image prompt, first use `prompt-professionalizer` to produce an optimized image prompt and parameter suggestions.
+3. If required image decisions are still missing after prompt professionalization, call `request_user_input` before calling any image tool.
+4. Read exactly one reference document for the selected task or use case.
+5. Build a concise generation prompt that includes subject, scene, composition, style, color, lighting, intended use, and prohibited elements when provided.
+6. Choose or confirm aspect ratio and number of candidates.
+7. Call `call_skill_tool` with `tool_name` set to `generate_image` or `edit_image`.
+8. In the final answer, mention the generated file names, usage notes, and any copyright or brand compliance reminder. Do not paste raw image bytes or base64.
 
 ## Clarification Workflow
 
@@ -138,6 +139,7 @@ Read exactly one reference after choosing the task:
 
 ## Constraints
 
+- Before calling `generate_image` or `edit_image`, use `prompt-professionalizer` when the user's request is casual, vague, incomplete, or not already a professional image prompt. Direct tool calls are allowed only when the prompt and key parameters are already complete.
 - Do not generate illegal, pornographic, exploitative, hateful, fraudulent, or clearly harmful imagery.
 - Do not generate graphic violence or sexual content.
 - Do not generate or imitate a specific living person's likeness.

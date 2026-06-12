@@ -96,7 +96,7 @@ func (r *Runtime) ResolveEnabledSkills(ctx context.Context, skillIDs []string) (
 
 func (r *Runtime) ResolveEnabledSkillsWithCustom(ctx context.Context, skillIDs []string, custom []CustomSkillCatalogEntry) (*ResolvedSkills, error) {
 	_ = ctx
-	ids := normalizeSkillIDs(skillIDs)
+	ids := withRequiredPreflightSkills(normalizeSkillIDs(skillIDs))
 	resolved := &ResolvedSkills{Skills: make([]SkillDocument, 0, len(ids))}
 	locations, err := r.skillLocations(custom)
 	if err != nil {
@@ -114,6 +114,43 @@ func (r *Runtime) ResolveEnabledSkillsWithCustom(ctx context.Context, skillIDs [
 		resolved.Skills = append(resolved.Skills, doc)
 	}
 	return resolved, nil
+}
+
+func withRequiredPreflightSkills(ids []string) []string {
+	if len(ids) == 0 {
+		return ids
+	}
+	hasPromptProfessionalizer := false
+	needsPromptProfessionalizer := false
+	for _, id := range ids {
+		switch normalizeSkillID(id) {
+		case SkillPromptProfessionalizer:
+			hasPromptProfessionalizer = true
+		case SkillImageGenerator, SkillArchitectureDiagram, SkillChartGenerator:
+			needsPromptProfessionalizer = true
+		}
+	}
+	if !needsPromptProfessionalizer || hasPromptProfessionalizer {
+		return ids
+	}
+	out := append([]string{}, ids...)
+	out = append(out, SkillPromptProfessionalizer)
+	return out
+}
+
+func RequiresPromptProfessionalizerPreflight(skillID string, toolName string) bool {
+	switch normalizeSkillID(skillID) {
+	case SkillImageGenerator:
+		switch strings.TrimSpace(toolName) {
+		case "generate_image", "edit_image":
+			return true
+		}
+	case SkillArchitectureDiagram:
+		return strings.TrimSpace(toolName) == "generate_architecture_diagram"
+	case SkillChartGenerator:
+		return strings.TrimSpace(toolName) == "generate_chart"
+	}
+	return false
 }
 
 func (r *Runtime) ListSkills(ctx context.Context) ([]SkillDiscoveryMetadata, error) {
@@ -973,7 +1010,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillChartGenerator + "/generate_chart": {
 			SkillID:     SkillChartGenerator,
 			ToolName:    "generate_chart",
-			Description: "Generate a downloadable SVG chart artifact from structured data after chart type, title, data mapping, and rendering style have been provided or confirmed. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution. For generic chart requests, call request_user_input before this tool.",
+			Description: "Generate a downloadable SVG chart artifact from structured data after prompt-professionalizer has been loaded and chart type, title, data mapping, and rendering style have been provided or confirmed. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution. For generic chart requests, call request_user_input before this tool.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"chart_type":      enumStringSchema("Chart type.", []string{"radar", "bar", "line", "pie", "doughnut", "scatter", "score_distribution"}),
@@ -1054,10 +1091,59 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 				"normalized_request": "Generate a DOCX file from the current report.",
 			},
 		},
+		SkillArchitectureDiagram + "/generate_architecture_diagram": {
+			SkillID:     SkillArchitectureDiagram,
+			ToolName:    "generate_architecture_diagram",
+			Description: "Generate downloadable SVG and HTML technical diagram artifacts after prompt-professionalizer has been loaded and diagram type, title, scope, and rendering style have been provided or confirmed. Supports system_architecture, agent_architecture, data_flow, flowchart, comparison_matrix, sequence, state, and er. For generic diagram requests, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"diagram_type":    enumStringSchema("Diagram type.", []string{"system_architecture", "agent_architecture", "data_flow", "flowchart", "comparison_matrix", "sequence", "state", "er"}),
+					"title":           stringValueSchema("Optional diagram title."),
+					"description":     stringValueSchema("Optional short subtitle or source summary."),
+					"output_filename": stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"data":            architectureDiagramDataSchema(),
+					"options": objectSchema(
+						map[string]interface{}{
+							"formats":     arraySchema("Output formats. Defaults to svg and html.", enumStringSchema("Output format.", []string{"svg", "html"})),
+							"width":       numberSchema("Optional SVG width. Defaults to 1200 and must be between 480 and 2400."),
+							"height":      numberSchema("Optional SVG height. Defaults to 760 and must be between 320 and 1800."),
+							"style":       enumStringSchema("Rendering style. Use technical for engineering docs, business for reports, presentation for slide-ready diagrams, paper for warm report visuals, and simple when unspecified.", []string{"simple", "business", "technical", "presentation", "paper"}),
+							"direction":   enumStringSchema("Layout direction.", []string{"left_to_right", "top_to_bottom"}),
+							"show_legend": booleanSchema("Whether to show legend when supported. Defaults to true."),
+							"show_labels": booleanSchema("Whether to show edge labels. Defaults to true."),
+						},
+						nil,
+					),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"diagram_type", "data"},
+			),
+			Example: map[string]interface{}{
+				"diagram_type":    "agent_architecture",
+				"title":           "RAG Agent Architecture",
+				"output_filename": "rag-agent-architecture",
+				"data": map[string]interface{}{
+					"nodes": []map[string]interface{}{
+						{"id": "user", "label": "User", "type": "actor", "layer": "input"},
+						{"id": "agent", "label": "Agent Orchestrator", "type": "agent", "layer": "agent"},
+						{"id": "retriever", "label": "Retriever", "type": "tool", "layer": "tools"},
+						{"id": "vector", "label": "Vector Store", "type": "memory", "layer": "memory"},
+						{"id": "llm", "label": "LLM", "type": "model", "layer": "model"},
+					},
+					"edges": []map[string]interface{}{
+						{"from": "user", "to": "agent", "label": "query"},
+						{"from": "agent", "to": "retriever", "label": "retrieve"},
+						{"from": "retriever", "to": "vector", "label": "search"},
+						{"from": "agent", "to": "llm", "label": "prompt + context"},
+					},
+				},
+				"options": map[string]interface{}{"style": "technical", "formats": []string{"svg", "html"}},
+			},
+		},
 		SkillImageGenerator + "/generate_image": {
 			SkillID:     SkillImageGenerator,
 			ToolName:    "generate_image",
-			Description: "Generate downloadable image files from a text prompt. Supports style, aspect ratio, count, negative prompt, and optional current-user reference image URL guidance. Reference images are passed as signed URLs in the prompt, not as structured image inputs. For generic image requests, call request_user_input before this tool.",
+			Description: "Generate downloadable image files from a text prompt after prompt-professionalizer has been loaded. Supports style, aspect ratio, count, negative prompt, and optional current-user reference image URL guidance. Reference images are passed as signed URLs in the prompt, not as structured image inputs. For generic image requests, call request_user_input before this tool.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"prompt":          stringValueSchema("Required image description. Include subject, scene, composition, intended use, and constraints."),
@@ -1078,7 +1164,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillImageGenerator + "/edit_image": {
 			SkillID:     SkillImageGenerator,
 			ToolName:    "edit_image",
-			Description: "Create prompt-plus-reference-URL variants or edit-style regenerated images from a current-user reference image and instruction. This is not precise in-place editing and does not pass structured image input to the provider. For ambiguous edits, call request_user_input before this tool.",
+			Description: "Create prompt-plus-reference-URL variants or edit-style regenerated images from a current-user reference image and instruction after prompt-professionalizer has been loaded. This is not precise in-place editing and does not pass structured image input to the provider. For ambiguous edits, call request_user_input before this tool.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"image":            imageFileObjectSchema("Required current-user reference image file object or file ID. The tool places a signed URL in the prompt for loose visual guidance; it is not a structured image input."),
@@ -1513,6 +1599,62 @@ func chartDataSchema() map[string]interface{} {
 	}
 }
 
+func architectureDiagramDataSchema() map[string]interface{} {
+	node := objectSchema(map[string]interface{}{
+		"id":    stringValueSchema("Stable node ID. Edges must reference this value."),
+		"label": stringValueSchema("Human-readable node label."),
+		"type":  stringValueSchema("Optional node type such as frontend, service, database, agent, model, tool, memory, input, output, or approval."),
+		"group": stringValueSchema("Optional logical group."),
+		"layer": stringValueSchema("Optional layout layer used to order nodes."),
+	}, []string{"id"})
+	edge := objectSchema(map[string]interface{}{
+		"from":  stringValueSchema("Source node ID, participant name, state ID, or entity ID."),
+		"to":    stringValueSchema("Target node ID, participant name, state ID, or entity ID."),
+		"label": stringValueSchema("Optional relationship, transition, message, or data-flow label."),
+	}, []string{"from", "to"})
+	group := objectSchema(map[string]interface{}{
+		"id":    stringValueSchema("Group ID."),
+		"label": stringValueSchema("Group label."),
+	}, []string{"id"})
+	entity := objectSchema(map[string]interface{}{
+		"id":     stringValueSchema("Stable entity ID. Relationships must reference this value."),
+		"label":  stringValueSchema("Entity label."),
+		"fields": stringArrayOrCSVSchema("Optional entity fields such as id PK, user_id FK, status."),
+	}, []string{"id"})
+	matrixCells := arraySchema("Matrix cell rows. Must align with rows and columns.", map[string]interface{}{
+		"type":  "array",
+		"items": map[string]interface{}{"type": "string"},
+	})
+	nodeEdgeProps := map[string]interface{}{
+		"nodes":  arraySchema("Diagram nodes.", node),
+		"edges":  arraySchema("Diagram edges.", edge),
+		"groups": arraySchema("Optional visual or logical groups.", group),
+	}
+	return map[string]interface{}{
+		"description": "Diagram-specific data. Node-edge diagrams use nodes, edges, and optional groups; comparison_matrix uses rows, columns, and cells; sequence uses participants and messages; state uses states and transitions; er uses entities and relationships.",
+		"anyOf": []interface{}{
+			objectSchema(nodeEdgeProps, []string{"nodes", "edges"}),
+			objectSchema(map[string]interface{}{
+				"columns": stringArrayOrCSVSchema("Compared products, vendors, options, or plans."),
+				"rows":    stringArrayOrCSVSchema("Comparison criteria, features, metrics, or factors."),
+				"cells":   matrixCells,
+			}, []string{"columns", "rows", "cells"}),
+			objectSchema(map[string]interface{}{
+				"participants": stringArrayOrCSVSchema("Ordered sequence participants."),
+				"messages":     arraySchema("Ordered sequence messages.", edge),
+			}, []string{"participants", "messages"}),
+			objectSchema(map[string]interface{}{
+				"states":      arraySchema("State nodes.", node),
+				"transitions": arraySchema("State transitions.", edge),
+			}, []string{"states", "transitions"}),
+			objectSchema(map[string]interface{}{
+				"entities":      arraySchema("ER entities.", entity),
+				"relationships": arraySchema("ER relationships.", edge),
+			}, []string{"entities", "relationships"}),
+		},
+	}
+}
+
 func copySchemaProperties(input map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(input))
 	for key, value := range input {
@@ -1555,126 +1697,6 @@ func booleanSchema(description string) map[string]interface{} {
 		"type":        "boolean",
 		"description": description,
 	}
-}
-
-func arraySchema(description string, items map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"type":        "array",
-		"description": description,
-		"items":       items,
-	}
-}
-
-func chartDataSchema() map[string]interface{} {
-	series := arraySchema(
-		"Chart data series. Radar supports 1-2 series; bar and line support 1-8 series.",
-		objectSchema(
-			map[string]interface{}{
-				"name":   stringValueSchema("Series label."),
-				"values": arraySchema("Numeric values matching the selected chart labels length.", numberSchema("Score or metric value.")),
-				"color":  stringValueSchema("Optional #RRGGBB color."),
-			},
-			[]string{"name", "values"},
-		),
-	)
-	pieItems := arraySchema(
-		"Pie or doughnut chart items.",
-		objectSchema(
-			map[string]interface{}{
-				"label": stringValueSchema("Slice label."),
-				"value": numberSchema("Slice value."),
-				"color": stringValueSchema("Optional #RRGGBB color."),
-			},
-			[]string{"label", "value"},
-		),
-	)
-	scatterPoints := arraySchema(
-		"Scatter chart points.",
-		objectSchema(
-			map[string]interface{}{
-				"x":     numberSchema("X-axis value."),
-				"y":     numberSchema("Y-axis value."),
-				"label": stringValueSchema("Optional point label."),
-				"color": stringValueSchema("Optional #RRGGBB color."),
-			},
-			[]string{"x", "y"},
-		),
-	)
-	scoreCountBands := arraySchema(
-		"Precomputed score distribution bands.",
-		objectSchema(
-			map[string]interface{}{
-				"label": stringValueSchema("Band label such as 90-100."),
-				"count": numberSchema("Precomputed count for this band."),
-			},
-			[]string{"label", "count"},
-		),
-	)
-	scoreRangeBands := arraySchema(
-		"Score distribution bands used to count raw scores.",
-		objectSchema(
-			map[string]interface{}{
-				"label": stringValueSchema("Band label such as 90-100."),
-				"min":   numberSchema("Inclusive minimum score when calculating from raw scores."),
-				"max":   numberSchema("Inclusive maximum score when calculating from raw scores."),
-			},
-			[]string{"label", "min", "max"},
-		),
-	)
-	common := map[string]interface{}{
-		"max_value": numberSchema("Optional shared maximum value. Radar defaults to 100; bar and line auto-scale when omitted."),
-		"series":    series,
-	}
-	radarProps := copySchemaProperties(common)
-	radarProps["dimensions"] = stringArrayOrCSVSchema("Radar axis labels, such as subject names. Required for radar charts.")
-	barProps := copySchemaProperties(common)
-	barProps["categories"] = stringArrayOrCSVSchema("Bar chart category labels.")
-	lineProps := copySchemaProperties(common)
-	lineProps["x_axis"] = stringArrayOrCSVSchema("Line chart x-axis labels.")
-	lineProps["categories"] = stringArrayOrCSVSchema("Line chart x-axis labels alias.")
-	pieProps := map[string]interface{}{
-		"items": pieItems,
-	}
-	scatterProps := map[string]interface{}{
-		"x_label": stringValueSchema("Optional x-axis label."),
-		"y_label": stringValueSchema("Optional y-axis label."),
-		"x_min":   numberSchema("Optional x-axis minimum."),
-		"x_max":   numberSchema("Optional x-axis maximum."),
-		"y_min":   numberSchema("Optional y-axis minimum."),
-		"y_max":   numberSchema("Optional y-axis maximum."),
-		"points":  scatterPoints,
-	}
-	distributionCountProps := map[string]interface{}{
-		"bands":     scoreCountBands,
-		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
-	}
-	distributionRangeProps := map[string]interface{}{
-		"bands":     scoreRangeBands,
-		"scores":    arraySchema("Raw score values or objects with value.", map[string]interface{}{"oneOf": []interface{}{numberSchema("Raw score value."), objectSchema(map[string]interface{}{"label": stringValueSchema("Optional score label."), "value": numberSchema("Raw score value.")}, []string{"value"})}}),
-		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
-	}
-
-	return map[string]interface{}{
-		"description": "Chart-specific data. Use dimensions for radar, categories for bar, x_axis or categories for line, items for pie/doughnut, points for scatter, and bands for score_distribution.",
-		"anyOf": []interface{}{
-			objectSchema(radarProps, []string{"dimensions", "series"}),
-			objectSchema(barProps, []string{"categories", "series"}),
-			objectSchema(lineProps, []string{"x_axis", "series"}),
-			objectSchema(lineProps, []string{"categories", "series"}),
-			objectSchema(pieProps, []string{"items"}),
-			objectSchema(scatterProps, []string{"points"}),
-			objectSchema(distributionCountProps, []string{"bands"}),
-			objectSchema(distributionRangeProps, []string{"bands", "scores"}),
-		},
-	}
-}
-
-func copySchemaProperties(input map[string]interface{}) map[string]interface{} {
-	out := make(map[string]interface{}, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
-	return out
 }
 
 func stringArrayOrCSVSchema(description string) map[string]interface{} {

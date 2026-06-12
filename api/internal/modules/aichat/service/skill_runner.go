@@ -702,6 +702,12 @@ func (s *service) handleProgressiveSkillCall(
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), toolName, "skill must be loaded before calling its tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)
 		}
+		if skills.RequiresPromptProfessionalizerPreflight(skillID, toolName) {
+			if _, ok := loadedSkills[skills.SkillPromptProfessionalizer]; !ok {
+				trace := blockedSkillGuardrailTrace(skillID, toolName, "prompt-professionalizer must be loaded before calling this professional generation tool")
+				return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)
+			}
+		}
 		if doc, ok := resolved.Get(skillID); ok && len(doc.Tools) == 0 {
 			trace := blockedSkillGuardrailTrace(skillID, toolName, "skill does not provide callable tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false)

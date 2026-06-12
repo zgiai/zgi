@@ -29,7 +29,7 @@ func NewGenerateImageTool(tenantID string, fileService ReferenceImageFileService
 		},
 		Description: tools.ToolDescription{
 			Human: tools.I18nText{"en_US": "Generate downloadable image files from a text prompt.", "zh_Hans": "Generate downloadable image files from a text prompt."},
-			LLM:   "Generate downloadable image files from a prompt. Supports broad styles, aspect ratios 1:1/16:9/9:16/4:3, 1-4 candidates, optional negative prompt, and optional current-user reference image URL guidance. Reference images are passed as signed URLs in the prompt, not as structured image inputs. For generic image requests, call request_user_input before this tool. Do not use for OCR, image understanding, table extraction, screenshot diagnosis, illegal/sexual/graphic/infringing imagery, or specific living-person likeness generation.",
+			LLM:   "Generate downloadable image files from a prompt. Supports broad styles, aspect ratios 1:1/16:9/9:16/4:3, 1-4 candidates, optional negative prompt, and optional current-user reference image URL guidance. Reference images are passed as signed URLs in the prompt, not as structured image inputs. For casual, vague, incomplete, or non-professional image requests, use prompt-professionalizer before this tool; for generic image requests, call request_user_input before this tool. Do not use for OCR, image understanding, table extraction, screenshot diagnosis, illegal/sexual/graphic/infringing imagery, or specific living-person likeness generation.",
 		},
 		Parameters: imageGenerationParameters(false),
 		OutputType: "file",
