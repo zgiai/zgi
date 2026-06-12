@@ -450,6 +450,38 @@ func TestRenderPPTXUsesSandbox(t *testing.T) {
 	require.NotContains(t, server.uploadedFiles[fileGeneratorPPTXScriptPath], `import pptxgen from "pptxgenjs"`)
 }
 
+func TestRenderPPTXScriptKeepsElementSpacingPrecedence(t *testing.T) {
+	server := newFakeFileGeneratorSandbox(t)
+	_, normalized, err := parsePPTXDocumentSpec(`{
+  "default_style": {"font_face": "Microsoft YaHei", "font_size": 18, "line_spacing": 1.1, "margin": 0.2, "break_line": false},
+  "slides": [
+    {"elements": [
+      {"type": "text", "text": "hello", "x": 0.8, "y": 1, "w": 8, "h": 1, "margin": 0.02, "line_spacing": 1.6, "break_line": true, "style": {"line_spacing": 1.2, "margin": 0.15, "break_line": false}},
+      {"type": "table", "x": 0.8, "y": 2.3, "w": 5, "h": 1, "margin": 0.03, "headers": ["Metric"], "rows": [["Value"]], "style": {"margin": 0.12}}
+    ]}
+  ]
+}`)
+	require.NoError(t, err)
+
+	_, err = renderPPTXInSandbox(context.Background(), &tools.ToolRuntime{TenantID: "tenant-1"}, "", normalized)
+	require.NoError(t, err)
+
+	uploadedSpec := server.uploadedFiles[fileGeneratorPPTXSpecPath]
+	require.Contains(t, uploadedSpec, `"line_spacing":1.6`)
+	require.Contains(t, uploadedSpec, `"margin":0.02`)
+	require.Contains(t, uploadedSpec, `"break_line":true`)
+	require.Contains(t, uploadedSpec, `"margin":0.03`)
+
+	script := server.uploadedFiles[fileGeneratorPPTXScriptPath]
+	require.Contains(t, script, "function applyTextElementOverrides")
+	require.Contains(t, script, "function applyTableElementOverrides")
+	require.Contains(t, script, "opts.margin = element.margin ?? opts.margin ?? fallbackMargin")
+	require.Contains(t, script, "opts.lineSpacingMultiple = element.line_spacing")
+	require.NotContains(t, script, "opts.lineSpacing = element.line_spacing")
+	require.Contains(t, script, "applyStyle(opts, element.style, spec.default_style);\n      applyTextElementOverrides(opts, element, 0.04);")
+	require.Contains(t, script, "applyStyle(opts, element.style, spec.default_style);\n      applyTableElementOverrides(opts, element, 0.05);")
+}
+
 func TestRenderPPTXReportsSandboxErrorField(t *testing.T) {
 	server := newFakeFileGeneratorSandbox(t)
 	server.commandError = "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'pptxgenjs'"

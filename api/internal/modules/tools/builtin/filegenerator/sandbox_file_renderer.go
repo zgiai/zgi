@@ -438,6 +438,22 @@ function applyStyle(opts, style, defaults = {}) {
   }
 }
 
+function applyTextElementOverrides(opts, element, fallbackMargin) {
+  opts.margin = element.margin ?? opts.margin ?? fallbackMargin;
+  if (element.break_line !== undefined) {
+    opts.breakLine = element.break_line;
+  } else if (opts.breakLine === undefined) {
+    opts.breakLine = false;
+  }
+  if (element.line_spacing !== undefined) {
+    opts.lineSpacingMultiple = element.line_spacing;
+  }
+}
+
+function applyTableElementOverrides(opts, element, fallbackMargin) {
+  opts.margin = element.margin ?? opts.margin ?? fallbackMargin;
+}
+
 function box(element, fallback) {
   return {
     x: numberOr(element.x, fallback.x),
@@ -529,12 +545,8 @@ for (const slideSpec of spec.slides) {
   for (const element of slideSpec.elements) {
     if (element.type === "title" || element.type === "text") {
       const opts = box(element, fallbackBox(element, cursorY));
-      opts.margin = element.margin ?? 0.04;
-      opts.breakLine = element.break_line ?? false;
-      if (element.line_spacing !== undefined) {
-        opts.lineSpacingMultiple = element.line_spacing;
-      }
       applyStyle(opts, element.style, spec.default_style);
+      applyTextElementOverrides(opts, element, 0.04);
       if (element.type === "title" && !opts.fontSize) opts.fontSize = 30;
       if (element.type === "title" && opts.bold === undefined) opts.bold = true;
       slide.addText(wrapTextForBox(element.text, opts, element.type === "title"), compact(opts));
@@ -555,13 +567,13 @@ for (const slideSpec of spec.slides) {
       }
       for (const row of element.rows || []) rows.push(row);
       const opts = box(element, fallbackBox(element, cursorY));
-      opts.margin = element.margin ?? 0.05;
       opts.border = { type: "solid", color: element.border_color || "D1D5DB", pt: 1 };
       opts.fontSize = element.style?.font_size || spec.default_style?.font_size || 12;
       opts.color = element.style?.color || spec.default_style?.color || "111827";
       if (element.column_widths && element.column_widths.length) opts.colW = element.column_widths;
       if (element.row_fill_color) opts.fill = { color: element.row_fill_color };
       applyStyle(opts, element.style, spec.default_style);
+      applyTableElementOverrides(opts, element, 0.05);
       slide.addTable(rows, compact(opts));
       cursorY = advanceCursor(cursorY, opts, element.type);
       continue;
