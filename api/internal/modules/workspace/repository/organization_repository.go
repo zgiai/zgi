@@ -17,6 +17,7 @@ type OrganizationRepository interface {
 	Update(ctx context.Context, organization *model.Organization) error
 	Delete(ctx context.Context, id string) error
 	ExistsByName(ctx context.Context, name string) (bool, error)
+	ExistsByNameExcludingID(ctx context.Context, name, excludeID string) (bool, error)
 
 	CreateAccountJoin(ctx context.Context, join *model.OrganizationMember) error
 	CreateAccountJoinWithTx(ctx context.Context, tx *gorm.DB, join *model.OrganizationMember) error
@@ -102,6 +103,14 @@ func (r *organizationRepository) Delete(ctx context.Context, id string) error {
 func (r *organizationRepository) ExistsByName(ctx context.Context, name string) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.Organization{}).Where("name = ?", name).Count(&count).Error
+	return count > 0, err
+}
+
+func (r *organizationRepository) ExistsByNameExcludingID(ctx context.Context, name, excludeID string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Organization{}).
+		Where("name = ? AND id <> ?", name, excludeID).
+		Count(&count).Error
 	return count > 0, err
 }
 
