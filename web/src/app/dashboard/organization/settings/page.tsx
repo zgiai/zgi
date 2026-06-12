@@ -219,7 +219,7 @@ export default function OrganizationSettingsPage() {
 
   return (
     <div className="h-full overflow-auto bg-bg-canvas/50 p-4 text-foreground lg:p-6">
-      <div className="flex max-w-[1280px] flex-col gap-4">
+      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-4">
         <header className="flex shrink-0 flex-col gap-1 border-b border-border/60 pb-4">
           <h1 className="text-[22px] font-semibold leading-7 text-text-primary">
             {t('organization.settings.title')}
