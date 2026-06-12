@@ -538,6 +538,8 @@ const messages = {
         demote: 'Remove admin',
         emptyAdmins: 'No organization administrators yet.',
         addTitle: 'Add administrator',
+        addDescription:
+          'Search active standard members and set them as organization administrators.',
         searchPlaceholder: 'Search active members by name or email',
         promote: 'Set as admin',
         emptyCandidates: 'No active standard members match this search.',

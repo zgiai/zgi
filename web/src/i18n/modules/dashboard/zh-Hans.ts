@@ -525,6 +525,7 @@ const messages: DashboardMessages = {
         demote: '移除管理员',
         emptyAdmins: '暂无组织管理员。',
         addTitle: '添加管理员',
+        addDescription: '搜索活跃普通成员，并将其设置为组织管理员。',
         searchPlaceholder: '按姓名或邮箱搜索活跃成员',
         promote: '设为管理员',
         emptyCandidates: '没有匹配的活跃普通成员。',
