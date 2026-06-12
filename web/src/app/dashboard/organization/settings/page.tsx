@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Search, Save, ShieldCheck, UserPlus, X } from 'lucide-react';
+import { Building2, Search, Save, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SafeAvatar } from '@/components/ui/avatar';
 import { useCurrentOrganizationMembers } from '@/hooks/organization/use-current-organization-members';
 import { useOrganizationActions } from '@/hooks/organization/use-organization-actions';
@@ -89,7 +90,31 @@ export default function OrganizationSettingsPage() {
     };
   }, []);
 
-  const isDirty = name.trim() !== (currentOrganization?.name ?? '');
+  const trimmedName = name.trim();
+  const isNameEmpty = trimmedName.length === 0;
+  const isNameTooLong = trimmedName.length > ORGANIZATION_NAME_MAX_LENGTH;
+  const isDirty = trimmedName !== (currentOrganization?.name ?? '');
+  const saveDisabledReason = useMemo(() => {
+    if (isUpdatingOrganization) {
+      return t('organization.settings.saveDisabledReasons.saving');
+    }
+    if (!canEdit) {
+      return t('organization.settings.saveDisabledReasons.noPermission');
+    }
+    if (isNameEmpty) {
+      return t('organization.settings.saveDisabledReasons.nameRequired');
+    }
+    if (isNameTooLong) {
+      return t('organization.settings.saveDisabledReasons.nameTooLong', {
+        max: ORGANIZATION_NAME_MAX_LENGTH,
+      });
+    }
+    if (!isDirty) {
+      return t('organization.settings.saveDisabledReasons.noChanges');
+    }
+    return '';
+  }, [canEdit, isDirty, isNameEmpty, isNameTooLong, isUpdatingOrganization, t]);
+  const isSaveDisabled = Boolean(saveDisabledReason);
   const currentRoleLabel = useMemo(() => {
     switch (currentOrganization?.organization_role) {
       case 'owner':
@@ -119,11 +144,11 @@ export default function OrganizationSettingsPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setNameError('');
-    if (!canEdit || !validate()) {
+    if (!canEdit || !isDirty || !validate()) {
       return;
     }
     await updateOrganization({
-      name: name.trim(),
+      name: trimmedName,
     });
     setSaveFeedbackVisible(true);
     if (saveFeedbackTimerRef.current) {
@@ -145,15 +170,16 @@ export default function OrganizationSettingsPage() {
   };
 
   const renderMemberIdentity = (member: Member) => (
-    <div className="flex min-w-0 items-center gap-3">
+    <div className="flex min-w-0 items-center gap-2.5">
       <SafeAvatar
         src={member.avatar_url || member.avatar}
         alt={member.name}
         fallback={member.name || member.email}
-        size="md"
+        size="sm"
+        className="rounded-[4px]"
       />
       <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-foreground">{member.name}</div>
+        <div className="truncate text-[13px] font-semibold text-foreground">{member.name}</div>
         <div className="truncate text-xs text-muted-foreground">{member.email}</div>
       </div>
     </div>
@@ -161,21 +187,21 @@ export default function OrganizationSettingsPage() {
 
   if (isLoading && !currentOrganization) {
     return (
-      <div className="flex h-full flex-col space-y-5 overflow-hidden bg-bg-canvas/50 p-4 text-foreground lg:p-6">
+      <div className="flex h-full flex-col gap-4 overflow-hidden bg-bg-canvas/50 p-4 text-foreground lg:p-6">
         <div className="shrink-0 space-y-2">
-          <Skeleton className="h-8 w-40 rounded-lg" />
+          <Skeleton className="h-7 w-40 rounded-[4px]" />
           <Skeleton className="h-4 w-80 rounded" />
         </div>
-        <Skeleton className="h-64 rounded-xl" />
-        <Skeleton className="min-h-0 flex-1 rounded-xl" />
+        <Skeleton className="h-52 rounded-[6px]" />
+        <Skeleton className="min-h-0 flex-1 rounded-[6px]" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col space-y-5 overflow-auto bg-bg-canvas/50 p-4 text-foreground lg:p-6">
-      <header className="shrink-0">
-        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
+    <div className="flex h-full flex-col gap-4 overflow-auto bg-bg-canvas/50 p-4 text-foreground lg:p-6">
+      <header className="flex shrink-0 flex-col gap-1 border-b border-border/60 pb-4">
+        <h1 className="text-[22px] font-semibold leading-7 text-text-primary">
           {t('organization.settings.title')}
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-text-secondary">
@@ -183,80 +209,116 @@ export default function OrganizationSettingsPage() {
         </p>
       </header>
 
-      <section className="shrink-0 overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm">
-        <div className="border-b border-border/60 px-5 py-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold tracking-tight text-text-primary">
+      <section className="shrink-0 overflow-hidden rounded-[6px] border border-border/80 bg-background shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-border/60 bg-muted/20 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 gap-3">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-[4px] border border-primary/20 bg-primary/10 text-primary">
+              <Building2 className="size-4" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-semibold leading-5 text-text-primary">
                 {t('organization.settings.profileTitle')}
               </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {t('organization.settings.profileDescription')}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t('organization.settings.permissionHint')}
-              </p>
             </div>
-            <Badge variant={canEdit ? 'info' : 'secondary'} className="w-fit font-medium">
-              {t('organization.settings.currentRole')}: {currentRoleLabel}
-            </Badge>
           </div>
+          <Badge variant={canEdit ? 'info' : 'secondary'} className="h-6 w-fit rounded-[3px] px-2">
+            {t('organization.settings.currentRole')}: {currentRoleLabel}
+          </Badge>
         </div>
 
-        <form className="space-y-5 p-5" onSubmit={handleSubmit}>
-          <div className="max-w-2xl space-y-2.5">
-            <Label htmlFor="organization-name">{t('organization.settings.name')}</Label>
-            <Input
-              id="organization-name"
-              value={name}
-              onChange={event => {
-                setName(event.target.value);
-                setSaveFeedbackVisible(false);
-                if (nameError) setNameError('');
-              }}
-              placeholder={t('organization.settings.namePlaceholder')}
-              maxLength={ORGANIZATION_NAME_MAX_LENGTH}
-              disabled={!canEdit || isUpdatingOrganization}
-              errorText={nameError}
-              showCharacterCount
-              className="h-10 rounded-md bg-bg-canvas/50 shadow-none transition-all focus:border-primary/40 focus:ring-0"
-            />
+        <form
+          className="grid gap-4 p-4 lg:grid-cols-[minmax(0,560px)_minmax(260px,1fr)]"
+          onSubmit={handleSubmit}
+        >
+          <div className="space-y-2">
+            <Label htmlFor="organization-name" className="text-xs font-semibold text-text-primary">
+              {t('organization.settings.name')}
+            </Label>
+            <div className="max-w-xl">
+              <Input
+                id="organization-name"
+                value={name}
+                onChange={event => {
+                  setName(event.target.value);
+                  setSaveFeedbackVisible(false);
+                  if (nameError) setNameError('');
+                }}
+                placeholder={t('organization.settings.namePlaceholder')}
+                maxLength={ORGANIZATION_NAME_MAX_LENGTH}
+                disabled={!canEdit || isUpdatingOrganization}
+                errorText={nameError}
+                showCharacterCount
+                className="h-9 rounded-[4px] bg-bg-canvas/40 shadow-none transition-all focus:border-primary/50 focus:ring-0"
+              />
+            </div>
           </div>
 
-          {!canEdit ? (
-            <div className="max-w-2xl rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
-              {t('organization.settings.noPermission')}
-            </div>
-          ) : null}
-
-          <div className="flex justify-end border-t border-border/60 pt-4">
-            <Button
-              type="submit"
-              disabled={!canEdit || !isDirty || isUpdatingOrganization}
-              className="h-10 gap-2 rounded-md px-4 font-medium"
-            >
-              <Save className="size-4" />
-              {isUpdatingOrganization
-                ? t('organization.settings.saving')
-                : saveFeedbackVisible
+          <div className="flex flex-col justify-between gap-3 rounded-[4px] border border-border/70 bg-bg-canvas/40 p-3">
+            <p className="text-xs leading-5 text-muted-foreground">
+              {t('organization.settings.permissionHint')}
+            </p>
+            {!canEdit ? (
+              <p className="rounded-[4px] border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning-foreground">
+                {t('organization.settings.noPermission')}
+              </p>
+            ) : null}
+            <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-end">
+              <span
+                className={
+                  saveFeedbackVisible ? 'text-xs text-success' : 'text-xs text-muted-foreground'
+                }
+              >
+                {saveFeedbackVisible
                   ? t('organization.settings.saved')
-                  : t('organization.settings.save')}
-            </Button>
+                  : saveDisabledReason || t('organization.settings.readyToSave')}
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex" tabIndex={isSaveDisabled ? 0 : -1}>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={isSaveDisabled}
+                      className="h-[30px] gap-1.5 rounded-[3px] px-3 text-xs"
+                    >
+                      <Save className="size-3.5" />
+                      {isUpdatingOrganization
+                        ? t('organization.settings.saving')
+                        : saveFeedbackVisible
+                          ? t('organization.settings.saved')
+                          : t('organization.settings.save')}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {isSaveDisabled ? (
+                  <TooltipContent side="top" align="end" className="max-w-64 text-xs">
+                    {saveDisabledReason}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
+            </div>
           </div>
         </form>
       </section>
 
       {isOwner ? (
-        <section className="min-h-[420px] overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-border/60 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-text-primary">
-                <ShieldCheck className="size-5 shrink-0 text-primary" />
-                {t('organization.settings.adminManagement.title')}
-              </h2>
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                {t('organization.settings.adminManagement.description')}
-              </p>
+        <section className="min-h-[420px] overflow-hidden rounded-[6px] border border-border/80 bg-background shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-border/60 bg-muted/20 px-4 py-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 gap-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-[4px] border border-primary/20 bg-primary/10 text-primary">
+                <ShieldCheck className="size-4" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-[15px] font-semibold leading-5 text-text-primary">
+                  {t('organization.settings.adminManagement.title')}
+                </h2>
+                <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
+                  {t('organization.settings.adminManagement.description')}
+                </p>
+              </div>
             </div>
             <div className="flex items-center gap-3">
               {isFetchingMembers ? (
@@ -264,7 +326,7 @@ export default function OrganizationSettingsPage() {
                   {t('organization.settings.adminManagement.refreshing')}
                 </span>
               ) : null}
-              <Badge variant="info" className="font-medium">
+              <Badge variant="info" className="h-6 rounded-[3px] px-2">
                 {t('organization.settings.adminManagement.adminCount', {
                   count: admins.length,
                 })}
@@ -272,69 +334,72 @@ export default function OrganizationSettingsPage() {
             </div>
           </div>
 
-          <div className="grid min-h-0 gap-0 lg:grid-cols-[minmax(0,1fr)_minmax(340px,420px)]">
-            <div className="space-y-6 p-5">
-              <div className="space-y-3">
-                <div className="text-sm font-semibold text-foreground">
+          <div className="grid min-h-0 gap-0 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)]">
+            <div className="space-y-4 p-4">
+              <div className="space-y-2">
+                <div className="text-xs font-semibold uppercase text-muted-foreground">
                   {t('organization.settings.adminManagement.ownerTitle')}
                 </div>
-                <div className="overflow-hidden rounded-lg border border-border/80">
+                <div className="overflow-hidden rounded-[4px] border border-border/80">
                   {owners.length > 0 ? (
                     owners.map(owner => (
                       <div
                         key={owner.id}
-                        className="flex items-center justify-between gap-3 bg-background px-4 py-3"
+                        className="flex items-center justify-between gap-3 bg-background px-3 py-2.5"
                       >
                         {renderMemberIdentity(owner)}
-                        <Badge variant="warning" className="shrink-0 font-medium">
+                        <Badge
+                          variant="warning"
+                          className="h-5 shrink-0 rounded-[3px] px-1.5 text-[11px]"
+                        >
                           {t('organization.settings.adminManagement.ownerBadge')}
                         </Badge>
                       </div>
                     ))
                   ) : (
-                    <div className="px-4 py-6 text-sm text-muted-foreground">
+                    <div className="px-3 py-5 text-xs text-muted-foreground">
                       {t('organization.settings.adminManagement.noOwner')}
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <div className="text-sm font-semibold text-foreground">
+              <div className="space-y-2">
+                <div className="text-xs font-semibold uppercase text-muted-foreground">
                   {t('organization.settings.adminManagement.adminTitle')}
                 </div>
-                <div className="overflow-hidden rounded-lg border border-border/80">
+                <div className="overflow-hidden rounded-[4px] border border-border/80">
                   {isLoadingRoleMembers ? (
                     <>
-                      <div className="border-b border-border/60 px-4 py-3">
-                        <Skeleton className="h-10 rounded-lg" />
+                      <div className="border-b border-border/60 px-3 py-2.5">
+                        <Skeleton className="h-8 rounded-[4px]" />
                       </div>
-                      <div className="px-4 py-3">
-                        <Skeleton className="h-10 rounded-lg" />
+                      <div className="px-3 py-2.5">
+                        <Skeleton className="h-8 rounded-[4px]" />
                       </div>
                     </>
                   ) : admins.length > 0 ? (
                     admins.map(admin => (
                       <div
                         key={admin.id}
-                        className="flex flex-col gap-3 border-b border-border/60 bg-background px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
+                        className="flex flex-col gap-2 border-b border-border/60 bg-background px-3 py-2.5 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
                       >
                         {renderMemberIdentity(admin)}
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="h-8 gap-2 self-start rounded-md sm:self-auto"
+                          className="h-[28px] gap-1.5 self-start rounded-[3px] px-2.5 sm:self-auto"
                           disabled={isUpdatingCurrentOrganizationMemberRole}
                           onClick={() => setAdminToDemote(admin)}
                         >
-                          <X className="size-4" />
+                          <X className="size-3.5" />
                           {t('organization.settings.adminManagement.demote')}
                         </Button>
                       </div>
                     ))
                   ) : (
-                    <div className="px-4 py-6 text-sm text-muted-foreground">
+                    <div className="px-3 py-5 text-xs text-muted-foreground">
                       {t('organization.settings.adminManagement.emptyAdmins')}
                     </div>
                   )}
@@ -342,53 +407,56 @@ export default function OrganizationSettingsPage() {
               </div>
             </div>
 
-            <aside className="border-t border-border/60 bg-muted/20 p-5 lg:border-l lg:border-t-0">
-              <div className="space-y-4">
-                <Label htmlFor="organization-admin-search">
+            <aside className="border-t border-border/60 bg-muted/20 p-4 lg:border-l lg:border-t-0">
+              <div className="space-y-3">
+                <Label
+                  htmlFor="organization-admin-search"
+                  className="text-xs font-semibold text-text-primary"
+                >
                   {t('organization.settings.adminManagement.addTitle')}
                 </Label>
                 <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     id="organization-admin-search"
                     value={memberKeyword}
                     onChange={event => setMemberKeyword(event.target.value)}
                     placeholder={t('organization.settings.adminManagement.searchPlaceholder')}
-                    className="h-10 rounded-md bg-background pl-9 shadow-none transition-all focus:border-primary/40 focus:ring-0"
+                    className="h-9 rounded-[4px] bg-background pl-8 shadow-none transition-all focus:border-primary/50 focus:ring-0"
                   />
                 </div>
 
-                <div className="overflow-hidden rounded-lg border border-border/80 bg-background">
+                <div className="overflow-hidden rounded-[4px] border border-border/80 bg-background">
                   {isLoadingCandidateMembers ? (
                     <>
-                      <div className="border-b border-border/60 px-4 py-3">
-                        <Skeleton className="h-10 rounded-lg" />
+                      <div className="border-b border-border/60 px-3 py-2.5">
+                        <Skeleton className="h-8 rounded-[4px]" />
                       </div>
-                      <div className="px-4 py-3">
-                        <Skeleton className="h-10 rounded-lg" />
+                      <div className="px-3 py-2.5">
+                        <Skeleton className="h-8 rounded-[4px]" />
                       </div>
                     </>
                   ) : candidateMembers.length > 0 ? (
                     candidateMembers.map(member => (
                       <div
                         key={member.id}
-                        className="flex flex-col gap-3 border-b border-border/60 px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between lg:flex-col lg:items-stretch xl:flex-row xl:items-center"
+                        className="flex flex-col gap-2 border-b border-border/60 px-3 py-2.5 last:border-b-0 sm:flex-row sm:items-center sm:justify-between lg:flex-col lg:items-stretch xl:flex-row xl:items-center"
                       >
                         {renderMemberIdentity(member)}
                         <Button
                           type="button"
                           size="sm"
-                          className="h-8 gap-2 self-start rounded-md sm:self-auto lg:self-start xl:self-auto"
+                          className="h-[28px] gap-1.5 self-start rounded-[3px] px-2.5 sm:self-auto lg:self-start xl:self-auto"
                           disabled={isUpdatingCurrentOrganizationMemberRole}
                           onClick={() => handlePromoteAdmin(member)}
                         >
-                          <UserPlus className="size-4" />
+                          <UserPlus className="size-3.5" />
                           {t('organization.settings.adminManagement.promote')}
                         </Button>
                       </div>
                     ))
                   ) : (
-                    <div className="px-4 py-8 text-sm text-muted-foreground">
+                    <div className="px-3 py-6 text-xs leading-5 text-muted-foreground">
                       {t('organization.settings.adminManagement.emptyCandidates')}
                     </div>
                   )}

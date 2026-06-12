@@ -503,6 +503,14 @@ const messages: DashboardMessages = {
       save: '保存修改',
       saving: '保存中...',
       saved: '已保存',
+      readyToSave: '有修改内容，可以保存。',
+      saveDisabledReasons: {
+        saving: '正在保存，请稍候。',
+        noPermission: '只有组织所有者和管理员可以编辑组织资料。',
+        nameRequired: '组织名称不能为空。',
+        nameTooLong: '组织名称不能超过 {max} 个字符。',
+        noChanges: '当前没有修改内容。',
+      },
       updateSuccess: '组织已更新',
       updateError: '组织更新失败',
       adminManagement: {

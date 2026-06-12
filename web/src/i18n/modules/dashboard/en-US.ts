@@ -514,6 +514,15 @@ const messages = {
       save: 'Save changes',
       saving: 'Saving...',
       saved: 'Saved',
+      readyToSave: 'Changes are ready to save.',
+      saveDisabledReasons: {
+        saving: 'Saving is in progress. Please wait.',
+        noPermission:
+          'Only organization owners and administrators can edit the organization profile.',
+        nameRequired: 'Organization name cannot be empty.',
+        nameTooLong: 'Organization name cannot exceed {max} characters.',
+        noChanges: 'There are no changes to save.',
+      },
       updateSuccess: 'Organization updated',
       updateError: 'Failed to update organization',
       adminManagement: {
