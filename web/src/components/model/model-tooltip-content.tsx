@@ -30,6 +30,7 @@ export interface ModelTooltipContentProps {
   labels: {
     context: string;
     features: string;
+    replacementSuggestion: string;
     useCases: string;
   };
   featureLabels: Record<string, string>;
@@ -66,6 +67,12 @@ export const ModelTooltipContent = memo(function ModelTooltipContent({
   const hasContext = model.context_window !== undefined && model.context_window > 0;
   const hasFeatures = enabledFeatures.length > 0;
   const hasUseCases = useCases.length > 0;
+  const deprecationReason =
+    model.status === 'deprecated' ? model.deprecation_reason?.trim() : '';
+  const replacementModel =
+    model.status === 'deprecated' && model.replacement_model
+      ? [model.replacement_provider, model.replacement_model].filter(Boolean).join('/')
+      : '';
 
   return (
     <div className="min-w-[280px] space-y-2">
@@ -84,6 +91,17 @@ export const ModelTooltipContent = memo(function ModelTooltipContent({
           <Cpu className="h-3.5 w-3.5" />
           <span>{labels.context}</span>
           <span className="font-medium text-foreground">{formatTokens(model.context_window)}</span>
+        </div>
+      )}
+
+      {deprecationReason && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+          {deprecationReason}
+          {replacementModel && (
+            <div className="mt-1 font-medium">
+              {labels.replacementSuggestion} {replacementModel}
+            </div>
+          )}
         </div>
       )}
 

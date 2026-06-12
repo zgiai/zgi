@@ -841,7 +841,7 @@ func shouldAutoEnableLangfuseDirectExport(endpoint string, tracesEndpoint string
 
 func loadModelMetaConfig(cfg *Config, source *envSource) {
 	cfg.ModelMeta = ModelMetaConfig{
-		APIURL: source.string("", envModelMetaAPIURL),
+		APIURL: source.string("https://models.zgi.ai", envModelMetaAPIURL),
 	}
 }
 

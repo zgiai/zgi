@@ -66,11 +66,19 @@ function getModelNameFromSelectionKey(key: string): string {
   return separatorIndex >= 0 ? key.slice(separatorIndex + 1) : key;
 }
 
+function isDeprecatedModel(model: ModelItem): boolean {
+  return model.status === 'deprecated';
+}
+
 function isModelSelectable(
   model: ModelItem,
   selectionPolicy: ModelSelectionPolicy,
   catalogModelKeys: ReadonlySet<string>
 ): boolean {
+  if (isDeprecatedModel(model)) {
+    return false;
+  }
+
   if (selectionPolicy === 'catalog') {
     return catalogModelKeys.has(getModelSelectionKey(model));
   }
@@ -110,15 +118,19 @@ function ModelMultiSelectorBase({
 
   // Fetch all models at once without pagination
   const { data, isLoading } = useQuery<ApiResponseData<ModelList>>({
-    queryKey: ['models', 'multi-selector', { is_enabled: isEnabled }],
-    queryFn: () => modelService.getModels({ is_enabled: isEnabled, page_size: 1000 }),
+    queryKey: ['models', 'multi-selector', { is_enabled: isEnabled, status: 'active' }],
+    queryFn: () =>
+      modelService.getModels({ is_enabled: isEnabled, page_size: 1000, status: 'active' }),
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
     retry: false,
   });
 
-  const catalogItems = useMemo(() => data?.data?.items ?? [], [data]);
+  const catalogItems = useMemo(
+    () => (data?.data?.items ?? []).filter(item => !isDeprecatedModel(item)),
+    [data]
+  );
 
   const catalogModelKeys = useMemo(
     () =>
@@ -570,6 +582,9 @@ function ModelMultiSelectorBase({
                                         labels={{
                                           context: t('models.selector.tooltip.context'),
                                           features: t('models.selector.tooltip.features'),
+                                          replacementSuggestion: t(
+                                            'models.selector.tooltip.replacementSuggestion'
+                                          ),
                                           useCases: t('models.selector.tooltip.useCases'),
                                         }}
                                       />

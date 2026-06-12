@@ -658,6 +658,9 @@ export function ModelSelector({
                           providerId={row.providerId}
                           contextLabel={t('models.selector.tooltip.context')}
                           featuresLabel={t('models.selector.tooltip.features')}
+                          replacementSuggestionLabel={t(
+                            'models.selector.tooltip.replacementSuggestion'
+                          )}
                           useCaseLabel={t('models.selector.tooltip.useCases')}
                           featureLabels={featureLabels}
                           useCaseLabels={useCaseLabels}

@@ -129,6 +129,7 @@ const messages: ModelsMessages = {
       context: '上下文',
       useCases: '使用场景',
       features: '功能',
+      replacementSuggestion: '建议使用',
       description: '描述：',
       unknown: '未知',
     },

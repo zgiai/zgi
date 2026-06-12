@@ -151,7 +151,7 @@ func (s *modelService) GetGlobal(ctx context.Context, id uuid.UUID) (*model.LLMM
 
 func (s *modelService) ListGlobal(ctx context.Context, req *dto.ListModelRequest) ([]*model.LLMModel, int64, error) {
 	offset := (req.Page - 1) * req.PageSize
-	return s.globalRepo.List(ctx, req.ProviderID, req.Provider, req.UseCase, req.IsActive, offset, req.PageSize)
+	return s.globalRepo.List(ctx, req.ProviderID, req.Provider, req.UseCase, req.Status, req.IsActive, offset, req.PageSize)
 }
 
 func (s *modelService) UpdateGlobal(ctx context.Context, id uuid.UUID, req *dto.UpdateModelRequest) (*model.LLMModel, error) {
@@ -500,9 +500,13 @@ func (s *modelService) GetModelParameters(ctx context.Context, organizationID uu
 
 // ListTenantModels returns all models available to a tenant (global + custom).
 // Visibility is derived from provider/model activity plus tenant configuration.
-func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid.UUID, useCase string, provider string) ([]*model.ModelView, error) {
+func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid.UUID, useCase string, provider string, status string) ([]*model.ModelView, error) {
 	var result []*model.ModelView
 	provider = strings.TrimSpace(provider)
+	status = strings.TrimSpace(status)
+	if status == "" {
+		status = "active"
+	}
 
 	visibility, err := loadProviderVisibility(
 		ctx,
@@ -518,7 +522,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 	var globalModels []*model.LLMModel
 	if visibility.ShouldQueryGlobal(provider) {
 		// Get all active global models
-		globalModels, _, err = s.globalRepo.List(ctx, nil, provider, useCase, boolPtr(true), 0, 1000)
+		globalModels, _, err = s.globalRepo.List(ctx, nil, provider, useCase, status, boolPtr(true), 0, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list global models: %w", err)
 		}
@@ -695,7 +699,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 	}
 
 	var customModels []*model.CustomModel
-	if visibility.ShouldQueryCustom(provider) {
+	if status == "active" && visibility.ShouldQueryCustom(provider) {
 		// Get tenant's custom models
 		customModels, _, err = s.customRepo.List(ctx, organizationID, nil, provider, useCase, boolPtr(true), 0, 10000)
 		if err != nil {

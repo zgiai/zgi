@@ -134,6 +134,7 @@ const messages = {
       context: 'Context',
       useCases: 'Use Cases',
       features: 'Features',
+      replacementSuggestion: 'Suggested replacement:',
       description: 'Description:',
       unknown: 'unknown',
       // Note: Feature labels now use aiProviders.models.features translations

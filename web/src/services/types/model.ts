@@ -78,6 +78,8 @@ export interface GetModelsParams {
   capabilities?: string;
   // Filter by model use case
   use_case?: ModelUseCase;
+  // Filter by model lifecycle status
+  status?: 'active' | 'deprecated';
 }
 
 // Available models fetch params (enabled models only)
@@ -175,7 +177,10 @@ export interface ModelItem {
   performance?: ModelPerformance;
   usage_guidelines?: ModelUsageGuidelines;
   deprecation_date?: string | null;
+  deprecation_reason?: string | null;
+  replacement_provider?: string | null;
   replacement_model?: string | null;
+  unselectable_reason_code?: 'deprecated';
 }
 
 export interface ModelList {
