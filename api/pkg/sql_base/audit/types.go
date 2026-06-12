@@ -33,6 +33,7 @@ type Context struct {
 	CreatedBy      string
 	OperationType  string
 	RequestID      string
+	Attempt        int
 }
 
 type Record struct {

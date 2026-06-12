@@ -156,6 +156,21 @@ func (n *Node) workflowRunID() string {
 	return n.GraphRuntimeState.VariablePool.SystemVariables.WorkflowRunID
 }
 
+func (n *Node) auditRequestID() string {
+	runScope := strings.TrimSpace(n.workflowRunID())
+	if runScope == "" {
+		runScope = strings.TrimSpace(n.InstanceID)
+	}
+	nodeID := strings.TrimSpace(n.NodeID)
+	if runScope == "" {
+		return nodeID
+	}
+	if nodeID == "" {
+		return runScope
+	}
+	return runScope + ":" + nodeID
+}
+
 // executeRun performs the SQL execution.
 func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	logCtx := n.logContext(ctx)
@@ -230,6 +245,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 		NodeID:         n.NodeID,
 		CreatedBy:      n.UserID,
 		OperationType:  inferOperationType(sqlText),
+		RequestID:      n.auditRequestID(),
 	}
 	result, attempts, execErr := n.executeWithRetry(execCtx, sqlText, auditCtx)
 	duration := time.Since(start)
@@ -311,6 +327,9 @@ func (n *Node) executeWithRetry(ctx context.Context, sqlText string, auditCtx *a
 
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		if auditCtx != nil {
+			auditCtx.Attempt = attempt
+		}
 		result, err := n.sqlClient.ExecuteSQL(ctx, sqlText, nil, auditCtx)
 		if err == nil {
 			return result, attempt, nil

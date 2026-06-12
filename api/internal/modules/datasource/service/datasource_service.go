@@ -411,14 +411,16 @@ func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dat
 		Comment: &comment,
 	}
 
-	createdTable, err := s.sqlBase.CreateTable(ctx, createTableReq)
+	var createdTable *sql_base.Table
+	createTableSQL := fmt.Sprintf("CREATE TABLE %s ();", quoteIdentifier(tableName))
+	err = s.auditSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, tableName, accountID, string(model.OperationTypeCreate), createTableSQL, func() error {
+		var opErr error
+		createdTable, opErr = s.sqlBase.CreateTable(ctx, createTableReq)
+		return opErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
-
-	// Log the SQL operation
-	s.logSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, createdTable.Name, accountID, string(model.OperationTypeCreate),
-		fmt.Sprintf("CREATE TABLE %s ();", tableName))
 
 	// Create default columns after table creation
 	// id - primary key
@@ -432,7 +434,10 @@ func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dat
 		IsNullable:         boolPtr(false),
 		Comment:            stringPtr("数据的唯一标识（主键）"),
 	}
-	_, err = s.sqlBase.CreateColumn(ctx, idColumnReq)
+	err = s.auditSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, createdTable.Name, accountID, string(model.OperationTypeCreate), fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s bigint PRIMARY KEY", quoteIdentifier(createdTable.Name), quoteIdentifier("id")), func() error {
+		_, opErr := s.sqlBase.CreateColumn(ctx, idColumnReq)
+		return opErr
+	})
 	if err != nil {
 		// If column creation fails, try to delete the table
 		s.sqlBase.DeleteTable(ctx, createdTable.ID, true)
@@ -449,7 +454,10 @@ func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dat
 		IsNullable:         boolPtr(false),
 		Comment:            stringPtr("用户唯一标识，由系统生成"),
 	}
-	_, err = s.sqlBase.CreateColumn(ctx, uuidColumnReq)
+	err = s.auditSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, createdTable.Name, accountID, string(model.OperationTypeCreate), fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s uuid", quoteIdentifier(createdTable.Name), quoteIdentifier("uuid")), func() error {
+		_, opErr := s.sqlBase.CreateColumn(ctx, uuidColumnReq)
+		return opErr
+	})
 	if err != nil {
 		// If column creation fails, try to delete the table
 		s.sqlBase.DeleteTable(ctx, createdTable.ID, true)
@@ -466,7 +474,10 @@ func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dat
 		IsNullable:         boolPtr(false),
 		Comment:            stringPtr("数据创建时间"),
 	}
-	_, err = s.sqlBase.CreateColumn(ctx, createdTimeColumnReq)
+	err = s.auditSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, createdTable.Name, accountID, string(model.OperationTypeCreate), fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s timestamp", quoteIdentifier(createdTable.Name), quoteIdentifier("created_time")), func() error {
+		_, opErr := s.sqlBase.CreateColumn(ctx, createdTimeColumnReq)
+		return opErr
+	})
 	if err != nil {
 		// If column creation fails, try to delete the table
 		s.sqlBase.DeleteTable(ctx, createdTable.ID, true)
@@ -483,7 +494,10 @@ func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dat
 		IsNullable:         boolPtr(false),
 		Comment:            stringPtr("数据更新时间"),
 	}
-	_, err = s.sqlBase.CreateColumn(ctx, updatedTimeColumnReq)
+	err = s.auditSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, createdTable.Name, accountID, string(model.OperationTypeCreate), fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s timestamp", quoteIdentifier(createdTable.Name), quoteIdentifier("updated_time")), func() error {
+		_, opErr := s.sqlBase.CreateColumn(ctx, updatedTimeColumnReq)
+		return opErr
+	})
 	if err != nil {
 		// If column creation fails, try to delete the table
 		s.sqlBase.DeleteTable(ctx, createdTable.ID, true)
@@ -684,7 +698,15 @@ func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dat
 		}
 	}
 
-	// Delete table and record usage in transaction
+	dropSQL := fmt.Sprintf("DROP TABLE %s CASCADE", quoteIdentifier(tableMetadata.PhysicalTableName))
+	if err := s.auditSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeDelete), dropSQL, func() error {
+		_, opErr := s.sqlBase.DeleteTable(ctx, tableMetadata.TableID, true)
+		return opErr
+	}); err != nil {
+		return fmt.Errorf("failed to delete physical table: %w", err)
+	}
+
+	// Delete metadata and record usage in transaction after the physical table is gone.
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		// Delete associated table prompt if exists
 		err = s.promptRepo.DeleteByTableID(ctx, tableID)
@@ -692,17 +714,6 @@ func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dat
 			// Log the error but continue with table deletion
 			logger.WarnContext(ctx, "failed to delete table prompt", "table_id", tableID, err)
 		}
-
-		// Delete table using sqlBase DeleteTable
-		_, err = s.sqlBase.DeleteTable(ctx, tableMetadata.TableID, true)
-		if err != nil {
-			// Log the error but continue with table metadata deletion
-			logger.WarnContext(ctx, "failed to delete physical table", "table_id", tableID, "physical_table", tableMetadata.PhysicalTableName, err)
-		}
-
-		// Log the SQL operation
-		s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeDelete),
-			fmt.Sprintf("DROP TABLE %s CASCADE", tableMetadata.PhysicalTableName))
 
 		// Delete table metadata
 		if err := s.tableRepo.Delete(ctx, tableID); err != nil {
@@ -868,13 +879,14 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 
 	// Delete columns that are not in the incoming request
 	for _, col := range columnsToDelete {
-		_, err = s.sqlBase.DeleteColumn(ctx, col.ID, true)
+		dropColumnSQL := fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s CASCADE", quoteIdentifier(tableMetadata.PhysicalTableName), quoteIdentifier(col.Name))
+		err = s.auditSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate), dropColumnSQL, func() error {
+			_, opErr := s.sqlBase.DeleteColumn(ctx, col.ID, true)
+			return opErr
+		})
 		if err != nil {
 			return fmt.Errorf("failed to delete column '%s': %w", col.Name, err)
 		}
-		// Log the SQL operation for column deletion with detailed information
-		s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate),
-			fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s CASCADE", tableMetadata.PhysicalTableName, col.Name))
 	}
 
 	// Update existing columns
@@ -965,12 +977,6 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 
 		// Only perform update if something has changed
 		if needsUpdate {
-			_, err = s.sqlBase.UpdateColumn(ctx, col.ID, updateReq)
-			if err != nil {
-				return fmt.Errorf("failed to update column '%s': %w", col.Name, err)
-			}
-
-			// Log the SQL operation for column update with detailed information
 			var changes []string
 			if updateReq.Name != "" && updateReq.Name != existingCol.Name {
 				changes = append(changes, fmt.Sprintf("rename column from '%s' to '%s'", existingCol.Name, updateReq.Name))
@@ -1010,7 +1016,13 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 				logMessage += " (no changes)"
 			}
 
-			s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate), logMessage)
+			err = s.auditSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate), logMessage, func() error {
+				_, opErr := s.sqlBase.UpdateColumn(ctx, col.ID, updateReq)
+				return opErr
+			})
+			if err != nil {
+				return fmt.Errorf("failed to update column '%s': %w", col.Name, err)
+			}
 		}
 	}
 
@@ -1033,14 +1045,10 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 			}
 		}
 
-		_, err = s.sqlBase.CreateColumn(ctx, createColReq)
-		if err != nil {
-			return fmt.Errorf("failed to create column '%s': %w", col.Name, err)
-		}
 		// Log the SQL operation for column creation with detailed information
 		createDetails := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s",
-			tableMetadata.PhysicalTableName,
-			col.Name,
+			quoteIdentifier(tableMetadata.PhysicalTableName),
+			quoteIdentifier(col.Name),
 			col.Type)
 		if col.Description != nil {
 			createDetails += fmt.Sprintf(" COMMENT '%s'", *col.Description)
@@ -1050,7 +1058,13 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 		} else {
 			createDetails += " NOT NULL"
 		}
-		s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate), createDetails)
+		err = s.auditSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate), createDetails, func() error {
+			_, opErr := s.sqlBase.CreateColumn(ctx, createColReq)
+			return opErr
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create column '%s': %w", col.Name, err)
+		}
 	}
 
 	// Update the table's updated_by and updated_at fields
@@ -2526,11 +2540,34 @@ func (s *dataSourceService) getDefaultForType(colType string, isRequired bool) (
 // logSQLOperation logs the SQL statement for audit purposes
 func (s *dataSourceService) logSQLOperation(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string) error {
 	now := time.Now()
+	return s.logSQLOperationWithResult(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement, now, now, nil)
+}
+
+func (s *dataSourceService) auditSQLOperation(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string, execute func() error) error {
+	start := time.Now()
+	err := execute()
+	end := time.Now()
+	if logErr := s.logSQLOperationWithResult(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement, start, end, err); logErr != nil {
+		logger.ErrorContext(ctx, "failed to audit sql operation", "data_source_id", dataSourceID, "table_id", tableID, logErr)
+	}
+	return err
+}
+
+func (s *dataSourceService) logSQLOperationWithResult(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string, start, end time.Time, execErr error) error {
+	now := time.Now()
 	workspaceID := organizationID
-	if dataSourceID != "" {
+	if dataSourceID != "" && s.repo != nil {
 		if dataSource, err := s.repo.FindByID(ctx, dataSourceID); err == nil && dataSource != nil {
 			workspaceID = auditWorkspaceID(organizationID, dataSource.WorkspaceID)
 		}
+	}
+	durationMS := end.Sub(start).Milliseconds()
+	status := string(model.OperationStatusSuccess)
+	var errorMessage *string
+	if execErr != nil {
+		status = string(model.OperationStatusFailed)
+		msg := execErr.Error()
+		errorMessage = &msg
 	}
 
 	// Create operation log entry
@@ -2544,11 +2581,12 @@ func (s *dataSourceService) logSQLOperation(ctx context.Context, organizationID,
 		SqlStatement:   sqlStatement,
 		OperationType:  operation,
 		ClientType:     string(audit.ClientTypeAPI),
-		DurationMS:     int64Ptr(0),
-		ExecutedAt:     &now,
-		StartTime:      now,
-		EndTime:        now,
-		Status:         string(model.OperationStatusSuccess), // Assuming success for now
+		DurationMS:     &durationMS,
+		ErrorMessage:   errorMessage,
+		ExecutedAt:     &start,
+		StartTime:      start,
+		EndTime:        end,
+		Status:         status,
 		CreatedBy:      accountID,
 		CreatedAt:      now,
 	}

@@ -753,23 +753,33 @@ func (r *PostgresSQLOperationRepository) ListAuditByWorkspace(ctx context.Contex
 	}
 
 	var logs []*model.DataSourceSQLOperation
-	query := r.applySQLAuditFilters(
+	base := r.applySQLAuditFilters(
 		r.db.WithContext(ctx).Model(&model.DataSourceSQLOperation{}).
 			Where("organization_id = ? AND workspace_id = ?", organizationID, workspaceID),
 		filters,
 	)
-	err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&logs).Error
+	ranked := base.Select("id, ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(request_id, ''), id) ORDER BY created_at DESC, id DESC) AS rn")
+	latestIDs := r.db.Table("(?) AS ranked_sql_audit", ranked).Select("id").Where("rn = 1")
+	err := r.db.WithContext(ctx).
+		Model(&model.DataSourceSQLOperation{}).
+		Where("id IN (?)", latestIDs).
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&logs).Error
 	return logs, err
 }
 
 func (r *PostgresSQLOperationRepository) CountAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error) {
 	var count int64
-	query := r.applySQLAuditFilters(
+	base := r.applySQLAuditFilters(
 		r.db.WithContext(ctx).Model(&model.DataSourceSQLOperation{}).
 			Where("organization_id = ? AND workspace_id = ?", organizationID, workspaceID),
 		filters,
 	)
-	err := query.Count(&count).Error
+	ranked := base.Select("id, ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(request_id, ''), id) ORDER BY created_at DESC, id DESC) AS rn")
+	latestIDs := r.db.Table("(?) AS ranked_sql_audit", ranked).Select("id").Where("rn = 1")
+	err := r.db.WithContext(ctx).Table("(?) AS latest_sql_audit", latestIDs).Count(&count).Error
 	return count, err
 }
 

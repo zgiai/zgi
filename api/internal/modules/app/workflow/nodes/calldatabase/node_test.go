@@ -17,11 +17,15 @@ import (
 type fakeSQLBase struct {
 	sql_base.SQLBase
 	auditCtx    *audit.Context
+	auditCtxs   []audit.Context
 	executeFunc func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error)
 }
 
 func (f *fakeSQLBase) ExecuteSQL(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
 	f.auditCtx = auditCtx
+	if auditCtx != nil {
+		f.auditCtxs = append(f.auditCtxs, *auditCtx)
+	}
 	if f.executeFunc != nil {
 		return f.executeFunc(ctx, query, params, auditCtx)
 	}
@@ -179,6 +183,9 @@ func TestWorkflowChainStartCallDatabaseEnd(t *testing.T) {
 	if mockClient.auditCtx.NodeID != "call-db-node" {
 		t.Fatalf("node_id = %s, want call-db-node", mockClient.auditCtx.NodeID)
 	}
+	if mockClient.auditCtx.RequestID != "call-instance:call-db-node" {
+		t.Fatalf("request_id = %s, want node instance and node id", mockClient.auditCtx.RequestID)
+	}
 	if mockClient.auditCtx.TableID != "table-uuid-1" {
 		t.Fatalf("table_id = %s, want table-uuid-1", mockClient.auditCtx.TableID)
 	}
@@ -242,6 +249,54 @@ func TestWorkflowChainStartCallDatabaseEnd(t *testing.T) {
 		}
 	default:
 		t.Fatalf("unexpected final_count type: %T", v)
+	}
+}
+
+func TestExecuteWithRetryUsesSingleAuditRequestIDAcrossAttempts(t *testing.T) {
+	var calls int
+	mockClient := &fakeSQLBase{
+		executeFunc: func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
+			calls++
+			if calls < 3 {
+				return nil, fmt.Errorf("temporary database error")
+			}
+			return &sql_base.QueryResult{
+				RowsAffected: 0,
+				Columns:      []string{},
+				Rows:         [][]any{},
+			}, nil
+		},
+	}
+
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			NodeID:   "call-db-node",
+			NodeType: shared.CallDatabase,
+		},
+		NodeData: NodeData{
+			Execution: ExecutionConfig{MaxRetries: 2},
+		},
+		sqlClient: mockClient,
+	}
+
+	auditCtx := &audit.Context{RequestID: "run-1:call-db-node"}
+	_, attempts, err := node.executeWithRetry(context.Background(), "SELECT 1", auditCtx)
+	if err != nil {
+		t.Fatalf("executeWithRetry returned error: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if len(mockClient.auditCtxs) != 3 {
+		t.Fatalf("audit ctx count = %d, want 3", len(mockClient.auditCtxs))
+	}
+	for i, got := range mockClient.auditCtxs {
+		if got.RequestID != "run-1:call-db-node" {
+			t.Fatalf("attempt %d request_id = %s, want shared request id", i+1, got.RequestID)
+		}
+		if got.Attempt != i+1 {
+			t.Fatalf("attempt %d audit attempt = %d, want %d", i+1, got.Attempt, i+1)
+		}
 	}
 }
 
