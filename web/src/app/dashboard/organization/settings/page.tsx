@@ -276,42 +276,31 @@ export default function OrganizationSettingsPage() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <span
-                className={
-                  saveFeedbackVisible ? 'text-xs text-success' : 'text-xs text-muted-foreground'
-                }
-              >
-                {saveFeedbackVisible
-                  ? t('organization.settings.saved')
-                  : saveDisabledReason || t('organization.settings.readyToSave')}
-              </span>
-              <div className="flex justify-end">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex" tabIndex={isSaveDisabled ? 0 : -1}>
-                      <Button
-                        type="submit"
-                        size="sm"
-                        disabled={isSaveDisabled}
-                        className="h-9 w-full gap-1.5 rounded-lg px-3 text-xs sm:w-auto"
-                      >
-                        <Save className="size-3.5" />
-                        {isUpdatingOrganization
-                          ? t('organization.settings.saving')
-                          : saveFeedbackVisible
-                            ? t('organization.settings.saved')
-                            : t('organization.settings.save')}
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  {isSaveDisabled ? (
-                    <TooltipContent side="top" align="end" className="max-w-64 text-xs">
-                      {saveDisabledReason}
-                    </TooltipContent>
-                  ) : null}
-                </Tooltip>
-              </div>
+            <div className="flex justify-end">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex" tabIndex={isSaveDisabled ? 0 : -1}>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={isSaveDisabled}
+                      className="h-9 w-full gap-1.5 rounded-lg px-3 text-xs sm:w-auto"
+                    >
+                      <Save className="size-3.5" />
+                      {isUpdatingOrganization
+                        ? t('organization.settings.saving')
+                        : saveFeedbackVisible
+                          ? t('organization.settings.saved')
+                          : t('organization.settings.save')}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {isSaveDisabled ? (
+                  <TooltipContent side="top" align="end" className="max-w-64 text-xs">
+                    {saveDisabledReason}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
             </div>
           </form>
         </section>
