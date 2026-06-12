@@ -26,7 +26,7 @@ import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import type { Member } from '@/services/types/organization';
 
-const ORGANIZATION_NAME_MAX_LENGTH = 255;
+const ORGANIZATION_NAME_MAX_LENGTH = 30;
 
 export default function OrganizationSettingsPage() {
   const t = useT('dashboard');
@@ -257,27 +257,39 @@ export default function OrganizationSettingsPage() {
               >
                 {t('organization.settings.name')}
               </Label>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-                <div className="min-w-0 flex-1 sm:max-w-[720px]">
-                  <Input
-                    id="organization-name"
-                    value={name}
-                    onChange={event => {
-                      setName(event.target.value);
-                      setSaveFeedbackVisible(false);
-                      if (nameError) setNameError('');
-                    }}
-                    placeholder={t('organization.settings.namePlaceholder')}
-                    maxLength={ORGANIZATION_NAME_MAX_LENGTH}
-                    disabled={!canEdit || isUpdatingOrganization}
-                    errorText={nameError}
-                    showCharacterCount
-                    className="h-9 rounded-lg bg-bg-canvas/40 shadow-none transition-all focus:border-primary/50 focus:ring-0"
-                  />
-                </div>
+              <div className="min-w-0 sm:max-w-[720px]">
+                <Input
+                  id="organization-name"
+                  value={name}
+                  onChange={event => {
+                    setName(event.target.value);
+                    setSaveFeedbackVisible(false);
+                    if (nameError) setNameError('');
+                  }}
+                  placeholder={t('organization.settings.namePlaceholder')}
+                  maxLength={ORGANIZATION_NAME_MAX_LENGTH}
+                  disabled={!canEdit || isUpdatingOrganization}
+                  errorText={nameError}
+                  showCharacterCount
+                  className="h-9 rounded-lg bg-bg-canvas/40 shadow-none transition-all focus:border-primary/50 focus:ring-0"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <span
+                className={
+                  saveFeedbackVisible ? 'text-xs text-success' : 'text-xs text-muted-foreground'
+                }
+              >
+                {saveFeedbackVisible
+                  ? t('organization.settings.saved')
+                  : saveDisabledReason || t('organization.settings.readyToSave')}
+              </span>
+              <div className="flex justify-end">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <span className="inline-flex sm:pt-0" tabIndex={isSaveDisabled ? 0 : -1}>
+                    <span className="inline-flex" tabIndex={isSaveDisabled ? 0 : -1}>
                       <Button
                         type="submit"
                         size="sm"
@@ -301,26 +313,8 @@ export default function OrganizationSettingsPage() {
                 </Tooltip>
               </div>
             </div>
-
-            <div className="flex flex-col gap-1.5 border-t border-border/60 pt-3 sm:flex-row sm:items-center sm:justify-between">
-              <span
-                className={
-                  saveFeedbackVisible ? 'text-xs text-success' : 'text-xs text-muted-foreground'
-                }
-              >
-                {saveFeedbackVisible
-                  ? t('organization.settings.saved')
-                  : saveDisabledReason || t('organization.settings.readyToSave')}
-              </span>
-              <span className="text-xs leading-5 text-muted-foreground">
-                {canEdit
-                  ? t('organization.settings.permissionHint')
-                  : t('organization.settings.noPermission')}
-              </span>
-            </div>
           </form>
         </section>
-
         {canViewAdminManagement ? (
           <section className="overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm">
             <div className="flex flex-col gap-3 border-b border-border/60 bg-muted/20 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
