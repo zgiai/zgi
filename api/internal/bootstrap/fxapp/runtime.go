@@ -35,6 +35,7 @@ type runtimeParams struct {
 	GRPCListener        net.Listener `name:"grpc_listener"`
 	Config              *config.Config
 	BootstrapService    *system_service.BootstrapService
+	ServiceContainer    *container.ServiceContainer
 	GraphFlowService    *graphflow.Service
 	WorkflowTestService *workflowtest.Service
 	LLMClient           llmclient.LLMClient
