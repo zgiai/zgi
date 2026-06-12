@@ -35,6 +35,7 @@ type runtimeParams struct {
 	GRPCListener        net.Listener `name:"grpc_listener"`
 	Config              *config.Config
 	BootstrapService    *system_service.BootstrapService
+	ServiceContainer    *container.ServiceContainer
 	GraphFlowService    *graphflow.Service
 	WorkflowTestService *workflowtest.Service
 	LLMClient           llmclient.LLMClient
@@ -115,6 +116,7 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 	RegisterSchedulerLifecycle(lc, params.Scheduler, params.Logger)
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
 	RegisterHTTPServerLifecycle(lc, params.HTTPServer, params.HTTPListener, params.Logger)
+	RegisterSQLAuditRecorderLifecycle(lc, params.ServiceContainer, params.Logger)
 	registerSentryLifecycle(lc, params.Sentry)
 
 	return nil
@@ -133,6 +135,26 @@ func RegisterCloudBootstrapLifecycle(
 				return err
 			}
 			return nil
+		},
+	})
+}
+
+// RegisterSQLAuditRecorderLifecycle flushes queued SQL audit records during shutdown.
+func RegisterSQLAuditRecorderLifecycle(lc fx.Lifecycle, serviceContainer *container.ServiceContainer, log *zap.Logger) {
+	lc.Append(fx.Hook{
+		OnStop: func(ctx context.Context) error {
+			var closeErr error
+			if serviceContainer != nil {
+				if err := serviceContainer.CloseSQLAuditRecorder(ctx); err != nil {
+					closeErr = err
+					log.Error("failed to close workflow SQL audit recorder", zap.Error(err))
+				}
+				if err := serviceContainer.CloseDataSourceSQLAuditRecorder(ctx); err != nil {
+					closeErr = err
+					log.Error("failed to close datasource SQL audit recorder", zap.Error(err))
+				}
+			}
+			return closeErr
 		},
 	})
 }

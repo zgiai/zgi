@@ -1946,6 +1946,153 @@ func (h *DataSourceHandler) ListOperationLogsByDataSourceID(c *gin.Context) {
 	})
 }
 
+func (h *DataSourceHandler) ListSQLAuditByWorkspace(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	workspaceID := c.Param("workspace_id")
+	if workspaceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "workspace_id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if h.organizationService != nil {
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	var req dto.ListSQLAuditRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid query parameters: "+err.Error())
+		return
+	}
+
+	page := 1
+	limit := 20
+	if req.Page > 0 {
+		page = req.Page
+	}
+	if req.Limit > 0 {
+		limit = req.Limit
+	}
+	offset := (page - 1) * limit
+
+	filters := dto.SQLAuditFilter{
+		DataSourceID:  req.DataSourceID,
+		TableID:       req.TableID,
+		ClientType:    req.ClientType,
+		WorkflowRunID: req.WorkflowRunID,
+		NodeID:        req.NodeID,
+		CreatedBy:     req.CreatedBy,
+		OperationType: req.OperationType,
+		Status:        req.Status,
+		StartTime:     req.StartTime,
+		EndTime:       req.EndTime,
+	}
+
+	records, err := h.service.ListSQLAuditByWorkspace(c.Request.Context(), organizationID, workspaceID, filters, limit, offset)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	total, err := h.service.CountSQLAuditByWorkspace(c.Request.Context(), organizationID, workspaceID, filters)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	items := make([]dto.SQLAuditListItem, 0, len(records))
+	for _, record := range records {
+		items = append(items, dto.ConvertSQLOperationModelToAuditListItem(record))
+	}
+
+	response.Success(c, dto.ListSQLAuditResponse{
+		Data:    items,
+		HasMore: int64(page*limit) < total,
+		Limit:   limit,
+		Total:   total,
+		Page:    page,
+	})
+}
+
+func (h *DataSourceHandler) GetSQLAuditDetail(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	workspaceID := c.Param("workspace_id")
+	if workspaceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "workspace_id is required")
+		return
+	}
+
+	operationID := c.Param("operation_id")
+	if operationID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "operation_id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if h.organizationService != nil {
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	record, err := h.service.GetSQLAuditDetail(c.Request.Context(), organizationID, workspaceID, operationID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	if record == nil {
+		response.Fail(c, response.ErrNotFound)
+		return
+	}
+
+	response.Success(c, dto.ConvertSQLOperationModelToAuditDetail(record))
+}
+
 // RegisterRoutes registers all data source routes
 func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant := router.Group("", middleware.JWTWithOrganizationAndService(h.accountService))
@@ -1969,6 +2116,8 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.PUT("/data-dbs/:id/tables/:table_id/columns", h.UpdateTableColumns)
 	authWithTenant.GET("/data-dbs/:id/tables/:table_id/columns", h.GetTableColumns)
 	authWithTenant.GET("/data-dbs/:id/sql-operations", h.ListOperationLogsByDataSourceID)
+	authWithTenant.GET("/workspaces/:workspace_id/sql-audit", h.ListSQLAuditByWorkspace)
+	authWithTenant.GET("/workspaces/:workspace_id/sql-audit/:operation_id", h.GetSQLAuditDetail)
 	authWithTenant.POST("/data-dbs/analyze-file-for-table", h.AnalyzeFileForTable)
 	authWithTenant.POST("/data-dbs/:id/excel-import/analyze", h.AnalyzeExcelImport)
 	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id", h.GetExcelImportJob)
