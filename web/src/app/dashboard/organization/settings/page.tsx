@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Search, Save, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { useT } from '@/i18n';
@@ -30,8 +30,10 @@ export default function OrganizationSettingsPage() {
   } = useOrganizationActions();
   const [name, setName] = useState('');
   const [nameError, setNameError] = useState('');
+  const [saveFeedbackVisible, setSaveFeedbackVisible] = useState(false);
   const [memberKeyword, setMemberKeyword] = useState('');
   const [adminToDemote, setAdminToDemote] = useState<Member | null>(null);
+  const saveFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debouncedMemberKeyword = useDebouncedValue(memberKeyword, 300);
 
   const canEdit = useMemo(
@@ -40,9 +42,17 @@ export default function OrganizationSettingsPage() {
   );
   const isOwner = currentOrganization?.organization_role === 'owner';
   const {
-    members,
-    isLoading: isLoadingMembers,
-    isFetching: isFetchingMembers,
+    members: roleMembers,
+    isLoading: isLoadingRoleMembers,
+    isFetching: isFetchingRoleMembers,
+  } = useCurrentOrganizationMembers({
+    limit: 1000,
+    enabled: isOwner,
+  });
+  const {
+    members: candidateMemberResults,
+    isLoading: isLoadingCandidateMembers,
+    isFetching: isFetchingCandidateMembers,
   } = useCurrentOrganizationMembers({
     keyword: debouncedMemberKeyword,
     limit: 1000,
@@ -50,27 +60,48 @@ export default function OrganizationSettingsPage() {
   });
 
   const owners = useMemo(
-    () => members.filter(member => member.organization_role === 'owner'),
-    [members]
+    () => roleMembers.filter(member => member.organization_role === 'owner'),
+    [roleMembers]
   );
   const admins = useMemo(
-    () => members.filter(member => member.organization_role === 'admin'),
-    [members]
+    () => roleMembers.filter(member => member.organization_role === 'admin'),
+    [roleMembers]
   );
   const candidateMembers = useMemo(
     () =>
-      members
+      candidateMemberResults
         .filter(member => member.organization_role === 'normal' && member.status === 'active')
         .slice(0, 8),
-    [members]
+    [candidateMemberResults]
   );
+  const isFetchingMembers = isFetchingRoleMembers || isFetchingCandidateMembers;
 
   useEffect(() => {
     setName(currentOrganization?.name ?? '');
     setNameError('');
   }, [currentOrganization?.id, currentOrganization?.name]);
 
+  useEffect(() => {
+    return () => {
+      if (saveFeedbackTimerRef.current) {
+        clearTimeout(saveFeedbackTimerRef.current);
+      }
+    };
+  }, []);
+
   const isDirty = name.trim() !== (currentOrganization?.name ?? '');
+  const currentRoleLabel = useMemo(() => {
+    switch (currentOrganization?.organization_role) {
+      case 'owner':
+        return t('organization.settings.roles.owner');
+      case 'admin':
+        return t('organization.settings.roles.admin');
+      case 'normal':
+        return t('organization.settings.roles.normal');
+      default:
+        return '-';
+    }
+  }, [currentOrganization?.organization_role, t]);
 
   const validate = () => {
     const nextName = name.trim();
@@ -94,6 +125,13 @@ export default function OrganizationSettingsPage() {
     await updateOrganization({
       name: name.trim(),
     });
+    setSaveFeedbackVisible(true);
+    if (saveFeedbackTimerRef.current) {
+      clearTimeout(saveFeedbackTimerRef.current);
+    }
+    saveFeedbackTimerRef.current = setTimeout(() => {
+      setSaveFeedbackVisible(false);
+    }, 1800);
   };
 
   const handlePromoteAdmin = async (member: Member) => {
@@ -155,10 +193,12 @@ export default function OrganizationSettingsPage() {
               <p className="mt-1 text-sm text-muted-foreground">
                 {t('organization.settings.profileDescription')}
               </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t('organization.settings.permissionHint')}
+              </p>
             </div>
             <Badge variant={canEdit ? 'info' : 'secondary'} className="w-fit font-medium">
-              {t('organization.settings.currentRole')}:{' '}
-              {currentOrganization?.organization_role ?? '-'}
+              {t('organization.settings.currentRole')}: {currentRoleLabel}
             </Badge>
           </div>
         </div>
@@ -171,6 +211,7 @@ export default function OrganizationSettingsPage() {
               value={name}
               onChange={event => {
                 setName(event.target.value);
+                setSaveFeedbackVisible(false);
                 if (nameError) setNameError('');
               }}
               placeholder={t('organization.settings.namePlaceholder')}
@@ -197,7 +238,9 @@ export default function OrganizationSettingsPage() {
               <Save className="size-4" />
               {isUpdatingOrganization
                 ? t('organization.settings.saving')
-                : t('organization.settings.save')}
+                : saveFeedbackVisible
+                  ? t('organization.settings.saved')
+                  : t('organization.settings.save')}
             </Button>
           </div>
         </form>
@@ -261,7 +304,7 @@ export default function OrganizationSettingsPage() {
                   {t('organization.settings.adminManagement.adminTitle')}
                 </div>
                 <div className="overflow-hidden rounded-lg border border-border/80">
-                  {isLoadingMembers ? (
+                  {isLoadingRoleMembers ? (
                     <>
                       <div className="border-b border-border/60 px-4 py-3">
                         <Skeleton className="h-10 rounded-lg" />
@@ -316,7 +359,16 @@ export default function OrganizationSettingsPage() {
                 </div>
 
                 <div className="overflow-hidden rounded-lg border border-border/80 bg-background">
-                  {candidateMembers.length > 0 ? (
+                  {isLoadingCandidateMembers ? (
+                    <>
+                      <div className="border-b border-border/60 px-4 py-3">
+                        <Skeleton className="h-10 rounded-lg" />
+                      </div>
+                      <div className="px-4 py-3">
+                        <Skeleton className="h-10 rounded-lg" />
+                      </div>
+                    </>
+                  ) : candidateMembers.length > 0 ? (
                     candidateMembers.map(member => (
                       <div
                         key={member.id}

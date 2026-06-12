@@ -500,19 +500,27 @@ const messages = {
       profileTitle: 'Profile',
       profileDescription:
         'This name is shown in the organization switcher, dashboard, and organization member views.',
+      permissionHint:
+        'Administrators can edit organization profile. Only owners can manage organization administrators.',
       name: 'Organization name',
       namePlaceholder: 'Enter organization name',
       currentRole: 'Current role',
+      roles: {
+        owner: 'Owner',
+        admin: 'Administrator',
+        normal: 'Member',
+      },
       noPermission: 'Only organization owners and administrators can update organization settings.',
       save: 'Save changes',
       saving: 'Saving...',
+      saved: 'Saved',
       updateSuccess: 'Organization updated',
       updateError: 'Failed to update organization',
       adminManagement: {
         title: 'Administrator Management',
         description:
           'Owners can grant or remove organization administrator access for active members.',
-        adminCount: '{count} admins',
+        adminCount: '{count} organization admins',
         ownerTitle: 'Owner',
         ownerBadge: 'Owner',
         noOwner: 'No owner found.',
