@@ -32,14 +32,14 @@ func NewGeneratePPTXTool(tenantID string) *GeneratePPTXTool {
 				"en_US":   "Generate an editable PPTX presentation from a structured specification.",
 				"zh_Hans": "根据结构化规格生成可编辑的 PPTX 演示文稿。",
 			},
-			LLM: "Generate an editable static PPTX presentation from a JSON presentation specification. Use this when the user asks for PowerPoint, slides, or a presentation deck. Supports text, title, basic table, and simple shape elements; animations and speaker notes are not supported.",
+			LLM: "Generate an editable static PPTX presentation from a JSON presentation specification. Use this when the user asks for PowerPoint, slides, or a presentation deck. Supports text, title, basic table, and simple shape elements; readable content must use non-overlapping boxes. Animations and speaker notes are not supported.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
 				Name:             "presentation",
 				Label:            tools.I18nText{"en_US": "Presentation", "zh_Hans": "演示文稿规格"},
 				HumanDescription: tools.I18nText{"en_US": "PPTX presentation specification as JSON.", "zh_Hans": "JSON 格式的 PPTX 演示文稿规格。"},
-				LLMDescription:   "JSON string describing the PPTX presentation. Include slides with elements of type title, text, table, or shape.",
+				LLMDescription:   "JSON string describing the PPTX presentation. Include slides with elements of type title, text, table, or shape. Use non-overlapping boxes for readable content; omitted boxes use simple auto layout.",
 				Type:             tools.ToolParameterTypeString,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         true,

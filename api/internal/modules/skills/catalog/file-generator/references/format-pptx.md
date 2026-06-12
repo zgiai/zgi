@@ -11,6 +11,7 @@ This path is for new decks only. It does not edit an existing PPTX template.
 - Editable text boxes and title text.
 - Basic tables.
 - Simple rectangle shapes.
+- Automatic safe fallback layout for elements that omit position fields.
 - Font face, font size, font weight, bold, italic, underline, color, horizontal alignment, vertical alignment, line spacing, and text box margins.
 - Slide background color.
 - Table column widths, border color, header fill/color, and row fill.
@@ -78,6 +79,19 @@ Shape fields:
 - `line_color`: optional `RRGGBB` color.
 - `rotation`: optional degrees.
 - `transparency`: optional `0` to `100`.
+
+## Layout Rules
+
+- Wide slides are `13.333 x 7.5` inches. 4:3 slides are `10 x 7.5` inches.
+- Keep normal content inside the slide bounds. Recommended content margins are `x >= 0.6`, `y >= 0.35`, and at least `0.45` inches above the bottom edge.
+- Do not overlap `title`, `text`, or `table` elements. Move content down, use columns, or split dense content into another slide.
+- `x` and `y` may be slightly negative only for decorative `shape` elements that should bleed off an edge. Do not use negative coordinates for readable text or tables.
+- Prefer explicit `x`, `y`, `w`, and `h` for important content. If positions are omitted, the renderer applies a simple top-to-bottom fallback layout.
+- For Chinese text, use `18` to `22` point body text and `1.1` to `1.3` line spacing. Keep each text box concise.
+- Avoid long unbroken Chinese paragraphs. As a rough budget, a `5.6 x 3.2` inch body box at `16` to `18` pt should stay under about `120` Chinese characters, and a `7.5 x 3.5` inch body box at `15` to `17` pt should stay under about `180` Chinese characters.
+- If the user asks for more text, add more slides or split into multiple short bullets. Do not pack long narrative paragraphs into a single text box.
+- If a slide needs more than one title, three body blocks, or one medium table, split it into multiple slides instead of shrinking text.
+- For two-column slides, use non-overlapping boxes such as left `x=0.75,w=5.6` and right `x=6.95,w=5.6`.
 
 ## Example
 

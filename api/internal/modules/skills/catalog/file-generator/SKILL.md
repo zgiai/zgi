@@ -56,9 +56,12 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
 5. Use `generate_docx` when a Word document needs headings, fonts, font sizes, alignment, spacing, page margins, page breaks, colored/bold/underlined text, or simple tables.
 6. Use `generate_pdf` when a PDF needs richer layout, print CSS, tables, colors, page margins, page breaks, or business-report formatting.
 7. Use `generate_pptx` when the user needs an editable static PowerPoint deck.
-8. Use `persistent` lifecycle by default unless the user asks for a temporary file.
-9. In the final answer, briefly mention the generated filename and format.
-10. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
+8. For PPTX, plan the slide layout before writing JSON. Use non-overlapping boxes for titles, text, and tables. Split dense content into more slides instead of shrinking text or stacking elements.
+9. For PPTX with Chinese or other dense text, treat "more text" as more slides, not denser text boxes. Keep body paragraphs short; use bullets, columns, or additional slides before exceeding the readable capacity of a box.
+10. Before calling `generate_pptx`, self-check that each slide's readable content fits within the slide bounds, does not overlap, uses explicit `x`, `y`, `w`, and `h` when the layout matters, and avoids long unbroken lines.
+11. Use `persistent` lifecycle by default unless the user asks for a temporary file.
+12. In the final answer, briefly mention the generated filename and format.
+13. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
 
 ## References
 
@@ -86,6 +89,7 @@ Read exactly one reference after choosing the target format:
 - `generate_docx` accepts a JSON string document specification. Do not pass raw Markdown or HTML as `document`.
 - `generate_pdf` accepts self-contained HTML and optional inline CSS. Do not pass JSON document specs.
 - `generate_pptx` accepts a JSON string presentation specification. Do not pass HTML or Markdown as `presentation`.
+- PPTX readable content should not use negative coordinates. Negative `x` or `y` is only appropriate for decorative shapes that intentionally bleed off an edge.
 - Generated file content must fit within the backend file size limit.
 - Do not include filesystem paths in filenames.
 - Do not claim a file was generated unless the tool call succeeded.

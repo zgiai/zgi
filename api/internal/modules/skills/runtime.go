@@ -897,7 +897,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			Description: "Generate an editable static PPTX presentation from a structured JSON presentation specification.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"presentation": stringValueSchema("JSON string describing the PPTX presentation. Include slides with elements of type title, text, table, or shape."),
+					"presentation": stringValueSchema("JSON string describing the PPTX presentation. Include slides with elements of type title, text, table, or shape. Use non-overlapping boxes for readable content; omitted boxes use simple auto layout."),
 					"filename":     stringValueSchema("Optional display filename. Do not include path separators or an extension."),
 					"title":        stringValueSchema("Optional title hint; visible content must be included in presentation.slides."),
 					"lifecycle":    enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),

@@ -405,6 +405,8 @@ pptx.author = "ZGI";
 pptx.subject = "Generated presentation";
 pptx.company = "ZGI";
 pptx.lang = spec.language || "en-US";
+const slideSize = spec.layout === "4:3" ? { width: 10, height: 7.5 } : { width: 13.333, height: 7.5 };
+const contentGap = 0.18;
 
 function compact(value) {
   const out = {};
@@ -433,8 +435,23 @@ function applyStyle(opts, style, defaults = {}) {
   if (merged.break_line !== undefined) opts.breakLine = merged.break_line;
   if (merged.line_spacing !== undefined) {
     opts.lineSpacingMultiple = merged.line_spacing;
-    opts.lineSpacing = merged.line_spacing;
   }
+}
+
+function applyTextElementOverrides(opts, element, fallbackMargin) {
+  opts.margin = element.margin ?? opts.margin ?? fallbackMargin;
+  if (element.break_line !== undefined) {
+    opts.breakLine = element.break_line;
+  } else if (opts.breakLine === undefined) {
+    opts.breakLine = false;
+  }
+  if (element.line_spacing !== undefined) {
+    opts.lineSpacingMultiple = element.line_spacing;
+  }
+}
+
+function applyTableElementOverrides(opts, element, fallbackMargin) {
+  opts.margin = element.margin ?? opts.margin ?? fallbackMargin;
 }
 
 function box(element, fallback) {
@@ -446,27 +463,94 @@ function box(element, fallback) {
   };
 }
 
+function isCjkCodePoint(code) {
+  return (code >= 0x3400 && code <= 0x4dbf) ||
+    (code >= 0x4e00 && code <= 0x9fff) ||
+    (code >= 0xf900 && code <= 0xfaff) ||
+    (code >= 0x3040 && code <= 0x30ff) ||
+    (code >= 0xac00 && code <= 0xd7af);
+}
+
+function textUnit(char) {
+  if (char === "\t") return 1.2;
+  if (char === " ") return 0.35;
+  const code = char.codePointAt(0);
+  if (code <= 0x7f) return 0.55;
+  if (isCjkCodePoint(code)) return 1.0;
+  return 0.8;
+}
+
+function wrapTextLine(text, maxUnits) {
+  if (!String(text).trim()) return [""];
+  const lines = [];
+  let line = "";
+  let units = 0;
+  for (const char of String(text)) {
+    const unit = textUnit(char);
+    if (units > 0 && units + unit > maxUnits) {
+      const trimmed = line.trimEnd();
+      if (trimmed) lines.push(trimmed);
+      line = "";
+      units = 0;
+      if (/\s/.test(char)) continue;
+    }
+    if (units === 0 && /\s/.test(char)) continue;
+    line += char;
+    units += unit;
+  }
+  const trimmed = line.trimEnd();
+  if (trimmed) lines.push(trimmed);
+  return lines.length ? lines : [""];
+}
+
+function wrapTextForBox(text, opts, isTitle) {
+  const margin = numberOr(opts.margin, 0.04);
+  const fontSize = numberOr(opts.fontSize, isTitle ? 30 : 18);
+  const unitWidth = Math.max(fontSize / 72, 12 / 72);
+  const usableWidth = Math.max(0.2, numberOr(opts.w, slideSize.width - 1.5) - 2 * margin);
+  const lineCapacity = Math.max(1, usableWidth / unitWidth);
+  const maxUnits = Math.max(8, lineCapacity * 0.92);
+  const paragraphs = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const wrapped = [];
+  for (const paragraph of paragraphs) wrapped.push(...wrapTextLine(paragraph, maxUnits));
+  return wrapped.join("\n");
+}
+
+function fallbackBox(element, cursorY) {
+  if (element.type === "title") {
+    return { x: 0.6, y: Math.max(cursorY, 0.35), w: slideSize.width - 1.2, h: 0.7 };
+  }
+  if (element.type === "text") {
+    return { x: 0.75, y: Math.max(cursorY, 1.25), w: slideSize.width - 1.5, h: 1.0 };
+  }
+  if (element.type === "table") {
+    return { x: 0.75, y: Math.max(cursorY, 1.45), w: slideSize.width - 1.5, h: 4.8 };
+  }
+  return { x: 0.75, y: Math.max(cursorY, 1.2), w: 2.0, h: 1.0 };
+}
+
+function advanceCursor(cursorY, opts, type) {
+  if (type === "title" || type === "text" || type === "table") {
+    return Math.max(cursorY, opts.y + opts.h + contentGap);
+  }
+  return cursorY;
+}
+
 fs.mkdirSync("artifacts", { recursive: true });
 
 for (const slideSpec of spec.slides) {
   const slide = pptx.addSlide();
   if (slideSpec.background_color) slide.background = { color: slideSpec.background_color };
+  let cursorY = 0.35;
   for (const element of slideSpec.elements) {
     if (element.type === "title" || element.type === "text") {
-      const fallback = element.type === "title"
-        ? { x: 0.6, y: 0.35, w: 12.1, h: 0.7 }
-        : { x: 0.75, y: 1.25, w: 11.8, h: 1.0 };
-      const opts = box(element, fallback);
-      opts.margin = element.margin ?? 0.04;
-      opts.breakLine = element.break_line ?? false;
-      if (element.line_spacing !== undefined) {
-        opts.lineSpacingMultiple = element.line_spacing;
-        opts.lineSpacing = element.line_spacing;
-      }
+      const opts = box(element, fallbackBox(element, cursorY));
       applyStyle(opts, element.style, spec.default_style);
+      applyTextElementOverrides(opts, element, 0.04);
       if (element.type === "title" && !opts.fontSize) opts.fontSize = 30;
       if (element.type === "title" && opts.bold === undefined) opts.bold = true;
-      slide.addText(element.text, compact(opts));
+      slide.addText(wrapTextForBox(element.text, opts, element.type === "title"), compact(opts));
+      cursorY = advanceCursor(cursorY, opts, element.type);
       continue;
     }
     if (element.type === "table") {
@@ -482,19 +566,20 @@ for (const slideSpec of spec.slides) {
         })));
       }
       for (const row of element.rows || []) rows.push(row);
-      const opts = box(element, { x: 0.75, y: 1.45, w: 11.8, h: 4.8 });
-      opts.margin = element.margin ?? 0.05;
+      const opts = box(element, fallbackBox(element, cursorY));
       opts.border = { type: "solid", color: element.border_color || "D1D5DB", pt: 1 };
       opts.fontSize = element.style?.font_size || spec.default_style?.font_size || 12;
       opts.color = element.style?.color || spec.default_style?.color || "111827";
       if (element.column_widths && element.column_widths.length) opts.colW = element.column_widths;
       if (element.row_fill_color) opts.fill = { color: element.row_fill_color };
       applyStyle(opts, element.style, spec.default_style);
+      applyTableElementOverrides(opts, element, 0.05);
       slide.addTable(rows, compact(opts));
+      cursorY = advanceCursor(cursorY, opts, element.type);
       continue;
     }
     if (element.type === "shape") {
-      const opts = box(element, { x: 0.75, y: 1.2, w: 2.0, h: 1.0 });
+      const opts = box(element, fallbackBox(element, cursorY));
       if (element.fill_color) opts.fill = { color: element.fill_color };
       if (element.line_color) opts.line = { color: element.line_color };
       if (element.rotation !== undefined) opts.rotate = element.rotation;
