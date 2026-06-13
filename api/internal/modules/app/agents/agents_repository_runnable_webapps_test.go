@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestAgentsRepository_ListRunnableWebApps_IncludesAgentPublishedVersions(t *testing.T) {
+func TestAgentsRepository_ListRunnableWebApps_BranchesPublishedChecksByAgentType(t *testing.T) {
 	db, mock := newRunnableWebAppsMockDB(t)
 	repo := NewAgentsRepository(db)
 
@@ -17,8 +17,8 @@ func TestAgentsRepository_ListRunnableWebApps_IncludesAgentPublishedVersions(t *
 	agentID := "22222222-2222-2222-2222-222222222222"
 	webAppID := "33333333-3333-3333-3333-333333333333"
 
-	mock.ExpectQuery(`(?s)SELECT .* FROM "agents".*agent_published_versions.*agent_published_versions\.deleted_at IS NULL.*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC`).
-		WithArgs(AgentWebAppStatusActive, workspaceID, "draft").
+	mock.ExpectQuery(`(?s)SELECT .* FROM "agents".*agents\.agent_type = .*agent_published_versions.*agent_published_versions\.deleted_at IS NULL.*agents\.agent_type != .*workflows.*workflows\.version !=.*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC`).
+		WithArgs(AgentWebAppStatusActive, workspaceID, "AGENT", "AGENT", "draft").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"agent_id",
 			"workspace_id",
