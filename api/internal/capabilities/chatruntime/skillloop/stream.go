@@ -21,8 +21,18 @@ func (r *Runner) runSkillPlanningStream(
 ) (planningResult, bool, error) {
 	streamReq := cloneChatRequest(planningReq)
 	streamReq.Stream = true
+	startedAt := time.Now()
 	stream, fallbackProgressStreamed, err := r.openSkillPlanningStream(ctx, prepared, streamReq, onEvent)
 	if err != nil {
+		r.recordModelInvocation(ModelInvocationTrace{
+			Phase:      "skill_planning",
+			Round:      round,
+			Streaming:  true,
+			StartedAt:  startedAt,
+			DurationMS: time.Since(startedAt).Milliseconds(),
+			Request:    streamReq,
+			Error:      err.Error(),
+		})
 		logger.WarnContext(ctx, "aichat skill planning stream unavailable, falling back to non-stream planning",
 			"message_id", prepared.Message.ID.String(),
 			"provider", prepared.parts.Provider,
@@ -57,10 +67,20 @@ func (r *Runner) runSkillPlanningStream(
 				goto streamDone
 			}
 
+			usage = mergeUsage(usage, response.Usage)
 			if response.Error != nil {
+				r.recordModelInvocation(ModelInvocationTrace{
+					Phase:      "skill_planning",
+					Round:      round,
+					Streaming:  true,
+					StartedAt:  startedAt,
+					DurationMS: time.Since(startedAt).Milliseconds(),
+					Request:    streamReq,
+					Usage:      usage,
+					Error:      response.Error.Error(),
+				})
 				return planningResult{}, true, response.Error
 			}
-			usage = mergeUsage(usage, response.Usage)
 			if response.Done {
 				goto streamDone
 			}
@@ -124,14 +144,25 @@ streamDone:
 		}
 		toolCalls = append(toolCalls, call)
 	}
+	message := adapter.Message{
+		Role:             "assistant",
+		Content:          contentBuilder.String(),
+		ToolCalls:        toolCalls,
+		ReasoningContent: reasoningBuilder.String(),
+	}
+	r.recordModelInvocation(ModelInvocationTrace{
+		Phase:      "skill_planning",
+		Round:      round,
+		Streaming:  true,
+		StartedAt:  startedAt,
+		DurationMS: time.Since(startedAt).Milliseconds(),
+		Request:    streamReq,
+		Response:   &message,
+		Usage:      usage,
+	})
 
 	return planningResult{
-		message: adapter.Message{
-			Role:             "assistant",
-			Content:          contentBuilder.String(),
-			ToolCalls:        toolCalls,
-			ReasoningContent: reasoningBuilder.String(),
-		},
+		message:          message,
 		usage:            usage,
 		answerStreamed:   answerStreamed && len(toolCalls) == 0,
 		progressStreamed: naturalProgressStreamed || toolPlanningProgressStreamed || fallbackProgressStreamed,

@@ -405,6 +405,73 @@ type SQLOperationFilter struct {
 	CreatedAtLTE  *time.Time
 }
 
+type SQLAuditFilter struct {
+	DataSourceID  *string
+	TableID       *string
+	ClientType    *string
+	WorkflowRunID *string
+	NodeID        *string
+	CreatedBy     *string
+	OperationType *string
+	Status        *string
+	StartTime     *time.Time
+	EndTime       *time.Time
+}
+
+type ListSQLAuditRequest struct {
+	Page          int        `form:"page" binding:"omitempty,min=1"`
+	Limit         int        `form:"limit" binding:"omitempty,min=1,max=100"`
+	DataSourceID  *string    `form:"data_source_id"`
+	TableID       *string    `form:"table_id"`
+	ClientType    *string    `form:"client_type"`
+	WorkflowRunID *string    `form:"workflow_run_id"`
+	NodeID        *string    `form:"node_id"`
+	CreatedBy     *string    `form:"created_by"`
+	OperationType *string    `form:"operation_type"`
+	Status        *string    `form:"status"`
+	StartTime     *time.Time `form:"start_time"`
+	EndTime       *time.Time `form:"end_time"`
+}
+
+type SQLAuditListItem struct {
+	ID             string     `json:"id"`
+	OrganizationID string     `json:"organization_id"`
+	WorkspaceID    *string    `json:"workspace_id"`
+	DataSourceID   string     `json:"data_source_id"`
+	DataSourceName *string    `json:"data_source_name"`
+	TableID        *string    `json:"table_id"`
+	TableName      *string    `json:"table_name"`
+	ClientType     string     `json:"client_type"`
+	WorkflowRunID  *string    `json:"workflow_run_id,omitempty"`
+	NodeID         *string    `json:"node_id,omitempty"`
+	OperationType  string     `json:"operation_type"`
+	Status         string     `json:"status"`
+	RowCount       *int64     `json:"row_count"`
+	DurationMS     *int64     `json:"duration_ms"`
+	CreatedBy      string     `json:"created_by"`
+	ExecutedAt     *time.Time `json:"executed_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+type SQLAuditDetailResponse struct {
+	SQLAuditListItem
+	SQLStatement string          `json:"sql_statement"`
+	ParamsJSON   json.RawMessage `json:"params_json,omitempty"`
+	ErrorCode    *string         `json:"error_code,omitempty"`
+	ErrorMessage *string         `json:"error_message,omitempty"`
+	RequestID    *string         `json:"request_id,omitempty"`
+	StartTime    time.Time       `json:"start_time"`
+	EndTime      time.Time       `json:"end_time"`
+}
+
+type ListSQLAuditResponse struct {
+	Data    []SQLAuditListItem `json:"data"`
+	HasMore bool               `json:"has_more"`
+	Limit   int                `json:"limit"`
+	Total   int64              `json:"total"`
+	Page    int                `json:"page"`
+}
+
 // ListSQLOperationsByDataSourceIDResponse represents the response for listing SQL operations by data source ID
 type ListSQLOperationsByDataSourceIDResponse struct {
 	Data    []SQLOperationResponse `json:"data"`
@@ -430,6 +497,41 @@ func ConvertSQLOperationModelToResponse(op *model.DataSourceSQLOperation) *SQLOp
 		Status:         op.Status,
 		CreatedBy:      op.CreatedBy,
 		CreatedAt:      op.CreatedAt,
+	}
+}
+
+func ConvertSQLOperationModelToAuditListItem(op *model.DataSourceSQLOperation) SQLAuditListItem {
+	return SQLAuditListItem{
+		ID:             op.ID,
+		OrganizationID: op.OrganizationID,
+		WorkspaceID:    op.WorkspaceID,
+		DataSourceID:   op.DataSourceID,
+		DataSourceName: op.DataSourceName,
+		TableID:        op.TableID,
+		TableName:      op.TableName,
+		ClientType:     op.ClientType,
+		WorkflowRunID:  op.WorkflowRunID,
+		NodeID:         op.NodeID,
+		OperationType:  op.OperationType,
+		Status:         op.Status,
+		RowCount:       op.RowCount,
+		DurationMS:     op.DurationMS,
+		CreatedBy:      op.CreatedBy,
+		ExecutedAt:     op.ExecutedAt,
+		CreatedAt:      op.CreatedAt,
+	}
+}
+
+func ConvertSQLOperationModelToAuditDetail(op *model.DataSourceSQLOperation) SQLAuditDetailResponse {
+	return SQLAuditDetailResponse{
+		SQLAuditListItem: ConvertSQLOperationModelToAuditListItem(op),
+		SQLStatement:     op.SqlStatement,
+		ParamsJSON:       json.RawMessage(op.ParamsJSON),
+		ErrorCode:        op.ErrorCode,
+		ErrorMessage:     op.ErrorMessage,
+		RequestID:        op.RequestID,
+		StartTime:        op.StartTime,
+		EndTime:          op.EndTime,
 	}
 }
 

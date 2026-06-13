@@ -195,6 +195,12 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 			out = append(out, id)
 		}
 	}
+	if runConfigHasWorkflowBindings(runConfig) && agentWorkflowAvailable(catalog) {
+		id := skills.SkillAgentWorkflow
+		if _, ok := seen[id]; !ok {
+			out = append(out, id)
+		}
+	}
 	sort.Strings(out)
 	return out
 }
@@ -300,6 +306,13 @@ func runtimeCapabilityRequiredConfig(required string) (runtimeCapabilityRequirem
 			Description: "configured database bindings",
 			Configured: func(runConfig *RunConfig) bool {
 				return runConfigHasDatabaseBindings(runConfig)
+			},
+		}, true
+	case skills.SkillRequiredConfigAgentWorkflow:
+		return runtimeCapabilityRequirement{
+			Description: "configured workflow bindings",
+			Configured: func(runConfig *RunConfig) bool {
+				return runConfigHasWorkflowBindings(runConfig)
 			},
 		}, true
 	default:
@@ -469,6 +482,18 @@ func runConfigHasDatabaseBindings(runConfig *RunConfig) bool {
 	return false
 }
 
+func runConfigHasWorkflowBindings(runConfig *RunConfig) bool {
+	if runConfig == nil {
+		return false
+	}
+	for _, binding := range runConfig.WorkflowBindings {
+		if strings.TrimSpace(binding.BindingID) != "" && strings.TrimSpace(binding.AgentID) != "" && strings.TrimSpace(binding.WorkflowID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func runConfigHasAgentMemory(runConfig *RunConfig) bool {
 	return runConfig != nil && runConfig.AgentMemoryEnabled && len(enabledAgentMemorySlots(runConfig.AgentMemorySlots)) > 0
 }
@@ -485,6 +510,15 @@ func agentKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
 func agentDatabaseAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
 	for _, item := range catalog {
 		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentDatabase) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentWorkflowAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
+	for _, item := range catalog {
+		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentWorkflow) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
 			return true
 		}
 	}

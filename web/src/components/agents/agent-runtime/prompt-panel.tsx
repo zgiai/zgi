@@ -2,7 +2,15 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
-import { Database, FileText, Sparkles, Table2, WandSparkles, Wrench } from 'lucide-react';
+import {
+  Database,
+  FileText,
+  Sparkles,
+  Table2,
+  WandSparkles,
+  Workflow as WorkflowIcon,
+  Wrench,
+} from 'lucide-react';
 import WorkflowValueEditor, {
   type VarOption,
   type WorkflowValueEditorHandle,
@@ -36,7 +44,11 @@ import { useDbsBasic } from '@/hooks/db/use-dbs';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { dbService } from '@/services';
-import type { AgentDatabaseBinding } from '@/services/types/agent';
+import type {
+  AgentDatabaseBinding,
+  AgentWorkflowBinding,
+  AgentWorkflowBindingCandidate,
+} from '@/services/types/agent';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { DbTable } from '@/services/types/db';
 import type { Dataset } from '@/services/types/dataset';
@@ -58,6 +70,8 @@ interface AgentRuntimePromptPanelProps {
   selectedKnowledgeDatasets: AgentKnowledgeDataset[];
   selectedSkills: AIChatSkillMetadata[];
   databaseBindings: AgentDatabaseBinding[];
+  workflowBindings: AgentWorkflowBinding[];
+  workflowCandidatesByBindingID: Map<string, AgentWorkflowBindingCandidate>;
   onChangeSystemPrompt: (value: string) => void;
   onOpenOptimizer: () => void;
 }
@@ -92,6 +106,8 @@ export function AgentRuntimePromptPanel({
   selectedKnowledgeDatasets,
   selectedSkills,
   databaseBindings,
+  workflowBindings,
+  workflowCandidatesByBindingID,
   onChangeSystemPrompt,
   onOpenOptimizer,
 }: AgentRuntimePromptPanelProps) {
@@ -266,6 +282,30 @@ export function AgentRuntimePromptPanel({
     [databaseCapabilityItems, databaseSummaryCapabilityItems, tableCapabilityItems]
   );
 
+  const workflowCapabilityItems = useMemo<VarOption[]>(
+    () =>
+      workflowBindings.map(binding => {
+        const candidate = workflowCandidatesByBindingID.get(binding.binding_id);
+        const label =
+          candidate?.label ||
+          binding.label ||
+          binding.binding_id ||
+          t('workflow.unavailableWorkflow');
+        return {
+          sourceId: 'workflow',
+          sourceTitle: t('prompt.variables.workflow'),
+          key: binding.binding_id,
+          label,
+          type: 'object',
+          showType: false,
+          description:
+            candidate?.description || binding.description || t('workflow.noDescription'),
+          invalid: !candidate && workflowCandidatesByBindingID.size > 0,
+        };
+      }),
+    [t, workflowBindings, workflowCandidatesByBindingID]
+  );
+
   const capabilityGroups = useMemo(
     () => [
       {
@@ -283,8 +323,19 @@ export function AgentRuntimePromptPanel({
         title: t('prompt.variables.database'),
         items: databaseTreeCapabilityItems,
       },
+      {
+        id: 'agent-workflow',
+        title: t('prompt.variables.workflow'),
+        items: workflowCapabilityItems,
+      },
     ],
-    [databaseTreeCapabilityItems, knowledgeCapabilityItems, skillCapabilityItems, t]
+    [
+      databaseTreeCapabilityItems,
+      knowledgeCapabilityItems,
+      skillCapabilityItems,
+      t,
+      workflowCapabilityItems,
+    ]
   );
 
   const promptTemplates = useMemo(
@@ -449,6 +500,30 @@ export function AgentRuntimePromptPanel({
                     ))}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>{t('prompt.variables.workflow')}</DropdownMenuLabel>
+              {workflowCapabilityItems.length === 0 ? (
+                <DropdownMenuItem disabled>{t('prompt.variables.noWorkflow')}</DropdownMenuItem>
+              ) : null}
+              {workflowCapabilityItems.map(workflow => (
+                <DropdownMenuItem
+                  key={workflow.key}
+                  disabled={workflow.invalid}
+                  onSelect={() =>
+                    insertToken('workflow', workflow.key, workflow.label || workflow.key)
+                  }
+                >
+                  <WorkflowIcon className="size-4" />
+                  <div className="min-w-0">
+                    <div className="truncate">{workflow.label || workflow.key}</div>
+                    {workflow.description ? (
+                      <div className="truncate text-xs text-muted-foreground">
+                        {workflow.description}
+                      </div>
+                    ) : null}
+                  </div>
+                </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
           </DropdownMenu>

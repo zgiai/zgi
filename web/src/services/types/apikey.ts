@@ -20,7 +20,7 @@ export enum ApiKeyQuotaType {
  */
 export interface ApiKeyItem {
   id: string;
-  key: string;
+  key?: string;
   key_masked: string;
   name: string;
   status: ApiKeyStatus;

@@ -3,7 +3,14 @@ import type { ApiResponseData } from './common';
 export type AIChatConversationStatus = 'normal' | 'archived';
 export type AIChatConversationSource = 'console' | 'webapp' | 'migration';
 export type AIChatConversationRuntimeStatus = 'idle' | 'streaming';
-export type AIChatMessageStatus = 'pending' | 'streaming' | 'completed' | 'error' | 'stopped';
+export type AIChatMessageStatus =
+  | 'pending'
+  | 'streaming'
+  | 'waiting_approval'
+  | 'waiting_question'
+  | 'completed'
+  | 'error'
+  | 'stopped';
 
 export interface AIChatUsage {
   prompt_tokens?: number;
@@ -147,6 +154,67 @@ export interface AIChatSkillInvocation {
   created_at?: number;
 }
 
+export interface AIChatWorkflowRunNodeMetadata {
+  node_id?: string;
+  execution_id?: string;
+  id?: string;
+  node_type?: string;
+  type?: string;
+  title?: string;
+  node_title?: string;
+  name?: string;
+  label?: string;
+  status?: string;
+  inputs?: unknown;
+  outputs?: unknown;
+  elapsed_time?: number;
+  error?: string;
+  created_at?: number;
+  iteration_inputs?: unknown;
+  iteration_outputs?: unknown;
+  iteration_rounds?: Array<{
+    index?: number;
+    nodes?: AIChatWorkflowRunNodeMetadata[];
+    elapsed_time?: number;
+  }>;
+  loop_inputs?: unknown;
+  loop_outputs?: unknown;
+  loop_rounds?: Array<{
+    index?: number;
+    nodes?: AIChatWorkflowRunNodeMetadata[];
+    elapsed_time?: number;
+    variables?: unknown;
+  }>;
+  steps?: number;
+}
+
+export interface AIChatWorkflowRunApprovalMetadata extends Record<string, unknown> {
+  approval_form_id?: string;
+  approval_token?: string;
+  approval_url?: string;
+  approval_form?: unknown;
+  status?: string;
+}
+
+export interface AIChatWorkflowRunMetadata {
+  workflow_run_id?: string;
+  task_id?: string;
+  id?: string;
+  workflow_id?: string;
+  agent_id?: string;
+  version?: string;
+  status?: string;
+  inputs?: unknown;
+  outputs?: unknown;
+  elapsed_time?: number;
+  error?: string;
+  approval?: AIChatWorkflowRunApprovalMetadata;
+  approval_result?: Record<string, unknown>;
+  approval_expired?: Record<string, unknown>;
+  nodes?: AIChatWorkflowRunNodeMetadata[];
+  created_at?: number;
+}
+
 export type AIChatFileContentStatus =
   | 'pending'
   | 'extracted'
@@ -208,6 +276,8 @@ export interface AIChatMessageMetadata {
   tool_call_count?: number;
   tool_names?: string[];
   skill_invocations?: AIChatSkillInvocation[];
+  workflow_run_count?: number;
+  workflow_runs?: AIChatWorkflowRunMetadata[];
   file_count?: number;
   files?: AIChatMessageFile[];
   generated_file_count?: number;
@@ -219,6 +289,8 @@ export interface AIChatMessageMetadata {
 
 export interface AIChatUserInputOption {
   label: string;
+  value?: string;
+  option_id?: string;
   description?: string;
 }
 
@@ -230,6 +302,12 @@ export interface AIChatUserInputQuestion {
 
 export interface AIChatUserInputRequest {
   request_id?: string;
+  source?: string;
+  workflow_run_id?: string;
+  node_id?: string;
+  conversation_id?: string;
+  message_id?: string;
+  round?: string | number;
   questions: AIChatUserInputQuestion[];
   created_at?: number;
 }
@@ -494,6 +572,44 @@ export interface AIChatMemoryMutationEventData {
   created_at?: number;
 }
 
+export interface AIChatWorkflowEventData extends Record<string, unknown> {
+  conversation_id: string;
+  message_id: string;
+  workflow_run_id?: string;
+  task_id?: string;
+  workflow_id?: string;
+  agent_id?: string;
+  status?: string;
+  elapsed_time?: number;
+  error?: string;
+  created_at?: number;
+}
+
+export interface AIChatWorkflowNodeEventData extends AIChatWorkflowEventData {
+  node_id?: string;
+  id?: string;
+  execution_id?: string;
+  node_type?: string;
+  type?: string;
+  title?: string;
+  node_title?: string;
+  name?: string;
+  label?: string;
+  inputs?: unknown;
+  outputs?: unknown;
+}
+
+export interface AIChatWorkflowPausedEventData extends AIChatWorkflowEventData {
+  node_id?: string;
+  node_ids?: string[];
+  node_type?: string;
+  title?: string;
+  approval_form_id?: string;
+  approval_token?: string;
+  approval_url?: string;
+  approval_form?: unknown;
+}
+
 export interface AIChatFileParseStartEventData {
   conversation_id: string;
   message_id: string;
@@ -556,6 +672,18 @@ export type AIChatSseEventName =
   | 'memory_update'
   | 'memory_delete'
   | 'memory_clear'
+  | 'workflow_started'
+  | 'node_started'
+  | 'node_finished'
+  | 'workflow_paused'
+  | 'approval_requested'
+  | 'approval_result_filled'
+  | 'approval_expired'
+  | 'question_answer_requested'
+  | 'question_answer_submitted'
+  | 'workflow_finished'
+  | 'workflow_failed'
+  | 'workflow_stopped'
   | 'file_parse_start'
   | 'file_parse_end'
   | 'file_parse_error'

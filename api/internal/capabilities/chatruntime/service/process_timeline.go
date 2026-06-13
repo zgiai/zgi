@@ -41,12 +41,26 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 	if r == nil || r.service == nil {
 		return
 	}
+	if isWorkflowTimelineEvent(eventType) {
+		r.service.persistWorkflowRunEventBestEffort(r.persistCtx, r.prepared, eventType, payload)
+	}
 	invocation := r.invocationFromEvent(eventType, payload)
 	if len(invocation) > 0 {
 		r.persistInvocation(invocation)
 		copyInvocationRuntimeFields(payload, invocation)
 	}
 	r.Emit(eventType, payload)
+}
+
+func isWorkflowTimelineEvent(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case "workflow_started", "node_started", "node_finished", "workflow_paused", "approval_requested", "workflow_finished", "workflow_failed",
+		"iteration_started", "iteration_next", "iteration_completed", "iteration_succeeded", "iteration_failed",
+		"loop_started", "loop_next", "loop_completed", "loop_succeeded", "loop_failed":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *processTimelineRecorder) RecordTrace(traces []skills.SkillTrace, trace skills.SkillTrace) {

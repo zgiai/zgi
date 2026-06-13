@@ -180,7 +180,7 @@ export default function ApiKeyDialog({
         expires_at: expiresAt || undefined,
       };
       const res = await createApiKey(payload);
-      if (res && res.keys && res.keys.length > 0) {
+      if (res && res.keys && res.keys.length > 0 && res.keys[0].key) {
         setSecretKey(res.keys[0].key);
       } else {
         onOpenChange(false);

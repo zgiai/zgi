@@ -99,7 +99,7 @@ export function buildWorkflowRunExecutionItems(
       modelInput: extractLlmGatewayRequest(rec.process_data),
       processData: rec.process_data,
       executionMetadata: rec.execution_metadata,
-      elapsedTime: typeof rec.elapsed_time === 'number' ? rec.elapsed_time : 0,
+      elapsedTime: typeof rec.elapsed_time === 'number' ? rec.elapsed_time : undefined,
       error:
         typeof rec.error === 'string' ? rec.error : rec.error ? JSON.stringify(rec.error) : null,
     };

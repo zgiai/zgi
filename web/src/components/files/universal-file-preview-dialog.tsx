@@ -49,16 +49,16 @@ const minDocxPreviewZoom = 0.75;
 const maxDocxPreviewZoom = 1.8;
 const docxPreviewZoomStep = 0.1;
 const htmlPreviewCsp = [
-  'default-src \'none\'',
-  'script-src \'unsafe-inline\'',
-  'style-src \'unsafe-inline\' https://fonts.googleapis.com',
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline' https://fonts.googleapis.com",
   'font-src https://fonts.gstatic.com data:',
   'img-src data: blob:',
-  'connect-src \'none\'',
-  'form-action \'none\'',
-  'frame-src \'none\'',
-  'base-uri \'none\'',
-  'navigate-to \'none\'',
+  "connect-src 'none'",
+  "form-action 'none'",
+  "frame-src 'none'",
+  "base-uri 'none'",
+  "navigate-to 'none'",
 ].join('; ');
 const htmlPreviewFallbackStyle = `
   .reveal {
@@ -108,6 +108,7 @@ export function UniversalFilePreviewContent({
   const isImage = isOriginalPreviewImage(file?.extension, file?.mimeType);
   const isPdf = isOriginalPreviewPdf(file?.extension, file?.mimeType);
   const previewKind = getOriginalPreviewKind(file?.extension, file?.mimeType);
+  const unsupportedFormatLabel = file ? getPreviewFormatLabel(file) : '';
 
   if (!file) {
     return (
@@ -125,8 +126,16 @@ export function UniversalFilePreviewContent({
       <div className={cn('h-full min-h-[360px]', className)}>
         <PreviewMessage
           icon={<AlertCircle className="h-5 w-5" />}
-          title={t('preview.unsupportedTitle')}
-          description={t('preview.unsupportedDescription')}
+          title={
+            unsupportedFormatLabel
+              ? t('preview.unsupportedFormatTitle', { format: unsupportedFormatLabel })
+              : t('preview.unsupportedTitle')
+          }
+          description={
+            unsupportedFormatLabel
+              ? t('preview.unsupportedFormatDescription', { format: unsupportedFormatLabel })
+              : t('preview.unsupportedDescription')
+          }
         />
       </div>
     );
@@ -223,8 +232,16 @@ export function UniversalFilePreviewContent({
     <div className={cn('h-full min-h-[360px]', className)}>
       <PreviewMessage
         icon={<AlertCircle className="h-5 w-5" />}
-        title={t('preview.unsupportedTitle')}
-        description={t('preview.unsupportedDescription')}
+        title={
+          unsupportedFormatLabel
+            ? t('preview.unsupportedFormatTitle', { format: unsupportedFormatLabel })
+            : t('preview.unsupportedTitle')
+        }
+        description={
+          unsupportedFormatLabel
+            ? t('preview.unsupportedFormatDescription', { format: unsupportedFormatLabel })
+            : t('preview.unsupportedDescription')
+        }
       />
     </div>
   );
@@ -384,6 +401,31 @@ function getPreviewFileKey(file: UniversalFilePreviewDescriptor): string {
   return file.id || file.name;
 }
 
+function getPreviewFormatLabel(file: UniversalFilePreviewDescriptor): string {
+  const extension = (file.extension || getFileExtension(file.name)).replace(/^\./, '').trim();
+  if (extension) return extension.toUpperCase();
+
+  const mimeType = file.mimeType?.split(';')[0].trim().toLowerCase() ?? '';
+  return previewMimeTypeLabels[mimeType] ?? mimeType;
+}
+
+function getFileExtension(filename: string): string {
+  const normalized = filename.trim();
+  const lastDotIndex = normalized.lastIndexOf('.');
+  if (lastDotIndex <= 0 || lastDotIndex === normalized.length - 1) return '';
+
+  return normalized.slice(lastDotIndex + 1);
+}
+
+const previewMimeTypeLabels: Record<string, string> = {
+  'application/msword': 'DOC',
+  'application/vnd.ms-excel': 'XLS',
+  'application/vnd.ms-powerpoint': 'PPT',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PPTX',
+  'application/zip': 'ZIP',
+  'application/x-zip-compressed': 'ZIP',
+};
+
 interface OfficePreviewProps {
   file: UniversalFilePreviewDescriptor;
   previewUrl: string;
@@ -500,14 +542,20 @@ function HtmlPreview({ previewUrl, title }: { previewUrl: string; title: string 
 function buildIsolatedHtmlPreview(html: string): string {
   const parser = new DOMParser();
   const document = parser.parseFromString(html, 'text/html');
-  const head = document.head || document.documentElement.insertBefore(document.createElement('head'), document.body);
+  const head =
+    document.head ||
+    document.documentElement.insertBefore(document.createElement('head'), document.body);
 
-  document.querySelectorAll('base, iframe, object, embed, form, meta[http-equiv="refresh"]').forEach(node => {
-    node.remove();
-  });
-  document.querySelectorAll('script[src], script[type="module"], script[type="importmap"]').forEach(node => {
-    node.remove();
-  });
+  document
+    .querySelectorAll('base, iframe, object, embed, form, meta[http-equiv="refresh"]')
+    .forEach(node => {
+      node.remove();
+    });
+  document
+    .querySelectorAll('script[src], script[type="module"], script[type="importmap"]')
+    .forEach(node => {
+      node.remove();
+    });
   document.querySelectorAll('*').forEach(element => {
     for (const attribute of Array.from(element.attributes)) {
       const name = attribute.name.toLowerCase();
@@ -539,7 +587,10 @@ function buildIsolatedHtmlPreview(html: string): string {
 
 function isSafeHtmlPreviewUrl(value: string, attributeName: string): boolean {
   if (!value) return true;
-  const normalized = value.replace(/\s+/g, '').replace(/\u007f/g, '').toLowerCase();
+  const normalized = value
+    .replace(/\s+/g, '')
+    .replace(/\u007f/g, '')
+    .toLowerCase();
   if (
     normalized.startsWith('javascript:') ||
     normalized.startsWith('vbscript:') ||

@@ -35,6 +35,14 @@ type approvalRequestedEventContext struct {
 }
 
 func (h *WorkflowHandler) ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error {
+	return h.resumeApprovalWorkflow(ctx, form, nil)
+}
+
+func (h *WorkflowHandler) ResumeApprovalWorkflowStream(ctx context.Context, form *approvalruntime.Form, onEvent func(string, map[string]interface{}) error) error {
+	return h.resumeApprovalWorkflow(ctx, form, onEvent)
+}
+
+func (h *WorkflowHandler) resumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form, onEvent func(string, map[string]interface{}) error) error {
 	workflowService, ok := h.workflowService.(*WorkflowService)
 	if !ok || workflowService == nil || workflowService.workflowRunLogRepo == nil {
 		return fmt.Errorf("workflow service is not available")
@@ -100,14 +108,135 @@ func (h *WorkflowHandler) ResumeApprovalWorkflow(ctx context.Context, form *appr
 		resumeStartedAt.Unix(),
 		workflowStartReasonResumption,
 	)
-	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, workflowpause.EventWorkflowStarted, startedPayload)
+	eventDispatcher := newWorkflowRunEventDispatcher(run.TenantID, run.AgentID, run.ID, true, workflowResumeEventHandler(onEvent))
+	defer eventDispatcher.Close(ctx)
+	eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowStarted, startedPayload)
 
 	go func() {
 		defer close(doneChan)
 		h.executeWorkflowStream(nil, ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
 	}()
 
-	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs)
+	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
+}
+
+func (h *WorkflowHandler) ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, resumeInputs map[string]interface{}) error {
+	return h.resumeQuestionAnswerWorkflow(ctx, workflowRunID, resumeInputs, nil)
+}
+
+func (h *WorkflowHandler) ResumeQuestionAnswerWorkflowStream(ctx context.Context, workflowRunID string, resumeInputs map[string]interface{}, onEvent func(string, map[string]interface{}) error) error {
+	return h.resumeQuestionAnswerWorkflow(ctx, workflowRunID, resumeInputs, onEvent)
+}
+
+func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, resumeInputs map[string]interface{}, onEvent func(string, map[string]interface{}) error) error {
+	workflowService, ok := h.workflowService.(*WorkflowService)
+	if !ok || workflowService == nil || workflowService.workflowRunLogRepo == nil {
+		return fmt.Errorf("workflow service is not available")
+	}
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" {
+		return fmt.Errorf("workflow_run_id is required")
+	}
+	run, err := workflowService.workflowRunLogRepo.GetByID(ctx, workflowRunID)
+	if err != nil {
+		return fmt.Errorf("load workflow run for question answer resume: %w", err)
+	}
+	pauseService := workflowpause.NewService(database.GetDB())
+	pauseRecord, reasons, pauseState, err := pauseService.GetActiveByWorkflowRunID(ctx, run.ID)
+	if err != nil {
+		return fmt.Errorf("load workflow pause for question answer resume: %w", err)
+	}
+	hasQuestionReason := false
+	for _, reason := range reasons {
+		if reason.Type == workflowpause.ReasonTypeQuestionAnswerRequired {
+			hasQuestionReason = true
+			break
+		}
+	}
+	if !hasQuestionReason {
+		return fmt.Errorf("workflow run %s is not waiting for question answer", run.ID)
+	}
+	inputs := workflowRunInputs(run)
+	if pauseState.Request.Inputs != nil {
+		inputs = copyWorkflowAnyMap(pauseState.Request.Inputs)
+	}
+	for key, value := range resumeInputs {
+		inputs[key] = value
+	}
+	responseMode := pauseState.Request.ResponseMode
+	if responseMode == "" {
+		responseMode = "streaming"
+	}
+	if err := workflowService.ResumeWorkflowRunLog(ctx, run.ID); err != nil {
+		return err
+	}
+	if err := pauseService.MarkResumed(ctx, run.ID); err != nil {
+		logger.WarnContext(ctx, "failed to mark question answer pause resumed", "workflow_run_id", run.ID, err)
+	}
+	req := &dto.DraftWorkflowRunRequest{
+		Inputs:       inputs,
+		ResponseMode: responseMode,
+	}
+	runType := pauseState.RunType
+	if runType == "" {
+		runType = approvalRunType(run)
+	}
+	isDraft := run.TriggeredFrom == "debugging" || run.Version == "draft"
+	systemInputs := approvalResumeSystemInputs(run, inputs)
+	systemInputs[workflowResumeStateInputKey] = pauseState
+	systemInputs[workflowResumePauseIDInputKey] = pauseRecord.ID
+	resultChan := make(chan *WorkflowStreamEvent, 100)
+	errorChan := make(chan error, 10)
+	doneChan := make(chan map[string]interface{}, 1)
+	resumeStartedAt := time.Now()
+	startedPayload := buildWorkflowStartedEventPayload(
+		runType,
+		run.ID,
+		run.WorkflowID,
+		run.SequenceNumber,
+		systemInputs,
+		resumeStartedAt.Unix(),
+		workflowStartReasonResumption,
+	)
+	eventDispatcher := newWorkflowRunEventDispatcher(run.TenantID, run.AgentID, run.ID, true, workflowResumeEventHandler(onEvent))
+	defer eventDispatcher.Close(ctx)
+	eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowStarted, startedPayload)
+	eventDispatcher.Dispatch(ctx, workflowpause.EventQuestionAnswerSubmitted, buildQuestionAnswerSubmittedEvent(run.ID, pauseState, req.Inputs))
+	go func() {
+		defer close(doneChan)
+		h.executeWorkflowStream(nil, ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
+	}()
+	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
+}
+
+func (h *WorkflowHandler) StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error {
+	workflowService, ok := h.workflowService.(*WorkflowService)
+	if !ok || workflowService == nil || workflowService.workflowRunLogRepo == nil {
+		return fmt.Errorf("workflow service is not available")
+	}
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" {
+		return fmt.Errorf("workflow_run_id is required")
+	}
+	run, err := workflowService.workflowRunLogRepo.GetByID(ctx, workflowRunID)
+	if err != nil {
+		return fmt.Errorf("load workflow run for stop: %w", err)
+	}
+	if err := workflowService.StopWorkflowTask(ctx, run.TenantID, run.AgentID, run.ID, accountID); err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	payload := map[string]interface{}{
+		"id":              run.ID,
+		"workflow_run_id": run.ID,
+		"workflow_id":     run.WorkflowID,
+		"status":          "stopped",
+		"error":           "Workflow stopped by user.",
+		"created_at":      now,
+	}
+	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, "workflow_stopped", payload)
+	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, workflowpause.EventWorkflowFinished, payload)
+	return nil
 }
 
 func detachWorkflowResumeState(systemInputs map[string]interface{}) (*workflowpause.State, bool) {
@@ -151,7 +280,16 @@ func workflowResumePausedNodeIDs(executorState workflowpause.ExecutorState) []st
 	return pausedNodeIDs
 }
 
-func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, resultChan <-chan *WorkflowStreamEvent, errorChan <-chan error, doneChan <-chan map[string]interface{}, resumeStartedAt time.Time, runType string, systemInputs map[string]interface{}, resumeInputs map[string]interface{}) error {
+func workflowResumeEventHandler(onEvent func(string, map[string]interface{}) error) workflowRunEventHandler {
+	if onEvent == nil {
+		return nil
+	}
+	return func(eventType string, data map[string]interface{}, stored *workflowpause.RunEventPayload) error {
+		return onEvent(eventType, data)
+	}
+}
+
+func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, resultChan <-chan *WorkflowStreamEvent, errorChan <-chan error, doneChan <-chan map[string]interface{}, resumeStartedAt time.Time, runType string, systemInputs map[string]interface{}, resumeInputs map[string]interface{}, eventDispatcher *workflowRunEventDispatcher) error {
 	messageEventSent := false
 	approvalExpired := false
 	answerSnapshots := newAnswerSnapshotWriter(h, run.ID, run.AgentID, run.CreatedBy, systemInputs, resumeInputs, run.TriggeredFrom)
@@ -178,13 +316,7 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 			if selection.event.EventType == workflowpause.EventApprovalResultFilled && approvalResultFilledEventAlreadyRecorded(ctx, pauseService, run, eventData) {
 				continue
 			}
-			_ = pauseService.AppendEvent(ctx, workflowpause.AppendEventParams{
-				TenantID:      run.TenantID,
-				AppID:         run.AgentID,
-				WorkflowRunID: run.ID,
-				EventType:     selection.event.EventType,
-				EventData:     eventData,
-			})
+			eventDispatcher.Dispatch(ctx, selection.event.EventType, eventData)
 			if selection.event.EventType == workflowpause.EventWorkflowPaused {
 				h.updateApprovalConversationMessageStatus(ctx, run.ID, conversation.AgentMessageStatusPendingApproval, nil)
 				return nil
@@ -197,17 +329,17 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 			if selection.err == nil {
 				continue
 			}
-			h.persistApprovalResumeError(ctx, pauseService, workflowService, run, selection.err, resumeStartedAt)
+			h.persistApprovalResumeError(ctx, pauseService, workflowService, run, selection.err, resumeStartedAt, eventDispatcher)
 			return selection.err
 		case workflowStreamSelectionDone:
 			if selection.ok {
-				h.persistApprovalResumeCompletion(ctx, pauseService, workflowService, run, selection.outputs, resumeStartedAt, runType, systemInputs, resumeInputs, messageEventSent, approvalExpired)
+				h.persistApprovalResumeCompletion(ctx, pauseService, workflowService, run, selection.outputs, resumeStartedAt, runType, systemInputs, resumeInputs, messageEventSent, approvalExpired, eventDispatcher)
 			}
 			return nil
 		case workflowStreamSelectionContextDone:
 			err := ctx.Err()
 			if err != nil {
-				h.persistApprovalResumeError(ctx, pauseService, workflowService, run, err, resumeStartedAt)
+				h.persistApprovalResumeError(ctx, pauseService, workflowService, run, err, resumeStartedAt, eventDispatcher)
 			}
 			return ctx.Err()
 		case workflowStreamSelectionHeartbeat:
@@ -242,13 +374,13 @@ func approvalResultFilledEventAlreadyRecorded(ctx context.Context, pauseService 
 	return false
 }
 
-func (h *WorkflowHandler) persistApprovalResumeCompletion(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, outputs map[string]interface{}, resumeStartedAt time.Time, runType string, systemInputs map[string]interface{}, resumeInputs map[string]interface{}, messageEventSent bool, approvalExpired bool) {
+func (h *WorkflowHandler) persistApprovalResumeCompletion(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, outputs map[string]interface{}, resumeStartedAt time.Time, runType string, systemInputs map[string]interface{}, resumeInputs map[string]interface{}, messageEventSent bool, approvalExpired bool, eventDispatcher *workflowRunEventDispatcher) {
 	if runType == "CONVERSATION_WORKFLOW" {
 		previousAnswer := h.approvalExistingConversationAnswer(ctx, run)
 		conversationID, answer := h.persistApprovalResumeConversationEvents(ctx, run, outputs, systemInputs, messageEventSent, previousAnswer)
 		h.persistApprovalResumeConversationMessage(ctx, run, outputs, systemInputs, resumeInputs, conversationID, answer, approvalConversationMessageStatusFromOutputs(outputs, approvalExpired))
 	}
-	h.persistApprovalResumeFinished(ctx, pauseService, workflowService, run, outputs, resumeStartedAt)
+	h.persistApprovalResumeFinished(ctx, pauseService, workflowService, run, outputs, resumeStartedAt, eventDispatcher)
 }
 
 func (h *WorkflowHandler) persistApprovalResumeConversationEvents(ctx context.Context, run *WorkflowRunLog, outputs map[string]interface{}, systemInputs map[string]interface{}, messageEventSent bool, previousAnswer string) (string, string) {
@@ -730,7 +862,7 @@ func approvalResumeInvokeFrom(run *WorkflowRunLog, inputs map[string]interface{}
 	return string(InvokeFromWorkflow)
 }
 
-func (h *WorkflowHandler) persistApprovalResumeFinished(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, outputs map[string]interface{}, resumeStartedAt time.Time) {
+func (h *WorkflowHandler) persistApprovalResumeFinished(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, outputs map[string]interface{}, resumeStartedAt time.Time, eventDispatcher *workflowRunEventDispatcher) {
 	if pauseService == nil || run == nil {
 		return
 	}
@@ -740,10 +872,10 @@ func (h *WorkflowHandler) persistApprovalResumeFinished(ctx context.Context, pau
 	}
 	elapsed := workflowElapsedMillisecondsFromOutputs(outputs, fallbackElapsed)
 	eventData := workflowFinishedEventFromOutputs(run, workflowService, outputs, elapsed)
-	appendWorkflowRunEvent(ctx, run.TenantID, run.AgentID, run.ID, workflowpause.EventWorkflowFinished, eventData)
+	eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowFinished, eventData)
 }
 
-func (h *WorkflowHandler) persistApprovalResumeError(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, err error, resumeStartedAt time.Time) {
+func (h *WorkflowHandler) persistApprovalResumeError(ctx context.Context, pauseService *workflowpause.Service, workflowService *WorkflowService, run *WorkflowRunLog, err error, resumeStartedAt time.Time, eventDispatcher *workflowRunEventDispatcher) {
 	if pauseService == nil || run == nil || err == nil {
 		return
 	}
@@ -757,34 +889,22 @@ func (h *WorkflowHandler) persistApprovalResumeError(ctx context.Context, pauseS
 		totalSteps = workflowService.workflowRunNodeStepCount(ctx, run.ID)
 		_ = workflowService.UpdateWorkflowRunLogStatus(ctx, run.ID, "failed", map[string]interface{}{}, elapsed, 0, totalSteps, errorMessage)
 	}
-	_ = pauseService.AppendEvent(ctx, workflowpause.AppendEventParams{
-		TenantID:      run.TenantID,
-		AppID:         run.AgentID,
-		WorkflowRunID: run.ID,
-		EventType:     workflowpause.EventError,
-		EventData:     map[string]interface{}{"message": errorMessage},
-	})
-	_ = pauseService.AppendEvent(ctx, workflowpause.AppendEventParams{
-		TenantID:      run.TenantID,
-		AppID:         run.AgentID,
-		WorkflowRunID: run.ID,
-		EventType:     workflowpause.EventWorkflowFinished,
-		EventData: map[string]interface{}{
-			"id":               run.ID,
-			"workflow_id":      run.WorkflowID,
-			"sequence_number":  run.SequenceNumber,
-			"status":           "failed",
-			"outputs":          map[string]interface{}{},
-			"error":            errorPayload,
-			"elapsed_time":     elapsed,
-			"total_tokens":     0,
-			"total_steps":      totalSteps,
-			"created_by":       map[string]interface{}{"id": run.CreatedBy, "name": "", "email": ""},
-			"created_at":       time.Now().Unix(),
-			"finished_at":      time.Now().Unix(),
-			"exceptions_count": 1,
-			"files":            []interface{}{},
-		},
+	eventDispatcher.Dispatch(ctx, workflowpause.EventError, map[string]interface{}{"message": errorMessage})
+	eventDispatcher.Dispatch(ctx, workflowpause.EventWorkflowFinished, map[string]interface{}{
+		"id":               run.ID,
+		"workflow_id":      run.WorkflowID,
+		"sequence_number":  run.SequenceNumber,
+		"status":           "failed",
+		"outputs":          map[string]interface{}{},
+		"error":            errorPayload,
+		"elapsed_time":     elapsed,
+		"total_tokens":     0,
+		"total_steps":      totalSteps,
+		"created_by":       map[string]interface{}{"id": run.CreatedBy, "name": "", "email": ""},
+		"created_at":       time.Now().Unix(),
+		"finished_at":      time.Now().Unix(),
+		"exceptions_count": 1,
+		"files":            []interface{}{},
 	})
 }
 

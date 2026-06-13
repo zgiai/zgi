@@ -131,8 +131,9 @@ services:
       context: ../sandbox
       dockerfile: Dockerfile
       args:
-        BUILD_REGION: ${BUILD_REGION:-global}
         GOPROXY: ${GOPROXY:-}
+        APT_MIRROR: ${APT_MIRROR:-}
+        APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
     env_file:
       - ../sandbox/.env
     environment:
@@ -141,6 +142,10 @@ services:
       ZGI_SANDBOX_REDIS_ADDR: redis:6379
       ZGI_SANDBOX_REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in docker/.env or your environment}
       ZGI_SANDBOX_REDIS_DB: ${SANDBOX_REDIS_DB:-1}
+      ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR: ${ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR:-/var/lib/zgi-sandbox/dependency-rootfs}
+      ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES: ${ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES:-skill-office}
+      ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR: ${ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR:-/opt/zgi/prebuilt-dependency-rootfs}
+      ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES: ${ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES:-1073741824}
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,7 +158,7 @@ services:
     ports:
       - "${SANDBOX_PORT:-2660}:2660"
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:2660/health').getcode() == 200 else 1)\""]
+      test: ["CMD-SHELL", "python3 -c \"import json, sys, urllib.request; res=urllib.request.urlopen('http://127.0.0.1:2660/ready', timeout=3); body=json.load(res); sys.exit(0 if res.getcode() == 200 and body.get('ready') is True else 1)\""]
       interval: 15s
       timeout: 5s
       retries: 5

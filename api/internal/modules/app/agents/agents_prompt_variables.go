@@ -15,7 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-var agentPromptVariablePattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill|database|table)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill|database|table)>`)
+var agentPromptVariablePattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill|database|table|workflow)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill|database|table|workflow)>`)
 var agentPromptVariableAttrPattern = regexp.MustCompile(`([a-zA-Z_][\w-]*)="([^"]*)"`)
 
 const (
@@ -117,6 +117,7 @@ func (h *AgentsHandler) resolveAgentSystemPrompt(ctx context.Context, scope runt
 	datasets := h.agentPromptDatasets(ctx, scope, cfg.KnowledgeDatasetIDs)
 	skillMetadata := h.agentPromptSkills(ctx, scope, cfg.EnabledSkillIDs)
 	databases := h.agentPromptDatabases(ctx, scope, cfg.DatabaseBindings)
+	workflows := agentPromptWorkflows(cfg.WorkflowBindings)
 
 	return agentPromptVariablePattern.ReplaceAllStringFunc(source, func(token string) string {
 		matches := agentPromptVariablePattern.FindStringSubmatch(token)
@@ -137,6 +138,8 @@ func (h *AgentsHandler) resolveAgentSystemPrompt(ctx context.Context, scope runt
 			return renderAgentPromptDatabaseVariable(attrs["id"], databases)
 		case "table":
 			return renderAgentPromptTableVariable(attrs["id"], databases)
+		case "workflow":
+			return renderAgentPromptWorkflowVariable(attrs["id"], workflows)
 		}
 		return agentPromptDisabledCapability(token)
 	})
@@ -337,6 +340,29 @@ func renderAgentPromptTableVariable(key string, databases map[string]agentPrompt
 	return agentPromptDisabledCapability("table." + key)
 }
 
+func agentPromptWorkflows(bindings []dto.AgentWorkflowBinding) map[string]dto.AgentWorkflowBinding {
+	out := make(map[string]dto.AgentWorkflowBinding, len(bindings))
+	for _, binding := range normalizeAgentWorkflowBindings(bindings) {
+		bindingID := strings.TrimSpace(binding.BindingID)
+		if bindingID == "" {
+			continue
+		}
+		out[bindingID] = binding
+	}
+	return out
+}
+
+func renderAgentPromptWorkflowVariable(key string, workflows map[string]dto.AgentWorkflowBinding) string {
+	id := strings.TrimSpace(key)
+	if id == "" {
+		return agentPromptDisabledCapability("workflow")
+	}
+	if item, ok := workflows[id]; ok {
+		return renderAgentPromptWorkflow(item)
+	}
+	return agentPromptDisabledCapability("workflow." + id)
+}
+
 func renderAgentPromptDataset(item agentPromptDatasetSummary) string {
 	name := strings.TrimSpace(item.Name)
 	if name == "" {
@@ -371,6 +397,66 @@ func renderAgentPromptDatabase(item agentPromptDatabaseSummary) string {
 	return strings.Join(parts, "\n")
 }
 
+func renderAgentPromptWorkflow(item dto.AgentWorkflowBinding) string {
+	name := strings.TrimSpace(item.Label)
+	if name == "" {
+		name = strings.TrimSpace(item.BindingID)
+	}
+	if name == "" {
+		name = "Unnamed workflow"
+	}
+	parts := []string{
+		fmt.Sprintf("Bound workflow: %s", name),
+		"Binding ID: " + strings.TrimSpace(item.BindingID),
+	}
+	if agentType := strings.TrimSpace(item.AgentType); agentType != "" {
+		parts = append(parts, "Workflow type: "+agentType)
+	}
+	if desc := strings.TrimSpace(item.Description); desc != "" {
+		parts = append(parts, "Description: "+desc)
+	}
+	if strategy := strings.TrimSpace(item.VersionStrategy); strategy != "" {
+		if strategy == "pinned" && strings.TrimSpace(item.VersionUUID) != "" {
+			parts = append(parts, "Version: pinned ("+strings.TrimSpace(item.VersionUUID)+")")
+		} else {
+			parts = append(parts, "Version: "+strategy)
+		}
+	}
+	if defaultInput := strings.TrimSpace(item.DefaultInputKey); defaultInput != "" {
+		parts = append(parts, "Default input: "+defaultInput)
+	}
+	if required := normalizedAgentWorkflowPromptRequiredInputs(item); len(required) > 0 {
+		parts = append(parts, "Required inputs: "+strings.Join(required, ", "))
+	}
+	if len(item.StartInputs) > 0 {
+		inputLines := make([]string, 0, len(item.StartInputs))
+		for _, input := range item.StartInputs {
+			variable := strings.TrimSpace(input.Variable)
+			if variable == "" {
+				continue
+			}
+			line := variable
+			if label := strings.TrimSpace(input.Label); label != "" {
+				line += " - " + label
+			}
+			if inputType := strings.TrimSpace(input.Type); inputType != "" {
+				line += " (" + inputType + ")"
+			}
+			if input.Required {
+				line += " [required]"
+			}
+			inputLines = append(inputLines, "- "+line)
+		}
+		if len(inputLines) > 0 {
+			parts = append(parts, "Start inputs:\n"+strings.Join(inputLines, "\n"))
+		}
+	} else {
+		parts = append(parts, "Start inputs:\n- query - The user's current request or instruction. (string) [required]")
+	}
+	parts = append(parts, "Call this workflow through the agent-workflow skill with this binding_id.")
+	return strings.Join(parts, "\n")
+}
+
 func renderAgentPromptTable(database agentPromptDatabaseSummary, table agentPromptTableSummary) string {
 	dbName := strings.TrimSpace(database.Name)
 	if dbName == "" {
@@ -392,6 +478,51 @@ func renderAgentPromptTable(database agentPromptDatabaseSummary, table agentProm
 		parts = append(parts, "Write access: disabled")
 	}
 	return strings.Join(parts, "\n")
+}
+
+func normalizedAgentWorkflowPromptRequiredInputs(item dto.AgentWorkflowBinding) []string {
+	allowed := map[string]struct{}{}
+	for _, input := range item.StartInputs {
+		if variable := strings.TrimSpace(input.Variable); variable != "" {
+			allowed[variable] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(item.RequiredInputs))
+	seen := map[string]struct{}{}
+	for _, raw := range item.RequiredInputs {
+		key := strings.TrimSpace(raw)
+		if key == "" {
+			continue
+		}
+		if len(allowed) > 0 {
+			if _, ok := allowed[key]; !ok {
+				continue
+			}
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for _, input := range item.StartInputs {
+		key := strings.TrimSpace(input.Variable)
+		if key == "" || !input.Required {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	if len(out) == 0 && len(item.StartInputs) == 0 {
+		return []string{"query"}
+	}
+	return out
 }
 
 func renderAgentPromptTableLine(table agentPromptTableSummary) string {

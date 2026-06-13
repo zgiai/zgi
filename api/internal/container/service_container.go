@@ -70,11 +70,14 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
 	knowledge_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/knowledge"
+	workflow_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
 	"github.com/zgiai/zgi/api/pkg/scheduler"
+	"github.com/zgiai/zgi/api/pkg/sql_base"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
 )
@@ -159,6 +162,8 @@ type ServiceContainer struct {
 
 	// DataSource service
 	dataSourceService service.DataSourceService
+	sqlAuditRecorder  audit.Recorder
+	sqlBase           sql_base.SQLBase
 	promptModule      *promptsmodule.Module
 
 	// Data Library module
@@ -634,6 +639,45 @@ func (c *ServiceContainer) GetDataSourceService() service.DataSourceService {
 	return c.dataSourceService
 }
 
+func (c *ServiceContainer) GetSQLAuditRecorder() audit.Recorder {
+	if c.sqlAuditRecorder == nil {
+		store := repository.NewPostgresSQLOperationRepository(c.db)
+		c.sqlAuditRecorder = audit.NewAsyncRecorder(store)
+	}
+	return c.sqlAuditRecorder
+}
+
+func (c *ServiceContainer) CloseSQLAuditRecorder(ctx context.Context) error {
+	if c == nil || c.sqlAuditRecorder == nil {
+		return nil
+	}
+	return c.sqlAuditRecorder.Close(ctx)
+}
+
+func (c *ServiceContainer) CloseDataSourceSQLAuditRecorder(ctx context.Context) error {
+	if c == nil || c.dataSourceService == nil {
+		return nil
+	}
+	closer, ok := c.dataSourceService.(interface {
+		Close(context.Context) error
+	})
+	if !ok {
+		return nil
+	}
+	return closer.Close(ctx)
+}
+
+func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
+	if c.sqlBase == nil {
+		client, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(c.GetSQLAuditRecorder()))
+		if err != nil {
+			panic("failed to create sql base client: " + err.Error())
+		}
+		c.sqlBase = client
+	}
+	return c.sqlBase
+}
+
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
 	if c.dataLibraryModule == nil {
 		c.dataLibraryModule = datalibrarymodule.NewModule(c.db)
@@ -821,6 +865,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
 		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
 		_ = c.toolManager.RegisterProvider(database_tools.NewProvider(c.GetDataSourceService(), c.GetOrganizationService()))
+		_ = c.toolManager.RegisterProvider(workflow_tools.NewProvider(c.GetAutomationWorkflowRunner))
 
 		logger.Info("ToolManager initialized with builtin providers")
 	}
@@ -966,6 +1011,7 @@ func (c *ServiceContainer) GetWorkflowEngineFactory() *graph_engine.EngineFactor
 			PromptResolver:              c.GetPromptService(),
 			AutomationDefinitionService: c.GetAutomationDefinitionService(),
 			NotificationSMSService:      c.GetNotificationSMSService(),
+			SQLBase:                     c.GetSQLBase(),
 		})
 		c.workflowEngineFactory = graph_engine.NewEngineFactory(10, nodeRunner)
 	}

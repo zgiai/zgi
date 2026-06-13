@@ -141,6 +141,36 @@ function nodeKeyOf(n: NodeInfo): string {
   return `${type}|${title}`;
 }
 
+function collectContainerChildKeys(node: NodeInfo): Set<string> {
+  const keys = new Set<string>();
+  const rounds = [...(node.iterationRounds ?? []), ...(node.loopRounds ?? [])];
+  rounds.forEach(round => {
+    (round.nodes ?? []).forEach(child => {
+      keys.add(nodeKeyOf(child));
+    });
+  });
+  return keys;
+}
+
+function removeNestedContainerChildren(nodes: NodeInfo[]): NodeInfo[] {
+  const containerChildKeys = new Set<string>();
+  const containerKeys = new Set<string>();
+
+  nodes.forEach(node => {
+    const childKeys = collectContainerChildKeys(node);
+    if (childKeys.size === 0) return;
+    containerKeys.add(nodeKeyOf(node));
+    childKeys.forEach(key => containerChildKeys.add(key));
+  });
+
+  if (containerChildKeys.size === 0) return nodes;
+
+  return nodes.filter(node => {
+    const key = nodeKeyOf(node);
+    return containerKeys.has(key) || !containerChildKeys.has(key);
+  });
+}
+
 const useChatStoreBase = create<ChatState>()((set, get) => ({
   conversations: {},
   currentId: null,
@@ -611,10 +641,12 @@ const useChatStoreBase = create<ChatState>()((set, get) => ({
         runNodeInfo.push({ ...node });
       }
 
+      const normalizedRunNodeInfo = removeNestedContainerChildren(runNodeInfo as NodeInfo[]);
+
       const updated: Message = {
         ...target,
         // Do not override workflow-level status here to avoid UI jitter; only append node info
-        WorkflowRunInfo: { ...run, runNodeInfo },
+        WorkflowRunInfo: { ...run, runNodeInfo: normalizedRunNodeInfo },
       };
       const nextMsgs = conv.messages.slice();
       nextMsgs[idx] = updated;

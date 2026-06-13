@@ -39,6 +39,7 @@ func persistMinerUImages(store storage.Storage, result *extractcommon.DocumentRe
 	}
 
 	byName := make(map[string]storedMinerUImage, len(result.ImageAssets))
+	byObjectName := make(map[string]storedMinerUImage, len(result.ImageAssets))
 	for name, dataURI := range result.ImageAssets {
 		data, contentType, err := decodeImageDataURI(dataURI)
 		if err != nil {
@@ -59,14 +60,17 @@ func persistMinerUImages(store storage.Storage, result *extractcommon.DocumentRe
 		sum := sha256.Sum256(data)
 		objectName := fmt.Sprintf("%x%s", sum[:], ext)
 		key := "mineru/images/" + namespace + "/" + objectName
-		if err := store.Save(key, data); err != nil {
-			return fmt.Errorf("save mineru image %s: %w", name, err)
-		}
-
-		stored := storedMinerUImage{
-			OriginalName: name,
-			StorageKey:   key,
-			URL:          buildMinerUImageAssetURL(key),
+		stored, ok := byObjectName[objectName]
+		if !ok {
+			if err := store.Save(key, data); err != nil {
+				return fmt.Errorf("save mineru image %s: %w", name, err)
+			}
+			stored = storedMinerUImage{
+				OriginalName: name,
+				StorageKey:   key,
+				URL:          buildMinerUImageAssetURL(key),
+			}
+			byObjectName[objectName] = stored
 		}
 		byName[name] = stored
 		if base := filepath.Base(strings.ReplaceAll(name, "\\", "/")); base != "" {

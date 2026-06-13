@@ -18,6 +18,7 @@ type RuntimeCapabilityConfig struct {
 	AgentID   string
 	Knowledge RuntimeKnowledgeCapability
 	Database  RuntimeDatabaseCapability
+	Workflow  RuntimeWorkflowCapability
 	Memory    RuntimeMemoryCapability
 }
 
@@ -29,6 +30,11 @@ type RuntimeKnowledgeCapability struct {
 
 type RuntimeDatabaseCapability struct {
 	Bindings []AgentDatabaseBinding
+	Grant    BoundResourceGrant
+}
+
+type RuntimeWorkflowCapability struct {
+	Bindings []AgentWorkflowBinding
 	Grant    BoundResourceGrant
 }
 
@@ -50,6 +56,10 @@ func runtimeCapabilityConfigFromRunConfig(config RunConfig) RuntimeCapabilityCon
 			Bindings: copyAgentDatabaseBindings(config.DatabaseBindings),
 			Grant:    NewBoundResourceGrant(config.DatabaseBoundByAccountID, config.DatabaseBoundAtUnix),
 		},
+		Workflow: RuntimeWorkflowCapability{
+			Bindings: copyAgentWorkflowBindings(config.WorkflowBindings),
+			Grant:    NewBoundResourceGrant(config.WorkflowBoundByAccountID, config.WorkflowBoundAtUnix),
+		},
 		Memory: RuntimeMemoryCapability{
 			AgentEnabled: config.AgentMemoryEnabled,
 			AgentSlots:   enabledAgentMemorySlots(config.AgentMemorySlots),
@@ -67,6 +77,7 @@ func (c RuntimeCapabilityConfig) RuntimeParameters(scope Scope, billingAppType s
 	}
 	c.Knowledge.applyRuntimeParameters(params)
 	c.Database.applyRuntimeParameters(params)
+	c.Workflow.applyRuntimeParameters(params)
 	c.Memory.applyRuntimeParameters(params)
 	if strings.EqualFold(strings.TrimSpace(billingAppType), runtimemodel.ConversationCallerAgent) && strings.TrimSpace(c.AgentID) != "" {
 		params["agent_id"] = strings.TrimSpace(c.AgentID)
@@ -89,6 +100,13 @@ func (c RuntimeDatabaseCapability) applyRuntimeParameters(params map[string]inte
 		params["database_bindings"] = copyAgentDatabaseBindings(c.Bindings)
 	}
 	c.Grant.applyRuntimeParameters(params, "database")
+}
+
+func (c RuntimeWorkflowCapability) applyRuntimeParameters(params map[string]interface{}) {
+	if len(c.Bindings) > 0 {
+		params["workflow_bindings"] = copyAgentWorkflowBindings(c.Bindings)
+	}
+	c.Grant.applyRuntimeParameters(params, "workflow")
 }
 
 func (c RuntimeMemoryCapability) applyRuntimeParameters(params map[string]interface{}) {

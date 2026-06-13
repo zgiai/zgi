@@ -853,6 +853,118 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"content": "# Report\n\nSummary...", "format": "md", "filename": "report"},
 		},
+		SkillFileGenerator + "/generate_docx": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_docx",
+			Description: "Generate a styled DOCX file from a structured JSON document specification.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"document":  stringValueSchema("JSON string describing the DOCX document. Include blocks with type heading, paragraph, table, or page_break."),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional title hint; visible content must be included in document.blocks."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"document"},
+			),
+			Example: map[string]interface{}{
+				"document": `{"blocks":[{"type":"heading","level":1,"text":"Report","style":{"alignment":"center","font_size":18,"bold":true}},{"type":"paragraph","runs":[{"text":"Total: "},{"text":"113.47","bold":true,"color":"C00000"}]}]}`,
+				"filename": "styled-report",
+			},
+		},
+		SkillFileGenerator + "/generate_pdf": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_pdf",
+			Description: "Generate a styled PDF file from self-contained HTML and inline CSS.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"html":      stringValueSchema("Self-contained HTML body or full HTML document. Do not include external URLs, scripts, iframes, or remote assets."),
+					"css":       stringValueSchema("Optional inline CSS appended to the HTML document. Prefer @page for page size and margins."),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional title used when wrapping an HTML fragment. Visible content must be included in html."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"html"},
+			),
+			Example: map[string]interface{}{
+				"html":     `<main><h1>Report</h1><p>Total: <strong class="amount">113.47</strong></p></main>`,
+				"css":      `@page { size: A4; margin: 18mm; } h1 { text-align: center; } .amount { color: #c00000; }`,
+				"filename": "styled-report",
+			},
+		},
+		SkillFileGenerator + "/generate_pptx": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_pptx",
+			Description: "Generate an editable static PPTX presentation from a structured JSON presentation specification.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"presentation": stringValueSchema("JSON string describing the PPTX presentation. Include slides with elements of type title, text, table, or shape. Use non-overlapping boxes for readable content; omitted boxes use simple auto layout."),
+					"filename":     stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":        stringValueSchema("Optional title hint; visible content must be included in presentation.slides."),
+					"lifecycle":    enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"presentation"},
+			),
+			Example: map[string]interface{}{
+				"presentation": `{"layout":"wide","slides":[{"elements":[{"type":"title","text":"Quarterly Report","style":{"align":"center"}},{"type":"text","text":"Total revenue: 113.47","x":0.8,"y":1.4,"w":11.6,"h":0.8,"style":{"font_size":24,"bold":true,"color":"C00000"}}]}]}`,
+				"filename":     "quarterly-report",
+			},
+		},
+		SkillChartGenerator + "/generate_chart": {
+			SkillID:     SkillChartGenerator,
+			ToolName:    "generate_chart",
+			Description: "Generate a downloadable SVG chart artifact from structured data after chart type, title, data mapping, and rendering style have been provided or confirmed. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution. For generic chart requests, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"chart_type":      enumStringSchema("Chart type.", []string{"radar", "bar", "line", "pie", "doughnut", "scatter", "score_distribution"}),
+					"title":           stringValueSchema("Optional chart title."),
+					"output_filename": stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"data":            chartDataSchema(),
+					"options": objectSchema(
+						map[string]interface{}{
+							"width":       numberSchema("Optional SVG width. Defaults to 900."),
+							"height":      numberSchema("Optional SVG height. Defaults to 700 for radar and 620 for bar/line."),
+							"style":       enumStringSchema("Rendering style.", []string{"simple", "business", "teaching", "comparison"}),
+							"show_values": booleanSchema("Whether to show point values. Defaults to true."),
+							"show_labels": booleanSchema("Whether to show scatter point labels. Defaults to true."),
+							"legend":      booleanSchema("Whether to show legend. Defaults to true."),
+							"grid":        booleanSchema("Whether to show grid lines. Defaults to true for bar/line."),
+						},
+						nil,
+					),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"chart_type", "data"},
+			),
+			Example: map[string]interface{}{
+				"chart_type":      "radar",
+				"title":           "Score Comparison",
+				"output_filename": "score-radar",
+				"data": map[string]interface{}{
+					"dimensions": []string{"Chinese", "Math", "English", "Physics", "Chemistry", "Biology"},
+					"max_value":  100,
+					"series": []map[string]interface{}{
+						{"name": "Class Average", "values": []int{78, 82, 80, 75, 73, 76}},
+						{"name": "Student", "values": []int{88, 92, 84, 81, 77, 86}},
+					},
+				},
+			},
+		},
+		SkillWorkReport + "/generate_file": {
+			SkillID:     SkillWorkReport,
+			ToolName:    "generate_file",
+			Description: "Generate a downloadable weekly, monthly, or work report artifact from prepared report content.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"content":   stringValueSchema("Final weekly, monthly, or work report content to write into the generated file."),
+					"format":    enumStringSchema("Output format.", []string{"txt", "md", "docx", "pdf"}),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional document title used by generated PDF files."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"content", "format"},
+			),
+			Example: map[string]interface{}{"content": "# Weekly Work Report\n\n## Summary\n\n...", "format": "md", "filename": "weekly-work-report"},
+		},
 		SkillInternalKnowledge + "/list_accessible_knowledge_bases": {
 			SkillID:     SkillInternalKnowledge,
 			ToolName:    "list_accessible_knowledge_bases",
@@ -909,6 +1021,9 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillAgentDatabase + "/insert_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "insert_table_records", "Insert records into an Agent-bound database table."),
 		SkillAgentDatabase + "/update_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "update_table_records", "Update records in an Agent-bound database table. Each record must include id."),
 		SkillAgentDatabase + "/delete_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "delete_table_records", "Delete records from an Agent-bound database table. Each record must include id."),
+		SkillAgentWorkflow + "/list_agent_workflows":         workflowListContract(),
+		SkillAgentWorkflow + "/run_agent_workflow":           workflowRunContract(),
+		SkillAgentWorkflow + "/get_workflow_run_status":      workflowRunStatusContract(),
 		SkillTime + "/current_time": {
 			SkillID:     SkillTime,
 			ToolName:    "current_time",
@@ -1049,6 +1164,55 @@ func databaseMutateRecordsContract(skillID string, toolName string, description 
 	}
 }
 
+func workflowListContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentWorkflow,
+		ToolName:    "list_agent_workflows",
+		Description: "Fallback/debug list of workflows bound to the current Agent. Prefer the injected available_workflows context when it is present.",
+		Schema:      objectSchema(map[string]interface{}{}, nil),
+		Example:     map[string]interface{}{},
+	}
+}
+
+func workflowRunContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentWorkflow,
+		ToolName:    "run_agent_workflow",
+		Description: "Run an Agent-bound workflow by binding_id. Do not pass workflow_id directly. Set inputs.query to the user's current request. After a succeeded run, final answers must use primary_output or outputs and must not invent workflow output.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"binding_id": stringValueSchema("Workflow binding ID from injected available_workflows, or from list_agent_workflows if the injected list is missing or ambiguous."),
+				"inputs": map[string]interface{}{
+					"type":                 "object",
+					"description":          "Workflow input object. Include query with the user's current request unless the binding's input_schema, required_inputs, or default_input_key says otherwise; the runtime also forwards query as sys.query.",
+					"additionalProperties": true,
+					"properties": map[string]interface{}{
+						"query": stringValueSchema("The user's current request or instruction to pass into the workflow."),
+					},
+					"required": []string{"query"},
+				},
+			},
+			[]string{"binding_id", "inputs"},
+		),
+		Example: map[string]interface{}{"binding_id": "approval-flow", "inputs": map[string]interface{}{"query": "Approve refund request #123"}},
+	}
+}
+
+func workflowRunStatusContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentWorkflow,
+		ToolName:    "get_workflow_run_status",
+		Description: "Query the status and available outputs for an Agent-bound workflow run.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"workflow_run_id": stringValueSchema("Workflow run ID returned by run_agent_workflow."),
+			},
+			[]string{"workflow_run_id"},
+		),
+		Example: map[string]interface{}{"workflow_run_id": "workflow-run-id"},
+	}
+}
+
 func objectSchema(properties map[string]interface{}, required []string) map[string]interface{} {
 	if required == nil {
 		required = []string{}
@@ -1088,6 +1252,126 @@ func booleanSchema(description string) map[string]interface{} {
 		"type":        "boolean",
 		"description": description,
 	}
+}
+
+func arraySchema(description string, items map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "array",
+		"description": description,
+		"items":       items,
+	}
+}
+
+func chartDataSchema() map[string]interface{} {
+	series := arraySchema(
+		"Chart data series. Radar supports 1-2 series; bar and line support 1-8 series.",
+		objectSchema(
+			map[string]interface{}{
+				"name":   stringValueSchema("Series label."),
+				"values": arraySchema("Numeric values matching the selected chart labels length.", numberSchema("Score or metric value.")),
+				"color":  stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"name", "values"},
+		),
+	)
+	pieItems := arraySchema(
+		"Pie or doughnut chart items.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Slice label."),
+				"value": numberSchema("Slice value."),
+				"color": stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"label", "value"},
+		),
+	)
+	scatterPoints := arraySchema(
+		"Scatter chart points.",
+		objectSchema(
+			map[string]interface{}{
+				"x":     numberSchema("X-axis value."),
+				"y":     numberSchema("Y-axis value."),
+				"label": stringValueSchema("Optional point label."),
+				"color": stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"x", "y"},
+		),
+	)
+	scoreCountBands := arraySchema(
+		"Precomputed score distribution bands.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Band label such as 90-100."),
+				"count": numberSchema("Precomputed count for this band."),
+			},
+			[]string{"label", "count"},
+		),
+	)
+	scoreRangeBands := arraySchema(
+		"Score distribution bands used to count raw scores.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Band label such as 90-100."),
+				"min":   numberSchema("Inclusive minimum score when calculating from raw scores."),
+				"max":   numberSchema("Inclusive maximum score when calculating from raw scores."),
+			},
+			[]string{"label", "min", "max"},
+		),
+	)
+	common := map[string]interface{}{
+		"max_value": numberSchema("Optional shared maximum value. Radar defaults to 100; bar and line auto-scale when omitted."),
+		"series":    series,
+	}
+	radarProps := copySchemaProperties(common)
+	radarProps["dimensions"] = stringArrayOrCSVSchema("Radar axis labels, such as subject names. Required for radar charts.")
+	barProps := copySchemaProperties(common)
+	barProps["categories"] = stringArrayOrCSVSchema("Bar chart category labels.")
+	lineProps := copySchemaProperties(common)
+	lineProps["x_axis"] = stringArrayOrCSVSchema("Line chart x-axis labels.")
+	lineProps["categories"] = stringArrayOrCSVSchema("Line chart x-axis labels alias.")
+	pieProps := map[string]interface{}{
+		"items": pieItems,
+	}
+	scatterProps := map[string]interface{}{
+		"x_label": stringValueSchema("Optional x-axis label."),
+		"y_label": stringValueSchema("Optional y-axis label."),
+		"x_min":   numberSchema("Optional x-axis minimum."),
+		"x_max":   numberSchema("Optional x-axis maximum."),
+		"y_min":   numberSchema("Optional y-axis minimum."),
+		"y_max":   numberSchema("Optional y-axis maximum."),
+		"points":  scatterPoints,
+	}
+	distributionCountProps := map[string]interface{}{
+		"bands":     scoreCountBands,
+		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
+	}
+	distributionRangeProps := map[string]interface{}{
+		"bands":     scoreRangeBands,
+		"scores":    arraySchema("Raw score values or objects with value.", map[string]interface{}{"oneOf": []interface{}{numberSchema("Raw score value."), objectSchema(map[string]interface{}{"label": stringValueSchema("Optional score label."), "value": numberSchema("Raw score value.")}, []string{"value"})}}),
+		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
+	}
+
+	return map[string]interface{}{
+		"description": "Chart-specific data. Use dimensions for radar, categories for bar, x_axis or categories for line, items for pie/doughnut, points for scatter, and bands for score_distribution.",
+		"anyOf": []interface{}{
+			objectSchema(radarProps, []string{"dimensions", "series"}),
+			objectSchema(barProps, []string{"categories", "series"}),
+			objectSchema(lineProps, []string{"x_axis", "series"}),
+			objectSchema(lineProps, []string{"categories", "series"}),
+			objectSchema(pieProps, []string{"items"}),
+			objectSchema(scatterProps, []string{"points"}),
+			objectSchema(distributionCountProps, []string{"bands"}),
+			objectSchema(distributionRangeProps, []string{"bands", "scores"}),
+		},
+	}
+}
+
+func copySchemaProperties(input map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func stringArrayOrCSVSchema(description string) map[string]interface{} {
@@ -1302,7 +1586,7 @@ func normalizeSkillCallers(id string, source string, callers []string) []string 
 	switch normalizeSkillID(id) {
 	case SkillInternalKnowledge, SkillInternalDatabase:
 		return []string{SkillCallerAIChat}
-	case SkillAgentKnowledge, SkillAgentDatabase:
+	case SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow:
 		return []string{SkillCallerAgent}
 	default:
 		return []string{SkillCallerAIChat, SkillCallerAgent}
@@ -1328,6 +1612,9 @@ func normalizeSkillRequiredConfig(id string, required []string) []string {
 	}
 	if len(out) == 0 && normalizeSkillID(id) == SkillAgentDatabase {
 		out = append(out, SkillRequiredConfigAgentDatabase)
+	}
+	if len(out) == 0 && normalizeSkillID(id) == SkillAgentWorkflow {
+		out = append(out, SkillRequiredConfigAgentWorkflow)
 	}
 	sort.Strings(out)
 	return out

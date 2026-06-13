@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -66,6 +67,18 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		answer, usage, err := s.runPreparedSkillStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
 		usage = mergeUsage(preflightUsage, usage)
 		if err != nil {
+			var pendingApproval *skillloop.WorkflowApprovalPendingError
+			if errors.As(err, &pendingApproval) {
+				metadata := s.persistWorkflowApprovalPending(persistCtx, prepared, pendingApproval.Payload, usage)
+				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), eventCallback)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage}, nil
+			}
+			var pendingQuestion *skillloop.WorkflowQuestionPendingError
+			if errors.As(err, &pendingQuestion) {
+				metadata := s.persistWorkflowQuestionPending(persistCtx, prepared, pendingQuestion.Payload, usage)
+				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), eventCallback)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage}, nil
+			}
 			if errors.Is(err, ErrMessageStopped) {
 				_ = s.clearPreparedRuntime(persistCtx, prepared)
 				return nil, err
@@ -90,8 +103,18 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage}, nil
 	}
 
+	finalCallStartedAt := time.Now()
 	stream, err := s.openChatStream(runCtx, prepared)
 	if err != nil {
+		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
+			Phase:      "final_answer",
+			Round:      -1,
+			Streaming:  true,
+			StartedAt:  finalCallStartedAt,
+			DurationMS: time.Since(finalCallStartedAt).Milliseconds(),
+			Request:    prepared.LLMRequest,
+			Error:      err.Error(),
+		})
 		if s.isStoppedContext(runCtx, prepared.Message.ID) {
 			_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 			return nil, ErrMessageStopped
@@ -99,9 +122,20 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
-	answer, usage, err := s.collectStreamAnswer(runCtx, prepared, stream, onChunk)
-	usage = mergeUsage(preflightUsage, usage)
+	answer, callUsage, err := s.collectStreamAnswer(runCtx, prepared, stream, onChunk)
+	usage := mergeUsage(preflightUsage, callUsage)
 	if err != nil {
+		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
+			Phase:      "final_answer",
+			Round:      -1,
+			Streaming:  true,
+			StartedAt:  finalCallStartedAt,
+			DurationMS: time.Since(finalCallStartedAt).Milliseconds(),
+			Request:    prepared.LLMRequest,
+			Response:   &adapter.Message{Role: "assistant", Content: answer},
+			Usage:      callUsage,
+			Error:      err.Error(),
+		})
 		if errors.Is(err, ErrMessageStopped) {
 			_ = s.clearPreparedRuntime(persistCtx, prepared)
 			return nil, err
@@ -109,6 +143,16 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
+	s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
+		Phase:      "final_answer",
+		Round:      -1,
+		Streaming:  true,
+		StartedAt:  finalCallStartedAt,
+		DurationMS: time.Since(finalCallStartedAt).Milliseconds(),
+		Request:    prepared.LLMRequest,
+		Response:   &adapter.Message{Role: "assistant", Content: answer},
+		Usage:      callUsage,
+	})
 	if s.streams.IsStopped(prepared.Message.ID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
@@ -191,7 +235,7 @@ func (s *service) StreamConversationEvents(ctx context.Context, scope Scope, con
 			if err := onEvent(event); err != nil {
 				return err
 			}
-			if isTerminalStreamEvent(event.EventType) {
+			if isTerminalStreamEvent(event) {
 				return nil
 			}
 		}
@@ -238,8 +282,21 @@ func conversationHasActiveMessage(conversation *runtimemodel.Conversation, messa
 	return conversation.RuntimeStatus == runtimemodel.ConversationRuntimeStatusStreaming && *conversation.ActiveMessageID == messageID
 }
 
-func isTerminalStreamEvent(eventType string) bool {
-	return eventType == streamEventMessageEnd || eventType == streamEventError
+func isTerminalStreamEvent(event StreamEvent) bool {
+	switch event.EventType {
+	case streamEventError:
+		return true
+	case streamEventMessageEnd:
+		status := strings.ToLower(strings.TrimSpace(fmt.Sprint(event.Payload["status"])))
+		switch status {
+		case runtimemodel.MessageStatusCompleted, runtimemodel.MessageStatusStopped, runtimemodel.MessageStatusError, "failed":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<-chan adapter.StreamResponse, error) {
@@ -330,6 +387,10 @@ func newBillingAppContext(prepared *PreparedChat) *llmclient.AppContext {
 }
 
 func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onChunk func(string) error) (string, *adapter.Usage, error) {
+	return s.collectStreamAnswerWithEvents(ctx, prepared, stream, nil, onChunk)
+}
+
+func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onEvent func(StreamEvent) error, onChunk func(string) error) (string, *adapter.Usage, error) {
 	var builder strings.Builder
 	var usage *adapter.Usage
 	eventBuffer := newStreamMessageEventBuffer(s.events, prepared.Conversation.ID, prepared.Message.ID)
@@ -338,7 +399,7 @@ func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedCha
 		case <-ctx.Done():
 			answer := builder.String()
 			if s.isStoppedContext(ctx, prepared.Message.ID) {
-				_ = eventBuffer.flush(context.WithoutCancel(ctx))
+				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
 				_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
 				return answer, usage, ErrMessageStopped
 			}
@@ -347,7 +408,7 @@ func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedCha
 		case chunk, ok := <-stream:
 			if !ok {
 				answer := builder.String()
-				_ = eventBuffer.flush(context.WithoutCancel(ctx))
+				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
 				if s.streams.IsStopped(prepared.Message.ID) {
 					_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
 					return answer, usage, ErrMessageStopped
@@ -356,7 +417,7 @@ func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedCha
 			}
 			if chunk.Error != nil {
 				answer := builder.String()
-				_ = eventBuffer.flush(context.WithoutCancel(ctx))
+				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
 				if s.streams.IsStopped(prepared.Message.ID) {
 					_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
 					return answer, usage, ErrMessageStopped
@@ -368,7 +429,7 @@ func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedCha
 				usage = chunk.Usage
 			}
 			if chunk.Done {
-				_ = eventBuffer.flush(context.WithoutCancel(ctx))
+				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
 				return builder.String(), usage, nil
 			}
 			text := streamChunkText(chunk)
@@ -376,15 +437,40 @@ func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedCha
 				continue
 			}
 			builder.WriteString(text)
-			if err := eventBuffer.add(ctx, text); err != nil {
+			event, err := eventBuffer.add(ctx, text)
+			if err != nil {
 				logger.WarnContext(ctx, "failed to append aichat stream message event", "message_id", prepared.Message.ID.String(), err)
 			}
+			s.deliverStreamEvent(ctx, prepared.Message.ID, event, onEvent)
 			if onChunk != nil {
 				if err := onChunk(text); err != nil {
 					logger.WarnContext(context.WithoutCancel(ctx), "failed to deliver aichat stream chunk to client", "message_id", prepared.Message.ID.String(), err)
 				}
 			}
 		}
+	}
+}
+
+func (s *service) flushStreamMessageEventBuffer(ctx context.Context, messageID uuid.UUID, eventBuffer *streamMessageEventBuffer, onEvent func(StreamEvent) error) {
+	event, err := eventBuffer.flush(ctx)
+	if err != nil {
+		logger.WarnContext(ctx, "failed to append aichat stream message event", "message_id", messageID.String(), err)
+		return
+	}
+	s.deliverStreamEvent(ctx, messageID, event, onEvent)
+}
+
+func (s *service) deliverStreamEvent(ctx context.Context, messageID uuid.UUID, event *StreamEvent, onEvent func(StreamEvent) error) {
+	if event == nil || onEvent == nil {
+		return
+	}
+	if err := onEvent(StreamEvent{
+		ID:        event.ID,
+		EventType: event.EventType,
+		Payload:   event.Payload,
+		CreatedAt: event.CreatedAt,
+	}); err != nil {
+		logger.WarnContext(context.WithoutCancel(ctx), "failed to deliver aichat stream event to client", "message_id", messageID.String(), "event_type", event.EventType, err)
 	}
 }
 
@@ -556,10 +642,14 @@ func baseFileParsePayload(prepared *PreparedChat, file attachmentFile, index, to
 }
 
 func messageEndPayload(prepared *PreparedChat, metadata map[string]interface{}) map[string]interface{} {
+	return messageEndPayloadWithStatus(prepared, metadata, completedStatusFromMetadata(metadata))
+}
+
+func messageEndPayloadWithStatus(prepared *PreparedChat, metadata map[string]interface{}, status string) map[string]interface{} {
 	return map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
-		"status":          completedStatusFromMetadata(metadata),
+		"status":          strings.TrimSpace(status),
 		"metadata":        copyStringAnyMap(metadata),
 	}
 }

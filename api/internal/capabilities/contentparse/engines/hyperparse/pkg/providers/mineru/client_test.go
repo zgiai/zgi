@@ -149,6 +149,7 @@ func TestOfficialReadZipArtifacts(t *testing.T) {
 		"sample/sample_content_list.json":    `[{"type":"text","text":"Title","bbox":[0,0,1000,100],"page_idx":0}]`,
 		"sample/sample_middle.json":          `{"pdf_info":[{"page_idx":0,"page_size":[1000,1000]}]}`,
 		"sample/sample_content_list_v2.json": `[[{"type":"title"}]]`,
+		"sample/images/chart.jpg":            "hello",
 	} {
 		w, err := zw.Create(name)
 		if err != nil {
@@ -174,6 +175,12 @@ func TestOfficialReadZipArtifacts(t *testing.T) {
 	}
 	if artifacts.MiddleJSON == "" || artifacts.MiddleJSONPath != "sample/sample_middle.json" {
 		t.Fatalf("middle json mismatch: path=%q body=%q", artifacts.MiddleJSONPath, artifacts.MiddleJSON)
+	}
+	wantImage := "data:image/jpeg;base64,aGVsbG8="
+	for _, name := range []string{"sample/images/chart.jpg", "images/chart.jpg", "chart.jpg"} {
+		if artifacts.Images[name] != wantImage {
+			t.Fatalf("image asset %q mismatch: %q", name, artifacts.Images[name])
+		}
 	}
 }
 

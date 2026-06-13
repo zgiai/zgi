@@ -23,7 +23,7 @@ export interface UseBuiltinToolsOptions {
 }
 
 /**
- * Fetch builtin tool providers and tools for the current workspace
+ * Fetch tool providers available in the current organization.
  * Uses React Query for caching and background refetching
  */
 export function useBuiltinTools(options: UseBuiltinToolsOptions = {}) {

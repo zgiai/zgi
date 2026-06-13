@@ -113,13 +113,39 @@ export function sortWorkflowRunRounds<T extends { index: number }>(rounds: T[]):
 
 /**
  * @util getWorkflowRunRoundElapsedTime
- * @description Resolve a container round duration from the sum of child node durations.
+ * @description Resolve a container round duration from the sum of finished child node durations.
  */
-export function getWorkflowRunRoundElapsedTime(round: { nodes: WorkflowRunOrderedItem[] }): number {
-  return round.nodes.reduce(
+export function getWorkflowRunRoundElapsedTime(
+  round: { nodes: WorkflowRunOrderedItem[] }
+): number | undefined {
+  const total = round.nodes.reduce(
     (total, node) => total + (typeof node.elapsedTime === 'number' ? node.elapsedTime : 0),
     0
   );
+  return total > 0 ? total : undefined;
+}
+
+/**
+ * @util getWorkflowRunRoundDurationMap
+ * @description Extract per-round elapsed time from workflow container completion metadata.
+ */
+export function getWorkflowRunRoundDurationMap(
+  source: unknown,
+  kind: 'iteration' | 'loop'
+): Map<number, number> {
+  const record = toRecord(source);
+  const metadata = toRecord(record?.['execution_metadata']) ?? toRecord(record?.['metadata']);
+  const durations = new Map<number, number>();
+  if (!metadata) return durations;
+
+  if (kind === 'iteration') {
+    mergeDurationMap(durations, metadata['iteration_duration_map']);
+    mergeDurationList(durations, metadata['iteration_duration_list']);
+    return durations;
+  }
+
+  mergeDurationMap(durations, metadata['loop_duration_map']);
+  return durations;
 }
 
 function toRecord(value: unknown): Record<string, unknown> | undefined {
@@ -156,4 +182,33 @@ function pickNumberString(
 ): string | undefined {
   const value = record?.[key];
   return typeof value === 'number' ? String(value) : undefined;
+}
+
+function mergeDurationMap(target: Map<number, number>, value: unknown): void {
+  const record = toRecord(value);
+  if (!record) return;
+  Object.entries(record).forEach(([key, item]) => {
+    const index = Number(key);
+    const elapsed = numberFromUnknown(item);
+    if (Number.isFinite(index) && typeof elapsed === 'number') {
+      target.set(index, elapsed);
+    }
+  });
+}
+
+function mergeDurationList(target: Map<number, number>, value: unknown): void {
+  if (!Array.isArray(value)) return;
+  value.forEach((item, index) => {
+    const elapsed = numberFromUnknown(item);
+    if (typeof elapsed === 'number') {
+      target.set(index, elapsed);
+    }
+  });
+}
+
+function numberFromUnknown(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return undefined;
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : undefined;
 }

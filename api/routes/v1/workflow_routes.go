@@ -102,20 +102,23 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 		conversation.NewAgentMessageService(messageRepo, conversationRepo),
 	)
 	runtimeLogHandler := workflowHandlerPkg.NewRuntimeLogHandler(workflowRunLogRepo, workflowNodeRuntimeLogRepo)
+	chatRuntimeService := runtimeservice.NewServiceWithDependencies(
+		runtimerepo.NewRepositories(deps.DB),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		deps.OrganizationService,
+	)
 	agentHistoryDispatchHandler := workflowHandlerPkg.NewAgentHistoryDispatchHandler(
 		agentsRepo,
+		handler,
 		agentHistoryHandler,
 		runtimeLogHandler,
-		runtimeservice.NewServiceWithDependencies(
-			runtimerepo.NewRepositories(deps.DB),
-			nil,
-			nil,
-			nil,
-			nil,
-			nil,
-			deps.OrganizationService,
-		),
+		chatRuntimeService,
 	)
+	agentRuntimeLogsHandler := workflowHandlerPkg.NewAgentRuntimeLogsHandler(agentsRepo, chatRuntimeService)
 
 	apps := router.Group("/agents")
 	// Add middleware for workflow routes
@@ -139,9 +142,12 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 
 	apps.POST("/:agent_id/workflows/precheck", handler.PrecheckPublishedWorkflow)
 	apps.POST("/:agent_id/workflows/run", handler.RunPublishedWorkflow)
-	apps.GET("/:agent_id/workflow-runs", handler.GetWorkflowRuns)
-	apps.GET("/:agent_id/workflow-runs/:run_id", handler.GetWorkflowRunDetail)
-	apps.GET("/:agent_id/workflow-runs/:run_id/node-executions", handler.GetWorkflowRunNodeExecutions)
+	apps.GET("/:agent_id/workflow-runs", agentHistoryDispatchHandler.GetWorkflowRuns)
+	apps.GET("/:agent_id/workflow-runs/:run_id", agentHistoryDispatchHandler.GetWorkflowRunDetail)
+	apps.GET("/:agent_id/workflow-runs/:run_id/node-executions", agentHistoryDispatchHandler.GetWorkflowRunNodeExecutions)
+	apps.GET("/:agent_id/runtime-runs", agentRuntimeLogsHandler.GetRuntimeRuns)
+	apps.GET("/:agent_id/runtime-runs/:message_id", agentRuntimeLogsHandler.GetRuntimeRunDetail)
+	apps.GET("/:agent_id/runtime-runs/:message_id/steps", agentRuntimeLogsHandler.GetRuntimeRunSteps)
 	apps.POST("/:agent_id/workflow-runs/:run_id/nodes/:node_log_id/diagnose", handler.ManualDiagnoseNode)
 	apps.GET("/:agent_id/conversations", agentHistoryDispatchHandler.GetConversations)
 	apps.GET("/:agent_id/conversations/:conversation_id", agentHistoryDispatchHandler.GetConversationDetail)

@@ -18,6 +18,12 @@ export interface OrganizationUpdateRequest {
   status?: 'active' | 'inactive';
 }
 
+export type OrganizationMemberRole = 'owner' | 'admin' | 'normal';
+
+export interface OrganizationMemberRoleUpdateRequest {
+  role: Exclude<OrganizationMemberRole, 'owner'>;
+}
+
 export interface OrganizationList {
   page: number;
   limit: number;
@@ -40,6 +46,7 @@ export interface Member {
   last_login_ip: string | null;
   created_at: number;
   status: 'active' | 'pending' | 'banned';
+  organization_role?: OrganizationMemberRole;
   account_role: {
     role_type: 'system_admin' | 'normal';
   } | null;

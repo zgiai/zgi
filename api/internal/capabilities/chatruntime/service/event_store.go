@@ -183,31 +183,39 @@ func newStreamMessageEventBuffer(store *streamEventStore, conversationID, messag
 	}
 }
 
-func (b *streamMessageEventBuffer) add(ctx context.Context, chunk string) error {
+func (b *streamMessageEventBuffer) add(ctx context.Context, chunk string) (*StreamEvent, error) {
 	if chunk == "" {
-		return nil
+		return nil, nil
 	}
 	b.builder.WriteString(chunk)
 	if b.builder.Len() < streamMessageFlushSize && time.Since(b.lastFlush) < streamMessageFlushAfter {
-		return nil
+		return nil, nil
 	}
 	return b.flush(ctx)
 }
 
-func (b *streamMessageEventBuffer) flush(ctx context.Context) error {
+func (b *streamMessageEventBuffer) flush(ctx context.Context) (*StreamEvent, error) {
 	if b == nil || b.builder.Len() == 0 {
-		return nil
+		return nil, nil
 	}
 	chunk := b.builder.String()
 	b.builder.Reset()
 	b.lastFlush = time.Now()
 	if !b.store.available() {
-		return nil
+		return &StreamEvent{
+			EventType: streamEventMessage,
+			Payload: map[string]interface{}{
+				"conversation_id": b.conversationID.String(),
+				"message_id":      b.messageID.String(),
+				"answer":          chunk,
+			},
+			CreatedAt: time.Now().Unix(),
+		}, nil
 	}
-	_, err := b.store.append(ctx, b.messageID, b.conversationID, streamEventMessage, map[string]interface{}{
+	event, err := b.store.append(ctx, b.messageID, b.conversationID, streamEventMessage, map[string]interface{}{
 		"conversation_id": b.conversationID.String(),
 		"message_id":      b.messageID.String(),
 		"answer":          chunk,
 	})
-	return err
+	return event, err
 }

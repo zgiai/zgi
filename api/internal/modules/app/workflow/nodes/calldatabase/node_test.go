@@ -11,23 +11,30 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/start"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 )
 
 type fakeSQLBase struct {
 	sql_base.SQLBase
-	executeFunc func(ctx context.Context, query string, params []any) (*sql_base.QueryResult, error)
+	auditCtx    *audit.Context
+	auditCtxs   []audit.Context
+	executeFunc func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error)
 }
 
-func (f *fakeSQLBase) ExecuteSQL(ctx context.Context, query string, params []any) (*sql_base.QueryResult, error) {
+func (f *fakeSQLBase) ExecuteSQL(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
+	f.auditCtx = auditCtx
+	if auditCtx != nil {
+		f.auditCtxs = append(f.auditCtxs, *auditCtx)
+	}
 	if f.executeFunc != nil {
-		return f.executeFunc(ctx, query, params)
+		return f.executeFunc(ctx, query, params, auditCtx)
 	}
 	return nil, nil
 }
 
 func ExampleNode_executeRun() {
 	mockClient := &fakeSQLBase{
-		executeFunc: func(ctx context.Context, query string, params []any) (*sql_base.QueryResult, error) {
+		executeFunc: func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
 			return &sql_base.QueryResult{
 				RowsAffected: 1,
 				Columns:      []string{"id", "status"},
@@ -74,7 +81,8 @@ func TestWorkflowChainStartCallDatabaseEnd(t *testing.T) {
 	state.VariablePool.UserInputs["request"] = "fetch active users"
 
 	initParams := entities.GraphInitParams{
-		OrganizationID: "tenant-1",
+		TenantID:       "workspace-1",
+		OrganizationID: "organization-1",
 		AppID:          "app-1",
 		WorkflowType:   entities.WorkflowTypeWorkflow,
 		WorkflowID:     "workflow-1",
@@ -102,7 +110,7 @@ func TestWorkflowChainStartCallDatabaseEnd(t *testing.T) {
 	rawSQL := "SELECT id, email FROM public.users LIMIT 1"
 	expectedSQL := `SELECT id, email FROM "public"."zgi_base_users" LIMIT 1`
 	mockClient := &fakeSQLBase{
-		executeFunc: func(ctx context.Context, query string, params []any) (*sql_base.QueryResult, error) {
+		executeFunc: func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
 			if query != expectedSQL {
 				t.Fatalf("unexpected query: %s", query)
 			}
@@ -128,6 +136,8 @@ func TestWorkflowChainStartCallDatabaseEnd(t *testing.T) {
 				map[string]any{
 					"schema":  "public",
 					"name":    "users",
+					"label":   "Users",
+					"id":      "table-uuid-1",
 					"columns": []any{"id", "email"},
 				},
 			},
@@ -154,6 +164,33 @@ func TestWorkflowChainStartCallDatabaseEnd(t *testing.T) {
 	}
 	if callResult.Outputs["row_count"] != 1 {
 		t.Fatalf("unexpected row_count: %v", callResult.Outputs["row_count"])
+	}
+	if mockClient.auditCtx == nil {
+		t.Fatal("audit context should be passed to sql base")
+	}
+	if mockClient.auditCtx.ClientType != audit.ClientTypeWorkflow {
+		t.Fatalf("client type = %s, want %s", mockClient.auditCtx.ClientType, audit.ClientTypeWorkflow)
+	}
+	if mockClient.auditCtx.OrganizationID != "organization-1" {
+		t.Fatalf("organization_id = %s, want organization-1", mockClient.auditCtx.OrganizationID)
+	}
+	if mockClient.auditCtx.WorkspaceID != "workspace-1" {
+		t.Fatalf("workspace_id = %s, want workspace-1", mockClient.auditCtx.WorkspaceID)
+	}
+	if mockClient.auditCtx.WorkflowRunID != state.VariablePool.SystemVariables.WorkflowRunID {
+		t.Fatalf("workflow_run_id = %s, want %s", mockClient.auditCtx.WorkflowRunID, state.VariablePool.SystemVariables.WorkflowRunID)
+	}
+	if mockClient.auditCtx.NodeID != "call-db-node" {
+		t.Fatalf("node_id = %s, want call-db-node", mockClient.auditCtx.NodeID)
+	}
+	if mockClient.auditCtx.RequestID != "call-instance:call-db-node" {
+		t.Fatalf("request_id = %s, want node instance and node id", mockClient.auditCtx.RequestID)
+	}
+	if mockClient.auditCtx.TableID != "table-uuid-1" {
+		t.Fatalf("table_id = %s, want table-uuid-1", mockClient.auditCtx.TableID)
+	}
+	if mockClient.auditCtx.TableName != "Users" {
+		t.Fatalf("table_name = %s, want Users", mockClient.auditCtx.TableName)
 	}
 	if got := callResult.Inputs["sql"]; got != expectedSQL {
 		t.Fatalf("call database input sql = %#v, want executed sql", got)
@@ -212,6 +249,108 @@ func TestWorkflowChainStartCallDatabaseEnd(t *testing.T) {
 		}
 	default:
 		t.Fatalf("unexpected final_count type: %T", v)
+	}
+}
+
+func TestExecuteWithRetryUsesSingleAuditRequestIDAcrossAttempts(t *testing.T) {
+	var calls int
+	mockClient := &fakeSQLBase{
+		executeFunc: func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
+			calls++
+			if calls < 3 {
+				return nil, fmt.Errorf("temporary database error")
+			}
+			return &sql_base.QueryResult{
+				RowsAffected: 0,
+				Columns:      []string{},
+				Rows:         [][]any{},
+			}, nil
+		},
+	}
+
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			NodeID:   "call-db-node",
+			NodeType: shared.CallDatabase,
+		},
+		NodeData: NodeData{
+			Execution: ExecutionConfig{MaxRetries: 2},
+		},
+		sqlClient: mockClient,
+	}
+
+	auditCtx := &audit.Context{RequestID: "run-1:call-db-node"}
+	_, attempts, err := node.executeWithRetry(context.Background(), "SELECT 1", auditCtx)
+	if err != nil {
+		t.Fatalf("executeWithRetry returned error: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if len(mockClient.auditCtxs) != 3 {
+		t.Fatalf("audit ctx count = %d, want 3", len(mockClient.auditCtxs))
+	}
+	for i, got := range mockClient.auditCtxs {
+		if got.RequestID != "run-1:call-db-node" {
+			t.Fatalf("attempt %d request_id = %s, want shared request id", i+1, got.RequestID)
+		}
+		if got.Attempt != i+1 {
+			t.Fatalf("attempt %d audit attempt = %d, want %d", i+1, got.Attempt, i+1)
+		}
+	}
+}
+
+func TestNewPrefersCanonicalWorkspaceIDForAuditScope(t *testing.T) {
+	mockClient := &fakeSQLBase{
+		executeFunc: func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
+			return &sql_base.QueryResult{
+				RowsAffected: 0,
+				Columns:      []string{},
+				Rows:         [][]any{},
+			}, nil
+		},
+	}
+
+	nodeConfig := map[string]any{
+		"id": "call-db-node",
+		"data": map[string]any{
+			"data_source": map[string]any{
+				"id":   "pg-main",
+				"name": "main",
+				"type": "postgres",
+			},
+			"manual_sql": "SELECT 1",
+			"execution": map[string]any{
+				"timeout_seconds": 5,
+				"max_retries":     0,
+			},
+		},
+	}
+	initParams := entities.GraphInitParams{
+		TenantID:       "legacy-workspace",
+		WorkspaceID:    "canonical-workspace",
+		OrganizationID: "organization-1",
+		AppID:          "app-1",
+		WorkflowType:   entities.WorkflowTypeWorkflow,
+		WorkflowID:     "workflow-1",
+		GraphConfig:    map[string]any{},
+		UserID:         "user-1",
+		UserFrom:       entities.UserFromAccount,
+		InvokeFrom:     entities.InvokeFromDebugger,
+	}
+
+	node, err := New("call-instance", nodeConfig, initParams, &entities.Graph{}, entities.NewGraphRuntimeStateWithDefaults(), nil, mockClient)
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
+
+	runNode(t, context.Background(), node)
+
+	if mockClient.auditCtx == nil {
+		t.Fatal("audit context should be passed to sql base")
+	}
+	if mockClient.auditCtx.WorkspaceID != "canonical-workspace" {
+		t.Fatalf("workspace_id = %s, want canonical-workspace", mockClient.auditCtx.WorkspaceID)
 	}
 }
 
@@ -298,7 +437,7 @@ func TestExecuteRunAppliesIdentifierQuoting(t *testing.T) {
 
 	var executedSQL string
 	mockClient := &fakeSQLBase{
-		executeFunc: func(ctx context.Context, query string, params []any) (*sql_base.QueryResult, error) {
+		executeFunc: func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
 			executedSQL = query
 			return &sql_base.QueryResult{
 				RowsAffected: 0,

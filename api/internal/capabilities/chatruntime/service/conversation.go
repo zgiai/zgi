@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
@@ -26,6 +27,11 @@ func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, 
 		return nil, err
 	}
 	title = normalizeTitle(title, defaultConversationTitle)
+	source := normalizeConversationSource(caller.Source)
+	sourceWebAppID := normalizeCallerID(caller.SourceWebAppID)
+	if source == runtimemodel.ConversationSourceWebApp && sourceWebAppID == nil {
+		return nil, fmt.Errorf("%w: source_web_app_id is required for webapp conversations", ErrInvalidInput)
+	}
 	conversation := &runtimemodel.Conversation{
 		OrganizationID: scope.OrganizationID,
 		WorkspaceID:    workspaceID,
@@ -34,8 +40,8 @@ func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, 
 		CallerID:       normalizeCallerID(caller.ID),
 		Title:          title,
 		Status:         runtimemodel.ConversationStatusNormal,
-		Source:         normalizeConversationSource(caller.Source),
-		SourceWebAppID: normalizeCallerID(caller.SourceWebAppID),
+		Source:         source,
+		SourceWebAppID: sourceWebAppID,
 	}
 	if err := s.repos.Conversation.Create(ctx, conversation); err != nil {
 		return nil, err
@@ -338,6 +344,86 @@ func (s *service) ListMessagesByCaller(ctx context.Context, scope Scope, caller 
 	return messages, total, nil
 }
 
+func (s *service) ListMessagesByCallerSource(ctx context.Context, scope Scope, caller Caller, source string, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, 0, err
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return s.ListMessagesByCaller(ctx, scope, caller, page, limit)
+	}
+	limit = clampLimit(limit, 50, 200)
+	offset := pageOffset(page, limit)
+	messages, total, err := s.repos.Message.ListByCallerSourceScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), source, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	hydrateMessagesGeneratedFileURLs(messages)
+	return messages, total, nil
+}
+
+func (s *service) ListMessagesByCallerLogFilters(ctx context.Context, scope Scope, caller Caller, source string, conversationID *uuid.UUID, queryText string, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, 0, err
+	}
+	limit = clampLimit(limit, 50, 200)
+	offset := pageOffset(page, limit)
+	messages, total, err := s.repos.Message.ListByCallerLogFilterScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), strings.TrimSpace(source), conversationID, strings.TrimSpace(queryText), limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	hydrateMessagesGeneratedFileURLs(messages)
+	return messages, total, nil
+}
+
+func (s *service) ListMessagesByCallerRuntimeLogFilters(ctx context.Context, scope Scope, caller Caller, source string, conversationID *uuid.UUID, queryText string, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, 0, err
+	}
+	limit = clampLimit(limit, 50, 200)
+	offset := pageOffset(page, limit)
+	messages, total, err := s.repos.Message.ListByCallerRuntimeLogScoped(ctx, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), strings.TrimSpace(source), conversationID, strings.TrimSpace(queryText), limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	hydrateMessagesGeneratedFileURLs(messages)
+	return messages, total, nil
+}
+
+func (s *service) GetMessageByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, nil, err
+	}
+	message, err := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
+	if err != nil {
+		return nil, nil, mapRepoError(err)
+	}
+	conversation, err := s.GetConversationByCaller(ctx, scope, caller, message.ConversationID)
+	if err != nil {
+		return nil, nil, err
+	}
+	hydrateMessageGeneratedFileURLs(message)
+	return message, conversation, nil
+}
+
+func (s *service) GetMessageByCallerRuntimeLog(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, source string) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, nil, err
+	}
+	normalizedCallerType := normalizeCallerType(caller.Type)
+	normalizedCallerID := normalizeCallerID(caller.ID)
+	message, err := s.repos.Message.GetRuntimeLogScoped(ctx, id, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, normalizedCallerType, normalizedCallerID, strings.TrimSpace(source))
+	if err != nil {
+		return nil, nil, mapRepoError(err)
+	}
+	conversation, err := s.repos.Conversation.GetRuntimeLogScoped(ctx, message.ConversationID, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, normalizedCallerType, normalizedCallerID, strings.TrimSpace(source))
+	if err != nil {
+		return nil, nil, mapRepoError(err)
+	}
+	hydrateMessageGeneratedFileURLs(message)
+	return message, conversation, nil
+}
+
 func (s *service) DeleteMessage(ctx context.Context, scope Scope, id uuid.UUID) error {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return err
@@ -361,15 +447,24 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 	if err != nil {
 		return nil, mapRepoError(err)
 	}
-	if !isActiveMessageStatus(message.Status) {
+	if !isStoppableMessageStatus(message.Status) {
 		hydrateMessageGeneratedFileURLs(message)
 		return message, nil
 	}
 
 	s.streams.Stop(id)
-	if err := s.repos.Message.MarkStopped(ctx, id); err != nil {
+	metadata := workflowContinuationMetadataWithoutUserInputRequest(message.Metadata)
+	if continuation := workflowApprovalContinuationFromMetadata(metadata); continuation.WorkflowRunID != "" {
+		metadata = mergeWorkflowRunMetadata(metadata, "workflow_stopped", map[string]interface{}{
+			"workflow_run_id": continuation.WorkflowRunID,
+			"status":          runtimemodel.MessageStatusStopped,
+			"created_at":      time.Now().Unix(),
+		})
+		metadata = workflowContinuationMetadataWithStatus(metadata, workflowContinuationStatusFailed)
+	}
+	if err := s.repos.Message.UpdateStoppedAnswer(ctx, id, message.Answer, metadata); err != nil {
 		latest, loadErr := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
-		if loadErr == nil && !isActiveMessageStatus(latest.Status) {
+		if loadErr == nil && !isStoppableMessageStatus(latest.Status) {
 			hydrateMessageGeneratedFileURLs(latest)
 			return latest, nil
 		}

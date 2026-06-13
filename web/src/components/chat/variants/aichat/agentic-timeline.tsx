@@ -1,12 +1,8 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, Loader2 } from 'lucide-react';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
+import { AlertCircle, CheckCircle2, ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { useT } from '@/i18n/translations';
@@ -25,6 +21,8 @@ import {
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
+import WorkflowRunMonitor from '@/components/chat/ui/workflow-run-monitor';
+import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-run-nodes-list';
 
 type TimelineTone = 'running' | 'success' | 'error';
 type TimelineDebugLabel = keyof typeof TIMELINE_DEBUG_LABEL_KEYS;
@@ -68,6 +66,7 @@ interface SkillTimelineViewModel {
 }
 
 type MemoryTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'memory_event' }>;
+type WorkflowTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'workflow_run' }>;
 
 function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
@@ -252,7 +251,11 @@ function memoryEventContent(item: MemoryTimelineItem): string {
   return (item.event.content ?? item.event.content_preview ?? '').trim();
 }
 
-function memoryEventTitle(item: MemoryTimelineItem, locale: string, showMemoryKey: boolean): string {
+function memoryEventTitle(
+  item: MemoryTimelineItem,
+  locale: string,
+  showMemoryKey: boolean
+): string {
   return getAIChatUserMemoryMutationTitle(item.event.action, locale, {
     content: item.event.content_preview || item.event.content,
     entryId: item.event.entry_id ?? (showMemoryKey ? item.event.key : undefined),
@@ -270,10 +273,7 @@ function MemoryTimelineRow({
   const [isOpen, setIsOpen] = useState(false);
   const content = memoryEventContent(item);
   const canExpand = Boolean(
-    content ||
-      (showMemoryKey && item.event.key) ||
-      item.event.category ||
-      item.event.memory_type
+    content || (showMemoryKey && item.event.key) || item.event.category || item.event.memory_type
   );
 
   return (
@@ -330,6 +330,114 @@ function MemoryTimelineRow({
   );
 }
 
+function WorkflowApprovalPanel({
+  approvalToken,
+  approvalUrl,
+  approvalFormId,
+}: {
+  approvalToken: string;
+  approvalUrl: string;
+  approvalFormId: string;
+}) {
+  const t = useT('webapp');
+
+  return (
+    <div className="mt-2 max-w-3xl rounded-md border bg-warning/10 px-3 py-2 text-xs text-muted-foreground">
+      <div className="font-medium text-foreground">{t('consoleChat.workflow.approvalPending')}</div>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        {approvalUrl ? (
+          <a
+            className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
+            href={approvalUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {t('consoleChat.workflow.openApproval')}
+            <ExternalLink className="size-3" />
+          </a>
+        ) : null}
+        {approvalFormId ? (
+          <span title={approvalFormId}>
+            {t('consoleChat.workflow.formId', { id: approvalFormId })}
+          </span>
+        ) : null}
+        {approvalToken && !approvalUrl ? (
+          <span title={approvalToken}>
+            {t('consoleChat.workflow.token', { token: approvalToken })}
+          </span>
+        ) : null}
+      </div>
+      {approvalToken ? (
+        <div className="mt-2 text-[11px] text-muted-foreground">
+          {t('consoleChat.workflow.approvalInputLocked')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function WorkflowTimelineRow({
+  item,
+}: {
+  item: WorkflowTimelineItem;
+}) {
+  const nodes: WorkflowRunNodeListItem[] = item.nodes.map((node, index) => ({
+    title: node.title ?? node.nodeId ?? node.nodeType ?? '',
+    nodeId: node.nodeId ?? `workflow-node-${index}`,
+    executionId: node.executionId,
+    createdAtMs: node.createdAtMs,
+    receivedOrder: node.receivedOrder,
+    nodeType: node.nodeType ?? 'custom',
+    status:
+      node.status === 'success' || node.status === 'partial-succeeded' ? 'succeeded' : node.status,
+    nodeInput: node.data?.input,
+    nodeOutput: node.data?.output,
+    modelInput: node.data?.modelInput,
+    elapsedTime: node.elapsedTime,
+    error: node.error ?? null,
+    iterationInputs: node.iterationInputs,
+    iterationOutputs: node.iterationOutputs,
+    iterationRounds: node.iterationRounds as WorkflowRunNodeListItem['iterationRounds'],
+    loopInputs: node.loopInputs,
+    loopOutputs: node.loopOutputs,
+    loopRounds: node.loopRounds as WorkflowRunNodeListItem['loopRounds'],
+    steps: node.steps,
+  }));
+  const approvalUrl =
+    typeof item.approval?.approval_url === 'string' ? item.approval.approval_url : '';
+  const approvalFormId =
+    typeof item.approval?.approval_form_id === 'string' ? item.approval.approval_form_id : '';
+  const approvalToken =
+    typeof item.approval?.approval_token === 'string' ? item.approval.approval_token : '';
+  const hasApproval = Boolean(approvalUrl || approvalFormId || approvalToken);
+  const approvalStatus =
+    typeof item.approval?.status === 'string' ? item.approval.status.toLowerCase() : '';
+  const showPendingApproval =
+    item.status === 'pending_approval' &&
+    hasApproval &&
+    !['submitted', 'approved', 'rejected', 'expired'].includes(approvalStatus);
+
+  return (
+    <div className="border-l-2 border-muted-foreground/20 pl-3">
+      <WorkflowRunMonitor
+        status={item.status}
+        elapsedTime={item.elapsedTime}
+        error={item.error}
+        items={nodes}
+        defaultOpen={item.status === 'running' || item.status === 'pending_approval'}
+        className="max-w-3xl rounded-md bg-background"
+      />
+      {showPendingApproval ? (
+        <WorkflowApprovalPanel
+          approvalToken={approvalToken}
+          approvalUrl={approvalUrl}
+          approvalFormId={approvalFormId}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function isProgressTextItem(
   item: AIChatAgenticTimelineItem | SkillTimelineViewModel
 ): item is Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }> {
@@ -346,6 +454,12 @@ function isMemoryEventItem(
   item: AIChatAgenticTimelineItem | SkillTimelineViewModel
 ): item is Extract<AIChatAgenticTimelineItem, { type: 'memory_event' }> {
   return 'type' in item && item.type === 'memory_event';
+}
+
+function isWorkflowTimelineItem(
+  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
+): item is WorkflowTimelineItem {
+  return 'type' in item && item.type === 'workflow_run';
 }
 
 function isTransientProgressItem(
@@ -377,7 +491,7 @@ function buildProgressText(
   }
 
   const skill = item.skill_id
-    ? skillDisplayById[item.skill_id] ?? getFallbackAIChatSkillDisplayInfo(item.skill_id, locale)
+    ? (skillDisplayById[item.skill_id] ?? getFallbackAIChatSkillDisplayInfo(item.skill_id, locale))
     : null;
   const tool =
     item.skill_id && item.tool_name
@@ -426,6 +540,7 @@ export function AIChatAgenticTimeline({
         if (item.type === 'progress_text') return item;
         if (item.type === 'intermediate_answer') return item;
         if (item.type === 'memory_event') return item;
+        if (item.type === 'workflow_run') return item;
 
         const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
         const skill =
@@ -518,6 +633,8 @@ export function AIChatAgenticTimeline({
               </div>
             ) : isMemoryEventItem(item) ? (
               <MemoryTimelineRow key={item.id} item={item} showMemoryKey={showMemoryKey} />
+            ) : isWorkflowTimelineItem(item) ? (
+              <WorkflowTimelineRow key={item.id} item={item} />
             ) : (
               <SkillTimelineRow
                 key={item.item.id}

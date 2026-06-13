@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
@@ -330,6 +332,7 @@ type officialZipArtifacts struct {
 	Markdown        string
 	MiddleJSON      string
 	ContentList     string
+	Images          map[string]string
 	MarkdownPath    string
 	MiddleJSONPath  string
 	ContentListPath string
@@ -384,6 +387,7 @@ func callOfficialMineruParse(ctx context.Context, filename string, data []byte) 
 				MdContent:   artifacts.Markdown,
 				MiddleJSON:  artifacts.MiddleJSON,
 				ContentList: artifacts.ContentList,
+				Images:      artifacts.Images,
 			},
 		},
 	}, nil
@@ -589,6 +593,19 @@ func officialReadZipArtifacts(data []byte) (*officialZipArtifacts, error) {
 				artifacts.MiddleJSON = content
 				artifacts.MiddleJSONPath = file.Name
 			}
+		case isOfficialImage(base):
+			dataURI, err := readZipImageDataURI(file, base)
+			if err != nil {
+				return nil, err
+			}
+			if artifacts.Images == nil {
+				artifacts.Images = map[string]string{}
+			}
+			for _, name := range officialImageAssetNames(file.Name) {
+				if _, exists := artifacts.Images[name]; !exists {
+					artifacts.Images[name] = dataURI
+				}
+			}
 		}
 	}
 	return artifacts, nil
@@ -607,6 +624,54 @@ func readZipFile(file *zip.File) (string, error) {
 	return string(data), nil
 }
 
+func readZipImageDataURI(file *zip.File, base string) (string, error) {
+	rc, err := file.Open()
+	if err != nil {
+		return "", fmt.Errorf("mineru official: open image zip entry %s: %w", file.Name, err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return "", fmt.Errorf("mineru official: read image zip entry %s: %w", file.Name, err)
+	}
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(base)))
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		return "", fmt.Errorf("mineru official: unsupported image content type %s for %s", contentType, file.Name)
+	}
+	return fmt.Sprintf("data:%s;base64,%s", contentType, base64.StdEncoding.EncodeToString(data)), nil
+}
+
+func officialImageAssetNames(name string) []string {
+	normalized := strings.Trim(strings.ReplaceAll(name, "\\", "/"), "/")
+	if normalized == "" {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 3)
+	add := func(value string) {
+		value = strings.Trim(strings.ReplaceAll(value, "\\", "/"), "/")
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+
+	add(normalized)
+	if idx := strings.Index(strings.ToLower(normalized), "images/"); idx >= 0 {
+		add(normalized[idx:])
+	}
+	add(filepath.Base(normalized))
+	return out
+}
+
 func isOfficialMarkdown(base string) bool {
 	return base == "full.md" || strings.HasSuffix(base, "_full.md") || (strings.HasSuffix(base, ".md") && !strings.Contains(base, "origin"))
 }
@@ -620,6 +685,15 @@ func isOfficialContentList(base string) bool {
 
 func isOfficialMiddleJSON(base string) bool {
 	return base == "middle.json" || base == "layout.json" || strings.HasSuffix(base, "_middle.json") || strings.HasSuffix(base, "_layout.json")
+}
+
+func isOfficialImage(base string) bool {
+	switch strings.ToLower(filepath.Ext(base)) {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff":
+		return true
+	default:
+		return false
+	}
 }
 
 func officialModelVersion(filename string) string {

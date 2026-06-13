@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"go.uber.org/zap"
 )
 
@@ -18,9 +20,10 @@ type externalClient struct {
 	baseURL    string
 	httpClient *http.Client
 	apiKey     string
+	recorder   audit.Recorder
 }
 
-func NewExternalClient() (SQLBase, error) {
+func NewExternalClient(recorder audit.Recorder) (SQLBase, error) {
 	sqlBaseCfg := appconfig.Current().SQLBase
 	baseURL := sqlBaseCfg.ExternalURL
 	if baseURL == "" {
@@ -33,6 +36,7 @@ func NewExternalClient() (SQLBase, error) {
 		baseURL:    baseURL,
 		httpClient: observability.HTTPClient(&http.Client{}),
 		apiKey:     apiKey,
+		recorder:   recorder,
 	}, nil
 }
 
@@ -1027,7 +1031,15 @@ func (c *externalClient) ListTypes(ctx context.Context) ([]Type, error) {
 }
 
 // Query operations
-func (c *externalClient) ExecuteSQL(ctx context.Context, query string, params []interface{}) (*QueryResult, error) {
+func (c *externalClient) ExecuteSQL(ctx context.Context, query string, params []interface{}, auditCtx *audit.Context) (*QueryResult, error) {
+	start := time.Now()
+	result, err := c.executeSQL(ctx, query, params)
+	end := time.Now()
+	c.recordAudit(ctx, auditCtx, query, params, result, err, start, end)
+	return result, err
+}
+
+func (c *externalClient) executeSQL(ctx context.Context, query string, params []interface{}) (*QueryResult, error) {
 	url := fmt.Sprintf("%s/query", c.baseURL)
 
 	// Prepare the request body
@@ -1134,6 +1146,37 @@ func (c *externalClient) ExecuteSQL(ctx context.Context, query string, params []
 	}
 
 	return &result, nil
+}
+
+func (c *externalClient) recordAudit(ctx context.Context, auditCtx *audit.Context, query string, params []interface{}, result *QueryResult, execErr error, start, end time.Time) {
+	if c.recorder == nil || auditCtx == nil {
+		return
+	}
+
+	record := audit.Record{
+		Context:      *auditCtx,
+		SQLStatement: query,
+		Params:       append([]any(nil), params...),
+		DurationMS:   end.Sub(start).Milliseconds(),
+		Status:       audit.StatusSuccess,
+		StartTime:    start,
+		EndTime:      end,
+		ExecutedAt:   start,
+	}
+	if record.ClientType == "" {
+		record.ClientType = audit.ClientTypeUnknown
+	}
+	if result != nil {
+		rowCount := result.RowsAffected
+		record.RowCount = &rowCount
+	}
+	if execErr != nil {
+		record.Status = audit.StatusFailed
+		record.RowCount = nil
+		record.ErrorMessage = execErr.Error()
+	}
+
+	c.recorder.Record(ctx, record)
 }
 
 func (c *externalClient) FormatQuery(ctx context.Context, req FormatQueryRequest) (string, error) {

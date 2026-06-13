@@ -170,3 +170,23 @@ func TestSummarizeToolResultCompactsDatabasePayloads(t *testing.T) {
 		})
 	}
 }
+
+func TestSummarizeToolResultCompactsAgentWorkflowPayload(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentWorkflow, "run_agent_workflow", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":          "succeeded",
+			"workflow_run_id": "run-1",
+			"elapsed_time":    1.2,
+			"output_keys":     []string{"answer"},
+			"primary_output":  "done",
+			"outputs":         map[string]interface{}{"answer": "done", "debug": "full output"},
+		},
+	}})
+	if result["status"] != "succeeded" || result["workflow_run_id"] != "run-1" || result["primary_output"] != "done" {
+		t.Fatalf("workflow summary = %#v, want status/run/primary output", result)
+	}
+	if _, ok := result["outputs"]; ok {
+		t.Fatalf("outputs should not be included in compact trace result: %#v", result)
+	}
+}

@@ -44,7 +44,13 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
-import type { AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
+import type {
+  AIChatConversation,
+  AIChatMessage,
+  AIChatMessageFile,
+  AIChatUserInputRequest,
+  AIChatWorkflowRunMetadata,
+} from '@/services/types/aichat';
 import {
   buildChatMessageTopology,
   buildChatMessageTopologyKey,
@@ -71,11 +77,14 @@ import {
   WorkflowBillingToastAction,
   workflowBillingToastClassNames,
 } from '@/components/workflow/common/workflow-billing-toast-action';
+import { normalizeApprovalRuntimeForm } from '@/components/workflow/approval/runtime-events';
 import { AICHAT_SIDEBAR_BG_IMAGE } from '@/lib/config';
 import {
   MAX_AICHAT_BRANCHES,
   type AIChatModelValue,
   type AIChatSuggestion,
+  type AIChatWorkflowApprovalRequest,
+  type AIChatWorkflowApprovalSubmitPayload,
 } from '@/components/chat/variants/aichat/types';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
@@ -88,6 +97,7 @@ interface AIChatShellProps {
   supportsVisionOverride?: boolean;
   isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
+  beforeSend?: () => boolean | Promise<boolean>;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
   requireModel?: boolean;
@@ -126,6 +136,7 @@ const CHAT_THEME_PRIMARY: Record<string, string> = {
   amber: '38 92% 50%',
   slate: '215 20% 45%',
 };
+const AGENT_WORKFLOW_QUESTION_SOURCE = 'agent_workflow_question_answer';
 
 function normalizeSkillIds(skillIds: string[]) {
   return Array.from(new Set(skillIds.filter(Boolean))).sort();
@@ -138,6 +149,29 @@ function areSkillIdsEqual(left: string[], right: string[]) {
     normalizedLeft.length === normalizedRight.length &&
     normalizedLeft.every((skillId, index) => skillId === normalizedRight[index])
   );
+}
+
+function resolveWorkflowQuestionAnswerInputs(
+  request: AIChatUserInputRequest,
+  fallbackQuery: string,
+  answers?: Record<string, string>
+): { query: string; question_answer_option_id?: string } | null {
+  const firstQuestion = request.questions[0];
+  if (!firstQuestion) return null;
+  const answerKey = firstQuestion.id || 'q1';
+  const rawAnswer = (answers?.[answerKey] ?? '').trim();
+  const query = rawAnswer || fallbackQuery.trim();
+  if (!query) return null;
+  const selectedOption = (firstQuestion.options ?? []).find(option => {
+    const candidates = [option.label, option.value, option.option_id]
+      .map(value => value?.trim())
+      .filter(Boolean);
+    return candidates.includes(rawAnswer) || candidates.includes(query);
+  });
+  return {
+    query: selectedOption?.label?.trim() || query,
+    question_answer_option_id: selectedOption?.option_id?.trim() || undefined,
+  };
 }
 
 /**
@@ -156,6 +190,7 @@ export function AIChatShell({
   supportsVisionOverride,
   isModelInitializing = false,
   onModelChange,
+  beforeSend,
   variant = 'full',
   showModelSelector = true,
   requireModel = true,
@@ -322,6 +357,24 @@ export function AIChatShell({
     return leafMessage;
   }, [activeConversation, activeMessages, hasActiveStreamingMessage, isSending]);
   const activeUserInputRequest = activeUserInputMessage?.metadata?.user_input_request ?? null;
+  const activeWorkflowApprovalRequest = useMemo(
+    () =>
+      surface === 'agent-draft' || surface === 'agent-webapp'
+        ? resolveActiveWorkflowApprovalRequest(
+            activeConversation,
+            activeMessages,
+            isSending,
+            hasActiveStreamingMessage
+          )
+        : null,
+    [activeConversation, activeMessages, hasActiveStreamingMessage, isSending, surface]
+  );
+  const canStopPendingWorkflowInteraction = Boolean(
+    activeWorkflowApprovalRequest ||
+      (activeUserInputMessage?.status === 'waiting_question' &&
+        activeUserInputRequest?.source === AGENT_WORKFLOW_QUESTION_SOURCE)
+  );
+  const messageActionsLocked = Boolean(activeWorkflowApprovalRequest);
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
 
   useEffect(() => {
@@ -434,12 +487,20 @@ export function AIChatShell({
   }, [isMobile]);
 
   const handleSend = useCallback(
-    (files: AIChatMessageFile[] = [], useMemory = false) => {
+    async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
+      if (activeWorkflowApprovalRequest) {
+        toast.info(t('consoleChat.workflow.approvalInputLocked'));
+        return false;
+      }
       const query = input.trim();
-      if (!query || isSending) return;
+      if (!query || isSending) return false;
       if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
-        return;
+        return false;
+      }
+      if (beforeSend) {
+        const canSend = await beforeSend();
+        if (!canSend) return false;
       }
 
       setInput('');
@@ -453,14 +514,37 @@ export function AIChatShell({
         },
         useMemory: forcedUseMemory ?? useMemory,
       });
+      return true;
     },
-    [controller, forcedUseMemory, input, isSending, modelSelectorValue, requireModel, t]
+    [
+      activeWorkflowApprovalRequest,
+      beforeSend,
+      controller,
+      forcedUseMemory,
+      input,
+      isSending,
+      modelSelectorValue,
+      requireModel,
+      t,
+    ]
   );
 
   const handleUserInputRequestSubmit = useCallback(
-    (query: string, useMemory: boolean) => {
+    (query: string, useMemory: boolean, answers?: Record<string, string>) => {
       const trimmedQuery = query.trim();
       if (!trimmedQuery || isSending || !activeUserInputMessage) return;
+      const activeRequest = activeUserInputMessage.metadata?.user_input_request;
+      if (activeRequest?.source === AGENT_WORKFLOW_QUESTION_SOURCE) {
+        if (!controller.continueWorkflowQuestion) return;
+        const inputs = resolveWorkflowQuestionAnswerInputs(activeRequest, trimmedQuery, answers);
+        if (!inputs) return;
+        void controller.continueWorkflowQuestion(
+          activeUserInputMessage.conversation_id,
+          activeUserInputMessage.id,
+          inputs
+        );
+        return;
+      }
       if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return;
@@ -492,6 +576,7 @@ export function AIChatShell({
     (message: AIChatMessage) => {
       const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
       const canReplaceRoot = canReplaceRootMessage(message);
+      if (messageActionsLocked) return;
       if (!canReplaceRoot && (!message.parent_id || branchCount >= MAX_AICHAT_BRANCHES)) return;
       if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
@@ -508,6 +593,7 @@ export function AIChatShell({
       branchNavigationByMessageId,
       canReplaceRootMessage,
       controller,
+      messageActionsLocked,
       modelSelectorValue,
       requireModel,
       t,
@@ -518,11 +604,12 @@ export function AIChatShell({
     (message: AIChatMessage) => {
       const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
       const canReplaceRoot = canReplaceRootMessage(message);
+      if (messageActionsLocked) return;
       if (!canReplaceRoot && (!message.parent_id || branchCount >= MAX_AICHAT_BRANCHES)) return;
       setEditingMessageId(message.id);
       setEditingQuery(message.query);
     },
-    [branchNavigationByMessageId, canReplaceRootMessage]
+    [branchNavigationByMessageId, canReplaceRootMessage, messageActionsLocked]
   );
 
   const handleEditCancel = useCallback(() => {
@@ -535,6 +622,7 @@ export function AIChatShell({
       const query = editingQuery.trim();
       const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
       const canReplaceRoot = canReplaceRootMessage(message);
+      if (messageActionsLocked) return;
       if (
         !query ||
         isSending ||
@@ -579,6 +667,7 @@ export function AIChatShell({
       controller,
       editingQuery,
       isSending,
+      messageActionsLocked,
       modelSelectorValue,
       requireModel,
       t,
@@ -590,6 +679,18 @@ export function AIChatShell({
       setEditingMessageId(null);
       setEditingQuery('');
       controller.switchBranch(messageId);
+    },
+    [controller]
+  );
+
+  const handleWorkflowApprovalSubmit = useCallback(
+    (request: AIChatWorkflowApprovalRequest, payload: AIChatWorkflowApprovalSubmitPayload) => {
+      if (!controller.continueWorkflowApproval) return;
+      void controller.continueWorkflowApproval(request.conversationId, request.messageId, {
+        approvalToken: request.approvalToken,
+        inputs: payload.inputs,
+        action: payload.action,
+      });
     },
     [controller]
   );
@@ -789,7 +890,7 @@ export function AIChatShell({
           branchNavigationByMessageId={branchNavigationByMessageId}
           isLoadingMessages={isLoadingMessages}
           isLoadingOlderMessages={isLoadingOlderMessages}
-          isSending={isSending}
+          isSending={isSending || messageActionsLocked}
           streamingByMessageId={streamingByMessageId}
           skillDisplayById={skillDisplayById}
           editingMessageId={editingMessageId}
@@ -844,11 +945,14 @@ export function AIChatShell({
           isModelInitializing={isModelInitializing}
           modelMissing={modelMissing}
           isSending={isSending}
+          canStop={canStopPendingWorkflowInteraction || isSending}
           isStopping={isStopping}
           onInputChange={setInput}
           onSend={handleSend}
           activeUserInputRequest={activeUserInputRequest}
           onUserInputRequestSubmit={handleUserInputRequestSubmit}
+          activeWorkflowApprovalRequest={activeWorkflowApprovalRequest}
+          onWorkflowApprovalSubmit={handleWorkflowApprovalSubmit}
           onStop={controller.stop}
           onModelChange={onModelChange}
           onHeightChange={setInputAreaHeight}
@@ -900,4 +1004,105 @@ export function AIChatShell({
       ) : null}
     </div>
   );
+}
+
+function resolveActiveWorkflowApprovalRequest(
+  conversation: AIChatConversation | null,
+  messages: AIChatMessage[],
+  isSending: boolean,
+  hasActiveStreamingMessage: boolean
+): AIChatWorkflowApprovalRequest | null {
+  if (
+    !conversation ||
+    conversation.runtime_status !== 'idle' ||
+    isSending ||
+    hasActiveStreamingMessage
+  ) {
+    return null;
+  }
+  const leafMessageId = conversation.current_leaf_message_id;
+  if (!leafMessageId) return null;
+  const leafMessage = messages.find(message => message.id === leafMessageId) ?? null;
+  if (!leafMessage || leafMessage.status !== 'waiting_approval') return null;
+  const continuation = leafMessage.metadata?.agent_workflow_continuation;
+  const continuationWorkflowRunId = stringFromRecord(continuation, 'workflow_run_id');
+  const continuationStatus = stringFromRecord(continuation, 'status');
+  const workflowRuns = leafMessage.metadata?.workflow_runs ?? [];
+  const runWithApproval = [...workflowRuns]
+    .reverse()
+    .find(
+      run =>
+        isActiveWorkflowApprovalRun(run, continuationWorkflowRunId, continuationStatus) &&
+        Boolean(resolveApprovalToken(run.approval))
+    );
+  const runForContinuation = continuationWorkflowRunId
+    ? workflowRuns.find(run => stringFromUnknown(run.workflow_run_id) === continuationWorkflowRunId)
+    : null;
+  if (
+    !runWithApproval &&
+    runForContinuation &&
+    !isActiveWorkflowApprovalRun(runForContinuation, continuationWorkflowRunId, continuationStatus)
+  ) {
+    return null;
+  }
+  const approval = runWithApproval?.approval;
+  const inlineApprovalForm = normalizeApprovalRuntimeForm(approval?.approval_form);
+  const approvalToken =
+    resolveApprovalToken(approval) ||
+    stringFromRecord(continuation, 'approval_token') ||
+    stringFromUnknown(inlineApprovalForm?.token);
+  if (!approvalToken) return null;
+  return {
+    conversationId: conversation.id,
+    messageId: leafMessage.id,
+    workflowRunId: stringFromUnknown(runWithApproval?.workflow_run_id) || continuationWorkflowRunId,
+    approvalToken,
+    approvalUrl: stringFromUnknown(approval?.approval_url),
+    approvalFormId:
+      stringFromUnknown(approval?.approval_form_id) || stringFromUnknown(inlineApprovalForm?.id),
+    approvalForm: inlineApprovalForm,
+  };
+}
+
+function isActiveWorkflowApprovalRun(
+  run: AIChatWorkflowRunMetadata,
+  continuationWorkflowRunId: string,
+  continuationStatus: string
+): boolean {
+  const status = String(run.status ?? '').toLowerCase();
+  const runId = stringFromUnknown(run.workflow_run_id);
+  const isContinuationWaitingRun =
+    Boolean(continuationWorkflowRunId && runId === continuationWorkflowRunId) &&
+    continuationStatus === 'waiting_approval';
+  if (
+    !isContinuationWaitingRun &&
+    status !== 'pending_approval' &&
+    status !== 'waiting_approval' &&
+    status !== 'paused'
+  ) {
+    return false;
+  }
+  if (run.approval_result || run.approval_expired) return false;
+  const approvalStatus = String(run.approval?.status ?? '').toLowerCase();
+  return !['submitted', 'approved', 'rejected', 'expired'].includes(approvalStatus);
+}
+
+function stringFromUnknown(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveApprovalToken(approval: unknown): string {
+  if (!approval || typeof approval !== 'object') return '';
+  const record = approval as Record<string, unknown>;
+  const inlineForm = normalizeApprovalRuntimeForm(record.approval_form);
+  return (
+    stringFromRecord(record, 'approval_token') ||
+    stringFromRecord(record, 'token') ||
+    stringFromUnknown(inlineForm?.token)
+  );
+}
+
+function stringFromRecord(value: unknown, key: string): string {
+  if (!value || typeof value !== 'object') return '';
+  return stringFromUnknown((value as Record<string, unknown>)[key]);
 }

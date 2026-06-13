@@ -20,6 +20,9 @@ import type {
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
   AIChatUserInputRequestedEventData,
+  AIChatWorkflowEventData,
+  AIChatWorkflowNodeEventData,
+  AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
 import type {
   AIChatControllerState,
@@ -48,6 +51,13 @@ import {
   applySkillLoadStartState,
   applySkillReferenceReadState,
   applyStreamErrorState,
+  applyWorkflowApprovalRequestedState,
+  applyWorkflowFailedState,
+  applyWorkflowFinishedState,
+  applyWorkflowNodeFinishedState,
+  applyWorkflowNodeStartedState,
+  applyWorkflowPausedState,
+  applyWorkflowStartedState,
 } from '@/components/chat/controllers/aichat/state-reducers';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 
@@ -68,6 +78,35 @@ interface UseAIChatEventAppliersArgs {
   clearRecoveryRetry: (conversationId: string) => void;
   refreshConversationSilently: (conversationId: string) => void;
   refreshMessagesSilently: (conversationId: string) => void;
+}
+
+function shouldRefreshConversationAfterMessageEnd(
+  current: AIChatControllerStore,
+  payload: AIChatMessageEndEventData
+): boolean {
+  const conversation = current.conversations.find(item => item.id === payload.conversation_id);
+  if (!conversation) return true;
+
+  const status = String(payload.status ?? '').toLowerCase();
+  if (
+    status === 'waiting_approval' ||
+    status === 'waiting_question' ||
+    status === 'stopped' ||
+    status === 'error' ||
+    status === 'failed'
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function shouldRefreshMessagesAfterMessageEnd(
+  current: AIChatControllerStore,
+  payload: AIChatMessageEndEventData
+): boolean {
+  const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  return !messages.some(message => message.id === payload.message_id);
 }
 
 /**
@@ -270,9 +309,72 @@ export function useChatRuntimeEventAppliers({
     [setControllerState]
   );
 
+  const applyWorkflowStarted = useCallback(
+    (payload: AIChatWorkflowEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowStartedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowNodeStarted = useCallback(
+    (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowNodeStartedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowNodeFinished = useCallback(
+    (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowNodeFinishedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowPaused = useCallback(
+    (payload: AIChatWorkflowPausedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowPausedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowApprovalRequested = useCallback(
+    (payload: AIChatWorkflowPausedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current =>
+        applyWorkflowApprovalRequestedState(current, payload, eventId)
+      );
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowFinished = useCallback(
+    (payload: AIChatWorkflowEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowFinishedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyWorkflowFailed = useCallback(
+    (payload: AIChatWorkflowEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyWorkflowFailedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
   const applyMessageEnd = useCallback(
     (payload: AIChatMessageEndEventData, _eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
+      const shouldRefreshConversation = shouldRefreshConversationAfterMessageEnd(
+        stateRef.current,
+        payload
+      );
+      const shouldRefreshMessages = shouldRefreshMessagesAfterMessageEnd(stateRef.current, payload);
       if (streamingMessageRef.current?.messageId === payload.message_id) {
         streamingMessageRef.current = null;
       }
@@ -283,8 +385,12 @@ export function useChatRuntimeEventAppliers({
       if (backgroundConversationIdRef.current === payload.conversation_id) {
         backgroundConversationIdRef.current = null;
       }
-      refreshConversationSilently(payload.conversation_id);
-      refreshMessagesSilently(payload.conversation_id);
+      if (shouldRefreshConversation) {
+        refreshConversationSilently(payload.conversation_id);
+      }
+      if (shouldRefreshMessages) {
+        refreshMessagesSilently(payload.conversation_id);
+      }
     },
     [
       backgroundConversationIdRef,
@@ -293,6 +399,7 @@ export function useChatRuntimeEventAppliers({
       refreshConversationSilently,
       refreshMessagesSilently,
       setControllerState,
+      stateRef,
       streamingMessageRef,
     ]
   );
@@ -351,6 +458,13 @@ export function useChatRuntimeEventAppliers({
       applySkillCallError,
       applySkillArtifactCreated,
       applyMemoryMutation,
+      applyWorkflowStarted,
+      applyWorkflowNodeStarted,
+      applyWorkflowNodeFinished,
+      applyWorkflowPaused,
+      applyWorkflowApprovalRequested,
+      applyWorkflowFinished,
+      applyWorkflowFailed,
       applyAgentProgress,
       applyIntermediateAnswer,
       applyUserInputRequested,
@@ -365,6 +479,13 @@ export function useChatRuntimeEventAppliers({
       applyIntermediateAnswer,
       applyUserInputRequested,
       applyMemoryMutation,
+      applyWorkflowApprovalRequested,
+      applyWorkflowFailed,
+      applyWorkflowFinished,
+      applyWorkflowNodeFinished,
+      applyWorkflowNodeStarted,
+      applyWorkflowPaused,
+      applyWorkflowStarted,
       applyMessageChunk,
       applyMessageEnd,
       applyMessageRetract,

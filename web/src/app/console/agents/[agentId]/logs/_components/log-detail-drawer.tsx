@@ -78,7 +78,7 @@ export function LogDetailDrawer({
       <SheetContent
         side="right"
         showClose={false}
-        className="flex h-full w-[min(94vw,980px)] max-w-none flex-col gap-0 p-0 sm:max-w-none"
+        className="flex h-full w-screen max-w-none flex-col gap-0 p-0 md:w-[80vw] sm:max-w-none"
       >
         <SheetHeader className="shrink-0 border-b px-5 py-4 text-left">
           <div className="min-w-0">

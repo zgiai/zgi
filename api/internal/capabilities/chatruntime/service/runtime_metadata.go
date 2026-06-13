@@ -2,14 +2,20 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
+
+const maxModelInvocationMetadataRecords = 100
 
 func (s *service) persistSkillTracesBestEffort(ctx context.Context, prepared *PreparedChat, traces []skills.SkillTrace) {
 	if prepared == nil || prepared.Message == nil {
@@ -31,6 +37,24 @@ func (s *service) persistGeneratedArtifactBestEffort(ctx context.Context, prepar
 	prepared.Message.Metadata = metadata
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		logger.WarnContext(ctx, "failed to persist aichat generated artifact metadata", "message_id", prepared.Message.ID.String(), err)
+	}
+}
+
+func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared *PreparedChat, trace skillloop.ModelInvocationTrace) {
+	if prepared == nil || prepared.Message == nil {
+		return
+	}
+	invocation := modelInvocationFromTrace(trace, runtimeUserSystemPrompt(prepared))
+	if len(invocation) == 0 {
+		return
+	}
+	metadata := mergeModelInvocationMetadata(prepared.Message.Metadata, invocation)
+	prepared.Message.Metadata = metadata
+	if s == nil || s.repos == nil || s.repos.Message == nil {
+		return
+	}
+	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
+		logger.WarnContext(ctx, "failed to persist aichat model invocation metadata", "message_id", prepared.Message.ID.String(), err)
 	}
 }
 
@@ -92,6 +116,145 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 	}
 	applySkillInvocationSummary(metadata, stored)
 	return metadata
+}
+
+func mergeModelInvocationMetadata(source map[string]interface{}, invocation map[string]interface{}) map[string]interface{} {
+	metadata := copyStringAnyMap(source)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	if len(invocation) == 0 {
+		return metadata
+	}
+	stored := modelInvocationsFromMetadata(metadata["model_invocations"])
+	runtimeID := strings.TrimSpace(stringFromAny(invocation["runtime_id"]))
+	replaced := false
+	if runtimeID != "" {
+		for index, item := range stored {
+			if strings.TrimSpace(stringFromAny(item["runtime_id"])) == runtimeID {
+				stored[index] = mergeInvocation(item, invocation)
+				replaced = true
+				break
+			}
+		}
+	}
+	if !replaced {
+		stored = append(stored, compactSkillInvocation(invocation))
+	}
+	if len(stored) > maxModelInvocationMetadataRecords {
+		stored = stored[len(stored)-maxModelInvocationMetadataRecords:]
+	}
+	metadata["model_invocations"] = skillInvocationsToInterfaceSlice(stored)
+	metadata["model_invocation_count"] = len(stored)
+	return metadata
+}
+
+func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPrompt string) map[string]interface{} {
+	phase := strings.TrimSpace(trace.Phase)
+	if phase == "" {
+		phase = "model_call"
+	}
+	startedAt := trace.StartedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	status := "success"
+	if strings.TrimSpace(trace.Error) != "" {
+		status = "error"
+	}
+	invocation := map[string]interface{}{
+		"kind":        "model_call",
+		"phase":       phase,
+		"round":       trace.Round,
+		"streaming":   trace.Streaming,
+		"status":      status,
+		"title":       modelInvocationTitle(phase, trace.Round),
+		"created_at":  startedAt.Unix(),
+		"duration_ms": trace.DurationMS,
+		"runtime_id":  fmt.Sprintf("model_call:%s:%d:%d", phase, trace.Round, startedAt.UnixNano()),
+		"request":     modelInvocationRequestPayload(trace.Request),
+		"response":    modelInvocationResponsePayload(trace.Response, trace.Usage),
+		"usage":       usageMetadata(trace.Usage),
+		"error":       strings.TrimSpace(trace.Error),
+	}
+	if trace.Request != nil {
+		invocation["model"] = trace.Request.Model
+		invocation["provider"] = trace.Request.Provider
+	}
+	if trace.Usage != nil {
+		invocation["prompt_tokens"] = trace.Usage.PromptTokens
+		invocation["completion_tokens"] = trace.Usage.CompletionTokens
+		invocation["total_tokens"] = trace.Usage.TotalTokens
+	}
+	if strings.TrimSpace(userSystemPrompt) != "" {
+		invocation["user_system_prompt"] = strings.TrimSpace(userSystemPrompt)
+	}
+	return compactSkillInvocation(invocation)
+}
+
+func runtimeUserSystemPrompt(prepared *PreparedChat) string {
+	if prepared == nil || prepared.parts == nil {
+		return ""
+	}
+	return strings.TrimSpace(prepared.parts.SystemPrompt)
+}
+
+func modelInvocationTitle(phase string, round int) string {
+	switch phase {
+	case "final_answer":
+		return "Model call: final answer"
+	case "skill_planning":
+		if round >= 0 {
+			return fmt.Sprintf("Model call: skill planning #%d", round+1)
+		}
+		return "Model call: skill planning"
+	default:
+		return "Model call"
+	}
+}
+
+func modelInvocationRequestPayload(req *adapter.ChatRequest) map[string]interface{} {
+	if req == nil {
+		return map[string]interface{}{}
+	}
+	payload := jsonObjectPayload(req)
+	if strings.TrimSpace(req.Provider) != "" {
+		payload["provider"] = req.Provider
+	}
+	if len(req.AdditionalParameters) > 0 {
+		payload["additional_parameters"] = copyStringAnyMap(req.AdditionalParameters)
+	}
+	return payload
+}
+
+func modelInvocationResponsePayload(message *adapter.Message, usage *adapter.Usage) map[string]interface{} {
+	payload := map[string]interface{}{}
+	if message != nil {
+		payload["message"] = jsonObjectPayload(message)
+	}
+	if usageMap := usageMetadata(usage); len(usageMap) > 0 {
+		payload["usage"] = usageMap
+	}
+	return payload
+}
+
+func jsonObjectPayload(value interface{}) map[string]interface{} {
+	if value == nil {
+		return map[string]interface{}{}
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return map[string]interface{}{"value": fmt.Sprintf("%v", value)}
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err == nil && payload != nil {
+		return payload
+	}
+	var raw interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return map[string]interface{}{"value": string(data)}
+	}
+	return map[string]interface{}{"value": raw}
 }
 
 func applySkillInvocationSummary(metadata map[string]interface{}, invocations []map[string]interface{}) {
@@ -168,6 +331,10 @@ func skillInvocationsFromMetadata(value interface{}) []map[string]interface{} {
 	default:
 		return []map[string]interface{}{}
 	}
+}
+
+func modelInvocationsFromMetadata(value interface{}) []map[string]interface{} {
+	return skillInvocationsFromMetadata(value)
 }
 
 func skillInvocationsToInterfaceSlice(invocations []map[string]interface{}) []interface{} {
@@ -325,12 +492,50 @@ func valueFromMap(values map[string]interface{}, key string) interface{} {
 }
 
 func numericValueFromMap(values map[string]interface{}, key string) interface{} {
-	value := valueFromMap(values, key)
+	return numericValueFromAny(valueFromMap(values, key))
+}
+
+func numericValueFromAny(value interface{}) interface{} {
 	switch value.(type) {
 	case int, int64, int32, float64, float32, uint, uint64, uint32:
 		return value
 	default:
 		return nil
+	}
+}
+
+func intValueFromAny(value interface{}) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case uint:
+		return int(typed)
+	case uint32:
+		return int(typed)
+	case uint64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil {
+			return int(parsed)
+		}
+		return 0
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err == nil {
+			return parsed
+		}
+		return 0
+	default:
+		return 0
 	}
 }
 

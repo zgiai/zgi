@@ -194,18 +194,6 @@ type stubWebAppStatusHandlerService struct {
 	organizationID string
 }
 
-func (s *stubWebAppStatusHandlerService) GetAgentsList(context.Context, string, string, interface{}) (interface{}, error) {
-	return nil, nil
-}
-
-func (s *stubWebAppStatusHandlerService) GetAgentsListMultipleTenants(context.Context, string, []string, interface{}) (interface{}, error) {
-	return nil, nil
-}
-
-func (s *stubWebAppStatusHandlerService) GetInternalAgentsList(context.Context, string, []string, interface{}) (interface{}, error) {
-	return nil, nil
-}
-
 func (s *stubWebAppStatusHandlerService) GetAgentsListWithPermissions(context.Context, string, dto.GetAgentsListRequest) (*dto.AgentsListResponse, error) {
 	return nil, nil
 }
@@ -235,6 +223,10 @@ func (s *stubWebAppStatusHandlerService) GetAgentDraftRuntimeConfig(context.Cont
 }
 
 func (s *stubWebAppStatusHandlerService) UpdateAgentConfig(context.Context, string, string, dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentWorkflowBindingCandidates(context.Context, string, string) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
 	return nil, nil
 }
 

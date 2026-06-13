@@ -339,7 +339,10 @@ func (s *KnowledgeRetrievalService) Retrieve(ctx context.Context, req KnowledgeR
 	for _, item := range scoredRecords {
 		records = append(records, item.Record)
 	}
-	resources, contextText, contextBlocks := knowledgeResourcesAndContext(scoredRecords, req.ContextSeparator, req.MaxContextChars)
+	resources, contextText, contextBlocks, err := knowledgeResourcesAndContext(scoredRecords, req.ContextSeparator, req.MaxContextChars, config.Current().App.FilesURL)
+	if err != nil {
+		return nil, err
+	}
 	return &KnowledgeRetrieveResponse{
 		Query:           query,
 		Status:          knowledgeRetrieveStatus(resources),
@@ -721,7 +724,7 @@ func stringsFromValue(value interface{}) []string {
 	}
 }
 
-func knowledgeResourcesAndContext(records []scoredKnowledgeRecord, separator string, maxChars int) ([]KnowledgeRetrieverResource, string, []KnowledgeContextBlock) {
+func knowledgeResourcesAndContext(records []scoredKnowledgeRecord, separator string, maxChars int, filesBaseURL string) ([]KnowledgeRetrieverResource, string, []KnowledgeContextBlock, error) {
 	if separator == "" {
 		separator = defaultKnowledgeContextSep
 	}
@@ -733,7 +736,10 @@ func knowledgeResourcesAndContext(records []scoredKnowledgeRecord, separator str
 	contextBlocks := make([]KnowledgeContextBlock, 0, len(records))
 	for i, scored := range records {
 		record := scored.Record
-		content := record.Segment.Content
+		content, err := NormalizeKnowledgeImageURLs(record.Segment.Content, filesBaseURL)
+		if err != nil {
+			return nil, "", nil, err
+		}
 		resource := KnowledgeRetrieverResource{
 			Position:        i + 1,
 			DatasetID:       scored.DatasetID,
@@ -767,7 +773,7 @@ func knowledgeResourcesAndContext(records []scoredKnowledgeRecord, separator str
 			contextBlocks = append(contextBlocks, block)
 		}
 	}
-	return resources, strings.Join(contextParts, separator), contextBlocks
+	return resources, strings.Join(contextParts, separator), contextBlocks, nil
 }
 
 func knowledgeRetrieveStatus(resources []KnowledgeRetrieverResource) string {

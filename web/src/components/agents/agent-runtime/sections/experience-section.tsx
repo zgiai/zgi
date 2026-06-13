@@ -1,7 +1,6 @@
 'use client';
 
 import { Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
-import type { ModelSelectorParameterValue } from '@/components/common/model-selector';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useT } from '@/i18n';
@@ -15,8 +14,6 @@ interface AgentRuntimeExperienceSectionProps {
   inputPlaceholder: string;
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
-  systemPrompt: string;
-  modelValue: ModelSelectorParameterValue;
   defaultHomeTitle: string;
   defaultInputPlaceholder: string;
   onToggleSection: (section: AgentConfigSection) => void;
@@ -32,8 +29,6 @@ export function AgentRuntimeExperienceSection({
   inputPlaceholder,
   suggestedQuestions,
   isGeneratingSuggestions,
-  systemPrompt,
-  modelValue,
   defaultHomeTitle,
   defaultInputPlaceholder,
   onToggleSection,
@@ -43,8 +38,7 @@ export function AgentRuntimeExperienceSection({
   onChangeSuggestedQuestions,
 }: AgentRuntimeExperienceSectionProps) {
   const t = useT('agents.agentRuntime');
-  const canGenerateSuggestions =
-    !isGeneratingSuggestions && Boolean(systemPrompt.trim()) && Boolean(modelValue.model);
+  const canGenerateSuggestions = !isGeneratingSuggestions;
 
   return (
     <RuntimeSection

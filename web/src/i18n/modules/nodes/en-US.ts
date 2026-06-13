@@ -468,6 +468,7 @@ const messages = {
       waitingForReviewer:
         'Waiting for the reviewer to respond. The flow will continue automatically.',
       waitingForReviewerStatus: 'Waiting for reviewer',
+      stopDisabled: 'Approval is in progress. The workflow cannot be stopped manually.',
       required: 'This field is required',
       submitted: 'Approval submitted',
       alreadyCompleted: 'Approval already completed',
@@ -479,6 +480,7 @@ const messages = {
       expired: 'Approval expired',
       expiredDescription:
         'The approval form has expired. The flow will continue through the timeout branch.',
+      closedByWorkflowFailure: 'Approval closed because the workflow failed.',
       finished: 'Flow resumed',
       finishedDescription: 'The approval has been processed and the flow has finished.',
       expiresAt: 'Expires at {time}',
