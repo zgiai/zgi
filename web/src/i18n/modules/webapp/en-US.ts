@@ -37,6 +37,13 @@ const messages = {
       write: 'Write content',
     },
     loadingImageGen: 'Loading image generator...',
+    markdownImage: {
+      previewTitle: 'Image preview',
+      zoomIn: 'Zoom in',
+      download: 'Download image',
+      loadFailedTitle: 'Image failed to load',
+      loadFailedDescription: 'The link may be expired or temporarily unavailable.',
+    },
     imageGenNotConfigured:
       'Function initialization failed. Please contact the website administrator for configuration.',
     imageGenLoadFailed: {

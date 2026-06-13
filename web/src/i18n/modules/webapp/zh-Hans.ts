@@ -39,6 +39,13 @@ const messages: WebappMessages = {
       write: '撰写内容',
     },
     loadingImageGen: '正在加载图像生成器...',
+    markdownImage: {
+      previewTitle: '图片预览',
+      zoomIn: '放大查看',
+      download: '下载图片',
+      loadFailedTitle: '图片加载失败',
+      loadFailedDescription: '链接可能已失效或暂时无法访问。',
+    },
     imageGenNotConfigured: '功能初始化失败，请联系网站管理员进行配置。',
     imageGenLoadFailed: {
       title: '绘图配置加载失败',
