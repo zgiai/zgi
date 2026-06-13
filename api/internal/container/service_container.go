@@ -8,7 +8,9 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
+	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
+	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -156,6 +158,7 @@ type ServiceContainer struct {
 	registerService               interfaces.RegisterService
 	fileService                   interfaces.FileService
 	contentExtractor              workflow_file.ContentExtractor
+	contentParseService           contracts.ContentParseService
 
 	// DataSource service
 	dataSourceService service.DataSourceService
@@ -583,6 +586,13 @@ func (c *ServiceContainer) GetFileService() interfaces.FileService {
 	return c.fileService
 }
 
+func (c *ServiceContainer) GetContentParseService() contracts.ContentParseService {
+	if c.contentParseService == nil {
+		c.contentParseService = contentparsecap.NewModule().Service
+	}
+	return c.contentParseService
+}
+
 func (c *ServiceContainer) GetContentExtractor() workflow_file.ContentExtractor {
 	if c.contentExtractor == nil {
 		// Get FileService dependency
@@ -609,7 +619,21 @@ func (c *ServiceContainer) GetDataSourceService() service.DataSourceService {
 		tableRepo := repository.NewPostgresTableRepository(c.db)
 		promptRepo := repository.NewPostgresPromptRepository(c.db)
 		sqlOperationRepo := repository.NewPostgresSQLOperationRepository(c.db)
-		c.dataSourceService = service.NewDataSourceService(dataSourceRepo, tableRepo, promptRepo, sqlOperationRepo, c.GetAccountService(), c.GetFileService(), c.GetOrganizationService(), c.GetResourcePermissionService(), c.GetQuotaService(), c.GetLLMClient(), c.db)
+		c.dataSourceService = service.NewDataSourceService(
+			dataSourceRepo,
+			tableRepo,
+			promptRepo,
+			sqlOperationRepo,
+			c.GetAccountService(),
+			c.GetFileService(),
+			c.GetOrganizationService(),
+			c.GetResourcePermissionService(),
+			c.GetQuotaService(),
+			c.GetLLMClient(),
+			c.GetDefaultModelService(),
+			c.db,
+			service.WithContentParseService(c.GetContentParseService()),
+		)
 	}
 
 	return c.dataSourceService

@@ -159,12 +159,59 @@ type IngestFileToTableRequest struct {
 	Model   *ModelSpec `json:"model,omitempty"`
 }
 
+// ParseFileForTableIngestRequest defines the request for parsing file content
+// before table field recognition.
+type ParseFileForTableIngestRequest struct {
+	FileID  string `json:"file_id" binding:"required"`
+	TableID string `json:"table_id" binding:"required"`
+}
+
+// ParseFileForTableIngestResponse defines the file parsing stage response.
+type ParseFileForTableIngestResponse struct {
+	FileID     string                    `json:"file_id,omitempty"`
+	FileName   string                    `json:"file_name,omitempty"`
+	Message    string                    `json:"message"`
+	Content    string                    `json:"content,omitempty"`
+	Extraction *FileIngestExtractionInfo `json:"extraction,omitempty"`
+	Stage      string                    `json:"stage,omitempty"`
+	Error      *string                   `json:"error,omitempty"`
+}
+
+// ExtractTextToTableRecordsRequest defines the request for recognizing table
+// records from already parsed text content.
+type ExtractTextToTableRecordsRequest struct {
+	FileID      string     `json:"file_id,omitempty"`
+	TableID     string     `json:"table_id" binding:"required"`
+	Content     string     `json:"content"`
+	ContentHash string     `json:"content_hash,omitempty"`
+	Prompt      *string    `json:"prompt,omitempty"`
+	Model       *ModelSpec `json:"model,omitempty"`
+}
+
+// ExtractTextToTableRecordsResponse defines the text recognition stage response.
+type ExtractTextToTableRecordsResponse struct {
+	FileID          string                     `json:"file_id,omitempty"`
+	Records         []map[string]interface{}   `json:"records"`
+	Columns         []TableColumn              `json:"columns"`
+	Message         string                     `json:"message"`
+	FieldExtraction *FileIngestFieldExtraction `json:"field_extraction,omitempty"`
+	ContentHash     string                     `json:"content_hash,omitempty"`
+	Stage           string                     `json:"stage,omitempty"`
+	Error           *string                    `json:"error,omitempty"`
+}
+
 // IngestFileToTableResponse defines the response for ingesting file to table
 type IngestFileToTableResponse struct {
-	Records []map[string]interface{} `json:"records"`
-	Columns []TableColumn            `json:"columns"`
-	Message string                   `json:"message"`
-	Content string                   `json:"content,omitempty"`
+	FileID          string                     `json:"file_id,omitempty"`
+	FileName        string                     `json:"file_name,omitempty"`
+	Records         []map[string]interface{}   `json:"records"`
+	Columns         []TableColumn              `json:"columns"`
+	Message         string                     `json:"message"`
+	Content         string                     `json:"content,omitempty"`
+	Extraction      *FileIngestExtractionInfo  `json:"extraction,omitempty"`
+	FieldExtraction *FileIngestFieldExtraction `json:"field_extraction,omitempty"`
+	Stage           string                     `json:"stage,omitempty"`
+	Error           *string                    `json:"error,omitempty"`
 }
 
 // BatchIngestFileToTableRequest defines the request for ingesting multiple files content into a table
@@ -177,19 +224,69 @@ type BatchIngestFileToTableRequest struct {
 
 // BatchIngestFileToTableResponse defines the response for ingesting multiple files to table
 type BatchIngestFileToTableResponse struct {
-	Results map[string]FileIngestResult `json:"results"`
-	Columns []TableColumn               `json:"columns"`
-	Message string                      `json:"message"`
+	Results      map[string]FileIngestResult `json:"results"`
+	Columns      []TableColumn               `json:"columns"`
+	Message      string                      `json:"message"`
+	TotalCount   int                         `json:"total_count"`
+	SuccessCount int                         `json:"success_count"`
+	FailedCount  int                         `json:"failed_count"`
 }
 
 // FileIngestResult represents the result of ingesting a single file
 type FileIngestResult struct {
-	FileID   string                   `json:"file_id"`
-	FileName string                   `json:"file_name"`
-	Records  []map[string]interface{} `json:"records"`
-	Message  string                   `json:"message"`
-	Content  string                   `json:"content,omitempty"`
-	Error    *string                  `json:"error,omitempty"`
+	FileID          string                     `json:"file_id"`
+	FileName        string                     `json:"file_name"`
+	Records         []map[string]interface{}   `json:"records"`
+	Message         string                     `json:"message"`
+	Content         string                     `json:"content,omitempty"`
+	Extraction      *FileIngestExtractionInfo  `json:"extraction,omitempty"`
+	FieldExtraction *FileIngestFieldExtraction `json:"field_extraction,omitempty"`
+	Stage           string                     `json:"stage,omitempty"`
+	Error           *string                    `json:"error,omitempty"`
+}
+
+// FileIngestExtractionInfo describes the parser path used before field extraction.
+type FileIngestExtractionInfo struct {
+	PrimaryStrategy string              `json:"primary_strategy,omitempty"`
+	ActualStrategy  string              `json:"actual_strategy,omitempty"`
+	FallbackReason  string              `json:"fallback_reason,omitempty"`
+	SourceType      string              `json:"source_type,omitempty"`
+	ContentHash     string              `json:"content_hash,omitempty"`
+	Attempts        []FileIngestAttempt `json:"attempts,omitempty"`
+}
+
+// FileIngestAttempt describes one user-visible extraction attempt in a file ingest run.
+type FileIngestAttempt struct {
+	Method      string `json:"method"`
+	Status      string `json:"status"`
+	Result      string `json:"result,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	DurationMS  int64  `json:"duration_ms,omitempty"`
+	RecordCount int    `json:"record_count,omitempty"`
+}
+
+// FileIngestFieldExtraction contains schema-aware field matches produced after
+// file parsing. It is additive to Records so existing ingest clients can keep
+// using table field names while review UIs can inspect evidence and confidence.
+type FileIngestFieldExtraction struct {
+	Records []FileIngestRecordExtraction `json:"records,omitempty"`
+}
+
+type FileIngestRecordExtraction struct {
+	Fields []FileIngestFieldMatch `json:"fields,omitempty"`
+}
+
+type FileIngestFieldMatch struct {
+	ColumnID            string      `json:"column_id"`
+	ColumnName          string      `json:"column_name,omitempty"`
+	Value               interface{} `json:"value,omitempty"`
+	RawValue            interface{} `json:"raw_value,omitempty"`
+	NormalizedValue     interface{} `json:"normalized_value,omitempty"`
+	NormalizationStatus string      `json:"normalization_status,omitempty"`
+	NormalizationReason string      `json:"normalization_reason,omitempty"`
+	Evidence            string      `json:"evidence,omitempty"`
+	Confidence          *float64    `json:"confidence,omitempty"`
+	Reason              string      `json:"reason,omitempty"`
 }
 
 // DataSourceResponse represents data source response DTO
