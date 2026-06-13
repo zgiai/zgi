@@ -384,6 +384,142 @@ func (h *DataSourceHandler) DeleteDataSourceByID(c *gin.Context) {
 	response.Success(c, gin.H{"message": "data source deleted successfully"})
 }
 
+func (h *DataSourceHandler) GetGuardPolicy(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+	id := c.Param("id")
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.ensureDatabaseManage(c, organizationID, id, accountID) {
+		return
+	}
+	policy, err := h.service.GetGuardPolicy(c.Request.Context(), organizationID, id)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, dto.GuardPolicyResponse{Policy: policy})
+}
+
+func (h *DataSourceHandler) UpdateGuardPolicy(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+	id := c.Param("id")
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.UpdateGuardPolicyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	if !h.ensureDatabaseManage(c, organizationID, id, accountID) {
+		return
+	}
+	if h.organizationService != nil {
+		currentPolicy, err := h.service.GetGuardPolicy(c.Request.Context(), organizationID, id)
+		if err != nil {
+			response.FailWithMessage(c, response.ErrSystemError, err.Error())
+			return
+		}
+		if req.Policy.Mode == "enforce" || currentPolicy.Mode == "enforce" {
+			isAdmin, err := h.organizationService.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
+			if err != nil {
+				response.Fail(c, response.ErrSystemError)
+				return
+			}
+			if !isAdmin {
+				response.Fail(c, response.ErrPermissionDenied)
+				return
+			}
+		}
+	}
+	policy, err := h.service.UpdateGuardPolicy(c.Request.Context(), organizationID, id, req.Policy)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, dto.GuardPolicyResponse{Policy: policy})
+}
+
+func (h *DataSourceHandler) PreviewGuard(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+	id := c.Param("id")
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.PreviewGuardRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	if !h.ensureDatabaseManage(c, organizationID, id, accountID) {
+		return
+	}
+	result, err := h.service.PreviewGuard(c.Request.Context(), organizationID, id, req.SQL, req.Policy)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, dto.PreviewGuardResponse{Result: result})
+}
+
+func (h *DataSourceHandler) ensureDatabaseManage(c *gin.Context, organizationID, dataSourceID, accountID string) bool {
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "id is required")
+		return false
+	}
+	if h.organizationService == nil {
+		return true
+	}
+	dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if dataSource == nil {
+		response.Fail(c, response.ErrNotFound)
+		return false
+	}
+	workspaceID := organizationID
+	if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+		workspaceID = *dataSource.WorkspaceID
+	}
+	hasPermission, err := h.organizationService.CheckWorkspacePermission(
+		c.Request.Context(),
+		organizationID,
+		workspaceID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseManage,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+	return true
+}
+
 // CreateTable creates a new table in a data source
 // @Summary Create a new table
 // @Description Create a new table in the specified data source
@@ -2103,6 +2239,9 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.GET("/data-dbs/:id", h.GetDataSourceByID)
 	authWithTenant.PUT("/data-dbs/:id", h.UpdateDataSource)
 	authWithTenant.DELETE("/data-dbs/:id", h.DeleteDataSourceByID)
+	authWithTenant.GET("/data-dbs/:id/guard/policy", h.GetGuardPolicy)
+	authWithTenant.PUT("/data-dbs/:id/guard/policy", h.UpdateGuardPolicy)
+	authWithTenant.POST("/data-dbs/:id/guard/preview", h.PreviewGuard)
 
 	// Table operations within a data source
 	authWithTenant.POST("/data-dbs/:id/tables", h.CreateTable)

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
 	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 )
 
 func TestSQLAuditContextFallsBackToOrganizationWorkspace(t *testing.T) {
@@ -141,4 +143,108 @@ func TestLogSQLOperationWithResultRecordsFailure(t *testing.T) {
 	if got.DurationMS == nil || *got.DurationMS != 25 {
 		t.Fatalf("duration_ms = %#v, want 25", got.DurationMS)
 	}
+}
+
+func TestSQLAuditContextIncludesGuardPolicy(t *testing.T) {
+	policy := guard.DefaultPolicy()
+	policy.Mode = guard.ModeEnforce
+	policyJSON, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataSource := &model.DataSource{
+		ID:             "datasource-1",
+		OrganizationID: "organization-1",
+		Name:           "main",
+		GuardPolicy:    policyJSON,
+	}
+
+	auditCtx := sqlAuditContext("organization-1", dataSource, nil, "account-1", "query")
+	if auditCtx == nil || auditCtx.GuardPolicy == nil {
+		t.Fatal("guard policy should be attached to audit context")
+	}
+	if auditCtx.GuardPolicy.Mode != guard.ModeEnforce {
+		t.Fatalf("guard mode = %s, want enforce", auditCtx.GuardPolicy.Mode)
+	}
+}
+
+func TestPreviewGuardUsesUpdatedPolicyImmediately(t *testing.T) {
+	repo := &fakeDataSourceRepo{
+		ds: &model.DataSource{
+			ID:             "datasource-1",
+			OrganizationID: "organization-1",
+			Name:           "main",
+			GuardPolicy:    guard.DefaultPolicyJSON(),
+		},
+	}
+	svc := &dataSourceService{repo: repo}
+
+	policy := guard.DefaultPolicy()
+	policy.Mode = guard.ModeEnforce
+	policy.Readonly = true
+	policy.RequireWhere = false
+	updated, err := svc.UpdateGuardPolicy(context.Background(), "organization-1", "datasource-1", policy)
+	if err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	if updated.Mode != guard.ModeEnforce {
+		t.Fatalf("updated mode = %s, want enforce", updated.Mode)
+	}
+
+	result, err := svc.PreviewGuard(context.Background(), "organization-1", "datasource-1", "INSERT INTO users(id) VALUES (1)", nil)
+	if err != nil {
+		t.Fatalf("preview guard: %v", err)
+	}
+	if result.Action != guard.ActionDeny {
+		t.Fatalf("preview action = %s, want deny", result.Action)
+	}
+}
+
+type fakeDataSourceRepo struct {
+	ds *model.DataSource
+}
+
+func (r *fakeDataSourceRepo) Create(ctx context.Context, ds *model.DataSource) error {
+	r.ds = ds
+	return nil
+}
+
+func (r *fakeDataSourceRepo) FindByID(ctx context.Context, id string) (*model.DataSource, error) {
+	if r.ds != nil && r.ds.ID == id {
+		return r.ds, nil
+	}
+	return nil, nil
+}
+
+func (r *fakeDataSourceRepo) FindByOrganizationAndName(ctx context.Context, organizationID, name string) (*model.DataSource, error) {
+	return nil, nil
+}
+
+func (r *fakeDataSourceRepo) ListByOrganization(ctx context.Context, organizationID string) ([]*model.DataSource, error) {
+	return nil, nil
+}
+
+func (r *fakeDataSourceRepo) ListByOrganizationWithPermissionFilter(ctx context.Context, organizationID, accountID string, isAdmin bool, filterWorkspaceIDs []string) ([]*model.DataSource, error) {
+	return nil, nil
+}
+
+func (r *fakeDataSourceRepo) Update(ctx context.Context, ds *model.DataSource) error {
+	r.ds = ds
+	return nil
+}
+
+func (r *fakeDataSourceRepo) UpdateGuardPolicy(ctx context.Context, id string, policy []byte) error {
+	if r.ds != nil && r.ds.ID == id {
+		r.ds.GuardPolicy = policy
+	}
+	return nil
+}
+
+func (r *fakeDataSourceRepo) UpdateStatus(ctx context.Context, id, status string) error {
+	return nil
+}
+
+func (r *fakeDataSourceRepo) Delete(ctx context.Context, id string) error {
+	r.ds = nil
+	return nil
 }
