@@ -1836,6 +1836,34 @@ func TestServerLoadsVerifiedDependencyProfileArtifacts(t *testing.T) {
 	}
 }
 
+func TestServerSkipsDependencyProfileArtifactRejectedByPackagePolicy(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DependencyRootFSDir = t.TempDir()
+	writeServerDependencyProfileArtifact(t, cfg.DependencyRootFSDir, "skill-office")
+	writeServerDependencyProfileArtifactWithPackages(t, cfg.DependencyRootFSDir, "auto-unsafe", []map[string]string{
+		{"ecosystem": "python3", "name": "openpyxl", "version": "3.1.5"},
+	})
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server to skip invalid dependency artifact, got %v", err)
+	}
+
+	catalogReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies?language=python3", nil)
+	catalogRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(catalogRes, catalogReq)
+	if catalogRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency catalog, got %d body=%s", catalogRes.Code, catalogRes.Body.String())
+	}
+	body := catalogRes.Body.String()
+	if !strings.Contains(body, `"name":"skill-office"`) {
+		t.Fatalf("expected valid artifact to remain available, got %s", body)
+	}
+	if strings.Contains(body, `"name":"auto-unsafe"`) {
+		t.Fatalf("expected invalid artifact to be skipped, got %s", body)
+	}
+}
+
 func TestDependencyUpdatePersistsBuiltProfileAcrossRestart(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.APIKey = "admin-test-key"
@@ -2379,6 +2407,14 @@ func testConfig(t *testing.T) config.Config {
 
 func writeServerDependencyProfileArtifact(t *testing.T, dependencyRoot string, profile string) {
 	t.Helper()
+	writeServerDependencyProfileArtifactWithPackages(t, dependencyRoot, profile, []map[string]string{
+		{"ecosystem": "python3", "name": "office-tools", "version": "managed"},
+		{"ecosystem": "nodejs", "name": "office-tools", "version": "managed"},
+	})
+}
+
+func writeServerDependencyProfileArtifactWithPackages(t *testing.T, dependencyRoot string, profile string, packages []map[string]string) {
+	t.Helper()
 	profileDir := filepath.Join(dependencyRoot, profile, "opt", "zgi", "profiles", profile)
 	files := map[string]string{
 		"venv/bin/python":       "python",
@@ -2403,10 +2439,7 @@ func writeServerDependencyProfileArtifact(t *testing.T, dependencyRoot string, p
 		"languages":    []string{"python3", "nodejs"},
 		"base_runtime": "linux-secure",
 		"description":  "Managed document automation profile.",
-		"packages": []map[string]string{
-			{"ecosystem": "python3", "name": "office-tools", "version": "managed"},
-			{"ecosystem": "nodejs", "name": "office-tools", "version": "managed"},
-		},
+		"packages":     packages,
 		"build": map[string]any{
 			"checksum":            checksum,
 			"size_bytes":          size,
