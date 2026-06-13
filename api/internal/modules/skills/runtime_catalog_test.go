@@ -266,6 +266,13 @@ func TestCalculatorMetaToolArgumentsExposeRequiredExpressionSchema(t *testing.T)
 	if err != nil {
 		t.Fatalf("ResolveEnabledSkills() error = %v", err)
 	}
+	doc, ok := resolved.Get(SkillCalculator)
+	if !ok {
+		t.Fatalf("calculator skill was not resolved")
+	}
+	if doc.Metadata.MaxCallsPerTurn != 50 {
+		t.Fatalf("calculator max calls = %d, want 50", doc.Metadata.MaxCallsPerTurn)
+	}
 	metaTools := MetaToolsForSkillState(resolved, map[string]struct{}{SkillCalculator: {}})
 	callTool := findMetaTool(metaTools, MetaToolCallSkillTool)
 	if callTool == nil {
