@@ -191,6 +191,12 @@ const messages = {
     toggleSidebar: 'Toggle sidebar',
     editMessage: 'Edit message',
     sendEdited: 'Send edited message',
+    composer: {
+      expandEditor: 'Expand editor',
+      collapseEditor: 'Collapse editor',
+      editorTitle: 'Edit long text',
+      done: 'Done',
+    },
     previousBranch: 'Previous branch',
     nextBranch: 'Next branch',
     userInputRequest: {

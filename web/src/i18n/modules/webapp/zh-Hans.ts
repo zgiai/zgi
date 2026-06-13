@@ -181,6 +181,12 @@ const messages: WebappMessages = {
     toggleSidebar: '切换侧边栏',
     editMessage: '编辑消息',
     sendEdited: '发送修改后的消息',
+    composer: {
+      expandEditor: '展开编辑',
+      collapseEditor: '收起编辑',
+      editorTitle: '编辑长文本',
+      done: '完成',
+    },
     previousBranch: '上一个分支',
     nextBranch: '下一个分支',
     userInputRequest: {
