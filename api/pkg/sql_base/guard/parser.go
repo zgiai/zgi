@@ -9,10 +9,11 @@ import (
 )
 
 type analysis struct {
-	statements []tree.Statement
-	functions  []string
-	maxJoins   int
-	parseErr   error
+	statements             []tree.Statement
+	topLevelStatementCount int
+	functions              []string
+	maxJoins               int
+	parseErr               error
 }
 
 func parseSQL(sql string) analysis {
@@ -25,7 +26,8 @@ func parseSQL(sql string) analysis {
 	a.statements = make([]tree.Statement, 0, len(stmts))
 	for _, stmt := range stmts {
 		if stmt.AST != nil {
-			a.statements = append(a.statements, stmt.AST)
+			a.topLevelStatementCount++
+			a.statements = appendAnalyzedStatements(a.statements, stmt.AST)
 		}
 	}
 
@@ -45,6 +47,38 @@ func parseSQL(sql string) analysis {
 	}
 	_, _ = w.Walk(stmts, &a)
 	return a
+}
+
+func appendAnalyzedStatements(out []tree.Statement, stmt tree.Statement) []tree.Statement {
+	if stmt == nil {
+		return out
+	}
+	out = append(out, stmt)
+	switch s := stmt.(type) {
+	case *tree.Explain:
+		out = appendAnalyzedStatements(out, s.Statement)
+	case *tree.Select:
+		out = appendWithStatements(out, s.With)
+	case *tree.Update:
+		out = appendWithStatements(out, s.With)
+	case *tree.Delete:
+		out = appendWithStatements(out, s.With)
+	case *tree.Insert:
+		out = appendWithStatements(out, s.With)
+	}
+	return out
+}
+
+func appendWithStatements(out []tree.Statement, with *tree.With) []tree.Statement {
+	if with == nil {
+		return out
+	}
+	for _, cte := range with.CTEList {
+		if cte != nil {
+			out = appendAnalyzedStatements(out, cte.Stmt)
+		}
+	}
+	return out
 }
 
 func countJoins(exprs tree.TableExprs) int {
@@ -145,8 +179,42 @@ func hasNonTrailingSemicolon(sql string) bool {
 		case '"':
 			inDouble = true
 		case ';':
-			return strings.TrimSpace(sql[i+1:]) != ""
+			return hasExecutableTail(sql[i+1:])
 		}
+	}
+	return false
+}
+
+func hasExecutableTail(sql string) bool {
+	for i := 0; i < len(sql); i++ {
+		ch := sql[i]
+		next := byte(0)
+		if i+1 < len(sql) {
+			next = sql[i+1]
+		}
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' {
+			continue
+		}
+		if ch == '-' && next == '-' {
+			i += 2
+			for i < len(sql) && sql[i] != '\n' && sql[i] != '\r' {
+				i++
+			}
+			i--
+			continue
+		}
+		if ch == '/' && next == '*' {
+			i += 2
+			for i+1 < len(sql) && !(sql[i] == '*' && sql[i+1] == '/') {
+				i++
+			}
+			if i+1 >= len(sql) {
+				return false
+			}
+			i++
+			continue
+		}
+		return true
 	}
 	return false
 }

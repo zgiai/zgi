@@ -2620,20 +2620,48 @@ func (s *dataSourceService) getDefaultForType(colType string, isRequired bool) (
 // logSQLOperation logs the SQL statement for audit purposes
 func (s *dataSourceService) logSQLOperation(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string) error {
 	now := time.Now()
-	return s.logSQLOperationWithResult(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement, now, now, nil)
+	return s.logSQLOperationWithResult(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement, now, now, nil, guard.Result{}, false)
 }
 
 func (s *dataSourceService) auditSQLOperation(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string, execute func() error) error {
 	start := time.Now()
-	err := execute()
+	guardResult, guarded, guardErr := s.evaluateGuardForAuditedSQL(ctx, dataSourceID, sqlStatement)
+	var err error
+	if guardErr != nil {
+		err = guardErr
+	} else {
+		err = execute()
+	}
 	end := time.Now()
-	if logErr := s.logSQLOperationWithResult(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement, start, end, err); logErr != nil {
+	if logErr := s.logSQLOperationWithResult(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement, start, end, err, guardResult, guarded); logErr != nil {
 		logger.ErrorContext(ctx, "failed to audit sql operation", "data_source_id", dataSourceID, "table_id", tableID, logErr)
 	}
 	return err
 }
 
-func (s *dataSourceService) logSQLOperationWithResult(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string, start, end time.Time, execErr error) error {
+func (s *dataSourceService) evaluateGuardForAuditedSQL(ctx context.Context, dataSourceID, sqlStatement string) (guard.Result, bool, error) {
+	if dataSourceID == "" || s.repo == nil {
+		return guard.Result{}, false, nil
+	}
+	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	if err != nil {
+		return guard.Result{}, false, fmt.Errorf("failed to find data source for sql guard: %w", err)
+	}
+	if dataSource == nil {
+		return guard.Result{}, false, fmt.Errorf("data source with id '%s' not found for sql guard", dataSourceID)
+	}
+	policy, err := guard.ParsePolicyJSON([]byte(dataSource.GuardPolicy))
+	if err != nil {
+		return guard.Result{}, false, fmt.Errorf("failed to parse sql guard policy: %w", err)
+	}
+	result := guard.Check(sqlStatement, policy)
+	if result.Action == guard.ActionDeny {
+		return result, true, &guard.DeniedError{Result: result}
+	}
+	return result, true, nil
+}
+
+func (s *dataSourceService) logSQLOperationWithResult(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string, start, end time.Time, execErr error, guardResult guard.Result, guarded bool) error {
 	now := time.Now()
 	workspaceID := organizationID
 	if dataSourceID != "" && s.repo != nil {
@@ -2669,6 +2697,16 @@ func (s *dataSourceService) logSQLOperationWithResult(ctx context.Context, organ
 		Status:         status,
 		CreatedBy:      accountID,
 		CreatedAt:      now,
+	}
+	if guarded {
+		verdict := string(guardResult.Verdict)
+		log.GuardVerdict = &verdict
+		if reasons, err := json.Marshal(guardResult.Reasons); err == nil {
+			log.GuardReasons = reasons
+		}
+		if policy, err := json.Marshal(guardResult.Policy); err == nil {
+			log.GuardPolicy = policy
+		}
 	}
 
 	// Only set TableID if it's not empty

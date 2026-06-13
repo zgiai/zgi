@@ -59,6 +59,49 @@ func TestCheckMaxJoinDepth(t *testing.T) {
 	assertReason(t, result, ReasonMaxJoinDepth)
 }
 
+func TestCheckExplainAnalyzeWriteStatements(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.Readonly = true
+	for _, sql := range []string{
+		"EXPLAIN ANALYZE UPDATE users SET name = 'x'",
+		"EXPLAIN ANALYZE DELETE FROM users",
+	} {
+		result := Check(sql, policy)
+		assertReasonCodes(t, result, ReasonRequireWhere, ReasonReadonly)
+	}
+}
+
+func TestCheckDataModifyingCTE(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.Readonly = true
+	for _, sql := range []string{
+		"WITH deleted AS (DELETE FROM users RETURNING id) SELECT * FROM deleted",
+		"WITH updated AS (UPDATE users SET name = 'x' RETURNING id) SELECT * FROM updated",
+	} {
+		result := Check(sql, policy)
+		assertReasonCodes(t, result, ReasonRequireWhere, ReasonReadonly)
+	}
+}
+
+func TestCheckAllowsTrailingSemicolonComment(t *testing.T) {
+	for _, sql := range []string{
+		"SELECT 1; -- comment",
+		"SELECT 1; /* comment */",
+		"SELECT 1; /* comment */ -- tail",
+	} {
+		result := Check(sql, DefaultPolicy())
+		if result.Verdict != VerdictAllow {
+			t.Fatalf("sql = %q, verdict = %s, reasons = %#v", sql, result.Verdict, result.Reasons)
+		}
+	}
+}
+
+func TestCheckDetectsStatementAfterTrailingComment(t *testing.T) {
+	result := Check("SELECT 1; /* comment */ DROP TABLE users", DefaultPolicy())
+	assertReason(t, result, ReasonMultiStatement)
+	assertReason(t, result, ReasonBlockStatement)
+}
+
 func TestWarnModeDoesNotDenyAction(t *testing.T) {
 	policy := DefaultPolicy()
 	policy.Mode = ModeWarn
@@ -88,4 +131,16 @@ func assertReason(t *testing.T, result Result, code ReasonCode) {
 		}
 	}
 	t.Fatalf("reason %s not found in %#v", code, result.Reasons)
+}
+
+func assertReasonCodes(t *testing.T, result Result, codes ...ReasonCode) {
+	t.Helper()
+	if len(result.Reasons) != len(codes) {
+		t.Fatalf("reasons = %#v, want codes %v", result.Reasons, codes)
+	}
+	for i, code := range codes {
+		if result.Reasons[i].Code != code {
+			t.Fatalf("reason[%d] = %s, want %s; all reasons = %#v", i, result.Reasons[i].Code, code, result.Reasons)
+		}
+	}
 }

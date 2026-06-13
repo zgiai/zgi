@@ -22,7 +22,7 @@ func checkMultiStatement(sql string, policy Policy, a analysis) (Reason, bool) {
 	if policy.AllowMultiStmt {
 		return Reason{}, false
 	}
-	if len(a.statements) > 1 || hasNonTrailingSemicolon(sql) {
+	if a.topLevelStatementCount > 1 || hasNonTrailingSemicolon(sql) {
 		return Reason{
 			Code:    ReasonMultiStatement,
 			Message: "multiple SQL statements are not allowed",

@@ -126,6 +126,8 @@ func TestLogSQLOperationWithResultRecordsFailure(t *testing.T) {
 		start,
 		end,
 		execErr,
+		guard.Result{},
+		false,
 	)
 	if err != nil {
 		t.Fatalf("logSQLOperationWithResult returned error: %v", err)
@@ -142,6 +144,210 @@ func TestLogSQLOperationWithResultRecordsFailure(t *testing.T) {
 	}
 	if got.DurationMS == nil || *got.DurationMS != 25 {
 		t.Fatalf("duration_ms = %#v, want 25", got.DurationMS)
+	}
+}
+
+func TestAuditSQLOperationWarnRecordsGuardAndExecutes(t *testing.T) {
+	dataSource := &model.DataSource{
+		ID:             "datasource-1",
+		OrganizationID: "organization-1",
+		Name:           "main",
+		GuardPolicy:    guard.DefaultPolicyJSON(),
+	}
+	repo := &fakeSQLOperationRepository{}
+	service := &dataSourceService{
+		repo:             &fakeDataSourceRepo{ds: dataSource},
+		sqlOperationRepo: repo,
+	}
+	executed := false
+
+	err := service.auditSQLOperation(
+		context.Background(),
+		"organization-1",
+		"datasource-1",
+		"table-1",
+		"main",
+		"Users",
+		"account-1",
+		string(model.OperationTypeDelete),
+		`DROP TABLE "users" CASCADE`,
+		func() error {
+			executed = true
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("auditSQLOperation returned error: %v", err)
+	}
+	if !executed {
+		t.Fatal("execute should run in warn mode")
+	}
+	if len(repo.logs) != 1 {
+		t.Fatalf("log count = %d, want 1", len(repo.logs))
+	}
+	got := repo.logs[0]
+	if got.Status != string(model.OperationStatusSuccess) {
+		t.Fatalf("status = %s, want success", got.Status)
+	}
+	if got.GuardVerdict == nil || *got.GuardVerdict != string(guard.VerdictDeny) {
+		t.Fatalf("guard_verdict = %#v, want deny", got.GuardVerdict)
+	}
+	var reasons []guard.Reason
+	if err := json.Unmarshal(got.GuardReasons, &reasons); err != nil {
+		t.Fatalf("guard_reasons: %v", err)
+	}
+	if len(reasons) == 0 || reasons[0].Code != guard.ReasonBlockStatement {
+		t.Fatalf("guard reasons = %#v, want block_statement", reasons)
+	}
+}
+
+func TestAuditSQLOperationEnforceBlocksAndAuditsFailure(t *testing.T) {
+	policy := guard.DefaultPolicy()
+	policy.Mode = guard.ModeEnforce
+	policyJSON, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataSource := &model.DataSource{
+		ID:             "datasource-1",
+		OrganizationID: "organization-1",
+		Name:           "main",
+		GuardPolicy:    policyJSON,
+	}
+	repo := &fakeSQLOperationRepository{}
+	service := &dataSourceService{
+		repo:             &fakeDataSourceRepo{ds: dataSource},
+		sqlOperationRepo: repo,
+	}
+	executed := false
+
+	err = service.auditSQLOperation(
+		context.Background(),
+		"organization-1",
+		"datasource-1",
+		"table-1",
+		"main",
+		"Users",
+		"account-1",
+		string(model.OperationTypeDelete),
+		`DROP TABLE "users" CASCADE`,
+		func() error {
+			executed = true
+			return nil
+		},
+	)
+	if err == nil {
+		t.Fatal("auditSQLOperation should return guard denial")
+	}
+	var denied *guard.DeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("error = %T, want guard.DeniedError", err)
+	}
+	if executed {
+		t.Fatal("execute should not run in enforce mode")
+	}
+	if len(repo.logs) != 1 {
+		t.Fatalf("log count = %d, want 1", len(repo.logs))
+	}
+	got := repo.logs[0]
+	if got.Status != string(model.OperationStatusFailed) {
+		t.Fatalf("status = %s, want failed", got.Status)
+	}
+	if got.GuardVerdict == nil || *got.GuardVerdict != string(guard.VerdictDeny) {
+		t.Fatalf("guard_verdict = %#v, want deny", got.GuardVerdict)
+	}
+	if got.ErrorMessage == nil || *got.ErrorMessage == "" {
+		t.Fatal("error_message should be recorded")
+	}
+}
+
+func TestAuditSQLOperationEnforceBlocksDDL(t *testing.T) {
+	policy := guard.DefaultPolicy()
+	policy.Mode = guard.ModeEnforce
+	policyJSON, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataSource := &model.DataSource{
+		ID:             "datasource-1",
+		OrganizationID: "organization-1",
+		Name:           "main",
+		GuardPolicy:    policyJSON,
+	}
+	repo := &fakeSQLOperationRepository{}
+	service := &dataSourceService{
+		repo:             &fakeDataSourceRepo{ds: dataSource},
+		sqlOperationRepo: repo,
+	}
+	executed := false
+
+	err = service.auditSQLOperation(
+		context.Background(),
+		"organization-1",
+		"datasource-1",
+		"",
+		"main",
+		"users",
+		"account-1",
+		string(model.OperationTypeCreate),
+		`CREATE TABLE "users" ()`,
+		func() error {
+			executed = true
+			return nil
+		},
+	)
+	if err == nil {
+		t.Fatal("auditSQLOperation should return guard denial")
+	}
+	if executed {
+		t.Fatal("execute should not run for blocked DDL in enforce mode")
+	}
+	if len(repo.logs) != 1 {
+		t.Fatalf("log count = %d, want 1", len(repo.logs))
+	}
+	got := repo.logs[0]
+	if got.GuardVerdict == nil || *got.GuardVerdict != string(guard.VerdictDeny) {
+		t.Fatalf("guard_verdict = %#v, want deny", got.GuardVerdict)
+	}
+}
+
+func TestAuditSQLOperationAllowedSQLRecordsGuardAllow(t *testing.T) {
+	dataSource := &model.DataSource{
+		ID:             "datasource-1",
+		OrganizationID: "organization-1",
+		Name:           "main",
+		GuardPolicy:    guard.DefaultPolicyJSON(),
+	}
+	repo := &fakeSQLOperationRepository{}
+	service := &dataSourceService{
+		repo:             &fakeDataSourceRepo{ds: dataSource},
+		sqlOperationRepo: repo,
+	}
+
+	err := service.auditSQLOperation(
+		context.Background(),
+		"organization-1",
+		"datasource-1",
+		"table-1",
+		"main",
+		"Users",
+		"account-1",
+		string(model.OperationTypeQuery),
+		`SELECT * FROM "users"`,
+		func() error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("auditSQLOperation returned error: %v", err)
+	}
+	if len(repo.logs) != 1 {
+		t.Fatalf("log count = %d, want 1", len(repo.logs))
+	}
+	got := repo.logs[0]
+	if got.GuardVerdict == nil || *got.GuardVerdict != string(guard.VerdictAllow) {
+		t.Fatalf("guard_verdict = %#v, want allow", got.GuardVerdict)
+	}
+	if len(got.GuardPolicy) == 0 {
+		t.Fatal("guard_policy should be recorded")
 	}
 }
 
