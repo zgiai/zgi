@@ -8,7 +8,9 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
+	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
+	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -74,6 +76,8 @@ import (
 	"github.com/zgiai/zgi/api/pkg/queue"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
 	"github.com/zgiai/zgi/api/pkg/scheduler"
+	"github.com/zgiai/zgi/api/pkg/sql_base"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
 )
@@ -154,9 +158,12 @@ type ServiceContainer struct {
 	registerService               interfaces.RegisterService
 	fileService                   interfaces.FileService
 	contentExtractor              workflow_file.ContentExtractor
+	contentParseService           contracts.ContentParseService
 
 	// DataSource service
 	dataSourceService service.DataSourceService
+	sqlAuditRecorder  audit.Recorder
+	sqlBase           sql_base.SQLBase
 	promptModule      *promptsmodule.Module
 
 	// Data Library module
@@ -579,6 +586,13 @@ func (c *ServiceContainer) GetFileService() interfaces.FileService {
 	return c.fileService
 }
 
+func (c *ServiceContainer) GetContentParseService() contracts.ContentParseService {
+	if c.contentParseService == nil {
+		c.contentParseService = contentparsecap.NewModule().Service
+	}
+	return c.contentParseService
+}
+
 func (c *ServiceContainer) GetContentExtractor() workflow_file.ContentExtractor {
 	if c.contentExtractor == nil {
 		// Get FileService dependency
@@ -605,10 +619,63 @@ func (c *ServiceContainer) GetDataSourceService() service.DataSourceService {
 		tableRepo := repository.NewPostgresTableRepository(c.db)
 		promptRepo := repository.NewPostgresPromptRepository(c.db)
 		sqlOperationRepo := repository.NewPostgresSQLOperationRepository(c.db)
-		c.dataSourceService = service.NewDataSourceService(dataSourceRepo, tableRepo, promptRepo, sqlOperationRepo, c.GetAccountService(), c.GetFileService(), c.GetOrganizationService(), c.GetResourcePermissionService(), c.GetQuotaService(), c.GetLLMClient(), c.db)
+		c.dataSourceService = service.NewDataSourceService(
+			dataSourceRepo,
+			tableRepo,
+			promptRepo,
+			sqlOperationRepo,
+			c.GetAccountService(),
+			c.GetFileService(),
+			c.GetOrganizationService(),
+			c.GetResourcePermissionService(),
+			c.GetQuotaService(),
+			c.GetLLMClient(),
+			c.GetDefaultModelService(),
+			c.db,
+			service.WithContentParseService(c.GetContentParseService()),
+		)
 	}
 
 	return c.dataSourceService
+}
+
+func (c *ServiceContainer) GetSQLAuditRecorder() audit.Recorder {
+	if c.sqlAuditRecorder == nil {
+		store := repository.NewPostgresSQLOperationRepository(c.db)
+		c.sqlAuditRecorder = audit.NewAsyncRecorder(store)
+	}
+	return c.sqlAuditRecorder
+}
+
+func (c *ServiceContainer) CloseSQLAuditRecorder(ctx context.Context) error {
+	if c == nil || c.sqlAuditRecorder == nil {
+		return nil
+	}
+	return c.sqlAuditRecorder.Close(ctx)
+}
+
+func (c *ServiceContainer) CloseDataSourceSQLAuditRecorder(ctx context.Context) error {
+	if c == nil || c.dataSourceService == nil {
+		return nil
+	}
+	closer, ok := c.dataSourceService.(interface {
+		Close(context.Context) error
+	})
+	if !ok {
+		return nil
+	}
+	return closer.Close(ctx)
+}
+
+func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
+	if c.sqlBase == nil {
+		client, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(c.GetSQLAuditRecorder()))
+		if err != nil {
+			panic("failed to create sql base client: " + err.Error())
+		}
+		c.sqlBase = client
+	}
+	return c.sqlBase
 }
 
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
@@ -944,6 +1011,7 @@ func (c *ServiceContainer) GetWorkflowEngineFactory() *graph_engine.EngineFactor
 			PromptResolver:              c.GetPromptService(),
 			AutomationDefinitionService: c.GetAutomationDefinitionService(),
 			NotificationSMSService:      c.GetNotificationSMSService(),
+			SQLBase:                     c.GetSQLBase(),
 		})
 		c.workflowEngineFactory = graph_engine.NewEngineFactory(10, nodeRunner)
 	}

@@ -19,13 +19,7 @@ func TestQueryExecute(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Second)
 	defer cancel()
 
-	cfg := driver.Config{
-		DBHost: "localhost",
-		DBPort: "5432",
-		DBUser: "postgres",
-		DBPass: "Abc1234",
-		DBName: "postgres",
-	}
+	cfg := testDBConfig()
 
 	pool, err := driver.NewPool(ctx, cfg)
 	if err != nil {
@@ -86,13 +80,7 @@ func TestQuerySpecialTypes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Second)
 	defer cancel()
 
-	cfg := driver.Config{
-		DBHost: "localhost",
-		DBPort: "5432",
-		DBUser: "postgres",
-		DBPass: "Abc1234",
-		DBName: "postgres",
-	}
+	cfg := testDBConfig()
 
 	pool, err := driver.NewPool(ctx, cfg)
 	if err != nil {
@@ -224,13 +212,7 @@ func TestQueryExecuteError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cfg := driver.Config{
-		DBHost: "localhost",
-		DBPort: "5432",
-		DBUser: "postgres",
-		DBPass: "Abc1234",
-		DBName: "postgres",
-	}
+	cfg := testDBConfig()
 
 	pool, err := driver.NewPool(ctx, cfg)
 	if err != nil {

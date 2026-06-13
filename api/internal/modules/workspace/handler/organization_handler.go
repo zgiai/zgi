@@ -1987,18 +1987,14 @@ func (h *OrganizationHandler) UpdateMemberInfo(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if req.Role != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "use organization-role endpoint to update organization member role")
+		return
+	}
 
 	// Force override IDs from path/context
 	req.OrganizationID = organizationID
 	req.AccountID = targetAccountID
-
-	// Prevent non-admins from changing role
-	if req.Role != nil {
-		if !middleware.IsOrganizationAdminOrOwner(c) {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
-	}
 
 	if err := h.organizationService.UpdateMemberInfo(c.Request.Context(), &req); err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
@@ -2623,6 +2619,10 @@ func (h *OrganizationHandler) UpdateOrganizationMember(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
+	if req.Role != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "use organization-role endpoint to update organization member role")
+		return
+	}
 
 	req.OrganizationID = organizationID
 	req.AccountID = memberID
@@ -2667,6 +2667,51 @@ func (h *OrganizationHandler) UpdateOrganizationMember(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"result": "success"})
+}
+
+func (h *OrganizationHandler) UpdateCurrentOrganizationMemberRole(c *gin.Context) {
+	memberID := c.Param("member_id")
+	if memberID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req shared_dto.UpdateCurrentOrganizationMemberRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	if err := h.organizationService.UpdateCurrentOrganizationMemberRole(c.Request.Context(), accountID, memberID, req.Role); err != nil {
+		h.handleUpdateOrganizationMemberRoleError(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{"result": "success"})
+}
+
+func (h *OrganizationHandler) handleUpdateOrganizationMemberRoleError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, workspace_service.ErrInvalidOrganizationMemberRole),
+		errors.Is(err, workspace_service.ErrOrganizationOwnerRoleImmutable),
+		errors.Is(err, workspace_service.ErrOrganizationMemberNotActive),
+		errors.Is(err, workspace_service.ErrOrganizationNotEditable):
+		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, workspace_service.ErrOrganizationMemberNotFound):
+		response.Fail(c, response.ErrMemberNotFound)
+	case errors.Is(err, workspace_service.ErrOrganizationPermissionDenied):
+		response.Fail(c, response.ErrPermissionDenied)
+	case errors.Is(err, workspace_service.ErrOrganizationNotFound):
+		response.Fail(c, response.ErrOrganizationNotFound)
+	default:
+		response.Fail(c, response.ErrSystemError)
+	}
 }
 
 // UpdateMemberStatus updates the status (active/inactive) of a member in organization
@@ -2845,8 +2890,11 @@ func (h *OrganizationHandler) GetCurrentOrganizationMembers(c *gin.Context) {
 	}
 
 	// Call service to get paginated data
-	search := c.Query("search")
-	pagination, err := h.organizationService.GetOrganizationMembersPaginated(c.Request.Context(), organizationID, page, limit, search)
+	keyword := c.Query("keyword")
+	if keyword == "" {
+		keyword = c.Query("search")
+	}
+	pagination, err := h.organizationService.GetOrganizationMembersPaginated(c.Request.Context(), organizationID, page, limit, keyword)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
@@ -2960,31 +3008,68 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 		return
 	}
 
-	// Update organization
-	err := h.organizationService.UpdateOrganization(c.Request.Context(), req.ID, &shared_dto.UpdateOrganizationRequest{
-		Name: req.Name,
+	organization, err := h.organizationService.UpdateOrganization(c.Request.Context(), req.ID, accountID, &shared_dto.UpdateOrganizationRequest{
+		Name:      req.Name,
+		ShortName: req.ShortName,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "record not found") {
-			response.Fail(c, response.ErrOrganizationNotFound)
-			return
-		}
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-
-	// Get updated organization
-	organization, err := h.organizationService.GetOrganizationByID(c.Request.Context(), req.ID)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "record not found") {
-			response.Fail(c, response.ErrOrganizationNotFound)
-			return
-		}
-		response.Fail(c, response.ErrSystemError)
+		h.handleUpdateOrganizationError(c, err)
 		return
 	}
 
 	response.Success(c, organization)
+}
+
+func (h *OrganizationHandler) PatchOrganization(c *gin.Context) {
+	organizationID := h.getOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	var req struct {
+		Name      string  `json:"name" binding:"required"`
+		ShortName *string `json:"short_name"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	organization, err := h.organizationService.UpdateOrganization(c.Request.Context(), organizationID, accountID, &shared_dto.UpdateOrganizationRequest{
+		Name:      req.Name,
+		ShortName: req.ShortName,
+	})
+	if err != nil {
+		h.handleUpdateOrganizationError(c, err)
+		return
+	}
+
+	response.Success(c, organization)
+}
+
+func (h *OrganizationHandler) handleUpdateOrganizationError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, workspace_service.ErrInvalidOrganizationName):
+		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, workspace_service.ErrOrganizationNotFound):
+		response.Fail(c, response.ErrOrganizationNotFound)
+	case errors.Is(err, workspace_service.ErrOrganizationNameExists):
+		response.Fail(c, response.ErrOrganizationExists)
+	case errors.Is(err, workspace_service.ErrOrganizationPermissionDenied):
+		response.Fail(c, response.ErrPermissionDenied)
+	case errors.Is(err, workspace_service.ErrOrganizationNotEditable):
+		response.Fail(c, response.ErrInvalidParam)
+	default:
+		response.Fail(c, response.ErrSystemError)
+	}
 }
 
 func (h *OrganizationHandler) DeleteOrganization(c *gin.Context) {
@@ -4136,9 +4221,12 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 		organization.PUT("/", h.UpdateOrganization)
 		organization.DELETE("/", h.DeleteOrganization)
 
+		organization.GET("/current/members", h.GetCurrentOrganizationMembers)
 		organization.POST("/current/members/invite", h.InviteCurrentOrganizationMember)
 		organization.POST("/current/members/reset-password", h.ResetCurrentOrganizationMemberPassword)
+		organization.PATCH("/current/members/:member_id/organization-role", h.UpdateCurrentOrganizationMemberRole)
 		organization.GET("/info/:organization_id", h.GetOrganizationDetails)
+		organization.PATCH("/info/:organization_id", h.PatchOrganization)
 		organization.GET("/:organization_id/workspaces", h.GetOrganizationWorkspaces)
 		organization.GET("/:organization_id/workspaces/:workspace_id", h.GetOrganizationWorkspaceDetail)
 		organization.GET("/:organization_id/workspaces/:workspace_id/available-members", h.GetOrganizationWorkspaceAvailableMembers)

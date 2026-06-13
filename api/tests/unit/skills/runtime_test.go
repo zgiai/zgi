@@ -683,6 +683,9 @@ provider_type: builtin
 provider_id: file_generator
 tools:
   - generate_file
+  - generate_docx
+  - generate_pdf
+  - generate_pptx
 max_calls_per_turn: 3
 timeout_seconds: 5
 ---

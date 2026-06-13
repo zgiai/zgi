@@ -73,18 +73,18 @@ func (s *apiKeyServiceImpl) modelToResponse(ctx context.Context, apiKey *model.T
 	} else {
 		decryptedKey, err := util.DecryptAPIKey(apiKey.Key)
 		if err != nil {
-			keyValue = ""
 			keyMasked = "****"
 		} else {
-			keyValue = decryptedKey
 			keyMasked = util.ObfuscateAPIKey(decryptedKey)
 		}
 	}
 
 	// Fetch organization name
 	organizationName := ""
-	if org, err := s.organizationService.GetOrganizationByID(ctx, apiKey.OrganizationID); err == nil && org != nil {
-		organizationName = org.Name
+	if s.organizationService != nil {
+		if org, err := s.organizationService.GetOrganizationByID(ctx, apiKey.OrganizationID); err == nil && org != nil {
+			organizationName = org.Name
+		}
 	}
 
 	return &dto.APIKeyResponse{

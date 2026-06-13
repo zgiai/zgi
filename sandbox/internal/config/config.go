@@ -36,6 +36,7 @@ type Config struct {
 	DependencyBuildCommand                     string
 	DependencyBuildWorkerEnabled               bool
 	DependencyBuildWorkerIntervalSeconds       int
+	RequiredDependencyProfiles                 []string
 	QueueTimeoutMS                             int
 	ShutdownTimeoutSeconds                     int
 	SessionTTL                                 int
@@ -92,11 +93,12 @@ func FromEnv() Config {
 		MaxArtifactManifestBytes:                   getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES", 0),
 		MaxArtifactBytesPerOrganization:            getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_BYTES_PER_ORGANIZATION", 0),
 		MaxDependencyProfilesPerOrganization:       getEnvIntAllowZero("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION", 0),
-		MaxDependencyProfileSizeBytes:              getEnvInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", 512*1024*1024),
+		MaxDependencyProfileSizeBytes:              getEnvInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", 1024*1024*1024),
 		DependencyProfileBuildTimeoutSeconds:       getEnvInt("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", 600),
 		DependencyBuildCommand:                     getEnv("ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND", ""),
 		DependencyBuildWorkerEnabled:               getEnvBool("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_ENABLED", true),
 		DependencyBuildWorkerIntervalSeconds:       getEnvInt("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_INTERVAL_SECONDS", 2),
+		RequiredDependencyProfiles:                 getEnvCSV("ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES"),
 		QueueTimeoutMS:                             getEnvInt("ZGI_SANDBOX_QUEUE_TIMEOUT_MS", 5000),
 		ShutdownTimeoutSeconds:                     getEnvInt("ZGI_SANDBOX_SHUTDOWN_TIMEOUT_SECONDS", 10),
 		SessionTTL:                                 getEnvInt("ZGI_SANDBOX_SESSION_TTL_SECONDS", 1800),
@@ -408,6 +410,7 @@ func (c Config) PublicSnapshot() map[string]any {
 		"dependency_build_command_configured":              strings.TrimSpace(c.DependencyBuildCommand) != "",
 		"dependency_build_worker_enabled":                  c.DependencyBuildWorkerEnabled,
 		"dependency_build_worker_interval_seconds":         c.DependencyBuildWorkerIntervalSeconds,
+		"required_dependency_profiles":                     append([]string(nil), c.RequiredDependencyProfiles...),
 		"queue_timeout_ms":                                 c.QueueTimeoutMS,
 		"shutdown_timeout_seconds":                         c.ShutdownTimeoutSeconds,
 		"session_ttl_seconds":                              c.SessionTTL,
@@ -533,6 +536,24 @@ func getEnvBool(key string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func getEnvCSV(key string) []string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var values []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		values = append(values, item)
+	}
+	return values
 }
 
 func defaultWorkerID() string {

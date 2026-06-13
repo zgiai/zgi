@@ -37,6 +37,15 @@ import (
 var ErrCannotUpdateBuiltinRole = errors.New("cannot update built-in role")
 var ErrRoleNameExists = errors.New("role name already exists")
 var ErrMemberNameExists = errors.New("member name already exists")
+var ErrOrganizationNotFound = errors.New("organization not found")
+var ErrOrganizationNameExists = errors.New("organization name already exists")
+var ErrOrganizationPermissionDenied = errors.New("organization permission denied")
+var ErrInvalidOrganizationName = errors.New("invalid organization name")
+var ErrOrganizationNotEditable = errors.New("organization is not editable")
+var ErrInvalidOrganizationMemberRole = errors.New("invalid organization member role")
+var ErrOrganizationOwnerRoleImmutable = errors.New("organization owner role is immutable")
+var ErrOrganizationMemberNotActive = errors.New("organization member is not active")
+var ErrOrganizationMemberRoleUpdateUnsupported = errors.New("organization member role update is unsupported")
 
 // GetDepartmentInviteLink gets invite link for a department or organization-level when departmentID is empty.
 func (s *organizationService) GetDepartmentInviteLink(ctx context.Context, organizationID, departmentID, accountID string) (*model.OrganizationInviteLink, error) {
@@ -1081,6 +1090,10 @@ func (s *organizationService) UpdateWorkspaceRolePermissions(ctx context.Context
 }
 
 func (s *organizationService) UpdateMemberInfo(ctx context.Context, req *shared_dto.UpdateOrganizationMemberRequest) error {
+	if req.Role != nil {
+		return ErrOrganizationMemberRoleUpdateUnsupported
+	}
+
 	// 1. Verify organization exists
 	_, err := s.organizationRepo.GetByID(ctx, req.OrganizationID)
 	if err != nil {
@@ -1095,9 +1108,6 @@ func (s *organizationService) UpdateMemberInfo(ctx context.Context, req *shared_
 
 	// 3. Update fields
 	updates := map[string]interface{}{}
-	if req.Role != nil {
-		updates["role"] = *req.Role
-	}
 	if req.Name != nil && *req.Name != "" {
 		// Check if name exists
 		exists, err := s.organizationRepo.ExistsMemberByName(ctx, req.OrganizationID, *req.Name, req.AccountID)
@@ -1545,21 +1555,60 @@ func (s *organizationService) GetOrganizationByID(ctx context.Context, id string
 	return organization, nil
 }
 
-// UpdateOrganization updates the name of an existing organization
-func (s *organizationService) UpdateOrganization(ctx context.Context, id string, req *shared_dto.UpdateOrganizationRequest) error {
+// UpdateOrganization updates editable organization profile fields.
+func (s *organizationService) UpdateOrganization(ctx context.Context, id, accountID string, req *shared_dto.UpdateOrganizationRequest) (*model.Organization, error) {
+	if id == "" || accountID == "" || req == nil {
+		return nil, ErrInvalidOrganizationName
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len(name) > 255 {
+		return nil, ErrInvalidOrganizationName
+	}
+
 	organization, err := s.organizationRepo.GetByID(ctx, id)
 	if err != nil {
-		return fmt.Errorf("organization not found: %w", err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrOrganizationNotFound
+		}
+		return nil, fmt.Errorf("failed to get organization: %w", err)
+	}
+	if organization.Status == model.OrganizationStatusArchived || organization.Status == model.OrganizationStatusDeleted {
+		return nil, ErrOrganizationNotEditable
 	}
 
-	organization.Name = req.Name
-	organization.UpdatedAt = time.Now()
+	allowed, err := s.IsOrganizationAdminOrOwner(ctx, id, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check organization permission: %w", err)
+	}
+	if !allowed {
+		return nil, ErrOrganizationPermissionDenied
+	}
+
+	if organization.Name != name {
+		exists, err := s.organizationRepo.ExistsByNameExcludingID(ctx, name, id)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check organization name: %w", err)
+		}
+		if exists {
+			return nil, ErrOrganizationNameExists
+		}
+	}
+
+	organization.Name = name
+	if req.ShortName != nil {
+		shortName := strings.TrimSpace(*req.ShortName)
+		if len(shortName) > 100 {
+			return nil, ErrInvalidOrganizationName
+		}
+		organization.ShortName = &shortName
+	}
 
 	if err := s.organizationRepo.Update(ctx, organization); err != nil {
-		return fmt.Errorf("failed to update organization: %w", err)
+		return nil, fmt.Errorf("failed to update organization: %w", err)
 	}
 
-	return nil
+	return organization, nil
 }
 
 // DeleteOrganization performs a soft delete of an organization (archives it)
@@ -1927,6 +1976,75 @@ func (s *organizationService) UpdateMemberRole(ctx context.Context, req *shared_
 	join.UpdatedAt = time.Now()
 	if err := s.organizationRepo.UpdateAccountJoin(ctx, join); err != nil {
 		return fmt.Errorf("failed to update member role: %w", err)
+	}
+
+	return nil
+}
+
+func (s *organizationService) UpdateCurrentOrganizationMemberRole(ctx context.Context, operatorID, memberID string, role model.OrganizationRole) error {
+	if operatorID == "" || memberID == "" {
+		return ErrInvalidOrganizationMemberRole
+	}
+	if role != model.OrganizationRoleAdmin && role != model.OrganizationRoleNormal {
+		return ErrInvalidOrganizationMemberRole
+	}
+
+	organizationID, err := s.accountService.EnsureCurrentOrganizationID(ctx, operatorID)
+	if err != nil {
+		return fmt.Errorf("failed to get current organization: %w", err)
+	}
+	if organizationID == "" {
+		return ErrOrganizationNotFound
+	}
+
+	organization, err := s.organizationRepo.GetByID(ctx, organizationID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrOrganizationNotFound
+		}
+		return fmt.Errorf("failed to get organization: %w", err)
+	}
+	if organization == nil {
+		return ErrOrganizationNotFound
+	}
+	if organization.Status != model.OrganizationStatusActive {
+		return ErrOrganizationNotEditable
+	}
+
+	operatorJoin, err := s.organizationRepo.GetAccountJoin(ctx, organizationID, operatorID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrOrganizationPermissionDenied
+		}
+		return fmt.Errorf("failed to get operator membership: %w", err)
+	}
+	if operatorJoin == nil || operatorJoin.Role != model.OrganizationRoleOwner {
+		return ErrOrganizationPermissionDenied
+	}
+
+	targetJoin, err := s.organizationRepo.GetAccountJoin(ctx, organizationID, memberID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrOrganizationMemberNotFound
+		}
+		return fmt.Errorf("failed to get target membership: %w", err)
+	}
+	if targetJoin == nil {
+		return ErrOrganizationMemberNotFound
+	}
+	if targetJoin.Role == model.OrganizationRoleOwner {
+		return ErrOrganizationOwnerRoleImmutable
+	}
+	if targetJoin.Status != model.OrganizationMemberStatusActive {
+		return ErrOrganizationMemberNotActive
+	}
+	if targetJoin.Role == role {
+		return nil
+	}
+
+	targetJoin.Role = role
+	if err := s.organizationRepo.UpdateAccountJoin(ctx, targetJoin); err != nil {
+		return fmt.Errorf("failed to update organization member role: %w", err)
 	}
 
 	return nil
@@ -3541,7 +3659,7 @@ func (s *organizationService) GetOrganizationMembersPaginated(ctx context.Contex
 	}
 	var total int64
 
-	baseQuery := db.WithContext(ctx).Table("members").
+	baseQuery := db.WithContext(ctx).Unscoped().Table("members").
 		Select("accounts.*, members.role as organization_role, members.name as member_name").
 		Joins("JOIN accounts ON members.account_id = accounts.id").
 		Where("members.organization_id = ?", organizationID)
@@ -3639,7 +3757,7 @@ func (s *organizationService) GetOrganizationMemberByAccountID(ctx context.Conte
 		MemberName       *string                `gorm:"column:member_name"`
 	}
 
-	err := db.WithContext(ctx).Table("members").
+	err := db.WithContext(ctx).Unscoped().Table("members").
 		Select("accounts.*, members.role as organization_role, members.name as member_name").
 		Joins("JOIN accounts ON members.account_id = accounts.id").
 		Where("members.organization_id = ?", organizationID).

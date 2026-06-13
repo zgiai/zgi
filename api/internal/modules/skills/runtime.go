@@ -853,6 +853,62 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"content": "# Report\n\nSummary...", "format": "md", "filename": "report"},
 		},
+		SkillFileGenerator + "/generate_docx": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_docx",
+			Description: "Generate a styled DOCX file from a structured JSON document specification.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"document":  stringValueSchema("JSON string describing the DOCX document. Include blocks with type heading, paragraph, table, or page_break."),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional title hint; visible content must be included in document.blocks."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"document"},
+			),
+			Example: map[string]interface{}{
+				"document": `{"blocks":[{"type":"heading","level":1,"text":"Report","style":{"alignment":"center","font_size":18,"bold":true}},{"type":"paragraph","runs":[{"text":"Total: "},{"text":"113.47","bold":true,"color":"C00000"}]}]}`,
+				"filename": "styled-report",
+			},
+		},
+		SkillFileGenerator + "/generate_pdf": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_pdf",
+			Description: "Generate a styled PDF file from self-contained HTML and inline CSS.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"html":      stringValueSchema("Self-contained HTML body or full HTML document. Do not include external URLs, scripts, iframes, or remote assets."),
+					"css":       stringValueSchema("Optional inline CSS appended to the HTML document. Prefer @page for page size and margins."),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional title used when wrapping an HTML fragment. Visible content must be included in html."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"html"},
+			),
+			Example: map[string]interface{}{
+				"html":     `<main><h1>Report</h1><p>Total: <strong class="amount">113.47</strong></p></main>`,
+				"css":      `@page { size: A4; margin: 18mm; } h1 { text-align: center; } .amount { color: #c00000; }`,
+				"filename": "styled-report",
+			},
+		},
+		SkillFileGenerator + "/generate_pptx": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_pptx",
+			Description: "Generate an editable static PPTX presentation from a structured JSON presentation specification.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"presentation": stringValueSchema("JSON string describing the PPTX presentation. Include slides with elements of type title, text, table, or shape. Use non-overlapping boxes for readable content; omitted boxes use simple auto layout."),
+					"filename":     stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":        stringValueSchema("Optional title hint; visible content must be included in presentation.slides."),
+					"lifecycle":    enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"presentation"},
+			),
+			Example: map[string]interface{}{
+				"presentation": `{"layout":"wide","slides":[{"elements":[{"type":"title","text":"Quarterly Report","style":{"align":"center"}},{"type":"text","text":"Total revenue: 113.47","x":0.8,"y":1.4,"w":11.6,"h":0.8,"style":{"font_size":24,"bold":true,"color":"C00000"}}]}]}`,
+				"filename":     "quarterly-report",
+			},
+		},
 		SkillChartGenerator + "/generate_chart": {
 			SkillID:     SkillChartGenerator,
 			ToolName:    "generate_chart",

@@ -11,6 +11,8 @@ export const ORGANIZATION_KEYS = {
   lists: () => [...ORGANIZATION_KEYS.all, 'list'] as const,
   list: (params: unknown) => [...ORGANIZATION_KEYS.lists(), params] as const,
   current: () => [...ORGANIZATION_KEYS.all, 'current'] as const,
+  currentMembers: (params?: unknown) =>
+    [...ORGANIZATION_KEYS.all, 'current-members', params].filter(Boolean),
   roles: (orgId: string) => [...ORGANIZATION_KEYS.all, 'roles', orgId] as const,
   roleDetail: (orgId: string, roleId: string) =>
     [...ORGANIZATION_KEYS.all, 'role-detail', orgId, roleId] as const,

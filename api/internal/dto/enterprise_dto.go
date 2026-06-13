@@ -278,7 +278,8 @@ type CreateOrganizationWithWorkspaceRequest struct {
 
 // UpdateOrganizationRequest represents the request to update an enterprise group
 type UpdateOrganizationRequest struct {
-	Name string `json:"name" binding:"required"`
+	Name      string  `json:"name" binding:"required"`
+	ShortName *string `json:"short_name,omitempty"`
 }
 
 // AddWorkspaceToOrganizationRequest represents the request to add a tenant to enterprise
@@ -348,6 +349,10 @@ type UpdateOrganizationMemberRoleRequest struct {
 	OrganizationID string                 `json:"organization_id" binding:"required"`
 	AccountID      string                 `json:"account_id" binding:"required"`
 	Role           model.OrganizationRole `json:"role" binding:"required"`
+}
+
+type UpdateCurrentOrganizationMemberRoleRequest struct {
+	Role model.OrganizationRole `json:"role" binding:"required"`
 }
 
 // UpdateOrganizationMemberRequest represents the request to update member info

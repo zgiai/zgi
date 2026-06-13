@@ -11,10 +11,11 @@ type TemplateID string
 
 const (
 	// Datasource module specific prompts.
-	DatasourceTableAnalysis       TemplateID = "datasource/table_analysis"
-	DatasourceFileConversion      TemplateID = "datasource/file_conversion"
-	DatasourceDefaultUserIngestZh TemplateID = "datasource/default_user_ingest_zh-CN"
-	DatasourceDefaultUserIngestEn TemplateID = "datasource/default_user_ingest"
+	DatasourceTableAnalysis         TemplateID = "datasource/table_analysis"
+	DatasourceFileConversion        TemplateID = "datasource/file_conversion"
+	DatasourceExcelFieldRecognition TemplateID = "datasource/excel_field_recognition"
+	DatasourceDefaultUserIngestZh   TemplateID = "datasource/default_user_ingest_zh-CN"
+	DatasourceDefaultUserIngestEn   TemplateID = "datasource/default_user_ingest"
 
 	// Dataset module specific prompts.
 	DatasetQuestionGeneration TemplateID = "dataset/question_generation"

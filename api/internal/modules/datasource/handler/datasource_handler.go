@@ -1510,6 +1510,64 @@ func (h *DataSourceHandler) IngestFileToTable(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// ParseFileForTableIngest parses file content for table ingestion review.
+func (h *DataSourceHandler) ParseFileForTableIngest(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req dto.ParseFileForTableIngestRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	result, err := h.service.ParseFileForTableIngest(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// ExtractTextToTableRecords recognizes table records from parsed text content.
+func (h *DataSourceHandler) ExtractTextToTableRecords(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req dto.ExtractTextToTableRecordsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	result, err := h.service.ExtractTextToTableRecords(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
 // BatchIngestFileToTable handles the batch ingestion of multiple files into a table
 func (h *DataSourceHandler) BatchIngestFileToTable(c *gin.Context) {
 	organizationID := util.GetOrganizationIDCompat(c)
@@ -1637,6 +1695,10 @@ func (h *DataSourceHandler) GetTablePrompt(c *gin.Context) {
 	// Get prompt for table
 	prompt, err := h.service.GetTablePrompt(c.Request.Context(), tableID, lang)
 	if err != nil {
+		if service.IsDataSourceTableNotFound(err) {
+			response.Fail(c, response.ErrNotFound)
+			return
+		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
@@ -1946,6 +2008,153 @@ func (h *DataSourceHandler) ListOperationLogsByDataSourceID(c *gin.Context) {
 	})
 }
 
+func (h *DataSourceHandler) ListSQLAuditByWorkspace(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	workspaceID := c.Param("workspace_id")
+	if workspaceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "workspace_id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if h.organizationService != nil {
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	var req dto.ListSQLAuditRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid query parameters: "+err.Error())
+		return
+	}
+
+	page := 1
+	limit := 20
+	if req.Page > 0 {
+		page = req.Page
+	}
+	if req.Limit > 0 {
+		limit = req.Limit
+	}
+	offset := (page - 1) * limit
+
+	filters := dto.SQLAuditFilter{
+		DataSourceID:  req.DataSourceID,
+		TableID:       req.TableID,
+		ClientType:    req.ClientType,
+		WorkflowRunID: req.WorkflowRunID,
+		NodeID:        req.NodeID,
+		CreatedBy:     req.CreatedBy,
+		OperationType: req.OperationType,
+		Status:        req.Status,
+		StartTime:     req.StartTime,
+		EndTime:       req.EndTime,
+	}
+
+	records, err := h.service.ListSQLAuditByWorkspace(c.Request.Context(), organizationID, workspaceID, filters, limit, offset)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	total, err := h.service.CountSQLAuditByWorkspace(c.Request.Context(), organizationID, workspaceID, filters)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	items := make([]dto.SQLAuditListItem, 0, len(records))
+	for _, record := range records {
+		items = append(items, dto.ConvertSQLOperationModelToAuditListItem(record))
+	}
+
+	response.Success(c, dto.ListSQLAuditResponse{
+		Data:    items,
+		HasMore: int64(page*limit) < total,
+		Limit:   limit,
+		Total:   total,
+		Page:    page,
+	})
+}
+
+func (h *DataSourceHandler) GetSQLAuditDetail(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	workspaceID := c.Param("workspace_id")
+	if workspaceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "workspace_id is required")
+		return
+	}
+
+	operationID := c.Param("operation_id")
+	if operationID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "operation_id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if h.organizationService != nil {
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	record, err := h.service.GetSQLAuditDetail(c.Request.Context(), organizationID, workspaceID, operationID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	if record == nil {
+		response.Fail(c, response.ErrNotFound)
+		return
+	}
+
+	response.Success(c, dto.ConvertSQLOperationModelToAuditDetail(record))
+}
+
 // RegisterRoutes registers all data source routes
 func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant := router.Group("", middleware.JWTWithOrganizationAndService(h.accountService))
@@ -1969,9 +2178,12 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.PUT("/data-dbs/:id/tables/:table_id/columns", h.UpdateTableColumns)
 	authWithTenant.GET("/data-dbs/:id/tables/:table_id/columns", h.GetTableColumns)
 	authWithTenant.GET("/data-dbs/:id/sql-operations", h.ListOperationLogsByDataSourceID)
+	authWithTenant.GET("/workspaces/:workspace_id/sql-audit", h.ListSQLAuditByWorkspace)
+	authWithTenant.GET("/workspaces/:workspace_id/sql-audit/:operation_id", h.GetSQLAuditDetail)
 	authWithTenant.POST("/data-dbs/analyze-file-for-table", h.AnalyzeFileForTable)
 	authWithTenant.POST("/data-dbs/:id/excel-import/analyze", h.AnalyzeExcelImport)
 	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id", h.GetExcelImportJob)
+	authWithTenant.POST("/data-dbs/:id/excel-import/jobs/:job_id/recognize", h.RecognizeExcelImportFields)
 	authWithTenant.POST("/data-dbs/:id/excel-import/jobs/:job_id/import", h.ConfirmExcelImport)
 	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id/errors", h.ListExcelImportErrors)
 
@@ -1984,6 +2196,8 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.POST("/data-dbs/:id/tables/:table_id/records/import", h.ImportTableRecords)
 
 	// File ingestion operations
+	authWithTenant.POST("/data-dbs/parse-file-for-table-ingest", h.ParseFileForTableIngest)
+	authWithTenant.POST("/data-dbs/extract-text-to-table-records", h.ExtractTextToTableRecords)
 	authWithTenant.POST("/data-dbs/ingest-file-to-table", h.IngestFileToTable)
 	authWithTenant.POST("/data-dbs/batch-ingest-file-to-table", h.BatchIngestFileToTable)
 }

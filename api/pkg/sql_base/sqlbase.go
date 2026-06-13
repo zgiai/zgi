@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 )
 
 // SQLBase defines the interface for postgres-meta service
@@ -92,7 +93,7 @@ type SQLBase interface {
 	ListTypes(ctx context.Context) ([]Type, error)
 
 	// Query operations
-	ExecuteSQL(ctx context.Context, query string, params []interface{}) (*QueryResult, error)
+	ExecuteSQL(ctx context.Context, query string, params []interface{}, auditCtx *audit.Context) (*QueryResult, error)
 	FormatQuery(ctx context.Context, req FormatQueryRequest) (string, error)
 	ParseQuery(ctx context.Context, req ParseQueryRequest) (*ParsedQuery, error)
 	DeparseQuery(ctx context.Context, req DeparseQueryRequest) (string, error)
@@ -543,7 +544,24 @@ const (
 	SQLBaseTypeInternal SQLBaseType = "internal"
 )
 
-func NewSQLBaseClient() (SQLBase, error) {
+type clientOptions struct {
+	recorder audit.Recorder
+}
+
+type Option func(*clientOptions)
+
+func WithAuditRecorder(recorder audit.Recorder) Option {
+	return func(options *clientOptions) {
+		options.recorder = recorder
+	}
+}
+
+func NewSQLBaseClient(opts ...Option) (SQLBase, error) {
+	options := clientOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	cfg := config.Current()
 	sqlBaseCfg := cfg.SQLBase
 	dbCfg := cfg.Database
@@ -557,11 +575,11 @@ func NewSQLBaseClient() (SQLBase, error) {
 
 	switch SQLBaseType(metaType) {
 	case SQLBaseTypeExternal:
-		return NewExternalClient()
+		return NewExternalClient(options.recorder)
 	case SQLBaseTypeInternal:
-		return NewInternalClient(internalHost, internalPort, internalUser, internalPassword, internalDb)
+		return NewInternalClient(internalHost, internalPort, internalUser, internalPassword, internalDb, options.recorder)
 	default:
 		// Fall back to the internal client when SQL_BASE_TYPE is empty or invalid.
-		return NewInternalClient(internalHost, internalPort, internalUser, internalPassword, internalDb)
+		return NewInternalClient(internalHost, internalPort, internalUser, internalPassword, internalDb, options.recorder)
 	}
 }

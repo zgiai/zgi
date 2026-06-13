@@ -22,6 +22,7 @@ func provideWorkflowRuntimeDependencies(serviceContainer *container.ServiceConta
 		FileService:                 serviceContainer.GetFileService(),
 		AutomationDefinitionService: serviceContainer.GetAutomationDefinitionService(),
 		NotificationSMSService:      serviceContainer.GetNotificationSMSService(),
+		SQLBase:                     serviceContainer.GetSQLBase(),
 	}
 }
 

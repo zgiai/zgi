@@ -89,6 +89,29 @@ type ConfirmExcelImportRequest struct {
 	} `json:"options"`
 }
 
+type RecognizeExcelImportTable struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type RecognizeExcelImportSource struct {
+	FileName  string `json:"file_name,omitempty"`
+	SheetName string `json:"sheet_name,omitempty"`
+}
+
+type RecognizeExcelImportRequest struct {
+	Table            RecognizeExcelImportTable  `json:"table" binding:"required"`
+	Source           RecognizeExcelImportSource `json:"source,omitempty"`
+	Columns          []InferredExcelColumn      `json:"columns" binding:"required,min=1"`
+	Model            *ModelSpec                 `json:"model" binding:"required"`
+	OperatorLanguage string                     `json:"operator_language,omitempty"`
+}
+
+type RecognizeExcelImportData struct {
+	Table   RecognizeExcelImportTable `json:"table"`
+	Columns []InferredExcelColumn     `json:"columns"`
+}
+
 type ExcelImportFailedItem struct {
 	RowIndex     int     `json:"row_index"`
 	ColumnName   *string `json:"column_name,omitempty"`

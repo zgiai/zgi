@@ -23,6 +23,7 @@ const messages = {
     workspaces: 'Workspace Management',
     contacts: 'Contacts',
     permissions: 'Permissions',
+    organizationSettings: 'Organization Settings',
     aichatSkills: 'Skill Management',
     modelSettings: 'Default Model Management',
     marketplace: 'Marketplace',
@@ -493,6 +494,65 @@ const messages = {
     },
   },
   organization: {
+    settings: {
+      title: 'Organization Settings',
+      subtitle: 'Manage the current organization profile and administrator access.',
+      profileTitle: 'Profile',
+      profileDescription:
+        'This name is shown in the organization switcher, dashboard, and organization member views.',
+      permissionHint:
+        'Administrators can edit organization profile. Only owners can manage organization administrators.',
+      name: 'Organization name',
+      namePlaceholder: 'Enter organization name',
+      currentRole: 'Current role',
+      roles: {
+        owner: 'Owner',
+        admin: 'Administrator',
+        normal: 'Member',
+      },
+      noPermission: 'Only organization owners and administrators can update organization settings.',
+      save: 'Save changes',
+      saving: 'Saving...',
+      saved: 'Saved',
+      readyToSave: 'Changes are ready to save.',
+      saveDisabledReasons: {
+        saving: 'Saving is in progress. Please wait.',
+        noPermission:
+          'Only organization owners and administrators can edit the organization profile.',
+        nameRequired: 'Organization name cannot be empty.',
+        nameTooLong: 'Organization name cannot exceed {max} characters.',
+        noChanges: 'There are no changes to save.',
+      },
+      updateSuccess: 'Organization updated',
+      updateError: 'Failed to update organization',
+      adminManagement: {
+        title: 'Administrator Management',
+        description:
+          'Owners can grant or remove organization administrator access for active members.',
+        adminCount: '{count} organization admins',
+        ownerTitle: 'Owner',
+        ownerBadge: 'Owner',
+        noOwner: 'No owner found.',
+        adminTitle: 'Administrators',
+        refreshing: 'Refreshing...',
+        demote: 'Remove admin',
+        emptyAdmins: 'No organization administrators yet.',
+        addTitle: 'Add administrator',
+        addDescription:
+          'Search active standard members and set them as organization administrators.',
+        searchPlaceholder: 'Search active members by name or email',
+        promote: 'Set as admin',
+        emptyCandidates: 'No active standard members match this search.',
+        promoteSuccess: 'Administrator added',
+        demoteSuccess: 'Administrator removed',
+        updateRoleError: 'Failed to update administrator role',
+        demoteConfirmTitle: 'Remove administrator access',
+        demoteConfirmDescription:
+          'Remove administrator access from "{name}"? They will remain a standard organization member.',
+        demoteConfirm: 'Remove admin',
+        cancel: 'Cancel',
+      },
+    },
     aichatSkills: {
       pageTitle: 'Organization Skills',
       pageSubtitle:

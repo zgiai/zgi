@@ -81,7 +81,11 @@ const OVERSCAN_PX = 200;
 function getModelPropsSignature(props: ModelSelectorModelProps | null): string {
   if (!props) return '__empty__';
 
-  const visionEnabled = Boolean(props.endpoints?.vision || props.use_cases?.includes('vision'));
+  const visionEnabled = Boolean(
+    props.endpoints?.vision ||
+      props.use_cases?.includes('vision') ||
+      props.input_modalities?.includes('image')
+  );
   return `${props.id}|${props.provider}|${props.model}|${props.updated_at}|${visionEnabled}`;
 }
 
@@ -187,7 +191,8 @@ export function ModelSelector({
       if (
         capabilityFilter.features_vision &&
         !model.endpoints?.vision &&
-        !model.use_cases?.includes('vision')
+        !model.use_cases?.includes('vision') &&
+        !model.input_modalities?.includes('image')
       ) {
         return false;
       }

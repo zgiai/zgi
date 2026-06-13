@@ -62,7 +62,7 @@ func NewModule(options ...ModuleOption) *Module {
 	adapters := []ParseAdapter{sdkAdapter, apiAdapter}
 	adapters = append(adapters, opts.extraAdapters...)
 	orchestrator := NewOrchestrator(resolver, adapters)
-	service := NewService(orchestrator)
+	service := NewService(orchestrator, planner, catalog)
 
 	return &Module{
 		Service:      service,
