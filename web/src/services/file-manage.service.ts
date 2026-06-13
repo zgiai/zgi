@@ -20,6 +20,7 @@ import type {
   CreateFolderResponse,
   UpdateFolderRequest,
   UpdateFolderResponse,
+  MoveFolderRequest,
   CreateTextFileRequest,
   CreateTextFileResponse,
   FileOriginalPreviewUrlResponse,
@@ -337,6 +338,16 @@ class FileManageService extends BaseService {
       parent_id: data.parent_id,
     };
     return this.request('patch', `/console/api/file-folders/${folderId}`, body);
+  }
+
+  /**
+   * Move folder to another folder
+   */
+  async moveFolder(data: MoveFolderRequest): Promise<ApiResponseData<{ success: boolean }>> {
+    return this.request('post', '/console/api/file-folders/move-folder', {
+      folder_id: data.folder_id,
+      target_id: data.target_id,
+    });
   }
 
   /**

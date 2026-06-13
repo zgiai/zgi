@@ -24,6 +24,9 @@ export interface FileSidebarProps {
   onItemClick?: (itemId: string) => void;
   onNewFolder?: () => void;
   onUpload?: () => void;
+  onFolderCreateChild?: (folder: FileFolder) => void;
+  onFolderRename?: (folder: FileFolder) => void;
+  onFolderMove?: (folder: FileFolder) => void;
   onFolderDelete?: (folder: FileFolder) => void;
   workspaceId?: string;
   topContent?: React.ReactNode;
@@ -52,6 +55,9 @@ function FileSidebarBase({
   onItemClick,
   onNewFolder,
   onUpload,
+  onFolderCreateChild,
+  onFolderRename,
+  onFolderMove,
   onFolderDelete,
   workspaceId,
   topContent,
@@ -255,6 +261,9 @@ function FileSidebarBase({
                   onToggleExpand={handleToggleExpand}
                   maxLevel={1}
                   variant="sidebar"
+                  onCreateChild={onFolderCreateChild}
+                  onRename={onFolderRename}
+                  onMove={onFolderMove}
                   onDelete={onFolderDelete}
                   workspaceId={workspaceId}
                 />

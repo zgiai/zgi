@@ -66,7 +66,7 @@ const messages: FilesMessages = {
     parsing: '解析中',
     confirming: '待确认',
     generating: '索引中',
-    parse_failed: '失败',
+    parse_failed: '解析失败',
     ready: '已就绪',
   },
 
@@ -485,6 +485,8 @@ const messages: FilesMessages = {
     createFolderError: '文件夹创建失败',
     updateFolderSuccess: '文件夹更新成功',
     updateFolderError: '文件夹更新失败',
+    moveFolderSuccess: '文件夹移动成功',
+    moveFolderError: '文件夹移动失败',
     deleteFolderSuccess: '文件夹删除成功',
     deleteFolderError: '文件夹删除失败',
     createTextFileSuccess: '文本文件创建成功',
@@ -543,7 +545,8 @@ const messages: FilesMessages = {
     workspaceRequired: '请选择所属工作空间',
     storageLocation: '存储位置',
     selectFolder: '选择文件夹',
-    defaultFolder: '默认文件夹',
+    defaultFolder: '我的文件',
+    uploadFolderRootHelp: '未选择具体文件夹时，文件会存放在我的文件下。',
     sourceType: '来源类型',
     processingMode: '处理方式',
     processingModes: {
@@ -558,6 +561,7 @@ const messages: FilesMessages = {
     },
     parseProvider: '解析引擎',
     parseProviderDescription: '上传后自动解析时使用，Auto 会按当前可用 provider 路由。',
+    parseProviderStoreOnlyDescription: '仅存储模式不会触发解析，引擎选择将在上传并解析时生效。',
     parseProviderUnavailable: '不可用',
     parseProviderLoading: '正在检查可用引擎...',
     parseProviders: {
@@ -572,6 +576,12 @@ const messages: FilesMessages = {
     processingHintDescription:
       '图片、图标、临时文件和暂不支持的格式会按仅存储处理，不进入文档处理链路。',
     uploadFiles: '上传文件',
+    selectedFilesTitle: '已选择 {count} 个文件',
+    selectedFilesPendingSummary: '已选择 {count} 个文件，等待上传。',
+    selectedFilesValidationSummary: '已选择 {count} 个文件，{failedCount} 个无法上传，请移除后继续。',
+    selectedFilesResultSummary: '已上传 {successCount} 个文件，{failedCount} 个上传失败。',
+    removeInvalidBeforeUpload: '请先移除无法上传的文件，再继续上传。',
+    cannotUpload: '无法上传',
     confirmUpload: '确认上传',
   },
 
@@ -592,6 +602,17 @@ const messages: FilesMessages = {
     selectParentFolder: '选择父文件夹',
     folderLabel: '文件夹：',
     rootFolder: '根目录',
+    renameTitle: '重命名文件夹',
+    renameDescription: '修改后会同步更新文件空间中的文件夹名称。',
+    moveTitle: '移动文件夹',
+    moveDescription: '选择“{name}”要移动到的位置。',
+    targetFolder: '目标文件夹',
+    actions: {
+      createChild: '新建子文件夹',
+      rename: '重命名',
+      moveTo: '移动到',
+      delete: '删除文件夹',
+    },
   },
 
   // Text file creation

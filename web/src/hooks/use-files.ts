@@ -19,6 +19,7 @@ import type {
   CreateFolderResponse,
   UpdateFolderRequest,
   UpdateFolderResponse,
+  MoveFolderRequest,
   CreateTextFileRequest,
   CreateTextFileResponse,
   GetAllFilesRequest,
@@ -46,6 +47,7 @@ export const FILE_FOLDERS_KEY = 'file-folders';
 export const UPLOAD_FILE_KEY = 'upload-file';
 export const CREATE_FOLDER_KEY = 'create-folder';
 export const UPDATE_FOLDER_KEY = 'update-folder';
+export const MOVE_FOLDER_KEY = 'move-folder';
 export const DELETE_FOLDER_KEY = 'delete-folder';
 export const CREATE_TEXT_FILE_KEY = 'create-text-file';
 
@@ -835,6 +837,43 @@ export function useUpdateFolder(): {
   return {
     updateFolder,
     isUpdating,
+  };
+}
+
+/**
+ * Move folder hook
+ */
+export function useMoveFolder(): {
+  moveFolder: (data: MoveFolderRequest) => Promise<void>;
+  isMoving: boolean;
+} {
+  const t = useT('files');
+  const queryClient = useQueryClient();
+
+  const { mutateAsync: moveFolderMutation, isPending: isMoving } = useMutation({
+    mutationFn: async (data: MoveFolderRequest) => {
+      await fileManageService.moveFolder(data);
+    },
+    onSuccess: () => {
+      toast.success(t('toast.moveFolderSuccess'));
+      queryClient.invalidateQueries({
+        queryKey: [FILE_FOLDERS_KEY],
+        predicate: query => isFileFolderListQuery(query.queryKey),
+      });
+    },
+    onError: error => {
+      const message = (error as { message?: string }).message ?? t('toast.moveFolderError');
+      toast.error(message);
+    },
+  });
+
+  const moveFolder = async (data: MoveFolderRequest) => {
+    return await moveFolderMutation(data);
+  };
+
+  return {
+    moveFolder,
+    isMoving,
   };
 }
 

@@ -622,7 +622,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           onDragLeave={handleDrag}
           onDrop={handleDrop}
           className={cn(
-            'flex flex-col items-center justify-center border-2 border-dashed rounded-md px-5 py-4 text-center transition-colors',
+            'flex flex-col items-center justify-center border-2 border-dashed rounded-md px-5 py-3 text-center transition-colors',
             dragActive ? 'border-primary bg-primary/5' : 'border-border',
             dropZoneClassName,
             isFull ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
@@ -673,20 +673,6 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
               )}
             </div>
           )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-4"
-            disabled={isFull}
-            onClick={e => {
-              e.preventDefault();
-              e.stopPropagation();
-              inputRef.current?.click();
-            }}
-          >
-            {t('fileUpload.selectLocalFiles')}
-          </Button>
         </div>
 
         {/* Table */}

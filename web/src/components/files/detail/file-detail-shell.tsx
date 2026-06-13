@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -215,19 +215,21 @@ function ProcessingWorkbenchOverview({
   const BannerIcon = banner.icon;
 
   return (
-    <section className={cn('rounded-lg border px-5 py-4', banner.className)}>
-      <div className="flex gap-4">
+    <section className={cn('rounded-lg border px-4 py-3', banner.className)}>
+      <div className="flex gap-3">
         <div
           className={cn(
-            'mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg',
+            'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
             banner.iconClassName
           )}
         >
-          <BannerIcon className={cn('h-5 w-5', status === 'parsing' || status === 'generating' ? 'animate-spin' : '')} />
+          <BannerIcon
+            className={cn('h-4 w-4', status === 'parsing' || status === 'generating' ? 'animate-spin' : '')}
+          />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-foreground">{t(banner.titleKey as never)}</h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          <h2 className="text-sm font-semibold text-foreground">{t(banner.titleKey as never)}</h2>
+          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
             {t(banner.descriptionKey as never, {
               pending: pendingCount,
               chunks: chunkCount,
@@ -235,7 +237,7 @@ function ProcessingWorkbenchOverview({
             })}
           </p>
 
-          <div className="mt-5 flex min-w-0 flex-wrap items-center gap-x-0 gap-y-3">
+          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-0 gap-y-2">
             {steps.map((step, index) => {
               const isActive = step.state === 'active' || step.state === 'attention';
               const StepIcon =
@@ -246,10 +248,10 @@ function ProcessingWorkbenchOverview({
                     : Circle;
               return (
                 <div key={step.key} className="flex items-center">
-                  <div className={cn('flex items-center gap-2 font-medium', getWorkbenchStepTone(step.state))}>
+                  <div className={cn('flex items-center gap-1.5 font-medium', getWorkbenchStepTone(step.state))}>
                     <span
                       className={cn(
-                        'flex h-7 w-7 items-center justify-center rounded-full border bg-background',
+                        'flex h-6 w-6 items-center justify-center rounded-full border bg-background',
                         step.state === 'done' && 'border-success/30 bg-success/10',
                         isActive && 'border-current bg-current/10',
                         step.state === 'failed' && 'border-destructive/30 bg-destructive/10',
@@ -257,14 +259,14 @@ function ProcessingWorkbenchOverview({
                         step.state === 'blocked' && 'border-border bg-muted'
                       )}
                     >
-                      <StepIcon className="h-4 w-4" />
+                      <StepIcon className="h-3.5 w-3.5" />
                     </span>
-                    <span className="text-sm">{t(`detail.workbench.steps.${step.key}` as never)}</span>
+                    <span className="text-xs">{t(`detail.workbench.steps.${step.key}` as never)}</span>
                   </div>
                   {index < steps.length - 1 ? (
                     <span
                       className={cn(
-                        'mx-3 h-px w-12 bg-border sm:w-20',
+                        'mx-2 h-px w-8 bg-border sm:w-14',
                         step.state === 'done' && 'bg-success/50',
                         isActive && 'bg-current'
                       )}
@@ -333,6 +335,9 @@ function FileDetailLoading() {
 
 export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const router = useRouter();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const tabAnchorRef = useRef<HTMLDivElement>(null);
+  const autoScrolledFileRef = useRef<string | null>(null);
   const { files: t, common } = useT();
   const { hasPermission } = useAccountPermissions();
   const canDownload = hasPermission('file.download');
@@ -347,6 +352,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
 
   const detail = data?.data;
   const file = detail?.file;
+  const loadedFileId = file?.id;
   const asset = detail?.asset;
   const processing = detail?.processing;
   const artifactState = detail?.artifact_state;
@@ -362,10 +368,14 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const parseReviewEnabled = status !== 'stored_only' && status !== 'parsing';
   const chunksEnabled = status === 'ready';
   const qaEnabled = status === 'ready' && vectorStatus === 'ready' && embeddingCount > 0;
+  const isFullyReady = status === 'ready' && vectorStatus === 'ready';
+  const showProcessingWorkbench = !isFullyReady;
+  const showHeaderRefresh = !isFullyReady;
   const parsedExportEnabled = parseReviewEnabled && status !== 'parse_failed';
   const canRequestProcessing =
     hasPermission('file.manage') || hasPermission('file.upload_create') || canDownload;
   const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
+  const showHeaderReparse = canReparse && !isFullyReady;
 
   const statusLabel = useMemo(() => {
     switch (status as FileAssetProductStatus | string) {
@@ -423,6 +433,27 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     }
   }, [status]);
 
+  useEffect(() => {
+    if (!loadedFileId || isFullyReady || autoScrolledFileRef.current === loadedFileId) return;
+
+    autoScrolledFileRef.current = loadedFileId;
+    window.requestAnimationFrame(() => {
+      const scrollContainer = scrollContainerRef.current;
+      const tabAnchor = tabAnchorRef.current;
+      if (!scrollContainer || !tabAnchor) return;
+
+      const scrollTop =
+        scrollContainer.scrollTop +
+        tabAnchor.getBoundingClientRect().top -
+        scrollContainer.getBoundingClientRect().top;
+
+      scrollContainer.scrollTo({
+        top: scrollTop,
+        behavior: 'smooth',
+      });
+    });
+  }, [loadedFileId, isFullyReady]);
+
   if (isLoading) return <FileDetailLoading />;
 
   if (error || !file) {
@@ -446,28 +477,28 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-background">
-      <div className="border-b bg-background px-4 py-5 sm:px-6">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+    <div ref={scrollContainerRef} className="flex h-full min-h-0 flex-col overflow-y-auto bg-background">
+      <div className="border-b bg-background px-4 py-3 sm:px-6">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2.5">
               <Button
                 variant="ghost"
-                className="h-auto gap-2 px-0 py-0 text-base font-medium text-muted-foreground hover:bg-transparent hover:text-foreground"
+                className="h-auto gap-2 px-0 py-0 text-sm font-medium text-muted-foreground hover:bg-transparent hover:text-foreground"
                 onClick={() => router.push('/console/files')}
               >
-                <ArrowLeft className="h-5 w-5" />
+                <ArrowLeft className="h-4 w-4" />
                 {t('detail.fileBreadcrumb')}
               </Button>
-              <span className="text-xl text-muted-foreground">/</span>
-              <h1 className="min-w-0 max-w-[min(720px,100%)] truncate text-2xl font-semibold leading-tight text-foreground">
+              <span className="text-lg text-muted-foreground">/</span>
+              <h1 className="min-w-0 max-w-[min(720px,100%)] truncate text-xl font-semibold leading-tight text-foreground">
                 {file.name}
               </h1>
-              <Badge variant={getProcessingBadgeVariant(status)} className="px-3 py-1 text-sm">
+              <Badge variant={getProcessingBadgeVariant(status)} className="px-2.5 py-0.5 text-xs">
                 {statusLabel}
               </Badge>
             </div>
-            <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
+            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm text-muted-foreground">
               <span>{t('detail.fileType', { extension: file.extension.toUpperCase() })}</span>
               <span>{formatFileSize(file.size)}</span>
               <span>{t('detail.createdAt', { time: formatDate(file.created_at) })}</span>
@@ -475,23 +506,25 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              className="h-11 gap-2 rounded-lg px-4"
-              onClick={() => void refetch()}
-              disabled={isFetching}
-            >
-              {isFetching ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              {common('refresh')}
-            </Button>
+            {showHeaderRefresh ? (
+              <Button
+                variant="outline"
+                className="h-9 gap-2 rounded-md px-3 text-sm"
+                onClick={() => void refetch()}
+                disabled={isFetching}
+              >
+                {isFetching ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                {common('refresh')}
+              </Button>
+            ) : null}
             {canDownload ? (
               <Button
                 variant="outline"
-                className="h-11 gap-2 rounded-lg px-4"
+                className="h-9 gap-2 rounded-md px-3 text-sm"
                 onClick={handleDownload}
                 disabled={isDownloading}
               >
@@ -505,7 +538,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
             ) : null}
             <Button
               variant="outline"
-              className="h-11 gap-2 rounded-lg px-4"
+              className="h-9 gap-2 rounded-md px-3 text-sm"
               onClick={() => void handleExportParsedContent()}
               disabled={!parsedExportEnabled || isExportingParsed}
               title={!parsedExportEnabled ? t('detail.exportParsedContentUnavailable') : undefined}
@@ -517,10 +550,10 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
               )}
               {t('detail.exportParsedContent')}
             </Button>
-            {canReparse ? (
+            {showHeaderReparse ? (
               <Button
                 variant="outline"
-                className="h-11 gap-2 rounded-lg px-4"
+                className="h-9 gap-2 rounded-md px-3 text-sm"
                 onClick={() => setReparseConfirmOpen(true)}
                 disabled={createProcessingRequest.isPending}
               >
@@ -571,25 +604,28 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         </div>
       ) : null}
 
-      <div className="border-b px-4 py-4 sm:px-6">
-        <ProcessingWorkbenchOverview
-          status={status}
-          pendingCount={pendingCount}
-          chunkCount={chunkCount}
-          embeddingCount={embeddingCount}
-          vectorStatus={vectorStatus}
-        />
-      </div>
+      {showProcessingWorkbench ? (
+        <div className="border-b px-4 py-3 sm:px-6">
+          <ProcessingWorkbenchOverview
+            status={status}
+            pendingCount={pendingCount}
+            chunkCount={chunkCount}
+            embeddingCount={embeddingCount}
+            vectorStatus={vectorStatus}
+          />
+        </div>
+      ) : null}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0">
+        <div ref={tabAnchorRef} />
         <TabsList className="grid h-auto w-full grid-cols-3 overflow-hidden rounded-none border-x-0 border-t-0 bg-background p-0 text-foreground">
           <TabsTrigger
             value="preview"
-            className="min-h-[84px] justify-start gap-3 rounded-none border-0 border-r border-border px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-success data-[state=active]:bg-background data-[state=active]:text-success data-[state=active]:shadow-none"
+            className="min-h-[56px] justify-start gap-2.5 rounded-none border-0 border-r border-border px-4 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-success data-[state=active]:bg-background data-[state=active]:text-success data-[state=active]:shadow-none"
           >
             <span
               className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
                 hasPendingConfirmations
                   ? 'bg-warning/10 text-warning'
                   : activeTab === 'preview'
@@ -597,28 +633,28 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
                     : 'bg-muted text-muted-foreground'
               )}
             >
-              <FileText className="h-5 w-5" />
+              <FileText className="h-4 w-4" />
             </span>
             <span className="min-w-0">
-              <span className="block text-base font-semibold">{t('detail.tabs.preview')}</span>
+              <span className="block text-sm font-semibold">{t('detail.tabs.preview')}</span>
             </span>
           </TabsTrigger>
           <TabsTrigger
             value="chunks"
             disabled={!chunksEnabled}
-            className="min-h-[84px] justify-start gap-3 rounded-none border-0 border-r border-border px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-success data-[state=active]:bg-background data-[state=active]:text-success data-[state=active]:shadow-none"
+            className="min-h-[56px] justify-start gap-2.5 rounded-none border-0 border-r border-border px-4 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-success data-[state=active]:bg-background data-[state=active]:text-success data-[state=active]:shadow-none"
           >
             <span
               className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
                 activeTab === 'chunks' ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
               )}
             >
-              <Layers3 className="h-5 w-5" />
+              <Layers3 className="h-4 w-4" />
             </span>
             <span className="min-w-0">
-              <span className="block text-base font-semibold">{t('detail.tabs.chunks')}</span>
-              <span className="mt-1 block truncate text-sm font-normal text-muted-foreground">
+              <span className="block text-sm font-semibold">{t('detail.tabs.chunks')}</span>
+              <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
                 {chunksEnabled
                   ? t('detail.tabHints.chunksReady', { count: chunkCount })
                   : t('detail.tabHints.chunksWaiting')}
@@ -628,19 +664,19 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           <TabsTrigger
             value="qa"
             disabled={!qaEnabled}
-            className="min-h-[84px] justify-start gap-3 rounded-none border-0 px-5 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-success data-[state=active]:bg-background data-[state=active]:text-success data-[state=active]:shadow-none"
+            className="min-h-[56px] justify-start gap-2.5 rounded-none border-0 px-4 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-success data-[state=active]:bg-background data-[state=active]:text-success data-[state=active]:shadow-none"
           >
             <span
               className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
                 activeTab === 'qa' ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
               )}
             >
-              <MessageSquareText className="h-5 w-5" />
+              <MessageSquareText className="h-4 w-4" />
             </span>
             <span className="min-w-0">
-              <span className="block text-base font-semibold">{t('detail.tabs.qa')}</span>
-              <span className="mt-1 block truncate text-sm font-normal text-muted-foreground">
+              <span className="block text-sm font-semibold">{t('detail.tabs.qa')}</span>
+              <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
                 {qaEnabled ? t('detail.tabHints.qaReady') : t('detail.tabHints.qaWaiting')}
               </span>
             </span>
@@ -649,9 +685,9 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
 
         <TabsContent value="preview" className="mt-0">
           <section>
-            <div className="border-b px-4 py-5 sm:px-6">
-              <h2 className="text-xl font-semibold text-foreground">{t('detail.tabs.preview')}</h2>
-              <p className="mt-2 text-sm text-muted-foreground">
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b px-4 py-3 sm:px-6">
+              <h2 className="text-lg font-semibold text-foreground">{t('detail.tabs.preview')}</h2>
+              <p className="text-sm text-muted-foreground">
                 {t('detail.previewWorkspaceDescription')}
               </p>
             </div>

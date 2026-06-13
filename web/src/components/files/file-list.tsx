@@ -1,7 +1,7 @@
 import { memo, useState, type ComponentType, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import {
-  MoreVertical,
+  MoreHorizontal,
   FileIcon,
   FileText,
   FileSpreadsheet,
@@ -43,7 +43,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import type { FileItem } from '@/services/types/file';
 import { formatDate } from '@/utils/format';
@@ -79,20 +78,35 @@ function getEffectiveProcessingStatus(file: FileItem): string {
   return getProcessingStatus(file);
 }
 
-function getProcessingBadgeVariant(status: string) {
+function getProcessingStatusTone(status: string) {
   switch (status) {
     case 'ready':
-      return 'success' as const;
+      return {
+        badge: 'border-success/25 bg-success/10 text-success',
+        bar: 'bg-success',
+      };
     case 'confirming':
-      return 'warning' as const;
+      return {
+        badge: 'border-warning/25 bg-warning/10 text-warning',
+        bar: 'bg-warning',
+      };
     case 'parsing':
     case 'generating':
-      return 'info' as const;
+      return {
+        badge: 'border-primary/25 bg-primary/10 text-primary',
+        bar: 'bg-primary',
+      };
     case 'parse_failed':
-      return 'destructive' as const;
+      return {
+        badge: 'border-destructive/25 bg-destructive/10 text-destructive',
+        bar: 'bg-destructive',
+      };
     case 'stored_only':
     default:
-      return 'subtle' as const;
+      return {
+        badge: 'border-border bg-muted/60 text-muted-foreground',
+        bar: 'bg-muted-foreground',
+      };
   }
 }
 
@@ -100,13 +114,28 @@ function isProcessingActive(status: string) {
   return status === 'parsing' || status === 'confirming' || status === 'generating';
 }
 
+function getFileProcessingProgress(file: FileItem, status: string) {
+  if (typeof file.processing_progress === 'number') {
+    return Math.min(100, Math.max(0, file.processing_progress));
+  }
+
+  if (status === 'confirming') {
+    return 82;
+  }
+
+  if (status === 'parsing' || status === 'generating') {
+    return 96;
+  }
+
+  return 0;
+}
+
 function FileProcessingStatus({ file, compact = false }: { file: FileItem; compact?: boolean }) {
   const { files: t } = useT();
   const status = getEffectiveProcessingStatus(file);
-  const progress = file.processing_progress ?? 0;
-  const pendingCount = file.pending_confirmation_count ?? 0;
-  const chunkCount = file.chunk_count ?? 0;
-  const embeddingCount = file.embedding_count ?? 0;
+  const progress = getFileProcessingProgress(file, status);
+  const tone = getProcessingStatusTone(status);
+  const showProgress = isProcessingActive(status);
   const statusLabel = (() => {
     switch (status) {
       case 'parsing':
@@ -126,35 +155,45 @@ function FileProcessingStatus({ file, compact = false }: { file: FileItem; compa
   })();
 
   return (
-    <div className="min-w-0 space-y-1.5">
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-        <Badge
-          variant={getProcessingBadgeVariant(status)}
-          className={cn(compact ? 'px-2 py-0 text-[10px]' : 'px-2 py-0.5 text-[11px]')}
+    <div className="min-w-0">
+      <div className={cn('flex min-w-0 items-center', compact ? 'gap-1.5' : 'gap-2')}>
+        <span
+          className={cn(
+            'inline-flex h-5 shrink-0 items-center justify-center rounded-full border px-2 text-[12px] font-medium leading-none',
+            tone.badge,
+            compact && 'h-5 px-2 text-[11px]'
+          )}
         >
           {statusLabel}
-        </Badge>
-        {isProcessingActive(status) ? (
-          <span className="text-[11px] font-medium text-muted-foreground">{progress}%</span>
+        </span>
+        {showProgress ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div
+              className={cn(
+                'h-1.5 overflow-hidden rounded-full bg-border',
+                compact ? 'w-12' : 'w-14'
+              )}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+            >
+              <div
+                className={cn('h-full rounded-full transition-[width]', tone.bar)}
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <span
+              className={cn(
+                'w-8 shrink-0 text-right text-[12px] tabular-nums text-muted-foreground',
+                compact && 'w-7 text-[11px]'
+              )}
+            >
+              {progress}%
+            </span>
+          </div>
         ) : null}
       </div>
-      {isProcessingActive(status) ? (
-        <Progress
-          className={cn('h-1.5 w-20 max-w-full', status === 'confirming' && '[&>span]:bg-warning')}
-          value={progress}
-        />
-      ) : null}
-      {!compact ? (
-        <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-          {pendingCount > 0 ? (
-            <span>{t('fileList.pendingCount', { count: pendingCount })}</span>
-          ) : null}
-          {chunkCount > 0 ? <span>{t('fileList.chunkCount', { count: chunkCount })}</span> : null}
-          {embeddingCount > 0 ? (
-            <span>{t('fileList.embeddingCount', { count: embeddingCount })}</span>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -195,42 +234,42 @@ function getFileTypeConfig(extension: string): {
 
   const configs: Record<string, { Icon: ComponentType<{ className?: string }>; color: string }> = {
     // Documents
-    pdf: { Icon: FileText, color: 'text-red-600' },
-    doc: { Icon: FileText, color: 'text-blue-600' },
-    docx: { Icon: FileText, color: 'text-blue-600' },
-    txt: { Icon: FileText, color: 'text-gray-600' },
+    pdf: { Icon: FileText, color: 'text-muted-foreground' },
+    doc: { Icon: FileText, color: 'text-muted-foreground' },
+    docx: { Icon: FileText, color: 'text-muted-foreground' },
+    txt: { Icon: FileText, color: 'text-muted-foreground' },
     // Spreadsheets
-    xls: { Icon: FileSpreadsheet, color: 'text-green-600' },
-    xlsx: { Icon: FileSpreadsheet, color: 'text-green-600' },
-    csv: { Icon: FileSpreadsheet, color: 'text-orange-600' },
+    xls: { Icon: FileSpreadsheet, color: 'text-muted-foreground' },
+    xlsx: { Icon: FileSpreadsheet, color: 'text-muted-foreground' },
+    csv: { Icon: FileSpreadsheet, color: 'text-muted-foreground' },
     // Images
-    jpg: { Icon: ImageIcon, color: 'text-yellow-600' },
-    jpeg: { Icon: ImageIcon, color: 'text-yellow-600' },
-    png: { Icon: ImageIcon, color: 'text-purple-600' },
-    gif: { Icon: ImageIcon, color: 'text-pink-600' },
-    webp: { Icon: ImageIcon, color: 'text-pink-600' },
-    svg: { Icon: ImageIcon, color: 'text-indigo-600' },
+    jpg: { Icon: ImageIcon, color: 'text-warning' },
+    jpeg: { Icon: ImageIcon, color: 'text-warning' },
+    png: { Icon: ImageIcon, color: 'text-warning' },
+    gif: { Icon: ImageIcon, color: 'text-warning' },
+    webp: { Icon: ImageIcon, color: 'text-warning' },
+    svg: { Icon: ImageIcon, color: 'text-warning' },
     // Video
-    mp4: { Icon: Video, color: 'text-pink-600' },
-    avi: { Icon: Video, color: 'text-pink-600' },
-    mov: { Icon: Video, color: 'text-pink-600' },
-    wmv: { Icon: Video, color: 'text-pink-600' },
+    mp4: { Icon: Video, color: 'text-muted-foreground' },
+    avi: { Icon: Video, color: 'text-muted-foreground' },
+    mov: { Icon: Video, color: 'text-muted-foreground' },
+    wmv: { Icon: Video, color: 'text-muted-foreground' },
     // Audio
-    mp3: { Icon: FileMusic, color: 'text-indigo-600' },
-    wav: { Icon: FileAudio, color: 'text-indigo-600' },
+    mp3: { Icon: FileMusic, color: 'text-muted-foreground' },
+    wav: { Icon: FileAudio, color: 'text-muted-foreground' },
     // Archives
-    zip: { Icon: FileArchive, color: 'text-orange-600' },
-    rar: { Icon: FileArchive, color: 'text-orange-600' },
-    '7z': { Icon: FileArchive, color: 'text-orange-600' },
+    zip: { Icon: FileArchive, color: 'text-muted-foreground' },
+    rar: { Icon: FileArchive, color: 'text-muted-foreground' },
+    '7z': { Icon: FileArchive, color: 'text-muted-foreground' },
     // Code
-    js: { Icon: FileCode, color: 'text-yellow-600' },
-    ts: { Icon: FileCode, color: 'text-blue-600' },
-    jsx: { Icon: FileCode, color: 'text-blue-600' },
-    tsx: { Icon: FileCode, color: 'text-blue-600' },
-    json: { Icon: FileCode, color: 'text-gray-600' },
+    js: { Icon: FileCode, color: 'text-muted-foreground' },
+    ts: { Icon: FileCode, color: 'text-muted-foreground' },
+    jsx: { Icon: FileCode, color: 'text-muted-foreground' },
+    tsx: { Icon: FileCode, color: 'text-muted-foreground' },
+    json: { Icon: FileCode, color: 'text-muted-foreground' },
   };
 
-  return configs[ext] || { Icon: FileIcon, color: 'text-gray-600' };
+  return configs[ext] || { Icon: FileIcon, color: 'text-muted-foreground' };
 }
 
 function FileListBase({
@@ -872,10 +911,11 @@ function FileListBase({
           <col style={{ width: 150 }} />
           {hasAnyAction ? <col style={{ width: 160 }} /> : null}
         </colgroup>
-        <TableHeader className="sticky top-0 z-10 bg-muted/30 backdrop-blur">
+        <TableHeader className="sticky top-0 z-10 bg-secondary/40 backdrop-blur">
           <TableRow className="h-11 hover:bg-muted/30">
             <TableHead className="px-3">
               <Checkbox
+                className="size-4 rounded-[3px] [&_svg]:size-3 [&_svg]:stroke-[2]"
                 checked={allSelected}
                 onCheckedChange={handleSelectAll}
                 disabled={
@@ -890,14 +930,14 @@ function FileListBase({
                 }}
               />
             </TableHead>
-            <TableHead className="text-sm">{t('fileList.fileName')}</TableHead>
-            <TableHead className="text-sm">{t('fileList.fileType')}</TableHead>
-            <TableHead className="text-sm">{t('fileList.fileSize')}</TableHead>
-            <TableHead className="text-sm">{t('fileList.processingStatus')}</TableHead>
-            <TableHead className="text-sm">{t('fileList.relatedStatus')}</TableHead>
-            <TableHead className="text-sm">{t('fileList.uploadDate')}</TableHead>
+            <TableHead className="text-[13px]">{t('fileList.fileName')}</TableHead>
+            <TableHead className="text-[13px]">{t('fileList.fileType')}</TableHead>
+            <TableHead className="text-[13px]">{t('fileList.fileSize')}</TableHead>
+            <TableHead className="text-[13px]">{t('fileList.processingStatus')}</TableHead>
+            <TableHead className="text-[13px]">{t('fileList.relatedStatus')}</TableHead>
+            <TableHead className="text-[13px]">{t('fileList.uploadDate')}</TableHead>
             {hasAnyAction && (
-              <TableHead className="text-right text-sm">{t('fileList.actions')}</TableHead>
+              <TableHead className="text-right text-[13px]">{t('fileList.actions')}</TableHead>
             )}
           </TableRow>
         </TableHeader>
@@ -928,13 +968,17 @@ function FileListBase({
                 <TableCell className="text-sm">
                   <div className="h-4 w-14 bg-muted animate-pulse rounded" />
                 </TableCell>
+                {/* Processing status */}
+                <TableCell className="text-sm">
+                  <div className="flex items-center gap-2">
+                    <div className="h-5 w-16 bg-muted animate-pulse rounded-full" />
+                    <div className="h-1.5 w-14 bg-muted animate-pulse rounded-full" />
+                    <div className="h-3 w-8 bg-muted animate-pulse rounded" />
+                  </div>
+                </TableCell>
                 {/* Related status badge */}
                 <TableCell className="text-sm">
                   <div className="h-6 w-16 bg-muted animate-pulse rounded-full" />
-                </TableCell>
-                {/* Processing status */}
-                <TableCell className="text-sm">
-                  <div className="h-6 w-24 bg-muted animate-pulse rounded-full" />
                 </TableCell>
                 {/* Upload date */}
                 <TableCell className="text-sm text-muted-foreground">
@@ -989,16 +1033,17 @@ function FileListBase({
                   className={cn(
                     'h-14 cursor-pointer transition-colors hover:bg-muted/30',
                     processingStatus === 'confirming' &&
-                      'bg-amber-50/40 shadow-[inset_2px_0_0_rgb(245,158,11)] hover:bg-amber-50/60',
+                      'bg-warning/5 shadow-[inset_2px_0_0_var(--warning)] hover:bg-warning/10',
                     processingStatus === 'parse_failed' &&
-                      'bg-red-50/40 shadow-[inset_2px_0_0_rgb(239,68,68)] hover:bg-red-50/60',
+                      'bg-destructive/5 shadow-[inset_2px_0_0_var(--destructive)] hover:bg-destructive/10',
                     selectedFiles.includes(file.id) &&
-                      'bg-primary/5 shadow-[inset_2px_0_0_hsl(var(--primary))]'
+                      'bg-primary/5 shadow-[inset_2px_0_0_var(--primary)]'
                   )}
                   onClick={() => handleRowClick(file)}
                 >
                   <TableCell className="px-3">
                     <Checkbox
+                      className="size-4 rounded-[3px] [&_svg]:size-3 [&_svg]:stroke-[2]"
                       checked={selectedFiles.includes(file.id)}
                       onCheckedChange={checked => handleFileSelect(file.id, checked as boolean)}
                       onClick={e => e.stopPropagation()}
@@ -1013,44 +1058,44 @@ function FileListBase({
                     <div className="flex min-w-0 items-center gap-3">
                       {(() => {
                         const { Icon, color } = getFileTypeConfig(file.extension);
-                        return <Icon className={cn('h-5 w-5 flex-shrink-0', color)} />;
+                        return <Icon className={cn('h-4 w-4 flex-shrink-0', color)} />;
                       })()}
                       {canOpenFileDetail ? (
                         <Link
                           href={`/console/files/${file.id}`}
-                          className="truncate text-sm font-medium text-foreground underline-offset-4 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                          className="truncate text-[13px] font-medium text-foreground underline-offset-4 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                           onClick={event => event.stopPropagation()}
                         >
                           {file.name}
                         </Link>
                       ) : (
-                        <span className="truncate text-sm font-medium text-foreground">
+                        <span className="truncate text-[13px] font-medium text-foreground">
                           {file.name}
                         </span>
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-sm text-foreground">{file.extension}</TableCell>
-                  <TableCell className="text-sm text-foreground">
+                  <TableCell className="text-[13px] text-foreground">{file.extension}</TableCell>
+                  <TableCell className="text-[13px] text-foreground">
                     {formatFileSize(file.size)}
                   </TableCell>
-                  <TableCell className="text-sm">
+                  <TableCell>
                     <FileProcessingStatus file={file} />
                   </TableCell>
-                  <TableCell className="text-sm">
+                  <TableCell>
                     {file.related_count > 0 ? (
                       <RelatedResourcesPopover fileId={file.id} relatedCount={file.related_count}>
-                        <span className="inline-flex cursor-pointer items-center rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/15">
+                        <span className="inline-flex max-w-full cursor-pointer items-center rounded-full bg-primary/10 px-2 py-0.5 text-[12px] font-medium text-primary transition-colors hover:bg-primary/15">
                           {t('fileList.relatedCount', { count: file.related_count })}
                         </span>
                       </RelatedResourcesPopover>
                     ) : (
-                      <span className="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium bg-muted">
+                      <span className="inline-flex max-w-full items-center rounded-full bg-muted px-2 py-0.5 text-[12px] font-medium text-muted-foreground">
                         {t('fileList.notRelated')}
                       </span>
                     )}
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
+                  <TableCell className="max-w-0 truncate text-[13px] text-muted-foreground">
                     {formatDate(new Date(file.created_at).getTime() - 8 * 60 * 60 * 1000)}
                   </TableCell>
                   {hasAnyAction && (
@@ -1061,7 +1106,7 @@ function FileListBase({
                             asChild
                             variant="outline"
                             size="sm"
-                            className="h-8 rounded-md px-3 text-xs"
+                            className="h-8 rounded-lg px-3 text-[12px]"
                             onClick={event => event.stopPropagation()}
                           >
                             <Link href={`/console/files/${file.id}`}>
@@ -1074,7 +1119,7 @@ function FileListBase({
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="h-8 rounded-md px-3 text-xs"
+                            className="h-8 rounded-lg px-3 text-[12px]"
                             disabled={startingParseFileId === file.id}
                             onClick={event => {
                               event.stopPropagation();
@@ -1091,7 +1136,7 @@ function FileListBase({
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="h-8 rounded-md px-3 text-xs"
+                            className="h-8 rounded-lg px-3 text-[12px]"
                             disabled={reparsingFileId === file.id}
                             onClick={event => {
                               event.stopPropagation();
@@ -1109,13 +1154,13 @@ function FileListBase({
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-8 w-8 p-0"
+                                className="h-8 w-8 rounded-md p-0 text-muted-foreground hover:bg-muted hover:text-foreground"
                                 onClick={e => e.stopPropagation()}
                               >
-                                <MoreVertical className="h-4 w-4" />
+                                <MoreHorizontal className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
+                            <DropdownMenuContent align="end" className="w-40 rounded-lg">
                               {canStartParse ? (
                                 <DropdownMenuItem
                                   onClick={e => {

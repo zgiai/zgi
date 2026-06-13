@@ -67,7 +67,7 @@ const messages = {
     parsing: 'Parsing',
     confirming: 'Needs review',
     generating: 'Indexing',
-    parse_failed: 'Failed',
+    parse_failed: 'Parse failed',
     ready: 'Ready',
   },
 
@@ -513,6 +513,8 @@ const messages = {
     createFolderError: 'Failed to create folder',
     updateFolderSuccess: 'Folder updated successfully',
     updateFolderError: 'Failed to update folder',
+    moveFolderSuccess: 'Folder moved successfully',
+    moveFolderError: 'Failed to move folder',
     deleteFolderSuccess: 'Folder deleted successfully',
     deleteFolderError: 'Failed to delete folder',
     createTextFileSuccess: 'Text file created successfully',
@@ -575,7 +577,8 @@ const messages = {
     workspaceRequired: 'Please select an owning workspace',
     storageLocation: 'Storage Location',
     selectFolder: 'Select Folder',
-    defaultFolder: 'Default Folder',
+    defaultFolder: 'My Files',
+    uploadFolderRootHelp: 'Files are stored in My Files when no specific folder is selected.',
     sourceType: 'Source Type',
     processingMode: 'Processing Mode',
     processingModes: {
@@ -591,6 +594,8 @@ const messages = {
     parseProvider: 'Parse Engine',
     parseProviderDescription:
       'Used for automatic parsing after upload. Auto follows the current provider routing strategy.',
+    parseProviderStoreOnlyDescription:
+      'Store-only mode does not start parsing. The engine selection applies when uploading and parsing.',
     parseProviderUnavailable: 'Unavailable',
     parseProviderLoading: 'Checking available engines...',
     parseProviders: {
@@ -605,6 +610,13 @@ const messages = {
     processingHintDescription:
       'Images, icons, temporary files, and unsupported formats are stored without document processing.',
     uploadFiles: 'Upload Files',
+    selectedFilesTitle: '{count} file(s) selected',
+    selectedFilesPendingSummary: '{count} file(s) selected, waiting to upload.',
+    selectedFilesValidationSummary:
+      '{count} file(s) selected, {failedCount} cannot upload. Remove them to continue.',
+    selectedFilesResultSummary: '{successCount} uploaded, {failedCount} failed.',
+    removeInvalidBeforeUpload: 'Remove files that cannot upload before continuing.',
+    cannotUpload: 'Cannot upload',
     confirmUpload: 'Confirm Upload',
   },
 
@@ -625,6 +637,17 @@ const messages = {
     selectParentFolder: 'Select parent folder',
     folderLabel: 'Folder:',
     rootFolder: 'Root Folder',
+    renameTitle: 'Rename Folder',
+    renameDescription: 'The folder name in File Space will update after saving.',
+    moveTitle: 'Move Folder',
+    moveDescription: 'Choose where to move "{name}".',
+    targetFolder: 'Target Folder',
+    actions: {
+      createChild: 'New Subfolder',
+      rename: 'Rename',
+      moveTo: 'Move to',
+      delete: 'Delete Folder',
+    },
   },
 
   // Text file creation

@@ -1,11 +1,33 @@
 'use client';
 
 import { useCallback } from 'react';
-import { FolderOpen, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  FolderInput,
+  FolderOpen,
+  FolderPlus,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n';
 import { useChildFolders } from '@/hooks/use-files';
 import type { FileFolder } from '@/services/types/file';
 import { Button } from '@/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 /**
  * Folder Tree Node Props
@@ -19,6 +41,9 @@ export interface FolderTreeNodeProps {
   onToggleExpand: (folderId: string) => void;
   maxLevel?: number; // Maximum rendered folder level under default folder, default is 1 (3 business levels)
   variant?: 'sidebar' | 'dialog'; // UI variant
+  onCreateChild?: (folder: FileFolder) => void;
+  onRename?: (folder: FileFolder) => void;
+  onMove?: (folder: FileFolder) => void;
   onDelete?: (folder: FileFolder) => void;
   workspaceId?: string;
 }
@@ -36,13 +61,19 @@ export function FolderTreeNode({
   onToggleExpand,
   maxLevel = 1,
   variant = 'sidebar',
+  onCreateChild,
+  onRename,
+  onMove,
   onDelete,
   workspaceId,
 }: FolderTreeNodeProps) {
+  const t = useT('files');
   const isFolderActive = activeItemId === folder.id;
   const isExpanded = expandedFolders.has(folder.id);
 
   const isMaxLevel = level >= maxLevel;
+  const canCreateChild = !isMaxLevel && !!onCreateChild;
+  const hasFolderActions = variant === 'sidebar' && (onCreateChild || onRename || onMove || onDelete);
 
   // Fetch child folders for expandable folders so empty folders do not show an expand icon.
   const { folders: childFolders, isLoading: isLoadingChildren } = useChildFolders(
@@ -70,72 +101,118 @@ export function FolderTreeNode({
   const textSize = variant === 'sidebar' ? 'text-sm' : 'text-sm';
   const padding = variant === 'sidebar' ? 'px-3 py-2' : 'px-3 py-2.5';
 
-  return (
-    <div>
-      <div
-        className={cn(
-          'w-full flex items-center justify-between rounded-md font-medium transition-colors group cursor-pointer',
-          padding,
-          textSize,
-          variant === 'sidebar'
-            ? isFolderActive
-              ? 'bg-muted text-primary'
-              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-            : isFolderActive
-              ? 'bg-muted text-primary hover:bg-muted'
-              : 'hover:bg-gray-100 text-gray-700'
-        )}
-        style={{ paddingLeft: `${paddingLeft}px` }}
-        role="button"
-        tabIndex={0}
-        onClick={handleClick}
-        onKeyDown={event => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            handleClick();
+  const renderActionItems = (Item: typeof ContextMenuItem | typeof DropdownMenuItem) => (
+    <>
+      <Item
+        disabled={!canCreateChild}
+        onSelect={() => {
+          if (canCreateChild) {
+            onCreateChild?.(folder);
           }
         }}
       >
-        <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          {shouldShowArrow &&
-            (isLoadingChildren ? (
-              <div className={cn('flex items-center justify-center', iconSize)}>
-                <div className="h-2 w-2 rounded-full bg-gray-400 animate-pulse" />
-              </div>
-            ) : (
-              <div className="flex-shrink-0 hover:bg-gray-200 rounded p-0.5">
-                {isExpanded ? (
-                  <ChevronDown className={iconSize} />
-                ) : (
-                  <ChevronUp className={iconSize} />
-                )}
-              </div>
-            ))}
-          <FolderOpen
-            className={cn(iconSize, 'flex-shrink-0', variant === 'dialog' && 'text-gray-500')}
-          />
-          <span className={cn('truncate', variant === 'dialog' && 'flex-1')}>{folder.name}</span>
-        </div>
+        <FolderPlus className="size-4" />
+        {t('folder.actions.createChild')}
+      </Item>
+      <Item onSelect={() => onRename?.(folder)} disabled={!onRename}>
+        <Pencil className="size-4" />
+        {t('folder.actions.rename')}
+      </Item>
+      <Item onSelect={() => onMove?.(folder)} disabled={!onMove}>
+        <FolderInput className="size-4" />
+        {t('folder.actions.moveTo')}
+      </Item>
+      <Item
+        onSelect={() => onDelete?.(folder)}
+        disabled={!onDelete}
+        className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+      >
+        <Trash2 className="size-4 text-destructive" />
+        {t('folder.actions.delete')}
+      </Item>
+    </>
+  );
 
-        {/* Action buttons - show delete button for both parent and child folders in sidebar variant */}
-        {variant === 'sidebar' && onDelete && (
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            {onDelete && (
-              <Button
-                variant="ghost"
-                isIcon
-                className="h-6 w-6 p-0 hover:bg-red-100"
-                onClick={e => {
-                  e.stopPropagation();
-                  onDelete(folder);
-                }}
-              >
-                <Trash2 className="h-3.5 w-3.5 text-red-600" />
-              </Button>
-            )}
-          </div>
-        )}
+  const folderRow = (
+    <div
+      className={cn(
+        'w-full flex items-center justify-between rounded-md font-medium transition-colors group cursor-pointer',
+        padding,
+        textSize,
+        variant === 'sidebar'
+          ? isFolderActive
+            ? 'bg-muted text-primary'
+            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+          : isFolderActive
+            ? 'bg-muted text-primary hover:bg-muted'
+            : 'hover:bg-gray-100 text-gray-700'
+      )}
+      style={{ paddingLeft: `${paddingLeft}px` }}
+      role="button"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          handleClick();
+        }
+      }}
+    >
+      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+        {shouldShowArrow &&
+          (isLoadingChildren ? (
+            <div className={cn('flex items-center justify-center', iconSize)}>
+              <div className="h-2 w-2 rounded-full bg-gray-400 animate-pulse" />
+            </div>
+          ) : (
+            <div className="flex-shrink-0 hover:bg-gray-200 rounded p-0.5">
+              {isExpanded ? (
+                <ChevronDown className={iconSize} />
+              ) : (
+                <ChevronUp className={iconSize} />
+              )}
+            </div>
+          ))}
+        <FolderOpen
+          className={cn(iconSize, 'flex-shrink-0', variant === 'dialog' && 'text-gray-500')}
+        />
+        <span className={cn('truncate', variant === 'dialog' && 'flex-1')}>{folder.name}</span>
       </div>
+
+      {hasFolderActions ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              isIcon
+              className="h-6 w-6 p-0 opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100 data-[state=open]:opacity-100"
+              onClick={event => {
+                event.stopPropagation();
+              }}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40 rounded-xl p-1.5">
+            {renderActionItems(DropdownMenuItem)}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <div>
+      {hasFolderActions ? (
+        <ContextMenu>
+          <ContextMenuTrigger asChild>{folderRow}</ContextMenuTrigger>
+          <ContextMenuContent className="w-40 rounded-xl p-1.5">
+            {renderActionItems(ContextMenuItem)}
+          </ContextMenuContent>
+        </ContextMenu>
+      ) : (
+        folderRow
+      )}
 
       {/* Render children when expanded - child folders will also display settings and delete buttons */}
       {isExpanded && hasChildFolders && (
@@ -152,6 +229,9 @@ export function FolderTreeNode({
                 onToggleExpand={onToggleExpand}
                 maxLevel={maxLevel}
                 variant={variant}
+                onCreateChild={onCreateChild}
+                onRename={onRename}
+                onMove={onMove}
                 onDelete={onDelete}
                 workspaceId={workspaceId}
               />

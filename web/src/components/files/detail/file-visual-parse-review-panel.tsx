@@ -393,11 +393,11 @@ export function FileVisualParseReviewPanel({
   return (
     <div className="grid min-h-[620px] xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.95fr)]">
       <section className="min-w-0 border-r bg-muted/20">
-        <div className="flex min-h-16 items-center justify-between gap-3 border-b bg-background px-4 py-3">
-          <Badge variant="subtle" className="px-4 py-2 text-sm font-semibold text-foreground">
+        <div className="flex min-h-12 items-center justify-between gap-3 border-b bg-background px-4 py-2">
+          <Badge variant="subtle" className="px-3 py-1.5 text-sm font-semibold text-foreground">
             {t('detail.tabs.originalPreview')}
           </Badge>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             {isSourcePreviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             <span>
               {hasVisualSourcePreview
@@ -411,7 +411,7 @@ export function FileVisualParseReviewPanel({
         <div
           className={cn(
             'h-[calc(100vh-430px)] min-h-[560px]',
-            hasVisualSourcePreview ? 'overflow-y-auto p-4' : 'overflow-hidden'
+            hasVisualSourcePreview ? 'overflow-y-auto p-3' : 'overflow-hidden'
           )}
         >
           {isSourcePreviewLoading ? (
@@ -441,7 +441,7 @@ export function FileVisualParseReviewPanel({
               <EmptyPreviewState />
             </div>
           ) : (
-            <div className="space-y-6">
+            <div className="space-y-5">
               {pages.map(page => {
                 const pageElements = elements.filter(
                   element => pageIndexForElement(element.page, pageBase) === page.pageIndex
@@ -468,14 +468,14 @@ export function FileVisualParseReviewPanel({
       </section>
 
       <section className="min-w-0 bg-background">
-        <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-          <Badge variant="subtle" className="px-4 py-2 text-sm font-semibold text-foreground">
+        <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b px-4 py-2">
+          <Badge variant="subtle" className="px-3 py-1.5 text-sm font-semibold text-foreground">
             {t('detail.workbench.steps.parsed')}
           </Badge>
           {canReparse ? (
             <Button
               variant="outline"
-              className="h-10 gap-2 rounded-lg"
+              className="h-8 gap-1.5 rounded-md px-3 text-sm"
               onClick={onReparse}
               disabled={isReparsing}
             >
@@ -489,19 +489,19 @@ export function FileVisualParseReviewPanel({
           ) : null}
         </div>
 
-        <div className="max-h-[calc(100vh-430px)] min-h-[560px] overflow-y-auto p-4">
+        <div className="max-h-[calc(100vh-430px)] min-h-[560px] overflow-y-auto p-3">
           {pendingCount > 0 ? (
-            <div className="mb-4 rounded-md border border-warning/30 bg-warning/5 p-4">
+            <div className="mb-3 rounded-md border border-warning/30 bg-warning/5 p-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex min-w-0 gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
-                    <TriangleAlert className="h-5 w-5" />
+                <div className="flex min-w-0 gap-2.5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-warning/10 text-warning">
+                    <TriangleAlert className="h-4 w-4" />
                   </span>
                   <div className="min-w-0">
-                    <div className="text-base font-semibold text-foreground">
+                    <div className="text-sm font-semibold text-foreground">
                       {t('detail.parseReview.pendingReviewTitle', { count: pendingCount })}
                     </div>
-                    <p className="mt-1 text-sm text-muted-foreground">
+                    <p className="mt-0.5 text-xs text-muted-foreground">
                       {t('detail.parseReview.pendingReviewDescription')}
                     </p>
                   </div>
@@ -536,7 +536,7 @@ export function FileVisualParseReviewPanel({
           {elements.length === 0 ? (
             <EmptyReviewState />
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {elements.map(element => {
                 const key = documentPreviewElementKey(element);
                 return (
@@ -600,15 +600,17 @@ function VisualReviewCard({
   return (
     <article
       className={cn(
-        'rounded-md border bg-background p-4 transition-all',
+        'rounded-md border bg-background p-3 transition-all',
         selected ? 'border-primary shadow-sm ring-2 ring-primary/15' : 'border-border',
         isPending && !selected && 'border-warning/40'
       )}
     >
       <button type="button" className="block w-full text-left" onClick={onSelect}>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">{elementTypeLabel(element.type, t as FilesTranslator)}</Badge>
-          <span className="text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant="outline" className="px-2 py-0.5 text-xs">
+            {elementTypeLabel(element.type, t as FilesTranslator)}
+          </Badge>
+          <span className="text-xs text-muted-foreground">
             {t('detail.parseReview.page', { page: pageNumber })}
           </span>
           <span className="min-w-0 truncate text-sm font-semibold text-foreground">
@@ -625,7 +627,7 @@ function VisualReviewCard({
 
       <div
         className={cn(
-          'mt-3 whitespace-pre-wrap rounded-md bg-muted/35 p-3 text-sm leading-6 text-foreground',
+          'mt-2.5 whitespace-pre-wrap rounded-md bg-muted/35 p-2.5 text-[13px] leading-5 text-foreground',
           selected && isPending && 'border border-primary bg-background'
         )}
       >
@@ -633,29 +635,31 @@ function VisualReviewCard({
       </div>
 
       {isPending && reasonText ? (
-        <div className="mt-3 flex gap-2 rounded-md border border-warning/20 bg-warning/5 p-3 text-sm text-warning">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+        <div className="mt-2.5 flex gap-2 rounded-md border border-warning/20 bg-warning/5 p-2.5 text-xs text-warning">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>{reasonText}</span>
         </div>
       ) : null}
 
-      <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-        <Badge variant="subtle">
+      <div className="mt-2.5 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+        <Badge variant="subtle" className="px-2 py-0.5 text-xs">
           {t('detail.parseReview.confidence', { value: confidenceLabel(element.confidence) })}
         </Badge>
         {element.bbox ? (
-          <Badge variant="subtle">{t('detail.parseReview.hasLocation')}</Badge>
+          <Badge variant="subtle" className="px-2 py-0.5 text-xs">
+            {t('detail.parseReview.hasLocation')}
+          </Badge>
         ) : null}
       </div>
 
       {confirmation && isPending && selected ? (
-        <div className="mt-3 rounded-md border border-border bg-bg-canvas/40 p-3">
+        <div className="mt-2.5 rounded-md border border-border bg-bg-canvas/40 p-2.5">
           {confirmation.suggested_content ? (
-            <div className="mb-3">
+            <div className="mb-2.5">
               <div className="text-xs font-medium text-muted-foreground">
                 {t('detail.parseReview.suggestedContent')}
               </div>
-              <div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-foreground">
+              <div className="mt-1 whitespace-pre-wrap text-[13px] leading-5 text-foreground">
                 {confirmation.suggested_content}
               </div>
             </div>
@@ -663,7 +667,7 @@ function VisualReviewCard({
           <Textarea
             value={editValue}
             onChange={event => onEditContent(confirmation.id, event.target.value)}
-            className="min-h-32 bg-background text-base leading-7"
+            className="min-h-28 bg-background text-sm leading-6"
           />
           <div className="mt-3 flex flex-wrap justify-end gap-2">
             <Button

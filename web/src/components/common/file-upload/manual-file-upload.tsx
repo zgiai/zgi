@@ -22,7 +22,6 @@ import {
 } from '@/utils/file-helpers';
 import { generateClientId } from '@/utils/client-id';
 import { FileList } from '@/components/common/file-upload/file-list';
-import { Button } from '@/components/ui/button';
 import {
   calculateFileHash,
   getExistingFileKeys,
@@ -51,8 +50,17 @@ export interface ManualFileUploadProps {
   dropContent?: React.ReactNode;
   /** Callback when files are selected (before upload) */
   onFilesChange?: (files: File[]) => void;
+  /** Callback when queue status counts change */
+  onQueueStateChange?: (state: {
+    failedCount: number;
+    pendingCount: number;
+    totalCount: number;
+    uploadingCount: number;
+  }) => void;
   /** Callback after files are successfully uploaded */
   onUploadComplete?: (files: UploadedFile[]) => void;
+  /** Translation namespace for the selected-file queue summary */
+  queueSummaryNamespace?: 'files' | 'ui';
   /** Folder ID to upload files to */
   folderId?: string;
   /** Workspace id */
@@ -68,6 +76,8 @@ export interface ManualFileUploadRef {
   uploadAll: () => Promise<UploadedFile[]>;
   /** Get all pending files (not yet uploaded) */
   getPendingFiles: () => File[];
+  /** Get all failed files */
+  getFailedFiles: () => File[];
   /** Get all successfully uploaded files */
   getUploadedFiles: () => UploadedFile[];
   /** Clear all files */
@@ -103,7 +113,9 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
       dropZoneClassName,
       dropContent,
       onFilesChange,
+      onQueueStateChange,
       onUploadComplete,
+      queueSummaryNamespace,
       folderId,
       workspaceId,
       processingMode,
@@ -121,11 +133,16 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
 
     // Keep latest callbacks in ref to avoid effect dependency loop
     const onFilesChangeRef = useRef<typeof onFilesChange>();
+    const onQueueStateChangeRef = useRef<typeof onQueueStateChange>();
     const onUploadCompleteRef = useRef<typeof onUploadComplete>();
 
     useEffect(() => {
       onFilesChangeRef.current = onFilesChange;
     }, [onFilesChange]);
+
+    useEffect(() => {
+      onQueueStateChangeRef.current = onQueueStateChange;
+    }, [onQueueStateChange]);
 
     useEffect(() => {
       onUploadCompleteRef.current = onUploadComplete;
@@ -137,6 +154,12 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
         const files = items.map(it => it.file);
         onFilesChangeRef.current(files);
       }
+      onQueueStateChangeRef.current?.({
+        failedCount: items.filter(it => it.status === 'error').length,
+        pendingCount: items.filter(it => it.status === 'pending').length,
+        totalCount: items.length,
+        uploadingCount: items.filter(it => it.status === 'uploading').length,
+      });
     }, [items]);
 
     // Expose methods to parent via ref
@@ -228,6 +251,10 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
 
         getPendingFiles: () => {
           return items.filter(it => it.status === 'pending').map(it => it.file);
+        },
+
+        getFailedFiles: () => {
+          return items.filter(it => it.status === 'error').map(it => it.file);
         },
 
         getUploadedFiles: () => {
@@ -430,7 +457,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
           onDragLeave={handleDrag}
           onDrop={handleDrop}
           className={cn(
-            'flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 text-center transition-colors',
+            'flex flex-col items-center justify-center border-2 border-dashed rounded-md px-6 py-4 text-center transition-colors',
             dragActive ? 'border-primary bg-primary/5' : 'border-border',
             dropZoneClassName,
             isFull ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
@@ -481,20 +508,6 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
               )}
             </div>
           )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-4"
-            disabled={isFull}
-            onClick={e => {
-              e.preventDefault();
-              e.stopPropagation();
-              inputRef.current?.click();
-            }}
-          >
-            {t('fileUpload.selectLocalFiles')}
-          </Button>
         </div>
 
         {/* Table */}
@@ -510,6 +523,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             }))}
             onRetry={retryItem}
             onRemove={removeItem}
+            queueSummaryNamespace={queueSummaryNamespace}
             tableWrapperClassName={tableWrapperClassName}
           />
         )}

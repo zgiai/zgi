@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { FileSidebar } from '@/components/files/file-sidebar';
 import { FileList } from '@/components/files/file-list';
-import { UploadDialog, type UploadConfig } from '@/components/files/upload-dialog';
 import { CreateFolderDialog, type CreateFolderData } from '@/components/files/create-folder-dialog';
 import {
   CreateTextFileDialog,
@@ -33,9 +32,18 @@ import {
   DialogBody,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   DropdownMenu,
@@ -51,6 +59,8 @@ import {
   useCreateFolder,
   useCreateTextFile,
   useFileFolders,
+  useUpdateFolder,
+  useMoveFolder,
   useDeleteFolder,
   FILE_FOLDERS_KEY,
   STORAGE_USAGE_KEY,
@@ -436,6 +446,150 @@ function FileSelectorSpaceSwitcherDialog({
   );
 }
 
+interface RenameFolderDialogProps {
+  folder: FileFolder | null;
+  open: boolean;
+  isSubmitting: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (name: string) => void;
+}
+
+function RenameFolderDialog({
+  folder,
+  open,
+  isSubmitting,
+  onOpenChange,
+  onConfirm,
+}: RenameFolderDialogProps) {
+  const t = useT();
+  const [name, setName] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setName(folder?.name ?? '');
+    }
+  }, [folder?.name, open]);
+
+  const trimmedName = name.trim();
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>{t('files.folder.renameTitle')}</DialogTitle>
+          <DialogDescription>{t('files.folder.renameDescription')}</DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-4"
+          onSubmit={event => {
+            event.preventDefault();
+            if (trimmedName) {
+              onConfirm(trimmedName);
+            }
+          }}
+        >
+          <div className="space-y-2">
+            <Label htmlFor="rename-folder-name">{t('files.folder.folderName')}</Label>
+            <Input
+              id="rename-folder-name"
+              value={name}
+              onChange={event => setName(event.target.value)}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={!trimmedName || isSubmitting}>
+              {t('common.confirm')}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface MoveFolderDialogProps {
+  folder: FileFolder | null;
+  folders: FileFolder[];
+  open: boolean;
+  isSubmitting: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (targetId: string) => void;
+}
+
+function MoveFolderDialog({
+  folder,
+  folders,
+  open,
+  isSubmitting,
+  onOpenChange,
+  onConfirm,
+}: MoveFolderDialogProps) {
+  const t = useT();
+  const [targetId, setTargetId] = useState('root');
+  const currentParentId = folder?.parent_id || 'root';
+  const normalizedTargetId = targetId === 'root' ? '' : targetId;
+  const isSameTarget = targetId === currentParentId;
+
+  useEffect(() => {
+    if (open) {
+      setTargetId(folder?.parent_id || 'root');
+    }
+  }, [folder?.parent_id, open]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>{t('files.folder.moveTitle')}</DialogTitle>
+          <DialogDescription>
+            {t('files.folder.moveDescription', { name: folder?.name ?? '' })}
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-4"
+          onSubmit={event => {
+            event.preventDefault();
+            if (!isSameTarget) {
+              onConfirm(normalizedTargetId);
+            }
+          }}
+        >
+          <div className="space-y-2">
+            <Label htmlFor="move-folder-target">{t('files.folder.targetFolder')}</Label>
+            <Select value={targetId} onValueChange={setTargetId}>
+              <SelectTrigger id="move-folder-target">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="root">{t('files.upload.defaultFolder')}</SelectItem>
+                {folders
+                  .filter(targetFolder => targetFolder.id !== folder?.id)
+                  .map(targetFolder => (
+                    <SelectItem key={targetFolder.id} value={targetFolder.id}>
+                      {targetFolder.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={isSameTarget || isSubmitting}>
+              {t('files.folder.actions.moveTo')}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const FileManagementContent = ({
   selectionMode = false,
   selectedFileIds = [],
@@ -470,6 +624,8 @@ const FileManagementContent = ({
 
   const { createFolder } = useCreateFolder();
   const { createTextFile, isCreating: isCreatingTextFile } = useCreateTextFile();
+  const { updateFolder, isUpdating: isUpdatingFolder } = useUpdateFolder();
+  const { moveFolder, isMoving: isMovingFolder } = useMoveFolder();
   const { deleteFolder, isDeleting: isDeletingFolder } = useDeleteFolder();
   const { folders } = useFileFolders(workspaceId);
 
@@ -611,7 +767,7 @@ const FileManagementContent = ({
     return () => window.clearInterval(interval);
   }, [hasActiveProcessingFiles, reload]);
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     if (isRefreshing) return;
 
     setIsRefreshing(true);
@@ -628,7 +784,18 @@ const FileManagementContent = ({
     } finally {
       setIsRefreshing(false);
     }
-  };
+  }, [goToPage, isRefreshing, queryClient, reload]);
+
+  const hasAutoRefreshedRef = useRef(false);
+
+  useEffect(() => {
+    if (hasAutoRefreshedRef.current) {
+      return;
+    }
+
+    hasAutoRefreshedRef.current = true;
+    void handleRefresh();
+  }, [handleRefresh]);
 
   const handleSelectionChange = (selectedIds: string[]) => {
     setSelectedFiles(selectedIds);
@@ -672,6 +839,11 @@ const FileManagementContent = ({
 
   const [createFolderDialogOpen, setCreateFolderDialogOpen] = useState(false);
 
+  const handleCreateChildFolder = useCallback((folder: FileFolder) => {
+    setCreateFolderInitialParentId(folder.id);
+    setCreateFolderDialogOpen(true);
+  }, []);
+
   const handleNewFolder = useCallback(async () => {
     if (SYSTEM_FILE_CATEGORIES.has(activeCategory)) {
       setCreateFolderInitialParentId('');
@@ -705,35 +877,14 @@ const FileManagementContent = ({
   );
 
   const handleUpload = () => {
-    openAddDialog();
+    setSelectedFolderId(initialUploadFolderId);
+    setSelectedUploadWorkspaceId(workspaceId || '');
+    setCreateLocalFileDialogOpen(true);
   };
-
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const openAddDialog = useCallback(() => setAddDialogOpen(true), []);
 
   const [createTextFileDialogOpen, setCreateTextFileDialogOpen] = useState(false);
   const [selectedFolderId, setSelectedFolderId] = useState<string>('');
   const [selectedUploadWorkspaceId, setSelectedUploadWorkspaceId] = useState<string>('');
-  const [selectedUploadProcessingMode, setSelectedUploadProcessingMode] =
-    useState<UploadConfig['processingMode']>('process_now');
-  const [selectedUploadParseProvider, setSelectedUploadParseProvider] =
-    useState<UploadConfig['parseProvider']>('auto');
-
-  const handleUploadConfirm = useCallback((config: UploadConfig) => {
-    setAddDialogOpen(false);
-    setSelectedUploadWorkspaceId(config.workspaceId);
-    setSelectedUploadProcessingMode(config.processingMode);
-    setSelectedUploadParseProvider(config.parseProvider);
-
-    if (config.mode === 'text') {
-      setSelectedFolderId(config.folderId);
-      setCreateTextFileDialogOpen(true);
-    } else {
-      // Always use dialog for file upload
-      setSelectedFolderId(config.folderId);
-      setCreateLocalFileDialogOpen(true);
-    }
-  }, []);
 
   const [createLocalFileDialogOpen, setCreateLocalFileDialogOpen] = useState(false);
 
@@ -748,8 +899,6 @@ const FileManagementContent = ({
       setCreateTextFileDialogOpen(false);
       setSelectedFolderId('');
       setSelectedUploadWorkspaceId('');
-      setSelectedUploadProcessingMode('process_now');
-      setSelectedUploadParseProvider('auto');
       // Refresh file list after creating text file
       if (selectionMode) {
         goToPage(1);
@@ -761,8 +910,6 @@ const FileManagementContent = ({
   const handleFileUploadComplete = useCallback(() => {
     setSelectedFolderId('');
     setSelectedUploadWorkspaceId('');
-    setSelectedUploadProcessingMode('process_now');
-    setSelectedUploadParseProvider('auto');
     reload();
     goToPage(1);
   }, [goToPage, reload]);
@@ -774,6 +921,42 @@ const FileManagementContent = ({
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<FileFolder | null>(null);
+  const [folderToRename, setFolderToRename] = useState<FileFolder | null>(null);
+  const [folderToMove, setFolderToMove] = useState<FileFolder | null>(null);
+
+  const handleFolderRename = useCallback((folder: FileFolder) => {
+    setFolderToRename(folder);
+  }, []);
+
+  const handleRenameConfirm = useCallback(
+    async (name: string) => {
+      if (!folderToRename) return;
+
+      await updateFolder(folderToRename.id, {
+        name,
+        parent_id: folderToRename.parent_id || '',
+      });
+      setFolderToRename(null);
+    },
+    [folderToRename, updateFolder]
+  );
+
+  const handleFolderMove = useCallback((folder: FileFolder) => {
+    setFolderToMove(folder);
+  }, []);
+
+  const handleMoveConfirm = useCallback(
+    async (targetId: string) => {
+      if (!folderToMove) return;
+
+      await moveFolder({
+        folder_id: folderToMove.id,
+        target_id: targetId,
+      });
+      setFolderToMove(null);
+    },
+    [folderToMove, moveFolder]
+  );
 
   const handleFolderDelete = useCallback((folder: FileFolder) => {
     setFolderToDelete(folder);
@@ -798,6 +981,9 @@ const FileManagementContent = ({
       onItemClick={handleCategoryChange}
       onNewFolder={canCreateInActiveFolder ? handleNewFolder : undefined}
       onUpload={canUpload ? handleUpload : undefined}
+      onFolderCreateChild={canCreateFolder ? handleCreateChildFolder : undefined}
+      onFolderRename={canManage ? handleFolderRename : undefined}
+      onFolderMove={canManage ? handleFolderMove : undefined}
       onFolderDelete={canManage ? handleFolderDelete : undefined}
       workspaceId={workspaceId}
       flushTop
@@ -1219,13 +1405,6 @@ const FileManagementContent = ({
           </div>
         </div>
       )}
-      {/* Upload Dialog */}
-      <UploadDialog
-        open={addDialogOpen}
-        onOpenChange={setAddDialogOpen}
-        onConfirm={handleUploadConfirm}
-        initialFolderId={initialUploadFolderId}
-      />
       {/* Create Folder Dialog */}
       <CreateFolderDialog
         open={createFolderDialogOpen}
@@ -1248,10 +1427,31 @@ const FileManagementContent = ({
         onOpenChange={setCreateLocalFileDialogOpen}
         folderId={selectedFolderId}
         workspaceId={selectedUploadWorkspaceId || workspaceId}
-        processingMode={selectedUploadProcessingMode}
-        parseProvider={selectedUploadParseProvider}
         acceptExt={acceptExt}
         onUploadComplete={handleFileUploadComplete}
+      />
+      <RenameFolderDialog
+        open={!!folderToRename}
+        onOpenChange={open => {
+          if (!open) {
+            setFolderToRename(null);
+          }
+        }}
+        folder={folderToRename}
+        isSubmitting={isUpdatingFolder}
+        onConfirm={handleRenameConfirm}
+      />
+      <MoveFolderDialog
+        open={!!folderToMove}
+        onOpenChange={open => {
+          if (!open) {
+            setFolderToMove(null);
+          }
+        }}
+        folder={folderToMove}
+        folders={folders}
+        isSubmitting={isMovingFolder}
+        onConfirm={handleMoveConfirm}
       />
       {/* Delete Folder Confirmation Dialog (only for full page mode) */}
       <ConfirmDialog

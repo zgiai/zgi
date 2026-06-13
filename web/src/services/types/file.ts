@@ -252,6 +252,14 @@ export interface UpdateFolderResponse {
 }
 
 /**
+ * Move folder request
+ */
+export interface MoveFolderRequest {
+  folder_id: string;
+  target_id: string;
+}
+
+/**
  * Create text file request
  */
 export interface CreateTextFileRequest {
