@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -502,6 +503,91 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		if findSchemaWithRequired(anyOf, required) == nil {
 			t.Fatalf("schema requiring %s not found in %#v", required, anyOf)
 		}
+	}
+}
+
+func TestSystemSkillToolGovernanceManifestLoadedFromFrontmatter(t *testing.T) {
+	catalog := t.TempDir()
+	root := filepath.Join(catalog, "governance-skill")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	skill := `---
+name: governance-skill
+description: governance test skill
+when_to_use: verify governance manifest parsing
+provider_type: builtin
+provider_id: files
+tools:
+  - file.read
+  - file.delete
+runtime_type: tool
+tool_governance:
+  file.read:
+    domain: files
+    effect: read
+    asset_type: File
+    risk_level: LOW
+    requires_asset_resolution: true
+    audit_required: true
+  file.delete:
+    tool_id: files.delete
+    domain: files
+    effect: delete
+    asset_type: file
+    risk_level: high
+    default_approval_policy: always_ask
+    allowed_permission_tiers:
+      - advanced
+      - full
+---
+Use governed tools.
+`
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(skill), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	runtime := NewRuntimeWithCatalog(nil, nil, catalog)
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{"governance-skill"})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get("governance-skill")
+	if !ok {
+		t.Fatalf("governance skill was not resolved")
+	}
+	readTool, ok := findSkillTool(*doc, "file.read")
+	if !ok {
+		t.Fatalf("file.read tool not found")
+	}
+	if readTool.Governance == nil {
+		t.Fatalf("file.read governance manifest missing")
+	}
+	if readTool.Governance.ToolID != "file.read" {
+		t.Fatalf("file.read tool_id = %q", readTool.Governance.ToolID)
+	}
+	if readTool.Governance.SkillID != "governance-skill" {
+		t.Fatalf("file.read skill_id = %q", readTool.Governance.SkillID)
+	}
+	if readTool.Governance.Effect != toolgovernance.EffectRead || readTool.Governance.AssetType != "file" || readTool.Governance.RiskLevel != toolgovernance.RiskLevelLow {
+		t.Fatalf("file.read governance not normalized: %#v", readTool.Governance)
+	}
+
+	deleteTool, ok := findSkillTool(*doc, "file.delete")
+	if !ok {
+		t.Fatalf("file.delete tool not found")
+	}
+	if deleteTool.Governance == nil {
+		t.Fatalf("file.delete governance manifest missing")
+	}
+	if deleteTool.Governance.ToolID != "files.delete" {
+		t.Fatalf("file.delete tool_id = %q", deleteTool.Governance.ToolID)
+	}
+	if deleteTool.Governance.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk {
+		t.Fatalf("file.delete approval policy = %q", deleteTool.Governance.DefaultApprovalPolicy)
+	}
+	if got := deleteTool.Governance.AllowedPermissionTiers; len(got) != 2 || got[0] != toolgovernance.PermissionTierAdvanced || got[1] != toolgovernance.PermissionTierFull {
+		t.Fatalf("file.delete allowed tiers = %#v", got)
 	}
 }
 

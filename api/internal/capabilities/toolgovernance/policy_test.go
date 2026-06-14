@@ -1,0 +1,192 @@
+package toolgovernance
+
+import (
+	"testing"
+	"time"
+)
+
+func TestDecideBasicLowRiskFileReadAllowed(t *testing.T) {
+	decision := Decide(Request{
+		Manifest: fileManifest(EffectRead, RiskLevelLow),
+		Assets:   []AssetRef{{ID: "file-1", Type: "file", Name: "report.pdf"}},
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusAllowed {
+		t.Fatalf("expected allowed, got %s (%s)", decision.Status, decision.Reason)
+	}
+	if decision.RequiresApproval {
+		t.Fatal("read should not require approval")
+	}
+	if decision.CorrelationID == "" {
+		t.Fatal("expected correlation id")
+	}
+}
+
+func TestDecideRequiresResolutionWhenAssetMissing(t *testing.T) {
+	decision := Decide(Request{
+		Manifest: fileManifest(EffectRead, RiskLevelLow),
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusNeedsResolution {
+		t.Fatalf("expected needs_resolution, got %s", decision.Status)
+	}
+	if decision.ModelFeedback["status"] != string(DecisionStatusNeedsResolution) {
+		t.Fatalf("expected model feedback status, got %#v", decision.ModelFeedback)
+	}
+}
+
+func TestDecideBasicCreateNeedsApproval(t *testing.T) {
+	decision := Decide(Request{
+		Manifest: fileManifest(EffectCreate, RiskLevelLow),
+		Assets:   []AssetRef{{ID: "file-1", Type: "file"}},
+	}, DefaultPolicy())
+
+	assertNeedsApproval(t, decision, "create")
+}
+
+func TestDecideAdvancedUpdateAllowed(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectUpdate, RiskLevelMedium),
+		PermissionTier: PermissionTierAdvanced,
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusAllowed {
+		t.Fatalf("expected allowed, got %s (%s)", decision.Status, decision.Reason)
+	}
+}
+
+func TestDecideAdvancedDeleteNeedsApproval(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelMedium),
+		PermissionTier: PermissionTierAdvanced,
+		Assets:         []AssetRef{{ID: "file-1", Type: "file", Name: "report.pdf"}},
+	}, DefaultPolicy())
+
+	assertNeedsApproval(t, decision, "delete")
+	if decision.ApprovalEvent.Assets[0].Name != "report.pdf" {
+		t.Fatalf("approval event should include assets, got %#v", decision.ApprovalEvent.Assets)
+	}
+}
+
+func TestDecideFullDeleteStillNeedsApprovalByDefault(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelLow),
+		PermissionTier: PermissionTierFull,
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+	}, DefaultPolicy())
+
+	assertNeedsApproval(t, decision, "delete")
+}
+
+func TestDecideSessionGrantAllowsMatchingToolEffectAssetAndRisk(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ConversationID: "conversation-1",
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+		SessionGrants: []SessionGrant{{
+			ConversationID: "conversation-1",
+			ToolID:         "file.delete",
+			Effect:         EffectDelete,
+			AssetType:      "file",
+			RiskLevel:      RiskLevelHigh,
+			ExpiresAt:      time.Now().Add(time.Hour),
+		}},
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusAllowed {
+		t.Fatalf("expected session grant to allow, got %s (%s)", decision.Status, decision.Reason)
+	}
+}
+
+func TestDecideSessionGrantDoesNotCrossConversationOrEffect(t *testing.T) {
+	request := Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierFull,
+		ConversationID: "conversation-1",
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+		SessionGrants: []SessionGrant{{
+			ConversationID: "conversation-2",
+			ToolID:         "file.delete",
+			Effect:         EffectUpdate,
+			AssetType:      "file",
+			RiskLevel:      RiskLevelHigh,
+			ExpiresAt:      time.Now().Add(time.Hour),
+		}},
+	}
+
+	decision := Decide(request, DefaultPolicy())
+	assertNeedsApproval(t, decision, "mismatch")
+}
+
+func TestDecideDeniedWhenTierIsNotAllowed(t *testing.T) {
+	manifest := fileManifest(EffectRead, RiskLevelLow)
+	manifest.AllowedPermissionTiers = []PermissionTier{PermissionTierAdvanced}
+
+	decision := Decide(Request{
+		Manifest:       manifest,
+		PermissionTier: PermissionTierBasic,
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusDenied {
+		t.Fatalf("expected denied, got %s", decision.Status)
+	}
+}
+
+func TestDecideAlwaysAskBuildsApprovalEventGrant(t *testing.T) {
+	manifest := fileManifest(EffectRead, RiskLevelLow)
+	manifest.DefaultApprovalPolicy = ApprovalPolicyAlwaysAsk
+
+	decision := Decide(Request{
+		Manifest:       manifest,
+		PermissionTier: PermissionTierAdvanced,
+		ConversationID: "conversation-1",
+		CorrelationID:  "corr-1",
+		Assets:         []AssetRef{{ID: "file-1", Type: "file", Name: "report.pdf"}},
+	}, DefaultPolicy())
+
+	assertNeedsApproval(t, decision, "always ask")
+	if decision.ApprovalEvent.CorrelationID != "corr-1" {
+		t.Fatalf("expected correlation id in approval event, got %s", decision.ApprovalEvent.CorrelationID)
+	}
+	if decision.ApprovalEvent.Grant.ToolID != "file.read" || decision.ApprovalEvent.Grant.Effect != EffectRead {
+		t.Fatalf("unexpected grant scope: %#v", decision.ApprovalEvent.Grant)
+	}
+	if decision.ApprovalEvent.Grant.ConversationID != "conversation-1" {
+		t.Fatalf("expected conversation-bound grant, got %#v", decision.ApprovalEvent.Grant)
+	}
+}
+
+func fileManifest(effect Effect, risk RiskLevel) Manifest {
+	return Manifest{
+		ToolID:                  "file." + string(effect),
+		SkillID:                 "internal-files",
+		Domain:                  "files",
+		Effect:                  effect,
+		AssetType:               "file",
+		RiskLevel:               risk,
+		RequiresAssetResolution: true,
+		AuditRequired:           true,
+	}
+}
+
+func assertNeedsApproval(t *testing.T, decision Decision, label string) {
+	t.Helper()
+	if decision.Status != DecisionStatusNeedsApproval {
+		t.Fatalf("%s: expected needs_approval, got %s (%s)", label, decision.Status, decision.Reason)
+	}
+	if !decision.RequiresApproval {
+		t.Fatalf("%s: expected requires approval", label)
+	}
+	if decision.ApprovalEvent == nil {
+		t.Fatalf("%s: expected approval event", label)
+	}
+	if decision.ApprovalEvent.Type != ApprovalEventTypeAssetToolApproval {
+		t.Fatalf("%s: unexpected event type %s", label, decision.ApprovalEvent.Type)
+	}
+	if decision.ModelFeedback["status"] != string(DecisionStatusNeedsApproval) {
+		t.Fatalf("%s: expected model feedback, got %#v", label, decision.ModelFeedback)
+	}
+}

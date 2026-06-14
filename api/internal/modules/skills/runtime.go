@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"gopkg.in/yaml.v3"
@@ -1532,7 +1533,7 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 			RequiredConfig:   normalizeSkillRequiredConfig(id, frontmatter.RequiredConfig),
 		},
 		Instructions: strings.TrimSpace(body),
-		Tools:        buildSkillToolDefinitions(frontmatter),
+		Tools:        buildSkillToolDefinitions(id, frontmatter),
 	}
 }
 
@@ -1697,7 +1698,7 @@ func validateCustomSkillDocument(doc SkillDocument) error {
 	return nil
 }
 
-func buildSkillToolDefinitions(frontmatter SkillFrontmatter) []SkillToolDefinition {
+func buildSkillToolDefinitions(skillID string, frontmatter SkillFrontmatter) []SkillToolDefinition {
 	providerType := frontmatter.ProviderType
 	if providerType == "" {
 		providerType = tools.ToolProviderTypeBuiltin
@@ -1708,13 +1709,38 @@ func buildSkillToolDefinitions(frontmatter SkillFrontmatter) []SkillToolDefiniti
 		if name == "" {
 			continue
 		}
-		defs = append(defs, SkillToolDefinition{
+		def := SkillToolDefinition{
 			Name:         name,
 			ProviderType: providerType,
 			ProviderID:   strings.TrimSpace(frontmatter.ProviderID),
-		})
+		}
+		if manifest, ok := skillToolGovernanceManifest(skillID, name, frontmatter.ToolGovernance); ok {
+			def.Governance = &manifest
+		}
+		defs = append(defs, def)
 	}
 	return defs
+}
+
+func skillToolGovernanceManifest(skillID string, toolName string, manifests map[string]toolgovernance.Manifest) (toolgovernance.Manifest, bool) {
+	if len(manifests) == 0 {
+		return toolgovernance.Manifest{}, false
+	}
+	manifest, ok := manifests[strings.TrimSpace(toolName)]
+	if !ok {
+		manifest, ok = manifests[strings.ToLower(strings.TrimSpace(toolName))]
+	}
+	if !ok {
+		return toolgovernance.Manifest{}, false
+	}
+	manifest = toolgovernance.NormalizeManifest(manifest)
+	if manifest.ToolID == "" {
+		manifest.ToolID = strings.TrimSpace(toolName)
+	}
+	if manifest.SkillID == "" {
+		manifest.SkillID = normalizeSkillID(skillID)
+	}
+	return toolgovernance.NormalizeManifest(manifest), true
 }
 
 func (r *Runtime) listReferences(skillID string) []SkillReference {

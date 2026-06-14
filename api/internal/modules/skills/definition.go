@@ -3,6 +3,7 @@ package skills
 import (
 	"strings"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
@@ -51,24 +52,26 @@ func IsHiddenSystemSkill(skillID string) bool {
 }
 
 type SkillToolDefinition struct {
-	Name         string                 `json:"name" yaml:"name"`
-	ProviderType tools.ToolProviderType `json:"provider_type" yaml:"provider_type"`
-	ProviderID   string                 `json:"provider_id" yaml:"provider_id"`
+	Name         string                   `json:"name" yaml:"name"`
+	ProviderType tools.ToolProviderType   `json:"provider_type" yaml:"provider_type"`
+	ProviderID   string                   `json:"provider_id" yaml:"provider_id"`
+	Governance   *toolgovernance.Manifest `json:"governance,omitempty" yaml:"governance"`
 }
 
 type SkillFrontmatter struct {
-	Name             string                 `yaml:"name"`
-	Description      string                 `yaml:"description"`
-	WhenToUse        string                 `yaml:"when_to_use"`
-	ProviderType     tools.ToolProviderType `yaml:"provider_type"`
-	ProviderID       string                 `yaml:"provider_id"`
-	Tools            []string               `yaml:"tools"`
-	RuntimeType      string                 `yaml:"runtime_type"`
-	MaxCallsPerTurn  int                    `yaml:"max_calls_per_turn"`
-	TimeoutSeconds   int                    `yaml:"timeout_seconds"`
-	Display          SkillDisplayMetadata   `yaml:"display"`
-	SupportedCallers []string               `yaml:"supported_callers"`
-	RequiredConfig   []string               `yaml:"required_config"`
+	Name             string                             `yaml:"name"`
+	Description      string                             `yaml:"description"`
+	WhenToUse        string                             `yaml:"when_to_use"`
+	ProviderType     tools.ToolProviderType             `yaml:"provider_type"`
+	ProviderID       string                             `yaml:"provider_id"`
+	Tools            []string                           `yaml:"tools"`
+	ToolGovernance   map[string]toolgovernance.Manifest `yaml:"tool_governance"`
+	RuntimeType      string                             `yaml:"runtime_type"`
+	MaxCallsPerTurn  int                                `yaml:"max_calls_per_turn"`
+	TimeoutSeconds   int                                `yaml:"timeout_seconds"`
+	Display          SkillDisplayMetadata               `yaml:"display"`
+	SupportedCallers []string                           `yaml:"supported_callers"`
+	RequiredConfig   []string                           `yaml:"required_config"`
 }
 
 type SkillDisplayMetadata struct {
