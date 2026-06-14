@@ -46,6 +46,25 @@ func (p *DefaultPlanner) Plan(req contracts.ParseRequest, catalog *contracts.Par
 		}
 	}
 
+	if profileAllowsRemote(profile) {
+		if routeProviders, ext := fileExtensionRouteProviders(req.FileName, catalog, health); len(routeProviders) > 0 {
+			plan.Primary = candidateFromProvider(routeProviders[0], map[string]any{
+				"selection":  "file_extension_auto_route",
+				"file_ext":   ext,
+				"route_rank": 0,
+			})
+			if len(routeProviders) > 1 {
+				plan.FallbackCandidates = buildCandidates(routeProviders[1:], map[string]any{
+					"selection": "file_extension_auto_fallback",
+					"file_ext":  ext,
+				})
+			}
+			plan.Metadata["file_ext"] = ext
+			plan.Metadata["selection"] = "file_extension_auto_route"
+			return plan, nil
+		}
+	}
+
 	configured := configuredProviders(catalog, health)
 	fallbacks := fallbackProviders(catalog, health)
 
