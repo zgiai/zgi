@@ -20,19 +20,43 @@ const (
 )
 
 type service struct {
-	repo     repository.Repository
-	registry *Registry
-	now      func() time.Time
+	repo      repository.Repository
+	registry  *Registry
+	executors map[string]Executor
+	now       func() time.Time
 }
 
-func NewService(repo repository.Repository, registry *Registry) Service {
+func NewService(repo repository.Repository, registry *Registry, opts ...Option) Service {
 	if registry == nil {
 		registry = NewDefaultRegistry()
 	}
-	return &service{
-		repo:     repo,
-		registry: registry,
-		now:      time.Now,
+	svc := &service{
+		repo:      repo,
+		registry:  registry,
+		executors: map[string]Executor{},
+		now:       time.Now,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(svc)
+		}
+	}
+	return svc
+}
+
+func WithExecutor(capabilityID string, executor Executor) Option {
+	return func(s *service) {
+		if s == nil || executor == nil {
+			return
+		}
+		id := strings.TrimSpace(capabilityID)
+		if id == "" {
+			return
+		}
+		if s.executors == nil {
+			s.executors = map[string]Executor{}
+		}
+		s.executors[id] = executor
 	}
 }
 
@@ -209,19 +233,88 @@ func (s *service) ExecuteAction(ctx context.Context, scope Scope, id uuid.UUID, 
 	}
 
 	now := s.now()
-	errText := adapterPendingMessage
 	ledger := copyStringAnyMap(run.Ledger)
-	ledger["status"] = actionmodel.ActionRunStatusBlocked
-	ledger["blocked_reason"] = adapterPendingMessage
 	ledger["execute_requested_at"] = now.UTC().Format(time.RFC3339)
 	if req.DryRun {
 		ledger["dry_run"] = true
 	}
 	metadata := mergeMaps(run.Metadata, req.Metadata)
+	executor := s.executors[strings.TrimSpace(run.CapabilityID)]
+	if executor == nil {
+		ledger["status"] = actionmodel.ActionRunStatusBlocked
+		ledger["blocked_reason"] = adapterPendingMessage
+		return s.blockActionRun(ctx, scope, view, ledger, metadata, adapterPendingMessage, now)
+	}
 
 	if len(view.Steps) > 0 {
 		step := view.Steps[0]
 		if err := s.repo.UpdateStepFields(ctx, run.ID, step.ID, map[string]interface{}{
+			"status":     actionmodel.ActionStepStatusRunning,
+			"started_at": now,
+			"error":      nil,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	ledger["status"] = actionmodel.ActionRunStatusRunning
+	if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.AccountID, map[string]interface{}{
+		"status":   actionmodel.ActionRunStatusRunning,
+		"error":    nil,
+		"ledger":   ledger,
+		"metadata": metadata,
+	}); err != nil {
+		return nil, err
+	}
+
+	latest, err := s.GetActionRun(ctx, scope, id)
+	if err != nil {
+		return nil, err
+	}
+	result, execErr := executor.Execute(ctx, scope, *latest, req)
+	finishedAt := s.now()
+	if execErr != nil {
+		return s.failActionRun(ctx, scope, latest, ledger, metadata, execErr.Error(), finishedAt)
+	}
+	if result == nil {
+		result = &ExecutionResult{}
+	}
+	finalLedger := mergeMaps(ledger, result.Ledger)
+	finalLedger["status"] = actionmodel.ActionRunStatusCompleted
+	finalLedger["completed_at"] = finishedAt.UTC().Format(time.RFC3339)
+	finalMetadata := mergeMaps(metadata, result.Metadata)
+	output := copyStringAnyMap(result.Output)
+	if len(output) == 0 {
+		output = map[string]interface{}{"status": "completed"}
+	}
+	if len(latest.Steps) > 0 {
+		step := latest.Steps[0]
+		if err := s.repo.UpdateStepFields(ctx, run.ID, step.ID, map[string]interface{}{
+			"status":       actionmodel.ActionStepStatusDone,
+			"error":        nil,
+			"completed_at": finishedAt,
+			"output":       output,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.AccountID, map[string]interface{}{
+		"status":   actionmodel.ActionRunStatusCompleted,
+		"error":    nil,
+		"ledger":   finalLedger,
+		"metadata": finalMetadata,
+	}); err != nil {
+		return nil, err
+	}
+	return s.GetActionRun(ctx, scope, id)
+}
+
+func (s *service) blockActionRun(ctx context.Context, scope Scope, view *ActionRunView, ledger map[string]interface{}, metadata map[string]interface{}, errText string, now time.Time) (*ActionRunView, error) {
+	if view == nil || view.Run == nil {
+		return nil, ErrNotFound
+	}
+	if len(view.Steps) > 0 {
+		step := view.Steps[0]
+		if err := s.repo.UpdateStepFields(ctx, view.Run.ID, step.ID, map[string]interface{}{
 			"status":       actionmodel.ActionStepStatusBlocked,
 			"error":        errText,
 			"completed_at": now,
@@ -233,7 +326,7 @@ func (s *service) ExecuteAction(ctx context.Context, scope Scope, id uuid.UUID, 
 			return nil, err
 		}
 	}
-	if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.AccountID, map[string]interface{}{
+	if err := s.repo.UpdateRunFieldsScoped(ctx, view.Run.ID, scope.OrganizationID, scope.AccountID, map[string]interface{}{
 		"status":   actionmodel.ActionRunStatusBlocked,
 		"error":    errText,
 		"ledger":   ledger,
@@ -241,7 +334,40 @@ func (s *service) ExecuteAction(ctx context.Context, scope Scope, id uuid.UUID, 
 	}); err != nil {
 		return nil, err
 	}
-	return s.GetActionRun(ctx, scope, id)
+	return s.GetActionRun(ctx, scope, view.Run.ID)
+}
+
+func (s *service) failActionRun(ctx context.Context, scope Scope, view *ActionRunView, ledger map[string]interface{}, metadata map[string]interface{}, errText string, now time.Time) (*ActionRunView, error) {
+	if view == nil || view.Run == nil {
+		return nil, ErrNotFound
+	}
+	ledger = copyStringAnyMap(ledger)
+	ledger["status"] = actionmodel.ActionRunStatusFailed
+	ledger["failed_at"] = now.UTC().Format(time.RFC3339)
+	ledger["error"] = errText
+	if len(view.Steps) > 0 {
+		step := view.Steps[0]
+		if err := s.repo.UpdateStepFields(ctx, view.Run.ID, step.ID, map[string]interface{}{
+			"status":       actionmodel.ActionStepStatusFailed,
+			"error":        errText,
+			"completed_at": now,
+			"output": map[string]interface{}{
+				"status": "failed",
+				"error":  errText,
+			},
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.repo.UpdateRunFieldsScoped(ctx, view.Run.ID, scope.OrganizationID, scope.AccountID, map[string]interface{}{
+		"status":   actionmodel.ActionRunStatusFailed,
+		"error":    errText,
+		"ledger":   ledger,
+		"metadata": metadata,
+	}); err != nil {
+		return nil, err
+	}
+	return s.GetActionRun(ctx, scope, view.Run.ID)
 }
 
 func (s *service) ensureMember(ctx context.Context, scope Scope) error {

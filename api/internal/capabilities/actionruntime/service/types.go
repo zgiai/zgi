@@ -49,6 +49,18 @@ type ActionRunView struct {
 	Capability *CapabilityManifest
 }
 
+type Executor interface {
+	Execute(ctx context.Context, scope Scope, view ActionRunView, req actiondto.ExecuteActionRequest) (*ExecutionResult, error)
+}
+
+type ExecutionResult struct {
+	Output   map[string]interface{}
+	Ledger   map[string]interface{}
+	Metadata map[string]interface{}
+}
+
+type Option func(*service)
+
 type InvocationTokenClaims struct {
 	ActionRunID    uuid.UUID  `json:"action_run_id"`
 	StepID         uuid.UUID  `json:"step_id"`

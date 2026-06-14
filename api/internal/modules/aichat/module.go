@@ -72,7 +72,14 @@ func NewModuleWithDependencies(
 	if err := svc.CleanupExpiredCustomSkillImportPreviews(context.Background()); err != nil {
 		logger.Warn("failed to cleanup expired aichat skill import previews", err)
 	}
-	actionSvc := actionservice.NewService(actionrepo.NewRepository(db), actionservice.NewDefaultRegistry())
+	actionOptions := []actionservice.Option{}
+	if fileService != nil {
+		actionOptions = append(actionOptions, actionservice.WithExecutor(
+			"file.read",
+			actionservice.NewFileReadExecutor(fileService, contentExtractor, workspacePerms),
+		))
+	}
+	actionSvc := actionservice.NewService(actionrepo.NewRepository(db), actionservice.NewDefaultRegistry(), actionOptions...)
 	return &Module{
 		Handler:       handler.NewHandler(svc, actionSvc),
 		Service:       svc,
