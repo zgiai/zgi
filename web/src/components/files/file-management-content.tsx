@@ -101,6 +101,13 @@ export interface FileManagementContentProps {
 
 const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
 const FILES_CONTEXT_VISIBLE_LIMIT = 20;
+const AI_CHAT_EXCEL_EXTENSIONS = new Set(['xls', 'xlsx', 'xlsm', 'xlsb']);
+const AI_CHAT_WORD_EXTENSIONS = new Set(['doc', 'docx']);
+const AI_CHAT_PRESENTATION_EXTENSIONS = new Set(['ppt', 'pptx']);
+const AI_CHAT_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg']);
+const AI_CHAT_AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'wav', 'amr', 'mpga']);
+const AI_CHAT_VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'webm', 'mpeg']);
+const AI_CHAT_TEXT_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'mdx', 'json', 'xml']);
 
 const waitForMinimumRefreshDuration = () =>
   new Promise<void>(resolve => {
@@ -122,21 +129,69 @@ function compactAIChatContextText(value: string, maxLength = 1200): string {
   return `${text.slice(0, maxLength).trim()}...`;
 }
 
+function normalizeAIChatFileExtension(file: FileItem): string {
+  const explicitExtension = file.extension?.toLowerCase().replace(/^\./, '').trim();
+  if (explicitExtension) return explicitExtension;
+
+  const inferredExtension = file.name.split('.').pop()?.toLowerCase().trim();
+  if (inferredExtension && inferredExtension !== file.name.toLowerCase()) {
+    return inferredExtension;
+  }
+
+  return 'unknown';
+}
+
+function getAIChatFileType(extension: string): string {
+  if (AI_CHAT_EXCEL_EXTENSIONS.has(extension)) return 'excel';
+  if (extension === 'pdf') return 'pdf';
+  if (AI_CHAT_WORD_EXTENSIONS.has(extension)) return 'word';
+  if (AI_CHAT_PRESENTATION_EXTENSIONS.has(extension)) return 'presentation';
+  if (extension === 'csv' || extension === 'tsv') return 'spreadsheet';
+  if (AI_CHAT_IMAGE_EXTENSIONS.has(extension)) return 'image';
+  if (AI_CHAT_AUDIO_EXTENSIONS.has(extension)) return 'audio';
+  if (AI_CHAT_VIDEO_EXTENSIONS.has(extension)) return 'video';
+  if (AI_CHAT_TEXT_EXTENSIONS.has(extension)) return 'text';
+
+  return extension || 'unknown';
+}
+
+function buildAIChatCountSummary(values: string[]): string | null {
+  const counts = new Map<string, number>();
+  values.forEach(value => {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  });
+
+  const summary = Array.from(counts.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([value, count]) => `${value}=${count}`)
+    .join(',');
+
+  return summary || null;
+}
+
+function buildAIChatListMetadata(values: string[]): string | null {
+  const filteredValues = values.filter(Boolean);
+  return filteredValues.length > 0 ? filteredValues.join(',') : null;
+}
+
 function buildVisibleFileContextDescription(files: FileItem[]) {
   if (files.length === 0) return 'No files are visible with the current filters.';
 
   return compactAIChatContextText(
     files
-      .map(file =>
-        [
+      .map((file, index) => {
+        const extensionNormalized = normalizeAIChatFileExtension(file);
+        return [
+          `visible_index=${index + 1}`,
           `id=${file.id}`,
           `name=${file.name}`,
-          `extension=${file.extension}`,
+          `extension=${extensionNormalized}`,
+          `file_type=${getAIChatFileType(extensionNormalized)}`,
           `size=${file.size}`,
           `workspace_id=${file.workspace_id || 'personal'}`,
           `created_at=${file.created_at}`,
-        ].join(', ')
-      )
+        ].join(', ');
+      })
       .join(' | ')
   );
 }
@@ -180,7 +235,40 @@ function buildFilesAIChatContextItems(params: {
     activeFolderName,
   } = params;
   const visibleFiles = files.slice(0, FILES_CONTEXT_VISIBLE_LIMIT);
-  const selectedVisibleCount = visibleFiles.filter(file => selectedFileIds.includes(file.id)).length;
+  const selectedFileIdSet = new Set(selectedFileIds);
+  const extensionRanks = new Map<string, number>();
+  const fileTypeRanks = new Map<string, number>();
+  const visibleFileContexts = visibleFiles.map((file, index) => {
+    const extensionNormalized = normalizeAIChatFileExtension(file);
+    const fileTypeNormalized = getAIChatFileType(extensionNormalized);
+    const extensionRank = (extensionRanks.get(extensionNormalized) ?? 0) + 1;
+    const fileTypeRank = (fileTypeRanks.get(fileTypeNormalized) ?? 0) + 1;
+
+    extensionRanks.set(extensionNormalized, extensionRank);
+    fileTypeRanks.set(fileTypeNormalized, fileTypeRank);
+
+    return {
+      file,
+      visibleIndex: index + 1,
+      extensionNormalized,
+      fileTypeNormalized,
+      extensionRank,
+      fileTypeRank,
+    };
+  });
+  const selectedVisibleCount = visibleFileContexts.filter(({ file }) =>
+    selectedFileIdSet.has(file.id)
+  ).length;
+  const orderedVisibleFileIds = buildAIChatListMetadata(
+    visibleFileContexts.map(({ file }) => file.id)
+  );
+  const selectedFileIdsMetadata = buildAIChatListMetadata(selectedFileIds);
+  const fileTypeCounts = buildAIChatCountSummary(
+    visibleFileContexts.map(({ fileTypeNormalized }) => fileTypeNormalized)
+  );
+  const extensionCounts = buildAIChatCountSummary(
+    visibleFileContexts.map(({ extensionNormalized }) => extensionNormalized)
+  );
   const scopeLabel = isOrganizationMode
     ? 'Personal space'
     : currentWorkspace?.name || 'Current workspace';
@@ -199,10 +287,14 @@ function buildFilesAIChatContextItems(params: {
       metadata: {
         page: 'console.files',
         route: '/console/files',
+        resource_kind: 'page',
+        ordered_visible_file_ids: orderedVisibleFileIds,
+        selected_file_ids: selectedFileIdsMetadata,
         visible_file_count: visibleFiles.length,
-        selected_file_ids: selectedFileIds.join(','),
         selected_file_count: selectedFileIds.length,
         selected_visible_file_count: selectedVisibleCount,
+        file_type_counts: fileTypeCounts,
+        extension_counts: extensionCounts,
         current_page: currentPage,
         category: activeCategory,
         total_file_count: total,
@@ -215,32 +307,49 @@ function buildFilesAIChatContextItems(params: {
         organization_mode: isOrganizationMode,
       },
     },
-    ...visibleFiles.map(file => ({
-      id: file.id,
-      type: 'file' as const,
-      title: file.name,
-      subtitle: `${file.extension || 'file'} - ${file.size} bytes`,
-      description: `Visible on console.files page. Workspace: ${file.workspace_id || 'personal'}. Created: ${file.created_at}.`,
-      href: '/console/files',
-      source: 'Files page',
-      status: 'available' as const,
-      capabilities: [fileReadCapability],
-      metadata: {
-        page: 'console.files',
-        file_id: file.id,
-        selected: selectedFileIds.includes(file.id),
-        name: file.name,
-        extension: file.extension,
-        size: file.size,
-        mime_type: file.mime_type,
-        workspace_id: file.workspace_id,
-        created_at: file.created_at,
-        created_by: file.created_by,
-        storage_type: file.storage_type,
-        related_count: file.related_count,
-        related_dataset_count: file.related_dataset_count,
-      },
-    })),
+    ...visibleFileContexts.map(
+      ({
+        file,
+        visibleIndex,
+        extensionNormalized,
+        fileTypeNormalized,
+        extensionRank,
+        fileTypeRank,
+      }) => ({
+        id: file.id,
+        type: 'file' as const,
+        title: file.name,
+        subtitle: `${extensionNormalized} - ${file.size} bytes`,
+        description: `Visible file ${visibleIndex} on console.files page. Workspace: ${file.workspace_id || 'personal'}. Created: ${file.created_at}.`,
+        href: '/console/files',
+        source: 'Files page',
+        status: 'available' as const,
+        capabilities: [fileReadCapability],
+        metadata: {
+          page: 'console.files',
+          resource_kind: 'file',
+          file_id: file.id,
+          visible_index: visibleIndex,
+          visible_rank: visibleIndex,
+          display_name: file.name,
+          name: file.name,
+          extension_normalized: extensionNormalized,
+          extension: file.extension,
+          file_type_normalized: fileTypeNormalized,
+          file_type_rank: fileTypeRank,
+          extension_rank: extensionRank,
+          selected: selectedFileIdSet.has(file.id),
+          size: file.size,
+          mime_type: file.mime_type,
+          workspace_id: file.workspace_id,
+          created_at: file.created_at,
+          created_by: file.created_by,
+          storage_type: file.storage_type,
+          related_count: file.related_count,
+          related_dataset_count: file.related_dataset_count,
+        },
+      })
+    ),
   ];
 }
 
@@ -605,7 +714,8 @@ const FileManagementContent = ({
   const canManage = hasPermission('file.manage');
   const canCreateFolder = hasPermission('file.move_create');
   const canUpload = hasPermission('file.upload_create');
-  const canCreateInActiveFolder = canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < 2;
+  const canCreateInActiveFolder =
+    canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < 2;
   const { organizations } = useOrganizations(isAuthenticated);
   const showOrganizationSwitcher = isAuthenticated && organizations.length > 1;
   const currentSpaceLabel = isOrganizationMode
@@ -857,8 +967,7 @@ const FileManagementContent = ({
     goToPage(1);
   }, [goToPage, reload]);
 
-  const initialUploadFolderId =
-    SYSTEM_FILE_CATEGORIES.has(activeCategory) ? '' : activeCategory;
+  const initialUploadFolderId = SYSTEM_FILE_CATEGORIES.has(activeCategory) ? '' : activeCategory;
 
   const selectedFolder = folders.find(f => f.id === selectedFolderId);
   const selectedFolderName = selectedFolder?.name || t('files.upload.defaultFolder');

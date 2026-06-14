@@ -18,6 +18,8 @@ export type {
   AIChatContextRisk,
   AIChatOperationCapability,
   AIChatOperationContext,
+  AIChatOperationMetadata,
+  AIChatOperationMetadataValue,
   AIChatOperationRelation,
   AIChatOperationResource,
   AIChatResourceStatus,

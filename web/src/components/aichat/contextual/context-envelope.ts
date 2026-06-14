@@ -11,6 +11,8 @@ import type {
   AIChatContextMetadata,
   AIChatOperationCapability,
   AIChatOperationContext,
+  AIChatOperationMetadata,
+  AIChatOperationMetadataValue,
   AIChatOperationRelation,
   AIChatOperationResource,
 } from './types';
@@ -19,11 +21,13 @@ const MAX_CONTEXT_ITEMS = 8;
 const MAX_METADATA_KEYS = 8;
 const MAX_FIELD_LENGTH = 260;
 const MAX_CAPABILITY_SUMMARY = 8;
-const MAX_OPERATION_RESOURCES = 12;
+const MAX_OPERATION_RESOURCES = 24;
 const MAX_OPERATION_CAPABILITIES = 32;
 const MAX_OPERATION_CAPABILITIES_PER_RESOURCE = 8;
 const MAX_OPERATION_RELATIONS_PER_RESOURCE = 8;
 const MAX_OPERATION_FIELD_LENGTH = 160;
+const MAX_OPERATION_METADATA_KEYS = 32;
+const MAX_OPERATION_METADATA_VALUE_LENGTH = 3200;
 const MAX_OPERATION_ID_LENGTH = 120;
 
 const RISK_RANK: Record<AIChatCapabilityRisk, number> = {
@@ -92,15 +96,18 @@ function formatCapabilities(item: AIChatContextItem): string {
 
 function sanitizeMetadataValue(
   value: AIChatContextMetadata[string]
-): string | number | boolean | null | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === 'string') return compactOptionalText(value, MAX_OPERATION_FIELD_LENGTH);
+): AIChatOperationMetadataValue | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === 'string') {
+    return compactOptionalText(value, MAX_OPERATION_METADATA_VALUE_LENGTH);
+  }
   return value;
 }
 
 function sanitizeMetadata(
   metadata: AIChatContextMetadata | undefined
-): Record<string, string | number | boolean | null> | undefined {
+): AIChatOperationMetadata | undefined {
   const entries = Object.entries(metadata ?? {})
     .map(([key, value]) => {
       const sanitizedKey = compactOptionalText(key, 80);
@@ -108,8 +115,8 @@ function sanitizeMetadata(
       if (!sanitizedKey || sanitizedValue === undefined) return null;
       return [sanitizedKey, sanitizedValue] as const;
     })
-    .filter((entry): entry is readonly [string, string | number | boolean | null] => Boolean(entry))
-    .slice(0, MAX_METADATA_KEYS);
+    .filter((entry): entry is readonly [string, AIChatOperationMetadataValue] => Boolean(entry))
+    .slice(0, MAX_OPERATION_METADATA_KEYS);
 
   if (entries.length === 0) return undefined;
   return Object.fromEntries(entries);

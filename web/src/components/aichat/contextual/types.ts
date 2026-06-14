@@ -34,6 +34,8 @@ export type AIChatCapabilityStatus =
 
 export type AIChatContextMetadataValue = string | number | boolean | null | undefined;
 export type AIChatContextMetadata = Record<string, AIChatContextMetadataValue>;
+export type AIChatOperationMetadataValue = string | number | boolean | null;
+export type AIChatOperationMetadata = Record<string, AIChatOperationMetadataValue>;
 
 export interface AIChatContextRelation {
   type: string;
@@ -80,7 +82,7 @@ export interface AIChatOperationRelation {
   resource_type: AIChatResourceType;
   resource_id: string;
   title?: string;
-  metadata?: Record<string, string | number | boolean | null>;
+  metadata?: AIChatOperationMetadata;
 }
 
 export interface AIChatOperationResource {
@@ -93,7 +95,7 @@ export interface AIChatOperationResource {
   status?: AIChatResourceStatus;
   risk?: AIChatCapabilityRisk;
   permissions?: string[];
-  metadata?: Record<string, string | number | boolean | null>;
+  metadata?: AIChatOperationMetadata;
   relations?: AIChatOperationRelation[];
   capability_ids?: string[];
 }
@@ -108,7 +110,7 @@ export interface AIChatOperationCapability {
   requires_confirmation?: boolean;
   status?: AIChatCapabilityStatus;
   permissions?: string[];
-  metadata?: Record<string, string | number | boolean | null>;
+  metadata?: AIChatOperationMetadata;
 }
 
 export interface AIChatOperationContext {

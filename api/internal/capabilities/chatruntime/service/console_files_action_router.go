@@ -34,11 +34,16 @@ func (s *service) runConsoleFilesActionIfMatched(ctx context.Context, prepared *
 	if s == nil || s.actionRuntime == nil || prepared == nil || prepared.Message == nil || prepared.Conversation == nil || prepared.parts == nil {
 		return nil, false, nil
 	}
-	decision := consoleFilesActionDecisionForParts(prepared.parts)
-	if !decision.Matched {
+	if !isConsoleFilesContext(prepared.parts.RuntimeContext, prepared.parts.RawOperationContext, prepared.parts.OperationContext) ||
+		!hasConsoleFilesReadCapability(prepared.parts.RuntimeContext, prepared.parts.RawOperationContext, prepared.parts.OperationContext) {
 		return nil, false, nil
 	}
-	if len(decision.FileIDs) == 0 {
+	decision := s.planAIChatActionDecision(ctx, prepared)
+	if !decision.Matched || !strings.EqualFold(decision.CapabilityID, consoleFilesActionCapabilityID) {
+		return nil, false, nil
+	}
+	fileIDs := resolveConsoleFileIDsFromActionDecision(prepared.parts, decision)
+	if len(fileIDs) == 0 {
 		metadata := preparedResultMetadata(prepared.Message.Metadata, nil)
 		if err := s.completePreparedChat(ctx, prepared, consoleFilesNoFileAnswer, metadata); err != nil {
 			return nil, true, err
@@ -54,7 +59,7 @@ func (s *service) runConsoleFilesActionIfMatched(ctx context.Context, prepared *
 		WorkspaceID:     prepared.Scope.WorkspaceID,
 		SkipAccessCheck: prepared.Scope.SkipAccessCheck,
 	}
-	plan, err := s.actionRuntime.PlanAction(ctx, actionScope, consoleFilesActionPlanRequest(prepared, decision.FileIDs))
+	plan, err := s.actionRuntime.PlanAction(ctx, actionScope, consoleFilesActionPlanRequest(prepared, fileIDs, decision))
 	if err != nil {
 		return nil, true, err
 	}
@@ -71,11 +76,22 @@ func (s *service) runConsoleFilesActionIfMatched(ctx context.Context, prepared *
 	}
 
 	answer := consoleFilesAnswerFromRun(run)
-	metadata := preparedResultMetadata(prepared.Message.Metadata, nil)
-	metadata["action_runtime"] = map[string]interface{}{
+	postprocessAnswer, postprocessUsage, postprocessErr := s.postprocessConsoleFilesActionAnswer(ctx, prepared, run, decision, answer)
+	if strings.TrimSpace(postprocessAnswer) != "" {
+		answer = postprocessAnswer
+	}
+	metadata := preparedResultMetadata(prepared.Message.Metadata, postprocessUsage)
+	actionRuntimeMetadata := map[string]interface{}{
 		"plan": actionRunResponseForMetadata(plan),
 		"run":  actionRunResponseForMetadata(run),
 	}
+	if postprocessErr != nil {
+		actionRuntimeMetadata["postprocess_error"] = postprocessErr.Error()
+	}
+	if len(decision.Postprocess) > 0 {
+		actionRuntimeMetadata["postprocess"] = decision.Postprocess
+	}
+	metadata["action_runtime"] = actionRuntimeMetadata
 	if err := s.completePreparedChat(ctx, prepared, answer, metadata); err != nil {
 		return nil, true, err
 	}
@@ -117,22 +133,39 @@ func consoleFilesActionDecisionForParts(parts *chatRequestParts) consoleFilesAct
 	}
 }
 
-func consoleFilesActionPlanRequest(prepared *PreparedChat, fileIDs []string) actiondto.ActionPlanRequest {
+func consoleFilesActionPlanRequest(prepared *PreparedChat, fileIDs []string, decision AIChatActionDecision) actiondto.ActionPlanRequest {
 	resources := make([]actiondto.ResourceRef, 0, len(fileIDs))
 	for _, fileID := range fileIDs {
 		resources = append(resources, actiondto.ResourceRef{Type: "file", ID: fileID, Source: "console.files"})
 	}
+	intent := strings.TrimSpace(decision.Intent)
+	if intent == "" {
+		intent = consoleFilesActionIntent
+	}
+	arguments := map[string]interface{}{"file_ids": fileIDs, "include_content": true, "max_chars": consoleFilesReadMaxChars}
+	if len(decision.Postprocess) > 0 {
+		arguments["postprocess"] = decision.Postprocess
+	}
+	metadata := map[string]interface{}{
+		"source": "aichat.console.files",
+		"planner": map[string]interface{}{
+			"confidence":  decision.Confidence,
+			"intent":      intent,
+			"reason":      decision.Reason,
+			"postprocess": decision.Postprocess,
+		},
+	}
 	return actiondto.ActionPlanRequest{
 		ConversationID:   prepared.Conversation.ID.String(),
 		MessageID:        prepared.Message.ID.String(),
-		Intent:           consoleFilesActionIntent,
+		Intent:           intent,
 		CapabilityID:     consoleFilesActionCapabilityID,
 		Title:            "Read selected file",
 		Summary:          "Read selected console file content for this AIChat turn",
 		Resources:        resources,
-		Arguments:        map[string]interface{}{"file_ids": fileIDs, "include_content": true, "max_chars": consoleFilesReadMaxChars},
+		Arguments:        arguments,
 		OperationContext: copyStringAnyMap(prepared.parts.RawOperationContext),
-		Metadata:         map[string]interface{}{"source": "aichat.console.files"},
+		Metadata:         metadata,
 	}
 }
 
@@ -267,6 +300,8 @@ func isFileReadIntent(query string) bool {
 	}
 	for _, token := range []string{
 		"\u8bfb\u53d6",
+		"\u8bfb\u4e00\u4e0b",
+		"\u8bfb\u4e0b",
 		"\u603b\u7ed3",
 		"\u5206\u6790",
 		"\u67e5\u770b\u5185\u5bb9",
@@ -297,6 +332,13 @@ func collectConsoleFilesFileIDs(parts *chatRequestParts) []string {
 	collectSelectedFileIDs(parts.RawOperationContext, 0, selected.add)
 	collectSelectedFileIDs(parts.OperationContext, 0, selected.add)
 	for _, id := range selected.values() {
+		collector.add(id)
+	}
+	if len(collector.values()) > 0 {
+		return collector.values()
+	}
+
+	for _, id := range resolveConsoleFileIDsFromQuery(parts) {
 		collector.add(id)
 	}
 	if len(collector.values()) > 0 {
