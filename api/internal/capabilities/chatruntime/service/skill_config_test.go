@@ -205,6 +205,94 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	}
 }
 
+func TestSkillRuntimeParametersForPreparedAddsSelectedFileGovernanceAsset(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		parts: consoleFilesSemanticTestParts("read the selected file", []consoleFilesTestFile{
+			{ID: "file-1", Name: "one.pdf", Extension: "pdf"},
+			{ID: "file-2", Name: "selected.xlsx", Extension: "xlsx", Selected: true},
+		}),
+	}
+
+	params := skillRuntimeParametersForPrepared(prepared)
+	governance := governanceRuntimeParamsFromTest(t, params)
+	if governance["permission_tier"] != "basic" {
+		t.Fatalf("permission_tier = %#v, want basic", governance["permission_tier"])
+	}
+	assets := governanceAssetsFromTest(t, governance)
+	if len(assets) != 1 || assets[0]["id"] != "file-2" || assets[0]["name"] != "selected.xlsx" {
+		t.Fatalf("governance assets = %#v, want selected file-2", assets)
+	}
+}
+
+func TestSkillRuntimeParametersForPreparedAddsOrdinalFileGovernanceAsset(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		parts: consoleFilesSemanticTestParts("translate the fourth file", []consoleFilesTestFile{
+			{ID: "file-1", Name: "one.xlsx", Extension: "xlsx"},
+			{ID: "file-2", Name: "two.xlsx", Extension: "xlsx"},
+			{ID: "file-3", Name: "three.pdf", Extension: "pdf"},
+			{ID: "file-4", Name: "four.pdf", Extension: "pdf"},
+		}),
+	}
+
+	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
+	assets := governanceAssetsFromTest(t, governance)
+	if len(assets) != 1 || assets[0]["id"] != "file-4" || assets[0]["name"] != "four.pdf" {
+		t.Fatalf("governance assets = %#v, want fourth file", assets)
+	}
+}
+
+func TestSkillRuntimeParametersForPreparedDoesNotAddAmbiguousFileGovernanceAssets(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		parts: consoleFilesSemanticTestParts("review these files", []consoleFilesTestFile{
+			{ID: "file-1", Name: "one.pdf", Extension: "pdf"},
+			{ID: "file-2", Name: "two.xlsx", Extension: "xlsx"},
+		}),
+	}
+
+	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
+	if _, exists := governance["assets"]; exists {
+		t.Fatalf("governance assets = %#v, want omitted for ambiguous target", governance["assets"])
+	}
+	if governance["permission_tier"] != "basic" {
+		t.Fatalf("permission_tier = %#v, want basic", governance["permission_tier"])
+	}
+}
+
+func TestApplySkillToolGovernanceRuntimeParametersPreservesFlatPermissionTier(t *testing.T) {
+	params := applySkillToolGovernanceRuntimeParameters(map[string]interface{}{
+		"tool_governance_permission_tier": "advanced",
+	}, nil)
+
+	governance := governanceRuntimeParamsFromTest(t, params)
+	if governance["permission_tier"] != "advanced" {
+		t.Fatalf("permission_tier = %#v, want advanced", governance["permission_tier"])
+	}
+}
+
+func governanceRuntimeParamsFromTest(t *testing.T, params map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	governance, ok := params["tool_governance"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("tool_governance = %#v, want map", params["tool_governance"])
+	}
+	return governance
+}
+
+func governanceAssetsFromTest(t *testing.T, governance map[string]interface{}) []map[string]interface{} {
+	t.Helper()
+	assets, ok := governance["assets"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("assets = %#v, want []map[string]interface{}", governance["assets"])
+	}
+	return assets
+}
+
 func TestAgentWorkflowAvailableBindingsMessageInjectsSafeContext(t *testing.T) {
 	message, ok := agentWorkflowAvailableBindingsMessage([]AgentWorkflowBinding{{
 		BindingID:       "task-flow",

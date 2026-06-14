@@ -109,6 +109,7 @@ func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{
 
 func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interface{} {
 	params := skillRuntimeParameters(prepared.Scope, prepared.RunConfig)
+	params = applySkillToolGovernanceRuntimeParameters(params, prepared)
 	if history := workflowConversationHistoryFromPrepared(prepared); len(history) > 0 {
 		params["workflow_context"] = map[string]interface{}{
 			"conversation_history": history,

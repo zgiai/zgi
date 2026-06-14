@@ -7,6 +7,7 @@ import (
 	"time"
 
 	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -14,7 +15,8 @@ import (
 )
 
 func newSkillRuntimeWithSandbox(toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, fileService interfaces.FileService, organizationService interfaces.OrganizationService) *skills.Runtime {
-	runtime := skills.NewRuntime(toolEngine, toolManager)
+	runtime := skills.NewRuntime(toolEngine, toolManager).
+		WithToolGovernanceGateway(skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))
 	if appconfig.GlobalConfig == nil {
 		return runtime
 	}
