@@ -315,6 +315,35 @@ func TestWorkflowTestScenarioRecognitionTasksMigrationDefinesActiveUniqueIndex(t
 	}
 }
 
+func TestDropAnnouncementRunNodeUniqueIndexMigrationSQL(t *testing.T) {
+	upSQL := strings.Join(strings.Fields(dropAnnouncementRunNodeUniqueIndexSQL), " ")
+	if !strings.Contains(upSQL, "DROP INDEX IF EXISTS public.idx_announcements_run_node") {
+		t.Fatalf("drop announcement run/node index SQL missing expected drop: %s", upSQL)
+	}
+
+	guardSQL := strings.Join(strings.Fields(ensureNoDuplicateAnnouncementRunNodeSQL), " ")
+	for _, want := range []string{
+		"FROM public.announcements",
+		"GROUP BY workflow_run_id, node_id",
+		"HAVING COUNT(*) > 1",
+		"RAISE EXCEPTION",
+	} {
+		if !strings.Contains(guardSQL, want) {
+			t.Fatalf("announcement run/node rollback guard SQL missing %q: %s", want, guardSQL)
+		}
+	}
+
+	recreateSQL := strings.Join(strings.Fields(recreateAnnouncementRunNodeUniqueIndexSQL), " ")
+	for _, want := range []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_announcements_run_node",
+		"ON public.announcements (workflow_run_id, node_id)",
+	} {
+		if !strings.Contains(recreateSQL, want) {
+			t.Fatalf("announcement run/node recreate SQL missing %q: %s", want, recreateSQL)
+		}
+	}
+}
+
 func TestLegacyBridgePreflightExcludesBackfilledTablesOnly(t *testing.T) {
 	tables := baselineTableNamesExcluding(legacyBridgeBackfilledTables)
 	seen := make(map[string]struct{}, len(tables))

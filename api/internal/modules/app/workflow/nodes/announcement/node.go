@@ -118,7 +118,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	renderedTitle := n.GraphRuntimeState.VariablePool.ConvertTemplate(config.Title).Text()
 	renderedContent := n.GraphRuntimeState.VariablePool.ConvertTemplate(config.Content).Markdown()
 	service := announcementruntime.NewService(database.GetDB())
-	runtimeAnnouncement, err := service.CreateOrGetRuntimeAnnouncement(ctx, announcementruntime.CreateRuntimeAnnouncementParams{
+	runtimeAnnouncement, err := service.CreateRuntimeAnnouncement(ctx, announcementruntime.CreateRuntimeAnnouncementParams{
 		TenantID:      n.TenantID,
 		AppID:         n.APPID,
 		WorkflowRunID: n.GraphRuntimeState.VariablePool.SystemVariables.WorkflowRunID,

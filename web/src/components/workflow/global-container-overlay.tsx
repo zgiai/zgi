@@ -3,6 +3,7 @@
 import React, { useMemo, useCallback } from 'react';
 import { useWorkflowStore } from './store';
 import { isContainerNode, type WorkflowNode } from './store/type';
+import { canPlaceNodeInContainer } from './store/helpers/container-rules';
 import { Layers, Ban } from 'lucide-react';
 import { useWorkflowOperations } from './hooks';
 import { createNodeByTypeFactory } from './ui/create-node-modal/services/create-node';
@@ -17,7 +18,6 @@ import { pickLocale, mapParametersToFormFields, createInitialBindings } from '@/
 import { useT, type Locale } from '@/lib/i18n';
 
 const CONTAINER_PAD = 24;
-const CONTAINER_DROP_BLOCKED_NODE_TYPES = new Set(['approval', 'announcement']);
 
 interface ContainerOverlayItemProps {
   containerNode: WorkflowNode;
@@ -155,16 +155,10 @@ const ContainerOverlayItem: React.FC<ContainerOverlayItemProps> = ({
       const newNodeId = createNodeByType(
         nodeType,
         { x: relativeX, y: relativeY },
-        undefined,
+        containerNode.id,
         initialData
       );
       if (newNodeId) {
-        // Set parent
-        useWorkflowStore.getState().updateNode(newNodeId, {
-          parentId: containerNode.id,
-          extent: 'parent',
-        });
-
         // Update children array
         const parentData = (containerNode.data || {}) as { _children?: string[] };
         const prevChildren = Array.isArray(parentData._children) ? parentData._children : [];
@@ -241,13 +235,6 @@ const GlobalContainerOverlay: React.FC = () => {
     return nodes.filter(n => isContainerNode(n.data?.type as string));
   }, [nodes]);
 
-  const isNestingBlocked = useMemo(() => {
-    if (!draggingNodeType) return false;
-    return (
-      isContainerNode(draggingNodeType) || CONTAINER_DROP_BLOCKED_NODE_TYPES.has(draggingNodeType)
-    );
-  }, [draggingNodeType]);
-
   // Node creation logic
   const operations = useWorkflowOperations();
   const createNodeByType = useMemo(() => createNodeByTypeFactory(operations), [operations]);
@@ -323,7 +310,9 @@ const GlobalContainerOverlay: React.FC = () => {
           key={item.id}
           containerNode={item.node}
           isHovered={dragOverContainerId === item.id}
-          isNestingBlocked={isNestingBlocked}
+          isNestingBlocked={
+            !canPlaceNodeInContainer(draggingNodeType, item.node.data?.type as string)
+          }
           draggingNodeType={draggingNodeType}
           viewport={viewport}
           onHover={handleHover}
