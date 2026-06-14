@@ -17,7 +17,7 @@ func (h *Handler) SubmitToolGovernanceDecision(c *gin.Context) {
 	if !ok {
 		return
 	}
-	conversationID, err := uuid.Parse(strings.TrimSpace(c.Param("conversation_id")))
+	conversationID, err := uuid.Parse(strings.TrimSpace(c.Param("id")))
 	if err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
@@ -51,7 +51,7 @@ func (h *Handler) ContinueToolGovernanceDecision(c *gin.Context) {
 	if !ok {
 		return
 	}
-	conversationID, err := uuid.Parse(strings.TrimSpace(c.Param("conversation_id")))
+	conversationID, err := uuid.Parse(strings.TrimSpace(c.Param("id")))
 	if err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return

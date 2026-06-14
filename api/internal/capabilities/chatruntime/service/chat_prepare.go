@@ -468,6 +468,7 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 		} else {
 			enabled = effectiveSkillIDsForCaller(parts.ConfiguredSkillIDs, catalog, orgEnabled, callerType, config)
 		}
+		enabled = addContextualAIChatSkillIDs(enabled, orgEnabled, catalog, parts)
 	}
 	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
 	if len(parts.SkillIDs) == 0 {

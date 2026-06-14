@@ -148,6 +148,102 @@ func TestRunConfigAllowsUserMemoryRejectsAgent(t *testing.T) {
 	}
 }
 
+func TestAddContextualAIChatSkillIDsAddsFileReaderForConsoleFileCapability(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+	}
+	parts := &chatRequestParts{
+		RuntimeContext: "route=/console/files capabilities=file.delete",
+		RawOperationContext: map[string]interface{}{
+			"resources": []interface{}{
+				map[string]interface{}{
+					"resource_type": "file",
+					"resource_id":   "file-1",
+					"title":         "old.pdf",
+					"capabilities": []interface{}{
+						map[string]interface{}{"id": "file.delete"},
+					},
+				},
+			},
+		},
+	}
+
+	got := addContextualAIChatSkillIDs(
+		[]string{skills.SkillCalculator},
+		[]string{skills.SkillCalculator, skills.SkillFileReader},
+		catalog,
+		parts,
+	)
+	want := []string{skills.SkillCalculator, skills.SkillFileReader}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("contextual skills = %#v, want %#v", got, want)
+	}
+}
+
+func TestAddContextualAIChatSkillIDsRespectsOrganizationDisabledSkill(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+	}
+	parts := &chatRequestParts{
+		RuntimeContext: "route=/console/files capabilities=file.delete",
+		RawOperationContext: map[string]interface{}{
+			"capabilities": []interface{}{
+				map[string]interface{}{"id": "file.delete"},
+			},
+		},
+	}
+
+	got := addContextualAIChatSkillIDs(
+		[]string{skills.SkillCalculator},
+		[]string{skills.SkillCalculator},
+		catalog,
+		parts,
+	)
+	want := []string{skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("contextual skills = %#v, want %#v", got, want)
+	}
+}
+
+func TestAddUnconfiguredDefaultSkillIDsAddsMissingDefaultSystemSkill(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+	}
+
+	got := addUnconfiguredDefaultSkillIDs(
+		[]string{skills.SkillCalculator},
+		map[string]struct{}{skills.SkillCalculator: {}},
+		catalog,
+	)
+	want := []string{skills.SkillCalculator, skills.SkillFileReader}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("default skills = %#v, want %#v", got, want)
+	}
+}
+
+func TestAddUnconfiguredDefaultSkillIDsPreservesExplicitDisable(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+	}
+
+	got := addUnconfiguredDefaultSkillIDs(
+		[]string{skills.SkillCalculator},
+		map[string]struct{}{
+			skills.SkillCalculator: {},
+			skills.SkillFileReader: {},
+		},
+		catalog,
+	)
+	want := []string{skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("default skills = %#v, want %#v", got, want)
+	}
+}
+
 func TestApplyRunConfigToPartsPreservesAIChatUseMemoryRequest(t *testing.T) {
 	parts := &chatRequestParts{UseMemory: true}
 

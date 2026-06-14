@@ -274,6 +274,28 @@ func TestConsoleFilesActionDecisionRequiresFileReadCapability(t *testing.T) {
 	}
 }
 
+func TestConsoleFilesAssetCapabilityMatchesDeleteCapability(t *testing.T) {
+	operationContext := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"resource_type": "file",
+				"resource_id":   "file-1",
+				"title":         "old.pdf",
+				"capabilities": []interface{}{
+					map[string]interface{}{"id": "file.delete", "risk": "high"},
+				},
+			},
+		},
+	}
+
+	if !hasConsoleFilesAssetCapability("route=/console/files", operationContext) {
+		t.Fatal("hasConsoleFilesAssetCapability() = false, want true for file.delete")
+	}
+	if hasConsoleFilesReadCapability("route=/console/files", operationContext) {
+		t.Fatal("hasConsoleFilesReadCapability() = true, want false for delete-only capability")
+	}
+}
+
 func TestConsoleFilesActionDecisionDoesNotMatchProfileReadCapability(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:          "read this file",

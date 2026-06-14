@@ -21,8 +21,9 @@ const (
 )
 
 var (
-	consoleFilesReadIntentPattern = regexp.MustCompile(`(?i)\b(read|preview|summari[sz]e|summary|analy[sz]e|analysis|inspect|show)\b`)
-	consoleFilesCapabilityPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])file\.read([^a-z0-9_.-]|$)`)
+	consoleFilesReadIntentPattern       = regexp.MustCompile(`(?i)\b(read|preview|summari[sz]e|summary|analy[sz]e|analysis|inspect|show)\b`)
+	consoleFilesCapabilityPattern       = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])file\.read([^a-z0-9_.-]|$)`)
+	consoleFilesDeleteCapabilityPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])file\.delete([^a-z0-9_.-]|$)`)
 )
 
 type consoleFilesActionDecision struct {
@@ -231,54 +232,65 @@ func runtimeContextJSON(value string) map[string]interface{} {
 }
 
 func hasConsoleFilesReadCapability(runtimeContext string, contexts ...map[string]interface{}) bool {
-	if containsFileReadCapabilityToken(runtimeContext) {
+	return hasConsoleFilesCapability(runtimeContext, consoleFilesCapabilityPattern, contexts...)
+}
+
+func hasConsoleFilesAssetCapability(runtimeContext string, contexts ...map[string]interface{}) bool {
+	if hasConsoleFilesCapability(runtimeContext, consoleFilesCapabilityPattern, contexts...) {
+		return true
+	}
+	return hasConsoleFilesCapability(runtimeContext, consoleFilesDeleteCapabilityPattern, contexts...)
+}
+
+func hasConsoleFilesCapability(runtimeContext string, pattern *regexp.Regexp, contexts ...map[string]interface{}) bool {
+	if containsConsoleFilesCapabilityToken(runtimeContext, pattern) {
 		return true
 	}
 	for _, ctx := range contexts {
-		if contextContainsFileReadCapability(ctx, 0) {
+		if contextContainsConsoleFilesCapability(ctx, pattern, 0) {
 			return true
 		}
 	}
 	if parsed := runtimeContextJSON(runtimeContext); parsed != nil {
-		return contextContainsFileReadCapability(parsed, 0)
+		return contextContainsConsoleFilesCapability(parsed, pattern, 0)
 	}
 	return false
 }
 
-func contextContainsFileReadCapability(value interface{}, depth int) bool {
+func contextContainsConsoleFilesCapability(value interface{}, pattern *regexp.Regexp, depth int) bool {
 	if depth > 5 || value == nil {
 		return false
 	}
 	switch typed := value.(type) {
 	case string:
-		return containsFileReadCapabilityToken(typed)
+		return containsConsoleFilesCapabilityToken(typed, pattern)
 	case map[string]interface{}:
 		for key, item := range typed {
 			normalizedKey := strings.ToLower(strings.TrimSpace(key))
 			switch normalizedKey {
 			case "id", "capability_id", "tool_id":
-				if containsFileReadCapabilityToken(stringMetadataValue(item)) {
+				if containsConsoleFilesCapabilityToken(stringMetadataValue(item), pattern) {
 					return true
 				}
 			case "capability_ids", "capabilities", "tool_ids", "tools":
-				if contextContainsFileReadCapability(item, depth+1) {
+				if contextContainsConsoleFilesCapability(item, pattern, depth+1) {
 					return true
 				}
 			default:
-				if contextContainsFileReadCapability(item, depth+1) {
+				if contextContainsConsoleFilesCapability(item, pattern, depth+1) {
 					return true
 				}
 			}
 		}
 	case []interface{}:
 		for _, item := range typed {
-			if contextContainsFileReadCapability(item, depth+1) {
+			if contextContainsConsoleFilesCapability(item, pattern, depth+1) {
 				return true
 			}
 		}
 	case []map[string]interface{}:
 		for _, item := range typed {
-			if contextContainsFileReadCapability(item, depth+1) {
+			if contextContainsConsoleFilesCapability(item, pattern, depth+1) {
 				return true
 			}
 		}
@@ -286,8 +298,8 @@ func contextContainsFileReadCapability(value interface{}, depth int) bool {
 	return false
 }
 
-func containsFileReadCapabilityToken(value string) bool {
-	return consoleFilesCapabilityPattern.MatchString(strings.TrimSpace(value))
+func containsConsoleFilesCapabilityToken(value string, pattern *regexp.Regexp) bool {
+	return pattern != nil && pattern.MatchString(strings.TrimSpace(value))
 }
 
 func isFileReadIntent(query string) bool {

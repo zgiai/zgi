@@ -93,15 +93,23 @@ func (s *service) effectiveOrganizationSkillIDs(ctx context.Context, organizatio
 	}
 	catalogIDs := catalogSkillIDSet(catalog)
 	enabled := make([]string, 0, len(configs))
+	configured := map[string]struct{}{}
 	for _, config := range configs {
-		if config == nil || !config.Enabled {
+		if config == nil {
 			continue
 		}
 		id := strings.ToLower(strings.TrimSpace(config.SkillID))
 		if _, ok := catalogIDs[id]; ok {
+			configured[id] = struct{}{}
+		}
+		if !config.Enabled {
+			continue
+		}
+		if _, ok := catalogIDs[id]; ok {
 			enabled = append(enabled, id)
 		}
 	}
+	enabled = addUnconfiguredDefaultSkillIDs(enabled, configured, catalog)
 	sort.Strings(enabled)
 	return enabled, nil
 }
@@ -285,6 +293,61 @@ func validateSkillRequiredConfig(item skills.SkillDiscoveryMetadata, runConfig *
 		}
 	}
 	return nil
+}
+
+func addContextualAIChatSkillIDs(enabled []string, organizationEnabled []string, catalog []skills.SkillDiscoveryMetadata, parts *chatRequestParts) []string {
+	if parts == nil || !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
+		!hasConsoleFilesAssetCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return enabled
+	}
+	return addSkillIDIfAvailable(enabled, organizationEnabled, catalog, skills.SkillFileReader, runtimemodel.ConversationCallerAIChat)
+}
+
+func addSkillIDIfAvailable(enabled []string, organizationEnabled []string, catalog []skills.SkillDiscoveryMetadata, skillID string, callerType string) []string {
+	id := strings.ToLower(strings.TrimSpace(skillID))
+	if id == "" {
+		return enabled
+	}
+	enabledSet := stringSet(enabled)
+	if _, exists := enabledSet[id]; exists {
+		return enabled
+	}
+	orgEnabled := stringSet(organizationEnabled)
+	if _, ok := orgEnabled[id]; !ok {
+		return enabled
+	}
+	metadata, ok := catalogSkillByID(catalog)[id]
+	if !ok || !skillSupportsCaller(metadata, callerType) || validateSkillRequiredConfig(metadata, nil) != nil {
+		return enabled
+	}
+	out := append(append([]string(nil), enabled...), id)
+	sort.Strings(out)
+	return out
+}
+
+func addUnconfiguredDefaultSkillIDs(enabled []string, configured map[string]struct{}, catalog []skills.SkillDiscoveryMetadata) []string {
+	catalogIDs := catalogSkillIDSet(catalog)
+	enabledSet := stringSet(enabled)
+	out := append([]string(nil), enabled...)
+	for _, raw := range defaultSystemSkillIDs {
+		id := strings.ToLower(strings.TrimSpace(raw))
+		if id == "" {
+			continue
+		}
+		if _, exists := configured[id]; exists {
+			continue
+		}
+		if _, ok := catalogIDs[id]; !ok {
+			continue
+		}
+		if _, exists := enabledSet[id]; exists {
+			continue
+		}
+		enabledSet[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type runtimeCapabilityRequirement struct {

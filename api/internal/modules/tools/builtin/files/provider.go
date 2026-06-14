@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	ProviderID   = "files"
-	ToolReadFile = "read_file"
+	ProviderID     = "files"
+	ToolReadFile   = "read_file"
+	ToolDeleteFile = "delete_file"
 
 	defaultReadFileMaxChars = 4000
 	maxReadFileMaxChars     = 12000
@@ -25,6 +26,7 @@ const (
 type FileService interface {
 	GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error)
 	GetFile(ctx context.Context, fileID string) (string, error)
+	DeleteFiles(ctx context.Context, fileIDs []string) error
 }
 
 type ContentExtractionService interface {
@@ -62,6 +64,7 @@ func NewProvider(fileService FileService, contentExtractor ContentExtractionServ
 		workspacePerms:   workspacePerms,
 	}
 	provider.RegisterTool(newReadFileTool(fileService, contentExtractor, workspacePerms))
+	provider.RegisterTool(newDeleteFileTool(fileService, workspacePerms))
 	return provider
 }
 
@@ -70,6 +73,12 @@ type readFileTool struct {
 	fileService      FileService
 	contentExtractor ContentExtractionService
 	workspacePerms   WorkspacePermissionService
+}
+
+type deleteFileTool struct {
+	*builtin.BuiltinTool
+	fileService    FileService
+	workspacePerms WorkspacePermissionService
 }
 
 type fileScope struct {
@@ -134,6 +143,44 @@ func newReadFileTool(fileService FileService, contentExtractor ContentExtraction
 	}
 }
 
+func newDeleteFileTool(fileService FileService, workspacePerms WorkspacePermissionService) tools.Tool {
+	entity := tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     ToolDeleteFile,
+			Author:   "System",
+			Provider: ProviderID,
+			Label: tools.I18nText{
+				"en_US": "Delete File",
+			},
+			Icon: "trash-2",
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{
+				"en_US": "Delete one file the current user can manage.",
+			},
+			LLM: "Delete one uploaded file the current AIChat user can manage. This is irreversible and must only run after tool governance approval. Pass a resolved file_id from the current page context or governed asset resolution.",
+		},
+		Parameters: []tools.ToolParameter{
+			{
+				Name:            "file_id",
+				Label:           tools.I18nText{"en_US": "File ID"},
+				LLMDescription:  "Required file ID resolved from the current page context, attachment, or governed asset resolution. Do not invent IDs.",
+				Type:            tools.ToolParameterTypeString,
+				Form:            tools.ToolParameterFormLLM,
+				Required:        true,
+				SupportVariable: true,
+			},
+		},
+		OutputType: "json",
+		Tags:       []string{"file", "system", "destructive"},
+	}
+	return &deleteFileTool{
+		BuiltinTool:    builtin.NewBuiltinTool(entity, ""),
+		fileService:    fileService,
+		workspacePerms: workspacePerms,
+	}
+}
+
 func (t *readFileTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
 	_ = conversationID
 	_ = appID
@@ -180,8 +227,60 @@ func (t *readFileTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 }
 
 func (t *readFileTool) scope(userID string) (fileScope, error) {
-	runtime := t.Runtime()
-	tenantID := strings.TrimSpace(t.GetTenantID())
+	return fileScopeFromRuntime(t.Runtime(), t.GetTenantID(), userID)
+}
+
+func (t *deleteFileTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
+	_ = conversationID
+	_ = appID
+	_ = messageID
+
+	if t.fileService == nil {
+		return nil, fmt.Errorf("file service is not configured")
+	}
+	scope, err := fileScopeFromRuntime(t.Runtime(), t.GetTenantID(), userID)
+	if err != nil {
+		return nil, err
+	}
+	fileID := fileIDParam(params)
+	if fileID == "" {
+		return nil, fmt.Errorf("file_id is required")
+	}
+
+	file, err := t.fileService.GetFileByID(ctx, fileID)
+	if err != nil || file == nil {
+		return nil, fmt.Errorf("file %s not found", fileID)
+	}
+	if err := t.ensureFileManageable(ctx, scope, file); err != nil {
+		return nil, err
+	}
+	filePayload := uploadFilePayload(file)
+	if err := t.fileService.DeleteFiles(ctx, []string{fileID}); err != nil {
+		return nil, fmt.Errorf("failed to delete file: %w", err)
+	}
+
+	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(map[string]interface{}{
+		"status":        "completed",
+		"deleted_count": 1,
+		"reversible":    false,
+		"file":          filePayload,
+	})}, nil
+}
+
+func (t *deleteFileTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
+	return &deleteFileTool{
+		BuiltinTool:    t.BuiltinTool.ForkToolRuntime(runtime),
+		fileService:    t.fileService,
+		workspacePerms: t.workspacePerms,
+	}
+}
+
+func (t *deleteFileTool) ensureFileManageable(ctx context.Context, scope fileScope, file *dto.UploadFile) error {
+	return ensureScopedFilePermission(ctx, scope, file, t.workspacePerms, workspacemodel.WorkspacePermissionFileManage)
+}
+
+func fileScopeFromRuntime(runtime *tools.ToolRuntime, tenantID string, userID string) (fileScope, error) {
+	tenantID = strings.TrimSpace(tenantID)
 	organizationID := ""
 	workspaceID := ""
 	invokeFrom := tools.ToolInvokeFromAIChat
@@ -214,6 +313,10 @@ func (t *readFileTool) scope(userID string) (fileScope, error) {
 }
 
 func (t *readFileTool) ensureFileReadable(ctx context.Context, scope fileScope, file *dto.UploadFile) error {
+	return ensureScopedFilePermission(ctx, scope, file, t.workspacePerms, workspacemodel.WorkspacePermissionFileDownload)
+}
+
+func ensureScopedFilePermission(ctx context.Context, scope fileScope, file *dto.UploadFile, workspacePerms WorkspacePermissionService, permission workspacemodel.WorkspacePermissionCode) error {
 	if file == nil {
 		return fmt.Errorf("file is not accessible")
 	}
@@ -239,10 +342,10 @@ func (t *readFileTool) ensureFileReadable(ctx context.Context, scope fileScope, 
 		}
 		return nil
 	}
-	if t.workspacePerms == nil {
+	if workspacePerms == nil {
 		return fmt.Errorf("workspace permission service is not configured")
 	}
-	allowed, err := t.workspacePerms.CheckWorkspacePermission(ctx, organizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionFileDownload)
+	allowed, err := workspacePerms.CheckWorkspacePermission(ctx, organizationID, workspaceID, scope.AccountID, permission)
 	if err != nil {
 		return fmt.Errorf("failed to check workspace file permission: %w", err)
 	}
@@ -401,3 +504,4 @@ func truncateRunes(value string, limit int) (string, bool) {
 
 var _ tools.ToolProvider = (*Provider)(nil)
 var _ tools.Tool = (*readFileTool)(nil)
+var _ tools.Tool = (*deleteFileTool)(nil)

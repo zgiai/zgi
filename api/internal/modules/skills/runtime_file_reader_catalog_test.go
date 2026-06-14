@@ -21,8 +21,8 @@ func TestFileReaderSystemSkillGovernanceManifest(t *testing.T) {
 	if !sameStrings(doc.Metadata.SupportedCallers, []string{SkillCallerAIChat}) {
 		t.Fatalf("supported callers = %#v, want aichat", doc.Metadata.SupportedCallers)
 	}
-	if got := toolNames(doc.Tools); !sameStrings(got, []string{"read_file"}) {
-		t.Fatalf("file-reader tools = %v, want read_file", got)
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"read_file", "delete_file"}) {
+		t.Fatalf("file-reader tools = %v, want read_file/delete_file", got)
 	}
 	readTool, ok := findSkillTool(*doc, "read_file")
 	if !ok {
@@ -60,5 +60,39 @@ func TestFileReaderSystemSkillGovernanceManifest(t *testing.T) {
 	}
 	if !readTool.Governance.AuditRequired {
 		t.Fatalf("audit_required = false, want true")
+	}
+	deleteTool, ok := findSkillTool(*doc, "delete_file")
+	if !ok {
+		t.Fatalf("delete_file tool not found")
+	}
+	if deleteTool.ProviderType != tools.ToolProviderTypeBuiltin || deleteTool.ProviderID != "files" {
+		t.Fatalf("delete_file provider = %s/%s, want builtin/files", deleteTool.ProviderType, deleteTool.ProviderID)
+	}
+	if deleteTool.Governance == nil {
+		t.Fatalf("delete_file governance manifest missing")
+	}
+	if deleteTool.Governance.ToolID != "file.delete" {
+		t.Fatalf("delete tool_id = %q, want file.delete", deleteTool.Governance.ToolID)
+	}
+	if deleteTool.Governance.Effect != toolgovernance.EffectDelete {
+		t.Fatalf("delete effect = %q, want delete", deleteTool.Governance.Effect)
+	}
+	if deleteTool.Governance.AssetType != "file" {
+		t.Fatalf("delete asset_type = %q, want file", deleteTool.Governance.AssetType)
+	}
+	if deleteTool.Governance.RiskLevel != toolgovernance.RiskLevelHigh {
+		t.Fatalf("delete risk_level = %q, want high", deleteTool.Governance.RiskLevel)
+	}
+	if !deleteTool.Governance.RequiresAssetResolution {
+		t.Fatalf("delete requires_asset_resolution = false, want true")
+	}
+	if deleteTool.Governance.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk {
+		t.Fatalf("delete default_approval_policy = %q, want always_ask", deleteTool.Governance.DefaultApprovalPolicy)
+	}
+	if got := deleteTool.Governance.PermissionScopes; len(got) != 1 || got[0] != "file:manage" {
+		t.Fatalf("delete permission_scopes = %#v, want file:manage", got)
+	}
+	if !deleteTool.Governance.AuditRequired {
+		t.Fatalf("delete audit_required = false, want true")
 	}
 }

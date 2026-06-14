@@ -122,11 +122,130 @@ func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message
 	if prepared == nil {
 		return nil
 	}
-	messages := make([]adapter.Message, 0, 1)
+	messages := make([]adapter.Message, 0, 2)
 	if message, ok := agentWorkflowAvailableBindingsMessage(prepared.RunConfig.WorkflowBindings); ok {
 		messages = append(messages, message)
 	}
+	if message, ok := contextualConsoleFilesSkillMessage(prepared); ok {
+		messages = append(messages, message)
+	}
 	return messages
+}
+
+func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message, bool) {
+	if prepared == nil || prepared.parts == nil || !skillIDEnabled(prepared.parts.SkillIDs, skills.SkillFileReader) {
+		return adapter.Message{}, false
+	}
+	parts := prepared.parts
+	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return adapter.Message{}, false
+	}
+	hasRead := hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
+	hasDelete := hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext)
+	if !hasRead && !hasDelete {
+		return adapter.Message{}, false
+	}
+
+	payload := map[string]interface{}{
+		"page":            "console.files",
+		"preferred_skill": skills.SkillFileReader,
+		"visible_files":   consoleFilesPromptVisibleFiles(parts),
+	}
+	tools := make([]map[string]string, 0, 2)
+	if hasRead {
+		tools = append(tools, map[string]string{
+			"capability_id": "file.read",
+			"skill_id":      skills.SkillFileReader,
+			"tool_name":     "read_file",
+		})
+	}
+	if hasDelete {
+		tools = append(tools, map[string]string{
+			"capability_id": "file.delete",
+			"skill_id":      skills.SkillFileReader,
+			"tool_name":     "delete_file",
+		})
+	}
+	payload["tools"] = tools
+	if targets := consoleFilesPromptResolvedTargets(parts); len(targets) > 0 {
+		payload["resolved_targets_from_user_request"] = targets
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return adapter.Message{}, false
+	}
+
+	content := strings.Join([]string{
+		"Contextual files-page tool guidance:",
+		"The user is operating on the Console Files page. Treat visible file resources in operation_context as concrete user assets.",
+		"For requests about reading, previewing, summarizing, analyzing, or translating visible files, use file-reader/read_file with the resolved file_id.",
+		"For requests about deleting or removing a resolved visible file, use file-reader/delete_file with exactly that file_id. Tool governance handles the approval card before deletion; do not ask for a separate natural-language confirmation first.",
+		"If the target file is missing or ambiguous, call request_user_input with a concise clarification instead of guessing.",
+		"Do not call unrelated discovery or domain tools, such as database, knowledge, calculator, or file-generation tools, before completing the requested files-page asset operation.",
+		"Files-page context JSON: " + string(encoded),
+	}, "\n")
+	return adapter.Message{Role: "system", Content: content}, true
+}
+
+func skillIDEnabled(skillIDs []string, target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target == "" {
+		return false
+	}
+	for _, raw := range skillIDs {
+		if strings.EqualFold(strings.TrimSpace(raw), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func consoleFilesPromptVisibleFiles(parts *chatRequestParts) []map[string]interface{} {
+	if parts == nil {
+		return nil
+	}
+	files := visibleFileResources(parts.RawOperationContext)
+	if len(files) == 0 {
+		files = visibleFileResources(parts.OperationContext)
+	}
+	out := make([]map[string]interface{}, 0, min(len(files), 10))
+	for idx, file := range files {
+		if idx >= 10 {
+			break
+		}
+		out = append(out, map[string]interface{}{
+			"visible_index": idx + 1,
+			"file_id":       file.ID,
+			"name":          file.Title,
+		})
+	}
+	return out
+}
+
+func consoleFilesPromptResolvedTargets(parts *chatRequestParts) []map[string]interface{} {
+	refs := plannerResourceRefsFromConsoleFilesQuery(parts)
+	if len(refs) == 0 {
+		return nil
+	}
+	result := resolveChatResourceRefs(parts, refs)
+	if !allResourceRefsResolved(result.Results) || len(result.FileIDs) == 0 {
+		return nil
+	}
+	namesByID := map[string]string{}
+	for _, file := range append(visibleFileResources(parts.RawOperationContext), visibleFileResources(parts.OperationContext)...) {
+		if file.ID != "" && file.Title != "" {
+			namesByID[file.ID] = file.Title
+		}
+	}
+	out := make([]map[string]interface{}, 0, len(result.FileIDs))
+	for _, id := range result.FileIDs {
+		item := map[string]interface{}{"file_id": id}
+		if name := namesByID[id]; name != "" {
+			item["name"] = name
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func agentWorkflowAvailableBindingsMessage(bindings []AgentWorkflowBinding) (adapter.Message, bool) {

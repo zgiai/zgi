@@ -65,8 +65,8 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.DELETE("/messages/:id", h.DeleteMessage)
 	group.POST("/messages/:id/stop", h.StopMessage)
 	group.POST("/messages/:id/regenerate", h.RegenerateMessage)
-	group.POST("/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id", h.SubmitToolGovernanceDecision)
-	group.POST("/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", h.ContinueToolGovernanceDecision)
+	group.POST("/conversations/:id/messages/:message_id/tool-governance/:correlation_id", h.SubmitToolGovernanceDecision)
+	group.POST("/conversations/:id/messages/:message_id/tool-governance/:correlation_id/continue", h.ContinueToolGovernanceDecision)
 	if h.actionService != nil {
 		group.GET("/action-capabilities", h.ListActionCapabilities)
 		group.POST("/action-plans", h.PlanAction)

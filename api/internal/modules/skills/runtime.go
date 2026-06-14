@@ -973,6 +973,18 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"file_id": "file_123", "max_chars": 4000},
 		},
+		SkillFileReader + "/delete_file": {
+			SkillID:     SkillFileReader,
+			ToolName:    "delete_file",
+			Description: "Delete one resolved file available in the current AIChat context after tool governance approval.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"file_id": stringValueSchema("Required file ID from the current page context, attachment context, or governed asset resolution. Do not invent IDs."),
+				},
+				[]string{"file_id"},
+			),
+			Example: map[string]interface{}{"file_id": "file_123"},
+		},
 		SkillFileGenerator + "/generate_docx": {
 			SkillID:     SkillFileGenerator,
 			ToolName:    "generate_docx",

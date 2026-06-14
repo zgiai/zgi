@@ -123,6 +123,20 @@ const fileReadCapability: AIChatCapabilityDescriptor = {
   permissions: ['file.view'],
 };
 
+const fileDeleteCapability: AIChatCapabilityDescriptor = {
+  id: 'file.delete',
+  title: 'Delete file',
+  description: 'Delete a visible file after explicit approval.',
+  risk: 'high',
+  requiresConfirmation: true,
+  status: 'available',
+  permissions: ['file.manage'],
+};
+
+function filesAIChatCapabilities(canManage: boolean): AIChatCapabilityDescriptor[] {
+  return canManage ? [fileReadCapability, fileDeleteCapability] : [fileReadCapability];
+}
+
 function compactAIChatContextText(value: string, maxLength = 1200): string {
   const text = value.replace(/\s+/g, ' ').trim();
   if (text.length <= maxLength) return text;
@@ -220,6 +234,7 @@ function buildFilesAIChatContextItems(params: {
   currentWorkspace: Workspace | null;
   isOrganizationMode: boolean;
   activeFolderName?: string;
+  canManage: boolean;
 }): AIChatContextItem[] {
   const {
     files,
@@ -233,7 +248,9 @@ function buildFilesAIChatContextItems(params: {
     currentWorkspace,
     isOrganizationMode,
     activeFolderName,
+    canManage,
   } = params;
+  const capabilities = filesAIChatCapabilities(canManage);
   const visibleFiles = files.slice(0, FILES_CONTEXT_VISIBLE_LIMIT);
   const selectedFileIdSet = new Set(selectedFileIds);
   const extensionRanks = new Map<string, number>();
@@ -283,7 +300,7 @@ function buildFilesAIChatContextItems(params: {
       href: '/console/files',
       source: 'Files page',
       status: 'available',
-      capabilities: [fileReadCapability],
+      capabilities,
       metadata: {
         page: 'console.files',
         route: '/console/files',
@@ -324,7 +341,7 @@ function buildFilesAIChatContextItems(params: {
         href: '/console/files',
         source: 'Files page',
         status: 'available' as const,
-        capabilities: [fileReadCapability],
+        capabilities,
         metadata: {
           page: 'console.files',
           resource_kind: 'file',
@@ -772,6 +789,7 @@ const FileManagementContent = ({
             currentWorkspace,
             isOrganizationMode,
             activeFolderName,
+            canManage,
           })
         : [],
     [
@@ -784,6 +802,7 @@ const FileManagementContent = ({
       extensionParam,
       files,
       isOrganizationMode,
+      canManage,
       selectedFiles,
       total,
       totalPages,

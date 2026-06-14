@@ -43,9 +43,12 @@ func TestReadFileToolReturnsAccessibleContent(t *testing.T) {
 			},
 		},
 	}
-	provider := NewProvider(fileService, extractor, fakeWorkspacePermissionService{allowed: true})
+	provider := NewProvider(fileService, extractor, &fakeWorkspacePermissionService{allowed: true})
 	if provider.GetEntity().Identity.Name != ProviderID {
 		t.Fatalf("provider name = %q, want %q", provider.GetEntity().Identity.Name, ProviderID)
+	}
+	if _, err := provider.GetTool(ToolDeleteFile); err != nil {
+		t.Fatalf("delete tool not registered: %v", err)
 	}
 	tool := readFileRuntimeTool(t, provider, organizationID)
 
@@ -96,7 +99,7 @@ func TestReadFileToolRejectsWorkspacePermissionDenied(t *testing.T) {
 			},
 		},
 	}
-	provider := NewProvider(fileService, nil, fakeWorkspacePermissionService{allowed: false})
+	provider := NewProvider(fileService, nil, &fakeWorkspacePermissionService{allowed: false})
 	tool := readFileRuntimeTool(t, provider, organizationID)
 
 	_, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{"file_id": "file-1"}, nil, nil, nil)
@@ -182,9 +185,101 @@ func TestReadFileToolFallsBackToFileServiceWhenExtractorMissing(t *testing.T) {
 	}
 }
 
+func TestDeleteFileToolDeletesManageableWorkspaceFile(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	fileService := &fakeFileService{
+		files: map[string]*dto.UploadFile{
+			"file-1": {
+				ID:             "file-1",
+				OrganizationID: organizationID,
+				WorkspaceID:    &workspaceID,
+				Name:           "obsolete.pdf",
+				Size:           25,
+				Extension:      "pdf",
+				MimeType:       "application/pdf",
+				CreatedBy:      accountID,
+				CreatedAt:      time.Unix(1700000100, 0),
+			},
+		},
+	}
+	perms := &fakeWorkspacePermissionService{allowed: true}
+	provider := NewProvider(fileService, nil, perms)
+	tool := deleteFileRuntimeTool(t, provider, organizationID)
+
+	messages, err := tool.Invoke(ctx, accountID, map[string]interface{}{"file_id": "file-1"}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if len(fileService.deleted) != 1 || fileService.deleted[0] != "file-1" {
+		t.Fatalf("deleted = %#v, want file-1", fileService.deleted)
+	}
+	if len(perms.codes) != 1 || perms.codes[0] != workspacemodel.WorkspacePermissionFileManage {
+		t.Fatalf("permission codes = %#v, want file.manage", perms.codes)
+	}
+	payload := singleJSONPayload(t, messages)
+	if got := payload["status"]; got != "completed" {
+		t.Fatalf("status = %#v, want completed", got)
+	}
+	if got := payload["deleted_count"]; got != 1 {
+		t.Fatalf("deleted_count = %#v, want 1", got)
+	}
+	if got := payload["reversible"]; got != false {
+		t.Fatalf("reversible = %#v, want false", got)
+	}
+	file, ok := payload["file"].(map[string]interface{})
+	if !ok || file["id"] != "file-1" || file["name"] != "obsolete.pdf" {
+		t.Fatalf("file payload = %#v, want deleted file metadata", payload["file"])
+	}
+}
+
+func TestDeleteFileToolRejectsWorkspacePermissionDenied(t *testing.T) {
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	fileService := &fakeFileService{
+		files: map[string]*dto.UploadFile{
+			"file-1": {
+				ID:             "file-1",
+				OrganizationID: organizationID,
+				WorkspaceID:    &workspaceID,
+				Name:           "private.pdf",
+				CreatedBy:      accountID,
+			},
+		},
+	}
+	provider := NewProvider(fileService, nil, &fakeWorkspacePermissionService{allowed: false})
+	tool := deleteFileRuntimeTool(t, provider, organizationID)
+
+	_, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{"file_id": "file-1"}, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "file is not accessible") {
+		t.Fatalf("Invoke() error = %v, want inaccessible file", err)
+	}
+	if len(fileService.deleted) != 0 {
+		t.Fatalf("deleted = %#v, want no deletion", fileService.deleted)
+	}
+}
+
 func readFileRuntimeTool(t *testing.T, provider *Provider, organizationID string) tools.Tool {
 	t.Helper()
 	tool, err := provider.GetTool(ToolReadFile)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	return tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   organizationID,
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id": organizationID,
+		},
+	})
+}
+
+func deleteFileRuntimeTool(t *testing.T, provider *Provider, organizationID string) tools.Tool {
+	t.Helper()
+	tool, err := provider.GetTool(ToolDeleteFile)
 	if err != nil {
 		t.Fatalf("GetTool() error = %v", err)
 	}
@@ -211,6 +306,7 @@ func singleJSONPayload(t *testing.T, messages []tools.ToolInvokeMessage) map[str
 type fakeFileService struct {
 	files   map[string]*dto.UploadFile
 	content map[string]string
+	deleted []string
 }
 
 func (s *fakeFileService) GetFileByID(_ context.Context, fileID string) (*dto.UploadFile, error) {
@@ -229,6 +325,17 @@ func (s *fakeFileService) GetFile(_ context.Context, fileID string) (string, err
 	return content, nil
 }
 
+func (s *fakeFileService) DeleteFiles(_ context.Context, fileIDs []string) error {
+	for _, fileID := range fileIDs {
+		if s.files[fileID] == nil {
+			return errors.New("file not found")
+		}
+		s.deleted = append(s.deleted, fileID)
+		delete(s.files, fileID)
+	}
+	return nil
+}
+
 type fakeContentExtractor struct {
 	contents map[string]*workflowfile.FileContent
 }
@@ -243,8 +350,10 @@ func (e *fakeContentExtractor) ExtractMultipleFiles(_ context.Context, fileIDs [
 
 type fakeWorkspacePermissionService struct {
 	allowed bool
+	codes   []workspacemodel.WorkspacePermissionCode
 }
 
-func (s fakeWorkspacePermissionService) CheckWorkspacePermission(context.Context, string, string, string, workspacemodel.WorkspacePermissionCode) (bool, error) {
+func (s *fakeWorkspacePermissionService) CheckWorkspacePermission(_ context.Context, _, _, _ string, code workspacemodel.WorkspacePermissionCode) (bool, error) {
+	s.codes = append(s.codes, code)
 	return s.allowed, nil
 }

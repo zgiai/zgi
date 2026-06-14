@@ -124,6 +124,77 @@ func TestPolicyToolGovernanceUsesToolArgumentsAsAssetRefs(t *testing.T) {
 	}
 }
 
+func TestPolicyToolGovernanceToolArgumentsOverrideRuntimeAssets(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "file.delete",
+			Domain:                  "files",
+			Effect:                  toolgovernance.EffectDelete,
+			AssetType:               "file",
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			RequiresAssetResolution: true,
+		},
+		SkillID:   "file-reader",
+		ToolName:  "delete_file",
+		Arguments: map[string]interface{}{"file_id": "file-2", "file_name": "target.pdf"},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets": []map[string]interface{}{
+						{"id": "file-1", "type": "file", "name": "wrong.pdf", "workspace_id": "workspace-1"},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusNeedsApproval {
+		t.Fatalf("decision status = %s, want needs_approval: %#v", decision.Status, decision)
+	}
+	if len(decision.Assets) != 1 || decision.Assets[0].ID != "file-2" || decision.Assets[0].Name != "target.pdf" {
+		t.Fatalf("assets = %#v, want file-2/target.pdf from tool arguments", decision.Assets)
+	}
+}
+
+func TestPolicyToolGovernanceEnrichesArgumentAssetFromRuntimeAsset(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "file.delete",
+			Domain:                  "files",
+			Effect:                  toolgovernance.EffectDelete,
+			AssetType:               "file",
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			RequiresAssetResolution: true,
+		},
+		SkillID:   "file-reader",
+		ToolName:  "delete_file",
+		Arguments: map[string]interface{}{"file_id": "file-1"},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets": []map[string]interface{}{
+						{"id": "file-1", "type": "file", "name": "report.pdf", "workspace_id": "workspace-1"},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if len(decision.Assets) != 1 || decision.Assets[0].ID != "file-1" || decision.Assets[0].Name != "report.pdf" || decision.Assets[0].WorkspaceID != "workspace-1" {
+		t.Fatalf("assets = %#v, want enriched file-1/report.pdf/workspace-1", decision.Assets)
+	}
+}
+
 func TestCallSkillToolMatchingSessionGrantAllowsEnginePath(t *testing.T) {
 	runtime, resolved := governedRuntimeForTest(t)
 	_, err := runtime.CallSkillTool(

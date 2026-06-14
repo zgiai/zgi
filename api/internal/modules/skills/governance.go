@@ -57,11 +57,57 @@ func governancePermissionTier(params map[string]interface{}, governance map[stri
 }
 
 func governanceAssets(params map[string]interface{}, governance map[string]interface{}, manifest toolgovernance.Manifest, arguments map[string]interface{}) []toolgovernance.AssetRef {
-	assets := assetRefsFromAny(firstRuntimeValue(params, governance, governanceAssetsKey, "assets"))
-	if len(assets) > 0 {
-		return assets
+	argumentAssets := assetRefsFromToolArguments(manifest, arguments)
+	runtimeAssets := assetRefsFromAny(firstRuntimeValue(params, governance, governanceAssetsKey, "assets"))
+	if len(argumentAssets) > 0 {
+		return enrichArgumentAssetRefs(argumentAssets, runtimeAssets)
 	}
-	return assetRefsFromToolArguments(manifest, arguments)
+	return runtimeAssets
+}
+
+func enrichArgumentAssetRefs(argumentAssets []toolgovernance.AssetRef, runtimeAssets []toolgovernance.AssetRef) []toolgovernance.AssetRef {
+	if len(argumentAssets) == 0 || len(runtimeAssets) == 0 {
+		return argumentAssets
+	}
+	out := make([]toolgovernance.AssetRef, len(argumentAssets))
+	copy(out, argumentAssets)
+	for idx := range out {
+		runtimeAsset, ok := matchingRuntimeAsset(out[idx], runtimeAssets)
+		if !ok {
+			continue
+		}
+		if out[idx].Name == "" {
+			out[idx].Name = runtimeAsset.Name
+		}
+		if out[idx].WorkspaceID == "" {
+			out[idx].WorkspaceID = runtimeAsset.WorkspaceID
+		}
+		if out[idx].Source == "" {
+			out[idx].Source = runtimeAsset.Source
+		}
+		if out[idx].Metadata == nil {
+			out[idx].Metadata = copyGovernanceMetadata(runtimeAsset.Metadata)
+		}
+	}
+	return out
+}
+
+func matchingRuntimeAsset(asset toolgovernance.AssetRef, runtimeAssets []toolgovernance.AssetRef) (toolgovernance.AssetRef, bool) {
+	assetID := strings.TrimSpace(asset.ID)
+	assetType := strings.TrimSpace(asset.Type)
+	assetName := strings.TrimSpace(asset.Name)
+	for _, candidate := range runtimeAssets {
+		if assetType != "" && strings.TrimSpace(candidate.Type) != "" && !strings.EqualFold(assetType, candidate.Type) {
+			continue
+		}
+		if assetID != "" && strings.TrimSpace(candidate.ID) == assetID {
+			return candidate, true
+		}
+		if assetID == "" && assetName != "" && strings.EqualFold(strings.TrimSpace(candidate.Name), assetName) {
+			return candidate, true
+		}
+	}
+	return toolgovernance.AssetRef{}, false
 }
 
 func governanceSessionGrants(params map[string]interface{}, governance map[string]interface{}) []toolgovernance.SessionGrant {
