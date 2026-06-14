@@ -9,9 +9,12 @@ export enum InputVarType {
   SELECT = 'select',
   NUMBER = 'number',
   CHECKBOX = 'checkbox',
+  DATETIME = 'datetime',
   FILE = 'file',
   FILE_LIST = 'file-list',
 }
+
+export type InputVarDateTimeDefaultMode = 'fixed' | 'now';
 
 export const ALLOWED_FILE_TYPES = ['image', 'audio', 'video', 'document'] as const;
 export type WorkflowFileType = (typeof ALLOWED_FILE_TYPES)[number];
@@ -117,6 +120,7 @@ export interface InputVar {
   description?: string;
   max_length?: number;
   default?: string | boolean;
+  default_datetime_mode?: InputVarDateTimeDefaultMode;
   required: boolean;
   options?: string[];
   value_selector?: ValueSelector;
@@ -257,6 +261,16 @@ export const validateInputVar = (inputVar: InputVar): ValidationError[] => {
     errors.push({ code: 'start.validation.defaultMustBeNumber' });
   }
 
+  if (
+    inputVar.type === InputVarType.DATETIME &&
+    inputVar.default_datetime_mode === 'fixed' &&
+    inputVar.default &&
+    typeof inputVar.default === 'string' &&
+    Number.isNaN(new Date(inputVar.default).getTime())
+  ) {
+    errors.push({ code: 'start.validation.defaultMustBeDateTime' });
+  }
+
   if (inputVar.max_length && inputVar.max_length <= 0) {
     errors.push({ code: 'start.validation.maxLengthGtZero' });
   }
@@ -291,6 +305,7 @@ export const getInputVarTypeLabel = (type: InputVarType, t?: Translator): string
     [InputVarType.SELECT]: 'Select',
     [InputVarType.NUMBER]: 'Number',
     [InputVarType.CHECKBOX]: 'Checkbox',
+    [InputVarType.DATETIME]: 'Date & Time',
     [InputVarType.FILE]: 'File',
     [InputVarType.FILE_LIST]: 'File List',
   };
@@ -310,6 +325,14 @@ export const createDefaultInputVar = (type: InputVarType = InputVarType.TEXT_INP
     return {
       ...baseVar,
       default: false,
+    };
+  }
+
+  if (type === InputVarType.DATETIME) {
+    return {
+      ...baseVar,
+      default: '',
+      default_datetime_mode: 'fixed',
     };
   }
 

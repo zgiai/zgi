@@ -98,7 +98,21 @@ const nodes = [
     id: 'start',
     type: 'custom',
     position: { x: 0, y: 0 },
-    data: { type: 'start', title: 'Start', desc: '', variables: [] },
+    data: {
+      type: 'start',
+      title: 'Start',
+      desc: '',
+      variables: [
+        {
+          variable: 'run_at',
+          label: 'Run at',
+          type: 'datetime',
+          required: true,
+          default: '',
+          default_datetime_mode: 'now',
+        },
+      ],
+    },
   },
   {
     id: 'tool-send-email',
@@ -203,6 +217,10 @@ assert.deepEqual(
 assert.equal(result.errorMap.get('tool-send-email')?.length, 2);
 assert.equal(
   result.errors.some(error => error.code === 'workflow.validation.startExactlyOne'),
+  false
+);
+assert.equal(
+  result.errors.some(error => error.nodeId === 'start'),
   false
 );
 

@@ -230,9 +230,19 @@ function validateStartDefaults(locale, fileName, nodes) {
     const variables = Array.isArray(start?.data?.variables) ? start.data.variables : [];
     for (const variable of variables) {
       if (variable.type === 'file-list') continue;
+      if (variable.type === 'datetime' && variable.default_datetime_mode === 'now') continue;
       if (variable.default === undefined || variable.default === '') {
         fail(
           `${locale}/${fileName} start variable ${variable.variable} is missing a debug default.`
+        );
+      }
+      if (
+        variable.type === 'datetime' &&
+        typeof variable.default === 'string' &&
+        Number.isNaN(new Date(variable.default).getTime())
+      ) {
+        fail(
+          `${locale}/${fileName} start variable ${variable.variable} has an invalid datetime debug default.`
         );
       }
     }
@@ -246,7 +256,9 @@ function collectStringValues(value, pathParts = [], values = []) {
   }
 
   if (Array.isArray(value)) {
-    value.forEach((item, index) => collectStringValues(item, [...pathParts, String(index)], values));
+    value.forEach((item, index) =>
+      collectStringValues(item, [...pathParts, String(index)], values)
+    );
     return values;
   }
 

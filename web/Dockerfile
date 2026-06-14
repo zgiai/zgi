@@ -101,7 +101,7 @@ COPY --from=builder /app/web/.next/static ./.next/static
 COPY docker/entrypoint.sh ./entrypoint.sh
 
 # Setup permissions for non-root user
-RUN mkdir -p /.pm2 \
+RUN mkdir -p /.pm2/logs /.pm2/pids \
     && chown -R 1001:0 /.pm2 /app/web \
     && chmod -R g=u /.pm2 /app/web \
     && sed -i 's/\r$//' ./entrypoint.sh \

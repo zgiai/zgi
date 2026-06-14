@@ -582,10 +582,12 @@ type workflowBinding struct {
 }
 
 type workflowStartInput struct {
-	Variable string `json:"variable"`
-	Label    string `json:"label,omitempty"`
-	Type     string `json:"type,omitempty"`
-	Required bool   `json:"required,omitempty"`
+	Variable            string      `json:"variable"`
+	Label               string      `json:"label,omitempty"`
+	Type                string      `json:"type,omitempty"`
+	Required            bool        `json:"required,omitempty"`
+	Default             interface{} `json:"default,omitempty"`
+	DefaultDateTimeMode string      `json:"default_datetime_mode,omitempty"`
 }
 
 func workflowBindingsFromRuntime(runtime *tools.ToolRuntime) ([]workflowBinding, error) {
@@ -758,10 +760,12 @@ func normalizeWorkflowStartInputs(inputs []workflowStartInput) []workflowStartIn
 		}
 		seen[variable] = struct{}{}
 		out = append(out, workflowStartInput{
-			Variable: variable,
-			Label:    strings.TrimSpace(input.Label),
-			Type:     strings.TrimSpace(input.Type),
-			Required: input.Required,
+			Variable:            variable,
+			Label:               strings.TrimSpace(input.Label),
+			Type:                strings.TrimSpace(input.Type),
+			Required:            input.Required,
+			Default:             input.Default,
+			DefaultDateTimeMode: strings.TrimSpace(input.DefaultDateTimeMode),
 		})
 	}
 	return out
@@ -873,6 +877,8 @@ func missingWorkflowInputs(inputs map[string]interface{}, required []string) []s
 
 func workflowJSONSchemaType(inputType string) string {
 	switch strings.ToLower(strings.TrimSpace(inputType)) {
+	case "datetime", "date-time":
+		return "string"
 	case "number", "integer":
 		return "number"
 	case "boolean", "bool":

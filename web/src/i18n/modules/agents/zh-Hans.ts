@@ -375,6 +375,7 @@ const messages: AgentsMessages = {
       requiredField: '该字段为必填项',
       fillFormToStart: '请先填写对话参数后再开始对话',
       invalidInputs: '输入中存在未填写的必填项。',
+      currentDateTimeAutoFilled: '运行时自动使用当前日期时间',
     },
     features: {
       title: '功能设置',

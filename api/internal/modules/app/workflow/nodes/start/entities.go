@@ -30,6 +30,7 @@ var (
 	SELECT           VariableEntityType = "select"
 	ParaGraph        VariableEntityType = "paragraph"
 	Number           VariableEntityType = "number"
+	DateTime         VariableEntityType = "datetime"
 	ExternalDataTool VariableEntityType = "external_data_tool"
 	File             VariableEntityType = "file"
 	FileList         VariableEntityType = "file-list"
