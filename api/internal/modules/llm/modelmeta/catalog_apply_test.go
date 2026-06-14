@@ -23,8 +23,10 @@ func TestFeatureColumnsForPublishedModelIncludesAttachment(t *testing.T) {
 func TestApplyPublishedCatalogMarksMissingModelsDeprecated(t *testing.T) {
 	db := newCatalogApplyTestDB(t)
 	insertCatalogApplyProvider(t, db, "openai", false)
+	insertCatalogApplyProvider(t, db, "qwen", false)
 	insertCatalogApplyModel(t, db, "openai", "gpt-5", "active", false)
 	insertCatalogApplyModel(t, db, "openai", "gpt-old", "active", false)
+	insertCatalogApplyModel(t, db, "qwen", "qwen-plus", "active", false)
 
 	svc := NewService(db)
 	err := svc.ApplyPublishedCatalog(context.Background(), PublishedCatalog{
@@ -64,6 +66,15 @@ func TestApplyPublishedCatalogMarksMissingModelsDeprecated(t *testing.T) {
 	require.Empty(t, oldModel.ReplacementProvider)
 	require.Empty(t, oldModel.ReplacementModel)
 	require.Empty(t, oldModel.DeprecationReason)
+
+	var qwenModel struct {
+		Status string
+	}
+	require.NoError(t, db.Table("llm_models").
+		Select("status").
+		Where("provider = ? AND name = ?", "qwen", "qwen-plus").
+		First(&qwenModel).Error)
+	require.Equal(t, "active", qwenModel.Status)
 }
 
 func TestApplyPublishedCatalogDoesNotRestoreSoftDeletedRecords(t *testing.T) {
@@ -181,6 +192,7 @@ func TestApplyPublishedCatalogStoresOptionalDeprecatedLifecycleFields(t *testing
 func TestApplyPublishedCatalogDoesNotSoftDeleteMissingProviders(t *testing.T) {
 	db := newCatalogApplyTestDB(t)
 	insertCatalogApplyProvider(t, db, "anthropic", false)
+	insertCatalogApplyModel(t, db, "anthropic", "claude-sonnet", "active", false)
 
 	svc := NewService(db)
 	err := svc.ApplyPublishedCatalog(context.Background(), PublishedCatalog{
@@ -202,6 +214,15 @@ func TestApplyPublishedCatalogDoesNotSoftDeleteMissingProviders(t *testing.T) {
 		Where("provider = ?", "anthropic").
 		Scan(&deletedAt).Error)
 	require.False(t, deletedAt.Valid)
+
+	var modelStatus struct {
+		Status string
+	}
+	require.NoError(t, db.Table("llm_models").
+		Select("status").
+		Where("provider = ? AND name = ?", "anthropic", "claude-sonnet").
+		First(&modelStatus).Error)
+	require.Equal(t, "active", modelStatus.Status)
 }
 
 func newCatalogApplyTestDB(t *testing.T) *gorm.DB {

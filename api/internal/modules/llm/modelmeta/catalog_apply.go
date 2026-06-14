@@ -280,20 +280,34 @@ func (s *Service) restorePublishedModelByID(ctx context.Context, id string) erro
 		Update("deleted_at", nil).Error
 }
 
-func (s *Service) markMissingModelsDeprecated(ctx context.Context, activeModels []catalogModelKey) error {
+func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels []catalogModelKey) error {
+	if len(appliedModels) == 0 {
+		return nil
+	}
+
+	providerSet := make(map[string]struct{}, len(appliedModels))
+	providers := make([]string, 0, len(appliedModels))
+	for _, key := range appliedModels {
+		if _, ok := providerSet[key.Provider]; ok {
+			continue
+		}
+		providerSet[key.Provider] = struct{}{}
+		providers = append(providers, key.Provider)
+	}
+
 	query := s.db.WithContext(ctx).
 		Table("llm_models").
 		Where("deleted_at IS NULL").
+		Where("provider IN ?", providers).
 		Where("status <> ?", "deprecated")
-	if len(activeModels) > 0 {
-		clauses := make([]string, 0, len(activeModels))
-		args := make([]interface{}, 0, len(activeModels)*2)
-		for _, key := range activeModels {
-			clauses = append(clauses, "(provider = ? AND name = ?)")
-			args = append(args, key.Provider, key.Model)
-		}
-		query = query.Not("("+joinWithOr(clauses)+")", args...)
+
+	clauses := make([]string, 0, len(appliedModels))
+	args := make([]interface{}, 0, len(appliedModels)*2)
+	for _, key := range appliedModels {
+		clauses = append(clauses, "(provider = ? AND name = ?)")
+		args = append(args, key.Provider, key.Model)
 	}
+	query = query.Not("("+joinWithOr(clauses)+")", args...)
 
 	updates := map[string]interface{}{
 		"status":     "deprecated",
