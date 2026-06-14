@@ -3,7 +3,9 @@
 import { useMemo } from 'react';
 import {
   useAIChatContextRegistration,
+  type AIChatCapabilityDescriptor,
   type AIChatContextItem,
+  type AIChatContextRelation,
 } from '@/components/aichat/contextual';
 import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
 import type {
@@ -153,6 +155,130 @@ function formatBooleanState(value: boolean): string {
   return value ? 'enabled' : 'disabled';
 }
 
+function capabilityStatus(isAvailable: boolean): AIChatCapabilityDescriptor['status'] {
+  return isAvailable ? 'available' : 'unavailable';
+}
+
+function buildAgentWorkflowRelations(
+  context: AgentRuntimeAIChatContext
+): AIChatContextRelation[] | undefined {
+  const relations = context.configuration.workflowBindings
+    .filter(binding => binding.workflow_id)
+    .map(binding => ({
+      type: 'binds_workflow',
+      resourceType: 'workflow' as const,
+      resourceId: binding.workflow_id,
+      title: binding.label || binding.binding_id,
+      metadata: {
+        binding_id: binding.binding_id,
+        version_strategy: binding.version_strategy,
+        version_uuid: binding.version_uuid,
+      },
+    }));
+
+  return relations.length > 0 ? relations : undefined;
+}
+
+function buildAgentRuntimeCapabilities(
+  context: AgentRuntimeAIChatContext
+): AIChatCapabilityDescriptor[] {
+  const canEdit = context.permissions.canEditAgent;
+  const canManage = context.permissions.canManageAgent;
+
+  return [
+    {
+      id: 'inspect_agent_runtime',
+      title: 'Inspect agent runtime',
+      description: 'Read the Agent Runtime configuration currently visible in the console.',
+      risk: 'low',
+      status: 'available',
+    },
+    {
+      id: 'update_agent_runtime_config',
+      title: 'Update agent runtime config',
+      description: 'Prepare or apply Agent Runtime configuration changes.',
+      risk: 'medium',
+      requiresConfirmation: true,
+      status: capabilityStatus(canEdit),
+      permissions: context.permissions.codes,
+      metadata: {
+        can_edit_agent: canEdit,
+        is_dirty: context.publish.isDirty,
+        save_state: context.publish.saveState,
+      },
+    },
+    {
+      id: 'publish_agent',
+      title: 'Publish agent',
+      description: 'Publish the Agent web app or promote the current runtime configuration.',
+      risk: 'high',
+      requiresConfirmation: true,
+      status: capabilityStatus(canManage),
+      permissions: context.permissions.codes,
+      metadata: {
+        can_manage_agent: canManage,
+        is_published: context.publish.isPublished,
+        web_app_status: context.publish.webAppStatus,
+      },
+    },
+    {
+      id: 'invoke_agent',
+      title: 'Invoke agent',
+      description: 'Run the Agent with the current runtime configuration.',
+      risk: 'low',
+      status: 'available',
+      metadata: {
+        file_upload_enabled: context.configuration.fileUploadEnabled,
+        memory_enabled: context.configuration.memory.enabled,
+      },
+    },
+    {
+      id: 'bind_workflow_to_agent',
+      title: 'Bind workflow to agent',
+      description: 'Add or update workflow bindings for this Agent.',
+      risk: 'medium',
+      requiresConfirmation: true,
+      status: capabilityStatus(canEdit),
+      permissions: context.permissions.codes,
+      metadata: {
+        can_edit_agent: canEdit,
+        workflow_binding_count: context.configuration.workflowBindings.length,
+      },
+    },
+  ];
+}
+
+function buildWorkflowBindingCapabilities(
+  binding: AgentWorkflowBinding
+): AIChatCapabilityDescriptor[] {
+  return [
+    {
+      id: 'inspect_workflow',
+      title: 'Inspect workflow',
+      description: 'Read workflow binding metadata and selected version strategy.',
+      risk: 'low',
+      status: 'available',
+      metadata: {
+        binding_id: binding.binding_id,
+        version_strategy: binding.version_strategy,
+        version_uuid: binding.version_uuid,
+      },
+    },
+    {
+      id: 'run_workflow',
+      title: 'Run workflow',
+      description: 'Invoke this bound workflow through the Agent Runtime.',
+      risk: 'medium',
+      requiresConfirmation: true,
+      status: binding.workflow_id ? 'available' : 'unavailable',
+      metadata: {
+        binding_id: binding.binding_id,
+        timeout_seconds: binding.timeout_seconds,
+      },
+    },
+  ];
+}
+
 export function buildAgentRuntimeAIChatContext({
   agent,
   locale,
@@ -265,6 +391,44 @@ function buildAgentRuntimeAIChatContextItems(
         (binding.writable_table_ids ?? []).length > 0 ? ', writable' : ''
       })`
   );
+  const agentCapabilities = buildAgentRuntimeCapabilities(context);
+  const workflowContextItems: AIChatContextItem[] = context.configuration.workflowBindings
+    .filter(binding => binding.workflow_id || binding.binding_id)
+    .map(binding => ({
+      id: binding.workflow_id || binding.binding_id,
+      type: 'workflow',
+      title: binding.label || binding.binding_id,
+      subtitle: `Bound to ${context.agent.name}`,
+      description: compactContextField(
+        binding.description ||
+          `Workflow binding ${binding.binding_id} uses ${binding.version_strategy} version strategy.`
+      ),
+      source: 'Agent Runtime',
+      risk: 'medium',
+      status: 'available',
+      relations: [
+        {
+          type: 'bound_to_agent',
+          resourceType: 'agent',
+          resourceId: context.agent.id,
+          title: context.agent.name,
+          metadata: {
+            binding_id: binding.binding_id,
+            version_strategy: binding.version_strategy,
+            version_uuid: binding.version_uuid,
+          },
+        },
+      ],
+      capabilities: buildWorkflowBindingCapabilities(binding),
+      metadata: {
+        agent_id: context.agent.id,
+        workflow_id: binding.workflow_id,
+        binding_id: binding.binding_id,
+        version_strategy: binding.version_strategy,
+        version_uuid: binding.version_uuid,
+        timeout_seconds: binding.timeout_seconds,
+      },
+    }));
 
   return [
     {
@@ -276,6 +440,9 @@ function buildAgentRuntimeAIChatContextItems(
       href: `/console/agents/${context.agent.id}/agent`,
       source: 'Agent Runtime',
       risk: 'low',
+      status: context.publish.isPublished ? 'published' : 'draft',
+      relations: buildAgentWorkflowRelations(context),
+      capabilities: agentCapabilities,
       permissions: context.permissions.codes,
       metadata: {
         agent_id: context.agent.id,
@@ -373,6 +540,7 @@ function buildAgentRuntimeAIChatContextItems(
         suggested_question_count: context.configuration.suggestedQuestions.length,
       },
     },
+    ...workflowContextItems,
     {
       id: `${context.agent.id}:permissions`,
       type: 'custom',

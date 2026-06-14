@@ -10,7 +10,12 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { AIChatContextItem, AIChatContextRegistrationOptions } from './types';
+import type {
+  AIChatCapabilityDescriptor,
+  AIChatContextItem,
+  AIChatContextRegistrationOptions,
+  AIChatContextRelation,
+} from './types';
 
 interface ContextualAIChatState {
   isOpen: boolean;
@@ -26,21 +31,65 @@ interface ContextualAIChatState {
 
 const ContextualAIChatContext = createContext<ContextualAIChatState | null>(null);
 
+function normalizeCapabilities(
+  capabilities: AIChatContextItem['capabilities']
+): AIChatCapabilityDescriptor[] | undefined {
+  const normalized: AIChatCapabilityDescriptor[] = [];
+  (capabilities ?? []).forEach(capability => {
+    const id = capability.id.trim();
+    if (!id) return;
+
+    normalized.push({
+      ...capability,
+      id,
+      title: capability.title?.trim() || undefined,
+      description: capability.description?.trim() || undefined,
+      permissions: capability.permissions?.map(permission => permission.trim()).filter(Boolean),
+    });
+  });
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeRelations(
+  relations: AIChatContextItem['relations']
+): AIChatContextRelation[] | undefined {
+  const normalized: AIChatContextRelation[] = [];
+  (relations ?? []).forEach(relation => {
+    const type = relation.type.trim();
+    const resourceId = relation.resourceId.trim();
+    if (!type || !resourceId) return;
+
+    normalized.push({
+      ...relation,
+      type,
+      resourceId,
+      title: relation.title?.trim() || undefined,
+    });
+  });
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function normalizeContextItems(items: AIChatContextItem[]): AIChatContextItem[] {
   const seen = new Set<string>();
   const normalized: AIChatContextItem[] = [];
   items.forEach(item => {
-    const id = `${item.type}:${item.id}`.trim();
+    const resourceId = item.id.trim();
+    const id = `${item.type}:${resourceId}`.trim();
     const title = item.title.trim();
-    if (!id || !title || seen.has(id)) return;
+    if (!resourceId || !title || seen.has(id)) return;
     seen.add(id);
     normalized.push({
       ...item,
+      id: resourceId,
       title,
       subtitle: item.subtitle?.trim() || undefined,
       description: item.description?.trim() || undefined,
       source: item.source?.trim() || undefined,
-      permissions: item.permissions?.filter(Boolean),
+      permissions: item.permissions?.map(permission => permission.trim()).filter(Boolean),
+      relations: normalizeRelations(item.relations),
+      capabilities: normalizeCapabilities(item.capabilities),
     });
   });
   return normalized;

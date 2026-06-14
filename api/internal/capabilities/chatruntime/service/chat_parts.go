@@ -135,6 +135,7 @@ func isUsableAssistantHistoryStatus(status string) bool {
 func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error) {
 	query := strings.TrimSpace(req.Query)
 	runtimeContext := normalizeRuntimeContext(req.RuntimeContext)
+	operationContext, operationLedger := normalizeOperationContext(req.OperationContext)
 	modelName := strings.TrimSpace(req.Model)
 	if query == "" || modelName == "" {
 		return nil, fmt.Errorf("%w: query and model are required", ErrInvalidInput)
@@ -149,13 +150,15 @@ func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error)
 		providerPtr = &provider
 	}
 	return &chatRequestParts{
-		Query:          query,
-		RuntimeContext: runtimeContext,
-		ModelName:      modelName,
-		Provider:       provider,
-		ProviderPtr:    providerPtr,
-		Parameters:     params,
-		UseMemory:      req.UseMemory,
+		Query:            query,
+		RuntimeContext:   runtimeContext,
+		OperationContext: operationContext,
+		OperationLedger:  operationLedger,
+		ModelName:        modelName,
+		Provider:         provider,
+		ProviderPtr:      providerPtr,
+		Parameters:       params,
+		UseMemory:        req.UseMemory,
 	}, nil
 }
 
@@ -294,6 +297,9 @@ func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
 			"included":   true,
 			"char_count": len([]rune(parts.RuntimeContext)),
 		}
+	}
+	if parts.OperationLedger != nil {
+		metadata["operation_ledger"] = copyStringAnyMap(parts.OperationLedger)
 	}
 	if parts.Attachments != nil && len(parts.Attachments.Files) > 0 {
 		metadata["files"] = parts.Attachments.metadataFiles()

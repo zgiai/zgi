@@ -11,16 +11,17 @@ type UpdateConversationRequest struct {
 }
 
 type ChatRequest struct {
-	ConversationID string                 `json:"conversation_id,omitempty"`
-	ParentID       string                 `json:"parent_id,omitempty"`
-	Query          string                 `json:"query" binding:"required"`
-	RuntimeContext string                 `json:"runtime_context,omitempty"`
-	FileIDs        []string               `json:"file_ids,omitempty"`
-	Model          string                 `json:"model,omitempty"`
-	Provider       string                 `json:"provider,omitempty"`
-	ResponseMode   string                 `json:"response_mode,omitempty"`
-	Parameters     map[string]interface{} `json:"parameters,omitempty"`
-	UseMemory      bool                   `json:"use_memory,omitempty"`
+	ConversationID   string                 `json:"conversation_id,omitempty"`
+	ParentID         string                 `json:"parent_id,omitempty"`
+	Query            string                 `json:"query" binding:"required"`
+	RuntimeContext   string                 `json:"runtime_context,omitempty"`
+	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
+	FileIDs          []string               `json:"file_ids,omitempty"`
+	Model            string                 `json:"model,omitempty"`
+	Provider         string                 `json:"provider,omitempty"`
+	ResponseMode     string                 `json:"response_mode,omitempty"`
+	Parameters       map[string]interface{} `json:"parameters,omitempty"`
+	UseMemory        bool                   `json:"use_memory,omitempty"`
 }
 
 type RegenerateMessageRequest struct {

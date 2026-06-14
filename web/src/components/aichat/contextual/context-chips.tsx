@@ -4,7 +4,7 @@ import { X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { AIChatContextItem } from './types';
+import type { AIChatCapabilityRisk, AIChatContextItem } from './types';
 
 interface AIChatContextChipsProps {
   items: AIChatContextItem[];
@@ -38,6 +38,40 @@ function contextTypeLabel(type: AIChatContextItem['type']) {
   }
 }
 
+const RISK_RANK: Record<AIChatCapabilityRisk, number> = {
+  low: 1,
+  medium: 2,
+  high: 3,
+};
+
+function getHighestCapabilityRisk(item: AIChatContextItem): AIChatCapabilityRisk | null {
+  return (
+    (item.capabilities ?? [])
+      .map(capability => capability.risk)
+      .sort((left, right) => RISK_RANK[right] - RISK_RANK[left])[0] ?? null
+  );
+}
+
+function capabilitySummary(item: AIChatContextItem): string | null {
+  const capabilityCount = item.capabilities?.length ?? 0;
+  if (capabilityCount === 0) return null;
+  const highestRisk = getHighestCapabilityRisk(item);
+  return `${capabilityCount} cap${capabilityCount === 1 ? '' : 's'}${
+    highestRisk ? `/${highestRisk}` : ''
+  }`;
+}
+
+function capabilityRiskClass(risk: AIChatCapabilityRisk | null) {
+  switch (risk) {
+    case 'high':
+      return 'text-destructive';
+    case 'medium':
+      return 'text-amber-600 dark:text-amber-400';
+    default:
+      return 'text-muted-foreground';
+  }
+}
+
 export function AIChatContextChips({
   items,
   maxVisible = 4,
@@ -53,12 +87,21 @@ export function AIChatContextChips({
 
   return (
     <div className={cn('flex min-w-0 flex-wrap items-center gap-1.5', className)}>
-      {visibleItems.map(item => (
-        <Badge key={`${item.type}:${item.id}`} variant="outline" className="max-w-[220px] gap-1">
-          <span className="shrink-0 text-muted-foreground">{contextTypeLabel(item.type)}</span>
-          <span className="truncate">{item.title}</span>
-        </Badge>
-      ))}
+      {visibleItems.map(item => {
+        const summary = capabilitySummary(item);
+        const highestRisk = getHighestCapabilityRisk(item);
+        return (
+          <Badge key={`${item.type}:${item.id}`} variant="outline" className="max-w-[280px] gap-1">
+            <span className="shrink-0 text-muted-foreground">{contextTypeLabel(item.type)}</span>
+            <span className="truncate">{item.title}</span>
+            {summary ? (
+              <span className={cn('shrink-0 text-[11px]', capabilityRiskClass(highestRisk))}>
+                {summary}
+              </span>
+            ) : null}
+          </Badge>
+        );
+      })}
       {hiddenCount > 0 ? <Badge variant="subtle">+{hiddenCount}</Badge> : null}
       {onClear ? (
         <Button

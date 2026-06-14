@@ -335,6 +335,8 @@ type ExistingSkill struct {
 type chatRequestParts struct {
 	Query                        string
 	RuntimeContext               string
+	OperationContext             map[string]interface{}
+	OperationLedger              map[string]interface{}
 	ModelName                    string
 	Provider                     string
 	ProviderPtr                  *string

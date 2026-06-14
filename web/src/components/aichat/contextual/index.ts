@@ -7,8 +7,19 @@ export {
 export { ContextualAIChatLauncher } from './contextual-ai-chat-launcher';
 export { AIChatContextChips } from './context-chips';
 export type {
+  AIChatCapabilityDescriptor,
+  AIChatCapabilityRisk,
+  AIChatCapabilityStatus,
   AIChatContextItem,
   AIChatContextItemType,
+  AIChatContextMetadata,
   AIChatContextRegistrationOptions,
+  AIChatContextRelation,
   AIChatContextRisk,
+  AIChatOperationCapability,
+  AIChatOperationContext,
+  AIChatOperationRelation,
+  AIChatOperationResource,
+  AIChatResourceStatus,
+  AIChatResourceType,
 } from './types';
