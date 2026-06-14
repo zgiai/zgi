@@ -48,13 +48,16 @@ func (p *DefaultPlanner) Plan(req contracts.ParseRequest, catalog *contracts.Par
 
 	if profileAllowsRemote(profile) {
 		if routeProviders, ext := fileExtensionRouteProviders(req.FileName, catalog, health); len(routeProviders) > 0 {
-			plan.Primary = candidateFromProvider(routeProviders[0], map[string]any{
+			primaryIndex := fileExtensionPrimaryIndex(routeProviders)
+			plan.Primary = candidateFromProvider(routeProviders[primaryIndex], map[string]any{
 				"selection":  "file_extension_auto_route",
 				"file_ext":   ext,
-				"route_rank": 0,
+				"route_rank": primaryIndex,
 			})
-			if len(routeProviders) > 1 {
-				plan.FallbackCandidates = buildCandidates(routeProviders[1:], map[string]any{
+			fallbackRouteProviders := append([]contracts.ParseProviderConfig(nil), routeProviders[:primaryIndex]...)
+			fallbackRouteProviders = append(fallbackRouteProviders, routeProviders[primaryIndex+1:]...)
+			if len(fallbackRouteProviders) > 0 {
+				plan.FallbackCandidates = buildCandidates(fallbackRouteProviders, map[string]any{
 					"selection": "file_extension_auto_fallback",
 					"file_ext":  ext,
 				})
@@ -115,6 +118,15 @@ func (p *DefaultPlanner) Plan(req contracts.ParseRequest, catalog *contracts.Par
 		})
 	}
 	return plan, nil
+}
+
+func fileExtensionPrimaryIndex(items []contracts.ParseProviderConfig) int {
+	for i, item := range items {
+		if !item.FallbackOnly {
+			return i
+		}
+	}
+	return 0
 }
 
 func preferredConfiguredProvider(profile contracts.ParseProfile, items []contracts.ParseProviderConfig) contracts.ParseProviderConfig {
