@@ -151,4 +151,16 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 	if len(grants) != 1 || grants[0]["tool_id"] != "file.delete" {
 		t.Fatalf("session grants = %#v, want file.delete grant", grants)
 	}
+
+	oneShotMetadata := appendToolGovernanceOneShotGrant(nil, grant)
+	oneShotPrepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.MustParse(conversationID), Metadata: map[string]interface{}{}},
+		Message:      &runtimemodel.Message{Metadata: oneShotMetadata},
+	}
+	params = applySkillToolGovernanceRuntimeParameters(nil, oneShotPrepared)
+	nested = governanceMapFromAny(params[skillToolGovernanceRuntimeKey])
+	grants = mapSliceFromAny(nested["session_grants"])
+	if len(grants) != 1 || grants[0]["tool_id"] != "file.delete" {
+		t.Fatalf("one-shot grants = %#v, want file.delete grant", grants)
+	}
 }

@@ -69,7 +69,11 @@ func skillToolGovernanceSessionGrantsFromPrepared(prepared *PreparedChat) []map[
 	if prepared == nil || prepared.Conversation == nil {
 		return nil
 	}
-	return mapSliceFromAny(prepared.Conversation.Metadata["tool_governance_session_grants"])
+	grants := mapSliceFromAny(prepared.Conversation.Metadata["tool_governance_session_grants"])
+	if prepared.Message != nil {
+		grants = append(grants, mapSliceFromAny(prepared.Message.Metadata["tool_governance_one_shot_grants"])...)
+	}
+	return grants
 }
 
 func toolGovernanceAssetMapsFromResources(resources []actiondto.ResourceRef) []map[string]interface{} {

@@ -296,6 +296,34 @@ export const aichatService = {
     );
   },
 
+  continueToolGovernanceDecision(
+    conversationId: string,
+    messageId: string,
+    correlationId: string,
+    payload: AIChatToolGovernanceDecisionRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    const outputFilter = createAIChatStreamOutputFilter(callbacks);
+
+    return http.sse<AIChatSseEnvelope, AIChatToolGovernanceDecisionRequest>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/tool-governance/${encodeURIComponent(
+        correlationId
+      )}/continue`,
+      {
+        method: 'POST',
+        body: payload,
+        abortSignal,
+        isTerminalMessage: isAIChatTerminalMessage,
+        onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
+        onError: error => callbacks.onError?.(error),
+        onClose: callbacks.onClose,
+      }
+    );
+  },
+
   streamChat(
     payload: AIChatChatRequest,
     callbacks: AIChatStreamCallbacks,

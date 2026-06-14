@@ -28,6 +28,7 @@ import type {
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
   AIChatStopConversationResponseData,
+  AIChatToolGovernanceDecisionRequest,
   AIChatToolGovernanceDecisionEventData,
   AIChatWorkflowEventData,
   AIChatWorkflowNodeEventData,
@@ -175,6 +176,14 @@ export interface AIChatRuntimeTransport {
     conversationId: string,
     messageId: string,
     payload: { inputs: { query: string; question_answer_option_id?: string } },
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
+  continueToolGovernanceDecision?(
+    conversationId: string,
+    messageId: string,
+    correlationId: string,
+    payload: AIChatToolGovernanceDecisionRequest,
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;
@@ -491,6 +500,30 @@ export class AIChatTransport implements AIChatRuntimeTransport {
         message_id: params.messageId,
         after_id: params.afterId,
       },
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
+
+  continueToolGovernanceDecision(
+    conversationId: string,
+    messageId: string,
+    correlationId: string,
+    payload: AIChatToolGovernanceDecisionRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.continueToolGovernanceDecision(
+      conversationId,
+      messageId,
+      correlationId,
+      payload,
       {
         onEvent: (event, data, eventId) => {
           dispatchAIChatStreamEvent(event, data, eventId, callbacks);

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -359,7 +360,18 @@ func (r *Runner) handleCallSkillTool(
 			}
 		}
 	}
+	if toolGovernanceApprovalPending(invocation.Trace) {
+		result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+		result.pendingGovernance = toolGovernanceDecisionPayload(prepared, invocation.Trace)
+		return result
+	}
 	return successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+}
+
+func toolGovernanceApprovalPending(trace skills.SkillTrace) bool {
+	return trace.Governance != nil &&
+		trace.Governance.Status == toolgovernance.DecisionStatusNeedsApproval &&
+		trace.Governance.RequiresApproval
 }
 
 func isAgentWorkflowRunTool(skillID string, toolName string) bool {

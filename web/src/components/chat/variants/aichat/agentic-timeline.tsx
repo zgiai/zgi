@@ -18,11 +18,7 @@ import { useT } from '@/i18n/translations';
 import type { ScopedTranslations } from '@/i18n/translations';
 import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
-import { aichatService } from '@/services/aichat.service';
-import type {
-  AIChatSkillInvocation,
-  AIChatToolGovernanceDecisionEventData,
-} from '@/services/types/aichat';
+import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import {
   getAIChatSkillResultDisplay,
@@ -78,6 +74,18 @@ interface AIChatAgenticTimelineProps {
   defaultOpen?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  onToolGovernanceDecision?: (
+    payload: AIChatToolGovernanceDecisionSubmitPayload
+  ) => void | Promise<void>;
+}
+
+export interface AIChatToolGovernanceDecisionSubmitPayload {
+  conversationId: string;
+  messageId: string;
+  correlationId: string;
+  action: 'approve' | 'reject';
+  rememberForSession?: boolean;
+  reason?: string;
 }
 
 interface SkillTimelineViewModel {
@@ -467,29 +475,20 @@ function governanceToolLabel(
 function ToolGovernanceDecisionRow({
   item,
   skillDisplayById,
+  onToolGovernanceDecision,
 }: {
   item: GovernanceTimelineItem;
   skillDisplayById: AIChatSkillDisplayMap;
+  onToolGovernanceDecision?: (
+    payload: AIChatToolGovernanceDecisionSubmitPayload
+  ) => void | Promise<void>;
 }) {
   const t = useT('webapp');
   const { locale } = useLocale();
-  const [localEvent, setLocalEvent] =
-    useState<AIChatToolGovernanceDecisionEventData | null>(null);
   const [rememberForSession, setRememberForSession] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<'approve' | 'reject' | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const currentItem = localEvent
-    ? ({
-        ...item,
-        event: {
-          ...item.event,
-          ...localEvent,
-          governance: localEvent.governance
-            ? { ...(item.event.governance ?? {}), ...localEvent.governance }
-            : item.event.governance,
-        },
-      } satisfies GovernanceTimelineItem)
-    : item;
+  const currentItem = item;
   const needsApproval = isToolGovernanceNeedsApproval(currentItem);
   const [isOpen, setIsOpen] = useState(needsApproval);
   const approvalStatus = governanceApprovalStatus(currentItem);
@@ -499,29 +498,37 @@ function ToolGovernanceDecisionRow({
   const details = governanceFieldRows(currentItem)
     .map(([labelKey, value]) => [labelKey, governanceDisplayText(value)] as const)
     .filter((row): row is readonly [GovernanceFieldLabel, string] => Boolean(row[1]));
-  const canExpand = details.length > 0 || Boolean(reason) || needsApproval || Boolean(approvalStatus);
+  const canExpand =
+    details.length > 0 || Boolean(reason) || needsApproval || Boolean(approvalStatus);
   const correlationId =
     currentItem.event.correlation_id ??
     currentItem.event.governance?.correlation_id ??
     governanceApprovalEvent(currentItem)?.correlation_id ??
     '';
-  const canSubmit = needsApproval && Boolean(correlationId) && !submittingAction;
+  const canSubmit =
+    needsApproval &&
+    Boolean(correlationId) &&
+    Boolean(onToolGovernanceDecision) &&
+    !submittingAction;
 
   const submitDecision = async (action: 'approve' | 'reject') => {
     if (!correlationId || submittingAction) return;
+    if (!onToolGovernanceDecision) {
+      const message = t('consoleChat.governance.submitFailed');
+      setSubmitError(message);
+      toast.error(message);
+      return;
+    }
     setSubmittingAction(action);
     setSubmitError(null);
     try {
-      const response = await aichatService.submitToolGovernanceDecision(
-        currentItem.event.conversation_id,
-        currentItem.event.message_id,
+      await onToolGovernanceDecision({
+        conversationId: currentItem.event.conversation_id,
+        messageId: currentItem.event.message_id,
         correlationId,
-        {
-          action,
-          remember_for_session: action === 'approve' ? rememberForSession : false,
-        }
-      );
-      setLocalEvent(response.data.event);
+        action,
+        rememberForSession: action === 'approve' ? rememberForSession : false,
+      });
       toast.success(
         action === 'approve'
           ? t('consoleChat.governance.approveSucceeded')
@@ -840,6 +847,7 @@ export function AIChatAgenticTimeline({
   defaultOpen = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
+  onToolGovernanceDecision,
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
   const { locale } = useLocale();
@@ -953,6 +961,7 @@ export function AIChatAgenticTimeline({
                 key={item.id}
                 item={item}
                 skillDisplayById={skillDisplayById}
+                onToolGovernanceDecision={onToolGovernanceDecision}
               />
             ) : isWorkflowTimelineItem(item) ? (
               <WorkflowTimelineRow key={item.id} item={item} />

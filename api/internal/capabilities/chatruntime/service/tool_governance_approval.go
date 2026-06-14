@@ -11,6 +11,8 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"gorm.io/gorm"
+
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 const (
@@ -22,6 +24,39 @@ const (
 	toolGovernanceApprovalStatusApproved = "approved"
 	toolGovernanceApprovalStatusRejected = "rejected"
 )
+
+func (s *service) persistToolGovernanceApprovalPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
+		return map[string]interface{}{}
+	}
+	pendingPayload := copyStringAnyMap(payload)
+	if pendingPayload == nil {
+		pendingPayload = map[string]interface{}{}
+	}
+	pendingPayload["conversation_id"] = prepared.Conversation.ID.String()
+	pendingPayload["message_id"] = prepared.Message.ID.String()
+
+	metadata := mergeToolGovernanceDecisionMetadata(prepared.Message.Metadata, pendingPayload)
+	metadata = preparedResultMetadata(metadata, usage)
+	metadata["tool_governance_continuation"] = compactSkillInvocation(map[string]interface{}{
+		"status":         "waiting_approval",
+		"correlation_id": toolGovernanceCorrelationID(pendingPayload),
+		"skill_id":       pendingPayload["skill_id"],
+		"tool_name":      pendingPayload["tool_name"],
+		"original_query": prepared.Message.Query,
+		"resume_policy":  "same_message",
+	})
+	prepared.Message.Metadata = metadata
+
+	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
+		return metadata
+	}
+	if err := s.repos.Message.UpdateWaitingApproval(ctx, prepared.Message.ID, metadata); err != nil {
+		return metadata
+	}
+	_ = s.repos.Conversation.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+	return metadata
+}
 
 func (s *service) SubmitToolGovernanceDecision(
 	ctx context.Context,
@@ -88,12 +123,19 @@ func (s *service) SubmitToolGovernanceDecision(
 	}
 
 	var sessionGrant map[string]interface{}
-	if action == toolGovernanceActionApprove && req.RememberForSession {
-		sessionGrant = toolGovernanceSessionGrantFromEvent(event, conversation.ID.String(), now)
-		resolution["session_grant"] = sessionGrant
+	if action == toolGovernanceActionApprove {
+		approvedGrant := toolGovernanceSessionGrantFromEvent(event, conversation.ID.String(), now)
+		resolution["approved_grant"] = approvedGrant
+		if req.RememberForSession {
+			sessionGrant = approvedGrant
+			resolution["session_grant"] = sessionGrant
+		}
 	}
 	updatedEvent := resolvedToolGovernanceDecisionEvent(event, resolution)
 	messageMetadata := mergeToolGovernanceDecisionMetadata(message.Metadata, updatedEvent)
+	if approvedGrant := governanceMapFromAny(resolution["approved_grant"]); len(approvedGrant) > 0 {
+		messageMetadata = appendToolGovernanceOneShotGrant(messageMetadata, approvedGrant)
+	}
 	conversationMetadata := copyStringAnyMap(conversation.Metadata)
 	if sessionGrant != nil {
 		conversationMetadata = appendToolGovernanceSessionGrant(conversationMetadata, sessionGrant)
@@ -322,17 +364,25 @@ func toolGovernanceSessionGrantFromEvent(event map[string]interface{}, conversat
 }
 
 func appendToolGovernanceSessionGrant(metadata map[string]interface{}, grant map[string]interface{}) map[string]interface{} {
+	return appendToolGovernanceGrant(metadata, "tool_governance_session_grants", grant)
+}
+
+func appendToolGovernanceOneShotGrant(metadata map[string]interface{}, grant map[string]interface{}) map[string]interface{} {
+	return appendToolGovernanceGrant(metadata, "tool_governance_one_shot_grants", grant)
+}
+
+func appendToolGovernanceGrant(metadata map[string]interface{}, key string, grant map[string]interface{}) map[string]interface{} {
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
 	if len(grant) == 0 {
 		return metadata
 	}
-	grants := mapSliceFromAny(metadata["tool_governance_session_grants"])
-	key := toolGovernanceSessionGrantKey(grant)
+	grants := mapSliceFromAny(metadata[key])
+	grantKey := toolGovernanceSessionGrantKey(grant)
 	replaced := false
 	for index, existing := range grants {
-		if toolGovernanceSessionGrantKey(existing) == key {
+		if toolGovernanceSessionGrantKey(existing) == grantKey {
 			grants[index] = mergeInvocation(existing, grant)
 			replaced = true
 			break
@@ -341,7 +391,7 @@ func appendToolGovernanceSessionGrant(metadata map[string]interface{}, grant map
 	if !replaced {
 		grants = append(grants, copyStringAnyMap(grant))
 	}
-	metadata["tool_governance_session_grants"] = mapsToInterfaceSlice(grants)
+	metadata[key] = mapsToInterfaceSlice(grants)
 	return metadata
 }
 

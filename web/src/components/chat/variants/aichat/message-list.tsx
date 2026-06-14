@@ -10,6 +10,7 @@ import type { AIChatConversation, AIChatMessage } from '@/services/types/aichat'
 import type { AIChatStreamingMessageState } from '@/components/chat/controllers/aichat';
 import { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
+import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
 
 interface AIChatMessageListProps {
   messages: AIChatMessage[];
@@ -28,6 +29,9 @@ interface AIChatMessageListProps {
   bottomSpacerHeight: number;
   onScroll: (event: UIEvent<HTMLDivElement>) => void;
   onRegenerate: (message: AIChatMessage) => void;
+  onToolGovernanceDecision?: (
+    payload: AIChatToolGovernanceDecisionSubmitPayload
+  ) => void | Promise<void>;
   onSwitchBranch: (messageId: string) => void;
   onEditStart: (message: AIChatMessage) => void;
   onEditChange: (value: string) => void;
@@ -86,6 +90,7 @@ export function AIChatMessageList({
   bottomSpacerHeight,
   onScroll,
   onRegenerate,
+  onToolGovernanceDecision,
   onSwitchBranch,
   onEditStart,
   onEditChange,
@@ -141,6 +146,7 @@ export function AIChatMessageList({
                   message
                 )}
                 onRegenerate={onRegenerate}
+                onToolGovernanceDecision={onToolGovernanceDecision}
                 branchNavigation={branchNavigationByMessageId.get(message.id)}
                 onSwitchBranch={onSwitchBranch}
                 isEditing={editingMessageId === message.id}

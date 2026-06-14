@@ -66,6 +66,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/messages/:id/stop", h.StopMessage)
 	group.POST("/messages/:id/regenerate", h.RegenerateMessage)
 	group.POST("/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id", h.SubmitToolGovernanceDecision)
+	group.POST("/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", h.ContinueToolGovernanceDecision)
 	if h.actionService != nil {
 		group.GET("/action-capabilities", h.ListActionCapabilities)
 		group.POST("/action-plans", h.PlanAction)
@@ -522,13 +523,17 @@ func writeChatError(c *gin.Context, prepared *runtimeservice.PreparedChat, err e
 
 func writeChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result *runtimeservice.ChatResult) {
 	metadata := map[string]interface{}{}
+	status := runtimemodel.MessageStatusCompleted
 	if result != nil && result.Metadata != nil {
 		metadata = result.Metadata
+	}
+	if result != nil && strings.TrimSpace(result.Status) != "" {
+		status = strings.TrimSpace(result.Status)
 	}
 	_ = writeSSE(c, "message_end", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
-		"status":          runtimemodel.MessageStatusCompleted,
+		"status":          status,
 		"metadata":        metadata,
 	})
 }

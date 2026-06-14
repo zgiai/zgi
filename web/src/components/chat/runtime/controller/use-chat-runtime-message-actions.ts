@@ -740,18 +740,19 @@ export function useChatRuntimeMessageActions({
     ]
   );
 
-  const { continueWorkflowApproval, continueWorkflowQuestion } = useWorkflowContinuationActions({
-    stateRef,
-    transportRef,
-    requireModel,
-    pendingStreamAbortRef,
-    streamAbortByConversationRef,
-    streamingMessageRef,
-    setControllerState,
-    markSelectionTarget,
-    refreshAccountMemoryAfterMemoryMutation,
-    eventAppliers,
-  });
+  const { continueWorkflowApproval, continueWorkflowQuestion, continueToolGovernanceDecision } =
+    useWorkflowContinuationActions({
+      stateRef,
+      transportRef,
+      requireModel,
+      pendingStreamAbortRef,
+      streamAbortByConversationRef,
+      streamingMessageRef,
+      setControllerState,
+      markSelectionTarget,
+      refreshAccountMemoryAfterMemoryMutation,
+      eventAppliers,
+    });
   const regenerate = useCallback(
     async (messageId: string, model: AIChatModelSelection) => {
       const activeConversationId = stateRef.current.activeConversationId;
@@ -784,5 +785,6 @@ export function useChatRuntimeMessageActions({
     replaceRootMessage,
     continueWorkflowApproval,
     continueWorkflowQuestion,
+    continueToolGovernanceDecision,
   };
 }

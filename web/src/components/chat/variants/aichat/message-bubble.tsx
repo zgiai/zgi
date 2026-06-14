@@ -40,6 +40,7 @@ import { UniversalFilePreviewDialog } from '@/components/files/universal-file-pr
 import { MarkdownImage } from '@/components/common/markdown-image';
 import { isOriginalPreviewImage } from '@/utils/file-helpers';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
+import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
 import { ActionPlanCard, ActionRunPanel } from '@/components/aichat/action-runtime';
 import { resolveAIChatActionRuntimeMessagePanels } from '@/components/aichat/action-runtime/message-metadata';
 import {
@@ -59,6 +60,9 @@ interface AIChatMessageBubbleProps {
   isLastMessage?: boolean;
   canReplaceRoot?: boolean;
   onRegenerate?: (message: AIChatMessage) => void;
+  onToolGovernanceDecision?: (
+    payload: AIChatToolGovernanceDecisionSubmitPayload
+  ) => void | Promise<void>;
   branchNavigation?: ChatBranchNavigation;
   onSwitchBranch?: (messageId: string) => void;
   isEditing?: boolean;
@@ -383,6 +387,7 @@ export function AIChatMessageBubble({
   isLastMessage = false,
   canReplaceRoot = false,
   onRegenerate,
+  onToolGovernanceDecision,
   branchNavigation,
   onSwitchBranch,
   isEditing = false,
@@ -628,6 +633,7 @@ export function AIChatMessageBubble({
               defaultOpen={shouldOpenTimelineByDefault}
               showMemoryKey={showMemoryKey}
               showSkillEventDetails={showSkillEventDetails}
+              onToolGovernanceDecision={onToolGovernanceDecision}
             />
           ) : null}
 

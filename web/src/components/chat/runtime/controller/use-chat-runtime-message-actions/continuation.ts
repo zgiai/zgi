@@ -1,6 +1,9 @@
 import { useCallback } from 'react';
 
-import type { AIChatConversation } from '@/services/types/aichat';
+import type {
+  AIChatConversation,
+  AIChatToolGovernanceDecisionRequest,
+} from '@/services/types/aichat';
 import {
   getNextActiveSendingState,
   timelineFromAIChatMessage,
@@ -54,16 +57,24 @@ export function useWorkflowContinuationActions({
       conversationId: string,
       messageId: string,
       approvalPayload?: AIChatWorkflowApprovalContinuationPayload,
-      questionInputs?: { query: string; question_answer_option_id?: string }
+      questionInputs?: { query: string; question_answer_option_id?: string },
+      toolGovernanceDecision?: {
+        correlationId: string;
+        payload: AIChatToolGovernanceDecisionRequest;
+      }
     ) => {
       const transport = transportRef.current;
-      if (questionInputs) {
+      if (toolGovernanceDecision) {
+        if (!transport.continueToolGovernanceDecision) return;
+      } else if (questionInputs) {
         if (!transport.continueWorkflowQuestion) return;
       } else if (!transport.continueWorkflowApproval) {
         return;
       }
       const continueWorkflowQuestionStream = transport.continueWorkflowQuestion?.bind(transport);
       const continueWorkflowApprovalStream = transport.continueWorkflowApproval?.bind(transport);
+      const continueToolGovernanceDecisionStream =
+        transport.continueToolGovernanceDecision?.bind(transport);
       const currentState = stateRef.current;
       if (currentState.isSending || currentState.recoveringByConversation[conversationId]) return;
       const conversation =
@@ -298,7 +309,17 @@ export function useWorkflowContinuationActions({
             }
           },
         };
-        if (questionInputs) {
+        if (toolGovernanceDecision) {
+          if (!continueToolGovernanceDecisionStream) return;
+          await continueToolGovernanceDecisionStream(
+            conversationId,
+            messageId,
+            toolGovernanceDecision.correlationId,
+            toolGovernanceDecision.payload,
+            callbacks,
+            abortController.signal
+          );
+        } else if (questionInputs) {
           if (!continueWorkflowQuestionStream) return;
           await continueWorkflowQuestionStream(
             conversationId,
@@ -377,5 +398,20 @@ export function useWorkflowContinuationActions({
     [continueWorkflowApproval]
   );
 
-  return { continueWorkflowApproval, continueWorkflowQuestion };
+  const continueToolGovernanceDecision = useCallback(
+    async (
+      conversationId: string,
+      messageId: string,
+      correlationId: string,
+      payload: AIChatToolGovernanceDecisionRequest
+    ) => {
+      await continueWorkflowApproval(conversationId, messageId, undefined, undefined, {
+        correlationId,
+        payload,
+      });
+    },
+    [continueWorkflowApproval]
+  );
+
+  return { continueWorkflowApproval, continueWorkflowQuestion, continueToolGovernanceDecision };
 }

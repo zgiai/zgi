@@ -66,6 +66,21 @@ func (e *WorkflowQuestionPendingError) Error() string {
 	return fmt.Sprintf("workflow question is pending for run %s", workflowRunID)
 }
 
+type ToolGovernancePendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *ToolGovernancePendingError) Error() string {
+	if e == nil {
+		return "tool governance approval is pending"
+	}
+	correlationID := stringFromInterface(e.Payload["correlation_id"])
+	if correlationID == "" {
+		return "tool governance approval is pending"
+	}
+	return fmt.Sprintf("tool governance approval is pending for %s", correlationID)
+}
+
 type Event struct {
 	Type    string
 	Payload map[string]interface{}

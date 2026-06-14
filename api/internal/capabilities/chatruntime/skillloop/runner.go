@@ -23,16 +23,17 @@ const (
 )
 
 type skillStepResult struct {
-	trace           skills.SkillTrace
-	toolMessage     adapter.Message
-	answer          string
-	usedSkill       bool
-	usedTool        bool
-	recoverable     bool
-	terminal        bool
-	pendingApproval map[string]interface{}
-	pendingQuestion map[string]interface{}
-	fatalErr        error
+	trace             skills.SkillTrace
+	toolMessage       adapter.Message
+	answer            string
+	usedSkill         bool
+	usedTool          bool
+	recoverable       bool
+	terminal          bool
+	pendingApproval   map[string]interface{}
+	pendingQuestion   map[string]interface{}
+	pendingGovernance map[string]interface{}
+	fatalErr          error
 }
 
 type planningResult struct {
@@ -187,6 +188,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if result.pendingQuestion != nil {
 				return answerBuilder.String(), usage, &WorkflowQuestionPendingError{Payload: result.pendingQuestion}
+			}
+			if result.pendingGovernance != nil {
+				return answerBuilder.String(), usage, &ToolGovernancePendingError{Payload: result.pendingGovernance}
 			}
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)

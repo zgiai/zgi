@@ -63,6 +63,7 @@ import {
   type AIChatUploadScope,
 } from '@/components/chat/variants/aichat/input-area';
 import { AIChatMessageList } from '@/components/chat/variants/aichat/message-list';
+import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   buildAIChatSkillDisplayMap,
   isHiddenSystemSkill,
@@ -695,6 +696,23 @@ export function AIChatShell({
     [controller]
   );
 
+  const handleToolGovernanceDecision = useCallback(
+    (payload: AIChatToolGovernanceDecisionSubmitPayload) => {
+      if (!controller.continueToolGovernanceDecision) return;
+      return controller.continueToolGovernanceDecision(
+        payload.conversationId,
+        payload.messageId,
+        payload.correlationId,
+        {
+          action: payload.action,
+          reason: payload.reason,
+          remember_for_session: payload.rememberForSession,
+        }
+      );
+    },
+    [controller]
+  );
+
   const handleNewChat = useCallback(() => {
     if (isHome) {
       toast.info(t('chat.alreadyInDraft'));
@@ -900,6 +918,7 @@ export function AIChatShell({
           bottomSpacerHeight={Math.max(inputAreaHeight + 72, 180)}
           onScroll={handleMessagesScroll}
           onRegenerate={handleRegenerate}
+          onToolGovernanceDecision={handleToolGovernanceDecision}
           onSwitchBranch={handleSwitchBranch}
           onEditStart={handleEditStart}
           onEditChange={setEditingQuery}

@@ -1,0 +1,275 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/google/uuid"
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"gorm.io/gorm"
+)
+
+type ToolGovernanceContinuation struct {
+	Conversation *runtimemodel.Conversation
+	Message      *runtimemodel.Message
+	Event        map[string]interface{}
+}
+
+func (s *service) RunToolGovernanceDecisionStream(
+	ctx context.Context,
+	scope Scope,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	correlationID string,
+	req runtimedto.ToolGovernanceDecisionRequest,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
+	if onEvent == nil {
+		return nil, fmt.Errorf("%w: event callback is required", ErrInvalidInput)
+	}
+	decision, err := s.SubmitToolGovernanceDecision(ctx, scope, conversationID, messageID, correlationID, req)
+	if err != nil {
+		return nil, err
+	}
+	continuation, err := s.beginToolGovernanceContinuation(ctx, scope, conversationID, messageID, correlationID)
+	if err != nil {
+		return nil, err
+	}
+
+	conversation, message, err := s.reloadToolGovernanceContinuationMessage(ctx, scope, conversationID, messageID)
+	if err != nil {
+		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	continuation.Conversation = conversation
+	continuation.Message = message
+	continuation.Event = decision.Event
+
+	s.resetStreamEventsBestEffort(ctx, message.ID)
+	prepared, err := s.prepareToolGovernanceContinuationChat(ctx, scope, continuation)
+	if err != nil {
+		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	s.emitPreparedEvent(ctx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
+	s.emitPreparedEvent(ctx, prepared, streamEventToolGovernanceDecision, decision.Event, onEvent)
+
+	switch strings.TrimSpace(decision.Action) {
+	case toolGovernanceActionReject:
+		return s.runToolGovernanceRejectionContinuation(ctx, prepared, req, decision.Event, onEvent)
+	case toolGovernanceActionApprove:
+		return s.runToolGovernanceApprovedContinuation(ctx, prepared, decision.Event, onEvent)
+	default:
+		return nil, fmt.Errorf("%w: action must be approve or reject", ErrInvalidInput)
+	}
+}
+
+func (s *service) failToolGovernanceContinuation(ctx context.Context, continuation *ToolGovernanceContinuation, cause error, onEvent func(StreamEvent) error) {
+	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil || cause == nil {
+		return
+	}
+	s.finalizePreparedError(ctx, &PreparedChat{
+		Conversation: continuation.Conversation,
+		Message:      continuation.Message,
+	}, cause, onEvent)
+}
+
+func (s *service) beginToolGovernanceContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, correlationID string) (*ToolGovernanceContinuation, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, err
+	}
+	conversation, err := s.getConversation(ctx, scope, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	message, err := s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
+	if err != nil {
+		return nil, mapRepoError(err)
+	}
+	if message.ConversationID != conversation.ID {
+		return nil, fmt.Errorf("%w: message belongs to another conversation", ErrInvalidInput)
+	}
+	event, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, correlationID)
+	if !ok {
+		return nil, fmt.Errorf("%w: tool governance approval event not found", ErrNotFound)
+	}
+	if message.Status != runtimemodel.MessageStatusWaitingApproval && message.Status != runtimemodel.MessageStatusStreaming {
+		return nil, fmt.Errorf("%w: message is not waiting for tool governance approval", ErrInvalidInput)
+	}
+	if s.repos.DB == nil {
+		return &ToolGovernanceContinuation{Conversation: conversation, Message: message, Event: event}, nil
+	}
+	err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepos := repository.NewRepositories(tx)
+		if err := txRepos.Conversation.StartStreaming(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, message.ID); err != nil {
+			return err
+		}
+		return tx.Model(&runtimemodel.Message{}).
+			Where("id = ? AND deleted_at IS NULL AND status = ?", message.ID, runtimemodel.MessageStatusWaitingApproval).
+			Updates(map[string]interface{}{"status": runtimemodel.MessageStatusStreaming, "error": nil}).Error
+	})
+	if err != nil {
+		return nil, mapRepoError(err)
+	}
+	conversation.RuntimeStatus = runtimemodel.ConversationRuntimeStatusStreaming
+	conversation.ActiveMessageID = &message.ID
+	message.Status = runtimemodel.MessageStatusStreaming
+	return &ToolGovernanceContinuation{Conversation: conversation, Message: message, Event: event}, nil
+}
+
+func (s *service) reloadToolGovernanceContinuationMessage(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
+	conversation, err := s.getConversation(ctx, scope, conversationID)
+	if err != nil {
+		return nil, nil, err
+	}
+	message, err := s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
+	if err != nil {
+		return nil, nil, mapRepoError(err)
+	}
+	if message.ConversationID != conversation.ID {
+		return nil, nil, fmt.Errorf("%w: message belongs to another conversation", ErrInvalidInput)
+	}
+	return conversation, message, nil
+}
+
+func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, scope Scope, continuation *ToolGovernanceContinuation) (*PreparedChat, error) {
+	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil {
+		return nil, fmt.Errorf("%w: tool governance continuation is required", ErrInvalidInput)
+	}
+	message := continuation.Message
+	parts, err := normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{}, message)
+	if err != nil {
+		return nil, err
+	}
+	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
+	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
+		parts.ConfiguredSkillIDs = configured
+	}
+	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
+		return nil, err
+	}
+	if err := s.applySkillConfig(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, nil, parts); err != nil {
+		return nil, err
+	}
+	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
+	if err != nil {
+		return nil, err
+	}
+	parts.ContextControl = contextResult.Metadata
+	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
+	return &PreparedChat{
+		Conversation: continuation.Conversation,
+		Message:      message,
+		LLMRequest:   llmRequest,
+		Scope:        scope,
+		Caller:       Caller{Type: runtimemodel.ConversationCallerAIChat},
+		ParentID:     message.ParentID,
+		parts:        parts,
+	}, nil
+}
+
+func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, prepared *PreparedChat, event map[string]interface{}, onEvent func(StreamEvent) error) (*ChatResult, error) {
+	if prepared == nil || prepared.LLMRequest == nil {
+		return nil, fmt.Errorf("%w: prepared chat is required", ErrInvalidInput)
+	}
+	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceApprovalContinuationMessage(event))
+	answer, usage, err := s.runPreparedSkillStream(ctx, context.WithoutCancel(ctx), prepared, nil, onEvent)
+	if err != nil {
+		var pendingGovernance *skillloop.ToolGovernancePendingError
+		if errors.As(err, &pendingGovernance) {
+			metadata := s.persistToolGovernanceApprovalPending(context.WithoutCancel(ctx), prepared, pendingGovernance.Payload, usage)
+			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
+		}
+		s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+	if err := s.completePreparedChat(context.WithoutCancel(ctx), prepared, answer, metadata); err != nil {
+		return nil, err
+	}
+	s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, prepared *PreparedChat, req runtimedto.ToolGovernanceDecisionRequest, event map[string]interface{}, onEvent func(StreamEvent) error) (*ChatResult, error) {
+	prepared.LLMRequest = toolGovernanceRejectionLLMRequest(prepared.Message, req, event)
+	stream, err := s.openChatStream(ctx, prepared)
+	if err != nil {
+		s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	answer, usage, err := s.collectStreamAnswerWithEvents(ctx, prepared, stream, onEvent, nil)
+	if err != nil {
+		s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+	if err := s.completePreparedChat(context.WithoutCancel(ctx), prepared, answer, metadata); err != nil {
+		return nil, err
+	}
+	s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func toolGovernanceApprovalContinuationMessage(event map[string]interface{}) adapter.Message {
+	return adapter.Message{Role: "system", Content: strings.Join([]string{
+		"The user approved the pending tool governance request for this same AIChat message.",
+		"Continue the original user task. Retry the previously blocked skill tool call only if it is still the correct next step.",
+		"The approval is scoped to the governance grant injected into runtime parameters; do not ask for the same approval again in this continuation.",
+		"Do not claim that the action succeeded until the corresponding skill/tool call actually succeeds.",
+		"Approved governance event JSON: " + compactJSON(event),
+	}, "\n")}
+}
+
+func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtimedto.ToolGovernanceDecisionRequest, event map[string]interface{}) *adapter.ChatRequest {
+	provider := ""
+	if message != nil && message.ModelProvider != nil {
+		provider = strings.TrimSpace(*message.ModelProvider)
+	}
+	model := ""
+	if message != nil {
+		model = strings.TrimSpace(message.ModelName)
+	}
+	userQuery := ""
+	if message != nil {
+		userQuery = strings.TrimSpace(message.Query)
+	}
+	content := strings.Join([]string{
+		"Original user request:\n" + userQuery,
+		"User rejected the pending tool governance request.",
+		"User rejection reason:\n" + strings.TrimSpace(req.Reason),
+		"Rejected governance event JSON:\n" + compactJSON(event),
+	}, "\n\n")
+	chatReq := &adapter.ChatRequest{
+		Provider: provider,
+		Model:    model,
+		Stream:   true,
+		Messages: []adapter.Message{
+			{
+				Role:    "system",
+				Content: "You are continuing an AIChat turn after the user rejected a governed tool call. Do not execute or claim the rejected action. Briefly explain that the action was not performed, then offer safe alternatives or ask for a safer next step when useful.",
+			},
+			{Role: "user", Content: content},
+		},
+	}
+	if message != nil {
+		applyModelParameters(chatReq, message.ModelParameters)
+	}
+	return chatReq
+}
+
+func compactJSON(value interface{}) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}

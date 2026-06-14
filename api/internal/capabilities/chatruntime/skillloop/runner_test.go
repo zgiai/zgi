@@ -256,7 +256,7 @@ Use the workflow tool.
 	}
 }
 
-func TestRunnerFeedsToolGovernanceDecisionBackToModel(t *testing.T) {
+func TestRunnerStopsForToolGovernanceApprovalPending(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, "governed-files", `---
@@ -312,11 +312,6 @@ Use governed file tools.
 					},
 				}},
 			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "需要你的确认后才能删除该文件。"},
-				}},
-			},
 		},
 	}
 	runtime := skills.NewRuntimeWithCatalog(nil, nil, catalogDir).
@@ -336,7 +331,7 @@ Use governed file tools.
 		},
 	}
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "删除第一个文件"}},
+		Messages: []adapter.Message{{Role: "user", Content: "Delete the first file"}},
 	})
 
 	answer, _, err := runner.Run(ctx, RunRequest{
@@ -355,14 +350,18 @@ Use governed file tools.
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+	var pending *ToolGovernancePendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("Run() error = %v, want ToolGovernancePendingError", err)
 	}
-	if answer != "需要你的确认后才能删除该文件。" {
-		t.Fatalf("answer = %q, want approval explanation after governance feedback", answer)
+	if answer != "" {
+		t.Fatalf("answer = %q, want no final answer before approval", answer)
 	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want replan after governance feedback", fakeLLM.appChatCalls)
+	if pending.Payload["correlation_id"] == "" {
+		t.Fatalf("pending payload = %#v, want correlation_id", pending.Payload)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want pause before governance replan", fakeLLM.appChatCalls)
 	}
 	event := findRunnerTestEvent(events, EventToolGovernanceDecision)
 	if event == nil {
