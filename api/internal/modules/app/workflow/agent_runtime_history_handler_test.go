@@ -536,41 +536,50 @@ func TestAgentRuntimeStepsFromSkillInvocationsAndFinalAnswer(t *testing.T) {
 		t.Fatalf("first item input = %#v, want model request", items[0].Input)
 	}
 	request := items[0].Input.(map[string]interface{})
-	if request["schema"] != "zgi.model_invocation.request_summary.v1" || request["trace_level"] != "summary" {
-		t.Fatalf("first item request = %#v, want summary request", request)
+	messages := request["messages"].([]interface{})
+	if len(messages) != 4 {
+		t.Fatalf("first item messages = %#v, want user system prompt plus user message", messages)
 	}
-	if request["message_count"] != 5 || request["total_content_chars"] == nil {
-		t.Fatalf("first item request summary = %#v, want message count and content chars", request)
+	if messages[0].(map[string]interface{})["role"] != "system" || messages[0].(map[string]interface{})["content"] != "visible user prompt" {
+		t.Fatalf("first system message = %#v, want visible user prompt only", messages[0])
 	}
-	if request["tool_call_count"] != 1 || len(request["tool_call_names"].([]interface{})) != 1 {
-		t.Fatalf("first item tool summary = %#v, want one tool call", request)
+	if messages[1].(map[string]interface{})["role"] != "user" {
+		t.Fatalf("second message = %#v, want user message", messages[1])
 	}
-	requestBytes, err := json.Marshal(request)
-	if err != nil {
-		t.Fatalf("marshal request summary: %v", err)
+	toolMessageContent := messages[2].(map[string]interface{})["content"].(string)
+	var toolMessage map[string]interface{}
+	if err := json.Unmarshal([]byte(toolMessageContent), &toolMessage); err != nil {
+		t.Fatalf("tool message content json = %v", err)
 	}
-	requestJSON := string(requestBytes)
-	if strings.Contains(requestJSON, "hidden agent runtime prompt") ||
-		strings.Contains(requestJSON, "hidden skill instructions") ||
-		strings.Contains(requestJSON, "secret-token") ||
-		strings.Contains(requestJSON, "Bearer abc") {
-		t.Fatalf("first item request summary leaked raw text: %s", requestJSON)
+	if toolMessage["instructions"] != agentRuntimeHiddenInstructionsPlaceholder || toolMessage["token"] != "[REDACTED]" {
+		t.Fatalf("tool message content = %#v, want instructions placeholder and token redacted", toolMessage)
+	}
+	assistantToolCall := messages[3].(map[string]interface{})["tool_calls"].([]interface{})[0].(map[string]interface{})
+	toolCallFn := assistantToolCall["function"].(map[string]interface{})
+	var toolCallArgs map[string]interface{}
+	if err := json.Unmarshal([]byte(toolCallFn["arguments"].(string)), &toolCallArgs); err != nil {
+		t.Fatalf("tool call arguments json = %v", err)
+	}
+	if toolCallArgs["password"] != "[REDACTED]" || toolCallArgs["query"] != "select 1" {
+		t.Fatalf("tool call arguments = %#v, want sensitive fields redacted only", toolCallArgs)
+	}
+	headers := toolCallArgs["headers"].(map[string]interface{})
+	if headers["Authorization"] != "[REDACTED]" {
+		t.Fatalf("tool call headers = %#v, want authorization redacted", headers)
 	}
 	rawEvent := items[0].Process["raw_event"].(map[string]interface{})
 	rawRequest := rawEvent["request"].(map[string]interface{})
-	if rawRequest["schema"] != "zgi.model_invocation.request_summary.v1" || rawRequest["message_count"] != 5 {
-		t.Fatalf("raw_event request = %#v, want request summary", rawRequest)
+	rawMessages := rawRequest["messages"].([]interface{})
+	if len(rawMessages) != 4 || rawMessages[0].(map[string]interface{})["content"] != "visible user prompt" {
+		t.Fatalf("raw_event messages = %#v, want user system prompt only", rawMessages)
 	}
-	rawEventBytes, err := json.Marshal(rawEvent)
-	if err != nil {
-		t.Fatalf("marshal raw event summary: %v", err)
+	rawToolMessageContent := rawMessages[2].(map[string]interface{})["content"].(string)
+	var rawToolMessage map[string]interface{}
+	if err := json.Unmarshal([]byte(rawToolMessageContent), &rawToolMessage); err != nil {
+		t.Fatalf("raw tool message content json = %v", err)
 	}
-	rawEventJSON := string(rawEventBytes)
-	if strings.Contains(rawEventJSON, "hidden agent runtime prompt") ||
-		strings.Contains(rawEventJSON, "hidden skill instructions") ||
-		strings.Contains(rawEventJSON, "secret-token") ||
-		strings.Contains(rawEventJSON, "Bearer abc") {
-		t.Fatalf("raw_event summary leaked raw text: %s", rawEventJSON)
+	if rawToolMessage["instructions"] != agentRuntimeHiddenInstructionsPlaceholder || rawToolMessage["token"] != "[REDACTED]" {
+		t.Fatalf("raw tool message content = %#v, want instructions placeholder and token redacted", rawToolMessage)
 	}
 	if items[0].Process["total_tokens"] != 12.0 || items[0].Process["prompt_tokens"] != 8.0 || items[0].Process["completion_tokens"] != 4.0 {
 		t.Fatalf("first item token process = %#v, want per-call token usage", items[0].Process)

@@ -629,7 +629,7 @@ func runtimeMessageResponse(message *runtimemodel.Message) runtimedto.MessageRes
 		ModelName:           message.ModelName,
 		BillingReasonSource: message.BillingReasonSource,
 		ModelParameters:     message.ModelParameters,
-		Metadata:            runtimeservice.PublicMessageMetadata(message.Metadata),
+		Metadata:            message.Metadata,
 		CreatedAt:           message.CreatedAt.Unix(),
 		UpdatedAt:           message.UpdatedAt.Unix(),
 	}
