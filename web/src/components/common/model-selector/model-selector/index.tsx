@@ -657,6 +657,9 @@ export function ModelSelector({
                           model={row.model}
                           providerId={row.providerId}
                           contextLabel={t('models.selector.tooltip.context')}
+                          deprecatedUnavailableLabel={t(
+                            'models.selector.tooltip.deprecatedUnavailable'
+                          )}
                           featuresLabel={t('models.selector.tooltip.features')}
                           replacementSuggestionLabel={t(
                             'models.selector.tooltip.replacementSuggestion'

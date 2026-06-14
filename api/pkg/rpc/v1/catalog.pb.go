@@ -410,6 +410,9 @@ type CatalogModel struct {
 	Features                *CatalogModelFeatures   `protobuf:"bytes,29,opt,name=features,proto3" json:"features,omitempty"`
 	Tools                   *CatalogModelTools      `protobuf:"bytes,30,opt,name=tools,proto3" json:"tools,omitempty"`
 	Parameters              *CatalogModelParameters `protobuf:"bytes,31,opt,name=parameters,proto3" json:"parameters,omitempty"`
+	ReplacementProvider     string                  `protobuf:"bytes,32,opt,name=replacement_provider,json=replacementProvider,proto3" json:"replacement_provider,omitempty"`
+	ReplacementModel        string                  `protobuf:"bytes,33,opt,name=replacement_model,json=replacementModel,proto3" json:"replacement_model,omitempty"`
+	DeprecationReason       string                  `protobuf:"bytes,34,opt,name=deprecation_reason,json=deprecationReason,proto3" json:"deprecation_reason,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -659,6 +662,27 @@ func (x *CatalogModel) GetParameters() *CatalogModelParameters {
 		return x.Parameters
 	}
 	return nil
+}
+
+func (x *CatalogModel) GetReplacementProvider() string {
+	if x != nil {
+		return x.ReplacementProvider
+	}
+	return ""
+}
+
+func (x *CatalogModel) GetReplacementModel() string {
+	if x != nil {
+		return x.ReplacementModel
+	}
+	return ""
+}
+
+func (x *CatalogModel) GetDeprecationReason() string {
+	if x != nil {
+		return x.DeprecationReason
+	}
+	return ""
 }
 
 type CatalogModelEndpoints struct {
@@ -1200,7 +1224,8 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"\x06status\x18\v \x01(\tR\x06status\x12\x1b\n" +
 	"\tis_active\x18\f \x01(\bR\bisActive\x12*\n" +
 	"\x11is_system_enabled\x18\r \x01(\bR\x0fisSystemEnabled\x12#\n" +
-	"\rmetadata_json\x18\x0e \x01(\tR\fmetadataJson\"\xb3\t\n" +
+	"\rmetadata_json\x18\x0e \x01(\tR\fmetadataJson\"\xc2\n" +
+	"\n" +
 	"\fCatalogModel\x12\x1a\n" +
 	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x1d\n" +
@@ -1241,7 +1266,10 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"\x05tools\x18\x1e \x01(\v2\x1d.zgi.rpc.v1.CatalogModelToolsR\x05tools\x12B\n" +
 	"\n" +
 	"parameters\x18\x1f \x01(\v2\".zgi.rpc.v1.CatalogModelParametersR\n" +
-	"parameters\"\x82\x04\n" +
+	"parameters\x121\n" +
+	"\x14replacement_provider\x18  \x01(\tR\x13replacementProvider\x12+\n" +
+	"\x11replacement_model\x18! \x01(\tR\x10replacementModel\x12-\n" +
+	"\x12deprecation_reason\x18\" \x01(\tR\x11deprecationReason\"\x82\x04\n" +
 	"\x15CatalogModelEndpoints\x12)\n" +
 	"\x10chat_completions\x18\x01 \x01(\bR\x0fchatCompletions\x12\x1c\n" +
 	"\tresponses\x18\x02 \x01(\bR\tresponses\x12\x1a\n" +

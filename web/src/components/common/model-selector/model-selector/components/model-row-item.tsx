@@ -14,6 +14,7 @@ export interface ModelRowItemProps {
   model: ModelItem;
   providerId: string;
   contextLabel: string;
+  deprecatedUnavailableLabel: string;
   featuresLabel: string;
   replacementSuggestionLabel: string;
   useCaseLabel: string;
@@ -26,6 +27,7 @@ export const ModelRowItem = memo(function ModelRowItem({
   model,
   providerId,
   contextLabel,
+  deprecatedUnavailableLabel,
   featuresLabel,
   replacementSuggestionLabel,
   useCaseLabel,
@@ -77,6 +79,7 @@ export const ModelRowItem = memo(function ModelRowItem({
           model={model}
           labels={{
             context: contextLabel,
+            deprecatedUnavailable: deprecatedUnavailableLabel,
             features: featuresLabel,
             replacementSuggestion: replacementSuggestionLabel,
             useCases: useCaseLabel,

@@ -127,6 +127,7 @@ const messages: ModelsMessages = {
     tooltip: {
       modelId: '模型ID：',
       context: '上下文',
+      deprecatedUnavailable: '该模型已废弃，不支持新建选择。',
       useCases: '使用场景',
       features: '功能',
       replacementSuggestion: '建议使用',

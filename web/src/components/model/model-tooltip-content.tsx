@@ -29,6 +29,7 @@ export interface ModelTooltipContentProps {
   model: ModelItem;
   labels: {
     context: string;
+    deprecatedUnavailable: string;
     features: string;
     replacementSuggestion: string;
     useCases: string;
@@ -68,7 +69,9 @@ export const ModelTooltipContent = memo(function ModelTooltipContent({
   const hasFeatures = enabledFeatures.length > 0;
   const hasUseCases = useCases.length > 0;
   const deprecationReason =
-    model.status === 'deprecated' ? model.deprecation_reason?.trim() : '';
+    model.status === 'deprecated'
+      ? model.deprecation_reason?.trim() || labels.deprecatedUnavailable
+      : '';
   const replacementModel =
     model.status === 'deprecated' && model.replacement_model
       ? [model.replacement_provider, model.replacement_model].filter(Boolean).join('/')

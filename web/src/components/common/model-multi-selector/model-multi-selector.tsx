@@ -581,6 +581,9 @@ function ModelMultiSelectorBase({
                                         }}
                                         labels={{
                                           context: t('models.selector.tooltip.context'),
+                                          deprecatedUnavailable: t(
+                                            'models.selector.tooltip.deprecatedUnavailable'
+                                          ),
                                           features: t('models.selector.tooltip.features'),
                                           replacementSuggestion: t(
                                             'models.selector.tooltip.replacementSuggestion'

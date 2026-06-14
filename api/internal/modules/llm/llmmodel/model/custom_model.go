@@ -306,16 +306,19 @@ func (m *CustomModel) BeforeSave(tx *gorm.DB) error {
 // Aligned with ModelHub API structure
 type ModelView struct {
 	// Basic info
-	ID            uuid.UUID  `json:"id"`
-	Provider      string     `json:"provider"`
-	Model         string     `json:"model"`
-	ModelName     string     `json:"model_name"`
-	Family        string     `json:"family"`                // Model family (e.g., GPT-4, Claude)
-	FamilyName    string     `json:"family_name,omitempty"` // Model family display name
-	ParentID      *uuid.UUID `json:"-"`                     // Internal use only
-	FamilyDefault bool       `json:"-"`                     // Internal use only
-	Status        string     `json:"status"`  // active, deprecated
-	Tagline       string     `json:"tagline"` // Short description
+	ID                  uuid.UUID  `json:"id"`
+	Provider            string     `json:"provider"`
+	Model               string     `json:"model"`
+	ModelName           string     `json:"model_name"`
+	Family              string     `json:"family"`                // Model family (e.g., GPT-4, Claude)
+	FamilyName          string     `json:"family_name,omitempty"` // Model family display name
+	ParentID            *uuid.UUID `json:"-"`                     // Internal use only
+	FamilyDefault       bool       `json:"-"`                     // Internal use only
+	Status              string     `json:"status"`                // active, deprecated
+	ReplacementProvider string     `json:"replacement_provider,omitempty"`
+	ReplacementModel    string     `json:"replacement_model,omitempty"`
+	DeprecationReason   string     `json:"deprecation_reason,omitempty"`
+	Tagline             string     `json:"tagline"` // Short description
 
 	// Flags
 	IsFlagship    bool   `json:"is_flagship"`

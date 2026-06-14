@@ -592,13 +592,16 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 
 		view := &model.ModelView{
 			// Basic info
-			ID:        m.ID,
-			Provider:  m.Provider,
-			Model:     m.Model,
-			ModelName: m.ModelName,
-			Family:    m.Family,
-			Status:    getStatusOrDefault(m.Status),
-			Tagline:   m.Tagline,
+			ID:                  m.ID,
+			Provider:            m.Provider,
+			Model:               m.Model,
+			ModelName:           m.ModelName,
+			Family:              m.Family,
+			Status:              getStatusOrDefault(m.Status),
+			ReplacementProvider: m.ReplacementProvider,
+			ReplacementModel:    m.ReplacementModel,
+			DeprecationReason:   m.DeprecationReason,
+			Tagline:             m.Tagline,
 
 			// Flags (read from database)
 			IsFlagship:    m.IsFlagship,
