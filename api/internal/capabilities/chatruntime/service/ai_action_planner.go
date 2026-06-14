@@ -169,12 +169,13 @@ func aiChatActionPlannerSystemPrompt() string {
 		"Decide whether the latest user query should run exactly one available action capability before the final assistant answer.",
 		"Use the query, runtime_context, operation_context, and capability descriptions semantically. Do not rely on keyword matching.",
 		"Return exactly one JSON object and no prose.",
-		`Schema: {"matched":true|false,"confidence":0.0,"capability_id":"available capability id or empty","intent":"short stable intent","resource_refs":[{"type":"file","id":"exact resource id when known","file_id":"exact file id when known","selector":"visible_files[4] when referring to visible order","visible_index":4,"ordinal":2,"ordinal_text":"last","name":"optional exact/fuzzy name","title_contains":"optional contained title text","extension":"pdf","file_type":"excel"}],"postprocess":[{"type":"translate","target_language":"optional language"}],"reason":"short internal reason"}`,
+		`Schema: {"matched":true|false,"confidence":0.0,"capability_id":"available capability id or empty","intent":"short stable intent","resource_refs":[{"type":"file","id":"exact resource id when known","file_id":"exact file id when known","selector":"visible_files[4] when referring to visible order","visible_index":4,"ordinal":2,"ordinal_text":"last","name":"optional exact/fuzzy name","title_contains":"optional contained title text","extension":"pdf","file_type":"excel"}],"postprocess":[{"type":"translate","target_language":"optional language"},{"type":"summarize"}],"reason":"short internal reason"}`,
 		"Set matched=true only when one listed capability clearly satisfies the user's requested action.",
 		"Never invent capability IDs or resources. If the capability or resource is unclear, set matched=false.",
 		"For file.read, plan only reading content from files represented in operation_context.",
 		`For file.read references: "the fourth file" => {"type":"file","visible_index":4}; "the second Excel" => {"type":"file","file_type":"excel","ordinal":2}; "the last PDF" => {"type":"file","extension":"pdf","ordinal_text":"last"}.`,
-		"If the user asks to transform the read content after reading, preserve that as postprocess.",
+		"For Chinese file.read references: \"\u7b2c\u56db\u4e2a\u6587\u4ef6\" => {\"type\":\"file\",\"visible_index\":4}; \"\u7b2c\u4e8c\u4e2a Excel\" => {\"type\":\"file\",\"file_type\":\"excel\",\"ordinal\":2}; \"\u6700\u540e\u4e00\u4e2a PDF\" => {\"type\":\"file\",\"extension\":\"pdf\",\"ordinal_text\":\"last\"}.",
+		"If the user asks to translate, summarize, explain, or extract the read content after reading, keep file.read as the capability and preserve those operations as postprocess.",
 		"Use confidence from 0 to 1. A confident executable decision should be at least 0.65.",
 	}, "\n")
 }

@@ -6,15 +6,22 @@ import (
 )
 
 func resolveConsoleFileIDsFromActionDecision(parts *chatRequestParts, decision AIChatActionDecision) []string {
-	refs := plannerResourceRefsFromActionDecision(decision)
-	if len(refs) == 0 {
-		refs = []PlannerResourceRef{{Type: resourceTypeFile}}
+	refGroups := make([][]PlannerResourceRef, 0, 3)
+	if refs := plannerResourceRefsFromActionDecision(decision); len(refs) > 0 {
+		refGroups = append(refGroups, refs)
 	}
-	result := resolveChatResourceRefs(parts, refs)
-	if !allResourceRefsResolved(result.Results) {
-		return nil
+	if refs := plannerResourceRefsFromConsoleFilesQuery(parts); len(refs) > 0 {
+		refGroups = append(refGroups, refs)
 	}
-	return result.FileIDs
+	refGroups = append(refGroups, []PlannerResourceRef{{Type: resourceTypeFile}})
+
+	for _, refs := range refGroups {
+		result := resolveChatResourceRefs(parts, refs)
+		if allResourceRefsResolved(result.Results) {
+			return result.FileIDs
+		}
+	}
+	return nil
 }
 
 func plannerResourceRefsFromActionDecision(decision AIChatActionDecision) []PlannerResourceRef {

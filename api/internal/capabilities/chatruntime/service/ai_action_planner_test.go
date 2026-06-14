@@ -108,19 +108,25 @@ func TestAIChatActionPlannerReturnsNoMatchForUnknownCapability(t *testing.T) {
 
 func TestAIChatActionPlannerPreservesTranslatePostprocess(t *testing.T) {
 	fakeLLM := &fakeAIChatActionPlannerLLM{
-		response: aiChatActionPlannerResponse(`{"matched":true,"confidence":0.88,"capability_id":"file.read","intent":"read_then_translate","resource_refs":[{"type":"file","id":"file-1"}],"postprocess":[{"type":"translate","target_language":"zh-CN"}],"reason":"translate file content after reading"}`),
+		response: aiChatActionPlannerResponse(`{"matched":true,"confidence":0.88,"capability_id":"file.read","intent":"read_then_translate_and_summarize","resource_refs":[{"type":"file","visible_index":4}],"postprocess":[{"type":"translate","target_language":"zh-CN"},{"type":"summarize"}],"reason":"translate and summarize file content after reading"}`),
 	}
 
-	decision := newAIChatActionPlanner(fakeLLM).Plan(context.Background(), testAIChatActionPlanRequest("translate notes.txt to Chinese"))
+	decision := newAIChatActionPlanner(fakeLLM).Plan(context.Background(), testAIChatActionPlanRequest("translate and summarize the fourth file to Chinese"))
 
 	if !decision.Matched {
 		t.Fatalf("Matched = false, want true; decision=%#v", decision)
 	}
-	if len(decision.Postprocess) != 1 {
-		t.Fatalf("Postprocess = %#v, want one translate item", decision.Postprocess)
+	if len(decision.ResourceRefs) != 1 || decision.ResourceRefs[0].VisibleIndex != 4 {
+		t.Fatalf("ResourceRefs = %#v, want visible_index 4", decision.ResourceRefs)
+	}
+	if len(decision.Postprocess) != 2 {
+		t.Fatalf("Postprocess = %#v, want translate and summarize items", decision.Postprocess)
 	}
 	if decision.Postprocess[0].Type != "translate" || decision.Postprocess[0].TargetLanguage != "zh-CN" {
 		t.Fatalf("Postprocess[0] = %#v, want translate zh-CN", decision.Postprocess[0])
+	}
+	if decision.Postprocess[1].Type != "summarize" {
+		t.Fatalf("Postprocess[1] = %#v, want summarize", decision.Postprocess[1])
 	}
 }
 

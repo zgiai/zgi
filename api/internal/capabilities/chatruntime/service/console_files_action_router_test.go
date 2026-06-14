@@ -160,6 +160,31 @@ func TestConsoleFilesSemanticActionDecisionResolvesVisibleFileOrdinals(t *testin
 	}
 }
 
+func TestResolveConsoleFileIDsFromActionDecisionFallsBackToQueryOrdinal(t *testing.T) {
+	files := []consoleFilesTestFile{
+		{ID: "file-1", Name: "meeting-notes.txt", Extension: "txt", MimeType: "text/plain"},
+		{ID: "file-2", Name: "sales-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{ID: "file-3", Name: "product-spec.pdf", Extension: "pdf", MimeType: "application/pdf"},
+		{ID: "file-4", Name: "customer-letter.pdf", Extension: "pdf", MimeType: "application/pdf"},
+	}
+	parts := consoleFilesSemanticTestParts(
+		"\u5e2e\u6211\u7ffb\u8bd1\u4e00\u4e0b\u7b2c\u56db\u4e2a\u6587\u4ef6\u7684\u5185\u5bb9\uff0c\u6458\u8981\u4e00\u4e0b\u4e3b\u8981\u5185\u5bb9\u5373\u53ef",
+		files,
+	)
+	confidence := 0.91
+	ids := resolveConsoleFileIDsFromActionDecision(parts, AIChatActionDecision{
+		Matched:      true,
+		Confidence:   &confidence,
+		CapabilityID: consoleFilesActionCapabilityID,
+		Intent:       "read_then_translate_and_summarize",
+		Postprocess:  []AIChatActionPostprocess{{Type: "translate"}, {Type: "summarize"}},
+	})
+
+	if got, want := strings.Join(ids, ","), "file-4"; got != want {
+		t.Fatalf("FileIDs = %q, want %q", got, want)
+	}
+}
+
 func TestConsoleFilesActionPlanRequestPreservesTranslatePostprocess(t *testing.T) {
 	files := []consoleFilesTestFile{
 		{ID: "file-1", Name: "meeting-notes.txt", Extension: "txt", MimeType: "text/plain"},
