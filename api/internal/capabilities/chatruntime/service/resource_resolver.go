@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	actiondto "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/dto"
+	"github.com/zgiai/zgi/api/internal/capabilities/assetresolver"
 )
 
 const (
@@ -111,21 +112,42 @@ func NewResourceResolver() ResourceResolver {
 // Resolve grounds planner refs and returns both per-ref status and flattened
 // action resources for resolved refs.
 func (r ResourceResolver) Resolve(input ResourceResolverInput, refs []PlannerResourceRef) ResourceResolverResult {
-	catalog := buildResourceResolverCatalog(input)
-	result := ResourceResolverResult{Results: make([]ResourceResolution, 0, len(refs))}
-	fileIDs := newUniqueStringCollector()
-	resources := make([]actiondto.ResourceRef, 0, len(refs))
+	if len(refs) == 0 {
+		return ResourceResolverResult{}
+	}
+	resolved := assetresolver.Resolve(assetResolverRequestFromInput(input, refs))
+	return resourceResolverResultFromAssets(resolved)
+}
+
+func assetResolverRequestFromInput(input ResourceResolverInput, refs []PlannerResourceRef) assetresolver.Request {
+	selectors := make([]assetresolver.Selector, 0, len(refs))
 	for _, ref := range refs {
-		resolution := r.resolveOne(catalog, ref)
-		result.Results = append(result.Results, resolution)
-		if resolution.Status != ResourceResolutionStatusResolved {
+		selectors = append(selectors, assetResolverSelectorFromPlannerRef(ref))
+	}
+	candidates := make([]assetresolver.Candidate, 0, len(input.AttachmentFiles))
+	for _, candidate := range input.AttachmentFiles {
+		candidates = append(candidates, assetResolverCandidateFromResourceCandidate(candidate))
+	}
+	return assetresolver.Request{
+		OperationContext:           input.OperationContext,
+		NormalizedOperationContext: input.NormalizedOperationContext,
+		Candidates:                 candidates,
+		Selectors:                  selectors,
+	}
+}
+
+func resourceResolverResultFromAssets(resolved assetresolver.Result) ResourceResolverResult {
+	result := ResourceResolverResult{Results: make([]ResourceResolution, 0, len(resolved.Resolutions))}
+	fileIDs := newUniqueStringCollector()
+	resources := make([]actiondto.ResourceRef, 0, len(resolved.Assets))
+	for _, resolution := range resolved.Resolutions {
+		converted := resourceResolutionFromAssetResolution(resolution)
+		result.Results = append(result.Results, converted)
+		if converted.Status != ResourceResolutionStatusResolved {
 			continue
 		}
-		for _, resource := range resolution.Resources {
-			if resource.ID == "" {
-				continue
-			}
-			if containsString(fileIDs.values(), resource.ID) {
+		for _, resource := range converted.Resources {
+			if resource.ID == "" || containsString(fileIDs.values(), resource.ID) {
 				continue
 			}
 			fileIDs.add(resource.ID)
@@ -135,6 +157,147 @@ func (r ResourceResolver) Resolve(input ResourceResolverInput, refs []PlannerRes
 	result.FileIDs = fileIDs.values()
 	result.Resources = resources
 	return result
+}
+
+func assetResolverSelectorFromPlannerRef(ref PlannerResourceRef) assetresolver.Selector {
+	return assetresolver.Selector{
+		ResourceType:  ref.ResourceType,
+		Type:          ref.Type,
+		Kind:          ref.Kind,
+		ID:            ref.ID,
+		FileID:        ref.FileID,
+		Source:        ref.Source,
+		Selector:      ref.Selector,
+		Scope:         ref.Scope,
+		Selected:      ref.Selected,
+		Ordinal:       ref.Ordinal,
+		VisibleIndex:  ref.VisibleIndex,
+		OrdinalText:   ref.OrdinalText,
+		Title:         ref.Title,
+		Name:          ref.Name,
+		TitleContains: ref.TitleContains,
+		NameContains:  ref.NameContains,
+		FuzzyName:     ref.FuzzyName,
+		Extension:     ref.Extension,
+		Extensions:    append([]string(nil), ref.Extensions...),
+		MimeType:      ref.MimeType,
+		MimeTypes:     append([]string(nil), ref.MimeTypes...),
+		FileType:      ref.FileType,
+		Metadata:      copyStringAnyMap(ref.Metadata),
+	}
+}
+
+func plannerRefFromAssetResolverSelector(selector assetresolver.Selector) PlannerResourceRef {
+	return PlannerResourceRef{
+		ResourceType:  selector.ResourceType,
+		Type:          selector.Type,
+		Kind:          selector.Kind,
+		ID:            selector.ID,
+		FileID:        selector.FileID,
+		Source:        selector.Source,
+		Selector:      selector.Selector,
+		Scope:         selector.Scope,
+		Selected:      selector.Selected,
+		Ordinal:       selector.Ordinal,
+		VisibleIndex:  selector.VisibleIndex,
+		OrdinalText:   selector.OrdinalText,
+		Title:         selector.Title,
+		Name:          selector.Name,
+		TitleContains: selector.TitleContains,
+		NameContains:  selector.NameContains,
+		FuzzyName:     selector.FuzzyName,
+		Extension:     selector.Extension,
+		Extensions:    append([]string(nil), selector.Extensions...),
+		MimeType:      selector.MimeType,
+		MimeTypes:     append([]string(nil), selector.MimeTypes...),
+		FileType:      selector.FileType,
+		Metadata:      copyStringAnyMap(selector.Metadata),
+	}
+}
+
+func assetResolverCandidateFromResourceCandidate(candidate ResourceCandidate) assetresolver.Candidate {
+	return assetresolver.Candidate{
+		Type:           candidate.Type,
+		ID:             candidate.ID,
+		Name:           candidate.Name,
+		Title:          candidate.Title,
+		Source:         candidate.Source,
+		Extension:      candidate.Extension,
+		MimeType:       candidate.MimeType,
+		FileType:       candidate.FileType,
+		Selected:       candidate.Selected,
+		Visible:        candidate.Visible,
+		VisibleOrdinal: candidate.VisibleOrdinal,
+		Metadata:       copyStringAnyMap(candidate.Metadata),
+	}
+}
+
+func resourceCandidateFromAssetResolverCandidate(candidate assetresolver.Candidate) ResourceCandidate {
+	return ResourceCandidate{
+		Type:           candidate.Type,
+		ID:             candidate.ID,
+		Name:           candidate.Name,
+		Title:          candidate.Title,
+		Source:         candidate.Source,
+		Extension:      candidate.Extension,
+		MimeType:       candidate.MimeType,
+		FileType:       candidate.FileType,
+		Selected:       candidate.Selected,
+		Visible:        candidate.Visible,
+		VisibleOrdinal: candidate.VisibleOrdinal,
+		Metadata:       copyStringAnyMap(candidate.Metadata),
+	}
+}
+
+func resourceResolutionFromAssetResolution(resolution assetresolver.Resolution) ResourceResolution {
+	out := ResourceResolution{
+		Ref:        plannerRefFromAssetResolverSelector(resolution.Selector),
+		Status:     resourceStatusFromAssetStatus(resolution.Status),
+		Reason:     resolution.Reason,
+		Candidates: make([]ResourceCandidate, 0, len(resolution.Candidates)),
+	}
+	for _, candidate := range resolution.Candidates {
+		out.Candidates = append(out.Candidates, resourceCandidateFromAssetResolverCandidate(candidate))
+	}
+	for _, asset := range resolution.Assets {
+		resource := actionResourceRefFromAsset(asset)
+		out.Resources = append(out.Resources, resource)
+		if resource.ID != "" {
+			out.FileIDs = append(out.FileIDs, resource.ID)
+		}
+	}
+	if len(out.Candidates) == 0 {
+		out.Candidates = nil
+	}
+	return out
+}
+
+func resourceStatusFromAssetStatus(status assetresolver.Status) ResourceResolutionStatus {
+	switch status {
+	case assetresolver.StatusResolved:
+		return ResourceResolutionStatusResolved
+	case assetresolver.StatusAmbiguous:
+		return ResourceResolutionStatusAmbiguous
+	default:
+		return ResourceResolutionStatusNotFound
+	}
+}
+
+func actionResourceRefFromAsset(asset assetresolver.Asset) actiondto.ResourceRef {
+	metadata := copyStringAnyMap(asset.Metadata)
+	if asset.WorkspaceID != "" {
+		if metadata == nil {
+			metadata = map[string]interface{}{}
+		}
+		metadata["workspace_id"] = asset.WorkspaceID
+	}
+	return actiondto.ResourceRef{
+		Type:     firstNonEmptyString(asset.Type, resourceTypeFile),
+		ID:       asset.ID,
+		Name:     asset.Name,
+		Source:   firstNonEmptyString(asset.Source, "assetresolver"),
+		Metadata: metadata,
+	}
 }
 
 func resolveChatResourceRefs(parts *chatRequestParts, refs []PlannerResourceRef) ResourceResolverResult {
