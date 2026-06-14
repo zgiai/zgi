@@ -51,6 +51,7 @@ type MessageRepository interface {
 	ReplaceRootForStreaming(ctx context.Context, message *runtimemodel.Message) error
 	UpdateCompleted(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
+	UpdateMetadataAnyStatus(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateWaitingApproval(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateWaitingQuestion(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateError(ctx context.Context, id uuid.UUID, message string) error
@@ -789,6 +790,29 @@ func (r *messageRepository) UpdateMetadata(ctx context.Context, id uuid.UUID, me
 	}
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
 		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, mutableMessageStatuses()).
+		Updates(map[string]interface{}{
+			"metadata":   datatypes.JSON(metadataJSON),
+			"updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to update aichat message metadata: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *messageRepository) UpdateMetadataAnyStatus(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal aichat message metadata: %w", err)
+	}
+	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL", id).
 		Updates(map[string]interface{}{
 			"metadata":   datatypes.JSON(metadataJSON),
 			"updated_at": time.Now(),

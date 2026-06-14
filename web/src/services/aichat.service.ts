@@ -29,6 +29,8 @@ import type {
   AIChatSkillPreferenceResponse,
   AIChatSseEnvelope,
   AIChatStopConversationResponseData,
+  AIChatToolGovernanceDecisionRequest,
+  AIChatToolGovernanceDecisionResponse,
   AIChatUpdateConversationRequest,
 } from './types/aichat';
 
@@ -276,6 +278,22 @@ export const aichatService = {
 
   deleteMessage(id: string) {
     return http.delete<ApiResponseData<SuccessResponse>>(`${AICHAT_BASE_PATH}/messages/${id}`);
+  },
+
+  submitToolGovernanceDecision(
+    conversationId: string,
+    messageId: string,
+    correlationId: string,
+    payload: AIChatToolGovernanceDecisionRequest
+  ) {
+    return http.post<ApiResponseData<AIChatToolGovernanceDecisionResponse>>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/tool-governance/${encodeURIComponent(
+        correlationId
+      )}`,
+      payload
+    );
   },
 
   streamChat(

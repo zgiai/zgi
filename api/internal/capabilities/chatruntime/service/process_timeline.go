@@ -172,6 +172,24 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 		})
 		invocation["runtime_id"] = r.runtimeIDForStandalone(invocation)
 		return invocation
+	case streamEventToolGovernanceDecision:
+		invocation := newSkillInvocation("tool_governance", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "needs_approval"), map[string]interface{}{
+			"conversation_id": payload["conversation_id"],
+			"message_id":      payload["message_id"],
+			"duration_ms":     payload["duration_ms"],
+			"created_at":      payload["created_at"],
+			"governance":      governanceMapFromAny(payload["governance"]),
+			"approval_status": payload["approval_status"],
+			"result": map[string]interface{}{
+				"approval_event": governanceMapFromAny(payload["approval_event"]),
+			},
+		})
+		if runtimeID := toolGovernanceRuntimeIDFromEvent(payload); runtimeID != "" {
+			invocation["runtime_id"] = runtimeID
+		} else {
+			invocation["runtime_id"] = r.runtimeIDForStandalone(invocation)
+		}
+		return invocation
 	case streamEventSkillCallStart:
 		invocation := newSkillInvocation("tool_call", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), "running", map[string]interface{}{
 			"arguments":  payloadMap(payload, "arguments_summary", "arguments"),
@@ -185,12 +203,23 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 			kind = "tool_call"
 		}
 		invocation := newSkillInvocation(kind, payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "success"), map[string]interface{}{
-			"duration_ms": payload["duration_ms"],
-			"message":     payloadString(payload, "message"),
-			"result":      payloadMap(payload, "result"),
-			"created_at":  payload["created_at"],
+			"duration_ms":     payload["duration_ms"],
+			"message":         payloadString(payload, "message"),
+			"result":          payloadMap(payload, "result"),
+			"governance":      governanceMapFromAny(payload["governance"]),
+			"conversation_id": payload["conversation_id"],
+			"message_id":      payload["message_id"],
+			"created_at":      payload["created_at"],
 		})
-		invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
+		if kind == "tool_governance" {
+			if runtimeID := toolGovernanceRuntimeIDFromEvent(payload); runtimeID != "" {
+				invocation["runtime_id"] = runtimeID
+			} else {
+				invocation["runtime_id"] = r.runtimeIDForStandalone(invocation)
+			}
+		} else {
+			invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
+		}
 		return invocation
 	case streamEventSkillCallError:
 		kind := payloadString(payload, "kind")
@@ -301,7 +330,7 @@ func (r *processTimelineRecorder) persistInvocation(invocation map[string]interf
 
 func streamBackedTrace(trace skills.SkillTrace) bool {
 	switch strings.TrimSpace(trace.Kind) {
-	case "skill_load", "reference_read", "tool_call", "intermediate_answer":
+	case "skill_load", "reference_read", "tool_call", "tool_governance", "intermediate_answer":
 		return true
 	default:
 		return false

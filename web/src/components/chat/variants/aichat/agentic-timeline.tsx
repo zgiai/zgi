@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import {
   AlertCircle,
   CheckCircle2,
@@ -11,12 +12,17 @@ import {
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { useT } from '@/i18n/translations';
 import type { ScopedTranslations } from '@/i18n/translations';
 import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
-import type { AIChatSkillInvocation } from '@/services/types/aichat';
+import { aichatService } from '@/services/aichat.service';
+import type {
+  AIChatSkillInvocation,
+  AIChatToolGovernanceDecisionEventData,
+} from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import {
   getAIChatSkillResultDisplay,
@@ -357,7 +363,17 @@ function governanceDecisionStatus(item: GovernanceTimelineItem): string {
   ).toLowerCase();
 }
 
+function governanceApprovalStatus(item: GovernanceTimelineItem): string {
+  return String(
+    item.event.approval_status ??
+      item.event.governance?.approval_status ??
+      item.event.governance?.approval_result?.approval_status ??
+      ''
+  ).toLowerCase();
+}
+
 function isToolGovernanceNeedsApproval(item: GovernanceTimelineItem): boolean {
+  if (governanceApprovalStatus(item)) return false;
   return (
     governanceDecisionStatus(item) === 'needs_approval' ||
     item.event.requires_approval === true ||
@@ -408,6 +424,9 @@ function governanceFieldRows(item: GovernanceTimelineItem) {
 }
 
 function buildGovernanceTitle(item: GovernanceTimelineItem, t: WebappTranslator): string {
+  const approvalStatus = governanceApprovalStatus(item);
+  if (approvalStatus === 'approved') return t('consoleChat.governance.approved');
+  if (approvalStatus === 'rejected') return t('consoleChat.governance.rejected');
   const status = governanceDecisionStatus(item);
   if (isToolGovernanceNeedsApproval(item)) {
     return t('consoleChat.governance.needsApproval');
@@ -454,15 +473,71 @@ function ToolGovernanceDecisionRow({
 }) {
   const t = useT('webapp');
   const { locale } = useLocale();
-  const needsApproval = isToolGovernanceNeedsApproval(item);
+  const [localEvent, setLocalEvent] =
+    useState<AIChatToolGovernanceDecisionEventData | null>(null);
+  const [rememberForSession, setRememberForSession] = useState(false);
+  const [submittingAction, setSubmittingAction] = useState<'approve' | 'reject' | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const currentItem = localEvent
+    ? ({
+        ...item,
+        event: {
+          ...item.event,
+          ...localEvent,
+          governance: localEvent.governance
+            ? { ...(item.event.governance ?? {}), ...localEvent.governance }
+            : item.event.governance,
+        },
+      } satisfies GovernanceTimelineItem)
+    : item;
+  const needsApproval = isToolGovernanceNeedsApproval(currentItem);
   const [isOpen, setIsOpen] = useState(needsApproval);
-  const title = buildGovernanceTitle(item, t);
-  const toolLabel = governanceToolLabel(item, skillDisplayById, locale, t);
-  const reason = governanceReason(item);
-  const details = governanceFieldRows(item)
+  const approvalStatus = governanceApprovalStatus(currentItem);
+  const title = buildGovernanceTitle(currentItem, t);
+  const toolLabel = governanceToolLabel(currentItem, skillDisplayById, locale, t);
+  const reason = governanceReason(currentItem);
+  const details = governanceFieldRows(currentItem)
     .map(([labelKey, value]) => [labelKey, governanceDisplayText(value)] as const)
     .filter((row): row is readonly [GovernanceFieldLabel, string] => Boolean(row[1]));
-  const canExpand = details.length > 0 || Boolean(reason) || needsApproval;
+  const canExpand = details.length > 0 || Boolean(reason) || needsApproval || Boolean(approvalStatus);
+  const correlationId =
+    currentItem.event.correlation_id ??
+    currentItem.event.governance?.correlation_id ??
+    governanceApprovalEvent(currentItem)?.correlation_id ??
+    '';
+  const canSubmit = needsApproval && Boolean(correlationId) && !submittingAction;
+
+  const submitDecision = async (action: 'approve' | 'reject') => {
+    if (!correlationId || submittingAction) return;
+    setSubmittingAction(action);
+    setSubmitError(null);
+    try {
+      const response = await aichatService.submitToolGovernanceDecision(
+        currentItem.event.conversation_id,
+        currentItem.event.message_id,
+        correlationId,
+        {
+          action,
+          remember_for_session: action === 'approve' ? rememberForSession : false,
+        }
+      );
+      setLocalEvent(response.data.event);
+      toast.success(
+        action === 'approve'
+          ? t('consoleChat.governance.approveSucceeded')
+          : t('consoleChat.governance.rejectSucceeded')
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : t('consoleChat.governance.submitFailed');
+      setSubmitError(message);
+      toast.error(message);
+    } finally {
+      setSubmittingAction(null);
+    }
+  };
 
   return (
     <div className="rounded-md border border-warning/40 bg-warning/10 text-xs text-foreground">
@@ -512,16 +587,50 @@ function ToolGovernanceDecisionRow({
             </dl>
           ) : null}
           {needsApproval ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="xs" variant="outline" disabled>
-                {t('consoleChat.governance.approve')}
-              </Button>
-              <Button type="button" size="xs" variant="outline" disabled>
-                {t('consoleChat.governance.reject')}
-              </Button>
-              <span className="text-[11px] text-muted-foreground">
-                {t('consoleChat.governance.actionsUnavailable')}
-              </span>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                <Checkbox
+                  checked={rememberForSession}
+                  onCheckedChange={checked => setRememberForSession(checked === true)}
+                  disabled={Boolean(submittingAction)}
+                />
+                <span>{t('consoleChat.governance.rememberForSession')}</span>
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={!canSubmit}
+                  onClick={() => void submitDecision('approve')}
+                >
+                  {submittingAction === 'approve' ? (
+                    <Loader2 className="mr-1 size-3 animate-spin" />
+                  ) : null}
+                  {t('consoleChat.governance.approve')}
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={!canSubmit}
+                  onClick={() => void submitDecision('reject')}
+                >
+                  {submittingAction === 'reject' ? (
+                    <Loader2 className="mr-1 size-3 animate-spin" />
+                  ) : null}
+                  {t('consoleChat.governance.reject')}
+                </Button>
+              </div>
+              {submitError ? (
+                <div className="text-[11px] text-destructive">{submitError}</div>
+              ) : null}
+            </div>
+          ) : approvalStatus ? (
+            <div className="text-[11px] text-muted-foreground">
+              {approvalStatus === 'approved'
+                ? t('consoleChat.governance.approved')
+                : t('consoleChat.governance.rejected')}
             </div>
           ) : null}
         </div>

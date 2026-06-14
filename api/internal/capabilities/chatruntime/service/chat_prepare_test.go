@@ -100,6 +100,10 @@ func (f fakeWaitingApprovalMessageRepo) UpdateMetadata(context.Context, uuid.UUI
 	panic("not implemented")
 }
 
+func (f fakeWaitingApprovalMessageRepo) UpdateMetadataAnyStatus(context.Context, uuid.UUID, map[string]interface{}) error {
+	panic("not implemented")
+}
+
 func (f fakeWaitingApprovalMessageRepo) UpdateWaitingApproval(context.Context, uuid.UUID, map[string]interface{}) error {
 	panic("not implemented")
 }

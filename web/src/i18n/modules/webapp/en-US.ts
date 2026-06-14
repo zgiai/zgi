@@ -226,6 +226,12 @@ const messages = {
       approve: 'Approve',
       reject: 'Reject',
       actionsUnavailable: 'Approval actions are not connected yet.',
+      rememberForSession: 'Do not ask again for this tool scope in this conversation',
+      approved: 'Tool approval recorded',
+      rejected: 'Tool request rejected',
+      approveSucceeded: 'Approval recorded',
+      rejectSucceeded: 'Rejection recorded',
+      submitFailed: 'Failed to submit approval decision',
       fields: {
         reason: 'Reason',
         decision: 'Decision',

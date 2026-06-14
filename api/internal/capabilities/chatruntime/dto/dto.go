@@ -32,6 +32,23 @@ type RegenerateMessageRequest struct {
 	UseMemory  *bool                  `json:"use_memory,omitempty"`
 }
 
+type ToolGovernanceDecisionRequest struct {
+	Action             string `json:"action" binding:"required"`
+	Reason             string `json:"reason,omitempty"`
+	RememberForSession bool   `json:"remember_for_session,omitempty"`
+}
+
+type ToolGovernanceDecisionResponse struct {
+	ConversationID     string                 `json:"conversation_id"`
+	MessageID          string                 `json:"message_id"`
+	CorrelationID      string                 `json:"correlation_id"`
+	Action             string                 `json:"action"`
+	ApprovalStatus     string                 `json:"approval_status"`
+	RememberForSession bool                   `json:"remember_for_session,omitempty"`
+	SessionGrant       map[string]interface{} `json:"session_grant,omitempty"`
+	Event              map[string]interface{} `json:"event"`
+}
+
 type StopConversationResponse struct {
 	ConversationID string  `json:"conversation_id"`
 	MessageID      *string `json:"message_id,omitempty"`

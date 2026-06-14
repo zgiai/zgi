@@ -34,6 +34,13 @@ func applySkillToolGovernanceRuntimeParameters(params map[string]interface{}, pr
 			}
 		}
 	}
+	if _, exists := governance["session_grants"]; !exists {
+		if _, flatGrantsExist := params["tool_governance_session_grants"]; !flatGrantsExist {
+			if grants := skillToolGovernanceSessionGrantsFromPrepared(prepared); len(grants) > 0 {
+				governance["session_grants"] = grants
+			}
+		}
+	}
 	params[skillToolGovernanceRuntimeKey] = governance
 	return params
 }
@@ -56,6 +63,13 @@ func skillToolGovernanceAssetsFromPrepared(prepared *PreparedChat) []map[string]
 		return toolGovernanceAssetMapsFromResources(result.Resources)
 	}
 	return nil
+}
+
+func skillToolGovernanceSessionGrantsFromPrepared(prepared *PreparedChat) []map[string]interface{} {
+	if prepared == nil || prepared.Conversation == nil {
+		return nil
+	}
+	return mapSliceFromAny(prepared.Conversation.Metadata["tool_governance_session_grants"])
 }
 
 func toolGovernanceAssetMapsFromResources(resources []actiondto.ResourceRef) []map[string]interface{} {

@@ -216,6 +216,12 @@ const messages: WebappMessages = {
       approve: '批准',
       reject: '拒绝',
       actionsUnavailable: '审批操作尚未接入。',
+      rememberForSession: '本会话内同类工具范围不再询问',
+      approved: '工具审批已记录',
+      rejected: '工具请求已拒绝',
+      approveSucceeded: '已记录批准',
+      rejectSucceeded: '已记录拒绝',
+      submitFailed: '提交审批决策失败',
       fields: {
         reason: '原因',
         decision: '决策',

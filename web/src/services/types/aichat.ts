@@ -606,9 +606,11 @@ export interface AIChatToolGovernanceDecision extends Record<string, unknown> {
   requires_approval?: boolean;
   reason?: string;
   correlation_id?: string;
+  approval_status?: 'approved' | 'rejected' | (string & {});
   manifest?: AIChatToolGovernanceManifest;
   assets?: AIChatToolGovernanceAssetRef[];
   approval_event?: AIChatToolGovernanceApprovalEvent;
+  approval_result?: Record<string, unknown>;
   model_feedback?: Record<string, unknown>;
 }
 
@@ -628,12 +630,30 @@ export interface AIChatToolGovernanceDecisionEventData extends Record<string, un
   risk_level?: AIChatToolGovernanceRiskLevel;
   effect?: AIChatToolGovernanceEffect;
   asset_type?: string;
+  approval_status?: 'approved' | 'rejected' | (string & {});
   approval_event?: AIChatToolGovernanceApprovalEvent;
 }
 
-export interface AIChatAgentProgressEventData {
+export interface AIChatToolGovernanceDecisionRequest {
+  action: 'approve' | 'reject';
+  reason?: string;
+  remember_for_session?: boolean;
+}
+
+export interface AIChatToolGovernanceDecisionResponse {
   conversation_id: string;
   message_id: string;
+  correlation_id: string;
+  action: 'approve' | 'reject' | (string & {});
+  approval_status: 'approved' | 'rejected' | (string & {});
+  remember_for_session?: boolean;
+  session_grant?: Record<string, unknown>;
+  event: AIChatToolGovernanceDecisionEventData;
+}
+
+export interface AIChatAgentProgressEventData {
+	conversation_id: string;
+	message_id: string;
   content?: string;
   phase?: 'planning' | 'tool_planning';
   meta_tool_name?: string;
