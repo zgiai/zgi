@@ -198,6 +198,10 @@ const messages = {
     createdAt: 'Uploaded {time}',
     previewWorkspaceDescription:
       'Review the original file and parsed content, then resolve marked items.',
+    previewFocus: {
+      enter: 'Preview Layout',
+      exit: 'Restore Layout',
+    },
     loadErrorTitle: 'Failed to load file details',
     loadErrorDescription: 'The file may have been removed or you may not have access.',
     processingError: 'Processing failed',

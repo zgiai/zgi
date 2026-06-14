@@ -188,6 +188,10 @@ const messages: FilesMessages = {
     fileType: '{extension} 文件',
     createdAt: '上传于 {time}',
     previewWorkspaceDescription: '核对原文件与解析内容，需处理标记项。',
+    previewFocus: {
+      enter: '预览布局',
+      exit: '恢复布局',
+    },
     loadErrorTitle: '文件详情加载失败',
     loadErrorDescription: '文件可能已被删除，或当前账号没有访问权限。',
     processingError: '处理失败',

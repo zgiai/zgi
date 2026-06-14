@@ -7,6 +7,7 @@ import {
   Edit3,
   FileText,
   Loader2,
+  Minimize2,
   SearchX,
   ShieldCheck,
   Sparkles,
@@ -45,6 +46,8 @@ interface FileVisualParseReviewPanelProps {
   canReparse?: boolean;
   onReparse?: () => void;
   isReparsing?: boolean;
+  previewFocusMode?: boolean;
+  onTogglePreviewFocus?: () => void;
 }
 
 type FilesTranslator = ((key: string, values?: Record<string, unknown>) => string) & {
@@ -71,10 +74,13 @@ const reviewReasonFallbacks: Record<keyof typeof reviewReasonTranslationKeys, st
   table_structure_risk: '表格结构可能需要确认',
 };
 
-function confidenceLabel(value?: number) {
-  if (value === undefined || value === null) return '-';
+function confidenceLabel(value: number) {
   const normalized = value <= 1 ? value * 100 : value;
   return `${Math.round(normalized)}%`;
+}
+
+function hasConfidenceValue(value?: number): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function confirmationContent(confirmation: FileParsePreviewConfirmation) {
@@ -219,6 +225,8 @@ export function FileVisualParseReviewPanel({
   canReparse = false,
   onReparse,
   isReparsing = false,
+  previewFocusMode = false,
+  onTogglePreviewFocus,
 }: FileVisualParseReviewPanelProps) {
   const t = useT('files');
   const [selectedElementId, setSelectedElementId] = useState<string | undefined>();
@@ -268,6 +276,12 @@ export function FileVisualParseReviewPanel({
   );
   const pendingCount = preview?.pending_confirmation_count ?? pendingElements.length;
   const isMutating = isResolving || isBatchIgnoring;
+  const previewViewportClassName = previewFocusMode
+    ? 'h-[calc(100vh-104px)] min-h-[680px]'
+    : 'h-[calc(100vh-430px)] min-h-[560px]';
+  const reviewViewportClassName = previewFocusMode
+    ? 'max-h-[calc(100vh-104px)] min-h-[680px]'
+    : 'max-h-[calc(100vh-430px)] min-h-[560px]';
 
   useEffect(() => {
     if (elements.length === 0) {
@@ -410,7 +424,7 @@ export function FileVisualParseReviewPanel({
         </div>
         <div
           className={cn(
-            'h-[calc(100vh-430px)] min-h-[560px]',
+            previewViewportClassName,
             hasVisualSourcePreview ? 'overflow-y-auto p-3' : 'overflow-hidden'
           )}
         >
@@ -472,24 +486,36 @@ export function FileVisualParseReviewPanel({
           <Badge variant="subtle" className="px-3 py-1.5 text-sm font-semibold text-foreground">
             {t('detail.workbench.steps.parsed')}
           </Badge>
-          {canReparse ? (
-            <Button
-              variant="outline"
-              className="h-8 gap-1.5 rounded-md px-3 text-sm"
-              onClick={onReparse}
-              disabled={isReparsing}
-            >
-              {isReparsing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-              {t('detail.reparse.action')}
-            </Button>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {previewFocusMode && onTogglePreviewFocus ? (
+              <Button
+                variant="outline"
+                className="h-8 gap-1.5 rounded-md px-3 text-sm"
+                onClick={onTogglePreviewFocus}
+              >
+                <Minimize2 className="h-4 w-4" />
+                {t('detail.previewFocus.exit')}
+              </Button>
+            ) : null}
+            {canReparse ? (
+              <Button
+                variant="outline"
+                className="h-8 gap-1.5 rounded-md px-3 text-sm"
+                onClick={onReparse}
+                disabled={isReparsing}
+              >
+                {isReparsing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                {t('detail.reparse.action')}
+              </Button>
+            ) : null}
+          </div>
         </div>
 
-        <div className="max-h-[calc(100vh-430px)] min-h-[560px] overflow-y-auto p-3">
+        <div className={cn(reviewViewportClassName, 'overflow-y-auto p-3')}>
           {pendingCount > 0 ? (
             <div className="mb-3 rounded-md border border-warning/30 bg-warning/5 p-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -596,6 +622,9 @@ function VisualReviewCard({
     ? editedContent ?? confirmationContent(confirmation)
     : '';
   const reasonText = reviewReasonText(confirmation?.review_reason, t as FilesTranslator);
+  const confidenceValue = element.confidence;
+  const showConfidence = hasConfidenceValue(confidenceValue);
+  const showMeta = showConfidence || Boolean(element.bbox);
 
   return (
     <article
@@ -612,9 +641,6 @@ function VisualReviewCard({
           </Badge>
           <span className="text-xs text-muted-foreground">
             {t('detail.parseReview.page', { page: pageNumber })}
-          </span>
-          <span className="min-w-0 truncate text-sm font-semibold text-foreground">
-            {element.subtype || element.content?.split('\n')[0] || element.type}
           </span>
           <span className="ml-auto" />
           {confirmation ? (
@@ -641,16 +667,20 @@ function VisualReviewCard({
         </div>
       ) : null}
 
-      <div className="mt-2.5 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
-        <Badge variant="subtle" className="px-2 py-0.5 text-xs">
-          {t('detail.parseReview.confidence', { value: confidenceLabel(element.confidence) })}
-        </Badge>
-        {element.bbox ? (
-          <Badge variant="subtle" className="px-2 py-0.5 text-xs">
-            {t('detail.parseReview.hasLocation')}
-          </Badge>
-        ) : null}
-      </div>
+      {showMeta ? (
+        <div className="mt-2.5 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+          {showConfidence ? (
+            <Badge variant="subtle" className="px-2 py-0.5 text-xs">
+              {t('detail.parseReview.confidence', { value: confidenceLabel(confidenceValue) })}
+            </Badge>
+          ) : null}
+          {element.bbox ? (
+            <Badge variant="subtle" className="px-2 py-0.5 text-xs">
+              {t('detail.parseReview.hasLocation')}
+            </Badge>
+          ) : null}
+        </div>
+      ) : null}
 
       {confirmation && isPending && selected ? (
         <div className="mt-2.5 rounded-md border border-border bg-bg-canvas/40 p-2.5">

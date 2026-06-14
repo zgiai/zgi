@@ -13,6 +13,7 @@ import {
   FileText,
   Layers3,
   Loader2,
+  Maximize2,
   MessageSquareText,
   RefreshCw,
   TriangleAlert,
@@ -343,6 +344,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const canDownload = hasPermission('file.download');
   const { downloadFile, isDownloading } = useDownloadFile();
   const [activeTab, setActiveTab] = useState('preview');
+  const [previewFocusMode, setPreviewFocusMode] = useState(false);
   const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
   const [isExportingParsed, setIsExportingParsed] = useState(false);
   const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
@@ -376,6 +378,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     hasPermission('file.manage') || hasPermission('file.upload_create') || canDownload;
   const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
   const showHeaderReparse = canReparse && !isFullyReady;
+  const previewFocusActive = previewFocusMode && activeTab === 'preview';
 
   const statusLabel = useMemo(() => {
     switch (status as FileAssetProductStatus | string) {
@@ -425,6 +428,9 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       force: false,
     });
   };
+  const togglePreviewFocusMode = () => {
+    setPreviewFocusMode(current => !current);
+  };
 
   useEffect(() => {
     if (status === 'confirming') {
@@ -432,6 +438,19 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       return;
     }
   }, [status]);
+
+  useEffect(() => {
+    if (activeTab !== 'preview' && previewFocusMode) {
+      setPreviewFocusMode(false);
+    }
+  }, [activeTab, previewFocusMode]);
+
+  useEffect(() => {
+    if (!previewFocusActive) return;
+    window.requestAnimationFrame(() => {
+      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }, [previewFocusActive]);
 
   useEffect(() => {
     if (!loadedFileId || isFullyReady || autoScrolledFileRef.current === loadedFileId) return;
@@ -478,6 +497,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
 
   return (
     <div ref={scrollContainerRef} className="flex h-full min-h-0 flex-col overflow-y-auto bg-background">
+      {!previewFocusActive ? (
       <div className="border-b bg-background px-4 py-3 sm:px-6">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
@@ -568,8 +588,9 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           </div>
         </div>
       </div>
+      ) : null}
 
-      {detail.error?.message || file.last_error_message ? (
+      {!previewFocusActive && (detail.error?.message || file.last_error_message) ? (
         <div className="px-4 pt-4 sm:px-6">
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
@@ -604,7 +625,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         </div>
       ) : null}
 
-      {showProcessingWorkbench ? (
+      {!previewFocusActive && showProcessingWorkbench ? (
         <div className="border-b px-4 py-3 sm:px-6">
           <ProcessingWorkbenchOverview
             status={status}
@@ -618,6 +639,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0">
         <div ref={tabAnchorRef} />
+        {!previewFocusActive ? (
         <TabsList className="grid h-auto w-full grid-cols-3 overflow-hidden rounded-none border-x-0 border-t-0 bg-background p-0 text-foreground">
           <TabsTrigger
             value="preview"
@@ -682,21 +704,36 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
             </span>
           </TabsTrigger>
         </TabsList>
+        ) : null}
 
         <TabsContent value="preview" className="mt-0">
           <section>
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b px-4 py-3 sm:px-6">
-              <h2 className="text-lg font-semibold text-foreground">{t('detail.tabs.preview')}</h2>
-              <p className="text-sm text-muted-foreground">
-                {t('detail.previewWorkspaceDescription')}
-              </p>
-            </div>
+            {!previewFocusActive ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 sm:px-6">
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                  <h2 className="text-lg font-semibold text-foreground">{t('detail.tabs.preview')}</h2>
+                  <p className="text-sm text-muted-foreground">
+                    {t('detail.previewWorkspaceDescription')}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  className="h-8 gap-1.5 rounded-md px-3 text-sm"
+                  onClick={togglePreviewFocusMode}
+                >
+                  <Maximize2 className="h-4 w-4" />
+                  {t('detail.previewFocus.enter')}
+                </Button>
+              </div>
+            ) : null}
             <FileVisualParseReviewPanel
               file={file}
               enabled={parseReviewEnabled}
               canReparse={canReparse}
               onReparse={() => setReparseConfirmOpen(true)}
               isReparsing={createProcessingRequest.isPending}
+              previewFocusMode={previewFocusActive}
+              onTogglePreviewFocus={togglePreviewFocusMode}
             />
           </section>
         </TabsContent>
