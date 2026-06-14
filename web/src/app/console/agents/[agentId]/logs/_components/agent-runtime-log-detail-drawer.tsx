@@ -7,6 +7,7 @@ import {
   AlertCircle,
   Bot,
   BookOpenText,
+  Bug,
   ChevronRight,
   Clock,
   Hash,
@@ -31,6 +32,7 @@ import type {
   AgentRuntimeRunItem,
   AgentRuntimeStep,
 } from '@/services/types/agent-runtime-log';
+import { useAgentRuntimeDebugTrace } from '@/hooks/agent/use-agent-runtime-debug-trace';
 import { cn } from '@/lib/utils';
 import { formatDate, formatWorkflowElapsedMs } from '@/utils/format';
 import { getAgentRuntimeStepDisplay } from './agent-runtime-step-display';
@@ -41,6 +43,7 @@ import WorkflowRunNodesList, {
 } from '@/components/workflow/ui/workflow-run-nodes-list';
 
 interface AgentRuntimeLogDetailDrawerProps {
+  agentId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   selectedRun: AgentRuntimeRunItem | null;
@@ -83,6 +86,11 @@ function stepTotalTokens(step: AgentRuntimeStep | null): number | null {
   const usage = step.process.usage;
   if (!isRecord(usage)) return null;
   return numberValue(usage.total_tokens);
+}
+
+function stepRuntimeID(step: AgentRuntimeStep | null): string | null {
+  if (!step || !isRecord(step.process)) return null;
+  return stringValue(step.process.runtime_id);
 }
 
 function localizeHiddenRuntimeString(value: string, labels: AgentRuntimeHiddenValueLabels): string {
@@ -540,9 +548,7 @@ function WorkflowRunProcessSections({
   return (
     <>
       {!isEmptyValue(invocation) ? (
-        <DetailSection title={titles.invocation}>
-          {renderValue(invocation, labels)}
-        </DetailSection>
+        <DetailSection title={titles.invocation}>{renderValue(invocation, labels)}</DetailSection>
       ) : null}
       {!isEmptyValue(approvals) ? (
         <DetailSection title={titles.approvals}>
@@ -560,15 +566,14 @@ function WorkflowRunProcessSections({
         </DetailSection>
       ) : null}
       {!isEmptyValue(messages) ? (
-        <DetailSection title={titles.messages}>
-          {renderValue(messages, labels)}
-        </DetailSection>
+        <DetailSection title={titles.messages}>{renderValue(messages, labels)}</DetailSection>
       ) : null}
     </>
   );
 }
 
 export function AgentRuntimeLogDetailDrawer({
+  agentId,
   open,
   onOpenChange,
   selectedRun,
@@ -581,6 +586,7 @@ export function AgentRuntimeLogDetailDrawer({
   const tAgents = useT('agents');
   const tCommon = useT('common');
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const [requestedDebugTraceKey, setRequestedDebugTraceKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -604,6 +610,23 @@ export function AgentRuntimeLogDetailDrawer({
   const userInput = detail?.query ?? selectedRun?.query ?? '';
   const selectedStepTotalTokens = stepTotalTokens(selectedStep);
   const selectedStepDisplay = selectedStep ? getAgentRuntimeStepDisplay(selectedStep, t) : null;
+  const selectedDebugRuntimeID =
+    selectedStep?.type === 'model_call' ? stepRuntimeID(selectedStep) : null;
+  const debugTraceKey =
+    runId && selectedDebugRuntimeID ? `${runId}:${selectedDebugRuntimeID}` : null;
+  const shouldLoadDebugTrace = Boolean(debugTraceKey && requestedDebugTraceKey === debugTraceKey);
+  const {
+    trace: debugTrace,
+    isLoading: isDebugTraceLoading,
+    isFetching: isDebugTraceFetching,
+  } = useAgentRuntimeDebugTrace(
+    { agentId, messageId: runId, runtimeId: selectedDebugRuntimeID },
+    {
+      enabled: shouldLoadDebugTrace,
+      staleTime: 0,
+      refetchOnWindowFocus: false,
+    }
+  );
   const modelInputLabels = useMemo<AgentRuntimeModelInputLabels>(
     () => ({
       hiddenSkillInstructions: t('appLogs.hiddenValues.skillInstructions'),
@@ -617,6 +640,11 @@ export function AgentRuntimeLogDetailDrawer({
     }),
     [t]
   );
+
+  useEffect(() => {
+    setRequestedDebugTraceKey(null);
+  }, [debugTraceKey]);
+
   const workflowRunProcessTitles = useMemo(
     () => ({
       invocation: t('appLogs.runtimeWorkflowInvocation'),
@@ -804,6 +832,42 @@ export function AgentRuntimeLogDetailDrawer({
                     }
                   >
                     {renderValue(selectedStep.process, modelInputLabels)}
+                  </DetailSection>
+                ) : null}
+
+                {selectedStep.type === 'model_call' ? (
+                  <DetailSection title={t('appLogs.runtimeRawDebugTrace')}>
+                    <div className="space-y-3">
+                      <div className="text-xs leading-5 text-muted-foreground">
+                        {t('appLogs.runtimeRawDebugTraceDescription')}
+                      </div>
+                      {!debugTraceKey ? (
+                        <div className="rounded-md border border-dashed bg-muted/20 p-3 text-sm text-muted-foreground">
+                          {t('appLogs.runtimeRawDebugTraceUnavailable')}
+                        </div>
+                      ) : requestedDebugTraceKey !== debugTraceKey ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          onClick={() => setRequestedDebugTraceKey(debugTraceKey)}
+                        >
+                          <Bug className="size-3.5" />
+                          {t('appLogs.runtimeRawDebugTraceLoad')}
+                        </Button>
+                      ) : isDebugTraceLoading || isDebugTraceFetching ? (
+                        <div className="flex items-center gap-2 rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
+                          <Clock className="size-4 animate-pulse" />
+                          {t('appLogs.runtimeRawDebugTraceLoading')}
+                        </div>
+                      ) : debugTrace?.trace ? (
+                        renderJsonValue(debugTrace.trace, modelInputLabels)
+                      ) : (
+                        <div className="rounded-md border border-dashed bg-muted/20 p-3 text-sm text-muted-foreground">
+                          {t('appLogs.runtimeRawDebugTraceUnavailable')}
+                        </div>
+                      )}
+                    </div>
                   </DetailSection>
                 ) : null}
 

@@ -449,6 +449,12 @@ const messages = {
     runtimeName: 'Name',
     runtimeModelRequestParams: 'Request Parameters',
     runtimeModelMessages: 'Message Context',
+    runtimeRawDebugTrace: 'Raw Debug Trace',
+    runtimeRawDebugTraceDescription:
+      'Available only while short-lived backend raw model tracing is enabled.',
+    runtimeRawDebugTraceLoad: 'Load raw trace',
+    runtimeRawDebugTraceLoading: 'Loading raw trace...',
+    runtimeRawDebugTraceUnavailable: 'No raw debug trace is available for this model call.',
     runtimeModelMessageRole: '{role} message',
     runtimeToolResultMessage: 'Tool result',
     runtimeToolResultMeta: 'tool message',

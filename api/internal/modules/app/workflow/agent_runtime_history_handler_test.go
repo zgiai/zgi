@@ -437,6 +437,186 @@ func TestAgentRuntimeRunDetailAllowsWebAppMessageFromEndUserAccount(t *testing.T
 	}
 }
 
+func TestAgentRuntimeRunDebugTraceReturnsRawTraceWhenEnabled(t *testing.T) {
+	t.Setenv("ZGI_AICHAT_DEBUG_RAW_MODEL_INVOCATIONS", "1")
+	gin.SetMode(gin.TestMode)
+	handler, service, ids := setupRuntimeLogsHandler(t)
+
+	webAppID := uuid.New()
+	conversationID := uuid.New()
+	runtimeID := "model_call:skill_planning:0:1700000000000000000"
+	service.addConversation(&runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: ids.organizationID,
+		WorkspaceID:    &ids.workspaceID,
+		AccountID:      uuid.New(),
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &ids.agentID,
+		Title:          "webapp visitor",
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &webAppID,
+	})
+	messageID := uuid.New()
+	expiresAt := time.Now().Add(time.Hour).Unix()
+	service.addMessage(&runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "debug me",
+		Answer:         "ok",
+		Status:         runtimemodel.MessageStatusCompleted,
+		ModelName:      "gpt-test",
+		Metadata: map[string]interface{}{
+			"debug_model_invocations": []interface{}{
+				map[string]interface{}{
+					"schema":      "zgi.model_invocation.debug_trace.v1",
+					"trace_level": "raw_debug",
+					"runtime_id":  runtimeID,
+					"expires_at":  float64(expiresAt),
+					"request": map[string]interface{}{"messages": []interface{}{
+						map[string]interface{}{"role": "system", "content": "RAW_DEBUG_SECRET"},
+					}},
+				},
+			},
+		},
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{
+		{Key: "agent_id", Value: ids.agentID.String()},
+		{Key: "message_id", Value: messageID.String()},
+		{Key: "runtime_id", Value: runtimeID},
+	}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs/"+messageID.String()+"/debug-traces/"+runtimeID, nil)
+
+	handler.GetRuntimeRunDebugTrace(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := resp["data"].(map[string]interface{})
+	if data["runtime_id"] != runtimeID || data["expires_at"] != float64(expiresAt) {
+		t.Fatalf("debug trace response = %#v, want runtime id and expires_at", data)
+	}
+	traceBytes, err := json.Marshal(data["trace"])
+	if err != nil {
+		t.Fatalf("marshal trace: %v", err)
+	}
+	if !strings.Contains(string(traceBytes), "RAW_DEBUG_SECRET") {
+		t.Fatalf("trace = %s, want raw debug content", string(traceBytes))
+	}
+}
+
+func TestAgentRuntimeRunDebugTraceHiddenWhenDebugDisabled(t *testing.T) {
+	t.Setenv("ZGI_AICHAT_DEBUG_RAW_MODEL_INVOCATIONS", "")
+	gin.SetMode(gin.TestMode)
+	handler, service, ids := setupRuntimeLogsHandler(t)
+
+	webAppID := uuid.New()
+	conversationID := uuid.New()
+	runtimeID := "model_call:skill_planning:0:1700000000000000000"
+	service.addConversation(&runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: ids.organizationID,
+		WorkspaceID:    &ids.workspaceID,
+		AccountID:      uuid.New(),
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &ids.agentID,
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &webAppID,
+	})
+	messageID := uuid.New()
+	service.addMessage(&runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Status:         runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"debug_model_invocations": []interface{}{
+				map[string]interface{}{
+					"runtime_id": runtimeID,
+					"expires_at": float64(time.Now().Add(time.Hour).Unix()),
+					"request":    map[string]interface{}{"messages": []interface{}{"raw"}},
+				},
+			},
+		},
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{
+		{Key: "agent_id", Value: ids.agentID.String()},
+		{Key: "message_id", Value: messageID.String()},
+		{Key: "runtime_id", Value: runtimeID},
+	}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs/"+messageID.String()+"/debug-traces/"+runtimeID, nil)
+
+	handler.GetRuntimeRunDebugTrace(ctx)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+}
+
+func TestAgentRuntimeRunDebugTraceRejectsExpiredTrace(t *testing.T) {
+	t.Setenv("ZGI_AICHAT_DEBUG_RAW_MODEL_INVOCATIONS", "1")
+	gin.SetMode(gin.TestMode)
+	handler, service, ids := setupRuntimeLogsHandler(t)
+
+	webAppID := uuid.New()
+	conversationID := uuid.New()
+	runtimeID := "model_call:skill_planning:0:1700000000000000000"
+	service.addConversation(&runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: ids.organizationID,
+		WorkspaceID:    &ids.workspaceID,
+		AccountID:      uuid.New(),
+		CallerType:     runtimemodel.ConversationCallerAgent,
+		CallerID:       &ids.agentID,
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &webAppID,
+	})
+	messageID := uuid.New()
+	service.addMessage(&runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Status:         runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"debug_model_invocations": []interface{}{
+				map[string]interface{}{
+					"runtime_id": runtimeID,
+					"expires_at": float64(time.Now().Add(-time.Hour).Unix()),
+					"request":    map[string]interface{}{"messages": []interface{}{"raw"}},
+				},
+			},
+		},
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{
+		{Key: "agent_id", Value: ids.agentID.String()},
+		{Key: "message_id", Value: messageID.String()},
+		{Key: "runtime_id", Value: runtimeID},
+	}
+	ctx.Set("account_id", ids.accountID.String())
+	util.SetOrganizationID(ctx, ids.organizationID.String())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+ids.agentID.String()+"/runtime-runs/"+messageID.String()+"/debug-traces/"+runtimeID, nil)
+
+	handler.GetRuntimeRunDebugTrace(ctx)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+}
+
 func TestAgentRuntimeStepsFromSkillInvocationsAndFinalAnswer(t *testing.T) {
 	messageID := uuid.New()
 	createdAt := time.Unix(1700000000, 0)

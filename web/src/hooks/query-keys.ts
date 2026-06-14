@@ -68,6 +68,8 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.detail(agentId), 'runtime-run-detail', messageId] as const,
   runtimeRunSteps: (agentId: string, messageId: string) =>
     [...AGENT_KEYS.detail(agentId), 'runtime-run-steps', messageId] as const,
+  runtimeRunDebugTrace: (agentId: string, messageId: string, runtimeId: string) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-run-debug-trace', messageId, runtimeId] as const,
 } as const;
 
 export const PROMPT_KEYS = {

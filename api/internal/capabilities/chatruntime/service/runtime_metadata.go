@@ -207,6 +207,21 @@ func pruneDebugModelInvocations(invocations []map[string]interface{}, now time.T
 	return out
 }
 
+// DebugModelInvocationTrace returns one unexpired raw debug model invocation by runtime ID.
+func DebugModelInvocationTrace(metadata map[string]interface{}, runtimeID string, now time.Time) (map[string]interface{}, bool) {
+	runtimeID = strings.TrimSpace(runtimeID)
+	if len(metadata) == 0 || runtimeID == "" {
+		return nil, false
+	}
+	for _, invocation := range pruneDebugModelInvocations(modelInvocationsFromMetadata(metadata[debugModelInvocationsMetadataKey]), now) {
+		if strings.TrimSpace(stringFromAny(invocation["runtime_id"])) != runtimeID {
+			continue
+		}
+		return copyStringAnyMap(invocation), true
+	}
+	return nil, false
+}
+
 func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPrompt string) map[string]interface{} {
 	phase := strings.TrimSpace(trace.Phase)
 	if phase == "" {
@@ -287,6 +302,11 @@ func debugModelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSys
 }
 
 func modelInvocationRawDebugEnabled() bool {
+	return ModelInvocationRawDebugEnabled()
+}
+
+// ModelInvocationRawDebugEnabled reports whether short-lived raw model traces are enabled.
+func ModelInvocationRawDebugEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(modelInvocationRawDebugEnv))) {
 	case "1", "true", "yes", "on", "debug", "raw":
 		return true

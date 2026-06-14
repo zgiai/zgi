@@ -53,6 +53,13 @@ export interface AgentRuntimeRunDetail {
   source_web_app_id?: string | null;
 }
 
+export interface AgentRuntimeDebugTrace {
+  message_id: string;
+  runtime_id: string;
+  trace: Record<string, unknown>;
+  expires_at?: number | null;
+}
+
 export type AgentRuntimeStepType =
   | 'user_input'
   | 'skill'

@@ -148,6 +148,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	apps.GET("/:agent_id/runtime-runs", agentRuntimeLogsHandler.GetRuntimeRuns)
 	apps.GET("/:agent_id/runtime-runs/:message_id", agentRuntimeLogsHandler.GetRuntimeRunDetail)
 	apps.GET("/:agent_id/runtime-runs/:message_id/steps", agentRuntimeLogsHandler.GetRuntimeRunSteps)
+	apps.GET("/:agent_id/runtime-runs/:message_id/debug-traces/:runtime_id", agentRuntimeLogsHandler.GetRuntimeRunDebugTrace)
 	apps.POST("/:agent_id/workflow-runs/:run_id/nodes/:node_log_id/diagnose", handler.ManualDiagnoseNode)
 	apps.GET("/:agent_id/conversations", agentHistoryDispatchHandler.GetConversations)
 	apps.GET("/:agent_id/conversations/:conversation_id", agentHistoryDispatchHandler.GetConversationDetail)

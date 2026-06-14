@@ -2,6 +2,7 @@ import { BaseService } from '@/lib/http/services';
 import { sanitizeModelOutputValue } from '@/utils/model-output-filter';
 import type { ApiResponseData } from './types/common';
 import type {
+  AgentRuntimeDebugTrace,
   AgentRuntimeRunDetail,
   AgentRuntimeRunsList,
   AgentRuntimeRunsQuery,
@@ -75,6 +76,17 @@ export class AgentRuntimeLogsService extends BaseService {
       `/agents/${agentId}/runtime-runs/${messageId}/steps`
     );
     return sanitizeAgentRuntimeStepsResponse(response);
+  }
+
+  async getRuntimeRunDebugTrace(
+    agentId: string,
+    messageId: string,
+    runtimeId: string
+  ): Promise<ApiResponseData<AgentRuntimeDebugTrace>> {
+    return this.request<ApiResponseData<AgentRuntimeDebugTrace>>(
+      'get',
+      `/agents/${agentId}/runtime-runs/${messageId}/debug-traces/${encodeURIComponent(runtimeId)}`
+    );
   }
 }
 
