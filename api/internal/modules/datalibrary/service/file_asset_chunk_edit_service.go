@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
 )
@@ -168,7 +169,7 @@ func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	embeddingResult, embeddingReady, err := s.syncEditedChunkEmbedding(ctx, asset, updatedChunk, input)
+	embeddingResult, embeddingReady, err := s.syncEditedChunkEmbedding(ctx, asset, chunk, updatedChunk, input)
 	if err != nil {
 		return nil, err
 	}
@@ -183,11 +184,18 @@ func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, 
 	}, nil
 }
 
-func (s *fileAssetChunkEditService) syncEditedChunkEmbedding(ctx context.Context, asset *model.DocumentAsset, updatedChunk *model.DocumentChunk, input FileAssetChunkEditInput) (*model.DocumentChunkEmbedding, bool, error) {
+func (s *fileAssetChunkEditService) syncEditedChunkEmbedding(ctx context.Context, asset *model.DocumentAsset, originalChunk *model.DocumentChunk, updatedChunk *model.DocumentChunk, input FileAssetChunkEditInput) (*model.DocumentChunkEmbedding, bool, error) {
 	if updatedChunk == nil {
 		return nil, false, nil
 	}
 	if updatedChunk.ChunkType == model.DocumentChunkTypeParent {
+		if input.Content != nil {
+			embeddingReady, err := s.rebuildParentChildChunks(ctx, asset, originalChunk, updatedChunk, input)
+			return nil, embeddingReady, err
+		}
+		if err := s.syncChildEnabledWithParent(ctx, asset, updatedChunk, input); err != nil {
+			return nil, false, err
+		}
 		if s.vectorIndex == nil || input.Enabled == nil {
 			return nil, false, nil
 		}
@@ -233,6 +241,139 @@ func (s *fileAssetChunkEditService) syncEditedChunkEmbedding(ctx context.Context
 		return embeddingResult, true, nil
 	}
 	return nil, false, nil
+}
+
+func (s *fileAssetChunkEditService) rebuildParentChildChunks(ctx context.Context, asset *model.DocumentAsset, originalChunk *model.DocumentChunk, updatedChunk *model.DocumentChunk, input FileAssetChunkEditInput) (bool, error) {
+	if asset == nil || originalChunk == nil || updatedChunk == nil {
+		return false, nil
+	}
+	if s.vectorIndex != nil {
+		if err := s.vectorIndex.DeleteChildVectorsByParent(ctx, asset, updatedChunk.ID); err != nil {
+			return false, err
+		}
+	}
+	if err := s.deleteChildEmbeddingsByParent(ctx, asset, updatedChunk.ID); err != nil {
+		return false, err
+	}
+	if err := s.chunks.DeleteChildrenByParent(ctx, input.OrganizationID, updatedChunk.ID); err != nil {
+		return false, err
+	}
+
+	parentDTO := dto.TransformedChunk{
+		Content:  updatedChunk.Content,
+		Metadata: cloneAnyMap(originalChunk.MetadataJSON),
+	}
+	children := splitDocumentChildChunks(parentDTO, updatedChunk.Content, parseDocumentSubchunkRule(nil))
+	items := make([]*model.DocumentChunk, 0, len(children))
+	for index, child := range children {
+		childContent := strings.TrimSpace(child.Content)
+		if childContent == "" {
+			continue
+		}
+		item := newDocumentChunk(
+			asset,
+			GenerateDocumentChunksInput{
+				OrganizationID:     input.OrganizationID,
+				AssetID:            asset.ID,
+				ProcessingRunID:    updatedChunk.ProcessingRunID,
+				GenerationNo:       updatedChunk.GenerationNo,
+				ChunkArtifactSetID: updatedChunk.ChunkArtifactSetID,
+				CreatedBy:          input.UpdatedBy,
+			},
+			uuid.New(),
+			&updatedChunk.ID,
+			index,
+			model.DocumentChunkTypeChild,
+			childContent,
+			child.BBox,
+			child.Metadata,
+		)
+		item.Enabled = updatedChunk.Enabled
+		items = append(items, item)
+	}
+	if len(items) == 0 {
+		return false, nil
+	}
+	if err := s.chunks.CreateBatch(ctx, items); err != nil {
+		return false, err
+	}
+	if !updatedChunk.Enabled || s.chunkEmbed == nil {
+		return false, nil
+	}
+	embeddingProvider, embeddingModel := resolveChunkEditEmbeddingModel(asset, input)
+	for _, item := range items {
+		if _, err := s.chunkEmbed.GenerateChunkEmbedding(ctx, GenerateDocumentChunkEmbeddingInput{
+			OrganizationID:    input.OrganizationID,
+			AssetID:           asset.ID,
+			ProcessingRunID:   updatedChunk.ProcessingRunID,
+			GenerationNo:      updatedChunk.GenerationNo,
+			EmbeddingProvider: embeddingProvider,
+			EmbeddingModel:    embeddingModel,
+			RequestedBy:       input.UpdatedBy,
+			Chunk:             item,
+		}); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (s *fileAssetChunkEditService) deleteChildEmbeddingsByParent(ctx context.Context, asset *model.DocumentAsset, parentChunkID uuid.UUID) error {
+	if s.embeddings == nil || asset == nil || parentChunkID == uuid.Nil {
+		return nil
+	}
+	children, _, err := s.chunks.List(ctx, repository.DocumentChunkListFilter{
+		OrganizationID: asset.OrganizationID,
+		AssetID:        asset.ID,
+		GenerationNo:   &asset.GenerationNo,
+		ParentChunkID:  &parentChunkID,
+		ChunkTypes:     []string{model.DocumentChunkTypeChild},
+		Limit:          500,
+		Offset:         0,
+	})
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
+		if err := s.embeddings.DeleteByChunkID(ctx, asset.OrganizationID, child.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *fileAssetChunkEditService) syncChildEnabledWithParent(ctx context.Context, asset *model.DocumentAsset, parentChunk *model.DocumentChunk, input FileAssetChunkEditInput) error {
+	if input.Enabled == nil || asset == nil || parentChunk == nil {
+		return nil
+	}
+	children, _, err := s.chunks.List(ctx, repository.DocumentChunkListFilter{
+		OrganizationID: asset.OrganizationID,
+		AssetID:        asset.ID,
+		GenerationNo:   &asset.GenerationNo,
+		ParentChunkID:  &parentChunk.ID,
+		ChunkTypes:     []string{model.DocumentChunkTypeChild},
+		Limit:          500,
+		Offset:         0,
+	})
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		if child == nil || child.Enabled == *input.Enabled {
+			continue
+		}
+		if _, err := s.chunks.Update(ctx, child.ID, repository.DocumentChunkPatch{
+			OrganizationID: input.OrganizationID,
+			Enabled:        input.Enabled,
+			UpdatedBy:      input.UpdatedBy,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func resolveChunkEditEmbeddingModel(asset *model.DocumentAsset, input FileAssetChunkEditInput) (string, string) {
@@ -285,7 +426,7 @@ func isEditableChunkUpdateAllowed(chunk *model.DocumentChunk, input FileAssetChu
 	case model.DocumentChunkTypeChild, model.DocumentChunkTypeAuto, model.DocumentChunkTypeManual:
 		return true
 	case model.DocumentChunkTypeParent:
-		return input.Content == nil && input.Enabled != nil
+		return input.Content != nil || input.Enabled != nil
 	default:
 		return false
 	}

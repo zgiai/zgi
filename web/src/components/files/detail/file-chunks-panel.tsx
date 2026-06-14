@@ -1,24 +1,21 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
   Edit3,
-  Eye,
   Layers3,
   Loader2,
-  Plus,
-  RefreshCw,
   Save,
   Search,
   SearchX,
-  Trash2,
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogBody,
@@ -60,9 +57,10 @@ function ChunkSkeleton() {
 
 export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
   const t = useT('files');
-  const [editingSecondaryChunk, setEditingSecondaryChunk] = useState<FileDocumentChunk | null>(null);
-  const [secondaryDraft, setSecondaryDraft] = useState('');
+  const [editingPrimaryChunk, setEditingPrimaryChunk] = useState<FileDocumentChunk | null>(null);
+  const [primaryDraft, setPrimaryDraft] = useState('');
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  const [selectedChunkIds, setSelectedChunkIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<ChunkFilter>('all');
   const { data, isLoading, error } = useFileChunks(fileId, { limit: 500 }, { enabled });
@@ -88,29 +86,66 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
     });
   }, [filter, primaryChunks, search]);
 
-  const allExpanded = visibleChunks.length > 0 && visibleChunks.every(chunk => expandedIds[chunk.id] ?? true);
+  const allExpanded = visibleChunks.length > 0 && visibleChunks.every(chunk => expandedIds[chunk.id] ?? false);
+  const visibleChunkIds = useMemo(() => visibleChunks.map(chunk => chunk.id), [visibleChunks]);
+  const selectedVisibleIds = useMemo(
+    () => selectedChunkIds.filter(id => visibleChunkIds.includes(id)),
+    [selectedChunkIds, visibleChunkIds]
+  );
+  const selectedChunks = useMemo(
+    () => visibleChunks.filter(chunk => selectedVisibleIds.includes(chunk.id)),
+    [selectedVisibleIds, visibleChunks]
+  );
+  const selectedCount = selectedVisibleIds.length;
+  const allVisibleSelected = visibleChunks.length > 0 && selectedCount === visibleChunks.length;
+  const someVisibleSelected = selectedCount > 0 && !allVisibleSelected;
 
-  const startEditSecondary = (chunk: FileDocumentChunk) => {
-    setEditingSecondaryChunk(chunk);
-    setSecondaryDraft(chunk.content);
+  useEffect(() => {
+    setSelectedChunkIds(current => current.filter(id => visibleChunkIds.includes(id)));
+  }, [visibleChunkIds]);
+
+  const startEditPrimary = (chunk: FileDocumentChunk) => {
+    setEditingPrimaryChunk(chunk);
+    setPrimaryDraft(chunk.content);
   };
 
-  const saveSecondaryChunkContent = async () => {
-    if (!editingSecondaryChunk) return;
+  const savePrimaryChunkContent = async () => {
+    if (!editingPrimaryChunk) return;
     await updateChunk.mutateAsync({
-      chunkId: editingSecondaryChunk.id,
-      data: { content: secondaryDraft },
+      chunkId: editingPrimaryChunk.id,
+      data: { content: primaryDraft },
     });
-    setEditingSecondaryChunk(null);
-    setSecondaryDraft('');
+    setEditingPrimaryChunk(null);
+    setPrimaryDraft('');
   };
 
   const toggleChunkEnabled = async (chunk: FileDocumentChunk, checked: boolean) => {
     await updateChunk.mutateAsync({ chunkId: chunk.id, data: { enabled: checked } });
   };
 
+  const toggleChunkSelected = (chunkId: string, checked: boolean) => {
+    setSelectedChunkIds(current => {
+      if (checked) {
+        return current.includes(chunkId) ? current : [...current, chunkId];
+      }
+      return current.filter(id => id !== chunkId);
+    });
+  };
+
+  const toggleAllVisibleSelected = (checked: boolean) => {
+    setSelectedChunkIds(checked ? visibleChunkIds : []);
+  };
+
+  const batchSetSelectedEnabled = async (checked: boolean) => {
+    await Promise.all(
+      selectedChunks
+        .filter(chunk => chunk.enabled !== checked)
+        .map(chunk => updateChunk.mutateAsync({ chunkId: chunk.id, data: { enabled: checked } }))
+    );
+  };
+
   const toggleExpanded = (chunkId: string) => {
-    setExpandedIds(current => ({ ...current, [chunkId]: !(current[chunkId] ?? true) }));
+    setExpandedIds(current => ({ ...current, [chunkId]: !(current[chunkId] ?? false) }));
   };
 
   const setAllExpanded = (expanded: boolean) => {
@@ -179,25 +214,70 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
             {allExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             {allExpanded ? t('detail.chunks.collapseAll') : t('detail.chunks.expandAll')}
           </Button>
-          <Button variant="outline" className="h-10 gap-2 rounded-lg" disabled>
+          {/* Re-enable these actions after chunk regeneration and creation APIs are implemented. */}
+          {/*
+          <Button variant="outline" className="h-10 gap-2 rounded-lg">
             <RefreshCw className="h-4 w-4" />
             {t('detail.chunks.resegment')}
           </Button>
-          <Button className="h-10 gap-2 rounded-lg" disabled>
+          <Button className="h-10 gap-2 rounded-lg">
             <Plus className="h-4 w-4" />
             {t('detail.chunks.add')}
           </Button>
+          */}
         </div>
       </div>
 
       <div className="rounded-lg border border-border bg-background px-4 py-3">
-        <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-          <span className="h-5 w-5 rounded-full border-2 border-primary" />
-          <span>{t('detail.chunks.selectAll', { count: total })}</span>
-          <span className="text-border">|</span>
-          <span>{t('detail.chunks.secondaryCount', { count: secondaryTotal })}</span>
-          <span className="text-border">|</span>
-          <span>{t('detail.chunks.generationNo', { value: response.generation_no })}</span>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <Checkbox
+              checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
+              onCheckedChange={checked => toggleAllVisibleSelected(checked === true)}
+              disabled={visibleChunks.length === 0 || updateChunk.isPending}
+              className="h-5 w-5 rounded-full"
+              aria-label={t('detail.chunks.selectAll', { count: visibleChunks.length })}
+            />
+            <span>{t('detail.chunks.selectAll', { count: visibleChunks.length })}</span>
+            {selectedCount > 0 ? (
+              <>
+                <span className="text-border">|</span>
+                <span className="font-medium text-foreground">
+                  {t('detail.chunks.selectedCount', { count: selectedCount })}
+                </span>
+              </>
+            ) : null}
+            <span className="text-border">|</span>
+            <span>{t('detail.chunks.secondaryCount', { count: secondaryTotal })}</span>
+            <span className="text-border">|</span>
+            <span>{t('detail.chunks.generationNo', { value: response.generation_no })}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-lg"
+              disabled={selectedCount === 0 || updateChunk.isPending}
+              onClick={() => void batchSetSelectedEnabled(true)}
+            >
+              {t('detail.chunks.batchEnable')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-lg"
+              disabled={selectedCount === 0 || updateChunk.isPending}
+              onClick={() => void batchSetSelectedEnabled(false)}
+            >
+              {t('detail.chunks.batchDisable')}
+            </Button>
+            {/* Re-enable after file chunk deletion API is implemented. */}
+            {/*
+            <Button variant="outline" size="sm" className="h-9 rounded-lg text-destructive hover:text-destructive">
+              {t('detail.chunks.delete')}
+            </Button>
+            */}
+          </div>
         </div>
       </div>
 
@@ -219,9 +299,11 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
             <PrimaryChunkCard
               key={chunk.id}
               chunk={chunk}
-              expanded={expandedIds[chunk.id] ?? true}
+              expanded={expandedIds[chunk.id] ?? false}
+              selected={selectedVisibleIds.includes(chunk.id)}
               disabled={updateChunk.isPending}
-              onEditSecondary={startEditSecondary}
+              onEditPrimary={startEditPrimary}
+              onSelect={toggleChunkSelected}
               onToggleEnabled={toggleChunkEnabled}
               onToggleExpanded={toggleExpanded}
             />
@@ -230,29 +312,29 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
       )}
 
       <Dialog
-        open={Boolean(editingSecondaryChunk)}
+        open={Boolean(editingPrimaryChunk)}
         onOpenChange={open => {
           if (!open) {
-            setEditingSecondaryChunk(null);
-            setSecondaryDraft('');
+            setEditingPrimaryChunk(null);
+            setPrimaryDraft('');
           }
         }}
       >
         <DialogContent size="xl">
           <DialogHeader>
-            <DialogTitle>{t('detail.chunks.editSecondaryTitle')}</DialogTitle>
+            <DialogTitle>{t('detail.chunks.editPrimaryTitle')}</DialogTitle>
             <DialogDescription>
-              {editingSecondaryChunk
-                ? t('detail.chunks.editSecondaryDescription', {
-                    count: editingSecondaryChunk.content.length,
+              {editingPrimaryChunk
+                ? t('detail.chunks.editPrimaryDescription', {
+                    count: editingPrimaryChunk.content.length,
                   })
                 : null}
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
             <Textarea
-              value={secondaryDraft}
-              onChange={event => setSecondaryDraft(event.target.value)}
+              value={primaryDraft}
+              onChange={event => setPrimaryDraft(event.target.value)}
               className="min-h-[360px] resize-y text-sm leading-6"
               disabled={updateChunk.isPending}
             />
@@ -261,8 +343,8 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
             <Button
               variant="outline"
               onClick={() => {
-                setEditingSecondaryChunk(null);
-                setSecondaryDraft('');
+                setEditingPrimaryChunk(null);
+                setPrimaryDraft('');
               }}
               disabled={updateChunk.isPending}
             >
@@ -270,12 +352,12 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
             </Button>
             <Button
               className="gap-2"
-              onClick={() => void saveSecondaryChunkContent()}
+              onClick={() => void savePrimaryChunkContent()}
               disabled={
                 updateChunk.isPending ||
-                !editingSecondaryChunk ||
-                secondaryDraft.trim() === '' ||
-                secondaryDraft === editingSecondaryChunk.content
+                !editingPrimaryChunk ||
+                primaryDraft.trim() === '' ||
+                primaryDraft === editingPrimaryChunk.content
               }
             >
               {updateChunk.isPending ? (
@@ -295,15 +377,19 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
 function PrimaryChunkCard({
   chunk,
   expanded,
+  selected,
   disabled,
-  onEditSecondary,
+  onEditPrimary,
+  onSelect,
   onToggleEnabled,
   onToggleExpanded,
 }: {
   chunk: FileDocumentChunk;
   expanded: boolean;
+  selected: boolean;
   disabled: boolean;
-  onEditSecondary: (chunk: FileDocumentChunk) => void;
+  onEditPrimary: (chunk: FileDocumentChunk) => void;
+  onSelect: (chunkId: string, checked: boolean) => void;
   onToggleEnabled: (chunk: FileDocumentChunk, checked: boolean) => Promise<void>;
   onToggleExpanded: (chunkId: string) => void;
 }) {
@@ -311,11 +397,22 @@ function PrimaryChunkCard({
   const children = chunk.children ?? [];
 
   return (
-    <article className="rounded-lg border border-border bg-background p-5 shadow-sm transition-colors focus-within:border-primary/70">
+    <article
+      className={cn(
+        'rounded-lg border bg-background p-5 shadow-sm transition-colors focus-within:border-primary/70',
+        selected ? 'border-primary ring-1 ring-primary' : 'border-border'
+      )}
+    >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="h-5 w-5 rounded-full border-2 border-primary" />
+            <Checkbox
+              checked={selected}
+              onCheckedChange={checked => onSelect(chunk.id, checked === true)}
+              disabled={disabled}
+              className="h-5 w-5 rounded-full"
+              aria-label={t('detail.chunks.selectChunk', { position: chunk.position + 1 })}
+            />
             <h3 className="text-lg font-semibold text-primary">#{chunk.position + 1}</h3>
             <Badge variant="info" className="rounded-full px-3">
               <Layers3 className="mr-1 h-3.5 w-3.5" />
@@ -334,12 +431,22 @@ function PrimaryChunkCard({
             onCheckedChange={checked => void onToggleEnabled(chunk, checked)}
             disabled={disabled}
           />
-          <Button variant="ghost" size="sm" className="h-9 w-9 p-0" disabled>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 w-9 p-0"
+            onClick={() => onEditPrimary(chunk)}
+            disabled={disabled}
+            aria-label={t('detail.chunks.edit')}
+          >
             <Edit3 className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="sm" className="h-9 w-9 p-0" disabled>
+          {/* Re-enable after file chunk deletion API is implemented. */}
+          {/*
+          <Button variant="ghost" size="sm" className="h-9 w-9 p-0">
             <Trash2 className="h-4 w-4" />
           </Button>
+          */}
           <Button variant="ghost" size="sm" className="h-9 w-9 p-0" onClick={() => onToggleExpanded(chunk.id)}>
             {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </Button>
@@ -353,12 +460,15 @@ function PrimaryChunkCard({
           {t('detail.chunks.secondaryCount', { count: children.length })}
         </Badge>
         <Button variant="link" className="h-auto p-0 text-primary" onClick={() => onToggleExpanded(chunk.id)}>
-          {t('detail.chunks.manageSecondary')}
+          {expanded ? t('detail.chunks.collapseSecondary') : t('detail.chunks.viewSecondary')}
         </Button>
-        <Button variant="link" className="h-auto gap-1 p-0 text-primary" disabled>
+        {/* Re-enable after source-locator preview is implemented for chunks. */}
+        {/*
+        <Button variant="link" className="h-auto gap-1 p-0 text-primary">
           <Eye className="h-4 w-4" />
           {t('detail.chunks.viewOriginal')}
         </Button>
+        */}
         <span className="text-muted-foreground">
           {t('detail.chunks.characters', { count: chunk.content.length })}
         </span>
@@ -371,9 +481,6 @@ function PrimaryChunkCard({
               key={child.id}
               chunk={child}
               index={index}
-              disabled={disabled}
-              onEdit={onEditSecondary}
-              onToggleEnabled={onToggleEnabled}
             />
           ))}
         </div>
@@ -385,15 +492,9 @@ function PrimaryChunkCard({
 function SecondaryChunkRow({
   chunk,
   index,
-  disabled,
-  onEdit,
-  onToggleEnabled,
 }: {
   chunk: FileDocumentChunk;
   index: number;
-  disabled: boolean;
-  onEdit: (chunk: FileDocumentChunk) => void;
-  onToggleEnabled: (chunk: FileDocumentChunk, checked: boolean) => Promise<void>;
 }) {
   const t = useT('files');
 
@@ -409,29 +510,11 @@ function SecondaryChunkRow({
             {t('detail.chunks.characters', { count: chunk.content.length })}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">{t('detail.chunks.enabled')}</span>
-          <Switch
-            checked={chunk.enabled}
-            onCheckedChange={checked => void onToggleEnabled(chunk, checked)}
-            disabled={disabled}
-          />
-        </div>
       </div>
-      <div className="mt-3 flex gap-3 rounded-lg border border-border bg-background p-3 shadow-sm">
+      <div className="mt-3 rounded-lg border border-border bg-background p-3 shadow-sm">
         <p className="max-h-24 min-w-0 flex-1 overflow-hidden whitespace-pre-wrap text-sm leading-6 text-foreground">
           {chunk.content}
         </p>
-        <Button
-          size="sm"
-          variant="outline"
-          className="shrink-0 gap-2 rounded-lg"
-          onClick={() => onEdit(chunk)}
-          disabled={disabled}
-        >
-          <Edit3 className="h-4 w-4" />
-          {t('detail.chunks.edit')}
-        </Button>
       </div>
     </div>
   );

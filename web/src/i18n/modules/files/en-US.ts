@@ -382,9 +382,18 @@ const messages = {
       resegment: 'Regenerate',
       add: 'Add chunk',
       selectAll: 'Select all ({count} chunks)',
+      selectedCount: '{count} selected',
+      selectChunk: 'Select chunk {position}',
+      batchEnable: 'Enable',
+      batchDisable: 'Disable',
       manageSecondary: 'Manage secondary chunks',
+      viewSecondary: 'View secondary chunks',
+      collapseSecondary: 'Collapse secondary chunks',
       viewOriginal: 'View source',
       edit: 'Edit',
+      editPrimaryTitle: 'Edit Primary Chunk',
+      editPrimaryDescription:
+        'This primary chunk has {count} characters. Saving will regenerate its secondary chunks and vectors.',
       editSecondaryTitle: 'Edit Secondary Chunk',
       editSecondaryDescription:
         'This secondary chunk has {count} characters. Saving will rebuild its vector.',

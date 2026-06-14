@@ -43,6 +43,7 @@ type DocumentChunkRepository interface {
 	CountByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error)
 	CountByAssetGenerationAndTypes(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, chunkTypes []string) (int64, error)
 	DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error
+	DeleteChildrenByParent(ctx context.Context, organizationID string, parentChunkID uuid.UUID) error
 	Update(ctx context.Context, id uuid.UUID, patch DocumentChunkPatch) (*model.DocumentChunk, error)
 }
 
@@ -177,6 +178,16 @@ func (r *documentChunkRepository) DeleteByAssetGeneration(ctx context.Context, o
 		Where("organization_id = ?", organizationID).
 		Where("asset_id = ?", assetID).
 		Where("generation_no = ?", generationNo).
+		Delete(&model.DocumentChunk{}).Error
+}
+
+func (r *documentChunkRepository) DeleteChildrenByParent(ctx context.Context, organizationID string, parentChunkID uuid.UUID) error {
+	if organizationID == "" || parentChunkID == uuid.Nil {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("organization_id = ?", organizationID).
+		Where("parent_chunk_id = ?", parentChunkID).
 		Delete(&model.DocumentChunk{}).Error
 }
 

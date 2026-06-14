@@ -178,10 +178,11 @@ func TestFileAssetChunkEditServiceEnqueuesDatasetRefSyncAfterEdit(t *testing.T) 
 	}
 }
 
-func TestFileAssetChunkEditServiceRejectsParentChunk(t *testing.T) {
+func TestFileAssetChunkEditServiceUpdatesParentChunkAndRegeneratesChildren(t *testing.T) {
 	assetID := uuid.New()
 	runID := uuid.New()
 	chunkID := uuid.New()
+	childID := uuid.New()
 	assetRepo := &fileAssetStateAssetRepo{
 		asset: &model.DocumentAsset{
 			ID:              assetID,
@@ -193,31 +194,66 @@ func TestFileAssetChunkEditServiceRejectsParentChunk(t *testing.T) {
 	}
 	chunkRepo := newFileAssetChunkEditChunkRepo([]*model.DocumentChunk{
 		{
-			ID:             chunkID,
-			OrganizationID: "org-1",
-			AssetID:        assetID,
-			GenerationNo:   1,
-			ChunkType:      model.DocumentChunkTypeParent,
-			Content:        "parent",
-			ContentHash:    documentChunkContentHash("parent"),
-			Enabled:        true,
-			Status:         model.DocumentChunkStatusReady,
+			ID:              chunkID,
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    1,
+			ChunkType:       model.DocumentChunkTypeParent,
+			Content:         "parent",
+			ContentHash:     documentChunkContentHash("parent"),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
+		},
+		{
+			ID:              childID,
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    1,
+			ParentChunkID:   &chunkID,
+			ChunkType:       model.DocumentChunkTypeChild,
+			Content:         "old child",
+			ContentHash:     documentChunkContentHash("old child"),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
 		},
 	})
-	svc := NewFileAssetChunkEditService(assetRepo, chunkRepo, nil, &fileAssetChunkEditEmbeddingService{})
-	content := "updated"
+	chunkEmbed := &fileAssetChunkEditEmbeddingService{}
+	vectorIndex := &fileAssetChunkEditVectorIndex{}
+	svc := NewFileAssetChunkEditService(assetRepo, chunkRepo, nil, chunkEmbed, vectorIndex)
+	content := "updated parent content"
 
-	_, err := svc.UpdateCurrentFileChunk(context.Background(), FileAssetChunkEditInput{
+	result, err := svc.UpdateCurrentFileChunk(context.Background(), FileAssetChunkEditInput{
 		OrganizationID: "org-1",
 		SourceFileID:   "file-1",
 		ChunkID:        chunkID,
 		Content:        &content,
+		UpdatedBy:      "user-1",
 	})
-	if !errors.Is(err, ErrFileChunkEditNotAllowed) {
-		t.Fatalf("err=%v want ErrFileChunkEditNotAllowed", err)
+	if err != nil {
+		t.Fatalf("UpdateCurrentFileChunk: %v", err)
 	}
-	if chunkRepo.updateCalls != 0 {
-		t.Fatalf("parent chunk should not be updated")
+	if result.Chunk.Content != content || result.Chunk.ContentHash != documentChunkContentHash(content) || !result.EmbeddingReady {
+		t.Fatalf("result=%+v", result)
+	}
+	if _, ok := chunkRepo.items[childID]; ok {
+		t.Fatalf("old child should be deleted")
+	}
+	var newChildren []*model.DocumentChunk
+	for _, item := range chunkRepo.items {
+		if item.ParentChunkID != nil && *item.ParentChunkID == chunkID {
+			newChildren = append(newChildren, item)
+		}
+	}
+	if len(newChildren) == 0 {
+		t.Fatalf("expected regenerated child chunks")
+	}
+	if chunkEmbed.called != len(newChildren) {
+		t.Fatalf("embedding called=%d children=%d", chunkEmbed.called, len(newChildren))
+	}
+	if len(vectorIndex.deletedParentIDs) != 1 || vectorIndex.deletedParentIDs[0] != chunkID {
+		t.Fatalf("deleted parent vectors=%v", vectorIndex.deletedParentIDs)
 	}
 }
 
@@ -353,6 +389,15 @@ func (r *fileAssetChunkEditChunkRepo) DeleteByAssetGeneration(ctx context.Contex
 	return nil
 }
 
+func (r *fileAssetChunkEditChunkRepo) DeleteChildrenByParent(ctx context.Context, organizationID string, parentChunkID uuid.UUID) error {
+	for id, item := range r.items {
+		if item.OrganizationID == organizationID && item.ParentChunkID != nil && *item.ParentChunkID == parentChunkID {
+			delete(r.items, id)
+		}
+	}
+	return nil
+}
+
 func (r *fileAssetChunkEditChunkRepo) Update(ctx context.Context, id uuid.UUID, patch repository.DocumentChunkPatch) (*model.DocumentChunk, error) {
 	item, ok := r.items[id]
 	if !ok || item.OrganizationID != patch.OrganizationID {
@@ -407,6 +452,37 @@ func (s *fileAssetChunkEditEmbeddingService) GenerateChunkEmbedding(ctx context.
 }
 
 var _ DocumentChunkEmbeddingService = (*fileAssetChunkEditEmbeddingService)(nil)
+
+type fileAssetChunkEditVectorIndex struct {
+	deletedParentIDs []uuid.UUID
+}
+
+func (v *fileAssetChunkEditVectorIndex) EnsureAssetIndexed(ctx context.Context, asset *model.DocumentAsset) error {
+	return nil
+}
+
+func (v *fileAssetChunkEditVectorIndex) IndexChunkEmbeddings(ctx context.Context, asset *model.DocumentAsset, chunks []*model.DocumentChunk, embeddings []*model.DocumentChunkEmbedding, resetAsset bool) error {
+	return nil
+}
+
+func (v *fileAssetChunkEditVectorIndex) DeleteAssetIndex(ctx context.Context, asset *model.DocumentAsset) error {
+	return nil
+}
+
+func (v *fileAssetChunkEditVectorIndex) DeleteChunkVector(ctx context.Context, asset *model.DocumentAsset, chunkID uuid.UUID) error {
+	return nil
+}
+
+func (v *fileAssetChunkEditVectorIndex) DeleteChildVectorsByParent(ctx context.Context, asset *model.DocumentAsset, parentChunkID uuid.UUID) error {
+	v.deletedParentIDs = append(v.deletedParentIDs, parentChunkID)
+	return nil
+}
+
+func (v *fileAssetChunkEditVectorIndex) Search(ctx context.Context, asset *model.DocumentAsset, queryVector []float64, limit int) ([]map[string]interface{}, error) {
+	return nil, nil
+}
+
+var _ FileAssetVectorIndexService = (*fileAssetChunkEditVectorIndex)(nil)
 
 type fileAssetChunkEditDatasetRefSyncEnqueuer struct {
 	items []fileAssetChunkEditDatasetRefSyncItem

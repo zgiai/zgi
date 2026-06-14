@@ -150,6 +150,18 @@ func (r *documentChunkGenerationChunkRepo) DeleteByAssetGeneration(ctx context.C
 	return nil
 }
 
+func (r *documentChunkGenerationChunkRepo) DeleteChildrenByParent(ctx context.Context, organizationID string, parentChunkID uuid.UUID) error {
+	next := make([]*model.DocumentChunk, 0, len(r.items))
+	for _, item := range r.items {
+		if item.OrganizationID == organizationID && item.ParentChunkID != nil && *item.ParentChunkID == parentChunkID {
+			continue
+		}
+		next = append(next, item)
+	}
+	r.items = next
+	return nil
+}
+
 func (r *documentChunkGenerationChunkRepo) Update(ctx context.Context, id uuid.UUID, patch repository.DocumentChunkPatch) (*model.DocumentChunk, error) {
 	return r.GetByID(ctx, id)
 }
