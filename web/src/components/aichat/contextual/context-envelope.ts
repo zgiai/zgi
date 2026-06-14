@@ -3,7 +3,11 @@ import type {
   AIChatStreamCallbacks,
 } from '@/components/chat/transports/aichat-transport';
 import { aichatTransport } from '@/components/chat/transports/aichat-transport';
-import type { AIChatChatRequest, AIChatRegenerateMessageRequest } from '@/services/types/aichat';
+import type {
+  AIChatChatRequest,
+  AIChatRegenerateMessageRequest,
+  AIChatToolGovernanceDecisionRequest,
+} from '@/services/types/aichat';
 import type {
   AIChatCapabilityDescriptor,
   AIChatCapabilityRisk,
@@ -305,5 +309,22 @@ export function createContextualAIChatTransport(
       return aichatTransport.regenerateMessage(messageId, payload, callbacks, abortSignal);
     },
     recoverConversationStream: base.recoverConversationStream.bind(base),
+    continueToolGovernanceDecision(
+      conversationId: string,
+      messageId: string,
+      correlationId: string,
+      payload: AIChatToolGovernanceDecisionRequest,
+      callbacks: AIChatStreamCallbacks,
+      abortSignal?: AbortSignal
+    ) {
+      return aichatTransport.continueToolGovernanceDecision(
+        conversationId,
+        messageId,
+        correlationId,
+        payload,
+        callbacks,
+        abortSignal
+      );
+    },
   };
 }

@@ -22,6 +22,10 @@ import {
 } from '@/components/chat/utils/message-tree';
 import { upsertAIChatMessage } from '@/components/chat/utils/aichat-message';
 import type { NodeInfo, RunStatus } from '@/components/chat/types';
+import {
+  governanceCorrelationIdFromInvocation,
+  isPendingToolGovernanceInvocation,
+} from './governance';
 
 const EMPTY_AICHAT_MESSAGES: AIChatMessage[] = [];
 
@@ -325,10 +329,21 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
   const invocations = (message.metadata?.skill_invocations ?? [])
     .filter(isVisibleSkillInvocation)
     .map(normalizeSkillInvocation);
+  const governanceCorrelationIds = new Set(
+    invocations
+      .filter(invocation => invocation.kind === 'tool_governance')
+      .map(governanceCorrelationIdFromInvocation)
+      .filter((correlationId): correlationId is string => Boolean(correlationId))
+  );
 
   const skillTimeline = invocations.map((invocation, index): AIChatAgenticTimelineItem => {
-    if (invocation.kind === 'tool_governance') {
-      const correlationId = invocation.governance?.correlation_id ?? index;
+    const correlationId = invocation.governance?.correlation_id ?? index;
+    const shouldRenderAsGovernanceDecision =
+      invocation.kind === 'tool_governance' ||
+      (isPendingToolGovernanceInvocation(invocation) &&
+        !governanceCorrelationIds.has(String(correlationId)));
+
+    if (shouldRenderAsGovernanceDecision) {
       return {
         id: `history-governance-${message.id}-${correlationId}`,
         type: 'tool_governance_decision',

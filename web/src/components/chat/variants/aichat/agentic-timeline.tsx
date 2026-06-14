@@ -20,6 +20,7 @@ import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
+import { isPendingToolGovernanceInvocation } from '@/components/chat/controllers/aichat/governance';
 import {
   getAIChatSkillResultDisplay,
   getAIChatSkillToolDisplayName,
@@ -780,6 +781,11 @@ function isWorkflowTimelineItem(
   return 'type' in item && item.type === 'workflow_run';
 }
 
+function isApprovalGatedSkillEvent(item: AIChatAgenticTimelineItem): boolean {
+  if (item.type !== 'skill_event') return false;
+  return isPendingToolGovernanceInvocation(item.invocation);
+}
+
 function isTransientProgressItem(
   item: Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>
 ) {
@@ -858,7 +864,7 @@ export function AIChatAgenticTimeline({
 
   const events = useMemo(
     () =>
-      timeline.map(item => {
+      timeline.filter(item => !isApprovalGatedSkillEvent(item)).map(item => {
         if (item.type === 'progress_text') return item;
         if (item.type === 'intermediate_answer') return item;
         if (item.type === 'memory_event') return item;

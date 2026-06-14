@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 
 import type {
   AIChatConversation,
+  AIChatMessage,
   AIChatToolGovernanceDecisionRequest,
 } from '@/services/types/aichat';
 import {
@@ -65,7 +66,9 @@ export function useWorkflowContinuationActions({
     ) => {
       const transport = transportRef.current;
       if (toolGovernanceDecision) {
-        if (!transport.continueToolGovernanceDecision) return;
+        if (!transport.continueToolGovernanceDecision) {
+          throw new Error('Tool governance continuation is unavailable.');
+        }
       } else if (questionInputs) {
         if (!transport.continueWorkflowQuestion) return;
       } else if (!transport.continueWorkflowApproval) {
@@ -76,11 +79,40 @@ export function useWorkflowContinuationActions({
       const continueToolGovernanceDecisionStream =
         transport.continueToolGovernanceDecision?.bind(transport);
       const currentState = stateRef.current;
-      if (currentState.isSending || currentState.recoveringByConversation[conversationId]) return;
       const conversation =
         currentState.conversations.find(item => item.id === conversationId) ?? null;
       const messages = currentState.messagesByConversation[conversationId] ?? [];
-      const sourceMessage = messages.find(message => message.id === messageId);
+      const persistedSourceMessage = messages.find(message => message.id === messageId);
+      const previousStreaming = currentState.streamingByMessageId[messageId];
+      const fallbackSourceMessage: AIChatMessage | null = toolGovernanceDecision
+        ? {
+            id: messageId,
+            conversation_id: conversationId,
+            query: '',
+            answer: previousStreaming?.answer ?? '',
+            status: 'waiting_approval',
+            model_name: '',
+            created_at: Math.floor(Date.now() / 1000),
+            updated_at: Math.floor(Date.now() / 1000),
+          }
+        : null;
+      const sourceMessage = persistedSourceMessage ?? fallbackSourceMessage;
+      const sourceTimeline = persistedSourceMessage
+        ? timelineFromAIChatMessage(persistedSourceMessage)
+        : (previousStreaming?.timeline ?? []);
+      const streamingStatus = previousStreaming?.status;
+      const waitingForContinuation =
+        Boolean(toolGovernanceDecision) ||
+        sourceMessage?.status === 'waiting_approval' ||
+        sourceMessage?.status === 'waiting_question' ||
+        streamingStatus === 'waiting_approval' ||
+        streamingStatus === 'waiting_question';
+      if (
+        (currentState.isSending && !waitingForContinuation) ||
+        (currentState.recoveringByConversation[conversationId] && !toolGovernanceDecision)
+      ) {
+        return;
+      }
       if (!conversation || !sourceMessage) return;
       const sourceConversation: AIChatConversation = conversation;
       let streamStarted = false;
@@ -152,7 +184,7 @@ export function useWorkflowContinuationActions({
               message_id: messageId,
               answer: sourceMessage.answer ?? '',
               status: 'streaming',
-              timeline: timelineFromAIChatMessage(sourceMessage),
+              timeline: sourceTimeline,
             },
           },
         };
@@ -226,6 +258,7 @@ export function useWorkflowContinuationActions({
           },
           onToolGovernanceDecision: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyToolGovernanceDecision(payload, eventId);
           },
           onMemoryMutation: (payload, eventId) => {
