@@ -11,6 +11,7 @@ import (
 	actiondto "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/dto"
 	actionmodel "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/model"
 	actionservice "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/service"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 const (
@@ -37,6 +38,9 @@ func (s *service) runConsoleFilesActionIfMatched(ctx context.Context, prepared *
 	}
 	if !isConsoleFilesContext(prepared.parts.RuntimeContext, prepared.parts.RawOperationContext, prepared.parts.OperationContext) ||
 		!hasConsoleFilesReadCapability(prepared.parts.RuntimeContext, prepared.parts.RawOperationContext, prepared.parts.OperationContext) {
+		return nil, false, nil
+	}
+	if shouldRouteConsoleFilesReadThroughSkillRuntime(prepared) {
 		return nil, false, nil
 	}
 	decision := s.planAIChatActionDecision(ctx, prepared)
@@ -99,6 +103,12 @@ func (s *service) runConsoleFilesActionIfMatched(ctx context.Context, prepared *
 	s.appendConsoleFilesMessageEvent(ctx, prepared, answer, onChunk)
 	s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, messageEndPayload(prepared, metadata))
 	return &ChatResult{Answer: answer, Metadata: metadata}, true, nil
+}
+
+func shouldRouteConsoleFilesReadThroughSkillRuntime(prepared *PreparedChat) bool {
+	return prepared != nil &&
+		prepared.skillsEnabled() &&
+		skillIDEnabled(prepared.parts.SkillIDs, skills.SkillFileReader)
 }
 
 func (s *service) appendConsoleFilesMessageEvent(ctx context.Context, prepared *PreparedChat, answer string, onChunk func(string) error) {

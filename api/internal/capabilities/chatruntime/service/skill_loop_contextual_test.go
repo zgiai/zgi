@@ -46,6 +46,36 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesToolGuidance(t *testin
 	}
 }
 
+func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesReadTarget(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts("\u8bfb\u7b2c\u56db\u4e2a\u6587\u4ef6", []consoleFilesTestFile{
+			{ID: "file-1", Name: "one.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-2", Name: "two.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-3", Name: "three.pdf", Extension: "pdf", MimeType: "application/pdf"},
+			{ID: "file-4", Name: "four.pdf", Extension: "pdf", MimeType: "application/pdf"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	messages := skillLoopAdditionalSystemMessages(prepared)
+	if len(messages) != 1 {
+		t.Fatalf("additional messages = %d, want 1", len(messages))
+	}
+	content := messageContentText(messages[0].Content)
+	for _, want := range []string{
+		"file-reader/read_file",
+		`"capability_id":"file.read"`,
+		"resolved_targets_from_user_request",
+		`"file_id":"file-4"`,
+		`"visible_index":4`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("contextual read guidance missing %q in:\n%s", want, content)
+		}
+	}
+}
+
 func TestSkillLoopAdditionalSystemMessagesSkipsConsoleFilesGuidanceWithoutFileReader(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{

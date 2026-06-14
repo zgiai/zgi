@@ -1,14 +1,17 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	actiondto "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/dto"
 	actionmodel "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/model"
 	actionservice "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/service"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestConsoleFilesActionDecisionMatchesChineseReadIntentWithSelectedFile(t *testing.T) {
@@ -272,6 +275,81 @@ func TestConsoleFilesActionDecisionRequiresFileReadCapability(t *testing.T) {
 	if decision.Matched {
 		t.Fatalf("Matched = true, want false")
 	}
+}
+
+func TestConsoleFilesReadActionRouterYieldsToFileReaderSkill(t *testing.T) {
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      &runtimemodel.Message{ID: uuid.New()},
+		parts: consoleFilesSemanticTestParts("read the fourth file", []consoleFilesTestFile{
+			{ID: "file-1", Name: "one.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-2", Name: "two.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-3", Name: "three.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-4", Name: "four.txt", Extension: "txt", MimeType: "text/plain"},
+		}),
+	}
+
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	if !shouldRouteConsoleFilesReadThroughSkillRuntime(prepared) {
+		t.Fatal("shouldRouteConsoleFilesReadThroughSkillRuntime() = false, want true with file-reader skill enabled")
+	}
+	actionRuntime := &failingConsoleFilesActionRuntime{t: t}
+	svc := &service{actionRuntime: actionRuntime}
+	result, handled, err := svc.runConsoleFilesActionIfMatched(context.Background(), prepared, nil)
+	if err != nil {
+		t.Fatalf("runConsoleFilesActionIfMatched() error = %v, want nil", err)
+	}
+	if handled {
+		t.Fatalf("handled = true, want false so skill runtime can process file.read")
+	}
+	if result != nil {
+		t.Fatalf("result = %#v, want nil", result)
+	}
+	if actionRuntime.planCalls != 0 || actionRuntime.executeCalls != 0 {
+		t.Fatalf("action runtime calls = plan:%d execute:%d, want 0", actionRuntime.planCalls, actionRuntime.executeCalls)
+	}
+
+	prepared.parts.SkillIDs = []string{skills.SkillCalculator}
+	if shouldRouteConsoleFilesReadThroughSkillRuntime(prepared) {
+		t.Fatal("shouldRouteConsoleFilesReadThroughSkillRuntime() = true, want false without file-reader skill")
+	}
+
+	prepared.parts.SkillMode = skillModeDisabled
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	if shouldRouteConsoleFilesReadThroughSkillRuntime(prepared) {
+		t.Fatal("shouldRouteConsoleFilesReadThroughSkillRuntime() = true, want false when skills are disabled")
+	}
+}
+
+type failingConsoleFilesActionRuntime struct {
+	t            *testing.T
+	planCalls    int
+	executeCalls int
+}
+
+func (f *failingConsoleFilesActionRuntime) ListCapabilities(ctx context.Context, scope actionservice.Scope) ([]actionservice.CapabilityManifest, error) {
+	return nil, nil
+}
+
+func (f *failingConsoleFilesActionRuntime) PlanAction(ctx context.Context, scope actionservice.Scope, req actiondto.ActionPlanRequest) (*actionservice.ActionRunView, error) {
+	f.planCalls++
+	f.t.Fatalf("PlanAction called for file read despite file-reader skill being enabled")
+	return nil, nil
+}
+
+func (f *failingConsoleFilesActionRuntime) GetActionRun(ctx context.Context, scope actionservice.Scope, id uuid.UUID) (*actionservice.ActionRunView, error) {
+	return nil, nil
+}
+
+func (f *failingConsoleFilesActionRuntime) ConfirmAction(ctx context.Context, scope actionservice.Scope, id uuid.UUID, req actiondto.ConfirmActionRequest) (*actionservice.ActionRunView, error) {
+	return nil, nil
+}
+
+func (f *failingConsoleFilesActionRuntime) ExecuteAction(ctx context.Context, scope actionservice.Scope, id uuid.UUID, req actiondto.ExecuteActionRequest) (*actionservice.ActionRunView, error) {
+	f.executeCalls++
+	f.t.Fatalf("ExecuteAction called for file read despite file-reader skill being enabled")
+	return nil, nil
 }
 
 func TestConsoleFilesAssetCapabilityMatchesDeleteCapability(t *testing.T) {
