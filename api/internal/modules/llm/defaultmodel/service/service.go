@@ -300,7 +300,7 @@ func (s *defaultModelService) buildRankedCandidates(ctx context.Context, organiz
 		return []*rankedCandidate{}, nil
 	}
 
-	globalModels, _, err := s.globalRepo.List(ctx, nil, "", "", nil, 0, 5000)
+	globalModels, _, err := s.globalRepo.List(ctx, nil, "", "", "", nil, 0, 5000)
 	if err != nil {
 		return nil, err
 	}
