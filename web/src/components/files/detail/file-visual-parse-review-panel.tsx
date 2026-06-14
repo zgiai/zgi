@@ -497,7 +497,7 @@ export function FileVisualParseReviewPanel({
                 {t('detail.previewFocus.exit')}
               </Button>
             ) : null}
-            {canReparse ? (
+            {canReparse && !previewFocusMode ? (
               <Button
                 variant="outline"
                 className="h-8 gap-1.5 rounded-md px-3 text-sm"

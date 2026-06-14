@@ -81,6 +81,13 @@ import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-
 import { fileManageService } from '@/services/file-manage.service';
 import type { Organization } from '@/services/types/organization';
 import type { Workspace } from '@/store/workspace-store';
+import {
+  MAX_FILE_FOLDER_LEVEL,
+  getDescendantFolderIds,
+  getFolderSubtreeHeight,
+  loadFileFolderOptions,
+  type FileFolderOption,
+} from './file-folder-levels';
 
 export interface FileManagementContentProps {
   /** Enable file selection mode */
@@ -530,15 +537,63 @@ function MoveFolderDialog({
 }: MoveFolderDialogProps) {
   const t = useT();
   const [targetId, setTargetId] = useState('root');
+  const [targetOptions, setTargetOptions] = useState<FileFolderOption[]>([]);
+  const [isTargetOptionsLoading, setIsTargetOptionsLoading] = useState(false);
   const currentParentId = folder?.parent_id || 'root';
   const normalizedTargetId = targetId === 'root' ? '' : targetId;
   const isSameTarget = targetId === currentParentId;
+
+  useEffect(() => {
+    if (!open) return;
+
+    let ignore = false;
+
+    const loadTargetOptions = async () => {
+      setIsTargetOptionsLoading(true);
+
+      try {
+        const options = await loadFileFolderOptions(
+          folders,
+          folder?.workspace_id,
+          MAX_FILE_FOLDER_LEVEL
+        );
+        if (!ignore) {
+          setTargetOptions(options);
+        }
+      } catch {
+        if (!ignore) {
+          setTargetOptions(folders.map(targetFolder => ({ ...targetFolder, depth: 1 })));
+        }
+      } finally {
+        if (!ignore) {
+          setIsTargetOptionsLoading(false);
+        }
+      }
+    };
+
+    void loadTargetOptions();
+
+    return () => {
+      ignore = true;
+    };
+  }, [folder?.workspace_id, folders, open]);
 
   useEffect(() => {
     if (open) {
       setTargetId(folder?.parent_id || 'root');
     }
   }, [folder?.parent_id, open]);
+
+  const descendantFolderIds = folder
+    ? getDescendantFolderIds(folder.id, targetOptions)
+    : new Set<string>();
+  const movingSubtreeHeight = folder ? getFolderSubtreeHeight(folder.id, targetOptions) : 1;
+  const allowedTargetOptions = targetOptions.filter(
+    targetFolder =>
+      targetFolder.id !== folder?.id &&
+      !descendantFolderIds.has(targetFolder.id) &&
+      targetFolder.depth + movingSubtreeHeight <= MAX_FILE_FOLDER_LEVEL
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -560,19 +615,23 @@ function MoveFolderDialog({
         >
           <div className="space-y-2">
             <Label htmlFor="move-folder-target">{t('files.folder.targetFolder')}</Label>
-            <Select value={targetId} onValueChange={setTargetId}>
-              <SelectTrigger id="move-folder-target">
+            <Select
+              value={targetId}
+              onValueChange={setTargetId}
+              disabled={isTargetOptionsLoading}
+            >
+              <SelectTrigger id="move-folder-target" isLoading={isTargetOptionsLoading}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="root">{t('files.upload.defaultFolder')}</SelectItem>
-                {folders
-                  .filter(targetFolder => targetFolder.id !== folder?.id)
-                  .map(targetFolder => (
-                    <SelectItem key={targetFolder.id} value={targetFolder.id}>
+                {allowedTargetOptions.map(targetFolder => (
+                  <SelectItem key={targetFolder.id} value={targetFolder.id}>
+                    <span style={{ paddingLeft: `${(targetFolder.depth - 1) * 16}px` }}>
                       {targetFolder.name}
-                    </SelectItem>
-                  ))}
+                    </span>
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -634,7 +693,7 @@ const FileManagementContent = ({
   const canCreateFolder = hasPermission('file.move_create');
   const canUpload = hasPermission('file.upload_create');
   const canCreateInActiveFolder =
-    canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < 2;
+    canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < MAX_FILE_FOLDER_LEVEL;
   const { organizations } = useOrganizations(isAuthenticated);
   const showOrganizationSwitcher = isAuthenticated && organizations.length > 1;
   const currentSpaceLabel = currentWorkspace?.name || tNavigation('switchWorkspace');
@@ -853,7 +912,7 @@ const FileManagementContent = ({
 
     try {
       const depth = await getFolderDepth(activeCategory);
-      setCreateFolderInitialParentId(depth <= 1 ? activeCategory : '');
+      setCreateFolderInitialParentId(depth < MAX_FILE_FOLDER_LEVEL ? activeCategory : '');
     } catch {
       setCreateFolderInitialParentId('');
     }

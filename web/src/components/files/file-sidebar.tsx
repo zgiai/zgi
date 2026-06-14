@@ -9,6 +9,7 @@ import { useStorageUsage, useFileFolders } from '@/hooks/use-files';
 import { fileManageService } from '@/services/file-manage.service';
 import { FolderTreeNode } from './folder-tree-node';
 import type { FileFolder } from '@/services/types/file';
+import { MAX_FILE_FOLDER_TREE_LEVEL } from './file-folder-levels';
 
 export interface FileSidebarItem {
   id: string;
@@ -259,7 +260,7 @@ function FileSidebarBase({
                   onItemClick={onItemClick}
                   expandedFolders={expandedFolders}
                   onToggleExpand={handleToggleExpand}
-                  maxLevel={1}
+                  maxLevel={MAX_FILE_FOLDER_TREE_LEVEL}
                   variant="sidebar"
                   onCreateChild={onFolderCreateChild}
                   onRename={onFolderRename}

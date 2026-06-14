@@ -28,6 +28,11 @@ import { useCurrentWorkspace, useIsOrganizationMode } from '@/store';
 import { FolderTreeNode } from './folder-tree-node';
 import { cn } from '@/lib/utils';
 import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
+import {
+  MAX_FILE_FOLDER_TREE_LEVEL,
+  getFileFolderAncestorIds,
+  getFileFolderAncestorIdsByRequest,
+} from './file-folder-levels';
 
 export interface CreateLocalFileDialogProps {
   open: boolean;
@@ -87,6 +92,39 @@ const CreateLocalFileDialog = ({
     setFailedUploadFilesCount(0);
     setSelectedProcessingMode(processingMode);
   }, [folderId, open, processingMode]);
+
+  useEffect(() => {
+    if (!open || !folderId) return;
+    let ignore = false;
+
+    const expandAncestors = async () => {
+      const knownAncestorIds = getFileFolderAncestorIds(folders, folderId);
+      const ancestorIds =
+        knownAncestorIds.length > 0
+          ? knownAncestorIds
+          : await getFileFolderAncestorIdsByRequest(folderId);
+
+      if (ignore || ancestorIds.length === 0) return;
+
+      setExpandedFolders(prev => {
+        const next = new Set(prev);
+        let changed = false;
+        ancestorIds.forEach(id => {
+          if (!next.has(id)) {
+            next.add(id);
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    };
+
+    void expandAncestors();
+
+    return () => {
+      ignore = true;
+    };
+  }, [folderId, folders, open]);
 
   const handleWorkspaceChange = useCallback((workspace: WorkspaceSelectorValue) => {
     setSelectedWorkspace(workspace);
@@ -248,7 +286,7 @@ const CreateLocalFileDialog = ({
                         onItemClick={setSelectedFolderId}
                         expandedFolders={expandedFolders}
                         onToggleExpand={handleToggleFolderExpand}
-                        maxLevel={1}
+                        maxLevel={MAX_FILE_FOLDER_TREE_LEVEL}
                         variant="dialog"
                         workspaceId={effectiveWorkspaceId}
                       />

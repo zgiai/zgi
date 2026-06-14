@@ -28,6 +28,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { MAX_FILE_FOLDER_TREE_LEVEL } from './file-folder-levels';
 
 /**
  * Folder Tree Node Props
@@ -39,7 +40,7 @@ export interface FolderTreeNodeProps {
   onItemClick?: (itemId: string) => void;
   expandedFolders: Set<string>;
   onToggleExpand: (folderId: string) => void;
-  maxLevel?: number; // Maximum rendered folder level under default folder, default is 1 (3 business levels)
+  maxLevel?: number; // 0-based maximum rendered folder level under My Files.
   variant?: 'sidebar' | 'dialog'; // UI variant
   onCreateChild?: (folder: FileFolder) => void;
   onRename?: (folder: FileFolder) => void;
@@ -59,7 +60,7 @@ export function FolderTreeNode({
   onItemClick,
   expandedFolders,
   onToggleExpand,
-  maxLevel = 1,
+  maxLevel = MAX_FILE_FOLDER_TREE_LEVEL,
   variant = 'sidebar',
   onCreateChild,
   onRename,
