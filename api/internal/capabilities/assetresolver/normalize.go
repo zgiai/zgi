@@ -104,6 +104,61 @@ func normalizeToken(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
+func normalizedFileType(value string) string {
+	token := normalizeToken(value)
+	switch token {
+	case "xls", "xlsx", "xlsm", "xlsb", "excel", "spreadsheet", "sheet", "\u8868\u683c", "\u7535\u5b50\u8868\u683c", "\u5de5\u4f5c\u8868", "\u5de5\u4f5c\u7c3f":
+		return "excel"
+	case "pdf", "pdf\u6587\u4ef6":
+		return "pdf"
+	case "csv":
+		return "csv"
+	case "image", "img", "picture", "photo", "\u56fe\u7247", "\u56fe\u50cf", "\u7167\u7247":
+		return "image"
+	case "document", "doc", "docx", "txt", "markdown", "md", "\u6587\u6863":
+		return "document"
+	default:
+		return token
+	}
+}
+
+func fileTypesFromReferenceText(value string) []string {
+	text := normalizeToken(value)
+	if text == "" {
+		return nil
+	}
+	collector := newUniqueStringCollector()
+	if strings.Contains(text, "excel") ||
+		strings.Contains(text, "xlsx") ||
+		strings.Contains(text, "xls") ||
+		strings.Contains(text, "\u7535\u5b50\u8868\u683c") ||
+		strings.Contains(text, "\u5de5\u4f5c\u8868") ||
+		strings.Contains(text, "\u5de5\u4f5c\u7c3f") ||
+		strings.Contains(text, "\u8868\u683c") {
+		collector.add("excel")
+	}
+	if strings.Contains(text, "pdf") {
+		collector.add("pdf")
+	}
+	if strings.Contains(text, "csv") {
+		collector.add("csv")
+	}
+	if strings.Contains(text, "image") ||
+		strings.Contains(text, "picture") ||
+		strings.Contains(text, "photo") ||
+		strings.Contains(text, "\u56fe\u7247") ||
+		strings.Contains(text, "\u56fe\u50cf") ||
+		strings.Contains(text, "\u7167\u7247") {
+		collector.add("image")
+	}
+	if strings.Contains(text, "document") ||
+		strings.Contains(text, "docx") ||
+		strings.Contains(text, "\u6587\u6863") {
+		collector.add("document")
+	}
+	return collector.values()
+}
+
 func normalizeKey(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	var builder strings.Builder

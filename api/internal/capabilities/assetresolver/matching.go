@@ -103,11 +103,11 @@ func candidateMatchesAnyFileType(candidate Candidate, fileTypes []string) bool {
 }
 
 func candidateMatchesFileType(candidate Candidate, fileType string) bool {
-	fileType = normalizeToken(fileType)
+	fileType = normalizedFileType(fileType)
 	if fileType == "" {
 		return true
 	}
-	if normalizeToken(candidate.FileType) == fileType {
+	if normalizedFileType(candidate.FileType) == fileType {
 		return true
 	}
 	if candidateMatchesExtension(candidate, fileTypeExtensions(fileType)) {

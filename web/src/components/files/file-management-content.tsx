@@ -100,6 +100,11 @@ export interface FileManagementContentProps {
 }
 
 const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
+const FILES_PAGE_SIZE = 20;
+const FILES_PAGE_LIMIT = String(FILES_PAGE_SIZE);
+const FILES_PAGE_SORT = 'created_at_desc';
+const FILES_PAGE_SORT_KEY = 'created_at';
+const FILES_PAGE_SORT_DIRECTION = 'desc';
 const FILES_CONTEXT_VISIBLE_LIMIT = 20;
 const AI_CHAT_EXCEL_EXTENSIONS = new Set(['xls', 'xlsx', 'xlsm', 'xlsb']);
 const AI_CHAT_WORD_EXTENSIONS = new Set(['doc', 'docx']);
@@ -215,9 +220,11 @@ function buildFilesPageContextDescription(files: FileItem[], selectedFileIds: st
     selectedFileIds.length > 0
       ? `Selected file ids: ${selectedFileIds.join(',')}. `
       : 'No files are selected. ';
+  const ordinalScope =
+    'Ordinal references such as fourth file, second Excel, and last PDF refer to the current visible page order only. ';
 
   return compactAIChatContextText(
-    `${selectedSummary}Visible files: ${buildVisibleFileContextDescription(files)}`,
+    `${selectedSummary}${ordinalScope}Visible files: ${buildVisibleFileContextDescription(files)}`,
     1200
   );
 }
@@ -289,6 +296,10 @@ function buildFilesAIChatContextItems(params: {
   const scopeLabel = isOrganizationMode
     ? 'Personal space'
     : currentWorkspace?.name || 'Current workspace';
+  const visibleRangeStart =
+    visibleFileContexts.length > 0 ? (currentPage - 1) * FILES_PAGE_SIZE + 1 : 0;
+  const visibleRangeEnd =
+    visibleFileContexts.length > 0 ? visibleRangeStart + visibleFileContexts.length - 1 : 0;
 
   return [
     {
@@ -313,6 +324,17 @@ function buildFilesAIChatContextItems(params: {
         file_type_counts: fileTypeCounts,
         extension_counts: extensionCounts,
         current_page: currentPage,
+        page_size: FILES_PAGE_SIZE,
+        visible_range_start: visibleRangeStart,
+        visible_range_end: visibleRangeEnd,
+        more_pages_available: currentPage < totalPages,
+        context_visible_limit: FILES_CONTEXT_VISIBLE_LIMIT,
+        omitted_context_file_count: Math.max(files.length - visibleFiles.length, 0),
+        ordinal_scope: 'current_visible_page',
+        visible_order_basis: 'current_visible_page_order',
+        sort: FILES_PAGE_SORT,
+        sort_key: FILES_PAGE_SORT_KEY,
+        sort_direction: FILES_PAGE_SORT_DIRECTION,
         category: activeCategory,
         total_file_count: total,
         total_pages: totalPages,
@@ -351,7 +373,9 @@ function buildFilesAIChatContextItems(params: {
           display_name: file.name,
           name: file.name,
           extension_normalized: extensionNormalized,
-          extension: file.extension,
+          extension: extensionNormalized,
+          extension_original: file.extension,
+          file_type: fileTypeNormalized,
           file_type_normalized: fileTypeNormalized,
           file_type_rank: fileTypeRank,
           extension_rank: extensionRank,
@@ -764,10 +788,10 @@ const FileManagementContent = ({
     acceptExt.length > 0 ? filterLowercaseExtensions(acceptExt).join(',') : undefined;
 
   const { files, currentPage, totalPages, total, isLoading, isFetching, error, goToPage, reload } =
-    useFiles('20', {
+    useFiles(FILES_PAGE_LIMIT, {
       category: activeCategory,
       keyword: debouncedSearchValue,
-      sort: 'created_at',
+      sort: FILES_PAGE_SORT,
       extension: extensionParam,
       workspaceId: workspaceId,
     });
@@ -1211,7 +1235,7 @@ const FileManagementContent = ({
             currentPage={currentPage}
             totalPages={totalPages}
             total={total}
-            pageSize={20}
+            pageSize={FILES_PAGE_SIZE}
             onPageChange={goToPage}
             showInfo={false}
           />

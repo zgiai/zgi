@@ -64,8 +64,12 @@ func criteriaFromSelector(selector Selector) criteria {
 	out.mimeTypes = append(out.mimeTypes, normalizedMimeType(selector.MimeType))
 	out.mimeTypes = append(out.mimeTypes, normalizedMimeTypes(selector.MimeTypes)...)
 	out.mimeTypes = append(out.mimeTypes, normalizedMimeTypes(stringSlice(firstMapValue(selector.Metadata, "mime_types", "mime_type", "mime", "content_type")))...)
-	out.fileTypes = append(out.fileTypes, normalizeToken(selector.FileType))
-	out.fileTypes = append(out.fileTypes, normalizeToken(stringValue(firstMapValue(selector.Metadata, "file_type", "format", "category"))))
+	out.fileTypes = append(out.fileTypes, normalizedFileType(selector.FileType))
+	out.fileTypes = append(out.fileTypes, normalizedFileType(stringValue(firstMapValue(selector.Metadata, "file_type", "format", "category"))))
+	out.fileTypes = append(out.fileTypes, fileTypesFromReferenceText(selector.Selector)...)
+	out.fileTypes = append(out.fileTypes, fileTypesFromReferenceText(selector.Source)...)
+	out.fileTypes = append(out.fileTypes, fileTypesFromReferenceText(selector.OrdinalText)...)
+	out.fileTypes = append(out.fileTypes, fileTypesFromReferenceText(stringValue(firstMapValue(selector.Metadata, "selector", "reference")))...)
 	out.extensions = compactStrings(out.extensions)
 	out.mimeTypes = compactStrings(out.mimeTypes)
 	out.fileTypes = compactStrings(out.fileTypes)
@@ -142,14 +146,26 @@ func parseOrdinalString(value string) (int, bool, bool) {
 	if text == "" {
 		return 0, false, false
 	}
+	if selectorValue, ok := visibleFilesSelectorValue(text); ok {
+		return parseOrdinalString(selectorValue)
+	}
 	switch text {
 	case "last", "latest", "final":
 		return 0, true, true
 	case "first":
 		return 1, false, true
 	}
-	if selectorValue, ok := visibleFilesSelectorValue(text); ok {
-		return parseOrdinalString(selectorValue)
+	if hasChineseLastOrdinal(text) {
+		return 0, true, true
+	}
+	if hasEnglishLastOrdinal(text) {
+		return 0, true, true
+	}
+	if ordinal, ok := chineseOrdinalFromText(text); ok {
+		return ordinal, false, true
+	}
+	if ordinal, ok := englishOrdinalFromText(text); ok {
+		return ordinal, false, true
 	}
 	ordinal, err := strconv.Atoi(text)
 	if err != nil || ordinal <= 0 {
@@ -169,4 +185,119 @@ func visibleFilesSelectorValue(text string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(text[open+1 : close]), true
+}
+
+func hasChineseLastOrdinal(text string) bool {
+	return strings.Contains(text, "\u6700\u540e")
+}
+
+func hasEnglishLastOrdinal(text string) bool {
+	for _, token := range strings.Fields(text) {
+		token = strings.Trim(token, ".,;:!?()[]{}")
+		switch token {
+		case "last", "latest", "final":
+			return true
+		}
+	}
+	return false
+}
+
+func chineseOrdinalFromText(text string) (int, bool) {
+	start := strings.Index(text, "\u7b2c")
+	if start < 0 {
+		return 0, false
+	}
+	after := text[start+len("\u7b2c"):]
+	end := -1
+	for _, marker := range []string{"\u4e2a", "\u4efd", "\u5f20", "\u9879", "\u6761", "\u4ef6"} {
+		index := strings.Index(after, marker)
+		if index >= 0 && (end < 0 || index < end) {
+			end = index
+		}
+	}
+	if end < 0 {
+		return 0, false
+	}
+	return parseChineseOrdinalToken(after[:end])
+}
+
+func parseChineseOrdinalToken(token string) (int, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return 0, false
+	}
+	if ordinal, err := strconv.Atoi(token); err == nil && ordinal > 0 {
+		return ordinal, true
+	}
+	digit := map[rune]int{
+		'\u96f6': 0,
+		'\u4e00': 1,
+		'\u4e8c': 2,
+		'\u4e24': 2,
+		'\u4e09': 3,
+		'\u56db': 4,
+		'\u4e94': 5,
+		'\u516d': 6,
+		'\u4e03': 7,
+		'\u516b': 8,
+		'\u4e5d': 9,
+	}
+	runes := []rune(token)
+	if len(runes) == 1 {
+		value, ok := digit[runes[0]]
+		return value, ok && value > 0
+	}
+	if len(runes) == 2 && runes[0] == '\u5341' {
+		value, ok := digit[runes[1]]
+		return 10 + value, ok
+	}
+	if len(runes) == 2 && runes[1] == '\u5341' {
+		value, ok := digit[runes[0]]
+		return value * 10, ok && value > 0
+	}
+	if len(runes) == 3 && runes[1] == '\u5341' {
+		tens, tensOK := digit[runes[0]]
+		ones, onesOK := digit[runes[2]]
+		if tensOK && onesOK && tens > 0 {
+			return tens*10 + ones, true
+		}
+	}
+	return 0, false
+}
+
+func englishOrdinalFromText(text string) (int, bool) {
+	for _, token := range strings.Fields(text) {
+		token = strings.Trim(token, ".,;:!?()[]{}")
+		if token == "" {
+			continue
+		}
+		if ordinal, ok := parseEnglishOrdinalToken(token); ok {
+			return ordinal, true
+		}
+	}
+	return 0, false
+}
+
+func parseEnglishOrdinalToken(token string) (int, bool) {
+	token = strings.ToLower(strings.TrimSpace(token))
+	switch token {
+	case "first":
+		return 1, true
+	case "second":
+		return 2, true
+	case "third":
+		return 3, true
+	case "fourth":
+		return 4, true
+	case "fifth":
+		return 5, true
+	}
+	for _, suffix := range []string{"st", "nd", "rd", "th"} {
+		if strings.HasSuffix(token, suffix) {
+			value := strings.TrimSuffix(token, suffix)
+			ordinal, err := strconv.Atoi(value)
+			return ordinal, err == nil && ordinal > 0
+		}
+	}
+	return 0, false
 }
