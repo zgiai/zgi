@@ -15,6 +15,7 @@ import type {
   AIChatMessageStartEventData,
   AIChatMemoryMutationEventData,
   AIChatSkillInvocation,
+  AIChatToolGovernanceDecisionEventData,
   AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
@@ -82,6 +83,13 @@ export type AIChatAgenticTimelineItem =
       id: string;
       type: 'memory_event';
       event: AIChatMemoryMutationEventData;
+      created_at?: number;
+      event_id?: string | null;
+    }
+  | {
+      id: string;
+      type: 'tool_governance_decision';
+      event: AIChatToolGovernanceDecisionEventData;
       created_at?: number;
       event_id?: string | null;
     }

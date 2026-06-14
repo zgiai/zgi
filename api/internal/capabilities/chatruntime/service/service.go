@@ -62,6 +62,7 @@ var defaultSystemSkillIDs = []string{
 	skills.SkillTime,
 	skills.SkillCalculator,
 	skills.SkillFileGenerator,
+	skills.SkillFileReader,
 }
 
 type Scope struct {

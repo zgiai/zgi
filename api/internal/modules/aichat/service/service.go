@@ -28,24 +28,25 @@ const (
 	titleGenerationTimeout   = 15 * time.Second
 	runtimeContextMaxRunes   = 8000
 
-	streamEventMessageStart         = "message_start"
-	streamEventMessage              = "message"
-	streamEventMessageRetract       = "message_retract"
-	streamEventMessageEnd           = "message_end"
-	streamEventError                = "error"
-	streamEventAgentProgress        = "agent_progress"
-	streamEventIntermediateAnswer   = "agent_intermediate_answer"
-	streamEventUserInputRequested   = "user_input_requested"
-	streamEventFileParseStart       = "file_parse_start"
-	streamEventFileParseEnd         = "file_parse_end"
-	streamEventFileParseError       = "file_parse_error"
-	streamEventSkillCallStart       = "skill_call_start"
-	streamEventSkillCallEnd         = "skill_call_end"
-	streamEventSkillCallError       = "skill_call_error"
-	streamEventSkillLoadStart       = "skill_load_start"
-	streamEventSkillLoadEnd         = "skill_load_end"
-	streamEventSkillReferenceRead   = "skill_reference_read"
-	streamEventSkillArtifactCreated = "skill_artifact_created"
+	streamEventMessageStart           = "message_start"
+	streamEventMessage                = "message"
+	streamEventMessageRetract         = "message_retract"
+	streamEventMessageEnd             = "message_end"
+	streamEventError                  = "error"
+	streamEventAgentProgress          = "agent_progress"
+	streamEventIntermediateAnswer     = "agent_intermediate_answer"
+	streamEventUserInputRequested     = "user_input_requested"
+	streamEventFileParseStart         = "file_parse_start"
+	streamEventFileParseEnd           = "file_parse_end"
+	streamEventFileParseError         = "file_parse_error"
+	streamEventSkillCallStart         = "skill_call_start"
+	streamEventSkillCallEnd           = "skill_call_end"
+	streamEventSkillCallError         = "skill_call_error"
+	streamEventSkillLoadStart         = "skill_load_start"
+	streamEventSkillLoadEnd           = "skill_load_end"
+	streamEventSkillReferenceRead     = "skill_reference_read"
+	streamEventSkillArtifactCreated   = "skill_artifact_created"
+	streamEventToolGovernanceDecision = "tool_governance_decision"
 
 	skillModeDisabled = "disabled"
 	skillModeAuto     = "auto"
@@ -58,6 +59,7 @@ var defaultSystemSkillIDs = []string{
 	skills.SkillTime,
 	skills.SkillCalculator,
 	skills.SkillFileGenerator,
+	skills.SkillFileReader,
 }
 
 type Scope struct {
@@ -227,6 +229,8 @@ type ExistingSkill struct {
 type chatRequestParts struct {
 	Query                        string
 	RuntimeContext               string
+	RawOperationContext          map[string]interface{}
+	OperationContext             map[string]interface{}
 	ModelName                    string
 	Provider                     string
 	ProviderPtr                  *string

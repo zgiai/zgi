@@ -1,7 +1,14 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ExternalLink,
+  Loader2,
+  ShieldAlert,
+} from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -26,6 +33,7 @@ import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-
 
 type TimelineTone = 'running' | 'success' | 'error';
 type TimelineDebugLabel = keyof typeof TIMELINE_DEBUG_LABEL_KEYS;
+type GovernanceFieldLabel = keyof typeof GOVERNANCE_FIELD_LABEL_KEYS;
 type WebappTranslator = ScopedTranslations<'webapp'>;
 
 const TIMELINE_DEBUG_LABEL_KEYS = {
@@ -37,6 +45,15 @@ const TIMELINE_DEBUG_LABEL_KEYS = {
   arguments: 'consoleChat.skills.trace.debug.arguments',
   message: 'consoleChat.skills.trace.debug.message',
   error: 'consoleChat.skills.trace.debug.error',
+} as const;
+
+const GOVERNANCE_FIELD_LABEL_KEYS = {
+  decision: 'consoleChat.governance.fields.decision',
+  riskLevel: 'consoleChat.governance.fields.riskLevel',
+  effect: 'consoleChat.governance.fields.effect',
+  assetType: 'consoleChat.governance.fields.assetType',
+  correlationId: 'consoleChat.governance.fields.correlationId',
+  approvalEvent: 'consoleChat.governance.fields.approvalEvent',
 } as const;
 
 const assistantMarkdownClassName =
@@ -66,6 +83,10 @@ interface SkillTimelineViewModel {
 }
 
 type MemoryTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'memory_event' }>;
+type GovernanceTimelineItem = Extract<
+  AIChatAgenticTimelineItem,
+  { type: 'tool_governance_decision' }
+>;
 type WorkflowTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'workflow_run' }>;
 
 function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
@@ -330,6 +351,185 @@ function MemoryTimelineRow({
   );
 }
 
+function governanceDecisionStatus(item: GovernanceTimelineItem): string {
+  return String(
+    item.event.decision ?? item.event.governance?.status ?? item.event.status ?? ''
+  ).toLowerCase();
+}
+
+function isToolGovernanceNeedsApproval(item: GovernanceTimelineItem): boolean {
+  return (
+    governanceDecisionStatus(item) === 'needs_approval' ||
+    item.event.requires_approval === true ||
+    item.event.governance?.requires_approval === true
+  );
+}
+
+function governanceDisplayText(value: unknown): string | null {
+  return formatDebugValue(value);
+}
+
+function governanceReason(item: GovernanceTimelineItem): string {
+  return String(item.event.reason ?? item.event.governance?.reason ?? '').trim();
+}
+
+function governanceApprovalEvent(item: GovernanceTimelineItem) {
+  return item.event.approval_event ?? item.event.governance?.approval_event;
+}
+
+function governanceFieldRows(item: GovernanceTimelineItem) {
+  const approvalEvent = governanceApprovalEvent(item);
+  return [
+    ['decision', item.event.decision ?? item.event.governance?.status ?? item.event.status],
+    [
+      'riskLevel',
+      item.event.risk_level ??
+        item.event.governance?.manifest?.risk_level ??
+        approvalEvent?.risk_level,
+    ],
+    [
+      'effect',
+      item.event.effect ?? item.event.governance?.manifest?.effect ?? approvalEvent?.effect,
+    ],
+    [
+      'assetType',
+      item.event.asset_type ??
+        item.event.governance?.manifest?.asset_type ??
+        approvalEvent?.asset_type,
+    ],
+    [
+      'correlationId',
+      item.event.correlation_id ??
+        item.event.governance?.correlation_id ??
+        approvalEvent?.correlation_id,
+    ],
+    ['approvalEvent', approvalEvent],
+  ] as const satisfies ReadonlyArray<readonly [GovernanceFieldLabel, unknown]>;
+}
+
+function buildGovernanceTitle(item: GovernanceTimelineItem, t: WebappTranslator): string {
+  const status = governanceDecisionStatus(item);
+  if (isToolGovernanceNeedsApproval(item)) {
+    return t('consoleChat.governance.needsApproval');
+  }
+  if (status === 'denied') return t('consoleChat.governance.denied');
+  if (status === 'blocked') return t('consoleChat.governance.blocked');
+  if (status === 'needs_resolution') return t('consoleChat.governance.needsResolution');
+  if (status === 'allowed') return t('consoleChat.governance.allowed');
+  return t('consoleChat.governance.title');
+}
+
+function governanceToolLabel(
+  item: GovernanceTimelineItem,
+  skillDisplayById: AIChatSkillDisplayMap,
+  locale: string,
+  t: WebappTranslator
+): string | null {
+  const skillId = item.event.skill_id ?? item.event.governance?.manifest?.skill_id ?? '';
+  const toolName =
+    item.event.tool_name ??
+    item.event.governance?.manifest?.tool_id ??
+    governanceApprovalEvent(item)?.tool_id ??
+    '';
+  const skill = skillId
+    ? (skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale)).label
+    : '';
+  const tool =
+    skillId && toolName
+      ? getAIChatSkillToolDisplayName(skillId, toolName, locale) || toolName
+      : toolName;
+
+  if (skill && tool) {
+    return t('consoleChat.governance.toolLabel', { skill, tool });
+  }
+  return skill || tool || null;
+}
+
+function ToolGovernanceDecisionRow({
+  item,
+  skillDisplayById,
+}: {
+  item: GovernanceTimelineItem;
+  skillDisplayById: AIChatSkillDisplayMap;
+}) {
+  const t = useT('webapp');
+  const { locale } = useLocale();
+  const needsApproval = isToolGovernanceNeedsApproval(item);
+  const [isOpen, setIsOpen] = useState(needsApproval);
+  const title = buildGovernanceTitle(item, t);
+  const toolLabel = governanceToolLabel(item, skillDisplayById, locale, t);
+  const reason = governanceReason(item);
+  const details = governanceFieldRows(item)
+    .map(([labelKey, value]) => [labelKey, governanceDisplayText(value)] as const)
+    .filter((row): row is readonly [GovernanceFieldLabel, string] => Boolean(row[1]));
+  const canExpand = details.length > 0 || Boolean(reason) || needsApproval;
+
+  return (
+    <div className="rounded-md border border-warning/40 bg-warning/10 text-xs text-foreground">
+      <button
+        type="button"
+        className="flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left"
+        onClick={() => canExpand && setIsOpen(open => !open)}
+        aria-expanded={isOpen}
+      >
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-warning/40 bg-background text-warning">
+          <ShieldAlert className="size-3.5" />
+        </span>
+        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
+        {toolLabel ? (
+          <span className="max-w-44 shrink-0 truncate text-muted-foreground">{toolLabel}</span>
+        ) : null}
+        {canExpand ? (
+          <ChevronDown
+            className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', {
+              'rotate-180': isOpen,
+            })}
+          />
+        ) : null}
+      </button>
+      {isOpen ? (
+        <div className="space-y-2 border-t border-warning/20 bg-background/70 px-2.5 py-2">
+          {reason ? (
+            <div className="rounded-md border border-warning/20 bg-warning/5 p-2 text-muted-foreground">
+              <span className="font-medium text-foreground">
+                {t('consoleChat.governance.fields.reason')}
+              </span>
+              <span className="ml-1 break-words">{reason}</span>
+            </div>
+          ) : null}
+          {details.length > 0 ? (
+            <dl className="grid gap-1 rounded-md bg-background/80 p-2 text-[11px]">
+              {details.map(([labelKey, value]) => (
+                <div key={labelKey} className="grid grid-cols-[104px_minmax(0,1fr)] gap-2">
+                  <dt className="text-muted-foreground">
+                    {t(GOVERNANCE_FIELD_LABEL_KEYS[labelKey])}
+                  </dt>
+                  <dd className="min-w-0 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-foreground/80">
+                    {value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          {needsApproval ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" size="xs" variant="outline" disabled>
+                {t('consoleChat.governance.approve')}
+              </Button>
+              <Button type="button" size="xs" variant="outline" disabled>
+                {t('consoleChat.governance.reject')}
+              </Button>
+              <span className="text-[11px] text-muted-foreground">
+                {t('consoleChat.governance.actionsUnavailable')}
+              </span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function WorkflowApprovalPanel({
   approvalToken,
   approvalUrl,
@@ -376,11 +576,7 @@ function WorkflowApprovalPanel({
   );
 }
 
-function WorkflowTimelineRow({
-  item,
-}: {
-  item: WorkflowTimelineItem;
-}) {
+function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
   const nodes: WorkflowRunNodeListItem[] = item.nodes.map((node, index) => ({
     title: node.title ?? node.nodeId ?? node.nodeType ?? '',
     nodeId: node.nodeId ?? `workflow-node-${index}`,
@@ -454,6 +650,12 @@ function isMemoryEventItem(
   item: AIChatAgenticTimelineItem | SkillTimelineViewModel
 ): item is Extract<AIChatAgenticTimelineItem, { type: 'memory_event' }> {
   return 'type' in item && item.type === 'memory_event';
+}
+
+function isToolGovernanceTimelineItem(
+  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
+): item is GovernanceTimelineItem {
+  return 'type' in item && item.type === 'tool_governance_decision';
 }
 
 function isWorkflowTimelineItem(
@@ -532,7 +734,10 @@ export function AIChatAgenticTimeline({
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
   const { locale } = useLocale();
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const hasApprovalGatedGovernance = timeline.some(
+    item => item.type === 'tool_governance_decision' && isToolGovernanceNeedsApproval(item)
+  );
+  const [isOpen, setIsOpen] = useState(defaultOpen || hasApprovalGatedGovernance);
 
   const events = useMemo(
     () =>
@@ -540,6 +745,7 @@ export function AIChatAgenticTimeline({
         if (item.type === 'progress_text') return item;
         if (item.type === 'intermediate_answer') return item;
         if (item.type === 'memory_event') return item;
+        if (item.type === 'tool_governance_decision') return item;
         if (item.type === 'workflow_run') return item;
 
         const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
@@ -633,6 +839,12 @@ export function AIChatAgenticTimeline({
               </div>
             ) : isMemoryEventItem(item) ? (
               <MemoryTimelineRow key={item.id} item={item} showMemoryKey={showMemoryKey} />
+            ) : isToolGovernanceTimelineItem(item) ? (
+              <ToolGovernanceDecisionRow
+                key={item.id}
+                item={item}
+                skillDisplayById={skillDisplayById}
+              />
             ) : isWorkflowTimelineItem(item) ? (
               <WorkflowTimelineRow key={item.id} item={item} />
             ) : (

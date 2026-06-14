@@ -12,6 +12,7 @@ const (
 	SkillTime              = "time"
 	SkillCalculator        = "calculator"
 	SkillFileGenerator     = "file-generator"
+	SkillFileReader        = "file-reader"
 	SkillWorkReport        = "work-report-generator"
 	SkillSchedulePlanner   = "schedule-planner"
 	SkillChartGenerator    = "chart-generator"

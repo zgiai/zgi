@@ -49,6 +49,7 @@ export function useChatRuntimeMessageActions({
     applySkillCallError,
     applySkillArtifactCreated,
     applyMemoryMutation,
+    applyToolGovernanceDecision,
     applyAgentProgress,
     applyIntermediateAnswer,
     applyUserInputRequested,
@@ -256,6 +257,10 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applySkillArtifactCreated(payload, eventId);
             },
+            onToolGovernanceDecision: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyToolGovernanceDecision(payload, eventId);
+            },
             onMemoryMutation: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMemoryMutation(payload, eventId);
@@ -390,6 +395,7 @@ export function useChatRuntimeMessageActions({
       applySkillCallError,
       applySkillCallStart,
       applySkillArtifactCreated,
+      applyToolGovernanceDecision,
       applySkillLoadEnd,
       applySkillLoadStart,
       applySkillReferenceRead,
@@ -600,6 +606,10 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applySkillArtifactCreated(payload, eventId);
             },
+            onToolGovernanceDecision: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyToolGovernanceDecision(payload, eventId);
+            },
             onMemoryMutation: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMemoryMutation(payload, eventId);
@@ -713,6 +723,7 @@ export function useChatRuntimeMessageActions({
       applySkillCallError,
       applySkillCallStart,
       applySkillArtifactCreated,
+      applyToolGovernanceDecision,
       applyMemoryMutation,
       applySkillLoadEnd,
       applySkillLoadStart,

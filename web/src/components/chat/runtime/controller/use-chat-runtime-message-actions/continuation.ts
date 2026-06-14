@@ -42,6 +42,7 @@ export function useWorkflowContinuationActions({
     applySkillCallError,
     applySkillArtifactCreated,
     applyMemoryMutation,
+    applyToolGovernanceDecision,
     applyAgentProgress,
     applyIntermediateAnswer,
     applyUserInputRequested,
@@ -212,6 +213,10 @@ export function useWorkflowContinuationActions({
             if (abortController.signal.aborted) return;
             applySkillArtifactCreated(payload, eventId);
           },
+          onToolGovernanceDecision: (payload, eventId) => {
+            if (abortController.signal.aborted) return;
+            applyToolGovernanceDecision(payload, eventId);
+          },
           onMemoryMutation: (payload, eventId) => {
             if (abortController.signal.aborted) return;
             applyMemoryMutation(payload, eventId);
@@ -347,6 +352,7 @@ export function useWorkflowContinuationActions({
       applySkillLoadEnd,
       applySkillLoadStart,
       applySkillReferenceRead,
+      applyToolGovernanceDecision,
       applyStreamError,
       applyUserInputRequested,
       eventAppliers,
@@ -370,7 +376,6 @@ export function useWorkflowContinuationActions({
     },
     [continueWorkflowApproval]
   );
-
 
   return { continueWorkflowApproval, continueWorkflowQuestion };
 }

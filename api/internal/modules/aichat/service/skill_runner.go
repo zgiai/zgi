@@ -954,6 +954,9 @@ func (s *service) handleCallSkillTool(
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)
 	}
 	invocation.Trace.Arguments = argumentSummary
+	if invocation.Trace.Kind == "tool_governance" {
+		s.emitPreparedEvent(ctx, prepared, streamEventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace), onEvent)
+	}
 	if err != nil {
 		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName)), true, false)
 	}
@@ -1017,6 +1020,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	if prepared.Scope.WorkspaceID != nil {
 		runtimeParameters["workspace_id"] = prepared.Scope.WorkspaceID.String()
 	}
+	runtimeParameters = applySkillToolGovernanceRuntimeParameters(runtimeParameters, prepared)
 	return skills.ExecutionContext{
 		OrganizationID:    prepared.Scope.OrganizationID.String(),
 		UserID:            prepared.Scope.AccountID.String(),
@@ -1268,7 +1272,7 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 		if trace.Kind == "guardrail" {
 			guardrailCount++
 		}
-		invocations = append(invocations, map[string]interface{}{
+		invocation := map[string]interface{}{
 			"kind":        trace.Kind,
 			"skill_id":    trace.SkillID,
 			"tool_name":   trace.ToolName,
@@ -1279,7 +1283,11 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 			"result":      trace.Result,
 			"message":     trace.Message,
 			"error":       trace.Error,
-		})
+		}
+		if trace.Governance != nil {
+			invocation["governance"] = trace.Governance
+		}
+		invocations = append(invocations, invocation)
 	}
 	metadata["has_trace"] = true
 	metadata["selected_skill_ids"] = selected
@@ -1299,7 +1307,7 @@ func countSkillActionTraces(traces []skills.SkillTrace) int {
 	count := 0
 	for _, trace := range traces {
 		switch trace.Kind {
-		case "skill_load", "reference_read", "tool_call", "guardrail", "intermediate_answer", "user_input_request":
+		case "skill_load", "reference_read", "tool_call", "tool_governance", "guardrail", "intermediate_answer", "user_input_request":
 			count++
 		}
 	}

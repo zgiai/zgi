@@ -215,6 +215,27 @@ const messages = {
       approvalInputLocked: 'Complete this workflow approval to continue this conversation.',
       approvalSubmitFailed: 'Failed to submit approval',
     },
+    governance: {
+      title: 'Tool governance decision',
+      needsApproval: 'Approval required before running this tool',
+      denied: 'Tool denied by governance policy',
+      blocked: 'Tool blocked by governance policy',
+      needsResolution: 'More information is required before running this tool',
+      allowed: 'Tool allowed by governance policy',
+      toolLabel: '{skill} / {tool}',
+      approve: 'Approve',
+      reject: 'Reject',
+      actionsUnavailable: 'Approval actions are not connected yet.',
+      fields: {
+        reason: 'Reason',
+        decision: 'Decision',
+        riskLevel: 'Risk',
+        effect: 'Effect',
+        assetType: 'Asset',
+        correlationId: 'Correlation',
+        approvalEvent: 'Approval event',
+      },
+    },
     skillPreferences: {
       action: 'My Skills',
       title: 'My AIChat Skills',
@@ -376,7 +397,8 @@ const messages = {
           'Attach images for this agent debug run. Up to {count} files, {size} MB each. Supported: {types}.',
       },
       agentWebapp: {
-        imageAttachmentHint: 'Uploaded images will be sent with this message for the app to understand.',
+        imageAttachmentHint:
+          'Uploaded images will be sent with this message for the app to understand.',
         imageVisionRequired:
           'This app has not enabled image understanding. Please contact the app administrator.',
         uploadImageTooltip:

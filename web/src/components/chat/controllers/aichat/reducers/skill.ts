@@ -7,11 +7,12 @@ import type {
   AIChatSkillInvocation,
   AIChatSkillLoadEndEventData,
   AIChatSkillLoadStartEventData,
-  AIChatSkillReferenceReadEventData
+  AIChatSkillReferenceReadEventData,
+  AIChatToolGovernanceDecisionEventData,
 } from '@/services/types/aichat';
 import {
   type AIChatControllerState,
-  type AIChatAgenticTimelineItem
+  type AIChatAgenticTimelineItem,
 } from '@/components/chat/controllers/aichat/types';
 import { removeTransientProgressItems } from './shared';
 
@@ -112,6 +113,96 @@ function upsertMemoryTimelineItem(
       type: 'memory_event',
       event: payload,
       created_at: payload.created_at,
+      event_id: eventId ?? null,
+    },
+  ];
+}
+
+function governanceString(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function toolGovernanceCorrelationId(
+  payload: AIChatToolGovernanceDecisionEventData
+): string | undefined {
+  return (
+    governanceString(payload.correlation_id) ??
+    governanceString(payload.governance?.correlation_id) ??
+    governanceString(payload.approval_event?.correlation_id) ??
+    governanceString(payload.governance?.approval_event?.correlation_id)
+  );
+}
+
+function normalizeToolGovernanceDecisionPayload(
+  payload: AIChatToolGovernanceDecisionEventData
+): AIChatToolGovernanceDecisionEventData {
+  const governance = payload.governance;
+  const approvalEvent = payload.approval_event ?? governance?.approval_event;
+  return {
+    ...payload,
+    correlation_id: payload.correlation_id ?? governance?.correlation_id,
+    decision: payload.decision ?? governance?.status ?? payload.status,
+    requires_approval: payload.requires_approval ?? governance?.requires_approval,
+    reason: payload.reason ?? governance?.reason,
+    risk_level: payload.risk_level ?? governance?.manifest?.risk_level ?? approvalEvent?.risk_level,
+    effect: payload.effect ?? governance?.manifest?.effect ?? approvalEvent?.effect,
+    asset_type: payload.asset_type ?? governance?.manifest?.asset_type ?? approvalEvent?.asset_type,
+    approval_event: approvalEvent,
+  };
+}
+
+function upsertToolGovernanceTimelineItem(
+  timeline: AIChatAgenticTimelineItem[] | undefined,
+  payload: AIChatToolGovernanceDecisionEventData,
+  eventId: string | null | undefined
+): AIChatAgenticTimelineItem[] {
+  const baseTimeline = removeTransientProgressItems(timeline);
+  const normalizedPayload = normalizeToolGovernanceDecisionPayload(payload);
+  if (baseTimeline.some(item => 'event_id' in item && item.event_id === eventId && eventId)) {
+    return baseTimeline;
+  }
+
+  const correlationId = toolGovernanceCorrelationId(normalizedPayload);
+  const existingIndex = correlationId
+    ? baseTimeline.findIndex(
+        item =>
+          item.type === 'tool_governance_decision' &&
+          toolGovernanceCorrelationId(item.event) === correlationId
+      )
+    : -1;
+  if (existingIndex >= 0) {
+    const next = baseTimeline.slice();
+    const existing = next[existingIndex];
+    if (existing.type !== 'tool_governance_decision') return next;
+    next[existingIndex] = {
+      ...existing,
+      event: {
+        ...existing.event,
+        ...normalizedPayload,
+        governance: normalizedPayload.governance
+          ? {
+              ...(existing.event.governance ?? {}),
+              ...normalizedPayload.governance,
+            }
+          : existing.event.governance,
+      },
+      created_at: normalizedPayload.created_at ?? existing.created_at,
+      event_id: eventId ?? existing.event_id,
+    };
+    return next;
+  }
+
+  return [
+    ...baseTimeline,
+    {
+      id:
+        eventId ??
+        `governance-${correlationId ?? normalizedPayload.skill_id ?? 'tool'}-${normalizedPayload.created_at ?? Date.now()}-${baseTimeline.length}`,
+      type: 'tool_governance_decision',
+      event: normalizedPayload,
+      created_at: normalizedPayload.created_at,
       event_id: eventId ?? null,
     },
   ];
@@ -397,6 +488,31 @@ export function applyMemoryMutationState(
   };
 }
 
+export function applyToolGovernanceDecisionState(
+  current: AIChatControllerState,
+  payload: AIChatToolGovernanceDecisionEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  if (!payload.conversation_id || !payload.message_id) {
+    return current;
+  }
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (!previousStreaming) {
+    return current;
+  }
+  return {
+    ...current,
+    streamingByMessageId: {
+      ...current.streamingByMessageId,
+      [payload.message_id]: {
+        ...previousStreaming,
+        timeline: upsertToolGovernanceTimelineItem(previousStreaming.timeline, payload, eventId),
+        last_event_id: eventId ?? previousStreaming.last_event_id,
+      },
+    },
+  };
+}
+
 export function applySkillCallStartState(
   current: AIChatControllerState,
   payload: AIChatSkillCallStartEventData,
@@ -529,4 +645,3 @@ export function applySkillReferenceReadState(
     }
   );
 }
-

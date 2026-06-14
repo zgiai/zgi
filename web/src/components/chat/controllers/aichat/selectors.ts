@@ -2,6 +2,7 @@ import type {
   AIChatConversation,
   AIChatMessage,
   AIChatSkillInvocation,
+  AIChatToolGovernanceDecisionEventData,
   AIChatWorkflowRunMetadata,
   AIChatWorkflowRunNodeMetadata,
 } from '@/services/types/aichat';
@@ -45,6 +46,33 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
   );
 }
 
+function toolGovernanceEventFromInvocation(
+  message: AIChatMessage,
+  invocation: AIChatSkillInvocation
+): AIChatToolGovernanceDecisionEventData {
+  const governance = invocation.governance ?? undefined;
+  const approvalEvent = governance?.approval_event;
+  const status = governance?.status ?? invocation.status;
+  return {
+    conversation_id: message.conversation_id,
+    message_id: message.id,
+    skill_id: invocation.skill_id || governance?.manifest?.skill_id,
+    tool_name: invocation.tool_name,
+    status,
+    decision: status,
+    duration_ms: invocation.duration_ms,
+    created_at: invocation.created_at,
+    governance,
+    correlation_id: governance?.correlation_id,
+    requires_approval: governance?.requires_approval,
+    reason: governance?.reason,
+    risk_level: governance?.manifest?.risk_level ?? approvalEvent?.risk_level,
+    effect: governance?.manifest?.effect ?? approvalEvent?.effect,
+    asset_type: governance?.manifest?.asset_type ?? approvalEvent?.asset_type,
+    approval_event: approvalEvent,
+  };
+}
+
 function workflowString(value: unknown): string | undefined {
   if (typeof value === 'string' && value.trim()) return value.trim();
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
@@ -52,13 +80,16 @@ function workflowString(value: unknown): string | undefined {
 }
 
 function workflowElapsedMs(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0
-    ? value
-    : undefined;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 function workflowRunId(run: AIChatWorkflowRunMetadata): string {
-  return workflowString(run.workflow_run_id) ?? workflowString(run.task_id) ?? workflowString(run.id) ?? '';
+  return (
+    workflowString(run.workflow_run_id) ??
+    workflowString(run.task_id) ??
+    workflowString(run.id) ??
+    ''
+  );
 }
 
 function normalizeWorkflowRunStatus(status: unknown): RunStatus {
@@ -296,6 +327,15 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     .map(normalizeSkillInvocation);
 
   const skillTimeline = invocations.map((invocation, index): AIChatAgenticTimelineItem => {
+    if (invocation.kind === 'tool_governance') {
+      const correlationId = invocation.governance?.correlation_id ?? index;
+      return {
+        id: `history-governance-${message.id}-${correlationId}`,
+        type: 'tool_governance_decision',
+        event: toolGovernanceEventFromInvocation(message, invocation),
+        created_at: invocation.created_at,
+      };
+    }
     if (invocation.kind === 'intermediate_answer' && invocation.message) {
       return {
         id: `history-intermediate-${message.id}-${index}`,
@@ -381,7 +421,7 @@ export function canReplaceRootMessage(
 
 export function selectActiveConversation(state: AIChatControllerState): AIChatConversation | null {
   return state.activeConversationId
-    ? state.conversations.find(item => item.id === state.activeConversationId) ?? null
+    ? (state.conversations.find(item => item.id === state.activeConversationId) ?? null)
     : null;
 }
 

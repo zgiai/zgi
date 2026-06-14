@@ -351,6 +351,7 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 		SkillAgentDatabase,
 		SkillCalculator,
 		SkillFileGenerator,
+		SkillFileReader,
 		SkillChartGenerator,
 		SkillWorkReport,
 		SkillInternalDatabase,
@@ -377,6 +378,7 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		required []string
 	}{
 		{SkillFileGenerator, "generate_file", []string{"content", "format"}},
+		{SkillFileReader, "read_file", []string{"file_id"}},
 		{SkillFileGenerator, "generate_docx", []string{"document"}},
 		{SkillFileGenerator, "generate_pdf", []string{"html"}},
 		{SkillFileGenerator, "generate_pptx", []string{"presentation"}},
@@ -461,6 +463,7 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		SkillAgentDatabase,
 		SkillCalculator,
 		SkillFileGenerator,
+		SkillFileReader,
 		SkillChartGenerator,
 		SkillWorkReport,
 		SkillInternalDatabase,
@@ -499,7 +502,7 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 	if !ok || len(anyOf) < 7 {
 		t.Fatalf("arguments.anyOf = %#v, want built-in tool schemas", arguments["anyOf"])
 	}
-	for _, required := range []string{"content", "query", "operation"} {
+	for _, required := range []string{"content", "file_id", "query", "operation"} {
 		if findSchemaWithRequired(anyOf, required) == nil {
 			t.Fatalf("schema requiring %s not found in %#v", required, anyOf)
 		}

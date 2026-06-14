@@ -26,6 +26,10 @@ export type AIChatSkillActivityStatus =
   | 'loading'
   | 'loaded'
   | 'running'
+  | 'allowed'
+  | 'needs_approval'
+  | 'needs_resolution'
+  | 'denied'
   | 'success'
   | 'blocked'
   | 'error';
@@ -34,6 +38,7 @@ export type AIChatSkillInvocationKind =
   | 'skill_load'
   | 'reference_read'
   | 'tool_call'
+  | 'tool_governance'
   | 'intermediate_answer'
   | 'user_input_request'
   | 'memory_planner';
@@ -151,6 +156,7 @@ export interface AIChatSkillInvocation {
   path?: string;
   message?: string;
   error?: string;
+  governance?: AIChatToolGovernanceDecision | null;
   created_at?: number;
 }
 
@@ -529,6 +535,102 @@ export interface AIChatSkillArtifactCreatedEventData extends Partial<AIChatGener
   file?: AIChatSkillArtifactFile;
 }
 
+export type AIChatToolGovernanceDecisionStatus =
+  | 'allowed'
+  | 'needs_approval'
+  | 'denied'
+  | 'needs_resolution'
+  | 'blocked'
+  | (string & {});
+
+export type AIChatToolGovernanceRiskLevel = 'low' | 'medium' | 'high' | 'critical' | (string & {});
+
+export type AIChatToolGovernanceEffect =
+  | 'none'
+  | 'read'
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'publish'
+  | 'invoke'
+  | 'schedule'
+  | 'external_send'
+  | (string & {});
+
+export interface AIChatToolGovernanceAssetRef extends Record<string, unknown> {
+  id?: string;
+  type?: string;
+  name?: string;
+  workspace_id?: string;
+  source?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AIChatToolGovernanceManifest extends Record<string, unknown> {
+  tool_id?: string;
+  skill_id?: string;
+  domain?: string;
+  effect?: AIChatToolGovernanceEffect;
+  asset_type?: string;
+  risk_level?: AIChatToolGovernanceRiskLevel;
+  requires_asset_resolution?: boolean;
+  reversible?: boolean;
+  bulk_sensitive?: boolean;
+  external_side_effect?: boolean;
+  permission_scopes?: string[];
+  default_approval_policy?: string;
+  allowed_permission_tiers?: string[];
+  audit_required?: boolean;
+  idempotency_required?: boolean;
+}
+
+export interface AIChatToolGovernanceApprovalEvent extends Record<string, unknown> {
+  type?: string;
+  correlation_id?: string;
+  tool_id?: string;
+  skill_id?: string;
+  domain?: string;
+  effect?: AIChatToolGovernanceEffect;
+  asset_type?: string;
+  risk_level?: AIChatToolGovernanceRiskLevel;
+  assets?: AIChatToolGovernanceAssetRef[];
+  reversible?: boolean;
+  bulk_sensitive?: boolean;
+  external_side_effect?: boolean;
+  permission_tier?: string;
+  grant?: Record<string, unknown>;
+}
+
+export interface AIChatToolGovernanceDecision extends Record<string, unknown> {
+  status?: AIChatToolGovernanceDecisionStatus;
+  requires_approval?: boolean;
+  reason?: string;
+  correlation_id?: string;
+  manifest?: AIChatToolGovernanceManifest;
+  assets?: AIChatToolGovernanceAssetRef[];
+  approval_event?: AIChatToolGovernanceApprovalEvent;
+  model_feedback?: Record<string, unknown>;
+}
+
+export interface AIChatToolGovernanceDecisionEventData extends Record<string, unknown> {
+  conversation_id: string;
+  message_id: string;
+  skill_id?: string;
+  tool_name?: string;
+  status?: AIChatToolGovernanceDecisionStatus;
+  duration_ms?: number;
+  created_at?: number;
+  governance?: AIChatToolGovernanceDecision;
+  correlation_id?: string;
+  decision?: AIChatToolGovernanceDecisionStatus;
+  requires_approval?: boolean;
+  reason?: string;
+  risk_level?: AIChatToolGovernanceRiskLevel;
+  effect?: AIChatToolGovernanceEffect;
+  asset_type?: string;
+  approval_event?: AIChatToolGovernanceApprovalEvent;
+}
+
 export interface AIChatAgentProgressEventData {
   conversation_id: string;
   message_id: string;
@@ -670,6 +772,7 @@ export type AIChatSseEventName =
   | 'skill_call_end'
   | 'skill_call_error'
   | 'skill_artifact_created'
+  | 'tool_governance_decision'
   | 'memory_create'
   | 'memory_update'
   | 'memory_delete'

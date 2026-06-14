@@ -408,6 +408,7 @@ func isUsableAssistantHistoryStatus(status string) bool {
 func normalizeChatRequest(req aichatdto.ChatRequest) (*chatRequestParts, error) {
 	query := strings.TrimSpace(req.Query)
 	runtimeContext := normalizeRuntimeContext(req.RuntimeContext)
+	operationContext := copyStringAnyMap(req.OperationContext)
 	modelName := strings.TrimSpace(req.Model)
 	if query == "" || modelName == "" {
 		return nil, fmt.Errorf("%w: query and model are required", ErrInvalidInput)
@@ -422,13 +423,15 @@ func normalizeChatRequest(req aichatdto.ChatRequest) (*chatRequestParts, error) 
 		providerPtr = &provider
 	}
 	return &chatRequestParts{
-		Query:          query,
-		RuntimeContext: runtimeContext,
-		ModelName:      modelName,
-		Provider:       provider,
-		ProviderPtr:    providerPtr,
-		Parameters:     params,
-		UseMemory:      req.UseMemory,
+		Query:               query,
+		RuntimeContext:      runtimeContext,
+		RawOperationContext: operationContext,
+		OperationContext:    operationContext,
+		ModelName:           modelName,
+		Provider:            provider,
+		ProviderPtr:         providerPtr,
+		Parameters:          params,
+		UseMemory:           req.UseMemory,
 	}, nil
 }
 

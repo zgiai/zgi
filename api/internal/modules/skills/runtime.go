@@ -960,6 +960,19 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"content": "# Report\n\nSummary...", "format": "md", "filename": "report"},
 		},
+		SkillFileReader + "/read_file": {
+			SkillID:     SkillFileReader,
+			ToolName:    "read_file",
+			Description: "Read extracted text content from one file available in the current AIChat context.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"file_id":   stringValueSchema("Required file ID from the current page context, attachment context, or governed asset resolution. Do not invent IDs."),
+					"max_chars": numberSchema("Optional maximum returned content characters. Defaults to 4000 and is capped at 12000."),
+				},
+				[]string{"file_id"},
+			),
+			Example: map[string]interface{}{"file_id": "file_123", "max_chars": 4000},
+		},
 		SkillFileGenerator + "/generate_docx": {
 			SkillID:     SkillFileGenerator,
 			ToolName:    "generate_docx",

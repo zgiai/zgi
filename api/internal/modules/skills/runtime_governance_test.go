@@ -92,6 +92,38 @@ func TestCallSkillToolGovernanceNeedsResolutionBeforeEngine(t *testing.T) {
 	}
 }
 
+func TestPolicyToolGovernanceUsesToolArgumentsAsAssetRefs(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "file.read",
+			Domain:                  "files",
+			Effect:                  toolgovernance.EffectRead,
+			AssetType:               "file",
+			RiskLevel:               toolgovernance.RiskLevelLow,
+			RequiresAssetResolution: true,
+		},
+		SkillID:   "file-reader",
+		ToolName:  "read_file",
+		Arguments: map[string]interface{}{"file_id": "file-1", "file_name": "report.pdf", "workspace_id": "workspace-1"},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance_permission_tier": "basic",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusAllowed {
+		t.Fatalf("decision status = %s, want allowed: %#v", decision.Status, decision)
+	}
+	if len(decision.Assets) != 1 || decision.Assets[0].ID != "file-1" || decision.Assets[0].Name != "report.pdf" {
+		t.Fatalf("assets = %#v, want file-1/report.pdf from tool arguments", decision.Assets)
+	}
+}
+
 func TestCallSkillToolMatchingSessionGrantAllowsEnginePath(t *testing.T) {
 	runtime, resolved := governedRuntimeForTest(t)
 	_, err := runtime.CallSkillTool(

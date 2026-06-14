@@ -36,7 +36,7 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 		Manifest:       req.Manifest,
 		PermissionTier: governancePermissionTier(params, governance),
 		ConversationID: req.ExecutionContext.ConversationID,
-		Assets:         governanceAssets(params, governance),
+		Assets:         governanceAssets(params, governance, req.Manifest, req.Arguments),
 		SessionGrants:  governanceSessionGrants(params, governance),
 		CorrelationID:  governanceString(params, governance, governanceCorrelationIDKey, "correlation_id"),
 	}, g.policy), nil
@@ -56,8 +56,12 @@ func governancePermissionTier(params map[string]interface{}, governance map[stri
 	return toolgovernance.PermissionTier(governanceString(params, governance, governancePermissionTierKey, "permission_tier"))
 }
 
-func governanceAssets(params map[string]interface{}, governance map[string]interface{}) []toolgovernance.AssetRef {
-	return assetRefsFromAny(firstRuntimeValue(params, governance, governanceAssetsKey, "assets"))
+func governanceAssets(params map[string]interface{}, governance map[string]interface{}, manifest toolgovernance.Manifest, arguments map[string]interface{}) []toolgovernance.AssetRef {
+	assets := assetRefsFromAny(firstRuntimeValue(params, governance, governanceAssetsKey, "assets"))
+	if len(assets) > 0 {
+		return assets
+	}
+	return assetRefsFromToolArguments(manifest, arguments)
 }
 
 func governanceSessionGrants(params map[string]interface{}, governance map[string]interface{}) []toolgovernance.SessionGrant {
@@ -120,6 +124,35 @@ func assetRefFromMap(input map[string]interface{}) toolgovernance.AssetRef {
 		Source:      stringMapValue(input, "source"),
 		Metadata:    copyGovernanceMetadata(input["metadata"]),
 	}
+}
+
+func assetRefsFromToolArguments(manifest toolgovernance.Manifest, arguments map[string]interface{}) []toolgovernance.AssetRef {
+	if len(arguments) == 0 {
+		return nil
+	}
+	manifest = toolgovernance.NormalizeManifest(manifest)
+	assetType := strings.TrimSpace(manifest.AssetType)
+	if assetType == "" {
+		return nil
+	}
+
+	idKeys := []string{"asset_id", "resource_id", assetType + "_id", "id"}
+	nameKeys := []string{"asset_name", "resource_name", assetType + "_name", "name"}
+	if assetType == "file" {
+		idKeys = []string{"file_id", "upload_file_id", "asset_id", "resource_id", "id"}
+		nameKeys = []string{"file_name", "filename", "asset_name", "resource_name", "name"}
+	}
+	asset := toolgovernance.AssetRef{
+		ID:          stringMapValue(arguments, idKeys...),
+		Type:        assetType,
+		Name:        stringMapValue(arguments, nameKeys...),
+		WorkspaceID: stringMapValue(arguments, "workspace_id", "workspaceId"),
+		Source:      "tool_arguments",
+	}
+	if asset.ID == "" && asset.Name == "" {
+		return nil
+	}
+	return []toolgovernance.AssetRef{asset}
 }
 
 func sessionGrantsFromAny(value interface{}) []toolgovernance.SessionGrant {

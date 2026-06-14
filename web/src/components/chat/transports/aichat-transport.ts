@@ -28,6 +28,7 @@ import type {
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
   AIChatStopConversationResponseData,
+  AIChatToolGovernanceDecisionEventData,
   AIChatWorkflowEventData,
   AIChatWorkflowNodeEventData,
   AIChatWorkflowPausedEventData,
@@ -97,6 +98,10 @@ export interface AIChatStreamCallbacks {
   onSkillCallError: (payload: AIChatSkillCallErrorEventData, eventId?: string | null) => void;
   onSkillArtifactCreated: (
     payload: AIChatSkillArtifactCreatedEventData,
+    eventId?: string | null
+  ) => void;
+  onToolGovernanceDecision?: (
+    payload: AIChatToolGovernanceDecisionEventData,
     eventId?: string | null
   ) => void;
   onMemoryMutation: (payload: AIChatMemoryMutationEventData, eventId?: string | null) => void;
@@ -224,6 +229,12 @@ export function dispatchAIChatStreamEvent(
     case 'skill_artifact_created':
       callbacks.onSkillArtifactCreated(
         (data ?? {}) as AIChatSkillArtifactCreatedEventData,
+        eventId
+      );
+      break;
+    case 'tool_governance_decision':
+      callbacks.onToolGovernanceDecision?.(
+        (data ?? {}) as AIChatToolGovernanceDecisionEventData,
         eventId
       );
       break;

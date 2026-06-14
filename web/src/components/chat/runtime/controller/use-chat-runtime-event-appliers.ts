@@ -19,6 +19,7 @@ import type {
   AIChatSkillLoadEndEventData,
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
+  AIChatToolGovernanceDecisionEventData,
   AIChatUserInputRequestedEventData,
   AIChatWorkflowEventData,
   AIChatWorkflowNodeEventData,
@@ -51,6 +52,7 @@ import {
   applySkillLoadStartState,
   applySkillReferenceReadState,
   applyStreamErrorState,
+  applyToolGovernanceDecisionState,
   applyWorkflowApprovalRequestedState,
   applyWorkflowFailedState,
   applyWorkflowFinishedState,
@@ -309,6 +311,14 @@ export function useChatRuntimeEventAppliers({
     [setControllerState]
   );
 
+  const applyToolGovernanceDecision = useCallback(
+    (payload: AIChatToolGovernanceDecisionEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyToolGovernanceDecisionState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
   const applyWorkflowStarted = useCallback(
     (payload: AIChatWorkflowEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
@@ -344,9 +354,7 @@ export function useChatRuntimeEventAppliers({
   const applyWorkflowApprovalRequested = useCallback(
     (payload: AIChatWorkflowPausedEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
-      setControllerState(current =>
-        applyWorkflowApprovalRequestedState(current, payload, eventId)
-      );
+      setControllerState(current => applyWorkflowApprovalRequestedState(current, payload, eventId));
     },
     [setControllerState]
   );
@@ -458,6 +466,7 @@ export function useChatRuntimeEventAppliers({
       applySkillCallError,
       applySkillArtifactCreated,
       applyMemoryMutation,
+      applyToolGovernanceDecision,
       applyWorkflowStarted,
       applyWorkflowNodeStarted,
       applyWorkflowNodeFinished,
@@ -498,6 +507,7 @@ export function useChatRuntimeEventAppliers({
       applySkillLoadStart,
       applySkillReferenceRead,
       applyStreamError,
+      applyToolGovernanceDecision,
     ]
   );
 }
