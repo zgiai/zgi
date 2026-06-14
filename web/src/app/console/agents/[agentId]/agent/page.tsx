@@ -2,6 +2,7 @@
 
 import { use } from 'react';
 import {
+  AgentRuntimeAIChatContextRegistration,
   AgentRuntimeDialogs,
   AgentRuntimeLoadingState,
   AgentRuntimeWorkbench,
@@ -22,6 +23,7 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background">
+      <AgentRuntimeAIChatContextRegistration context={model.aiChatContext} />
       {model.leaveGuardNode}
       <AgentRuntimeWorkbench model={model} />
       <AgentRuntimeDialogs model={model} />

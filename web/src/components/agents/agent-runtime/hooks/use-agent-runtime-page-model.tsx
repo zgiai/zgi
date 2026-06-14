@@ -48,6 +48,7 @@ import {
   type VersionPreviewBackup,
 } from './page-model-utils';
 import { AGENT_SYSTEM_PROMPT_MAX_LENGTH } from '../prompt-limits';
+import { buildAgentRuntimeAIChatContext } from '../aichat-context';
 
 type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
 
@@ -232,7 +233,14 @@ export function useAgentRuntimePageModel(agentId: string) {
   const t = useT('agents.agentRuntime');
   const tRoot = useT();
   const { agent, isLoading: isAgentLoading } = useAgent(agentId);
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const {
+    permissions,
+    organizationRole,
+    workspaceRole,
+    workspaceRoleName,
+    hasPermission,
+    isLoading: isPermissionsLoading,
+  } = useAccountPermissions();
   const canManageAgent = hasPermission('agent.manage');
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
   const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(agentId);
@@ -965,7 +973,14 @@ export function useAgentRuntimePageModel(agentId: string) {
       return false;
     }
     return saveNow({ silent: false, force: true });
-  }, [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, isVersionPreviewing, saveNow, t]);
+  }, [
+    canManageAgent,
+    hasAgentMemorySlotErrors,
+    isSystemPromptTooLong,
+    isVersionPreviewing,
+    saveNow,
+    t,
+  ]);
 
   const leaveGuardNode = useAgentRuntimeLeaveGuard({
     enabled: canManageAgent && !isVersionPreviewing,
@@ -975,11 +990,51 @@ export function useAgentRuntimePageModel(agentId: string) {
   });
 
   const webAppUrl = agentDetail?.web_app_id ? `/webapp/${agentDetail.web_app_id}/chat` : '';
+  const aiChatContext = useMemo(
+    () =>
+      buildAgentRuntimeAIChatContext({
+        agent: agentDetail,
+        locale,
+        payload: currentPayload,
+        promptCharacterCount: systemPromptEffectiveLength,
+        isPromptTooLong: isSystemPromptTooLong,
+        selectedSkills,
+        selectedKnowledgeDatasets,
+        permissions,
+        organizationRole,
+        workspaceRole,
+        workspaceRoleName,
+        canManageAgent,
+        saveState,
+        isDirty,
+        isVersionPreviewing,
+        webAppUrl,
+      }),
+    [
+      agentDetail,
+      canManageAgent,
+      currentPayload,
+      isDirty,
+      isSystemPromptTooLong,
+      isVersionPreviewing,
+      locale,
+      organizationRole,
+      permissions,
+      saveState,
+      selectedKnowledgeDatasets,
+      selectedSkills,
+      systemPromptEffectiveLength,
+      webAppUrl,
+      workspaceRole,
+      workspaceRoleName,
+    ]
+  );
 
   return {
     agentId,
     locale,
     t,
+    aiChatContext,
     isLoading: isAgentLoading || isConfigLoading || isPermissionsLoading,
     leaveGuardNode,
     isTwoXlViewport,

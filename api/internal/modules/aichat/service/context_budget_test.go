@@ -56,6 +56,37 @@ func TestBuildRecentExecutionContextMessageLimitsToolAndIntermediateHistory(t *t
 	}
 }
 
+func TestRuntimeContextIsTransientUserContent(t *testing.T) {
+	svc := &service{}
+	parts := &chatRequestParts{
+		Query:          "Summarize this page.",
+		RuntimeContext: "Page /console/agents with 2 context chips.",
+	}
+
+	content, ok := svc.currentUserContent(parts, parts.Query).(string)
+	if !ok {
+		t.Fatalf("content type = %T, want string", content)
+	}
+	for _, want := range []string{
+		"Transient ZGI page context",
+		"Page /console/agents with 2 context chips.",
+		"User request:",
+		"Summarize this page.",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("content missing %q:\n%s", want, content)
+		}
+	}
+
+	message := newStreamingMessage(aichatmodel.Message{}.ConversationID, nil, parts)
+	if message.Query != parts.Query {
+		t.Fatalf("message query = %q, want original query %q", message.Query, parts.Query)
+	}
+	if strings.Contains(message.Query, parts.RuntimeContext) {
+		t.Fatalf("message query contains runtime context: %q", message.Query)
+	}
+}
+
 func recentExecutionTestMessage(query string, answer string, invocations []interface{}) *aichatmodel.Message {
 	return &aichatmodel.Message{
 		Query:  query,

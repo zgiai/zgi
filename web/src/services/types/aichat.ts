@@ -385,6 +385,7 @@ export interface AIChatChatRequest {
   conversation_id?: string;
   parent_id?: string;
   query: string;
+  runtime_context?: string;
   model: string;
   provider?: string;
   file_ids?: string[];

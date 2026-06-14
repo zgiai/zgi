@@ -14,6 +14,7 @@ type ChatRequest struct {
 	ConversationID string                 `json:"conversation_id,omitempty"`
 	ParentID       string                 `json:"parent_id,omitempty"`
 	Query          string                 `json:"query" binding:"required"`
+	RuntimeContext string                 `json:"runtime_context,omitempty"`
 	FileIDs        []string               `json:"file_ids,omitempty"`
 	Model          string                 `json:"model" binding:"required"`
 	Provider       string                 `json:"provider,omitempty"`

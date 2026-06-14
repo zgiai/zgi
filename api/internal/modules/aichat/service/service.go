@@ -26,6 +26,7 @@ const (
 	staleActiveMessageError  = "stream interrupted before completion"
 	streamEventsExpiredError = "stream events expired"
 	titleGenerationTimeout   = 15 * time.Second
+	runtimeContextMaxRunes   = 8000
 
 	streamEventMessageStart         = "message_start"
 	streamEventMessage              = "message"
@@ -225,6 +226,7 @@ type ExistingSkill struct {
 
 type chatRequestParts struct {
 	Query                        string
+	RuntimeContext               string
 	ModelName                    string
 	Provider                     string
 	ProviderPtr                  *string

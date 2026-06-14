@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
 import { useOrganizationStore } from '@/store/organization-store';
 import { cn } from '@/lib/utils';
+import { ContextualAIChatLauncher } from '@/components/aichat/contextual';
 
 interface ConsoleHeaderProps {
   hidden?: boolean;
@@ -155,6 +156,7 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
       ) : null}
 
       <div className="flex items-center gap-4 md:ml-auto">
+        {!isDashboardRoute ? <ContextualAIChatLauncher /> : null}
         {/* <QuickThemeToggle /> */}
         <UserMenu />
       </div>

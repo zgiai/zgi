@@ -407,6 +407,7 @@ func isUsableAssistantHistoryStatus(status string) bool {
 
 func normalizeChatRequest(req aichatdto.ChatRequest) (*chatRequestParts, error) {
 	query := strings.TrimSpace(req.Query)
+	runtimeContext := normalizeRuntimeContext(req.RuntimeContext)
 	modelName := strings.TrimSpace(req.Model)
 	if query == "" || modelName == "" {
 		return nil, fmt.Errorf("%w: query and model are required", ErrInvalidInput)
@@ -421,13 +422,26 @@ func normalizeChatRequest(req aichatdto.ChatRequest) (*chatRequestParts, error) 
 		providerPtr = &provider
 	}
 	return &chatRequestParts{
-		Query:       query,
-		ModelName:   modelName,
-		Provider:    provider,
-		ProviderPtr: providerPtr,
-		Parameters:  params,
-		UseMemory:   req.UseMemory,
+		Query:          query,
+		RuntimeContext: runtimeContext,
+		ModelName:      modelName,
+		Provider:       provider,
+		ProviderPtr:    providerPtr,
+		Parameters:     params,
+		UseMemory:      req.UseMemory,
 	}, nil
+}
+
+func normalizeRuntimeContext(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= runtimeContextMaxRunes {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:runtimeContextMaxRunes]))
 }
 
 func normalizeRegenerateRequest(req aichatdto.RegenerateMessageRequest, message *aichatmodel.Message) (*chatRequestParts, error) {
@@ -540,6 +554,12 @@ func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
 	}
 	if parts.UseMemory {
 		metadata["use_memory"] = true
+	}
+	if parts.RuntimeContext != "" {
+		metadata["runtime_context"] = map[string]interface{}{
+			"included":   true,
+			"char_count": len([]rune(parts.RuntimeContext)),
+		}
 	}
 	if parts.Attachments != nil && len(parts.Attachments.Files) > 0 {
 		metadata["files"] = parts.Attachments.metadataFiles()

@@ -1,0 +1,406 @@
+'use client';
+
+import { useMemo } from 'react';
+import {
+  useAIChatContextRegistration,
+  type AIChatContextItem,
+} from '@/components/aichat/contextual';
+import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
+import type {
+  AgentDatabaseBinding,
+  AgentDetail,
+  AgentMemorySlotConfig,
+  AgentWorkflowBinding,
+  UpdateAgentRuntimeConfigRequest,
+} from '@/services/types/agent';
+import type { AIChatSkillMetadata } from '@/services/types/aichat';
+import type { Dataset } from '@/services/types/dataset';
+import type { AgentRuntimeSaveState } from './types';
+
+const PROMPT_SUMMARY_MAX_LENGTH = 1200;
+const CONTEXT_FIELD_MAX_LENGTH = 500;
+
+interface AgentRuntimeAIChatWorkspaceContext {
+  id: string;
+  name: string;
+}
+
+interface AgentRuntimeAIChatPromptContext {
+  excerpt: string;
+  characterCount: number;
+  isTruncated: boolean;
+  isTooLong: boolean;
+}
+
+interface AgentRuntimeAIChatSkillContext {
+  id: string;
+  name: string;
+  description: string;
+  source?: string;
+  runtimeType?: string;
+}
+
+interface AgentRuntimeAIChatKnowledgeContext {
+  id: string;
+  name: string;
+  description: string;
+  loadError: boolean;
+}
+
+interface AgentRuntimeAIChatMemoryContext {
+  enabled: boolean;
+  slots: Array<Pick<AgentMemorySlotConfig, 'key' | 'description' | 'enabled' | 'max_chars'>>;
+}
+
+interface AgentRuntimeAIChatPublishContext {
+  isPublished: boolean;
+  webAppStatus?: AgentDetail['web_app_status'];
+  webAppUrl: string;
+  saveState: AgentRuntimeSaveState;
+  isDirty: boolean;
+  isVersionPreviewing: boolean;
+}
+
+interface AgentRuntimeAIChatPermissionContext {
+  codes: string[];
+  canManageAgent: boolean;
+  canEditAgent: boolean;
+  organizationRole: string | null;
+  workspaceRole: string | null;
+  workspaceRoleName: string | null;
+}
+
+export interface AgentRuntimeAIChatContext {
+  id: string;
+  source: 'agent-runtime';
+  agent: {
+    id: string;
+    name: string;
+    description: string;
+    type: string;
+    workspace: AgentRuntimeAIChatWorkspaceContext | null;
+  };
+  configuration: {
+    prompt: AgentRuntimeAIChatPromptContext;
+    model: {
+      provider: string;
+      name: string;
+      parameters: Record<string, unknown>;
+    };
+    skills: AgentRuntimeAIChatSkillContext[];
+    knowledge: AgentRuntimeAIChatKnowledgeContext[];
+    memory: AgentRuntimeAIChatMemoryContext;
+    fileUploadEnabled: boolean;
+    suggestedQuestions: string[];
+    databaseBindings: AgentDatabaseBinding[];
+    workflowBindings: AgentWorkflowBinding[];
+  };
+  publish: AgentRuntimeAIChatPublishContext;
+  permissions: AgentRuntimeAIChatPermissionContext;
+}
+
+interface BuildAgentRuntimeAIChatContextParams {
+  agent: AgentDetail | undefined;
+  locale: string;
+  payload: UpdateAgentRuntimeConfigRequest;
+  promptCharacterCount: number;
+  isPromptTooLong: boolean;
+  selectedSkills: AIChatSkillMetadata[];
+  selectedKnowledgeDatasets: Array<Dataset & { load_error?: boolean }>;
+  permissions: readonly string[];
+  organizationRole: string | null;
+  workspaceRole: string | null;
+  workspaceRoleName: string | null;
+  canManageAgent: boolean;
+  saveState: AgentRuntimeSaveState;
+  isDirty: boolean;
+  isVersionPreviewing: boolean;
+  webAppUrl: string;
+}
+
+interface AgentRuntimeAIChatContextRegistrationProps {
+  context: AgentRuntimeAIChatContext | null;
+}
+
+function summarizePrompt(prompt: string, characterCount: number, isTooLong: boolean) {
+  const normalized = prompt.replace(/\s+/g, ' ').trim();
+  const excerpt =
+    normalized.length > PROMPT_SUMMARY_MAX_LENGTH
+      ? normalized.slice(0, PROMPT_SUMMARY_MAX_LENGTH).trim()
+      : normalized;
+
+  return {
+    excerpt,
+    characterCount,
+    isTruncated: normalized.length > excerpt.length,
+    isTooLong,
+  };
+}
+
+function compactContextField(value: string, maxLength = CONTEXT_FIELD_MAX_LENGTH): string {
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trim()}...`;
+}
+
+function summarizeNames(values: string[], emptyLabel = 'none'): string {
+  const names = values.map(value => value.trim()).filter(Boolean);
+  if (names.length === 0) return emptyLabel;
+  return compactContextField(names.join(', '));
+}
+
+function formatBooleanState(value: boolean): string {
+  return value ? 'enabled' : 'disabled';
+}
+
+export function buildAgentRuntimeAIChatContext({
+  agent,
+  locale,
+  payload,
+  promptCharacterCount,
+  isPromptTooLong,
+  selectedSkills,
+  selectedKnowledgeDatasets,
+  permissions,
+  organizationRole,
+  workspaceRole,
+  workspaceRoleName,
+  canManageAgent,
+  saveState,
+  isDirty,
+  isVersionPreviewing,
+  webAppUrl,
+}: BuildAgentRuntimeAIChatContextParams): AgentRuntimeAIChatContext | null {
+  if (!agent) return null;
+
+  return {
+    id: `agent-runtime:${agent.id}`,
+    source: 'agent-runtime',
+    agent: {
+      id: agent.id,
+      name: agent.name,
+      description: agent.description,
+      type: agent.agent_type,
+      workspace: agent.workspace
+        ? {
+            id: agent.workspace.id,
+            name: agent.workspace.name,
+          }
+        : null,
+    },
+    configuration: {
+      prompt: summarizePrompt(payload.system_prompt, promptCharacterCount, isPromptTooLong),
+      model: {
+        provider: payload.model_provider,
+        name: payload.model,
+        parameters: payload.model_parameters,
+      },
+      skills: selectedSkills.map(skill => {
+        const display = getAIChatSkillDisplayInfo(skill, locale);
+        return {
+          id: skill.skill_id,
+          name: display.label,
+          description: display.description || skill.description || '',
+          source: skill.source,
+          runtimeType: skill.runtime_type,
+        };
+      }),
+      knowledge: selectedKnowledgeDatasets.map(dataset => ({
+        id: dataset.id,
+        name: dataset.name,
+        description: dataset.description ?? '',
+        loadError: Boolean(dataset.load_error),
+      })),
+      memory: {
+        enabled: Boolean(payload.agent_memory_enabled),
+        slots: (payload.agent_memory_slots ?? []).map(slot => ({
+          key: slot.key,
+          description: slot.description,
+          enabled: slot.enabled,
+          max_chars: slot.max_chars,
+        })),
+      },
+      fileUploadEnabled: payload.file_upload_enabled,
+      suggestedQuestions: payload.suggested_questions,
+      databaseBindings: payload.database_bindings ?? [],
+      workflowBindings: payload.workflow_bindings ?? [],
+    },
+    publish: {
+      isPublished: Boolean(agent.is_published),
+      webAppStatus: agent.web_app_status,
+      webAppUrl,
+      saveState,
+      isDirty,
+      isVersionPreviewing,
+    },
+    permissions: {
+      codes: Array.from(new Set(permissions)).sort(),
+      canManageAgent,
+      canEditAgent: agent.can_edit,
+      organizationRole,
+      workspaceRole,
+      workspaceRoleName,
+    },
+  };
+}
+
+function buildAgentRuntimeAIChatContextItems(
+  context: AgentRuntimeAIChatContext | null
+): AIChatContextItem[] {
+  if (!context) return [];
+
+  const workspaceLabel = context.agent.workspace?.name ?? 'no workspace';
+  const modelLabel = [context.configuration.model.provider, context.configuration.model.name]
+    .filter(Boolean)
+    .join('/');
+  const skillNames = context.configuration.skills.map(skill => skill.name);
+  const knowledgeNames = context.configuration.knowledge.map(dataset => dataset.name);
+  const enabledMemorySlots = context.configuration.memory.slots.filter(slot => slot.enabled);
+  const workflowLabels = context.configuration.workflowBindings.map(
+    binding => binding.label || binding.binding_id
+  );
+  const databaseLabels = context.configuration.databaseBindings.map(
+    binding =>
+      `${binding.data_source_id} (${binding.table_ids.length} tables${
+        (binding.writable_table_ids ?? []).length > 0 ? ', writable' : ''
+      })`
+  );
+
+  return [
+    {
+      id: context.agent.id,
+      type: 'agent',
+      title: context.agent.name,
+      subtitle: `${context.agent.type} in ${workspaceLabel}`,
+      description: compactContextField(context.agent.description),
+      href: `/console/agents/${context.agent.id}/agent`,
+      source: 'Agent Runtime',
+      risk: 'low',
+      permissions: context.permissions.codes,
+      metadata: {
+        agent_id: context.agent.id,
+        agent_type: context.agent.type,
+        workspace_id: context.agent.workspace?.id,
+        workspace_name: context.agent.workspace?.name,
+        is_published: context.publish.isPublished,
+        web_app_status: context.publish.webAppStatus,
+        can_edit_agent: context.permissions.canEditAgent,
+        can_manage_agent: context.permissions.canManageAgent,
+      },
+    },
+    {
+      id: `${context.agent.id}:prompt-model`,
+      type: 'custom',
+      title: 'Runtime prompt and model',
+      subtitle: modelLabel || 'No model selected',
+      description: context.configuration.prompt.excerpt || 'Prompt is empty.',
+      source: 'Agent Runtime',
+      metadata: {
+        agent_id: context.agent.id,
+        model_provider: context.configuration.model.provider,
+        model: context.configuration.model.name,
+        prompt_character_count: context.configuration.prompt.characterCount,
+        prompt_truncated: context.configuration.prompt.isTruncated,
+        prompt_too_long: context.configuration.prompt.isTooLong,
+        model_parameter_count: Object.keys(context.configuration.model.parameters).length,
+      },
+    },
+    {
+      id: `${context.agent.id}:skills`,
+      type: 'custom',
+      title: 'Runtime skills',
+      subtitle: `${context.configuration.skills.length} selected`,
+      description: summarizeNames(skillNames),
+      source: 'Agent Runtime',
+      metadata: {
+        agent_id: context.agent.id,
+        skill_count: context.configuration.skills.length,
+        skill_ids: summarizeNames(context.configuration.skills.map(skill => skill.id)),
+      },
+    },
+    {
+      id: `${context.agent.id}:knowledge`,
+      type: 'dataset',
+      title: 'Runtime knowledge',
+      subtitle: `${context.configuration.knowledge.length} datasets`,
+      description: summarizeNames(knowledgeNames),
+      source: 'Agent Runtime',
+      metadata: {
+        agent_id: context.agent.id,
+        dataset_count: context.configuration.knowledge.length,
+        dataset_ids: summarizeNames(context.configuration.knowledge.map(dataset => dataset.id)),
+        load_error_count: context.configuration.knowledge.filter(dataset => dataset.loadError)
+          .length,
+      },
+    },
+    {
+      id: `${context.agent.id}:memory-files`,
+      type: 'custom',
+      title: 'Runtime memory and files',
+      subtitle: `memory ${formatBooleanState(context.configuration.memory.enabled)}, files ${formatBooleanState(
+        context.configuration.fileUploadEnabled
+      )}`,
+      description: summarizeNames(
+        enabledMemorySlots.map(slot => `${slot.key}: ${slot.description}`),
+        'No enabled memory slots.'
+      ),
+      source: 'Agent Runtime',
+      metadata: {
+        agent_id: context.agent.id,
+        memory_enabled: context.configuration.memory.enabled,
+        memory_slot_count: context.configuration.memory.slots.length,
+        enabled_memory_slot_count: enabledMemorySlots.length,
+        file_upload_enabled: context.configuration.fileUploadEnabled,
+      },
+    },
+    {
+      id: `${context.agent.id}:resources`,
+      type: 'custom',
+      title: 'Runtime resources',
+      subtitle: `${context.configuration.databaseBindings.length} databases, ${context.configuration.workflowBindings.length} workflows`,
+      description: compactContextField(
+        [
+          `Databases: ${summarizeNames(databaseLabels)}`,
+          `Workflows: ${summarizeNames(workflowLabels)}`,
+          `Suggested questions: ${summarizeNames(context.configuration.suggestedQuestions)}`,
+        ].join(' | ')
+      ),
+      source: 'Agent Runtime',
+      metadata: {
+        agent_id: context.agent.id,
+        database_binding_count: context.configuration.databaseBindings.length,
+        workflow_binding_count: context.configuration.workflowBindings.length,
+        suggested_question_count: context.configuration.suggestedQuestions.length,
+      },
+    },
+    {
+      id: `${context.agent.id}:permissions`,
+      type: 'custom',
+      title: 'Runtime permissions',
+      subtitle: context.permissions.canManageAgent ? 'Can manage agent' : 'View-only agent access',
+      description: summarizeNames(context.permissions.codes),
+      source: 'Agent Runtime',
+      permissions: context.permissions.codes,
+      metadata: {
+        agent_id: context.agent.id,
+        organization_role: context.permissions.organizationRole,
+        workspace_role: context.permissions.workspaceRole,
+        workspace_role_name: context.permissions.workspaceRoleName,
+        permission_count: context.permissions.codes.length,
+        save_state: context.publish.saveState,
+        is_dirty: context.publish.isDirty,
+        is_version_previewing: context.publish.isVersionPreviewing,
+      },
+    },
+  ];
+}
+
+export function AgentRuntimeAIChatContextRegistration({
+  context,
+}: AgentRuntimeAIChatContextRegistrationProps) {
+  const items = useMemo(() => buildAgentRuntimeAIChatContextItems(context), [context]);
+
+  useAIChatContextRegistration(items, { scopeId: context?.id ?? 'agent-runtime' });
+
+  return null;
+}
