@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
+	actionrepo "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/repository"
+	actionservice "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -18,8 +20,9 @@ import (
 )
 
 type Module struct {
-	Handler *handler.Handler
-	Service service.Service
+	Handler       *handler.Handler
+	Service       service.Service
+	ActionService actionservice.Service
 }
 
 func NewModule(db *gorm.DB, llmClient llmclient.LLMClient, defaultModelSvc llmdefaultservice.DefaultModelService) *Module {
@@ -69,9 +72,11 @@ func NewModuleWithDependencies(
 	if err := svc.CleanupExpiredCustomSkillImportPreviews(context.Background()); err != nil {
 		logger.Warn("failed to cleanup expired aichat skill import previews", err)
 	}
+	actionSvc := actionservice.NewService(actionrepo.NewRepository(db), actionservice.NewDefaultRegistry())
 	return &Module{
-		Handler: handler.NewHandler(svc),
-		Service: svc,
+		Handler:       handler.NewHandler(svc, actionSvc),
+		Service:       svc,
+		ActionService: actionSvc,
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	actionservice "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/service"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -28,11 +29,16 @@ const (
 )
 
 type Handler struct {
-	service runtimeservice.Service
+	service       runtimeservice.Service
+	actionService actionservice.Service
 }
 
-func NewHandler(service runtimeservice.Service) *Handler {
-	return &Handler{service: service}
+func NewHandler(service runtimeservice.Service, actionServices ...actionservice.Service) *Handler {
+	var actionService actionservice.Service
+	if len(actionServices) > 0 {
+		actionService = actionServices[0]
+	}
+	return &Handler{service: service, actionService: actionService}
 }
 
 func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
@@ -59,6 +65,14 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.DELETE("/messages/:id", h.DeleteMessage)
 	group.POST("/messages/:id/stop", h.StopMessage)
 	group.POST("/messages/:id/regenerate", h.RegenerateMessage)
+	if h.actionService != nil {
+		group.GET("/action-capabilities", h.ListActionCapabilities)
+		group.POST("/action-plans", h.PlanAction)
+		group.GET("/actions/:id", h.GetAction)
+		group.POST("/actions/:id/confirm", h.ConfirmAction)
+		group.POST("/actions/:id/execute", h.ExecuteAction)
+		group.GET("/actions/:id/events", h.StreamActionEvents)
+	}
 	group.POST("/chat", h.Chat)
 }
 
