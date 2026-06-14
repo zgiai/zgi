@@ -3,6 +3,8 @@ package workflow
 import (
 	"encoding/json"
 	"strings"
+
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 )
 
 const (
@@ -12,7 +14,7 @@ const (
 func agentRuntimeEventInput(event map[string]interface{}) interface{} {
 	switch agentRuntimeEventType(event) {
 	case "model_call":
-		return sanitizeAgentRuntimeModelRequest(runtimeMap(event["request"]), runtimeString(event["user_system_prompt"]))
+		return runtimeservice.PublicModelInvocationRequest(runtimeMap(event["request"]), runtimeString(event["user_system_prompt"]))
 	case "tool_call":
 		return sanitizeAgentRuntimeToolArguments(runtimeMap(event["arguments"]))
 	case "skill_load":
@@ -67,7 +69,7 @@ func agentRuntimeEventInput(event map[string]interface{}) interface{} {
 
 func agentRuntimeEventOutput(event map[string]interface{}) interface{} {
 	if agentRuntimeEventType(event) == "model_call" {
-		output := runtimeMap(event["response"])
+		output := runtimeservice.PublicModelInvocationResponse(runtimeMap(event["response"]))
 		if len(output) == 0 {
 			output["status"] = runtimeString(event["status"])
 		}
@@ -181,7 +183,7 @@ func agentRuntimeEventProcess(event map[string]interface{}) map[string]interface
 func sanitizeAgentRuntimeRawEvent(event map[string]interface{}) map[string]interface{} {
 	raw := copyRuntimeMap(event)
 	if agentRuntimeEventType(event) == "model_call" {
-		raw["request"] = sanitizeAgentRuntimeModelRequest(runtimeMap(event["request"]), runtimeString(event["user_system_prompt"]))
+		return runtimeservice.PublicModelInvocationEvent(raw)
 	}
 	if arguments := runtimeMap(event["arguments"]); len(arguments) > 0 {
 		raw["arguments"] = sanitizeAgentRuntimeToolArguments(arguments)

@@ -806,7 +806,7 @@ func messageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {
 		ModelName:           message.ModelName,
 		BillingReasonSource: message.BillingReasonSource,
 		ModelParameters:     message.ModelParameters,
-		Metadata:            message.Metadata,
+		Metadata:            runtimeservice.PublicMessageMetadata(message.Metadata),
 		CreatedAt:           message.CreatedAt.Unix(),
 		UpdatedAt:           message.UpdatedAt.Unix(),
 	}

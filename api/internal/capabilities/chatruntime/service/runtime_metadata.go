@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +19,19 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-const maxModelInvocationMetadataRecords = 100
+const (
+	modelInvocationSchema                  = "zgi.model_invocation.v2"
+	modelInvocationRequestSummarySchema    = "zgi.model_invocation.request_summary.v1"
+	modelInvocationResponseSummarySchema   = "zgi.model_invocation.response_summary.v1"
+	modelInvocationDebugSchema             = "zgi.model_invocation.debug_trace.v1"
+	modelInvocationTraceLevelSummary       = "summary"
+	modelInvocationTraceLevelRawDebug      = "raw_debug"
+	debugModelInvocationsMetadataKey       = "debug_model_invocations"
+	modelInvocationRawDebugEnv             = "ZGI_AICHAT_DEBUG_RAW_MODEL_INVOCATIONS"
+	maxModelInvocationMetadataRecords      = 100
+	maxDebugModelInvocationMetadataRecords = 100
+	modelInvocationDebugRetention          = 7 * 24 * time.Hour
+)
 
 func (s *service) persistSkillTracesBestEffort(ctx context.Context, prepared *PreparedChat, traces []skills.SkillTrace) {
 	if prepared == nil || prepared.Message == nil {
@@ -49,6 +65,7 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 		return
 	}
 	metadata := mergeModelInvocationMetadata(prepared.Message.Metadata, invocation)
+	metadata = mergeDebugModelInvocationMetadata(metadata, debugModelInvocationFromTrace(trace, runtimeUserSystemPrompt(prepared)), time.Now())
 	prepared.Message.Metadata = metadata
 	if s == nil || s.repos == nil || s.repos.Message == nil {
 		return
@@ -149,6 +166,47 @@ func mergeModelInvocationMetadata(source map[string]interface{}, invocation map[
 	return metadata
 }
 
+func mergeDebugModelInvocationMetadata(source map[string]interface{}, invocation map[string]interface{}, now time.Time) map[string]interface{} {
+	metadata := copyStringAnyMap(source)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	stored := pruneDebugModelInvocations(modelInvocationsFromMetadata(metadata[debugModelInvocationsMetadataKey]), now)
+	if len(invocation) > 0 {
+		stored = upsertSkillInvocation(stored, invocation)
+	}
+	if len(stored) > maxDebugModelInvocationMetadataRecords {
+		stored = stored[len(stored)-maxDebugModelInvocationMetadataRecords:]
+	}
+	if len(stored) == 0 {
+		delete(metadata, debugModelInvocationsMetadataKey)
+		delete(metadata, "debug_model_invocation_count")
+		return metadata
+	}
+	metadata[debugModelInvocationsMetadataKey] = skillInvocationsToInterfaceSlice(stored)
+	metadata["debug_model_invocation_count"] = len(stored)
+	return metadata
+}
+
+func pruneDebugModelInvocations(invocations []map[string]interface{}, now time.Time) []map[string]interface{} {
+	if len(invocations) == 0 {
+		return invocations
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	out := make([]map[string]interface{}, 0, len(invocations))
+	nowUnix := now.Unix()
+	for _, invocation := range invocations {
+		expiresAt := intValueFromAny(invocation["expires_at"])
+		if expiresAt > 0 && int64(expiresAt) < nowUnix {
+			continue
+		}
+		out = append(out, invocation)
+	}
+	return out
+}
+
 func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPrompt string) map[string]interface{} {
 	phase := strings.TrimSpace(trace.Phase)
 	if phase == "" {
@@ -163,6 +221,8 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 		status = "error"
 	}
 	invocation := map[string]interface{}{
+		"schema":      modelInvocationSchema,
+		"trace_level": modelInvocationTraceLevelSummary,
 		"kind":        "model_call",
 		"phase":       phase,
 		"round":       trace.Round,
@@ -187,9 +247,52 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 		invocation["total_tokens"] = trace.Usage.TotalTokens
 	}
 	if strings.TrimSpace(userSystemPrompt) != "" {
+		invocation["user_system_prompt"] = textSummaryPayload(userSystemPrompt)
+	}
+	return compactSkillInvocation(invocation)
+}
+
+func debugModelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPrompt string) map[string]interface{} {
+	if !modelInvocationRawDebugEnabled() {
+		return nil
+	}
+	startedAt := trace.StartedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	invocation := map[string]interface{}{
+		"schema":      modelInvocationDebugSchema,
+		"trace_level": modelInvocationTraceLevelRawDebug,
+		"kind":        "model_call",
+		"phase":       firstNonEmptyString(trace.Phase, "model_call"),
+		"round":       trace.Round,
+		"streaming":   trace.Streaming,
+		"created_at":  startedAt.Unix(),
+		"expires_at":  startedAt.Add(modelInvocationDebugRetention).Unix(),
+		"duration_ms": trace.DurationMS,
+		"runtime_id":  fmt.Sprintf("model_call:%s:%d:%d", firstNonEmptyString(trace.Phase, "model_call"), trace.Round, startedAt.UnixNano()),
+		"request":     modelInvocationRawRequestPayload(trace.Request),
+		"response":    modelInvocationRawResponsePayload(trace.Response, trace.Usage),
+		"usage":       usageMetadata(trace.Usage),
+		"error":       strings.TrimSpace(trace.Error),
+	}
+	if trace.Request != nil {
+		invocation["model"] = trace.Request.Model
+		invocation["provider"] = trace.Request.Provider
+	}
+	if strings.TrimSpace(userSystemPrompt) != "" {
 		invocation["user_system_prompt"] = strings.TrimSpace(userSystemPrompt)
 	}
 	return compactSkillInvocation(invocation)
+}
+
+func modelInvocationRawDebugEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(modelInvocationRawDebugEnv))) {
+	case "1", "true", "yes", "on", "debug", "raw":
+		return true
+	default:
+		return false
+	}
 }
 
 func runtimeUserSystemPrompt(prepared *PreparedChat) string {
@@ -217,17 +320,75 @@ func modelInvocationRequestPayload(req *adapter.ChatRequest) map[string]interfac
 	if req == nil {
 		return map[string]interface{}{}
 	}
-	payload := jsonObjectPayload(req)
+	return modelInvocationRequestSummaryPayload(modelInvocationRawRequestPayload(req), req.Provider)
+}
+
+func modelInvocationRawRequestPayload(req *adapter.ChatRequest) map[string]interface{} {
+	if req == nil {
+		return map[string]interface{}{}
+	}
+	request := jsonObjectPayload(req)
 	if strings.TrimSpace(req.Provider) != "" {
-		payload["provider"] = req.Provider
+		request["provider"] = req.Provider
 	}
 	if len(req.AdditionalParameters) > 0 {
-		payload["additional_parameters"] = copyStringAnyMap(req.AdditionalParameters)
+		request["additional_parameters"] = copyStringAnyMap(req.AdditionalParameters)
 	}
-	return payload
+	return request
+}
+
+func modelInvocationRequestSummaryPayload(request map[string]interface{}, provider string) map[string]interface{} {
+	payload := map[string]interface{}{
+		"schema":      modelInvocationRequestSummarySchema,
+		"trace_level": modelInvocationTraceLevelSummary,
+	}
+	if model := strings.TrimSpace(stringFromAny(request["model"])); model != "" {
+		payload["model"] = model
+	}
+	if provider = strings.TrimSpace(provider); provider != "" {
+		payload["provider"] = provider
+	} else if provider = strings.TrimSpace(stringFromAny(request["provider"])); provider != "" {
+		payload["provider"] = provider
+	}
+	copySafeModelRequestParameter(payload, request, "temperature")
+	copySafeModelRequestParameter(payload, request, "top_p")
+	copySafeModelRequestParameter(payload, request, "max_tokens")
+	copySafeModelRequestParameter(payload, request, "presence_penalty")
+	copySafeModelRequestParameter(payload, request, "frequency_penalty")
+	copySafeModelRequestParameter(payload, request, "seed")
+	copySafeModelRequestParameter(payload, request, "n")
+	copySafeModelRequestParameter(payload, request, "stream")
+	if stopCount := len(interfaceSliceFromAny(request["stop"])); stopCount > 0 {
+		payload["stop_count"] = stopCount
+	}
+	if toolsCount := len(interfaceSliceFromAny(request["tools"])); toolsCount > 0 {
+		payload["tool_count"] = toolsCount
+		payload["has_tools"] = true
+	}
+	if functionsCount := len(interfaceSliceFromAny(request["functions"])); functionsCount > 0 {
+		payload["function_count"] = functionsCount
+	}
+	if responseFormat := mapFromAny(request["response_format"]); len(responseFormat) > 0 {
+		if formatType := strings.TrimSpace(stringFromAny(responseFormat["type"])); formatType != "" {
+			payload["response_format_type"] = formatType
+		}
+		if len(mapFromAny(responseFormat["schema"])) > 0 {
+			payload["has_response_schema"] = true
+		}
+	}
+	if additional := mapFromAny(request["additional_parameters"]); len(additional) > 0 {
+		payload["additional_parameter_keys"] = sortedMapKeys(additional)
+	}
+	mergeModelMessagesSummary(payload, request["messages"])
+	payload["prompt_hash"] = hashAnyPayload(request)
+	return compactSkillInvocation(payload)
 }
 
 func modelInvocationResponsePayload(message *adapter.Message, usage *adapter.Usage) map[string]interface{} {
+	return modelInvocationResponseSummaryPayload(modelInvocationRawResponsePayload(message, usage))
+}
+
+func modelInvocationRawResponsePayload(message *adapter.Message, usage *adapter.Usage) map[string]interface{} {
 	payload := map[string]interface{}{}
 	if message != nil {
 		payload["message"] = jsonObjectPayload(message)
@@ -236,6 +397,365 @@ func modelInvocationResponsePayload(message *adapter.Message, usage *adapter.Usa
 		payload["usage"] = usageMap
 	}
 	return payload
+}
+
+func modelInvocationResponseSummaryPayload(response map[string]interface{}) map[string]interface{} {
+	payload := map[string]interface{}{
+		"schema":      modelInvocationResponseSummarySchema,
+		"trace_level": modelInvocationTraceLevelSummary,
+	}
+	if message := mapFromAny(response["message"]); len(message) > 0 {
+		payload["message"] = summarizeModelMessageMap(message, 0)
+	}
+	if usageMap := mapFromAny(response["usage"]); len(usageMap) > 0 {
+		payload["usage"] = usageMap
+	}
+	payload["response_hash"] = hashAnyPayload(response)
+	return compactSkillInvocation(payload)
+}
+
+// PublicMessageMetadata returns metadata safe for webapp and console API responses.
+func PublicMessageMetadata(metadata map[string]interface{}) map[string]interface{} {
+	if metadata == nil {
+		return nil
+	}
+	out := copyStringAnyMap(metadata)
+	delete(out, debugModelInvocationsMetadataKey)
+	delete(out, "debug_model_invocation_count")
+	if invocations := publicModelInvocations(out["model_invocations"]); len(invocations) > 0 {
+		out["model_invocations"] = invocations
+		out["model_invocation_count"] = len(invocations)
+	}
+	return out
+}
+
+// PublicModelInvocationEvent returns a single model invocation safe for webapp logs.
+func PublicModelInvocationEvent(event map[string]interface{}) map[string]interface{} {
+	if len(event) == 0 {
+		return map[string]interface{}{}
+	}
+	out := copyStringAnyMap(event)
+	out["schema"] = modelInvocationSchema
+	out["trace_level"] = modelInvocationTraceLevelSummary
+	if request := mapFromAny(event["request"]); len(request) > 0 {
+		out["request"] = PublicModelInvocationRequest(request, stringFromAny(event["user_system_prompt"]))
+	}
+	if response := mapFromAny(event["response"]); len(response) > 0 {
+		out["response"] = PublicModelInvocationResponse(response)
+	}
+	if prompt := strings.TrimSpace(stringFromAny(event["user_system_prompt"])); prompt != "" {
+		out["user_system_prompt"] = textSummaryPayload(prompt)
+	}
+	delete(out, debugModelInvocationsMetadataKey)
+	return compactSkillInvocation(out)
+}
+
+// PublicModelInvocationRequest summarizes a model request without exposing prompt text.
+func PublicModelInvocationRequest(request map[string]interface{}, userSystemPrompt string) map[string]interface{} {
+	if isModelInvocationSummaryPayload(request, modelInvocationRequestSummarySchema) {
+		payload := copyStringAnyMap(request)
+		if strings.TrimSpace(userSystemPrompt) != "" {
+			payload["user_system_prompt"] = textSummaryPayload(userSystemPrompt)
+		}
+		return compactSkillInvocation(payload)
+	}
+	payload := modelInvocationRequestSummaryPayload(request, "")
+	if strings.TrimSpace(userSystemPrompt) != "" {
+		payload["user_system_prompt"] = textSummaryPayload(userSystemPrompt)
+	}
+	return compactSkillInvocation(payload)
+}
+
+// PublicModelInvocationResponse summarizes a model response without exposing response text.
+func PublicModelInvocationResponse(response map[string]interface{}) map[string]interface{} {
+	if isModelInvocationSummaryPayload(response, modelInvocationResponseSummarySchema) {
+		return compactSkillInvocation(copyStringAnyMap(response))
+	}
+	return modelInvocationResponseSummaryPayload(response)
+}
+
+func publicModelInvocations(value interface{}) []interface{} {
+	invocations := modelInvocationsFromMetadata(value)
+	if len(invocations) == 0 {
+		return nil
+	}
+	out := make([]interface{}, 0, len(invocations))
+	for _, invocation := range invocations {
+		out = append(out, PublicModelInvocationEvent(invocation))
+	}
+	return out
+}
+
+func isModelInvocationSummaryPayload(payload map[string]interface{}, schema string) bool {
+	return strings.TrimSpace(stringFromAny(payload["schema"])) == schema &&
+		strings.TrimSpace(stringFromAny(payload["trace_level"])) == modelInvocationTraceLevelSummary
+}
+
+func copySafeModelRequestParameter(out map[string]interface{}, source map[string]interface{}, key string) {
+	if value, ok := safeScalarValue(source[key]); ok {
+		out[key] = value
+	}
+}
+
+func safeScalarValue(value interface{}) (interface{}, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number:
+		return typed, true
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" || len([]rune(text)) > 120 {
+			return nil, false
+		}
+		return text, true
+	default:
+		return nil, false
+	}
+}
+
+func mergeModelMessagesSummary(payload map[string]interface{}, value interface{}) {
+	messages := interfaceSliceFromAny(value)
+	if len(messages) == 0 {
+		return
+	}
+	roleCounts := map[string]interface{}{}
+	roles := make([]interface{}, 0, len(messages))
+	summaries := make([]interface{}, 0, len(messages))
+	totalContentChars := 0
+	runtimeContextChars := 0
+	toolCallCount := 0
+	toolMessageCount := 0
+	imagePartCount := 0
+	textPartCount := 0
+	toolNamesSeen := map[string]struct{}{}
+	toolNames := make([]interface{}, 0)
+	hasRuntimeContext := false
+
+	for index, item := range messages {
+		message := mapFromAny(item)
+		if len(message) == 0 {
+			continue
+		}
+		summary := summarizeModelMessageMap(message, index)
+		summaries = append(summaries, summary)
+		role := strings.TrimSpace(stringFromAny(summary["role"]))
+		if role != "" {
+			roles = append(roles, role)
+			roleCounts[role] = intValueFromAny(roleCounts[role]) + 1
+		}
+		totalContentChars += intValueFromAny(summary["content_chars"])
+		runtimeContextChars += intValueFromAny(summary["runtime_context_char_count"])
+		toolCallCount += intValueFromAny(summary["tool_call_count"])
+		imagePartCount += intValueFromAny(summary["image_part_count"])
+		textPartCount += intValueFromAny(summary["text_part_count"])
+		if role == "tool" {
+			toolMessageCount++
+		}
+		if value, ok := summary["has_runtime_context"].(bool); ok && value {
+			hasRuntimeContext = true
+		}
+		for _, rawName := range interfaceSliceFromAny(summary["tool_call_names"]) {
+			name := strings.TrimSpace(stringFromAny(rawName))
+			if name == "" {
+				continue
+			}
+			if _, exists := toolNamesSeen[name]; exists {
+				continue
+			}
+			toolNamesSeen[name] = struct{}{}
+			toolNames = append(toolNames, name)
+		}
+	}
+
+	payload["message_count"] = len(messages)
+	payload["message_roles"] = roles
+	payload["message_role_counts"] = roleCounts
+	payload["messages"] = summaries
+	payload["total_content_chars"] = totalContentChars
+	if toolCallCount > 0 {
+		payload["tool_call_count"] = toolCallCount
+		payload["tool_call_names"] = toolNames
+	}
+	if toolMessageCount > 0 {
+		payload["tool_message_count"] = toolMessageCount
+	}
+	if imagePartCount > 0 {
+		payload["image_part_count"] = imagePartCount
+	}
+	if textPartCount > 0 {
+		payload["text_part_count"] = textPartCount
+	}
+	if hasRuntimeContext {
+		payload["has_runtime_context"] = true
+		payload["runtime_context_char_count"] = runtimeContextChars
+	}
+}
+
+func summarizeModelMessageMap(message map[string]interface{}, index int) map[string]interface{} {
+	summary := map[string]interface{}{
+		"index": index,
+	}
+	if role := strings.TrimSpace(stringFromAny(message["role"])); role != "" {
+		summary["role"] = role
+	}
+	mergeContentSummary(summary, message["content"])
+	if toolCalls := interfaceSliceFromAny(message["tool_calls"]); len(toolCalls) > 0 {
+		toolNames := make([]interface{}, 0, len(toolCalls))
+		argumentsChars := 0
+		for _, item := range toolCalls {
+			toolCall := mapFromAny(item)
+			function := mapFromAny(toolCall["function"])
+			if name := strings.TrimSpace(stringFromAny(function["name"])); name != "" {
+				toolNames = append(toolNames, name)
+			}
+			argumentsChars += len([]rune(stringFromAny(function["arguments"])))
+		}
+		summary["tool_call_count"] = len(toolCalls)
+		if len(toolNames) > 0 {
+			summary["tool_call_names"] = toolNames
+		}
+		if argumentsChars > 0 {
+			summary["tool_call_arguments_chars"] = argumentsChars
+		}
+	}
+	if functionCall := mapFromAny(message["function_call"]); len(functionCall) > 0 {
+		summary["function_call"] = compactSkillInvocation(map[string]interface{}{
+			"name":            strings.TrimSpace(stringFromAny(functionCall["name"])),
+			"arguments_chars": len([]rune(stringFromAny(functionCall["arguments"]))),
+		})
+	}
+	return compactSkillInvocation(summary)
+}
+
+func mergeContentSummary(summary map[string]interface{}, content interface{}) {
+	switch typed := content.(type) {
+	case string:
+		contentChars := len([]rune(typed))
+		summary["content_type"] = "text"
+		summary["content_chars"] = contentChars
+		if hasRuntimeContextMarker(typed) {
+			summary["has_runtime_context"] = true
+			summary["runtime_context_char_count"] = contentChars
+		}
+	case []interface{}:
+		textChars := 0
+		textPartCount := 0
+		imagePartCount := 0
+		hasRuntimeContext := false
+		runtimeChars := 0
+		for _, item := range typed {
+			part := mapFromAny(item)
+			switch strings.TrimSpace(stringFromAny(part["type"])) {
+			case "text", "input_text":
+				text := stringFromAny(part["text"])
+				textPartCount++
+				textChars += len([]rune(text))
+				if hasRuntimeContextMarker(text) {
+					hasRuntimeContext = true
+					runtimeChars += len([]rune(text))
+				}
+			case "image_url", "input_image":
+				imagePartCount++
+			}
+		}
+		summary["content_type"] = "parts"
+		summary["content_chars"] = textChars
+		if textPartCount > 0 {
+			summary["text_part_count"] = textPartCount
+		}
+		if imagePartCount > 0 {
+			summary["image_part_count"] = imagePartCount
+		}
+		if hasRuntimeContext {
+			summary["has_runtime_context"] = true
+			summary["runtime_context_char_count"] = runtimeChars
+		}
+	case nil:
+		return
+	default:
+		summary["content_type"] = "structured"
+		summary["content_chars"] = len([]rune(fmt.Sprintf("%v", typed)))
+	}
+}
+
+func hasRuntimeContextMarker(text string) bool {
+	text = strings.ToLower(text)
+	return strings.Contains(text, "transient zgi page context") ||
+		strings.Contains(text, "current zgi page context") ||
+		strings.Contains(text, "zgi page context")
+}
+
+func textSummaryPayload(text string) map[string]interface{} {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"trace_level": modelInvocationTraceLevelSummary,
+		"char_count":  len([]rune(text)),
+		"sha256":      hashString(text),
+	}
+}
+
+func hashAnyPayload(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return hashString(fmt.Sprintf("%v", value))
+	}
+	return hashBytes(data)
+}
+
+func hashString(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return hashBytes([]byte(value))
+}
+
+func hashBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func mapFromAny(value interface{}) map[string]interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return copyStringAnyMap(typed)
+	default:
+		return map[string]interface{}{}
+	}
+}
+
+func interfaceSliceFromAny(value interface{}) []interface{} {
+	switch typed := value.(type) {
+	case []interface{}:
+		return typed
+	case []map[string]interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func sortedMapKeys(values map[string]interface{}) []interface{} {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]interface{}, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key)
+	}
+	return out
 }
 
 func jsonObjectPayload(value interface{}) map[string]interface{} {

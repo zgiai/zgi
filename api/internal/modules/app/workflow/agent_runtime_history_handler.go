@@ -419,7 +419,7 @@ func buildRuntimeChatMessagesResponse(messages []*runtimemodel.Message, total in
 			"model_provider":    message.ModelProvider,
 			"model_name":        message.ModelName,
 			"created_at":        message.CreatedAt.Unix(),
-			"message_metadata":  message.Metadata,
+			"message_metadata":  runtimeservice.PublicMessageMetadata(message.Metadata),
 		})
 	}
 	return map[string]interface{}{
@@ -436,6 +436,7 @@ func buildRuntimeLogItem(message *runtimemodel.Message) map[string]interface{} {
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
+	publicMetadata := runtimeservice.PublicMessageMetadata(metadata)
 	item := map[string]interface{}{
 		"id":               message.ID.String(),
 		"conversation_id":  message.ConversationID.String(),
@@ -456,8 +457,8 @@ func buildRuntimeLogItem(message *runtimemodel.Message) map[string]interface{} {
 		"query":               message.Query,
 		"skill_invocations":   metadata["skill_invocations"],
 		"generated_files":     metadata["generated_files"],
-		"message_metadata":    metadata,
-		"billing_app_context": metadata["billing_app_context"],
+		"message_metadata":    publicMetadata,
+		"billing_app_context": publicMetadata["billing_app_context"],
 	}
 	if message.Error != nil {
 		item["error"] = *message.Error

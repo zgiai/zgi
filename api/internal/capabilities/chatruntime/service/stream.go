@@ -650,7 +650,7 @@ func messageEndPayloadWithStatus(prepared *PreparedChat, metadata map[string]int
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"status":          strings.TrimSpace(status),
-		"metadata":        copyStringAnyMap(metadata),
+		"metadata":        PublicMessageMetadata(metadata),
 	}
 }
 
