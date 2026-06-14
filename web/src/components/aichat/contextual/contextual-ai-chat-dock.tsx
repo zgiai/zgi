@@ -148,6 +148,7 @@ export function ContextualAIChatDock() {
       <SheetContent
         side="right"
         showClose={false}
+        overlayClassName="bg-transparent backdrop-blur-none"
         className="flex h-full min-h-0 w-[min(720px,100vw)] max-w-none flex-col overflow-hidden p-0 sm:max-w-none"
       >
         <SheetTitle className="sr-only">AIChat assistant</SheetTitle>

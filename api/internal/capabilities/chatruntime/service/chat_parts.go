@@ -150,15 +150,16 @@ func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error)
 		providerPtr = &provider
 	}
 	return &chatRequestParts{
-		Query:            query,
-		RuntimeContext:   runtimeContext,
-		OperationContext: operationContext,
-		OperationLedger:  operationLedger,
-		ModelName:        modelName,
-		Provider:         provider,
-		ProviderPtr:      providerPtr,
-		Parameters:       params,
-		UseMemory:        req.UseMemory,
+		Query:               query,
+		RuntimeContext:      runtimeContext,
+		RawOperationContext: copyStringAnyMap(req.OperationContext),
+		OperationContext:    operationContext,
+		OperationLedger:     operationLedger,
+		ModelName:           modelName,
+		Provider:            provider,
+		ProviderPtr:         providerPtr,
+		Parameters:          params,
+		UseMemory:           req.UseMemory,
 	}, nil
 }
 

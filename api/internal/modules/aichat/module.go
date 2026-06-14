@@ -54,6 +54,14 @@ func NewModuleWithDependencies(
 			logger.Error("failed to validate aichat skill catalog", err)
 		}
 	}
+	actionOptions := []actionservice.Option{}
+	if fileService != nil {
+		actionOptions = append(actionOptions, actionservice.WithExecutor(
+			"file.read",
+			actionservice.NewFileReadExecutor(fileService, contentExtractor, workspacePerms),
+		))
+	}
+	actionSvc := actionservice.NewService(actionrepo.NewRepository(db), actionservice.NewDefaultRegistry(), actionOptions...)
 	svc := service.NewServiceWithSkillRuntime(
 		repos,
 		llmClient,
@@ -65,6 +73,7 @@ func NewModuleWithDependencies(
 		skillRuntime,
 		memoryService,
 		agentMemoryService,
+		actionSvc,
 	)
 	if _, err := svc.CleanupStaleActiveMessages(context.Background()); err != nil {
 		logger.Warn("failed to cleanup stale aichat messages", err)
@@ -72,14 +81,6 @@ func NewModuleWithDependencies(
 	if err := svc.CleanupExpiredCustomSkillImportPreviews(context.Background()); err != nil {
 		logger.Warn("failed to cleanup expired aichat skill import previews", err)
 	}
-	actionOptions := []actionservice.Option{}
-	if fileService != nil {
-		actionOptions = append(actionOptions, actionservice.WithExecutor(
-			"file.read",
-			actionservice.NewFileReadExecutor(fileService, contentExtractor, workspacePerms),
-		))
-	}
-	actionSvc := actionservice.NewService(actionrepo.NewRepository(db), actionservice.NewDefaultRegistry(), actionOptions...)
 	return &Module{
 		Handler:       handler.NewHandler(svc, actionSvc),
 		Service:       svc,

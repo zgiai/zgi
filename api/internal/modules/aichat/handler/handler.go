@@ -520,13 +520,15 @@ func writeChatError(c *gin.Context, prepared *runtimeservice.PreparedChat, err e
 }
 
 func writeChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result *runtimeservice.ChatResult) {
+	metadata := map[string]interface{}{}
+	if result != nil && result.Metadata != nil {
+		metadata = result.Metadata
+	}
 	_ = writeSSE(c, "message_end", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"status":          runtimemodel.MessageStatusCompleted,
-		"metadata": gin.H{
-			"usage": result.Metadata["usage"],
-		},
+		"metadata":        metadata,
 	})
 }
 

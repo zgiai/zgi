@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { FileSidebar } from '@/components/files/file-sidebar';
 import { FileList } from '@/components/files/file-list';
 import { UploadDialog, type UploadConfig } from '@/components/files/upload-dialog';
@@ -74,6 +74,11 @@ import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-
 import { fileManageService } from '@/services/file-manage.service';
 import type { Organization } from '@/services/types/organization';
 import type { Workspace } from '@/store/workspace-store';
+import {
+  useAIChatContextRegistration,
+  type AIChatCapabilityDescriptor,
+  type AIChatContextItem,
+} from '@/components/aichat/contextual';
 
 export interface FileManagementContentProps {
   /** Enable file selection mode */
@@ -90,14 +95,159 @@ export interface FileManagementContentProps {
   acceptExt?: string[];
   /** Enable workspace switcher inside file selector empty state */
   allowWorkspaceSwitch?: boolean;
+  /** Register visible file-page state for contextual AIChat */
+  enableAIChatContext?: boolean;
 }
 
 const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
+const FILES_CONTEXT_VISIBLE_LIMIT = 20;
 
 const waitForMinimumRefreshDuration = () =>
   new Promise<void>(resolve => {
     setTimeout(resolve, 1000);
   });
+
+const fileReadCapability: AIChatCapabilityDescriptor = {
+  id: 'file.read',
+  title: 'Read file',
+  description: 'Read file metadata and contents for files visible on the current files page.',
+  risk: 'low',
+  status: 'available',
+  permissions: ['file.view'],
+};
+
+function compactAIChatContextText(value: string, maxLength = 1200): string {
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trim()}...`;
+}
+
+function buildVisibleFileContextDescription(files: FileItem[]) {
+  if (files.length === 0) return 'No files are visible with the current filters.';
+
+  return compactAIChatContextText(
+    files
+      .map(file =>
+        [
+          `id=${file.id}`,
+          `name=${file.name}`,
+          `extension=${file.extension}`,
+          `size=${file.size}`,
+          `workspace_id=${file.workspace_id || 'personal'}`,
+          `created_at=${file.created_at}`,
+        ].join(', ')
+      )
+      .join(' | ')
+  );
+}
+
+function buildFilesPageContextDescription(files: FileItem[], selectedFileIds: string[]) {
+  const selectedSummary =
+    selectedFileIds.length > 0
+      ? `Selected file ids: ${selectedFileIds.join(',')}. `
+      : 'No files are selected. ';
+
+  return compactAIChatContextText(
+    `${selectedSummary}Visible files: ${buildVisibleFileContextDescription(files)}`,
+    1200
+  );
+}
+
+function buildFilesAIChatContextItems(params: {
+  files: FileItem[];
+  selectedFileIds: string[];
+  currentPage: number;
+  totalPages: number;
+  total: number;
+  activeCategory: string;
+  searchValue: string;
+  extensionParam?: string;
+  currentWorkspace: Workspace | null;
+  isOrganizationMode: boolean;
+  activeFolderName?: string;
+}): AIChatContextItem[] {
+  const {
+    files,
+    selectedFileIds,
+    currentPage,
+    totalPages,
+    total,
+    activeCategory,
+    searchValue,
+    extensionParam,
+    currentWorkspace,
+    isOrganizationMode,
+    activeFolderName,
+  } = params;
+  const visibleFiles = files.slice(0, FILES_CONTEXT_VISIBLE_LIMIT);
+  const selectedVisibleCount = visibleFiles.filter(file => selectedFileIds.includes(file.id)).length;
+  const scopeLabel = isOrganizationMode
+    ? 'Personal space'
+    : currentWorkspace?.name || 'Current workspace';
+
+  return [
+    {
+      id: 'console.files',
+      type: 'page',
+      title: 'console.files',
+      subtitle: `${scopeLabel} files page`,
+      description: buildFilesPageContextDescription(visibleFiles, selectedFileIds),
+      href: '/console/files',
+      source: 'Files page',
+      status: 'available',
+      capabilities: [fileReadCapability],
+      metadata: {
+        page: 'console.files',
+        route: '/console/files',
+        visible_file_count: visibleFiles.length,
+        selected_file_ids: selectedFileIds.join(','),
+        selected_file_count: selectedFileIds.length,
+        selected_visible_file_count: selectedVisibleCount,
+        current_page: currentPage,
+        category: activeCategory,
+        total_file_count: total,
+        total_pages: totalPages,
+        folder_name: activeFolderName,
+        search: searchValue.trim(),
+        extension_filter: extensionParam,
+        workspace_id: currentWorkspace?.id,
+        workspace_name: currentWorkspace?.name,
+        organization_mode: isOrganizationMode,
+      },
+    },
+    ...visibleFiles.map(file => ({
+      id: file.id,
+      type: 'file' as const,
+      title: file.name,
+      subtitle: `${file.extension || 'file'} - ${file.size} bytes`,
+      description: `Visible on console.files page. Workspace: ${file.workspace_id || 'personal'}. Created: ${file.created_at}.`,
+      href: '/console/files',
+      source: 'Files page',
+      status: 'available' as const,
+      capabilities: [fileReadCapability],
+      metadata: {
+        page: 'console.files',
+        file_id: file.id,
+        selected: selectedFileIds.includes(file.id),
+        name: file.name,
+        extension: file.extension,
+        size: file.size,
+        mime_type: file.mime_type,
+        workspace_id: file.workspace_id,
+        created_at: file.created_at,
+        created_by: file.created_by,
+        storage_type: file.storage_type,
+        related_count: file.related_count,
+        related_dataset_count: file.related_dataset_count,
+      },
+    })),
+  ];
+}
+
+function FilesAIChatContextRegistration({ items }: { items: AIChatContextItem[] }) {
+  useAIChatContextRegistration(items, { scopeId: 'console-files' });
+  return null;
+}
 
 async function getFolderDepth(folderId: string) {
   let depth = 0;
@@ -426,6 +576,7 @@ const FileManagementContent = ({
   acceptExt = [],
   maxCount,
   allowWorkspaceSwitch = false,
+  enableAIChatContext = false,
 }: FileManagementContentProps): React.ReactNode => {
   const [searchValue, setSearchValue] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
@@ -493,6 +644,41 @@ const FileManagementContent = ({
       extension: extensionParam,
       workspaceId: workspaceId,
     });
+  const activeFolderName = SYSTEM_FILE_CATEGORIES.has(activeCategory)
+    ? undefined
+    : folders.find(folder => folder.id === activeCategory)?.name;
+  const aiChatContextItems = useMemo<AIChatContextItem[]>(
+    () =>
+      enableAIChatContext
+        ? buildFilesAIChatContextItems({
+            files,
+            selectedFileIds: selectedFiles,
+            currentPage,
+            totalPages,
+            total,
+            activeCategory,
+            searchValue: debouncedSearchValue,
+            extensionParam,
+            currentWorkspace,
+            isOrganizationMode,
+            activeFolderName,
+          })
+        : [],
+    [
+      activeCategory,
+      activeFolderName,
+      currentPage,
+      currentWorkspace,
+      debouncedSearchValue,
+      enableAIChatContext,
+      extensionParam,
+      files,
+      isOrganizationMode,
+      selectedFiles,
+      total,
+      totalPages,
+    ]
+  );
 
   const prevPropRef = useRef<string[]>(selectedFileIds);
   const prevInternalRef = useRef<string[]>(selectedFiles);
@@ -908,6 +1094,7 @@ const FileManagementContent = ({
 
   return (
     <>
+      {enableAIChatContext ? <FilesAIChatContextRegistration items={aiChatContextItems} /> : null}
       {isMobileSelectionMode ? (
         <div className="flex min-h-0 flex-1 flex-col bg-background">
           <div className="shrink-0 border-b bg-background px-3 py-3">
