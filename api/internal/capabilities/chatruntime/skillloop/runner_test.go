@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -252,6 +253,126 @@ Use the workflow tool.
 	nodeStarted := findRunnerTestEvent(events, EventWorkflowNodeStarted)
 	if nodeStarted == nil || nodeStarted.Payload["node_id"] != "node-1" {
 		t.Fatalf("events = %#v, want node_started node-1", events)
+	}
+}
+
+func TestRunnerFeedsToolGovernanceDecisionBackToModel(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "governed-files", `---
+name: governed-files
+description: Governed files test skill.
+when_to_use: Use when testing tool governance feedback.
+provider_type: builtin
+provider_id: files
+runtime_type: tool
+tools:
+  - delete_file
+tool_governance:
+  delete_file:
+    tool_id: file.delete
+    domain: files
+    effect: delete
+    asset_type: file
+    risk_level: high
+    requires_asset_resolution: true
+    audit_required: true
+---
+
+# Governed Files
+
+Use governed file tools.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"governed-files"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_delete", "governed-files", "delete_file", map[string]interface{}{
+								"file_id": "file-1",
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "需要你的确认后才能删除该文件。"},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, catalogDir).
+		WithToolGovernanceGateway(skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"governed-files"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "删除第一个文件"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		ExecutionContext: skills.ExecutionContext{
+			ConversationID: "conv-1",
+			MessageID:      "msg-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets": []map[string]interface{}{
+						{"id": "file-1", "type": "file", "name": "report.pdf"},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "需要你的确认后才能删除该文件。" {
+		t.Fatalf("answer = %q, want approval explanation after governance feedback", answer)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want replan after governance feedback", fakeLLM.appChatCalls)
+	}
+	event := findRunnerTestEvent(events, EventToolGovernanceDecision)
+	if event == nil {
+		t.Fatalf("events = %#v, want tool_governance_decision", events)
+	}
+	if event.Payload["decision"] != toolgovernance.DecisionStatusNeedsApproval {
+		t.Fatalf("governance payload = %#v, want needs_approval", event.Payload)
+	}
+	if event.Payload["requires_approval"] != true {
+		t.Fatalf("governance payload = %#v, want requires_approval", event.Payload)
 	}
 }
 

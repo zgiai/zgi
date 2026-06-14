@@ -39,6 +39,7 @@ type Runtime struct {
 	manager      *tools.ToolManager
 	catalogDir   string
 	scriptRunner SkillScriptRunner
+	governance   ToolGovernanceGateway
 }
 
 type SkillScriptRunner interface {
@@ -83,6 +84,13 @@ func NewRuntimeWithCatalog(engine *tools.ToolEngine, manager *tools.ToolManager,
 func (r *Runtime) WithScriptRunner(scriptRunner SkillScriptRunner) *Runtime {
 	if r != nil && scriptRunner != nil && scriptRunner.Configured() {
 		r.scriptRunner = scriptRunner
+	}
+	return r
+}
+
+func (r *Runtime) WithToolGovernanceGateway(governance ToolGovernanceGateway) *Runtime {
+	if r != nil {
+		r.governance = governance
 	}
 	return r
 }
@@ -368,12 +376,20 @@ func (r *Runtime) CallSkillTool(
 		}
 		return r.scriptRunner.RunSkillScript(ctx, *doc, arguments, execCtx, callID)
 	}
-	if r.engine == nil {
-		return nil, fmt.Errorf("tool engine is not configured")
-	}
 	toolDef, ok := findSkillTool(*doc, toolName)
 	if !ok {
 		return nil, fmt.Errorf("tool %s is not available in skill %s", strings.TrimSpace(toolName), doc.Metadata.ID)
+	}
+
+	governanceDecision, governed, preflight, err := r.preflightToolGovernance(ctx, *doc, toolDef, arguments, execCtx, callID)
+	if preflight != nil {
+		return preflight, err
+	}
+	if err != nil {
+		return nil, err
+	}
+	if r.engine == nil {
+		return nil, fmt.Errorf("tool engine is not configured")
 	}
 
 	timeout := docTimeoutSeconds(*doc)
@@ -401,6 +417,9 @@ func (r *Runtime) CallSkillTool(
 		Status:     "success",
 		DurationMS: time.Since(start).Milliseconds(),
 		Arguments:  summarizeArguments(arguments),
+	}
+	if governed {
+		trace.Governance = &governanceDecision
 	}
 	if err != nil {
 		trace.Status = "error"
@@ -430,6 +449,93 @@ func (r *Runtime) CallSkillTool(
 			Content:    toolMessagesContent(result.Messages),
 		},
 	}, nil
+}
+
+func (r *Runtime) preflightToolGovernance(
+	ctx context.Context,
+	doc SkillDocument,
+	toolDef SkillToolDefinition,
+	arguments map[string]interface{},
+	execCtx ExecutionContext,
+	callID string,
+) (toolgovernance.Decision, bool, *ToolInvocationResult, error) {
+	if r == nil || r.governance == nil || toolDef.Governance == nil {
+		return toolgovernance.Decision{}, false, nil, nil
+	}
+	start := time.Now()
+	decision, err := r.governance.DecideSkillTool(ctx, ToolGovernanceRequest{
+		Manifest:         *toolDef.Governance,
+		SkillID:          doc.Metadata.ID,
+		ToolName:         toolDef.Name,
+		ProviderType:     toolDef.ProviderType,
+		ProviderID:       toolDef.ProviderID,
+		Arguments:        copyStringAnyMap(arguments),
+		ExecutionContext: execCtx,
+	})
+	trace := SkillTrace{
+		Kind:       "tool_governance",
+		SkillID:    doc.Metadata.ID,
+		ToolName:   toolDef.Name,
+		Status:     string(decision.Status),
+		DurationMS: time.Since(start).Milliseconds(),
+		Arguments:  summarizeArguments(arguments),
+		Governance: &decision,
+		Result:     governanceTraceResult(decision),
+	}
+	if err != nil {
+		trace.Status = "error"
+		trace.Error = err.Error()
+		return decision, true, &ToolInvocationResult{Trace: trace}, err
+	}
+	if decision.Status == toolgovernance.DecisionStatusAllowed {
+		return decision, true, nil, nil
+	}
+	callID = strings.TrimSpace(callID)
+	if callID == "" {
+		callID = "call_" + toolDef.Name
+	}
+	return decision, true, &ToolInvocationResult{
+		Trace:       trace,
+		ToolMessage: ToolResultMessage(callID, governanceToolFeedback(decision)),
+	}, nil
+}
+
+func governanceTraceResult(decision toolgovernance.Decision) map[string]interface{} {
+	result := governanceToolFeedback(decision)
+	if decision.ApprovalEvent != nil {
+		result["approval_event"] = decision.ApprovalEvent
+	}
+	return result
+}
+
+func governanceToolFeedback(decision toolgovernance.Decision) map[string]interface{} {
+	feedback := copyStringAnyMap(decision.ModelFeedback)
+	if feedback == nil {
+		feedback = map[string]interface{}{}
+	}
+	feedback["status"] = string(decision.Status)
+	feedback["reason"] = strings.TrimSpace(decision.Reason)
+	feedback["correlation_id"] = strings.TrimSpace(decision.CorrelationID)
+	feedback["requires_approval"] = decision.RequiresApproval
+	feedback["instruction"] = governanceInstruction(decision.Status)
+	return map[string]interface{}{
+		"governance": feedback,
+	}
+}
+
+func governanceInstruction(status toolgovernance.DecisionStatus) string {
+	switch status {
+	case toolgovernance.DecisionStatusNeedsApproval:
+		return "The tool was not executed. Explain that user approval is required and wait for approval before retrying this action."
+	case toolgovernance.DecisionStatusNeedsResolution:
+		return "The tool was not executed. Ask the user to clarify the target asset or resolve the asset reference before retrying."
+	case toolgovernance.DecisionStatusDenied:
+		return "The tool was not executed. Explain the denial and continue with a safe alternative."
+	case toolgovernance.DecisionStatusBlocked:
+		return "The tool was not executed. Explain why the action is blocked and continue without this tool."
+	default:
+		return "Continue with the tool result."
+	}
 }
 
 func MetaTools() []llmadapter.Tool {

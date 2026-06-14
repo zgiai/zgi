@@ -49,6 +49,35 @@ func SkillCallEndPayload(ids PayloadIDs, trace skills.SkillTrace, includeKind bo
 	if len(trace.Result) > 0 {
 		payload["result"] = trace.Result
 	}
+	if trace.Governance != nil {
+		payload["governance"] = trace.Governance
+	}
+	return payload
+}
+
+func ToolGovernanceDecisionPayload(ids PayloadIDs, trace skills.SkillTrace) map[string]interface{} {
+	payload := map[string]interface{}{
+		"conversation_id": ids.ConversationID,
+		"message_id":      ids.MessageID,
+		"skill_id":        trace.SkillID,
+		"tool_name":       trace.ToolName,
+		"status":          trace.Status,
+		"duration_ms":     trace.DurationMS,
+		"created_at":      time.Now().Unix(),
+	}
+	if trace.Governance != nil {
+		payload["governance"] = trace.Governance
+		payload["correlation_id"] = trace.Governance.CorrelationID
+		payload["decision"] = trace.Governance.Status
+		payload["requires_approval"] = trace.Governance.RequiresApproval
+		payload["reason"] = trace.Governance.Reason
+		payload["risk_level"] = trace.Governance.Manifest.RiskLevel
+		payload["effect"] = trace.Governance.Manifest.Effect
+		payload["asset_type"] = trace.Governance.Manifest.AssetType
+		if trace.Governance.ApprovalEvent != nil {
+			payload["approval_event"] = trace.Governance.ApprovalEvent
+		}
+	}
 	return payload
 }
 
@@ -66,6 +95,9 @@ func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status strin
 	}
 	if includeKind {
 		payload["kind"] = trace.Kind
+	}
+	if trace.Governance != nil {
+		payload["governance"] = trace.Governance
 	}
 	return payload
 }

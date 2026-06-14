@@ -359,6 +359,9 @@ func skillInvocationFromTrace(trace skills.SkillTrace, index int) map[string]int
 		"error":       trace.Error,
 		"runtime_id":  traceRuntimeID(trace, index),
 	}
+	if trace.Governance != nil {
+		invocation["governance"] = trace.Governance
+	}
 	if path := firstNonEmptyString(valueFromMap(trace.Arguments, "path"), valueFromMap(trace.Result, "path")); path != "" {
 		invocation["path"] = path
 	}

@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"context"
 	"strings"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
@@ -158,16 +159,31 @@ type SkillReference struct {
 }
 
 type SkillTrace struct {
-	Kind       string                 `json:"kind"`
-	SkillID    string                 `json:"skill_id,omitempty"`
-	ToolName   string                 `json:"tool_name,omitempty"`
-	Title      string                 `json:"title,omitempty"`
-	Message    string                 `json:"message,omitempty"`
-	Status     string                 `json:"status"`
-	DurationMS int64                  `json:"duration_ms,omitempty"`
-	Arguments  map[string]interface{} `json:"arguments,omitempty"`
-	Result     map[string]interface{} `json:"result,omitempty"`
-	Error      string                 `json:"error,omitempty"`
+	Kind       string                   `json:"kind"`
+	SkillID    string                   `json:"skill_id,omitempty"`
+	ToolName   string                   `json:"tool_name,omitempty"`
+	Title      string                   `json:"title,omitempty"`
+	Message    string                   `json:"message,omitempty"`
+	Status     string                   `json:"status"`
+	DurationMS int64                    `json:"duration_ms,omitempty"`
+	Arguments  map[string]interface{}   `json:"arguments,omitempty"`
+	Result     map[string]interface{}   `json:"result,omitempty"`
+	Governance *toolgovernance.Decision `json:"governance,omitempty"`
+	Error      string                   `json:"error,omitempty"`
+}
+
+type ToolGovernanceRequest struct {
+	Manifest         toolgovernance.Manifest
+	SkillID          string
+	ToolName         string
+	ProviderType     tools.ToolProviderType
+	ProviderID       string
+	Arguments        map[string]interface{}
+	ExecutionContext ExecutionContext
+}
+
+type ToolGovernanceGateway interface {
+	DecideSkillTool(ctx context.Context, req ToolGovernanceRequest) (toolgovernance.Decision, error)
 }
 
 type SkillToolArgumentContract struct {

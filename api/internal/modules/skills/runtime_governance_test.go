@@ -1,0 +1,175 @@
+package skills
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+)
+
+func TestCallSkillToolGovernanceNeedsApprovalDoesNotInvokeEngine(t *testing.T) {
+	runtime, resolved := governedRuntimeForTest(t)
+	invocation, err := runtime.CallSkillTool(
+		context.Background(),
+		resolved,
+		"governed-files",
+		"delete_file",
+		map[string]interface{}{"file_id": "file-1"},
+		ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets": []map[string]interface{}{
+						{"id": "file-1", "type": "file", "name": "report.pdf", "workspace_id": "workspace-1"},
+					},
+				},
+			},
+		},
+		"call_delete",
+	)
+	if err != nil {
+		t.Fatalf("CallSkillTool() error = %v", err)
+	}
+	if invocation == nil {
+		t.Fatalf("CallSkillTool() invocation = nil")
+	}
+	if invocation.Trace.Kind != "tool_governance" || invocation.Trace.Status != string(toolgovernance.DecisionStatusNeedsApproval) {
+		t.Fatalf("trace = %#v, want governance needs_approval", invocation.Trace)
+	}
+	if invocation.Trace.Governance == nil || invocation.Trace.Governance.ApprovalEvent == nil {
+		t.Fatalf("governance decision missing approval event: %#v", invocation.Trace.Governance)
+	}
+	if invocation.Trace.Governance.ApprovalEvent.Grant.ConversationID != "conversation-1" {
+		t.Fatalf("approval grant = %#v, want conversation-bound grant", invocation.Trace.Governance.ApprovalEvent.Grant)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(fmt.Sprint(invocation.ToolMessage.Content)), &payload); err != nil {
+		t.Fatalf("tool message content is not JSON: %v", err)
+	}
+	governance, ok := payload["governance"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("tool message payload = %#v, want governance object", payload)
+	}
+	if governance["status"] != string(toolgovernance.DecisionStatusNeedsApproval) || governance["requires_approval"] != true {
+		t.Fatalf("governance feedback = %#v", governance)
+	}
+	if instruction := strings.TrimSpace(governance["instruction"].(string)); !strings.Contains(instruction, "not executed") {
+		t.Fatalf("instruction = %q, want not executed guidance", instruction)
+	}
+}
+
+func TestCallSkillToolGovernanceNeedsResolutionBeforeEngine(t *testing.T) {
+	runtime, resolved := governedRuntimeForTest(t)
+	invocation, err := runtime.CallSkillTool(
+		context.Background(),
+		resolved,
+		"governed-files",
+		"read_file",
+		map[string]interface{}{"ref": "fourth file"},
+		ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance_permission_tier": "basic",
+			},
+		},
+		"call_read",
+	)
+	if err != nil {
+		t.Fatalf("CallSkillTool() error = %v", err)
+	}
+	if invocation.Trace.Status != string(toolgovernance.DecisionStatusNeedsResolution) {
+		t.Fatalf("trace status = %s, want needs_resolution", invocation.Trace.Status)
+	}
+	if invocation.Trace.Governance == nil || invocation.Trace.Governance.Status != toolgovernance.DecisionStatusNeedsResolution {
+		t.Fatalf("governance = %#v, want needs_resolution", invocation.Trace.Governance)
+	}
+}
+
+func TestCallSkillToolMatchingSessionGrantAllowsEnginePath(t *testing.T) {
+	runtime, resolved := governedRuntimeForTest(t)
+	_, err := runtime.CallSkillTool(
+		context.Background(),
+		resolved,
+		"governed-files",
+		"delete_file",
+		map[string]interface{}{"file_id": "file-1"},
+		ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets":          []map[string]interface{}{{"id": "file-1", "type": "file"}},
+					"session_grants": []map[string]interface{}{
+						{
+							"conversation_id": "conversation-1",
+							"tool_id":         "file.delete",
+							"effect":          "delete",
+							"asset_type":      "file",
+							"risk_level":      "high",
+							"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+		},
+		"call_delete",
+	)
+	if err == nil || !strings.Contains(err.Error(), "tool engine is not configured") {
+		t.Fatalf("CallSkillTool() error = %v, want fallthrough to engine path", err)
+	}
+}
+
+func governedRuntimeForTest(t *testing.T) (*Runtime, *ResolvedSkills) {
+	t.Helper()
+	catalogDir := t.TempDir()
+	root := filepath.Join(catalogDir, "governed-files")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	skill := `---
+name: governed-files
+description: Governed files test skill
+when_to_use: Use when testing governance preflight.
+provider_type: builtin
+provider_id: files
+tools:
+  - read_file
+  - delete_file
+runtime_type: tool
+tool_governance:
+  read_file:
+    tool_id: file.read
+    domain: files
+    effect: read
+    asset_type: file
+    risk_level: low
+    requires_asset_resolution: true
+    audit_required: true
+  delete_file:
+    tool_id: file.delete
+    domain: files
+    effect: delete
+    asset_type: file
+    risk_level: high
+    requires_asset_resolution: true
+    audit_required: true
+---
+Use file tools.
+`
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(skill), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runtime := NewRuntimeWithCatalog(nil, nil, catalogDir).WithToolGovernanceGateway(NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{"governed-files"})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	return runtime, resolved
+}

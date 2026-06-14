@@ -19,6 +19,11 @@ func skillCallEndPayload(prepared *PreparedChat, trace skills.SkillTrace) map[st
 	return skilltrace.SkillCallEndPayload(skillTracePayloadIDs(prepared), trace, true)
 }
 
+func toolGovernanceDecisionPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
+	payload := skilltrace.ToolGovernanceDecisionPayload(skillTracePayloadIDs(prepared), trace)
+	return payload
+}
+
 func skillArtifactsFromToolMessages(prepared *PreparedChat, trace skills.SkillTrace, messages []tools.ToolInvokeMessage) []map[string]interface{} {
 	return skilltrace.SkillArtifactsFromToolMessages(skillTracePayloadIDs(prepared), trace, messages)
 }

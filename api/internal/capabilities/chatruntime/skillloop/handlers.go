@@ -314,10 +314,15 @@ func (r *Runner) handleCallSkillTool(
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)
 	}
 	invocation.Trace.Arguments = argumentSummary
+	if invocation.Trace.Governance != nil {
+		r.emitEvent(EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
+	}
 	if err != nil {
 		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName)), true, false)
 	}
-	invocation.Trace.Result = summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages)
+	if summary := summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages); len(summary) > 0 {
+		invocation.Trace.Result = summary
+	}
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),
 		"message_id", prepared.Message.ID.String(),
