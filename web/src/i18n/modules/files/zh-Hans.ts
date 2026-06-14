@@ -39,9 +39,9 @@ const messages: FilesMessages = {
     chunkCount: '{count} 个切片',
     embeddingCount: '{count} 个向量',
     startParseDialog: {
-      title: '选择解析引擎',
-      description: '为「{name}」选择解析引擎。提交后文件会进入解析、确认和索引流程。',
-      providerHint: 'Auto 会按当前可用 provider 路由，也可以手动指定 MinerU 等解析引擎。',
+      title: '提交解析',
+      description: '为「{name}」提交解析任务。文件会进入解析、确认和索引流程。',
+      providerHint: '系统会按文件类型自动选择解析路由。',
       toasts: {
         started: '已提交解析请求',
         failed: '解析请求提交失败',
@@ -120,7 +120,8 @@ const messages: FilesMessages = {
     loadError: '文件预览加载失败',
     noFileSelected: '未选择文件',
     unsupportedTitle: '暂不支持预览该文件',
-    unsupportedDescription: '当前支持图片、PDF、HTML、轻量文本类文件、DOCX 和 XLSX 原文件预览。',
+    unsupportedDescription:
+      '当前支持图片、PDF、HTML、轻量文本类文件、DOCX、XLSX 和 XLS 原文件预览。',
     unsupportedFormatTitle: '{format} 文件暂不支持预览',
     unsupportedFormatDescription: '当前暂不支持预览 {format} 格式文件。请下载文件后在本地查看。',
     openInNewTab: '新窗口打开',
@@ -582,7 +583,8 @@ const messages: FilesMessages = {
     uploadFiles: '上传文件',
     selectedFilesTitle: '已选择 {count} 个文件',
     selectedFilesPendingSummary: '已选择 {count} 个文件，等待上传。',
-    selectedFilesValidationSummary: '已选择 {count} 个文件，{failedCount} 个无法上传，请移除后继续。',
+    selectedFilesValidationSummary:
+      '已选择 {count} 个文件，{failedCount} 个无法上传，请移除后继续。',
     selectedFilesResultSummary: '已上传 {successCount} 个文件，{failedCount} 个上传失败。',
     removeInvalidBeforeUpload: '请先移除无法上传的文件，再继续上传。',
     cannotUpload: '无法上传',

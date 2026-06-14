@@ -22,25 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { contentParseService } from '@/services/content-parse.service';
 import { useUploadConfig } from '@/hooks/use-upload';
-import type {
-  ContentParsePlaygroundProviderStatus,
-  ParseProviderKey,
-} from '@/services/types/content-parse';
-import type {
-  FileItem,
-  FileParseProviderKey,
-  FileUploadProcessingMode,
-} from '@/services/types/file';
-
-const FILE_PARSE_PROVIDERS: FileParseProviderKey[] = [
-  'auto',
-  'mineru',
-  'local',
-  'reducto',
-  'hyperparse_api',
-];
+import type { FileItem, FileUploadProcessingMode } from '@/services/types/file';
 
 interface ReplaceDocumentDialogProps {
   open: boolean;
@@ -50,8 +33,7 @@ interface ReplaceDocumentDialogProps {
   onConfirm: (
     file: FileItem,
     replacementFile: File,
-    processingMode: FileUploadProcessingMode,
-    parseProvider: FileParseProviderKey
+    processingMode: FileUploadProcessingMode
   ) => void;
 }
 
@@ -66,11 +48,6 @@ export function ReplaceDocumentDialog({
   const { data: uploadConfig } = useUploadConfig({ enabled: open });
   const [replacementFile, setReplacementFile] = useState<File | null>(null);
   const [processingMode, setProcessingMode] = useState<FileUploadProcessingMode>('process_now');
-  const [parseProvider, setParseProvider] = useState<FileParseProviderKey>('auto');
-  const [providerStatuses, setProviderStatuses] = useState<
-    Partial<Record<ParseProviderKey, ContentParsePlaygroundProviderStatus>>
-  >({});
-  const [providersLoading, setProvidersLoading] = useState(false);
 
   const maxSizeMB = uploadConfig?.file_size_limit ?? 15;
 
@@ -78,63 +55,11 @@ export function ReplaceDocumentDialog({
     if (!open) return;
     setReplacementFile(null);
     setProcessingMode('process_now');
-    setParseProvider('auto');
   }, [file?.id, open]);
-
-  useEffect(() => {
-    if (!open) return;
-    let ignore = false;
-
-    const loadProviders = async () => {
-      setProvidersLoading(true);
-      try {
-        const response = await contentParseService.listPlaygroundProviders();
-        if (ignore) return;
-        const next: Partial<Record<ParseProviderKey, ContentParsePlaygroundProviderStatus>> = {};
-        response.data.providers.forEach(provider => {
-          next[provider.key] = provider;
-        });
-        setProviderStatuses(next);
-      } catch {
-        if (!ignore) {
-          setProviderStatuses({});
-        }
-      } finally {
-        if (!ignore) {
-          setProvidersLoading(false);
-        }
-      }
-    };
-
-    void loadProviders();
-
-    return () => {
-      ignore = true;
-    };
-  }, [open]);
-
-  const getParseProviderLabel = (provider: FileParseProviderKey) => {
-    switch (provider) {
-      case 'auto':
-        return t('upload.parseProviders.auto');
-      case 'mineru':
-        return t('upload.parseProviders.mineru');
-      case 'local':
-        return t('upload.parseProviders.local');
-      case 'reducto':
-        return t('upload.parseProviders.reducto');
-      case 'hyperparse_api':
-        return t('upload.parseProviders.hyperparseApi');
-      case 'vlm':
-        return t('upload.parseProviders.vlm');
-      default:
-        return provider;
-    }
-  };
 
   const handleConfirm = () => {
     if (!file || !replacementFile) return;
-    onConfirm(file, replacementFile, processingMode, parseProvider);
+    onConfirm(file, replacementFile, processingMode);
   };
 
   const isFileTooLarge =
@@ -200,48 +125,11 @@ export function ReplaceDocumentDialog({
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <Label className="text-sm font-semibold">{t('upload.parseProvider')}</Label>
-            <Select
-              value={parseProvider}
-              onValueChange={value => setParseProvider(value as FileParseProviderKey)}
-              disabled={loading || processingMode !== 'process_now'}
-            >
-              <SelectTrigger className="bg-background" isLoading={providersLoading}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {FILE_PARSE_PROVIDERS.map(provider => {
-                  const status = providerStatuses[provider];
-                  const hasProviderStatuses = Object.keys(providerStatuses).length > 0;
-                  const isUnavailable =
-                    provider !== 'auto' && !providersLoading && hasProviderStatuses
-                      ? !status?.selectable
-                      : false;
-
-                  return (
-                    <SelectItem key={provider} value={provider} disabled={isUnavailable}>
-                      <span className="flex w-full min-w-0 items-center justify-between gap-3">
-                        <span className="truncate">
-                          {status?.display_name || getParseProviderLabel(provider)}
-                        </span>
-                        {provider !== 'auto' && isUnavailable ? (
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            {t('upload.parseProviderUnavailable')}
-                          </span>
-                        ) : null}
-                      </span>
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
-            <p className="text-xs leading-5 text-muted-foreground">
-              {processingMode === 'process_now'
-                ? t('replaceDocument.processingHint')
-                : t('replaceDocument.storeOnlyHint')}
-            </p>
-          </div>
+          <p className="text-xs leading-5 text-muted-foreground">
+            {processingMode === 'process_now'
+              ? t('replaceDocument.processingHint')
+              : t('replaceDocument.storeOnlyHint')}
+          </p>
         </DialogBody>
         <DialogFooter className="border-t bg-muted/30 px-6 py-4">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

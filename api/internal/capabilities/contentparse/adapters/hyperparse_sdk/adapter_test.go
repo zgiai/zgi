@@ -154,8 +154,11 @@ func TestAdapterParsesCSVBytes(t *testing.T) {
 	if artifact.Status != contracts.ParseStatusSucceeded {
 		t.Fatalf("Status = %q, want %q", artifact.Status, contracts.ParseStatusSucceeded)
 	}
-	if !strings.Contains(artifact.Markdown, "alice,30") {
+	if !strings.Contains(artifact.Markdown, `"name":"alice";"age":"30"`) {
 		t.Fatalf("Markdown = %q, want parsed csv content", artifact.Markdown)
+	}
+	if len(artifact.Elements) != 2 || artifact.Elements[0].Type != "table" {
+		t.Fatalf("Elements = %+v, want one table element per csv row", artifact.Elements)
 	}
 }
 

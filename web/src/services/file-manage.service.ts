@@ -41,6 +41,7 @@ import type {
   AskFileQuestionResponse,
   FileQuestionStreamEvent,
   FileSourcePreviewPagesResponse,
+  FileSpreadsheetPreviewResponse,
 } from './types/file';
 import { BaseService } from '@/lib/http/services';
 import type { SseMessage } from '@/lib/http/client';
@@ -131,6 +132,14 @@ class FileManageService extends BaseService {
       undefined,
       { timeout: 120000 }
     );
+  }
+
+  async getSpreadsheetPreview(
+    fileId: string
+  ): Promise<ApiResponseData<FileSpreadsheetPreviewResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/spreadsheet-preview`, undefined, {
+      timeout: 120000,
+    });
   }
 
   async getFileDetail(fileId: string): Promise<ApiResponseData<FileDetailResponse>> {

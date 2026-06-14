@@ -2120,7 +2120,7 @@ func isTextOriginalPreviewMIMEType(mimeType string) bool {
 
 func isOfficeOriginalPreviewExtension(extension string) bool {
 	switch extension {
-	case "docx", "xlsx":
+	case "docx", "xlsx", "xls":
 		return true
 	default:
 		return false
@@ -2130,7 +2130,8 @@ func isOfficeOriginalPreviewExtension(extension string) bool {
 func isOfficeOriginalPreviewMIMEType(mimeType string) bool {
 	switch strings.TrimSpace(strings.Split(mimeType, ";")[0]) {
 	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/vnd.ms-excel":
 		return true
 	default:
 		return false

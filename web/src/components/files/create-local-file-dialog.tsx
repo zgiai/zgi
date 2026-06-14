@@ -19,14 +19,6 @@ import { FILES_QUERY_KEY, useFileFolders } from '@/hooks/use-files';
 import { useUploadConfig } from '@/hooks/use-upload';
 import { Label } from '@/components/ui/label';
 import { RadioCard, RadioCardGroup } from '@/components/ui/radio-card';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { contentParseService } from '@/services/content-parse.service';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   WorkspaceSelector,
@@ -35,10 +27,6 @@ import {
 import { useCurrentWorkspace, useIsOrganizationMode } from '@/store';
 import { FolderTreeNode } from './folder-tree-node';
 import { cn } from '@/lib/utils';
-import type {
-  ContentParsePlaygroundProviderStatus,
-  ParseProviderKey,
-} from '@/services/types/content-parse';
 import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
 
 export interface CreateLocalFileDialogProps {
@@ -54,14 +42,6 @@ export interface CreateLocalFileDialogProps {
   onUploadComplete?: () => void;
 }
 
-const FILE_UPLOAD_PARSE_PROVIDERS: FileParseProviderKey[] = [
-  'auto',
-  'mineru',
-  'local',
-  'reducto',
-  'hyperparse_api',
-];
-
 /**
  * File Upload Inline Dialog Component
  * A dialog for uploading files directly without navigation
@@ -73,7 +53,6 @@ const CreateLocalFileDialog = ({
   acceptExt = [],
   workspaceId,
   processingMode = 'process_now',
-  parseProvider = 'auto',
   onUploadComplete,
 }: CreateLocalFileDialogProps) => {
   const t = useT();
@@ -95,12 +74,6 @@ const CreateLocalFileDialog = ({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [selectedProcessingMode, setSelectedProcessingMode] =
     useState<FileUploadProcessingMode>(processingMode);
-  const [selectedParseProvider, setSelectedParseProvider] =
-    useState<FileParseProviderKey>(parseProvider);
-  const [providerStatuses, setProviderStatuses] = useState<
-    Partial<Record<ParseProviderKey, ContentParsePlaygroundProviderStatus>>
-  >({});
-  const [providersLoading, setProvidersLoading] = useState(false);
   const { data: uploadConfig } = useUploadConfig({ enabled: open });
   const maxSizeMB = uploadConfig?.file_size_limit ?? 15;
   const maxCount = uploadConfig?.batch_count_limit ?? 100;
@@ -113,60 +86,7 @@ const CreateLocalFileDialog = ({
     setUploadFilesCount(0);
     setFailedUploadFilesCount(0);
     setSelectedProcessingMode(processingMode);
-    setSelectedParseProvider(parseProvider);
-  }, [folderId, open, parseProvider, processingMode]);
-
-  useEffect(() => {
-    if (!open) return;
-    let ignore = false;
-
-    const loadProviders = async () => {
-      setProvidersLoading(true);
-      try {
-        const response = await contentParseService.listPlaygroundProviders();
-        if (ignore) return;
-
-        const next: Partial<Record<ParseProviderKey, ContentParsePlaygroundProviderStatus>> = {};
-        response.data.providers.forEach(provider => {
-          next[provider.key] = provider;
-        });
-        setProviderStatuses(next);
-      } catch {
-        if (!ignore) {
-          setProviderStatuses({});
-        }
-      } finally {
-        if (!ignore) {
-          setProvidersLoading(false);
-        }
-      }
-    };
-
-    void loadProviders();
-
-    return () => {
-      ignore = true;
-    };
-  }, [open]);
-
-  const getParseProviderLabel = (provider: FileParseProviderKey) => {
-    switch (provider) {
-      case 'auto':
-        return t('files.upload.parseProviders.auto');
-      case 'mineru':
-        return t('files.upload.parseProviders.mineru');
-      case 'local':
-        return t('files.upload.parseProviders.local');
-      case 'reducto':
-        return t('files.upload.parseProviders.reducto');
-      case 'hyperparse_api':
-        return t('files.upload.parseProviders.hyperparseApi');
-      case 'vlm':
-        return t('files.upload.parseProviders.vlm');
-      default:
-        return provider;
-    }
-  };
+  }, [folderId, open, processingMode]);
 
   const handleWorkspaceChange = useCallback((workspace: WorkspaceSelectorValue) => {
     setSelectedWorkspace(workspace);
@@ -246,7 +166,6 @@ const CreateLocalFileDialog = ({
     onOpenChange(false);
   }, [onOpenChange]);
 
-  const parseProviderDisabled = isUploading || selectedProcessingMode !== 'process_now';
   const canUpload = !isOrganizationMode || !!effectiveWorkspaceId;
 
   return (
@@ -265,7 +184,7 @@ const CreateLocalFileDialog = ({
             folderId={selectedFolderId}
             workspaceId={effectiveWorkspaceId}
             processingMode={selectedProcessingMode}
-            parseProvider={selectedParseProvider}
+            parseProvider="auto"
             onFilesChange={handleFilesChange}
             onQueueStateChange={state => setFailedUploadFilesCount(state.failedCount)}
             queueSummaryNamespace="files"
@@ -283,7 +202,7 @@ const CreateLocalFileDialog = ({
             </div>
           ) : null}
 
-          <div className="grid gap-2 md:max-w-[420px]">
+          <div className="grid gap-2">
             <Label className="text-sm font-semibold">{t('files.upload.storageLocation')}</Label>
             <div className="max-h-[240px] overflow-y-auto rounded-xl border border-border bg-muted/20 p-2">
               {isOrganizationMode && !effectiveWorkspaceId ? (
@@ -344,75 +263,28 @@ const CreateLocalFileDialog = ({
           </div>
 
           <div className="rounded-xl border border-border bg-muted/20 p-4">
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1.15fr)_minmax(240px,0.85fr)]">
-              <div className="space-y-3">
-                <Label className="text-sm font-semibold">{t('files.upload.processingMode')}</Label>
-                <RadioCardGroup
-                  value={selectedProcessingMode}
-                  onValueChange={value =>
-                    setSelectedProcessingMode(value as FileUploadProcessingMode)
-                  }
-                  className="grid grid-cols-1 gap-2 sm:grid-cols-2"
-                >
-                  <RadioCard
-                    value="process_now"
-                    title={t('files.upload.processingModes.processNow.title')}
-                    description={t('files.upload.processingModes.processNow.desc')}
-                    className="h-full"
-                  />
-                  <RadioCard
-                    value="store_only"
-                    title={t('files.upload.processingModes.storeOnly.title')}
-                    description={t('files.upload.processingModes.storeOnly.desc')}
-                    className="h-full"
-                  />
-                </RadioCardGroup>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold">{t('files.upload.parseProvider')}</Label>
-                <Select
-                  value={selectedParseProvider}
-                  onValueChange={value => setSelectedParseProvider(value as FileParseProviderKey)}
-                  disabled={parseProviderDisabled}
-                >
-                  <SelectTrigger className="bg-background">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {FILE_UPLOAD_PARSE_PROVIDERS.map(provider => {
-                      const status = providerStatuses[provider];
-                      const hasProviderStatuses = Object.keys(providerStatuses).length > 0;
-                      const isUnavailable =
-                        provider !== 'auto' && !providersLoading && hasProviderStatuses
-                          ? !status?.selectable
-                          : false;
-
-                      return (
-                        <SelectItem key={provider} value={provider} disabled={isUnavailable}>
-                          <span className="flex w-full min-w-0 items-center justify-between gap-3">
-                            <span className="truncate">
-                              {status?.display_name || getParseProviderLabel(provider)}
-                            </span>
-                            {provider !== 'auto' && isUnavailable ? (
-                              <span className="shrink-0 text-xs text-muted-foreground">
-                                {t('files.upload.parseProviderUnavailable')}
-                              </span>
-                            ) : null}
-                          </span>
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs leading-5 text-muted-foreground">
-                  {selectedProcessingMode !== 'process_now'
-                    ? t('files.upload.parseProviderStoreOnlyDescription')
-                    : providersLoading
-                      ? t('files.upload.parseProviderLoading')
-                      : t('files.upload.parseProviderDescription')}
-                </p>
-              </div>
+            <div className="space-y-3">
+              <Label className="text-sm font-semibold">{t('files.upload.processingMode')}</Label>
+              <RadioCardGroup
+                value={selectedProcessingMode}
+                onValueChange={value =>
+                  setSelectedProcessingMode(value as FileUploadProcessingMode)
+                }
+                className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+              >
+                <RadioCard
+                  value="process_now"
+                  title={t('files.upload.processingModes.processNow.title')}
+                  description={t('files.upload.processingModes.processNow.desc')}
+                  className="h-full"
+                />
+                <RadioCard
+                  value="store_only"
+                  title={t('files.upload.processingModes.storeOnly.title')}
+                  description={t('files.upload.processingModes.storeOnly.desc')}
+                  className="h-full"
+                />
+              </RadioCardGroup>
             </div>
           </div>
         </DialogBody>

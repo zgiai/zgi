@@ -38,11 +38,10 @@ const messages = {
     chunkCount: '{count} chunks',
     embeddingCount: '{count} vectors',
     startParseDialog: {
-      title: 'Choose Parse Engine',
+      title: 'Submit Parse',
       description:
-        'Choose a parse engine for "{name}". After submitting, the file will go through parsing, review, and indexing.',
-      providerHint:
-        'Auto follows the current provider routing strategy. You can also choose MinerU or another engine manually.',
+        'Submit a parse task for "{name}". The file will go through parsing, review, and indexing.',
+      providerHint: 'The system will automatically choose a parse route by file type.',
       toasts: {
         started: 'Parse request submitted',
         failed: 'Failed to submit parse request',
@@ -107,7 +106,8 @@ const messages = {
     selectedFile: 'Selected: {name}',
     fileTooLarge: 'File size cannot exceed {max}MB',
     processingHint: 'The document will be parsed and indexed immediately after replacement.',
-    storeOnlyHint: 'The old content will be invalidated. Parse this document later before using it.',
+    storeOnlyHint:
+      'The old content will be invalidated. Parse this document later before using it.',
     confirm: 'Update',
     toasts: {
       started: 'Document update submitted',
@@ -124,7 +124,7 @@ const messages = {
     noFileSelected: 'No file selected',
     unsupportedTitle: 'Preview is not available for this file',
     unsupportedDescription:
-      'Original preview supports images, PDF, HTML, text-like files, DOCX, and XLSX.',
+      'Original preview supports images, PDF, HTML, text-like files, DOCX, XLSX, and XLS.',
     unsupportedFormatTitle: '{format} preview is not supported',
     unsupportedFormatDescription:
       '{format} files are not supported in browser preview yet. Download the file to view it locally.',

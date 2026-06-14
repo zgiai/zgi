@@ -62,7 +62,7 @@ import { isOriginalPreviewSupported } from '@/utils/file-helpers';
 import { fileManageService } from '@/services/file-manage.service';
 import { StartFileParseDialog } from './start-file-parse-dialog';
 import { ReplaceDocumentDialog } from './replace-document-dialog';
-import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
+import type { FileUploadProcessingMode } from '@/services/types/file';
 import { getFileDetailKey } from '@/hooks/file/use-file-detail';
 import { FILE_PARSE_PREVIEW_QUERY_KEY } from '@/hooks/file/use-file-parse-preview';
 import { FILE_CHUNKS_QUERY_KEY } from '@/hooks/file/use-file-chunks';
@@ -385,14 +385,14 @@ function FileListBase({
     setReplaceDocumentFile(file);
   };
 
-  const handleStartParse = async (file: FileItem, parseProvider: FileParseProviderKey) => {
+  const handleStartParse = async (file: FileItem) => {
     try {
       setStartingParseFileId(file.id);
       await fileManageService.createProcessingRequest(file.id, {
         mode: 'parse_now',
         target_level: 'vectorize',
         force: false,
-        parse_provider: parseProvider,
+        parse_provider: 'auto',
       });
       toast.success(t('fileList.startParseDialog.toasts.started'));
       setStartParseFile(null);
@@ -462,15 +462,14 @@ function FileListBase({
   const handleReplaceDocument = async (
     file: FileItem,
     replacementFile: File,
-    processingMode: FileUploadProcessingMode,
-    parseProvider: FileParseProviderKey
+    processingMode: FileUploadProcessingMode
   ) => {
     try {
       setReplacingFileId(file.id);
       await fileManageService.replaceDocument(file.id, {
         file: replacementFile,
         processing_mode: processingMode,
-        parse_provider: parseProvider,
+        parse_provider: 'auto',
       });
       toast.success(t('replaceDocument.toasts.started'));
       setReplaceDocumentFile(null);
@@ -834,8 +833,8 @@ function FileListBase({
           }}
           file={startParseFile}
           loading={Boolean(startParseFile && startingParseFileId === startParseFile.id)}
-          onConfirm={(file, parseProvider) => {
-            void handleStartParse(file, parseProvider);
+          onConfirm={file => {
+            void handleStartParse(file);
           }}
         />
 
@@ -1312,8 +1311,8 @@ function FileListBase({
         }}
         file={startParseFile}
         loading={Boolean(startParseFile && startingParseFileId === startParseFile.id)}
-        onConfirm={(file, parseProvider) => {
-          void handleStartParse(file, parseProvider);
+        onConfirm={file => {
+          void handleStartParse(file);
         }}
       />
       <ReplaceDocumentDialog
@@ -1323,8 +1322,8 @@ function FileListBase({
         }}
         file={replaceDocumentFile}
         loading={Boolean(replaceDocumentFile && replacingFileId === replaceDocumentFile.id)}
-        onConfirm={(file, replacementFile, processingMode, parseProvider) => {
-          void handleReplaceDocument(file, replacementFile, processingMode, parseProvider);
+        onConfirm={(file, replacementFile, processingMode) => {
+          void handleReplaceDocument(file, replacementFile, processingMode);
         }}
       />
     </div>

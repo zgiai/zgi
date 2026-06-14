@@ -136,6 +136,23 @@ export interface FileSourcePreviewPagesResponse {
   pages: string[];
 }
 
+export interface FileSpreadsheetPreviewRow {
+  number: number;
+  cells: string[];
+}
+
+export interface FileSpreadsheetPreviewSheet {
+  name: string;
+  rows: FileSpreadsheetPreviewRow[];
+  columnCount: number;
+  totalRowCount: number;
+}
+
+export interface FileSpreadsheetPreviewResponse {
+  engine: string;
+  sheets: FileSpreadsheetPreviewSheet[];
+}
+
 export interface StorageUsage {
   used: number; // GB
   total: number; // GB
