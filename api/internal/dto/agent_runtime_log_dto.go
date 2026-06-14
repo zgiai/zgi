@@ -64,14 +64,6 @@ type AgentRuntimeStepsResponse struct {
 	Data []AgentRuntimeStep `json:"data"`
 }
 
-// AgentRuntimeDebugTraceResponse represents one short-lived raw model debug trace.
-type AgentRuntimeDebugTraceResponse struct {
-	MessageID string                 `json:"message_id"`
-	RuntimeID string                 `json:"runtime_id"`
-	Trace     map[string]interface{} `json:"trace"`
-	ExpiresAt *int64                 `json:"expires_at,omitempty"`
-}
-
 // AgentRuntimeStep represents a user input, skill/tool invocation, or model answer step.
 type AgentRuntimeStep struct {
 	ID          string                 `json:"id"`

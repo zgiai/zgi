@@ -154,38 +154,6 @@ func (h *AgentRuntimeLogsHandler) GetRuntimeRunSteps(c *gin.Context) {
 	})
 }
 
-func (h *AgentRuntimeLogsHandler) GetRuntimeRunDebugTrace(c *gin.Context) {
-	message, _, ok := h.runtimeMessage(c)
-	if !ok {
-		return
-	}
-	if !runtimeservice.ModelInvocationRawDebugEnabled() {
-		response.Fail(c, response.ErrNotFound)
-		return
-	}
-	runtimeID := strings.TrimSpace(c.Param("runtime_id"))
-	if runtimeID == "" {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-	trace, ok := runtimeservice.DebugModelInvocationTrace(message.Metadata, runtimeID, time.Now())
-	if !ok {
-		response.Fail(c, response.ErrNotFound)
-		return
-	}
-	var expiresAt *int64
-	if value := metadataNumber(trace, "expires_at"); value > 0 {
-		expiresAtValue := int64(value)
-		expiresAt = &expiresAtValue
-	}
-	response.Success(c, dto.AgentRuntimeDebugTraceResponse{
-		MessageID: message.ID.String(),
-		RuntimeID: runtimeID,
-		Trace:     trace,
-		ExpiresAt: expiresAt,
-	})
-}
-
 func (h *AgentRuntimeLogsHandler) runtimeScope(c *gin.Context) (runtimeservice.Scope, uuid.UUID, bool) {
 	if h == nil || h.agentsRepo == nil || h.chatRuntime == nil {
 		response.Fail(c, response.ErrNotFound)

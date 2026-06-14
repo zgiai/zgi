@@ -895,7 +895,6 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
 
         {isAgentRuntime ? (
           <AgentRuntimeLogDetailDrawer
-            agentId={agentId}
             open={isDetailDrawerOpen}
             onOpenChange={handleDetailOpenChange}
             selectedRun={selectedAgentRuntimeRun}
