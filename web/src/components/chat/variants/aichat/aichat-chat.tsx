@@ -65,6 +65,7 @@ import {
 } from '@/components/chat/utils/message-tree';
 import { AIChatHeader } from '@/components/chat/variants/aichat/chat-header';
 import { AIChatHomeView } from '@/components/chat/variants/aichat/home-view';
+import { AIChatAssetAuditButton } from '@/components/chat/variants/aichat/asset-audit-button';
 import {
   AIChatInputArea,
   type AIChatUploadScope,
@@ -446,6 +447,16 @@ export function AIChatShell({
     () => selectDisplayMessages(displayMessageIds, activeMessages),
     [activeMessages, displayMessageIds]
   );
+  const assetAuditRefreshKey = useMemo(
+    () =>
+      activeMessages
+        .map(message => {
+          const invocationCount = message.metadata?.skill_invocations?.length ?? 0;
+          return `${message.id}:${message.updated_at}:${message.status}:${invocationCount}`;
+        })
+        .join('|'),
+    [activeMessages]
+  );
   const branchNavigationByMessageId = useMemo(
     () => selectBranchNavigationByMessageId(displayMessageIds, messageTopology),
     [displayMessageIds, messageTopology]
@@ -512,6 +523,17 @@ export function AIChatShell({
   );
   const messageActionsLocked = Boolean(activeWorkflowApprovalRequest);
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
+  const showAssetAuditControl = surface === 'aichat' && Boolean(activeConversationId);
+  const assetAuditButton = useMemo(
+    () =>
+      showAssetAuditControl ? (
+        <AIChatAssetAuditButton
+          conversationId={activeConversationId}
+          refreshKey={assetAuditRefreshKey}
+        />
+      ) : null,
+    [activeConversationId, assetAuditRefreshKey, showAssetAuditControl]
+  );
 
   useEffect(() => {
     if (!error) {
@@ -966,9 +988,11 @@ export function AIChatShell({
         >
           <MessageSquarePlus className="size-4" />
         </Button>
+        {assetAuditButton}
       </div>
     );
   }, [
+    assetAuditButton,
     handleNewChat,
     isHome,
     renderEmbeddedConversationControls,
@@ -1015,16 +1039,21 @@ export function AIChatShell({
             onToggleSidebar={handleToggleSidebar}
             onStartNew={handleNewChat}
             rightAction={
-              enableAIChatSkillPreference ? (
-                <Button
-                  variant="ghost"
-                  isIcon
-                  className="size-8 text-muted-foreground"
-                  onClick={() => handleSkillPreferenceOpenChange(true)}
-                  title={t('consoleChat.skillPreferences.action')}
-                >
-                  <Settings2 className="size-4" />
-                </Button>
+              assetAuditButton || enableAIChatSkillPreference ? (
+                <div className="flex items-center justify-end gap-1">
+                  {assetAuditButton}
+                  {enableAIChatSkillPreference ? (
+                    <Button
+                      variant="ghost"
+                      isIcon
+                      className="size-8 text-muted-foreground"
+                      onClick={() => handleSkillPreferenceOpenChange(true)}
+                      title={t('consoleChat.skillPreferences.action')}
+                    >
+                      <Settings2 className="size-4" />
+                    </Button>
+                  ) : null}
+                </div>
               ) : undefined
             }
           />
