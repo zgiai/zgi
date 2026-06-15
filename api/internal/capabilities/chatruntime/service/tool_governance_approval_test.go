@@ -97,6 +97,66 @@ func TestProcessTimelineRecorderPersistsToolGovernanceDecisionEvent(t *testing.T
 	if audit["tool_id"] != "file.delete" || audit["approval_status"] != "pending" {
 		t.Fatalf("asset_operation_audit = %#v, want persisted audit payload", audit)
 	}
+	records := mapSliceFromAny(prepared.Message.Metadata["tool_governance_decisions"])
+	if len(records) != 1 {
+		t.Fatalf("tool_governance_decisions len = %d in %#v, want 1", len(records), prepared.Message.Metadata["tool_governance_decisions"])
+	}
+	if records[0]["runtime_id"] != "tool_governance:corr-1" {
+		t.Fatalf("decision runtime_id = %#v, want tool_governance:corr-1", records[0]["runtime_id"])
+	}
+
+	recorder.RecordEvent(streamEventToolGovernanceDecision, map[string]interface{}{
+		"conversation_id":   prepared.Conversation.ID.String(),
+		"message_id":        prepared.Message.ID.String(),
+		"skill_id":          "file-reader",
+		"tool_name":         "delete_file",
+		"status":            "success",
+		"correlation_id":    "corr-1",
+		"approval_status":   "approved",
+		"requires_approval": false,
+		"governance": map[string]interface{}{
+			"status":            "needs_approval",
+			"correlation_id":    "corr-1",
+			"requires_approval": false,
+			"approval_status":   "approved",
+			"approval_event": map[string]interface{}{
+				"correlation_id": "corr-1",
+				"tool_id":        "file.delete",
+			},
+		},
+		"approval_event": map[string]interface{}{
+			"correlation_id": "corr-1",
+			"tool_id":        "file.delete",
+		},
+		"asset_operation_audit": map[string]interface{}{
+			"schema_version":    "tool_governance.asset_operation.v1",
+			"correlation_id":    "corr-1",
+			"tool_id":           "file.delete",
+			"effect":            "delete",
+			"asset_type":        "file",
+			"approval_status":   "approved",
+			"governance_status": "needs_approval",
+		},
+	})
+
+	records = mapSliceFromAny(prepared.Message.Metadata["tool_governance_decisions"])
+	if len(records) != 1 {
+		t.Fatalf("tool_governance_decisions len after update = %d in %#v, want 1", len(records), prepared.Message.Metadata["tool_governance_decisions"])
+	}
+	if records[0]["approval_status"] != "approved" {
+		t.Fatalf("decision approval_status = %#v, want approved", records[0]["approval_status"])
+	}
+	audit = governanceMapFromAny(records[0]["asset_operation_audit"])
+	if audit["approval_status"] != "approved" || audit["tool_id"] != "file.delete" {
+		t.Fatalf("updated asset_operation_audit = %#v, want approved file.delete audit", audit)
+	}
+	invocations := skillInvocationsFromMetadata(prepared.Message.Metadata["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations len = %d in %#v, want one updated governance invocation", len(invocations), prepared.Message.Metadata["skill_invocations"])
+	}
+	if invocations[0]["approval_status"] != "approved" {
+		t.Fatalf("invocation approval_status = %#v, want approved", invocations[0]["approval_status"])
+	}
 }
 
 func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing.T) {

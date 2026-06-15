@@ -392,6 +392,9 @@ func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event ma
 		metadata = map[string]interface{}{}
 	}
 	correlationID := toolGovernanceCorrelationID(event)
+	if correlationID == "" {
+		return metadata
+	}
 	records := mapSliceFromAny(metadata["tool_governance_decisions"])
 	replaced := false
 	for index, existing := range records {
