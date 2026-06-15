@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronsUpDown, Check, Loader2, Settings, Users } from 'lucide-react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -18,6 +19,7 @@ import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-
 import { useCurrentUser } from '@/store/auth-store';
 import { useWorkspaceStore } from '@/store';
 import { canManageOrganizationWorkspaces } from '@/utils/workspace-access';
+import { getWorkspaceSwitchRedirect } from '@/utils/workspace-route-reset';
 import type { Workspace } from '@/store';
 
 interface WorkspaceSwitcherProps {
@@ -31,6 +33,9 @@ interface WorkspaceSwitcherProps {
 export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
   const t = useT('navigation');
   const tCommon = useT('common');
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const user = useCurrentUser();
   const workspaces = useWorkspaceStore.use.workspaces();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
@@ -42,10 +47,6 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
   const canManageWorkspaces = canManageOrganizationWorkspaces(user);
   const isLoadingWorkspaces = (isLoading || isFetching) && workspaces.length === 0;
 
-  const handleSelectWorkspace = (workspace: Workspace) => {
-    updateWorkspace(workspace);
-  };
-
   const getWorkspaceDisplayName = (workspace?: Pick<Workspace, 'name'> | null) => {
     if (!workspace?.name) return '';
     return workspace.name === 'Default Workspace' ? t('defaultWorkspace') : workspace.name;
@@ -53,6 +54,18 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
 
   const displayName = getWorkspaceDisplayName(currentWorkspace) || t('switchWorkspace');
   const hasReadyWorkspace = contextStatus === 'ready' && !!currentWorkspace;
+
+  const handleSelectWorkspace = (workspace: Workspace) => {
+    if (hasReadyWorkspace && currentWorkspace?.id === workspace.id) {
+      return;
+    }
+
+    const redirectTo = getWorkspaceSwitchRedirect(pathname, searchParams);
+    updateWorkspace(workspace);
+    if (redirectTo) {
+      router.replace(redirectTo);
+    }
+  };
 
   return (
     <DropdownMenu>

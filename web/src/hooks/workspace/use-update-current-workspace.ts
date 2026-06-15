@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { accountService } from '@/services/account.service';
 import { useWorkspaceStore, type Workspace } from '@/store/workspace-store';
 import { useAuthStore } from '@/store/auth-store';
-import { WORKSPACE_KEYS } from '@/hooks/query-keys';
+import { AGENT_KEYS, DATASET_KEYS, DB_KEYS, PROMPT_KEYS, WORKSPACE_KEYS } from '@/hooks/query-keys';
 import { sessionManager } from '@/lib/auth/session-manager';
 import { clearProfileClientCache } from '@/utils/client-cache';
 
@@ -39,9 +39,18 @@ export function useUpdateCurrentWorkspace() {
       clearProfileClientCache();
       // Refresh store profile to keep everything in sync (Synchronize backend ID)
       await useAuthStore.getState().refreshProfile();
-      // Targeted invalidation for all workspace-related data using the unified prefix
-      // With the refactored query keys, all workspace data starts with ['workspace']
-      await queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.all });
+      queryClient.removeQueries({ queryKey: AGENT_KEYS.details() });
+      queryClient.removeQueries({ queryKey: DATASET_KEYS.details() });
+      queryClient.removeQueries({ queryKey: DB_KEYS.details() });
+      queryClient.removeQueries({ queryKey: PROMPT_KEYS.details() });
+      // Refresh workspace-scoped resources so views don't keep showing data from the previous workspace.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.all }),
+        queryClient.invalidateQueries({ queryKey: AGENT_KEYS.all }),
+        queryClient.invalidateQueries({ queryKey: DATASET_KEYS.all }),
+        queryClient.invalidateQueries({ queryKey: DB_KEYS.all }),
+        queryClient.invalidateQueries({ queryKey: PROMPT_KEYS.all }),
+      ]);
       sessionManager.broadcastContextChanged({
         currentWorkspaceId: workspace.id,
       });

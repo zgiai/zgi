@@ -8,7 +8,6 @@ import { useAgent } from '@/hooks/agent/use-agents';
 import { useParams } from 'next/navigation';
 import { WorkspaceMismatchGuard } from '@/components/common/workspace-mismatch-guard';
 import { useT } from '@/i18n';
-import { useWorkspaceMismatch } from '@/hooks';
 
 export default function AgentLayout({ children }: { children: React.ReactNode }) {
   const t = useT();
@@ -20,9 +19,6 @@ export default function AgentLayout({ children }: { children: React.ReactNode })
 
   const canView = hasPermission('agent.view');
   const isLoading = isPermissionsLoading || isAgentLoading;
-
-  // Check workspace mismatch for sidebar navigation control
-  const { isMismatch } = useWorkspaceMismatch(agent?.data?.workspace?.id || '');
 
   if (isLoading) {
     return (
@@ -43,17 +39,15 @@ export default function AgentLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="flex h-full min-w-0 min-h-0">
-      <AgentSidebar isMismatch={isMismatch} />
-      <div className="w-0 grow h-full min-w-0 min-h-0 overflow-auto">
-        <WorkspaceMismatchGuard
-          isLoading={isAgentLoading}
-          targetWorkspaceId={agent?.data?.workspace?.id || ''}
-          targetWorkspaceName={agent?.data?.workspace?.name}
-        >
-          {children}
-        </WorkspaceMismatchGuard>
+    <WorkspaceMismatchGuard
+      isLoading={isAgentLoading}
+      targetWorkspaceId={agent?.data?.workspace?.id || ''}
+      targetWorkspaceName={agent?.data?.workspace?.name}
+    >
+      <div className="flex h-full min-w-0 min-h-0">
+        <AgentSidebar />
+        <div className="w-0 grow h-full min-w-0 min-h-0 overflow-auto">{children}</div>
       </div>
-    </div>
+    </WorkspaceMismatchGuard>
   );
 }
