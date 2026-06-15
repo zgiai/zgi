@@ -30,7 +30,7 @@ data.package_policy.allowed_packages.0.name == "data-tools"
 data.package_policy.denied_packages.0.name == "remote-url"
 data.build_policy.mode == "operator-managed"
 data.build_policy.enforced == true
-data.build_policy.max_profile_size_bytes == 536870912
+data.build_policy.max_profile_size_bytes == 1073741824
 data.build_policy.build_timeout_seconds == 600
 data.build_policy.builds_allowed_during_runtime == false
 data.profiles.0.size_bytes == 33554432

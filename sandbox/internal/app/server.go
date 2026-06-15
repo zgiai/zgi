@@ -161,7 +161,8 @@ func dependencyProfileFromArtifact(artifact runner.DependencyProfileArtifact) po
 		ArtifactChecksum: artifact.Checksum,
 		SizeBytes:        artifact.SizeBytes,
 		Description:      artifact.Description,
-		PublicReusable:   true,
+		PublicReusable:   artifact.PublicReusable,
+		Pinned:           artifact.Pinned,
 	}
 }
 
