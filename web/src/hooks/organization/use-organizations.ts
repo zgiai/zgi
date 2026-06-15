@@ -8,9 +8,11 @@ import type { Organization } from '@/services/types/organization';
 import { toast } from 'sonner';
 import { useOrganizationStore } from '@/store/organization-store';
 import { useAuthStore } from '@/store/auth-store';
+import { useWorkspaceStore } from '@/store/workspace-store';
 import { useT } from '@/i18n';
-import { ORGANIZATION_KEYS } from '../query-keys';
+import { ORGANIZATION_KEYS, WORKSPACE_KEYS } from '../query-keys';
 import { sessionManager } from '@/lib/auth/session-manager';
+import { clearProfileClientCache } from '@/utils/client-cache';
 
 interface UseOrganizationsResult {
   organizations: Organization[];
@@ -33,6 +35,8 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
   const currentOrganization = useOrganizationStore.use.currentOrganization();
   const setOrganizations = useOrganizationStore.use.setOrganizations();
   const setCurrentOrganization = useOrganizationStore.use.setCurrentOrganization();
+  const resetWorkspaceForOrganizationSwitch =
+    useWorkspaceStore.use.resetForOrganizationSwitch();
   const isAuthenticated = useAuthStore.use.isAuthenticated();
   const isLoggingOut = useAuthStore.use.isLoggingOut();
   const shouldAutoLoad = autoLoad && isAuthenticated && !isLoggingOut;
@@ -89,7 +93,7 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
       hasErrorProcessed.current = true;
       toast.error(t('common.organization.fetchOrgFailed'));
     }
-  }, [listError, currentOrganizationError, toast, t, shouldAutoLoad]);
+  }, [listError, currentOrganizationError, t, shouldAutoLoad]);
 
   // If still no currentOrganization
   useEffect(() => {
@@ -122,9 +126,12 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
       }
       try {
         await accountService.updateContext({ current_organization_id: organization.id });
+        resetWorkspaceForOrganizationSwitch();
+        queryClient.removeQueries({ queryKey: WORKSPACE_KEYS.all });
+        clearProfileClientCache();
         setCurrentOrganization(organization);
         try {
-          await useAuthStore.getState().refreshProfile();
+          await useAuthStore.getState().refreshProfile({ refresh: true });
           // Invalidate ALL queries because organization context change affects everything
           await queryClient.invalidateQueries();
         } catch {
@@ -132,13 +139,20 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
         }
         sessionManager.broadcastContextChanged({
           currentOrganizationId: organization.id,
+          currentWorkspaceId: null,
         });
         toast.success(t('common.organization.switchOrgSuccess'));
       } catch {
         toast.error(t('common.organization.switchOrgFailed'));
       }
     },
-    [currentOrganization, setCurrentOrganization, toast, t, queryClient]
+    [
+      currentOrganization,
+      resetWorkspaceForOrganizationSwitch,
+      setCurrentOrganization,
+      t,
+      queryClient,
+    ]
   );
 
   return {
