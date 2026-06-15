@@ -48,6 +48,7 @@ const systemRows = [
   { label: 'Database', value: 'Connected' },
 ];
 const RECENT_WORK_LIMIT = 4;
+const SHOW_RECENT_WORK_CARD = false;
 
 async function getRecentWorkItems(): Promise<RecentWorkItem[]> {
   const response = await dashboardService.getRecentWork();
@@ -291,7 +292,9 @@ export default function ConsolePage() {
                 <span>{t('dashboard.stats.consoleHome.connected')}</span>
               </div>
               <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-muted/30 px-3 py-1 text-muted-foreground">
-                <span>{t('navigation.current')} {t('navigation.workspace')}:</span>
+                <span>
+                  {t('navigation.current')} {t('navigation.workspace')}:
+                </span>
                 <span className="text-foreground">{workspaceLabel}</span>
               </div>
               <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-muted/30 px-3 py-1 text-muted-foreground">
@@ -357,7 +360,9 @@ export default function ConsolePage() {
                     </Button>
                     {secondaryActions.map(action => (
                       <Button key={action.key} asChild variant="outline" size="default">
-                        <Link href={action.href}>{action.action} {action.label}</Link>
+                        <Link href={action.href}>
+                          {action.action} {action.label}
+                        </Link>
                       </Button>
                     ))}
                   </div>
@@ -529,63 +534,65 @@ export default function ConsolePage() {
               </CardContent>
             </Card>
 
-            <Card className="border-border/80 shadow-sm">
-              <CardHeader>
-                <SectionLabel>{t('dashboard.stats.consoleHome.continue')}</SectionLabel>
-                <CardTitle className="text-lg">
-                  {t('dashboard.stats.consoleHome.recentWork')}
-                </CardTitle>
-                <CardDescription>
-                  {visibleRecentWorkItems.length > 0
-                    ? t('dashboard.stats.consoleHome.nextActions.startChatDescription')
-                    : t('dashboard.stats.consoleHome.noRecentDescription')}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {isRecentWorkLoading ? (
-                  <div className="space-y-3">
-                    <Skeleton className="h-10 w-full" />
-                    <Skeleton className="h-10 w-full" />
-                    <Skeleton className="h-10 w-full" />
-                  </div>
-                ) : visibleRecentWorkItems.length > 0 ? (
-                  <div className="divide-y divide-border/70 rounded-lg border border-border/70">
-                    {visibleRecentWorkItems.map(item => (
-                      <Link
-                        key={item.id}
-                        href={item.href}
-                        className="grid gap-3 px-4 py-3 transition-colors hover:bg-muted/40 md:grid-cols-[96px_minmax(0,1fr)_auto_auto]"
-                      >
-                        <span className="text-xs font-medium text-muted-foreground">
-                          {t(`dashboard.stats.consoleHome.recentTypes.${item.type}`)}
-                        </span>
-                        <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                          {item.title ||
-                            t(`dashboard.stats.consoleHome.recentFallback.${item.type}`)}
-                        </span>
-                        <span className="text-sm text-muted-foreground">
-                          {t('dashboard.stats.consoleHome.updatedAt', {
-                            time: dateFormatter.format(item.timestamp),
-                          })}
-                        </span>
-                        <span className="text-xs font-medium text-primary">
-                          {t('dashboard.stats.consoleHome.actions.open')}
-                        </span>
-                      </Link>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-dashed border-border/70 px-5 py-6">
-                    <h3 className="text-base font-semibold text-foreground">
-                      {t('dashboard.stats.consoleHome.noRecentTitle')}
-                    </h3>
-                    <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                      {t('dashboard.stats.consoleHome.noRecentDescription')}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            {SHOW_RECENT_WORK_CARD ? (
+              <Card className="border-border/80 shadow-sm">
+                <CardHeader>
+                  <SectionLabel>{t('dashboard.stats.consoleHome.continue')}</SectionLabel>
+                  <CardTitle className="text-lg">
+                    {t('dashboard.stats.consoleHome.recentWork')}
+                  </CardTitle>
+                  <CardDescription>
+                    {visibleRecentWorkItems.length > 0
+                      ? t('dashboard.stats.consoleHome.nextActions.startChatDescription')
+                      : t('dashboard.stats.consoleHome.noRecentDescription')}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {isRecentWorkLoading ? (
+                    <div className="space-y-3">
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                    </div>
+                  ) : visibleRecentWorkItems.length > 0 ? (
+                    <div className="divide-y divide-border/70 rounded-lg border border-border/70">
+                      {visibleRecentWorkItems.map(item => (
+                        <Link
+                          key={item.id}
+                          href={item.href}
+                          className="grid gap-3 px-4 py-3 transition-colors hover:bg-muted/40 md:grid-cols-[96px_minmax(0,1fr)_auto_auto]"
+                        >
+                          <span className="text-xs font-medium text-muted-foreground">
+                            {t(`dashboard.stats.consoleHome.recentTypes.${item.type}`)}
+                          </span>
+                          <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                            {item.title ||
+                              t(`dashboard.stats.consoleHome.recentFallback.${item.type}`)}
+                          </span>
+                          <span className="text-sm text-muted-foreground">
+                            {t('dashboard.stats.consoleHome.updatedAt', {
+                              time: dateFormatter.format(item.timestamp),
+                            })}
+                          </span>
+                          <span className="text-xs font-medium text-primary">
+                            {t('dashboard.stats.consoleHome.actions.open')}
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-border/70 px-5 py-6">
+                      <h3 className="text-base font-semibold text-foreground">
+                        {t('dashboard.stats.consoleHome.noRecentTitle')}
+                      </h3>
+                      <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                        {t('dashboard.stats.consoleHome.noRecentDescription')}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : null}
           </main>
 
           <aside className="space-y-5">
