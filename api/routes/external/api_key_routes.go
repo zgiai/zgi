@@ -85,6 +85,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	agentHandler := agents.NewAgentsHandler(agentService, nil, accountService, enterpriseService, db, chatRuntimeService)
 	agentHandler.SetFileService(fileService)
+	agentHandler.SetWorkflowContinuationRunner(internalWorkflowHandler)
 
 	externalGroup := r.Group("/v1")
 	externalGroup.Use(middleware.APIKeyAuthMiddleware(db))
@@ -113,6 +114,16 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 
 		// Workflow run status endpoints
 		externalGroup.GET("/workflows/runs/:run_id", externalWorkflowHandler.GetWorkflowRunDetail)
+		externalGroup.GET("/workflows/runs/:run_id/events", func(c *gin.Context) {
+			if v, exists := c.Get("api_key_info"); exists {
+				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {
+					util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
+					c.Set("account_id", keyInfo.ID.String())
+					c.Params = append(c.Params, gin.Param{Key: "workflow_run_id", Value: c.Param("run_id")})
+				}
+			}
+			internalWorkflowHandler.GetWorkflowRunEvents(c)
+		})
 
 		externalGroup.POST("/workflows/tasks/:task_id/stop", externalWorkflowHandler.StopWorkflowTask)
 
@@ -153,6 +164,44 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 				}
 			}
 			agentHandler.ChatAPIKeyAgent(c)
+		})
+		externalGroup.GET("/agents/conversations/:conversation_id/events", func(c *gin.Context) {
+			if v, exists := c.Get("api_key_info"); exists {
+				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {
+					util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
+					if enterpriseService != nil {
+						if org, err := enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), keyInfo.TenantID.String()); err == nil && org != nil && org.ID != "" {
+							util.SetOrganizationID(c, org.ID)
+						} else {
+							util.SetOrganizationID(c, keyInfo.TenantID.String())
+						}
+					} else {
+						util.SetOrganizationID(c, keyInfo.TenantID.String())
+					}
+					c.Set("account_id", keyInfo.ID.String())
+					c.Set("agent_id", keyInfo.AgentID.String())
+				}
+			}
+			agentHandler.StreamAPIKeyAgentRuntimeEvents(c)
+		})
+		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/workflow-continuation", func(c *gin.Context) {
+			if v, exists := c.Get("api_key_info"); exists {
+				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {
+					util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
+					if enterpriseService != nil {
+						if org, err := enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), keyInfo.TenantID.String()); err == nil && org != nil && org.ID != "" {
+							util.SetOrganizationID(c, org.ID)
+						} else {
+							util.SetOrganizationID(c, keyInfo.TenantID.String())
+						}
+					} else {
+						util.SetOrganizationID(c, keyInfo.TenantID.String())
+					}
+					c.Set("account_id", keyInfo.ID.String())
+					c.Set("agent_id", keyInfo.AgentID.String())
+				}
+			}
+			agentHandler.ContinueAPIKeyAgentRuntimeWorkflowContinuation(c)
 		})
 	}
 }

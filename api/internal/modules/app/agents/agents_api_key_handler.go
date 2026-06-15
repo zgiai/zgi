@@ -97,8 +97,8 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		Query:          req.Query,
 		FileIDs:        req.FileIDs,
 		ResponseMode:   "streaming",
-		Parameters:     req.Parameters,
-		UseMemory:      req.UseMemory,
+		Parameters:     nil,
+		UseMemory:      false,
 	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		ctx,
@@ -132,9 +132,6 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 			"answer":          chunk,
 		})
 	}, func(event runtimeservice.StreamEvent) error {
-		if event.EventType != "message" && event.EventType != "error" {
-			return nil
-		}
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
@@ -151,6 +148,9 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		})
 		return
 	}
+	if agentWorkflowContinuationWaiting(result.Metadata) {
+		return
+	}
 	_ = writeAgentSSE(c, "message_end", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -159,4 +159,92 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 			"usage": result.Metadata["usage"],
 		},
 	})
+}
+
+// StreamAPIKeyAgentRuntimeEvents resumes a recoverable external Agent stream.
+func (h *AgentsHandler) StreamAPIKeyAgentRuntimeEvents(c *gin.Context) {
+	if h.chatRuntimeService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	runtimeCtx, ok := h.apiKeyAgentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	conversationID, err := uuid.Parse(strings.TrimSpace(c.Param("conversation_id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	messageID, err := uuid.Parse(strings.TrimSpace(c.Query("message_id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+
+	setupAgentSSE(c)
+	err = h.chatRuntimeService.StreamConversationEvents(c.Request.Context(), runtimeCtx.Scope, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
+		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
+	})
+	if err != nil {
+		_ = writeAgentSSEEvent(c, "", "error", gin.H{
+			"conversation_id": conversationID.String(),
+			"message_id":      messageID.String(),
+			"message":         err.Error(),
+		})
+	}
+}
+
+// ContinueAPIKeyAgentRuntimeWorkflowContinuation resumes an Agent workflow pause for an external API caller.
+func (h *AgentsHandler) ContinueAPIKeyAgentRuntimeWorkflowContinuation(c *gin.Context) {
+	if h.chatRuntimeService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	runtimeCtx, ok := h.apiKeyAgentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	h.continueRuntimeWorkflowApproval(c, runtimeCtx)
+}
+
+func (h *AgentsHandler) apiKeyAgentRuntimeContext(c *gin.Context) (agentRuntimeContext, bool) {
+	agentID, err := uuid.Parse(strings.TrimSpace(c.GetString("agent_id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return agentRuntimeContext{}, false
+	}
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return agentRuntimeContext{}, false
+	}
+	organizationID, err := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
+	if err != nil {
+		response.Fail(c, response.ErrOrganizationNotFound)
+		return agentRuntimeContext{}, false
+	}
+	workspaceID, err := uuid.Parse(strings.TrimSpace(util.GetWorkspaceID(c)))
+	if err != nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return agentRuntimeContext{}, false
+	}
+
+	scope := runtimeservice.Scope{
+		OrganizationID:  organizationID,
+		AccountID:       accountID,
+		WorkspaceID:     &workspaceID,
+		SkipAccessCheck: true,
+	}
+	caller := runtimeservice.Caller{
+		Type:   runtimemodel.ConversationCallerAgent,
+		ID:     &agentID,
+		Source: runtimemodel.ConversationSourceExternalAPI,
+	}
+	return agentRuntimeContext{Scope: scope, Caller: caller}, true
 }

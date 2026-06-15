@@ -62,6 +62,8 @@ func normalizeConversationSource(value string) string {
 	switch strings.TrimSpace(value) {
 	case runtimemodel.ConversationSourceWebApp:
 		return runtimemodel.ConversationSourceWebApp
+	case runtimemodel.ConversationSourceExternalAPI:
+		return runtimemodel.ConversationSourceExternalAPI
 	case runtimemodel.ConversationSourceMigration:
 		return runtimemodel.ConversationSourceMigration
 	default:

@@ -4,8 +4,10 @@ import React, { useRef } from 'react';
 import { AgentType } from '@/services/types/agent';
 import AgentApiDocsEn from '@/components/agents/api/md/agent-api.en-US.mdx';
 import AgentApiDocsZh from '@/components/agents/api/md/agent-api.zh-Hans.mdx';
-import WorkflowApiDocs from '@/components/agents/api/md/workflow-api.mdx';
-import ChatWorkflowApiDocs from '@/components/agents/api/md/chat-workflow-api.mdx';
+import WorkflowApiDocsEn from '@/components/agents/api/md/workflow-api.en-US.mdx';
+import WorkflowApiDocsZh from '@/components/agents/api/md/workflow-api.zh-Hans.mdx';
+import ChatWorkflowApiDocsEn from '@/components/agents/api/md/chat-workflow-api.en-US.mdx';
+import ChatWorkflowApiDocsZh from '@/components/agents/api/md/chat-workflow-api.zh-Hans.mdx';
 import { MDXProvider } from '@mdx-js/react';
 import { CodeGroup } from '@/components/agents/api/ui/code-group';
 import MDComponents, {
@@ -26,7 +28,14 @@ import { API_URL } from '@/lib/config';
 import { useLocale } from '@/hooks/use-locale';
 
 interface ApiDocsTabProps {
-  agentType: AgentType | null | undefined;
+  agentType: AgentType | string | null | undefined;
+}
+
+function normalizeAgentType(agentType: ApiDocsTabProps['agentType']) {
+  return String(agentType ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/-/g, '_');
 }
 
 export default function ApiDocsTab({ agentType }: ApiDocsTabProps) {
@@ -54,19 +63,22 @@ export default function ApiDocsTab({ agentType }: ApiDocsTabProps) {
     code: InlineCode,
   };
 
-  const isAgentRuntime = agentType === AgentType.AGENT;
-  const apiBase = isAgentRuntime ? API_URL + '/api/v1' : API_URL + '/v1/api';
+  const normalizedAgentType = normalizeAgentType(agentType);
+  const isAgentRuntime = normalizedAgentType === AgentType.AGENT;
+  const apiBase = API_URL + '/api/v1';
 
   const renderDocs = () => {
     if (isAgentRuntime) {
       const AgentApiDocs = locale === 'zh-Hans' ? AgentApiDocsZh : AgentApiDocsEn;
       return <AgentApiDocs components={components} />;
     }
-    return agentType === AgentType.WORKFLOW ? (
-      <WorkflowApiDocs components={components} />
-    ) : (
-      <ChatWorkflowApiDocs components={components} />
-    );
+    if (normalizedAgentType === AgentType.WORKFLOW) {
+      const WorkflowApiDocs = locale === 'zh-Hans' ? WorkflowApiDocsZh : WorkflowApiDocsEn;
+      return <WorkflowApiDocs components={components} />;
+    }
+    const ChatWorkflowApiDocs =
+      locale === 'zh-Hans' ? ChatWorkflowApiDocsZh : ChatWorkflowApiDocsEn;
+    return <ChatWorkflowApiDocs components={components} />;
   };
 
   return (

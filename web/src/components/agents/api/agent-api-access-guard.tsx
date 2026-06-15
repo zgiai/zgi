@@ -11,7 +11,7 @@ import { getErrorMessage } from '@/utils/error-notifications';
 
 interface AgentApiAccessGuardProps {
   agentId: string;
-  children: (context: { agentType: AgentType | undefined }) => ReactNode;
+  children: (context: { agentType: AgentType | string | undefined }) => ReactNode;
 }
 
 export function AgentApiAccessGuard({ agentId, children }: AgentApiAccessGuardProps) {
@@ -20,7 +20,7 @@ export function AgentApiAccessGuard({ agentId, children }: AgentApiAccessGuardPr
   const { agent, isLoading, error } = useAgent(agentId);
   const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canManage = hasPermission('agent.manage');
-  const agentType = (agent?.data?.agent_type as AgentType | undefined) ?? undefined;
+  const agentType = (agent?.data?.agent_type as AgentType | string | undefined) ?? undefined;
 
   if (isLoading || isPermissionsLoading) {
     return (

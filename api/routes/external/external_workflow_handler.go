@@ -860,18 +860,43 @@ func (h *ExternalWorkflowHandler) sendChatSSEError(ctx context.Context, w gin.Re
 }
 
 func (h *ExternalWorkflowHandler) StopWorkflowTask(c *gin.Context) {
-	var req struct {
-		User string `json:"user" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"message": "user parameter is required"})
+	apiKeyInfo, exists := c.Get("api_key_info")
+	if !exists {
+		response.Fail(c, response.ErrorCode{Code: 401001, Message: "API key info not found", UserVisible: true})
 		return
 	}
 
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"message": "workflow task stop is not implemented",
-	})
+	keyInfo, ok := apiKeyInfo.(*middleware.APIKeyInfo)
+	if !ok {
+		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid API key info format", UserVisible: false})
+		return
+	}
+
+	taskID := strings.TrimSpace(c.Param("task_id"))
+	if taskID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if h.workflowService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	tenantID := keyInfo.TenantID.String()
+	agentID := keyInfo.AgentID.String()
+	accountID := keyInfo.ID.String()
+	if err := h.workflowService.StopWorkflowTask(c.Request.Context(), tenantID, agentID, taskID, accountID); err != nil {
+		logger.CriticalContext(c.Request.Context(), "external api workflow stop failed",
+			"agent_id", agentID,
+			"tenant_id", tenantID,
+			"task_id", taskID,
+			err,
+		)
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	response.Success(c, nil)
 }
 
 func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {

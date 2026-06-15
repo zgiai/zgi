@@ -2,7 +2,16 @@
 
 import * as React from 'react';
 import { usePathname, useParams } from 'next/navigation';
-import { BookOpen, History, KeyRound, PanelsTopLeft, RotateCcw, ScanSearch } from 'lucide-react';
+import {
+  BookOpen,
+  FileCode2,
+  History,
+  KeyRound,
+  PanelsTopLeft,
+  RotateCcw,
+  ScanSearch,
+  Server,
+} from 'lucide-react';
 import { useAgent } from '@/hooks/agent/use-agents';
 import { useT } from '@/i18n';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
@@ -73,22 +82,20 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       items.push({
         title: t('agents.apiGroupTitle'),
         href: `/console/agents/${agentId}/api/keys`,
-        icon: KeyRound,
+        icon: Server,
         isActive: currentPathname => currentPathname.startsWith(`/console/agents/${agentId}/api`),
         children: [
           {
             title: t('agents.apiKeys.navTitle'),
             href: `/console/agents/${agentId}/api/keys`,
             icon: KeyRound,
-            isActive: currentPathname =>
-              currentPathname === `/console/agents/${agentId}/api/keys`,
+            isActive: currentPathname => currentPathname === `/console/agents/${agentId}/api/keys`,
           },
           {
             title: t('agents.apiDocsNavTitle'),
             href: `/console/agents/${agentId}/api/docs`,
-            icon: BookOpen,
-            isActive: currentPathname =>
-              currentPathname === `/console/agents/${agentId}/api/docs`,
+            icon: FileCode2,
+            isActive: currentPathname => currentPathname === `/console/agents/${agentId}/api/docs`,
           },
         ],
       });

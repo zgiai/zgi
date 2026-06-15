@@ -245,7 +245,7 @@ func (s *agentsService) GetAgentsListWithPermissions(
 			ID:           a.ID.String(),
 			Name:         a.Name,
 			Description:  a.Description,
-			AgentType:    a.AgentsType,
+			AgentType:    normalizeAgentTypeForResponse(a.AgentsType),
 			TenantID:     a.TenantID.String(),
 			WorkspaceID:  a.TenantID.String(),
 			IconType:     iconType,
