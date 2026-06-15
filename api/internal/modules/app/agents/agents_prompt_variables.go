@@ -34,7 +34,7 @@ type agentPromptDatabaseSummary struct {
 	Name        string
 	Description string
 	SchemaName  string
-	Tables      []agentPromptTableSummary
+	Tables      []agentPromptTableSummary `gorm:"-"`
 }
 
 type agentPromptTableSummary struct {

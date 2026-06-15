@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/dto"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestAgentPromptEffectiveLengthIncludesDatabaseAndTableBlocks(t *testing.T) {
@@ -37,6 +39,35 @@ func TestRenderAgentPromptDatabaseIncludesBoundTables(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rendered database summary missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestAgentPromptDatabaseSummaryScansWithoutGormRelationError(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE data_sources (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		description TEXT,
+		schema_name TEXT
+	)`).Error; err != nil {
+		t.Fatalf("create data_sources: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO data_sources (id, name, description, schema_name) VALUES (?, ?, ?, ?)`, "db-1", "Operations", "Operational records", "ops").Error; err != nil {
+		t.Fatalf("insert data source: %v", err)
+	}
+
+	var rows []agentPromptDatabaseSummary
+	err = db.Table("data_sources").
+		Select("id, name, COALESCE(description, '') AS description, COALESCE(schema_name, '') AS schema_name").
+		Find(&rows).Error
+	if err != nil {
+		t.Fatalf("scan database summary: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "db-1" || rows[0].Name != "Operations" {
+		t.Fatalf("unexpected rows: %+v", rows)
 	}
 }
 
