@@ -15,10 +15,13 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	"github.com/zgiai/zgi/api/internal/dto"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	builtinfiles "github.com/zgiai/zgi/api/internal/modules/tools/builtin/files"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
@@ -164,7 +167,7 @@ func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	assertToolGovernanceStreamEvents(t, events)
 }
 
-func TestRunToolGovernanceDecisionStreamApproveExecutesDeleteToolBeforeAnswer(t *testing.T) {
+func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -223,8 +226,23 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesDeleteToolBeforeAnswer(t 
 	}
 	conversation.CurrentLeafMessageID = &messageID
 
-	deleteTool := &toolGovernanceStreamDeleteTool{}
-	runtime := newToolGovernanceStreamSkillRuntime(t, deleteTool)
+	workspaceID := "workspace-1"
+	fileService := &toolGovernanceStreamFileService{
+		files: map[string]*dto.UploadFile{
+			"file-1": {
+				ID:             "file-1",
+				OrganizationID: organizationID.String(),
+				WorkspaceID:    &workspaceID,
+				Name:           "report.pdf",
+				Extension:      "pdf",
+				MimeType:       "application/pdf",
+				CreatedBy:      accountID.String(),
+				CreatedAt:      now,
+			},
+		},
+	}
+	workspacePerms := &toolGovernanceStreamWorkspacePermissionService{allowed: true}
+	runtime := newToolGovernanceStreamSkillRuntime(t, fileService, workspacePerms)
 	llm := &toolGovernanceStreamLLM{
 		appChatResponses: []*adapter.ChatResponse{
 			{
@@ -308,8 +326,11 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesDeleteToolBeforeAnswer(t 
 	if result.Answer != "Deleted report.pdf after calling the delete tool." {
 		t.Fatalf("result answer = %q, want post-tool final answer", result.Answer)
 	}
-	if len(deleteTool.calls) != 1 || deleteTool.calls[0] != "file-1" {
-		t.Fatalf("delete calls = %#v, want one delete for approved file-1", deleteTool.calls)
+	if len(fileService.deleted) != 1 || fileService.deleted[0] != "file-1" {
+		t.Fatalf("deleted files = %#v, want one delete for approved file-1", fileService.deleted)
+	}
+	if len(workspacePerms.codes) != 1 || workspacePerms.codes[0] != workspacemodel.WorkspacePermissionFileManage {
+		t.Fatalf("workspace permission checks = %#v, want file manage check", workspacePerms.codes)
 	}
 	if len(llm.appChatRequests) != 4 {
 		t.Fatalf("AppChat requests = %d, want direct answer, guard replan, tool call, final answer", len(llm.appChatRequests))
@@ -479,7 +500,7 @@ func toolGovernanceStreamSkillToolCall(callID string, skillID string, toolName s
 	}
 }
 
-func newToolGovernanceStreamSkillRuntime(t *testing.T, deleteTool *toolGovernanceStreamDeleteTool) *skills.Runtime {
+func newToolGovernanceStreamSkillRuntime(t *testing.T, fileService *toolGovernanceStreamFileService, workspacePerms *toolGovernanceStreamWorkspacePermissionService) *skills.Runtime {
 	t.Helper()
 	catalogDir := t.TempDir()
 	root := filepath.Join(catalogDir, skills.SkillFileReader)
@@ -491,7 +512,7 @@ name: file-reader
 description: Governed files service test skill.
 when_to_use: Use when testing AIChat approval continuation.
 provider_type: builtin
-provider_id: governed_files_stream_test
+provider_id: files
 runtime_type: tool
 tools:
   - delete_file
@@ -514,7 +535,7 @@ Use governed file tools.
 		t.Fatalf("write SKILL.md: %v", err)
 	}
 	manager := tools.NewToolManager(nil)
-	if err := manager.RegisterProvider(&toolGovernanceStreamFilesProvider{tool: deleteTool}); err != nil {
+	if err := manager.RegisterProvider(builtinfiles.NewProvider(fileService, nil, workspacePerms)); err != nil {
 		t.Fatalf("register files provider: %v", err)
 	}
 	return skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir).
@@ -621,115 +642,49 @@ func (toolGovernanceStreamModelSpecResolver) Resolve(context.Context, uuid.UUID,
 	return ModelSpec{SupportsToolCall: true}, true, nil
 }
 
-type toolGovernanceStreamFilesProvider struct {
-	tool *toolGovernanceStreamDeleteTool
+type toolGovernanceStreamFileService struct {
+	files   map[string]*dto.UploadFile
+	content map[string]string
+	deleted []string
 }
 
-func (p *toolGovernanceStreamFilesProvider) GetEntity() tools.ToolProviderEntity {
-	return tools.ToolProviderEntity{
-		Identity: tools.ToolProviderIdentity{
-			Name:        "governed_files_stream_test",
-			Label:       tools.I18nText{"en_US": "Governed Files Stream Test"},
-			Description: tools.I18nText{"en_US": "Governed files stream test provider"},
-		},
-		ProviderType: tools.ToolProviderTypeBuiltin,
+func (s *toolGovernanceStreamFileService) GetFileByID(_ context.Context, fileID string) (*dto.UploadFile, error) {
+	if s == nil || s.files[fileID] == nil {
+		return nil, errors.New("file not found")
 	}
+	return s.files[fileID], nil
 }
 
-func (p *toolGovernanceStreamFilesProvider) GetProviderType() tools.ToolProviderType {
-	return tools.ToolProviderTypeBuiltin
-}
-
-func (p *toolGovernanceStreamFilesProvider) GetTool(name string) (tools.Tool, error) {
-	if name != "delete_file" {
-		return nil, tools.ErrToolNotFound
+func (s *toolGovernanceStreamFileService) GetFile(_ context.Context, fileID string) (string, error) {
+	if s == nil {
+		return "", errors.New("file not found")
 	}
-	return p.tool, nil
+	content, ok := s.content[fileID]
+	if !ok {
+		return "", errors.New("file content not found")
+	}
+	return content, nil
 }
 
-func (p *toolGovernanceStreamFilesProvider) GetTools() []tools.Tool {
-	return []tools.Tool{p.tool}
-}
-
-func (p *toolGovernanceStreamFilesProvider) ValidateCredentials(context.Context, map[string]interface{}) error {
+func (s *toolGovernanceStreamFileService) DeleteFiles(_ context.Context, fileIDs []string) error {
+	for _, fileID := range fileIDs {
+		if s.files[fileID] == nil {
+			return errors.New("file not found")
+		}
+		s.deleted = append(s.deleted, fileID)
+		delete(s.files, fileID)
+	}
 	return nil
 }
 
-type toolGovernanceStreamDeleteTool struct {
-	calls []string
+type toolGovernanceStreamWorkspacePermissionService struct {
+	allowed bool
+	codes   []workspacemodel.WorkspacePermissionCode
 }
 
-func (t *toolGovernanceStreamDeleteTool) GetEntity() tools.ToolEntity {
-	return tools.ToolEntity{
-		Identity: tools.ToolIdentity{
-			Name:     "delete_file",
-			Provider: "governed_files_stream_test",
-			Label:    tools.I18nText{"en_US": "Delete File"},
-		},
-		Description: tools.ToolDescription{
-			Human: tools.I18nText{"en_US": "Delete a file"},
-			LLM:   "Delete the file identified by file_id.",
-		},
-		Parameters: []tools.ToolParameter{
-			{
-				Name:        "file_id",
-				Label:       tools.I18nText{"en_US": "File ID"},
-				Type:        tools.ToolParameterTypeString,
-				Form:        tools.ToolParameterFormLLM,
-				Required:    true,
-				Placeholder: tools.I18nText{"en_US": "file id"},
-			},
-		},
-	}
-}
-
-func (t *toolGovernanceStreamDeleteTool) GetProviderType() tools.ToolProviderType {
-	return tools.ToolProviderTypeBuiltin
-}
-
-func (t *toolGovernanceStreamDeleteTool) GetTenantID() string {
-	return ""
-}
-
-func (t *toolGovernanceStreamDeleteTool) Invoke(
-	ctx context.Context,
-	userID string,
-	toolParameters map[string]interface{},
-	conversationID *string,
-	appID *string,
-	messageID *string,
-) ([]tools.ToolInvokeMessage, error) {
-	_ = ctx
-	_ = userID
-	_ = conversationID
-	_ = appID
-	_ = messageID
-	fileID, _ := toolParameters["file_id"].(string)
-	t.calls = append(t.calls, fileID)
-	return []tools.ToolInvokeMessage{{
-		Type: tools.ToolInvokeMessageTypeJSON,
-		Data: map[string]interface{}{
-			"deleted_count": 1,
-			"file_id":       fileID,
-		},
-	}}, nil
-}
-
-func (t *toolGovernanceStreamDeleteTool) GetRuntimeParameters(
-	context.Context,
-	*string,
-	*string,
-	*string,
-) ([]tools.ToolParameter, error) {
-	return nil, nil
-}
-
-func (t *toolGovernanceStreamDeleteTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
-	return t
-}
-
-func (t *toolGovernanceStreamDeleteTool) ValidateCredentials(context.Context, map[string]interface{}) error {
-	return nil
+func (s *toolGovernanceStreamWorkspacePermissionService) CheckWorkspacePermission(_ context.Context, _, _, _ string, code workspacemodel.WorkspacePermissionCode) (bool, error) {
+	s.codes = append(s.codes, code)
+	return s.allowed, nil
 }
 
 type toolGovernanceStreamLLM struct {
