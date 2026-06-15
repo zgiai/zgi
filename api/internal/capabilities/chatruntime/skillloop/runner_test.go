@@ -321,6 +321,7 @@ Use governed file tools.
 	if err != nil {
 		t.Fatalf("resolve skills: %v", err)
 	}
+
 	var events []Event
 	runner := &Runner{
 		LLMClient:    fakeLLM,
@@ -373,6 +374,213 @@ Use governed file tools.
 	}
 	if event.Payload["requires_approval"] != true {
 		t.Fatalf("governance payload = %#v, want requires_approval", event.Payload)
+	}
+}
+
+func TestRunnerApprovedGovernanceGrantExecutesDeleteTool(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "governed-files", `---
+name: governed-files
+description: Governed files test skill.
+when_to_use: Use when testing approved tool governance execution.
+provider_type: builtin
+provider_id: governed_files_test
+runtime_type: tool
+tools:
+  - delete_file
+tool_governance:
+  delete_file:
+    tool_id: file.delete
+    domain: files
+    effect: delete
+    asset_type: file
+    risk_level: high
+    requires_asset_resolution: true
+    audit_required: true
+---
+
+# Governed Files
+
+Use governed file tools.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"governed-files"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_delete", "governed-files", "delete_file", map[string]interface{}{
+								"file_id": "file-1",
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Deleted report.pdf."},
+				}},
+			},
+		},
+	}
+	deleteTool := &runnerGovernedFilesDeleteTool{}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerGovernedFilesProvider{tool: deleteTool}); err != nil {
+		t.Fatalf("register governed files provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir).
+		WithToolGovernanceGateway(skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"governed-files"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+
+	pendingLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load_pending",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"governed-files"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_delete_pending", "governed-files", "delete_file", map[string]interface{}{
+								"file_id": "file-1",
+							}),
+						},
+					},
+				}},
+			},
+		},
+	}
+	pendingRunner := &Runner{
+		LLMClient:    pendingLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	pendingPrepared := NewPreparedChat("conv-1", "msg-pending", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "Delete report.pdf"}},
+	})
+	pendingAnswer, _, pendingErr := pendingRunner.Run(ctx, RunRequest{
+		Prepared: pendingPrepared,
+		Resolved: resolved,
+		ExecutionContext: skills.ExecutionContext{
+			ConversationID: "conv-1",
+			MessageID:      "msg-pending",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets": []map[string]interface{}{
+						{"id": "file-1", "type": "file", "name": "report.pdf"},
+					},
+				},
+			},
+		},
+	})
+	var pendingWithoutGrant *ToolGovernancePendingError
+	if !errors.As(pendingErr, &pendingWithoutGrant) {
+		t.Fatalf("pending Run() error = %v, want ToolGovernancePendingError", pendingErr)
+	}
+	if pendingAnswer != "" {
+		t.Fatalf("pending answer = %q, want no final answer before approval", pendingAnswer)
+	}
+	if len(deleteTool.calls) != 0 {
+		t.Fatalf("delete calls before approval = %#v, want none", deleteTool.calls)
+	}
+
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "Delete report.pdf"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		ExecutionContext: skills.ExecutionContext{
+			ConversationID: "conv-1",
+			MessageID:      "msg-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets": []map[string]interface{}{
+						{"id": "file-1", "type": "file", "name": "report.pdf"},
+					},
+					"session_grants": []map[string]interface{}{
+						{
+							"conversation_id":         "conv-1",
+							"tool_id":                 "file.delete",
+							"effect":                  "delete",
+							"asset_type":              "file",
+							"assets":                  []map[string]interface{}{{"id": "file-1", "type": "file", "name": "report.pdf"}},
+							"risk_level":              "high",
+							"approval_correlation_id": "approval-corr-1",
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Deleted report.pdf." {
+		t.Fatalf("answer = %q, want approved continuation final answer", answer)
+	}
+	if len(deleteTool.calls) != 1 || deleteTool.calls[0] != "file-1" {
+		t.Fatalf("delete calls = %#v, want one call for approved file-1", deleteTool.calls)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want load, delete, final answer", fakeLLM.appChatCalls)
+	}
+	event := findRunnerTestEvent(events, EventToolGovernanceDecision)
+	if event == nil {
+		t.Fatalf("events = %#v, want allowed tool governance decision", events)
+	}
+	if event.Payload["decision"] != toolgovernance.DecisionStatusAllowed {
+		t.Fatalf("governance payload = %#v, want allowed", event.Payload)
+	}
+	decision, ok := event.Payload["governance"].(*toolgovernance.Decision)
+	if !ok || decision.ApprovedByCorrelationID != "approval-corr-1" {
+		t.Fatalf("governance payload = %#v, want approval correlation", event.Payload)
 	}
 }
 
@@ -644,6 +852,117 @@ type runnerTestLLMClient struct {
 
 type runnerTestWorkflowRunner struct {
 	events []automationaction.WorkflowRunEvent
+}
+
+type runnerGovernedFilesProvider struct {
+	tool *runnerGovernedFilesDeleteTool
+}
+
+func (p *runnerGovernedFilesProvider) GetEntity() tools.ToolProviderEntity {
+	return tools.ToolProviderEntity{
+		Identity: tools.ToolProviderIdentity{
+			Name:        "governed_files_test",
+			Label:       tools.I18nText{"en_US": "Governed Files Test"},
+			Description: tools.I18nText{"en_US": "Governed files test provider"},
+		},
+		ProviderType: tools.ToolProviderTypeBuiltin,
+	}
+}
+
+func (p *runnerGovernedFilesProvider) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (p *runnerGovernedFilesProvider) GetTool(name string) (tools.Tool, error) {
+	if name != "delete_file" {
+		return nil, tools.ErrToolNotFound
+	}
+	return p.tool, nil
+}
+
+func (p *runnerGovernedFilesProvider) GetTools() []tools.Tool {
+	return []tools.Tool{p.tool}
+}
+
+func (p *runnerGovernedFilesProvider) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerGovernedFilesDeleteTool struct {
+	calls []string
+}
+
+func (t *runnerGovernedFilesDeleteTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "delete_file",
+			Provider: "governed_files_test",
+			Label:    tools.I18nText{"en_US": "Delete File"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Delete a file"},
+			LLM:   "Delete the file identified by file_id.",
+		},
+		Parameters: []tools.ToolParameter{
+			{
+				Name:        "file_id",
+				Label:       tools.I18nText{"en_US": "File ID"},
+				Type:        tools.ToolParameterTypeString,
+				Form:        tools.ToolParameterFormLLM,
+				Required:    true,
+				Placeholder: tools.I18nText{"en_US": "file id"},
+			},
+		},
+	}
+}
+
+func (t *runnerGovernedFilesDeleteTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *runnerGovernedFilesDeleteTool) GetTenantID() string {
+	return ""
+}
+
+func (t *runnerGovernedFilesDeleteTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	fileID, _ := toolParameters["file_id"].(string)
+	t.calls = append(t.calls, fileID)
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"deleted_count": 1,
+			"file_id":       fileID,
+		},
+	}}, nil
+}
+
+func (t *runnerGovernedFilesDeleteTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *runnerGovernedFilesDeleteTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *runnerGovernedFilesDeleteTool) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
 }
 
 func (f *runnerTestWorkflowRunner) RunAutomationWorkflow(ctx context.Context, req automationaction.WorkflowRunRequest) (*automationaction.WorkflowRunResult, error) {
