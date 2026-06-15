@@ -51,6 +51,8 @@ interface WorkspaceState {
   clearPermissions: () => void;
   // Mark console business features as requiring a workspace.
   markWorkspaceRequired: () => void;
+  // Clear stale workspace context while a newly selected organization is loading.
+  resetForOrganizationSwitch: () => void;
   // Legacy alias for markWorkspaceRequired.
   enterOrganizationMode: () => void;
   // Switch to a specific workspace (exits organization mode)
@@ -106,6 +108,14 @@ const useWorkspaceStoreBase = create<WorkspaceState>()(
           contextStatus: 'workspace_required',
           isOrganizationMode: true,
           currentWorkspace: null,
+          permissionState: defaultPermissionState,
+        }),
+      resetForOrganizationSwitch: () =>
+        set({
+          workspaces: [],
+          currentWorkspace: null,
+          contextStatus: 'loading',
+          isOrganizationMode: true,
           permissionState: defaultPermissionState,
         }),
       enterOrganizationMode: () => get().markWorkspaceRequired(),

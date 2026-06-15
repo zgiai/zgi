@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/store/auth-store';
+import { useWorkspaceStore } from '@/store/workspace-store';
 import { clearSessionBoundClientState } from '@/lib/auth/client-state';
 import { sessionManager, type AuthSyncEvent } from '@/lib/auth/session-manager';
 import { PROFILE_KEYS } from '@/hooks/query-keys';
@@ -10,6 +11,38 @@ import { clearProfileClientCache } from '@/utils/client-cache';
 
 interface AuthProviderProps {
   children: React.ReactNode;
+}
+
+function syncWorkspaceStoreForContextChange(event: AuthSyncEvent): void {
+  const { payload } = event;
+  if (!payload) {
+    return;
+  }
+
+  const workspaceStore = useWorkspaceStore.getState();
+  const workspaceID = payload.currentWorkspaceId;
+
+  if (workspaceID === null || workspaceID === '') {
+    workspaceStore.resetForOrganizationSwitch();
+    return;
+  }
+
+  if (payload.currentOrganizationId) {
+    workspaceStore.resetForOrganizationSwitch();
+    return;
+  }
+
+  if (typeof workspaceID !== 'string') {
+    return;
+  }
+
+  const nextWorkspace = workspaceStore.workspaces.find(workspace => workspace.id === workspaceID);
+  if (nextWorkspace) {
+    workspaceStore.selectWorkspace(nextWorkspace);
+    return;
+  }
+
+  workspaceStore.resetForOrganizationSwitch();
 }
 
 async function handleCrossTabEvent(event: AuthSyncEvent): Promise<void> {
@@ -46,6 +79,7 @@ async function handleCrossTabEvent(event: AuthSyncEvent): Promise<void> {
       return;
     }
     case 'CONTEXT_CHANGED': {
+      syncWorkspaceStoreForContextChange(event);
       clearProfileClientCache();
       queryClient.clear();
       await useAuthStore.getState().initializeAuth({ force: true });

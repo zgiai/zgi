@@ -62,8 +62,12 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
     workspaceId === 'current' && currentWorkspace ? currentWorkspace.id : workspaceId;
 
   const isWorkspaceRequired = contextStatus === 'workspace_required';
+  const isWorkspaceLoading = contextStatus === 'loading';
+  const isMissingCurrentWorkspace = workspaceId === 'current' && !currentWorkspace;
   // Skip query when no workspace context is usable.
-  const shouldSkip = skipInOrgMode && isWorkspaceRequired;
+  const shouldSkip =
+    skipInOrgMode &&
+    (isWorkspaceRequired || isWorkspaceLoading || isMissingCurrentWorkspace);
 
   const {
     data: permissionsData,
@@ -86,6 +90,9 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
     refetchOnWindowFocus: false,
     retry: false,
   });
+
+  const hasUsableWorkspaceContext =
+    !shouldSkip && contextStatus === 'ready' && effectiveWorkspaceId !== 'current';
 
   // Sync permissions to store
   useEffect(() => {
@@ -135,12 +142,18 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   return {
     permissions: isWorkspaceRequired
       ? organizationViewPermissions
-      : (permissionsData?.permissions ?? []),
+      : hasUsableWorkspaceContext
+        ? (permissionsData?.permissions ?? [])
+        : [],
     organizationRole: isWorkspaceRequired
       ? organizationRoleFromProfile
-      : (permissionsData?.organization_role ?? null),
-    workspaceRole: permissionsData?.workspace_role ?? null,
-    workspaceRoleName: permissionsData?.workspace_role_name ?? null,
+      : hasUsableWorkspaceContext
+        ? (permissionsData?.organization_role ?? null)
+        : null,
+    workspaceRole: hasUsableWorkspaceContext ? (permissionsData?.workspace_role ?? null) : null,
+    workspaceRoleName: hasUsableWorkspaceContext
+      ? (permissionsData?.workspace_role_name ?? null)
+      : null,
     isLoading,
     isFetching,
     error: error ? getErrorMessage(error) : null,
@@ -153,6 +166,9 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
         }
         return permission.endsWith('.view');
       }
+      if (!hasUsableWorkspaceContext) {
+        return false;
+      }
       return permissionsData?.permissions.includes(permission) ?? false;
     },
     hasAnyPermission: (permissions: PermissionCode[]) => {
@@ -161,6 +177,9 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
           return permissions.length > 0;
         }
         return permissions.some(p => p.endsWith('.view'));
+      }
+      if (!hasUsableWorkspaceContext) {
+        return false;
       }
       return permissions.some(p => permissionsData?.permissions.includes(p) ?? false);
     },
@@ -171,12 +190,17 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
         }
         return permissions.every(p => p.endsWith('.view'));
       }
+      if (!hasUsableWorkspaceContext) {
+        return false;
+      }
       return permissions.every(p => permissionsData?.permissions.includes(p) ?? false);
     },
     isAdmin: () => {
       const gRole = isWorkspaceRequired
         ? organizationRoleFromProfile
-        : (permissionsData?.organization_role ?? null);
+        : hasUsableWorkspaceContext
+          ? (permissionsData?.organization_role ?? null)
+          : null;
       return gRole === 'owner' || gRole === 'admin';
     },
   };
