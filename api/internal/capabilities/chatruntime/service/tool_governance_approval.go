@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -408,6 +409,13 @@ func toolGovernanceSessionGrantFromEvent(event map[string]interface{}, conversat
 	if strings.TrimSpace(stringFromAny(grant["risk_level"])) == "" {
 		grant["risk_level"] = firstNonEmptyString(stringFromAny(approvalEvent["risk_level"]), stringFromAny(event["risk_level"]))
 	}
+	assets := mapSliceFromAny(grant["assets"])
+	if len(assets) == 0 {
+		assets = toolGovernanceAssetsFromEvent(event, approvalEvent)
+	}
+	if assets = compactToolGovernanceGrantAssets(assets); len(assets) > 0 {
+		grant["assets"] = mapsToInterfaceSlice(assets)
+	}
 	if strings.TrimSpace(stringFromAny(grant["approval_correlation_id"])) == "" {
 		grant["approval_correlation_id"] = firstNonEmptyString(
 			stringFromAny(approvalEvent["correlation_id"]),
@@ -417,6 +425,53 @@ func toolGovernanceSessionGrantFromEvent(event map[string]interface{}, conversat
 	}
 	grant["granted_at"] = now.Format(time.RFC3339)
 	return compactSkillInvocation(grant)
+}
+
+func toolGovernanceAssetsFromEvent(event map[string]interface{}, approvalEvent map[string]interface{}) []map[string]interface{} {
+	if assets := mapSliceFromAny(approvalEvent["assets"]); len(assets) > 0 {
+		return assets
+	}
+	if assets := mapSliceFromAny(event["assets"]); len(assets) > 0 {
+		return assets
+	}
+	if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
+		if assets := mapSliceFromAny(governance["assets"]); len(assets) > 0 {
+			return assets
+		}
+		if nestedApprovalEvent := governanceMapFromAny(governance["approval_event"]); len(nestedApprovalEvent) > 0 {
+			return mapSliceFromAny(nestedApprovalEvent["assets"])
+		}
+	}
+	return nil
+}
+
+func compactToolGovernanceGrantAssets(assets []map[string]interface{}) []map[string]interface{} {
+	if len(assets) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(assets))
+	for _, asset := range assets {
+		compact := map[string]interface{}{}
+		if id := strings.TrimSpace(firstNonEmptyString(asset["id"], asset["asset_id"], asset["file_id"])); id != "" {
+			compact["id"] = id
+		}
+		if assetType := strings.TrimSpace(firstNonEmptyString(asset["type"], asset["asset_type"])); assetType != "" {
+			compact["type"] = assetType
+		}
+		if name := strings.TrimSpace(firstNonEmptyString(asset["name"], asset["asset_name"], asset["file_name"], asset["filename"], asset["title"])); name != "" {
+			compact["name"] = name
+		}
+		if workspaceID := strings.TrimSpace(firstNonEmptyString(asset["workspace_id"], asset["workspaceId"])); workspaceID != "" {
+			compact["workspace_id"] = workspaceID
+		}
+		if source := strings.TrimSpace(stringFromAny(asset["source"])); source != "" {
+			compact["source"] = source
+		}
+		if len(compact) > 0 {
+			out = append(out, compact)
+		}
+	}
+	return out
 }
 
 func appendToolGovernanceSessionGrant(metadata map[string]interface{}, grant map[string]interface{}) map[string]interface{} {
@@ -458,7 +513,35 @@ func toolGovernanceSessionGrantKey(grant map[string]interface{}) string {
 		strings.TrimSpace(stringFromAny(grant["effect"])),
 		strings.TrimSpace(stringFromAny(grant["asset_type"])),
 		strings.TrimSpace(stringFromAny(grant["risk_level"])),
+		toolGovernanceGrantAssetsKey(grant),
 	}, "|")
+}
+
+func toolGovernanceGrantAssetsKey(grant map[string]interface{}) string {
+	assets := mapSliceFromAny(grant["assets"])
+	if len(assets) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(assets))
+	for _, asset := range assets {
+		parts = append(parts, toolGovernanceGrantAssetKey(asset))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
+}
+
+func toolGovernanceGrantAssetKey(asset map[string]interface{}) string {
+	assetType := strings.ToLower(strings.TrimSpace(stringFromAny(asset["type"])))
+	workspaceID := strings.TrimSpace(firstNonEmptyString(asset["workspace_id"], asset["workspaceId"]))
+	id := strings.TrimSpace(firstNonEmptyString(asset["id"], asset["asset_id"], asset["file_id"]))
+	if id != "" {
+		return strings.Join([]string{assetType, workspaceID, "id:" + id}, "/")
+	}
+	name := strings.ToLower(strings.TrimSpace(firstNonEmptyString(asset["name"], asset["asset_name"], asset["file_name"], asset["filename"], asset["title"])))
+	if name != "" {
+		return strings.Join([]string{assetType, workspaceID, "name:" + name}, "/")
+	}
+	return strings.Join([]string{assetType, workspaceID}, "/")
 }
 
 func toolGovernanceCorrelationID(event map[string]interface{}) string {

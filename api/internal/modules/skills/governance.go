@@ -229,11 +229,12 @@ func sessionGrantsFromAny(value interface{}) []toolgovernance.SessionGrant {
 }
 
 func sessionGrantFromMap(input map[string]interface{}) toolgovernance.SessionGrant {
-	return toolgovernance.SessionGrant{
+	grant := toolgovernance.SessionGrant{
 		ConversationID: stringMapValue(input, "conversation_id", "conversationId"),
 		ToolID:         stringMapValue(input, "tool_id", "toolId"),
 		Effect:         toolgovernance.Effect(stringMapValue(input, "effect")),
 		AssetType:      stringMapValue(input, "asset_type", "assetType"),
+		Assets:         assetRefsFromAny(firstMapValue(input, "assets", "asset_refs", "assetRefs")),
 		RiskLevel:      toolgovernance.RiskLevel(stringMapValue(input, "risk_level", "riskLevel")),
 		ApprovalCorrelationID: stringMapValue(input,
 			"approval_correlation_id",
@@ -246,10 +247,41 @@ func sessionGrantFromMap(input map[string]interface{}) toolgovernance.SessionGra
 		GrantedAt: timeFromAny(firstMapValue(input, "granted_at", "grantedAt")),
 		ExpiresAt: timeFromAny(firstMapValue(input, "expires_at", "expiresAt")),
 	}
+	if len(grant.Assets) == 0 {
+		grant.Assets = assetRefsFromIDList(firstMapValue(input, "asset_ids", "assetIds", "file_ids", "fileIds"), grant.AssetType)
+	}
+	return grant
+}
+
+func assetRefsFromIDList(value interface{}, assetType string) []toolgovernance.AssetRef {
+	switch typed := value.(type) {
+	case []string:
+		out := make([]toolgovernance.AssetRef, 0, len(typed))
+		for _, id := range typed {
+			if id = strings.TrimSpace(id); id != "" {
+				out = append(out, toolgovernance.AssetRef{ID: id, Type: assetType})
+			}
+		}
+		return out
+	case []interface{}:
+		out := make([]toolgovernance.AssetRef, 0, len(typed))
+		for _, item := range typed {
+			if id := strings.TrimSpace(stringMapScalar(item)); id != "" {
+				out = append(out, toolgovernance.AssetRef{ID: id, Type: assetType})
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func stringMapValue(input map[string]interface{}, keys ...string) string {
 	value := firstMapValue(input, keys...)
+	return stringMapScalar(value)
+}
+
+func stringMapScalar(value interface{}) string {
 	switch typed := value.(type) {
 	case string:
 		return strings.TrimSpace(typed)

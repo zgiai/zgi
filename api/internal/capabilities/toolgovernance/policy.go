@@ -57,7 +57,7 @@ func Decide(req Request, policy Policy) Decision {
 		decision.ModelFeedback = modelFeedback(decision, tier)
 		return decision
 	}
-	if grant, ok := matchingSessionGrant(req.SessionGrants, req.ConversationID, manifest); ok {
+	if grant, ok := matchingSessionGrant(req.SessionGrants, req.ConversationID, manifest, assets); ok {
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by matching session grant", false)
 		decision = decision.withMatchedGrant(grant)
 		decision.ModelFeedback = modelFeedback(decision, tier)
@@ -138,6 +138,7 @@ func approvalEvent(decision Decision, tier PermissionTier, conversationID string
 			ToolID:                manifest.ToolID,
 			Effect:                manifest.Effect,
 			AssetType:             manifest.AssetType,
+			Assets:                decision.Assets,
 			RiskLevel:             manifest.RiskLevel,
 			ApprovalCorrelationID: decision.CorrelationID,
 		},
@@ -164,6 +165,9 @@ func modelFeedback(decision Decision, tier PermissionTier) map[string]interface{
 	}
 	if decision.MatchedGrant != nil {
 		feedback["matched_grant"] = *decision.MatchedGrant
+		if len(decision.MatchedGrant.Assets) > 0 {
+			feedback["matched_assets"] = decision.MatchedGrant.Assets
+		}
 	}
 	return feedback
 }
@@ -277,12 +281,13 @@ func tierAllowed(manifest Manifest, tier PermissionTier) bool {
 	return false
 }
 
-func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest Manifest) (SessionGrant, bool) {
+func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest Manifest, assets []AssetRef) (SessionGrant, bool) {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
 		return SessionGrant{}, false
 	}
 	now := time.Now()
+	assets = normalizeAssets(assets)
 	for _, raw := range grants {
 		grant := normalizeSessionGrant(raw)
 		if grant.ConversationID != conversationID {
@@ -297,7 +302,51 @@ func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest
 		if !grant.ExpiresAt.IsZero() && !grant.ExpiresAt.After(now) {
 			continue
 		}
+		if !sessionGrantCoversAssets(grant, manifest, assets) {
+			continue
+		}
 		return grant, true
 	}
 	return SessionGrant{}, false
+}
+
+func sessionGrantCoversAssets(grant SessionGrant, manifest Manifest, assets []AssetRef) bool {
+	if !isAssetOperation(manifest) || len(assets) == 0 {
+		return true
+	}
+	if len(grant.Assets) == 0 {
+		return false
+	}
+	for _, requested := range assets {
+		matched := false
+		for _, approved := range grant.Assets {
+			if assetRefCovers(approved, requested) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+func assetRefCovers(approved AssetRef, requested AssetRef) bool {
+	if requested.Type != "" && approved.Type != "" && requested.Type != approved.Type {
+		return false
+	}
+	if requested.WorkspaceID != "" && approved.WorkspaceID != "" && requested.WorkspaceID != approved.WorkspaceID {
+		return false
+	}
+	if requested.ID != "" {
+		return approved.ID != "" && approved.ID == requested.ID
+	}
+	if requested.Name != "" {
+		if approved.ID != "" {
+			return false
+		}
+		return approved.Name != "" && strings.EqualFold(approved.Name, requested.Name)
+	}
+	return false
 }

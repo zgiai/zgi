@@ -90,6 +90,7 @@ func TestDecideSessionGrantAllowsMatchingToolEffectAssetAndRisk(t *testing.T) {
 			ToolID:                "file.delete",
 			Effect:                EffectDelete,
 			AssetType:             "file",
+			Assets:                []AssetRef{{ID: "file-1", Type: "file", Name: "report.pdf"}},
 			RiskLevel:             RiskLevelHigh,
 			ApprovalCorrelationID: "approval-corr-1",
 			ExpiresAt:             time.Now().Add(time.Hour),
@@ -107,6 +108,100 @@ func TestDecideSessionGrantAllowsMatchingToolEffectAssetAndRisk(t *testing.T) {
 	}
 	if decision.ModelFeedback["approved_by_correlation_id"] != "approval-corr-1" {
 		t.Fatalf("model feedback = %#v, want approval correlation", decision.ModelFeedback)
+	}
+	if matchedAssets, ok := decision.ModelFeedback["matched_assets"].([]AssetRef); !ok || len(matchedAssets) != 1 || matchedAssets[0].ID != "file-1" {
+		t.Fatalf("model feedback matched_assets = %#v, want approved file", decision.ModelFeedback["matched_assets"])
+	}
+}
+
+func TestDecideSessionGrantDoesNotAllowDifferentAsset(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ConversationID: "conversation-1",
+		Assets:         []AssetRef{{ID: "file-2", Type: "file", Name: "other.pdf"}},
+		SessionGrants: []SessionGrant{{
+			ConversationID:        "conversation-1",
+			ToolID:                "file.delete",
+			Effect:                EffectDelete,
+			AssetType:             "file",
+			Assets:                []AssetRef{{ID: "file-1", Type: "file", Name: "report.pdf"}},
+			RiskLevel:             RiskLevelHigh,
+			ApprovalCorrelationID: "approval-corr-1",
+			ExpiresAt:             time.Now().Add(time.Hour),
+		}},
+	}, DefaultPolicy())
+
+	assertNeedsApproval(t, decision, "different asset")
+	if decision.ApprovedByCorrelationID != "" || decision.MatchedGrant != nil {
+		t.Fatalf("decision should not carry matched grant for different asset: %#v", decision)
+	}
+}
+
+func TestDecideSessionGrantRequiresAssetScopeForAssetOperations(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ConversationID: "conversation-1",
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+		SessionGrants: []SessionGrant{{
+			ConversationID:        "conversation-1",
+			ToolID:                "file.delete",
+			Effect:                EffectDelete,
+			AssetType:             "file",
+			RiskLevel:             RiskLevelHigh,
+			ApprovalCorrelationID: "legacy-corr",
+			ExpiresAt:             time.Now().Add(time.Hour),
+		}},
+	}, DefaultPolicy())
+
+	assertNeedsApproval(t, decision, "assetless grant")
+}
+
+func TestDecideSessionGrantDoesNotAllowUnapprovedAdditionalAsset(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ConversationID: "conversation-1",
+		Assets: []AssetRef{
+			{ID: "file-1", Type: "file"},
+			{ID: "file-2", Type: "file"},
+		},
+		SessionGrants: []SessionGrant{{
+			ConversationID:        "conversation-1",
+			ToolID:                "file.delete",
+			Effect:                EffectDelete,
+			AssetType:             "file",
+			Assets:                []AssetRef{{ID: "file-1", Type: "file"}},
+			RiskLevel:             RiskLevelHigh,
+			ApprovalCorrelationID: "approval-corr-1",
+			ExpiresAt:             time.Now().Add(time.Hour),
+		}},
+	}, DefaultPolicy())
+
+	assertNeedsApproval(t, decision, "unapproved extra asset")
+}
+
+func TestDecideSessionGrantMatchesNameOnlyAssetWhenScoped(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ConversationID: "conversation-1",
+		Assets:         []AssetRef{{Type: "file", Name: "report.pdf", WorkspaceID: "workspace-1"}},
+		SessionGrants: []SessionGrant{{
+			ConversationID:        "conversation-1",
+			ToolID:                "file.delete",
+			Effect:                EffectDelete,
+			AssetType:             "file",
+			Assets:                []AssetRef{{Type: "file", Name: "Report.pdf", WorkspaceID: "workspace-1"}},
+			RiskLevel:             RiskLevelHigh,
+			ApprovalCorrelationID: "approval-corr-1",
+			ExpiresAt:             time.Now().Add(time.Hour),
+		}},
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusAllowed {
+		t.Fatalf("expected name-only grant to allow, got %s (%s)", decision.Status, decision.Reason)
 	}
 }
 
@@ -169,6 +264,9 @@ func TestDecideAlwaysAskBuildsApprovalEventGrant(t *testing.T) {
 	}
 	if decision.ApprovalEvent.Grant.ApprovalCorrelationID != "corr-1" {
 		t.Fatalf("expected grant approval correlation, got %#v", decision.ApprovalEvent.Grant)
+	}
+	if len(decision.ApprovalEvent.Grant.Assets) != 1 || decision.ApprovalEvent.Grant.Assets[0].ID != "file-1" {
+		t.Fatalf("expected grant assets, got %#v", decision.ApprovalEvent.Grant.Assets)
 	}
 }
 

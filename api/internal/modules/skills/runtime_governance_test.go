@@ -249,6 +249,7 @@ func TestCallSkillToolMatchingSessionGrantAllowsEnginePath(t *testing.T) {
 							"tool_id":         "file.delete",
 							"effect":          "delete",
 							"asset_type":      "file",
+							"assets":          []map[string]interface{}{{"id": "file-1", "type": "file"}},
 							"risk_level":      "high",
 							"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
 						},
@@ -289,6 +290,7 @@ func TestPolicyToolGovernanceMatchingSessionGrantCarriesApprovalCorrelation(t *t
 							"tool_id":                 "file.delete",
 							"effect":                  "delete",
 							"asset_type":              "file",
+							"assets":                  []map[string]interface{}{{"id": "file-1", "type": "file", "name": "report.pdf"}},
 							"risk_level":              "high",
 							"approval_correlation_id": "approval-corr-1",
 							"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
@@ -309,6 +311,56 @@ func TestPolicyToolGovernanceMatchingSessionGrantCarriesApprovalCorrelation(t *t
 	}
 	if decision.MatchedGrant == nil || decision.MatchedGrant.ApprovalCorrelationID != "approval-corr-1" {
 		t.Fatalf("matched grant = %#v, want approval correlation", decision.MatchedGrant)
+	}
+	if len(decision.MatchedGrant.Assets) != 1 || decision.MatchedGrant.Assets[0].ID != "file-1" || decision.MatchedGrant.Assets[0].Name != "report.pdf" {
+		t.Fatalf("matched grant assets = %#v, want approved asset", decision.MatchedGrant.Assets)
+	}
+}
+
+func TestPolicyToolGovernanceMatchingSessionGrantDoesNotAllowDifferentRuntimeAsset(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "file.delete",
+			Domain:                  "files",
+			Effect:                  toolgovernance.EffectDelete,
+			AssetType:               "file",
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			RequiresAssetResolution: true,
+		},
+		SkillID:   "file-reader",
+		ToolName:  "delete_file",
+		Arguments: map[string]interface{}{"file_id": "file-2"},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets":          []map[string]interface{}{{"id": "file-2", "type": "file", "name": "other.pdf"}},
+					"session_grants": []map[string]interface{}{
+						{
+							"conversation_id":         "conversation-1",
+							"tool_id":                 "file.delete",
+							"effect":                  "delete",
+							"asset_type":              "file",
+							"assets":                  []map[string]interface{}{{"id": "file-1", "type": "file", "name": "report.pdf"}},
+							"risk_level":              "high",
+							"approval_correlation_id": "approval-corr-1",
+							"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusNeedsApproval {
+		t.Fatalf("decision status = %s, want needs_approval: %#v", decision.Status, decision)
+	}
+	if decision.MatchedGrant != nil || decision.ApprovedByCorrelationID != "" {
+		t.Fatalf("decision should not carry matched grant for different asset: %#v", decision)
 	}
 }
 

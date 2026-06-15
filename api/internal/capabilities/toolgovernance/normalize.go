@@ -112,6 +112,12 @@ func normalizeSessionGrant(grant SessionGrant) SessionGrant {
 	grant.ToolID = strings.TrimSpace(grant.ToolID)
 	grant.Effect = NormalizeEffect(grant.Effect)
 	grant.AssetType = normalizeAssetType(grant.AssetType)
+	grant.Assets = normalizeAssets(grant.Assets)
+	for index := range grant.Assets {
+		if grant.Assets[index].Type == "" {
+			grant.Assets[index].Type = grant.AssetType
+		}
+	}
 	grant.RiskLevel = NormalizeRiskLevel(grant.RiskLevel)
 	grant.ApprovalCorrelationID = strings.TrimSpace(grant.ApprovalCorrelationID)
 	return grant

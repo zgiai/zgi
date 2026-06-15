@@ -106,6 +106,14 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 						"effect":         "delete",
 						"asset_type":     "file",
 						"risk_level":     "high",
+						"assets": []interface{}{
+							map[string]interface{}{
+								"id":           "file-1",
+								"type":         "file",
+								"name":         "smoke.txt",
+								"workspace_id": "workspace-1",
+							},
+						},
 						"grant": map[string]interface{}{
 							"conversation_id": conversationID,
 							"tool_id":         "file.delete",
@@ -130,6 +138,10 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 	}
 	if grant["approval_correlation_id"] != "corr-1" {
 		t.Fatalf("session grant = %#v, want approval correlation", grant)
+	}
+	grantAssets := mapSliceFromAny(grant["assets"])
+	if len(grantAssets) != 1 || grantAssets[0]["id"] != "file-1" || grantAssets[0]["workspace_id"] != "workspace-1" {
+		t.Fatalf("session grant assets = %#v, want approved file asset", grantAssets)
 	}
 	updated := resolvedToolGovernanceDecisionEvent(event, map[string]interface{}{
 		"action":               "approve",
@@ -161,6 +173,9 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 	if len(grants) != 1 || grants[0]["tool_id"] != "file.delete" || grants[0]["approval_correlation_id"] != "corr-1" {
 		t.Fatalf("session grants = %#v, want file.delete grant", grants)
 	}
+	if assets := mapSliceFromAny(grants[0]["assets"]); len(assets) != 1 || assets[0]["id"] != "file-1" {
+		t.Fatalf("session grant assets = %#v, want approved file", assets)
+	}
 
 	oneShotMetadata := appendToolGovernanceOneShotGrant(nil, grant)
 	oneShotPrepared := &PreparedChat{
@@ -172,6 +187,61 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 	grants = mapSliceFromAny(nested["session_grants"])
 	if len(grants) != 1 || grants[0]["tool_id"] != "file.delete" || grants[0]["approval_correlation_id"] != "corr-1" {
 		t.Fatalf("one-shot grants = %#v, want file.delete grant", grants)
+	}
+	if assets := mapSliceFromAny(grants[0]["assets"]); len(assets) != 1 || assets[0]["id"] != "file-1" {
+		t.Fatalf("one-shot grant assets = %#v, want approved file", assets)
+	}
+}
+
+func TestToolGovernanceSessionGrantFromEventFallsBackToGovernanceAssetsAndCompacts(t *testing.T) {
+	conversationID := uuid.New().String()
+	event := map[string]interface{}{
+		"correlation_id": "corr-1",
+		"governance": map[string]interface{}{
+			"assets": []interface{}{
+				map[string]interface{}{
+					"file_id":      "file-1",
+					"asset_type":   "file",
+					"file_name":    "smoke.txt",
+					"workspace_id": "workspace-1",
+					"source":       "resolver",
+					"metadata":     map[string]interface{}{"created_by": "account-1"},
+				},
+			},
+			"approval_event": map[string]interface{}{
+				"correlation_id": "corr-1",
+				"tool_id":        "file.delete",
+				"effect":         "delete",
+				"asset_type":     "file",
+				"risk_level":     "high",
+				"grant": map[string]interface{}{
+					"tool_id":    "file.delete",
+					"effect":     "delete",
+					"asset_type": "file",
+					"risk_level": "high",
+				},
+			},
+		},
+	}
+
+	grant := toolGovernanceSessionGrantFromEvent(event, conversationID, time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC))
+	assets := mapSliceFromAny(grant["assets"])
+	if len(assets) != 1 {
+		t.Fatalf("grant assets = %#v, want one compact asset", assets)
+	}
+	for key, want := range map[string]interface{}{
+		"id":           "file-1",
+		"type":         "file",
+		"name":         "smoke.txt",
+		"workspace_id": "workspace-1",
+		"source":       "resolver",
+	} {
+		if assets[0][key] != want {
+			t.Fatalf("asset %s = %#v, want %#v in %#v", key, assets[0][key], want, assets[0])
+		}
+	}
+	if _, ok := assets[0]["metadata"]; ok {
+		t.Fatalf("grant asset should not persist metadata: %#v", assets[0])
 	}
 }
 
@@ -564,6 +634,9 @@ func TestToolGovernanceSessionGrantKeyIncludesConversationToolEffectAssetAndRisk
 		"asset_type":      "file",
 		"risk_level":      "high",
 		"granted_at":      "2026-06-15T12:00:00Z",
+		"assets": []interface{}{
+			map[string]interface{}{"id": "file-1", "type": "file"},
+		},
 	})
 	metadata = appendToolGovernanceSessionGrant(metadata, map[string]interface{}{
 		"conversation_id": "conversation-1",
@@ -572,10 +645,13 @@ func TestToolGovernanceSessionGrantKeyIncludesConversationToolEffectAssetAndRisk
 		"asset_type":      "file",
 		"risk_level":      "high",
 		"granted_at":      "2026-06-15T12:05:00Z",
+		"assets": []interface{}{
+			map[string]interface{}{"id": "file-1", "type": "file"},
+		},
 	})
 	grants := mapSliceFromAny(metadata["tool_governance_session_grants"])
 	if len(grants) != 1 {
-		t.Fatalf("session grants = %#v, want duplicate five-field scope to replace", grants)
+		t.Fatalf("session grants = %#v, want duplicate scoped grant to replace", grants)
 	}
 	if grants[0]["granted_at"] != "2026-06-15T12:05:00Z" {
 		t.Fatalf("session grant = %#v, want latest duplicate grant", grants[0])
@@ -587,11 +663,47 @@ func TestToolGovernanceSessionGrantKeyIncludesConversationToolEffectAssetAndRisk
 		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "update", "asset_type": "file", "risk_level": "high"},
 		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "delete", "asset_type": "database", "risk_level": "high"},
 		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "medium"},
+		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high", "assets": []interface{}{map[string]interface{}{"id": "file-2", "type": "file"}}},
 	} {
 		metadata = appendToolGovernanceSessionGrant(metadata, variant)
 	}
 	grants = mapSliceFromAny(metadata["tool_governance_session_grants"])
-	if len(grants) != 6 {
-		t.Fatalf("session grants = %#v, want one base plus five distinct scoped grants", grants)
+	if len(grants) != 7 {
+		t.Fatalf("session grants = %#v, want one base plus six distinct scoped grants", grants)
+	}
+}
+
+func TestToolGovernanceSessionGrantKeyCanonicalizesAssetOrder(t *testing.T) {
+	metadata := appendToolGovernanceSessionGrant(nil, map[string]interface{}{
+		"conversation_id": "conversation-1",
+		"tool_id":         "file.delete",
+		"effect":          "delete",
+		"asset_type":      "file",
+		"risk_level":      "high",
+		"granted_at":      "2026-06-15T12:00:00Z",
+		"assets": []interface{}{
+			map[string]interface{}{"id": "file-1", "type": "file"},
+			map[string]interface{}{"id": "file-2", "type": "file"},
+		},
+	})
+	metadata = appendToolGovernanceSessionGrant(metadata, map[string]interface{}{
+		"conversation_id": "conversation-1",
+		"tool_id":         "file.delete",
+		"effect":          "delete",
+		"asset_type":      "file",
+		"risk_level":      "high",
+		"granted_at":      "2026-06-15T12:05:00Z",
+		"assets": []interface{}{
+			map[string]interface{}{"id": "file-2", "type": "file"},
+			map[string]interface{}{"id": "file-1", "type": "file"},
+		},
+	})
+
+	grants := mapSliceFromAny(metadata["tool_governance_session_grants"])
+	if len(grants) != 1 {
+		t.Fatalf("session grants = %#v, want asset order to canonicalize", grants)
+	}
+	if grants[0]["granted_at"] != "2026-06-15T12:05:00Z" {
+		t.Fatalf("session grant = %#v, want latest duplicate grant", grants[0])
 	}
 }

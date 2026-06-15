@@ -81,14 +81,15 @@ type AssetRef struct {
 }
 
 type SessionGrant struct {
-	ConversationID        string    `json:"conversation_id"`
-	ToolID                string    `json:"tool_id"`
-	Effect                Effect    `json:"effect"`
-	AssetType             string    `json:"asset_type,omitempty"`
-	RiskLevel             RiskLevel `json:"risk_level"`
-	ApprovalCorrelationID string    `json:"approval_correlation_id,omitempty"`
-	GrantedAt             time.Time `json:"granted_at,omitempty"`
-	ExpiresAt             time.Time `json:"expires_at,omitempty"`
+	ConversationID        string     `json:"conversation_id"`
+	ToolID                string     `json:"tool_id"`
+	Effect                Effect     `json:"effect"`
+	AssetType             string     `json:"asset_type,omitempty"`
+	Assets                []AssetRef `json:"assets,omitempty"`
+	RiskLevel             RiskLevel  `json:"risk_level"`
+	ApprovalCorrelationID string     `json:"approval_correlation_id,omitempty"`
+	GrantedAt             time.Time  `json:"granted_at,omitempty"`
+	ExpiresAt             time.Time  `json:"expires_at,omitempty"`
 }
 
 type ApprovalEvent struct {
