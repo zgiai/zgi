@@ -11,6 +11,7 @@ import { clearAuthClientCaches } from '@/utils/client-cache';
 import { ENABLE_ROOT_COOKIE_TOKEN_SYNC, IS_CLOUD, ROOT_COOKIE_DOMAIN } from '@/lib/config';
 import { sessionManager } from '@/lib/auth/session-manager';
 import { getCurrentLocale } from '@/lib/i18n';
+import { syncAccountContextStores } from '@/lib/auth/context-sync';
 
 export type AuthSessionStatus = 'booting' | 'guest' | 'syncing' | 'authenticated';
 
@@ -100,13 +101,15 @@ function getSessionExpiredMessage(): string {
 const useAuthStoreBase = create<AuthState>()((set, get) => ({
   ...defaultState,
 
-  setUser: user =>
+  setUser: user => {
+    syncAccountContextStores(user);
     set({
       user,
       isAuthenticated: !!user,
       sessionStatus: user ? 'authenticated' : 'guest',
       error: null,
-    }),
+    });
+  },
 
   setLoading: isLoading => set({ isLoading }),
 
@@ -154,6 +157,7 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
         return null;
       }
 
+      syncAccountContextStores(user);
       set({
         user,
         isAuthenticated: true,

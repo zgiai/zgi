@@ -10,6 +10,7 @@ import { getErrorMessage } from '@/utils/error-notifications';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { useAuthStore } from '@/store/auth-store';
+import { useOrganizationStore } from '@/store/organization-store';
 import type { WorkspaceManagementList } from '@/services/types/workspace';
 import { sessionManager } from '@/lib/auth/session-manager';
 import { clearProfileClientCache } from '@/utils/client-cache';
@@ -17,6 +18,10 @@ import { clearProfileClientCache } from '@/utils/client-cache';
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
 
 const MAX_JOINED_WORKSPACE_PAGES = 100;
+
+type JoinedWorkspacePagesResult = WorkspaceManagementList & {
+  organizationId: string;
+};
 
 interface UseJoinedWorkspacesOptions {
   page?: number;
@@ -40,16 +45,19 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
   const markWorkspaceRequired = useWorkspaceStore.use.markWorkspaceRequired();
   const selectWorkspace = useWorkspaceStore.use.selectWorkspace();
   const user = useAuthStore.use.user();
+  const isSwitchingOrganization =
+    useOrganizationStore.use.isSwitchingOrganization();
   const autoPersistedWorkspaceIdRef = useRef<string | null>(null);
 
   const organizationId = currentOrganization?.id ?? null;
 
-  const fetchJoinedWorkspacePages = async (): Promise<WorkspaceManagementList> => {
+  const fetchJoinedWorkspacePages = async (): Promise<JoinedWorkspacePagesResult> => {
     if (!organizationId) {
       throw new Error('No organization selected');
     }
+    const requestOrganizationId = organizationId;
 
-    const firstPage = await workspaceService.getWorkspaces(organizationId, { page, limit });
+    const firstPage = await workspaceService.getWorkspaces(requestOrganizationId, { page, limit });
     const seenWorkspaceIds = new Set<string>();
     const mergedWorkspaces = firstPage.data.filter(workspace => {
       if (seenWorkspaceIds.has(workspace.id)) return false;
@@ -62,7 +70,7 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     let nextPage = (firstPage.page || page) + 1;
 
     while (latestPage.has_more && pagesFetched < MAX_JOINED_WORKSPACE_PAGES) {
-      latestPage = await workspaceService.getWorkspaces(organizationId, {
+      latestPage = await workspaceService.getWorkspaces(requestOrganizationId, {
         page: nextPage,
         limit,
       });
@@ -79,6 +87,7 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
 
     return {
       ...firstPage,
+      organizationId: requestOrganizationId,
       data: mergedWorkspaces,
       total: Math.max(firstPage.total, mergedWorkspaces.length),
       has_more: latestPage.has_more,
@@ -96,7 +105,7 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
   } = useQuery({
     queryKey: WORKSPACE_KEYS.forSwitcher(organizationId, { page, limit }),
     queryFn: fetchJoinedWorkspacePages,
-    enabled: !!organizationId,
+    enabled: !!organizationId && !isSwitchingOrganization,
     staleTime: 2 * 60 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -109,7 +118,9 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
 
   // 1. Sync workspaces to store and handle fallback logic
   useEffect(() => {
+    if (isSwitchingOrganization) return;
     if (!syncToStore || !responseData?.data) return;
+    if (responseData.organizationId !== organizationId) return;
 
     const transformedWorkspaces = responseData.data.map(w => ({
       id: w.id,
@@ -135,18 +146,23 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     }
   }, [
     responseData,
+    responseData?.organizationId,
     syncToStore,
     setWorkspaces,
     currentWorkspace,
     contextStatus,
     markWorkspaceRequired,
     selectWorkspace,
+    organizationId,
+    isSwitchingOrganization,
   ]);
 
   // 2. Synchronize from user profile ONLY when the profile's workspace ID changes
   // and it differs from our current store value.
   useEffect(() => {
+    if (isSwitchingOrganization) return;
     if (!user || !responseData?.data || !syncToStore) return;
+    if (responseData.organizationId !== organizationId) return;
 
     const profileWorkspaceId = user.current_workspace_id || null;
     const storeWorkspaceId = currentWorkspace?.id ?? null;
@@ -216,10 +232,13 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     user,
     user?.current_workspace_id,
     responseData?.data,
+    responseData?.organizationId,
+    organizationId,
     syncToStore,
     currentWorkspace?.id,
     selectWorkspace,
     markWorkspaceRequired,
+    isSwitchingOrganization,
   ]);
 
   // Show error toast if query fails
@@ -229,8 +248,14 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
   }, [error, t]);
 
   return {
-    workspaces: responseData?.data ?? [],
-    total: responseData?.total ?? 0,
+    workspaces:
+      !isSwitchingOrganization && responseData?.organizationId === organizationId
+        ? responseData.data
+        : [],
+    total:
+      !isSwitchingOrganization && responseData?.organizationId === organizationId
+        ? responseData.total
+        : 0,
     isLoading,
     isFetching,
     error: error ? getErrorMessage(error) : null,

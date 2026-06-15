@@ -8,6 +8,7 @@ import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import type { PermissionState } from '@/store/workspace-store';
+import { useOrganizationStore } from '@/store/organization-store';
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
 import { ALL_PERMISSION_CODES, type PermissionCode } from '@/constants/permissions';
 import { useAuthStore } from '@/store';
@@ -43,6 +44,8 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   const clearPermissions = useWorkspaceStore.use.clearPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
+  const isSwitchingOrganization =
+    useOrganizationStore.use.isSwitchingOrganization();
   const user = useAuthStore.use.user();
 
   // Determining role based on profile (user object) instead of currentOrganization
@@ -66,8 +69,9 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   const isMissingCurrentWorkspace = workspaceId === 'current' && !currentWorkspace;
   // Skip query when no workspace context is usable.
   const shouldSkip =
-    skipInOrgMode &&
-    (isWorkspaceRequired || isWorkspaceLoading || isMissingCurrentWorkspace);
+    isSwitchingOrganization ||
+    (skipInOrgMode &&
+      (isWorkspaceRequired || isWorkspaceLoading || isMissingCurrentWorkspace));
 
   const {
     data: permissionsData,
@@ -136,8 +140,9 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   // Show error toast if query fails
   useEffect(() => {
     if (!error) return;
+    if (isSwitchingOrganization || !hasUsableWorkspaceContext) return;
     toast.error(getErrorMessage(error) || t('switchWorkspace'));
-  }, [error, t]);
+  }, [error, t, isSwitchingOrganization, hasUsableWorkspaceContext]);
 
   return {
     permissions: isWorkspaceRequired
