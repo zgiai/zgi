@@ -15,14 +15,15 @@ import (
 )
 
 const (
-	consoleFilesActionCapabilityID = "file.read"
-	consoleFilesActionIntent       = "console.files.file_read"
-	consoleFilesNoFileAnswer       = "Please select a file on the Files page, or mention the exact visible file name, then ask me to read it."
-	consoleFilesReadMaxChars       = 4000
+	consoleFilesActionCapabilityID  = "file.read"
+	consoleFilesActionIntent        = "console.files.file_read"
+	consoleFilesNoFileAnswer        = "Please select a file on the Files page, or mention the exact visible file name, then ask me to read it."
+	consoleFilesSkillRequiredAnswer = "Reading, summarizing, or translating file content from the Files page requires the file-reader skill. Enable file-reader for AIChat, then try again."
+	consoleFilesReadMaxChars        = 4000
 )
 
 var (
-	consoleFilesReadIntentPattern       = regexp.MustCompile(`(?i)\b(read|preview|summari[sz]e|summary|analy[sz]e|analysis|inspect|show)\b`)
+	consoleFilesReadIntentPattern       = regexp.MustCompile(`(?i)\b(read|preview|summari[sz]e|summary|analy[sz]e|analysis|inspect|show|translate|translation|abstract|digest|extract)\b`)
 	consoleFilesDeleteIntentPattern     = regexp.MustCompile(`(?i)\b(delete|remove|trash|discard)\b`)
 	consoleFilesCapabilityPattern       = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])file\.read([^a-z0-9_.-]|$)`)
 	consoleFilesDeleteCapabilityPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])file\.delete([^a-z0-9_.-]|$)`)
@@ -43,6 +44,20 @@ func (s *service) runConsoleFilesActionIfMatched(ctx context.Context, prepared *
 	}
 	if shouldRouteConsoleFilesReadThroughSkillRuntime(prepared) {
 		return nil, false, nil
+	}
+	if shouldBlockConsoleFilesActionRuntimeFallback(prepared) {
+		metadata := preparedResultMetadata(prepared.Message.Metadata, nil)
+		metadata["console_files"] = map[string]interface{}{
+			"blocked_action_runtime_fallback": true,
+			"required_skill_id":               skills.SkillFileReader,
+			"capability_id":                   consoleFilesActionCapabilityID,
+		}
+		if err := s.completePreparedChat(ctx, prepared, consoleFilesSkillRequiredAnswer, metadata); err != nil {
+			return nil, true, err
+		}
+		s.appendConsoleFilesMessageEvent(ctx, prepared, consoleFilesSkillRequiredAnswer, onChunk)
+		s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, messageEndPayload(prepared, metadata))
+		return &ChatResult{Answer: consoleFilesSkillRequiredAnswer, Metadata: metadata}, true, nil
 	}
 	decision := s.planAIChatActionDecision(ctx, prepared)
 	if !decision.Matched || !strings.EqualFold(decision.CapabilityID, consoleFilesActionCapabilityID) {
@@ -110,6 +125,16 @@ func shouldRouteConsoleFilesReadThroughSkillRuntime(prepared *PreparedChat) bool
 	return prepared != nil &&
 		prepared.skillsEnabled() &&
 		skillIDEnabled(prepared.parts.SkillIDs, skills.SkillFileReader)
+}
+
+func shouldBlockConsoleFilesActionRuntimeFallback(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.parts == nil {
+		return false
+	}
+	if shouldRouteConsoleFilesReadThroughSkillRuntime(prepared) {
+		return false
+	}
+	return isFileReadIntent(prepared.parts.Query)
 }
 
 func (s *service) appendConsoleFilesMessageEvent(ctx context.Context, prepared *PreparedChat, answer string, onChunk func(string) error) {
@@ -326,6 +351,11 @@ func isFileReadIntent(query string) bool {
 		"\u8bfb\u4e00\u4e0b",
 		"\u8bfb\u4e0b",
 		"\u603b\u7ed3",
+		"\u6458\u8981",
+		"\u7ffb\u8bd1",
+		"\u6982\u62ec",
+		"\u63d0\u70bc",
+		"\u89e3\u91ca",
 		"\u5206\u6790",
 		"\u67e5\u770b\u5185\u5bb9",
 		"\u770b\u770b\u5185\u5bb9",

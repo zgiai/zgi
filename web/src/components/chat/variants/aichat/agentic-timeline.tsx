@@ -18,10 +18,7 @@ import { useT } from '@/i18n/translations';
 import type { ScopedTranslations } from '@/i18n/translations';
 import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
-import type {
-  AIChatSkillInvocation,
-  AIChatToolGovernanceAssetRef,
-} from '@/services/types/aichat';
+import type { AIChatSkillInvocation, AIChatToolGovernanceAssetRef } from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import { isPendingToolGovernanceInvocation } from '@/components/chat/controllers/aichat/governance';
 import {
@@ -40,6 +37,7 @@ import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-
 type TimelineTone = 'running' | 'success' | 'error';
 type TimelineDebugLabel = keyof typeof TIMELINE_DEBUG_LABEL_KEYS;
 type GovernanceFieldLabel = keyof typeof GOVERNANCE_FIELD_LABEL_KEYS;
+type GovernanceDisplayRow = readonly [GovernanceFieldLabel, string];
 type WebappTranslator = ScopedTranslations<'webapp'>;
 
 const TIMELINE_DEBUG_LABEL_KEYS = {
@@ -54,6 +52,13 @@ const TIMELINE_DEBUG_LABEL_KEYS = {
 } as const;
 
 const GOVERNANCE_FIELD_LABEL_KEYS = {
+  intent: 'consoleChat.governance.fields.intent',
+  assetCount: 'consoleChat.governance.fields.assetCount',
+  workspace: 'consoleChat.governance.fields.workspace',
+  reversible: 'consoleChat.governance.fields.reversible',
+  bulkSensitive: 'consoleChat.governance.fields.bulkSensitive',
+  externalSideEffect: 'consoleChat.governance.fields.externalSideEffect',
+  permissionTier: 'consoleChat.governance.fields.permissionTier',
   decision: 'consoleChat.governance.fields.decision',
   riskLevel: 'consoleChat.governance.fields.riskLevel',
   effect: 'consoleChat.governance.fields.effect',
@@ -416,10 +421,7 @@ function governanceStringValue(value: unknown): string | null {
   return null;
 }
 
-function governanceNestedString(
-  value: unknown,
-  keys: readonly string[]
-): string | null {
+function governanceRecordString(value: unknown, keys: readonly string[]): string | null {
   const record = governanceRecord(value);
   if (!record) return null;
   for (const key of keys) {
@@ -440,16 +442,20 @@ function governanceApprovalAssets(item: GovernanceTimelineItem): AIChatToolGover
 
 function governanceAssetDisplayName(asset: AIChatToolGovernanceAssetRef): string {
   return (
-    governanceNestedString(asset, ['name', 'title', 'label', 'filename', 'file_name']) ??
-    governanceNestedString(asset.metadata, ['name', 'title', 'label', 'filename', 'file_name']) ??
+    governanceRecordString(asset, ['name', 'title', 'label', 'filename', 'file_name']) ??
+    governanceRecordString(asset.metadata, ['name', 'title', 'label', 'filename', 'file_name']) ??
     governanceStringValue(asset.id) ??
     'asset'
   );
 }
 
 function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef, t: WebappTranslator): string {
+  const workspaceID =
+    governanceStringValue(asset.workspace_id) ??
+    governanceRecordString(asset.metadata, ['workspace_id', 'workspaceId']);
   const parts = [
     governanceStringValue(asset.type),
+    workspaceID ? `${t('consoleChat.governance.fields.workspace')} ${workspaceID}` : null,
     governanceStringValue(asset.id)
       ? `${t('consoleChat.governance.fields.assetId')} ${asset.id}`
       : null,
@@ -458,6 +464,170 @@ function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef, t: WebappTrans
       : null,
   ].filter((part): part is string => Boolean(part));
   return parts.join(' · ');
+}
+
+function governanceBooleanValue(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return null;
+}
+
+function governanceBooleanLabel(value: unknown, t: WebappTranslator): string | null {
+  const normalized = governanceBooleanValue(value);
+  if (normalized === null) return null;
+  return normalized
+    ? t('consoleChat.governance.values.yes')
+    : t('consoleChat.governance.values.no');
+}
+
+function governanceAssetWorkspaceIDs(assets: AIChatToolGovernanceAssetRef[]): string[] {
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const asset of assets) {
+    const workspaceID =
+      governanceStringValue(asset.workspace_id) ??
+      governanceRecordString(asset.metadata, ['workspace_id', 'workspaceId']);
+    if (!workspaceID || seen.has(workspaceID)) continue;
+    seen.add(workspaceID);
+    values.push(workspaceID);
+  }
+  return values;
+}
+
+function governanceEventString(
+  item: GovernanceTimelineItem,
+  keys: readonly string[]
+): string | null {
+  const approvalEvent = governanceApprovalEvent(item);
+  for (const source of [
+    item.event,
+    item.event.governance,
+    item.event.governance?.manifest,
+    approvalEvent,
+  ]) {
+    const value = governanceRecordString(source, keys);
+    if (value) return value;
+  }
+  return null;
+}
+
+function governanceEventBoolean(
+  item: GovernanceTimelineItem,
+  keys: readonly string[]
+): boolean | null {
+  const approvalEvent = governanceApprovalEvent(item);
+  for (const source of [
+    item.event,
+    item.event.governance,
+    item.event.governance?.manifest,
+    approvalEvent,
+  ]) {
+    const record = governanceRecord(source);
+    if (!record) continue;
+    for (const key of keys) {
+      const value = governanceBooleanValue(record[key]);
+      if (value !== null) return value;
+    }
+  }
+  return null;
+}
+
+function governanceIntentText(
+  item: GovernanceTimelineItem,
+  assets: AIChatToolGovernanceAssetRef[],
+  t: WebappTranslator
+): string | null {
+  const explicitIntent = governanceEventString(item, ['intent', 'model_intent', 'action_intent']);
+  if (explicitIntent) return explicitIntent;
+  const effect = governanceEventString(item, ['effect']);
+  const assetType = governanceEventString(item, ['asset_type']);
+  if (!effect && !assetType && assets.length === 0) return null;
+  return t('consoleChat.governance.intentFallback', {
+    effect: effect ? governanceEffectLabel(effect, t) : t('consoleChat.governance.values.unknown'),
+    count: assets.length || 1,
+    assetType: assetType
+      ? governanceAssetTypeLabel(assetType, t)
+      : t('consoleChat.governance.values.asset'),
+  });
+}
+
+function governanceEffectLabel(effect: string, t: WebappTranslator): string {
+  switch (effect) {
+    case 'none':
+      return t('consoleChat.governance.effects.none');
+    case 'read':
+      return t('consoleChat.governance.effects.read');
+    case 'create':
+      return t('consoleChat.governance.effects.create');
+    case 'update':
+      return t('consoleChat.governance.effects.update');
+    case 'delete':
+      return t('consoleChat.governance.effects.delete');
+    case 'publish':
+      return t('consoleChat.governance.effects.publish');
+    case 'invoke':
+      return t('consoleChat.governance.effects.invoke');
+    case 'schedule':
+      return t('consoleChat.governance.effects.schedule');
+    case 'external_send':
+      return t('consoleChat.governance.effects.externalSend');
+    default:
+      return effect;
+  }
+}
+
+function governanceRiskLabel(riskLevel: string, t: WebappTranslator): string {
+  switch (riskLevel) {
+    case 'low':
+      return t('consoleChat.governance.risks.low');
+    case 'medium':
+      return t('consoleChat.governance.risks.medium');
+    case 'high':
+      return t('consoleChat.governance.risks.high');
+    case 'critical':
+      return t('consoleChat.governance.risks.critical');
+    default:
+      return riskLevel;
+  }
+}
+
+function governanceAssetTypeLabel(assetType: string, t: WebappTranslator): string {
+  switch (assetType) {
+    case 'file':
+      return t('consoleChat.governance.assetTypes.file');
+    default:
+      return assetType;
+  }
+}
+
+function governanceSummaryRows(
+  item: GovernanceTimelineItem,
+  assets: AIChatToolGovernanceAssetRef[],
+  t: WebappTranslator
+) {
+  const workspaces = governanceAssetWorkspaceIDs(assets);
+  const effect = governanceEventString(item, ['effect']);
+  const riskLevel = governanceEventString(item, ['risk_level']);
+  const assetType = governanceEventString(item, ['asset_type']);
+  return [
+    ['intent', governanceIntentText(item, assets, t)],
+    ['assetCount', assets.length > 0 ? String(assets.length) : null],
+    ['workspace', workspaces.length > 0 ? workspaces.join(', ') : null],
+    ['effect', effect ? governanceEffectLabel(effect, t) : null],
+    ['riskLevel', riskLevel ? governanceRiskLabel(riskLevel, t) : null],
+    ['assetType', assetType ? governanceAssetTypeLabel(assetType, t) : null],
+    ['reversible', governanceBooleanLabel(governanceEventBoolean(item, ['reversible']), t)],
+    ['bulkSensitive', governanceBooleanLabel(governanceEventBoolean(item, ['bulk_sensitive']), t)],
+    [
+      'externalSideEffect',
+      governanceBooleanLabel(governanceEventBoolean(item, ['external_side_effect']), t),
+    ],
+    ['permissionTier', governanceEventString(item, ['permission_tier'])],
+  ] as const satisfies ReadonlyArray<readonly [GovernanceFieldLabel, string | null]>;
 }
 
 function governanceFieldRows(item: GovernanceTimelineItem) {
@@ -555,10 +725,27 @@ function ToolGovernanceDecisionRow({
   const toolLabel = governanceToolLabel(currentItem, skillDisplayById, locale, t);
   const reason = governanceReason(currentItem);
   const approvalAssets = governanceApprovalAssets(currentItem);
-  const details = governanceFieldRows(currentItem)
-    .map(([labelKey, value]) => [labelKey, governanceDisplayText(value)] as const)
-    .filter((row): row is readonly [GovernanceFieldLabel, string] => Boolean(row[1]));
+  const summaryRows: GovernanceDisplayRow[] = governanceSummaryRows(
+    currentItem,
+    approvalAssets,
+    t
+  ).flatMap(([labelKey, value]) => (value ? [[labelKey, value] as GovernanceDisplayRow] : []));
+  const details: GovernanceDisplayRow[] = governanceFieldRows(currentItem).flatMap(
+    ([labelKey, value]) => {
+      const formatted = governanceDisplayText(value);
+      return formatted ? [[labelKey, formatted] as GovernanceDisplayRow] : [];
+    }
+  );
+  const effect = governanceEventString(currentItem, ['effect']);
+  const riskLevel = governanceEventString(currentItem, ['risk_level']);
+  const isHighImpact =
+    effect === 'delete' ||
+    effect === 'publish' ||
+    effect === 'external_send' ||
+    riskLevel === 'high' ||
+    riskLevel === 'critical';
   const canExpand =
+    summaryRows.length > 0 ||
     approvalAssets.length > 0 ||
     details.length > 0 ||
     Boolean(reason) ||
@@ -611,14 +798,26 @@ function ToolGovernanceDecisionRow({
   };
 
   return (
-    <div className="rounded-md border border-warning/40 bg-warning/10 text-xs text-foreground">
+    <div
+      className={cn(
+        'rounded-md border text-xs text-foreground',
+        isHighImpact ? 'border-destructive/35 bg-destructive/10' : 'border-warning/40 bg-warning/10'
+      )}
+    >
       <button
         type="button"
         className="flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left"
         onClick={() => canExpand && setIsOpen(open => !open)}
         aria-expanded={isOpen}
       >
-        <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-warning/40 bg-background text-warning">
+        <span
+          className={cn(
+            'flex size-5 shrink-0 items-center justify-center rounded-full border bg-background',
+            isHighImpact
+              ? 'border-destructive/40 text-destructive'
+              : 'border-warning/40 text-warning'
+          )}
+        >
           <ShieldAlert className="size-3.5" />
         </span>
         <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
@@ -634,7 +833,24 @@ function ToolGovernanceDecisionRow({
         ) : null}
       </button>
       {isOpen ? (
-        <div className="space-y-2 border-t border-warning/20 bg-background/70 px-2.5 py-2">
+        <div
+          className={cn(
+            'space-y-2 border-t bg-background/70 px-2.5 py-2',
+            isHighImpact ? 'border-destructive/15' : 'border-warning/20'
+          )}
+        >
+          {summaryRows.length > 0 ? (
+            <dl className="grid gap-1.5 rounded-md bg-background/80 p-2 text-[11px] sm:grid-cols-2">
+              {summaryRows.map(([labelKey, value]) => (
+                <div key={labelKey} className="min-w-0">
+                  <dt className="text-muted-foreground">
+                    {t(GOVERNANCE_FIELD_LABEL_KEYS[labelKey])}
+                  </dt>
+                  <dd className="mt-0.5 truncate font-medium text-foreground">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
           {reason ? (
             <div className="rounded-md border border-warning/20 bg-warning/5 p-2 text-muted-foreground">
               <span className="font-medium text-foreground">
@@ -954,29 +1170,31 @@ export function AIChatAgenticTimeline({
 
   const events = useMemo(
     () =>
-      timeline.filter(item => !isApprovalGatedSkillEvent(item)).map(item => {
-        if (item.type === 'progress_text') return item;
-        if (item.type === 'intermediate_answer') return item;
-        if (item.type === 'memory_event') return item;
-        if (item.type === 'tool_governance_decision') return item;
-        if (item.type === 'workflow_run') return item;
+      timeline
+        .filter(item => !isApprovalGatedSkillEvent(item))
+        .map(item => {
+          if (item.type === 'progress_text') return item;
+          if (item.type === 'intermediate_answer') return item;
+          if (item.type === 'memory_event') return item;
+          if (item.type === 'tool_governance_decision') return item;
+          if (item.type === 'workflow_run') return item;
 
-        const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
-        const skill =
-          skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
-        const tone = getInvocationTone(item.invocation);
+          const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
+          const skill =
+            skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
+          const tone = getInvocationTone(item.invocation);
 
-        return {
-          item,
-          skill,
-          tone,
-          title: buildSkillTitle(item.invocation, skill, tone, locale, t),
-          detail:
-            getAIChatSkillResultDisplay(item.invocation, locale) ||
-            item.invocation.message ||
-            item.invocation.error,
-        };
-      }),
+          return {
+            item,
+            skill,
+            tone,
+            title: buildSkillTitle(item.invocation, skill, tone, locale, t),
+            detail:
+              getAIChatSkillResultDisplay(item.invocation, locale) ||
+              item.invocation.message ||
+              item.invocation.error,
+          };
+        }),
     [locale, skillDisplayById, t, timeline]
   );
 

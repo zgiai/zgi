@@ -144,6 +144,16 @@ func TestConsoleFilesSemanticActionDecisionResolvesVisibleFileOrdinals(t *testin
 			want:  "file-5",
 		},
 		{
+			name:  "translate second visible Excel file",
+			query: "\u5e2e\u6211\u7ffb\u8bd1\u7b2c\u4e8c\u4e2a Excel",
+			want:  "file-5",
+		},
+		{
+			name:  "summarize second visible Excel file",
+			query: "\u5e2e\u6211\u6458\u8981\u7b2c\u4e8c\u4e2a Excel",
+			want:  "file-5",
+		},
+		{
 			name:  "last visible PDF file",
 			query: "\u8bfb\u53d6\u6700\u540e\u4e00\u4e2a PDF",
 			want:  "file-6",
@@ -314,11 +324,31 @@ func TestConsoleFilesReadActionRouterYieldsToFileReaderSkill(t *testing.T) {
 	if shouldRouteConsoleFilesReadThroughSkillRuntime(prepared) {
 		t.Fatal("shouldRouteConsoleFilesReadThroughSkillRuntime() = true, want false without file-reader skill")
 	}
+	if !shouldBlockConsoleFilesActionRuntimeFallback(prepared) {
+		t.Fatal("shouldBlockConsoleFilesActionRuntimeFallback() = false, want true without file-reader skill")
+	}
 
 	prepared.parts.SkillMode = skillModeDisabled
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
 	if shouldRouteConsoleFilesReadThroughSkillRuntime(prepared) {
 		t.Fatal("shouldRouteConsoleFilesReadThroughSkillRuntime() = true, want false when skills are disabled")
+	}
+	if !shouldBlockConsoleFilesActionRuntimeFallback(prepared) {
+		t.Fatal("shouldBlockConsoleFilesActionRuntimeFallback() = false, want true when skills are disabled")
+	}
+}
+
+func TestConsoleFilesActionRuntimeFallbackBlockOnlyAppliesToReadIntent(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts("\u6211\u73b0\u5728\u6709\u54ea\u4e9b\u6587\u4ef6", []consoleFilesTestFile{
+			{ID: "file-1", Name: "one.txt", Extension: "txt", MimeType: "text/plain"},
+		}),
+	}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.SkillIDs = []string{skills.SkillCalculator}
+
+	if shouldBlockConsoleFilesActionRuntimeFallback(prepared) {
+		t.Fatal("shouldBlockConsoleFilesActionRuntimeFallback() = true, want false for file listing")
 	}
 }
 

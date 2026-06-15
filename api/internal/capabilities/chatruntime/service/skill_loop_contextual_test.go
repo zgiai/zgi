@@ -128,7 +128,7 @@ func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *tes
 
 func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testing.T) {
 	prepared := &PreparedChat{
-		parts: consoleFilesSemanticTestParts("\u5e2e\u6211\u603b\u7ed3\u7b2c\u4e8c\u4e2a Excel", []consoleFilesTestFile{
+		parts: consoleFilesSemanticTestParts("\u5e2e\u6211\u6458\u8981\u7b2c\u4e8c\u4e2a Excel \u5e76\u7ffb\u8bd1", []consoleFilesTestFile{
 			{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
 			{ID: "file-2", Name: "budget-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
 			{ID: "file-3", Name: "invoice.pdf", Extension: "pdf", MimeType: "application/pdf"},

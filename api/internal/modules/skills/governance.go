@@ -72,11 +72,11 @@ func enrichArgumentAssetRefs(argumentAssets []toolgovernance.AssetRef, runtimeAs
 	out := make([]toolgovernance.AssetRef, len(argumentAssets))
 	copy(out, argumentAssets)
 	for idx := range out {
-		runtimeAsset, ok := matchingRuntimeAsset(out[idx], runtimeAssets)
+		runtimeAsset, matchedByID, ok := matchingRuntimeAsset(out[idx], runtimeAssets)
 		if !ok {
 			continue
 		}
-		if out[idx].Name == "" {
+		if out[idx].Name == "" || matchedByID {
 			out[idx].Name = runtimeAsset.Name
 		}
 		if out[idx].WorkspaceID == "" {
@@ -92,7 +92,7 @@ func enrichArgumentAssetRefs(argumentAssets []toolgovernance.AssetRef, runtimeAs
 	return out
 }
 
-func matchingRuntimeAsset(asset toolgovernance.AssetRef, runtimeAssets []toolgovernance.AssetRef) (toolgovernance.AssetRef, bool) {
+func matchingRuntimeAsset(asset toolgovernance.AssetRef, runtimeAssets []toolgovernance.AssetRef) (toolgovernance.AssetRef, bool, bool) {
 	assetID := strings.TrimSpace(asset.ID)
 	assetType := strings.TrimSpace(asset.Type)
 	assetName := strings.TrimSpace(asset.Name)
@@ -101,13 +101,13 @@ func matchingRuntimeAsset(asset toolgovernance.AssetRef, runtimeAssets []toolgov
 			continue
 		}
 		if assetID != "" && strings.TrimSpace(candidate.ID) == assetID {
-			return candidate, true
+			return candidate, true, true
 		}
 		if assetID == "" && assetName != "" && strings.EqualFold(strings.TrimSpace(candidate.Name), assetName) {
-			return candidate, true
+			return candidate, false, true
 		}
 	}
-	return toolgovernance.AssetRef{}, false
+	return toolgovernance.AssetRef{}, false, false
 }
 
 func governanceSessionGrants(params map[string]interface{}, governance map[string]interface{}) []toolgovernance.SessionGrant {
