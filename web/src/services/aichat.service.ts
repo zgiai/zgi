@@ -10,6 +10,7 @@ import {
 } from '@/utils/sensitive-word-filter';
 import type { ApiResponseData, SuccessResponse } from './types/common';
 import type {
+  AIChatAssetOperationAuditListResponse,
   AIChatChatRequest,
   AIChatCancelImportSkillPreviewResponse,
   AIChatConversation,
@@ -274,6 +275,15 @@ export const aichatService = {
     return http.get<AIChatMessageListResponse>(`${AICHAT_BASE_PATH}/conversations/${id}/messages`, {
       params,
     });
+  },
+
+  listAssetOperationAudits(id: string, params: { page?: number; limit?: number } = {}) {
+    return http.get<AIChatAssetOperationAuditListResponse>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(id)}/asset-operation-audits`,
+      {
+        params,
+      }
+    );
   },
 
   deleteMessage(id: string) {

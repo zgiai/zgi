@@ -366,6 +366,9 @@ export interface AIChatPageData<T> {
 
 export type AIChatConversationListResponse = ApiResponseData<AIChatPageData<AIChatConversation>>;
 export type AIChatMessageListResponse = ApiResponseData<AIChatPageData<AIChatMessage>>;
+export type AIChatAssetOperationAuditListResponse = ApiResponseData<
+  AIChatPageData<AIChatAssetOperationAuditRecord>
+>;
 
 export interface AIChatCreateConversationRequest {
   title: string;
@@ -610,6 +613,11 @@ export interface AIChatToolGovernanceApprovalEvent extends Record<string, unknow
   grant?: Record<string, unknown>;
 }
 
+export type AIChatAssetOperationAuditSource =
+  | 'tool_governance_decision'
+  | 'skill_invocation'
+  | (string & {});
+
 export interface AIChatAssetOperationAudit extends Record<string, unknown> {
   schema_version?: string;
   event_type?: string;
@@ -638,6 +646,37 @@ export interface AIChatAssetOperationAudit extends Record<string, unknown> {
   matched_grant?: Record<string, unknown>;
   approved_grant?: Record<string, unknown>;
   session_grant?: Record<string, unknown>;
+}
+
+export interface AIChatAssetOperationAuditRecord extends Record<string, unknown> {
+  id: string;
+  source: AIChatAssetOperationAuditSource;
+  source_id?: string;
+  conversation_id: string;
+  message_id: string;
+  runtime_id?: string;
+  correlation_id: string;
+  schema_version?: string;
+  status?: AIChatSkillActivityStatus | (string & {});
+  skill_id?: string;
+  tool_name?: string;
+  tool_id?: string;
+  effect?: AIChatToolGovernanceEffect;
+  asset_type?: string;
+  risk_level?: AIChatToolGovernanceRiskLevel;
+  approval_status?: 'pending' | 'approved' | 'rejected' | (string & {});
+  governance_status?: AIChatToolGovernanceDecisionStatus | (string & {});
+  action?: string;
+  reason?: string;
+  resolved_at?: number;
+  resolved_by?: string;
+  requires_approval?: boolean;
+  remember_for_session?: boolean;
+  asset_count?: number;
+  workspace_id?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  created_at?: number;
+  message_created_at?: number;
 }
 
 export interface AIChatToolGovernanceDecision extends Record<string, unknown> {
