@@ -86,17 +86,27 @@ func TestDecideSessionGrantAllowsMatchingToolEffectAssetAndRisk(t *testing.T) {
 		ConversationID: "conversation-1",
 		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
 		SessionGrants: []SessionGrant{{
-			ConversationID: "conversation-1",
-			ToolID:         "file.delete",
-			Effect:         EffectDelete,
-			AssetType:      "file",
-			RiskLevel:      RiskLevelHigh,
-			ExpiresAt:      time.Now().Add(time.Hour),
+			ConversationID:        "conversation-1",
+			ToolID:                "file.delete",
+			Effect:                EffectDelete,
+			AssetType:             "file",
+			RiskLevel:             RiskLevelHigh,
+			ApprovalCorrelationID: "approval-corr-1",
+			ExpiresAt:             time.Now().Add(time.Hour),
 		}},
 	}, DefaultPolicy())
 
 	if decision.Status != DecisionStatusAllowed {
 		t.Fatalf("expected session grant to allow, got %s (%s)", decision.Status, decision.Reason)
+	}
+	if decision.ApprovedByCorrelationID != "approval-corr-1" {
+		t.Fatalf("approved_by_correlation_id = %q, want approval-corr-1", decision.ApprovedByCorrelationID)
+	}
+	if decision.MatchedGrant == nil || decision.MatchedGrant.ApprovalCorrelationID != "approval-corr-1" {
+		t.Fatalf("matched grant = %#v, want approval correlation", decision.MatchedGrant)
+	}
+	if decision.ModelFeedback["approved_by_correlation_id"] != "approval-corr-1" {
+		t.Fatalf("model feedback = %#v, want approval correlation", decision.ModelFeedback)
 	}
 }
 
@@ -156,6 +166,9 @@ func TestDecideAlwaysAskBuildsApprovalEventGrant(t *testing.T) {
 	}
 	if decision.ApprovalEvent.Grant.ConversationID != "conversation-1" {
 		t.Fatalf("expected conversation-bound grant, got %#v", decision.ApprovalEvent.Grant)
+	}
+	if decision.ApprovalEvent.Grant.ApprovalCorrelationID != "corr-1" {
+		t.Fatalf("expected grant approval correlation, got %#v", decision.ApprovalEvent.Grant)
 	}
 }
 

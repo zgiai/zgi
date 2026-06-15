@@ -235,8 +235,16 @@ func sessionGrantFromMap(input map[string]interface{}) toolgovernance.SessionGra
 		Effect:         toolgovernance.Effect(stringMapValue(input, "effect")),
 		AssetType:      stringMapValue(input, "asset_type", "assetType"),
 		RiskLevel:      toolgovernance.RiskLevel(stringMapValue(input, "risk_level", "riskLevel")),
-		GrantedAt:      timeFromAny(firstMapValue(input, "granted_at", "grantedAt")),
-		ExpiresAt:      timeFromAny(firstMapValue(input, "expires_at", "expiresAt")),
+		ApprovalCorrelationID: stringMapValue(input,
+			"approval_correlation_id",
+			"approvalCorrelationId",
+			"approved_by_correlation_id",
+			"approvedByCorrelationId",
+			"source_correlation_id",
+			"sourceCorrelationId",
+		),
+		GrantedAt: timeFromAny(firstMapValue(input, "granted_at", "grantedAt")),
+		ExpiresAt: timeFromAny(firstMapValue(input, "expires_at", "expiresAt")),
 	}
 }
 

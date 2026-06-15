@@ -190,3 +190,44 @@ func TestSummarizeToolResultCompactsAgentWorkflowPayload(t *testing.T) {
 		t.Fatalf("outputs should not be included in compact trace result: %#v", result)
 	}
 }
+
+func TestSummarizeToolResultCompactsFileDeletePayload(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillFileReader, "delete_file", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":        "completed",
+			"deleted_count": 1,
+			"reversible":    false,
+			"file": map[string]interface{}{
+				"id":           "file-1",
+				"name":         "smoke.txt",
+				"workspace_id": "workspace-1",
+				"extension":    "txt",
+				"mime_type":    "text/plain",
+				"size":         42,
+				"created_by":   "account-1",
+			},
+		},
+	}})
+	for key, want := range map[string]interface{}{
+		"status":            "completed",
+		"deleted_count":     1,
+		"reversible":        false,
+		"file_id":           "file-1",
+		"file_name":         "smoke.txt",
+		"file_workspace_id": "workspace-1",
+		"file_extension":    "txt",
+		"file_mime_type":    "text/plain",
+		"file_size":         42,
+	} {
+		if result[key] != want {
+			t.Fatalf("%s = %#v, want %#v in %#v", key, result[key], want, result)
+		}
+	}
+	if _, ok := result["created_by"]; ok {
+		t.Fatalf("created_by should not be included in compact trace result: %#v", result)
+	}
+	if _, ok := result["file_created_by"]; ok {
+		t.Fatalf("file_created_by should not be included in compact trace result: %#v", result)
+	}
+}

@@ -113,6 +113,7 @@ func normalizeSessionGrant(grant SessionGrant) SessionGrant {
 	grant.Effect = NormalizeEffect(grant.Effect)
 	grant.AssetType = normalizeAssetType(grant.AssetType)
 	grant.RiskLevel = NormalizeRiskLevel(grant.RiskLevel)
+	grant.ApprovalCorrelationID = strings.TrimSpace(grant.ApprovalCorrelationID)
 	return grant
 }
 

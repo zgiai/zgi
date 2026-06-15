@@ -263,6 +263,55 @@ func TestCallSkillToolMatchingSessionGrantAllowsEnginePath(t *testing.T) {
 	}
 }
 
+func TestPolicyToolGovernanceMatchingSessionGrantCarriesApprovalCorrelation(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "file.delete",
+			Domain:                  "files",
+			Effect:                  toolgovernance.EffectDelete,
+			AssetType:               "file",
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			RequiresAssetResolution: true,
+		},
+		SkillID:   "file-reader",
+		ToolName:  "delete_file",
+		Arguments: map[string]interface{}{"file_id": "file-1"},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets":          []map[string]interface{}{{"id": "file-1", "type": "file"}},
+					"session_grants": []map[string]interface{}{
+						{
+							"conversation_id":         "conversation-1",
+							"tool_id":                 "file.delete",
+							"effect":                  "delete",
+							"asset_type":              "file",
+							"risk_level":              "high",
+							"approval_correlation_id": "approval-corr-1",
+							"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusAllowed {
+		t.Fatalf("decision status = %s, want allowed: %#v", decision.Status, decision)
+	}
+	if decision.ApprovedByCorrelationID != "approval-corr-1" {
+		t.Fatalf("approved_by_correlation_id = %q, want approval-corr-1", decision.ApprovedByCorrelationID)
+	}
+	if decision.MatchedGrant == nil || decision.MatchedGrant.ApprovalCorrelationID != "approval-corr-1" {
+		t.Fatalf("matched grant = %#v, want approval correlation", decision.MatchedGrant)
+	}
+}
+
 func governedRuntimeForTest(t *testing.T) (*Runtime, *ResolvedSkills) {
 	t.Helper()
 	catalogDir := t.TempDir()

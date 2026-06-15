@@ -57,8 +57,9 @@ func Decide(req Request, policy Policy) Decision {
 		decision.ModelFeedback = modelFeedback(decision, tier)
 		return decision
 	}
-	if matchingSessionGrant(req.SessionGrants, req.ConversationID, manifest) {
+	if grant, ok := matchingSessionGrant(req.SessionGrants, req.ConversationID, manifest); ok {
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by matching session grant", false)
+		decision = decision.withMatchedGrant(grant)
 		decision.ModelFeedback = modelFeedback(decision, tier)
 		return decision
 	}
@@ -109,6 +110,13 @@ func (d Decision) needsApproval(tier PermissionTier, conversationID string, reas
 	return d
 }
 
+func (d Decision) withMatchedGrant(grant SessionGrant) Decision {
+	grant = normalizeSessionGrant(grant)
+	d.MatchedGrant = &grant
+	d.ApprovedByCorrelationID = strings.TrimSpace(grant.ApprovalCorrelationID)
+	return d
+}
+
 func approvalEvent(decision Decision, tier PermissionTier, conversationID string) *ApprovalEvent {
 	manifest := decision.Manifest
 	return &ApprovalEvent{
@@ -126,18 +134,19 @@ func approvalEvent(decision Decision, tier PermissionTier, conversationID string
 		ExternalSideEffect: manifest.ExternalSideEffect,
 		PermissionTier:     tier,
 		Grant: SessionGrant{
-			ConversationID: strings.TrimSpace(conversationID),
-			ToolID:         manifest.ToolID,
-			Effect:         manifest.Effect,
-			AssetType:      manifest.AssetType,
-			RiskLevel:      manifest.RiskLevel,
+			ConversationID:        strings.TrimSpace(conversationID),
+			ToolID:                manifest.ToolID,
+			Effect:                manifest.Effect,
+			AssetType:             manifest.AssetType,
+			RiskLevel:             manifest.RiskLevel,
+			ApprovalCorrelationID: decision.CorrelationID,
 		},
 	}
 }
 
 func modelFeedback(decision Decision, tier PermissionTier) map[string]interface{} {
 	manifest := decision.Manifest
-	return map[string]interface{}{
+	feedback := map[string]interface{}{
 		"status":            string(decision.Status),
 		"reason":            decision.Reason,
 		"correlation_id":    decision.CorrelationID,
@@ -150,6 +159,13 @@ func modelFeedback(decision Decision, tier PermissionTier) map[string]interface{
 		"permission_tier":   string(tier),
 		"requires_approval": decision.RequiresApproval,
 	}
+	if decision.ApprovedByCorrelationID != "" {
+		feedback["approved_by_correlation_id"] = decision.ApprovedByCorrelationID
+	}
+	if decision.MatchedGrant != nil {
+		feedback["matched_grant"] = *decision.MatchedGrant
+	}
+	return feedback
 }
 
 func (p Policy) withDefaults() Policy {
@@ -261,10 +277,10 @@ func tierAllowed(manifest Manifest, tier PermissionTier) bool {
 	return false
 }
 
-func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest Manifest) bool {
+func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest Manifest) (SessionGrant, bool) {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
-		return false
+		return SessionGrant{}, false
 	}
 	now := time.Now()
 	for _, raw := range grants {
@@ -281,7 +297,7 @@ func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest
 		if !grant.ExpiresAt.IsZero() && !grant.ExpiresAt.After(now) {
 			continue
 		}
-		return true
+		return grant, true
 	}
-	return false
+	return SessionGrant{}, false
 }

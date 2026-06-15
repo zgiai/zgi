@@ -128,6 +128,9 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 	if grant["conversation_id"] != conversationID || grant["tool_id"] != "file.delete" {
 		t.Fatalf("session grant = %#v, want conversation-bound file.delete grant", grant)
 	}
+	if grant["approval_correlation_id"] != "corr-1" {
+		t.Fatalf("session grant = %#v, want approval correlation", grant)
+	}
 	updated := resolvedToolGovernanceDecisionEvent(event, map[string]interface{}{
 		"action":               "approve",
 		"approval_status":      "approved",
@@ -155,7 +158,7 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 	params := applySkillToolGovernanceRuntimeParameters(nil, prepared)
 	nested := governanceMapFromAny(params[skillToolGovernanceRuntimeKey])
 	grants := mapSliceFromAny(nested["session_grants"])
-	if len(grants) != 1 || grants[0]["tool_id"] != "file.delete" {
+	if len(grants) != 1 || grants[0]["tool_id"] != "file.delete" || grants[0]["approval_correlation_id"] != "corr-1" {
 		t.Fatalf("session grants = %#v, want file.delete grant", grants)
 	}
 
@@ -167,7 +170,7 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 	params = applySkillToolGovernanceRuntimeParameters(nil, oneShotPrepared)
 	nested = governanceMapFromAny(params[skillToolGovernanceRuntimeKey])
 	grants = mapSliceFromAny(nested["session_grants"])
-	if len(grants) != 1 || grants[0]["tool_id"] != "file.delete" {
+	if len(grants) != 1 || grants[0]["tool_id"] != "file.delete" || grants[0]["approval_correlation_id"] != "corr-1" {
 		t.Fatalf("one-shot grants = %#v, want file.delete grant", grants)
 	}
 }

@@ -408,6 +408,13 @@ func toolGovernanceSessionGrantFromEvent(event map[string]interface{}, conversat
 	if strings.TrimSpace(stringFromAny(grant["risk_level"])) == "" {
 		grant["risk_level"] = firstNonEmptyString(stringFromAny(approvalEvent["risk_level"]), stringFromAny(event["risk_level"]))
 	}
+	if strings.TrimSpace(stringFromAny(grant["approval_correlation_id"])) == "" {
+		grant["approval_correlation_id"] = firstNonEmptyString(
+			stringFromAny(approvalEvent["correlation_id"]),
+			stringFromAny(event["correlation_id"]),
+			toolGovernanceCorrelationID(event),
+		)
+	}
 	grant["granted_at"] = now.Format(time.RFC3339)
 	return compactSkillInvocation(grant)
 }

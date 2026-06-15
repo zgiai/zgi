@@ -81,13 +81,14 @@ type AssetRef struct {
 }
 
 type SessionGrant struct {
-	ConversationID string    `json:"conversation_id"`
-	ToolID         string    `json:"tool_id"`
-	Effect         Effect    `json:"effect"`
-	AssetType      string    `json:"asset_type,omitempty"`
-	RiskLevel      RiskLevel `json:"risk_level"`
-	GrantedAt      time.Time `json:"granted_at,omitempty"`
-	ExpiresAt      time.Time `json:"expires_at,omitempty"`
+	ConversationID        string    `json:"conversation_id"`
+	ToolID                string    `json:"tool_id"`
+	Effect                Effect    `json:"effect"`
+	AssetType             string    `json:"asset_type,omitempty"`
+	RiskLevel             RiskLevel `json:"risk_level"`
+	ApprovalCorrelationID string    `json:"approval_correlation_id,omitempty"`
+	GrantedAt             time.Time `json:"granted_at,omitempty"`
+	ExpiresAt             time.Time `json:"expires_at,omitempty"`
 }
 
 type ApprovalEvent struct {
@@ -108,14 +109,16 @@ type ApprovalEvent struct {
 }
 
 type Decision struct {
-	Status           DecisionStatus         `json:"status"`
-	RequiresApproval bool                   `json:"requires_approval"`
-	Reason           string                 `json:"reason,omitempty"`
-	CorrelationID    string                 `json:"correlation_id"`
-	Manifest         Manifest               `json:"manifest"`
-	Assets           []AssetRef             `json:"assets,omitempty"`
-	ApprovalEvent    *ApprovalEvent         `json:"approval_event,omitempty"`
-	ModelFeedback    map[string]interface{} `json:"model_feedback,omitempty"`
+	Status                  DecisionStatus         `json:"status"`
+	RequiresApproval        bool                   `json:"requires_approval"`
+	Reason                  string                 `json:"reason,omitempty"`
+	CorrelationID           string                 `json:"correlation_id"`
+	ApprovedByCorrelationID string                 `json:"approved_by_correlation_id,omitempty"`
+	MatchedGrant            *SessionGrant          `json:"matched_grant,omitempty"`
+	Manifest                Manifest               `json:"manifest"`
+	Assets                  []AssetRef             `json:"assets,omitempty"`
+	ApprovalEvent           *ApprovalEvent         `json:"approval_event,omitempty"`
+	ModelFeedback           map[string]interface{} `json:"model_feedback,omitempty"`
 }
 
 type Request struct {
