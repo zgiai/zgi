@@ -74,6 +74,12 @@ function toolGovernanceEventFromInvocation(
     risk_level: governance?.manifest?.risk_level ?? approvalEvent?.risk_level,
     effect: governance?.manifest?.effect ?? approvalEvent?.effect,
     asset_type: governance?.manifest?.asset_type ?? approvalEvent?.asset_type,
+    asset_operation_audit:
+      invocation.asset_operation_audit ??
+      governance?.asset_operation_audit ??
+      (governance?.model_feedback?.asset_operation_audit as
+        | AIChatToolGovernanceDecisionEventData['asset_operation_audit']
+        | undefined),
     approval_status:
       governance?.approval_status ??
       (approvalResult?.approval_status as AIChatToolGovernanceDecisionEventData['approval_status']),

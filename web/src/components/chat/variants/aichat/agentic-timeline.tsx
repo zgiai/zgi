@@ -425,12 +425,31 @@ function governanceStringValue(value: unknown): string | null {
   return null;
 }
 
+function governanceNumberValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return Math.floor(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return null;
+}
+
 function governanceRecordString(value: unknown, keys: readonly string[]): string | null {
   const record = governanceRecord(value);
   if (!record) return null;
   for (const key of keys) {
     const text = governanceStringValue(record[key]);
     if (text) return text;
+  }
+  return null;
+}
+
+function governanceRecordNumber(value: unknown, keys: readonly string[]): number | null {
+  const record = governanceRecord(value);
+  if (!record) return null;
+  for (const key of keys) {
+    const number = governanceNumberValue(record[key]);
+    if (number !== null) return number;
   }
   return null;
 }
@@ -448,6 +467,17 @@ function governanceModelFeedback(item: GovernanceTimelineItem): Record<string, u
     governanceRecord(item.event.model_feedback) ??
     governanceRecord(item.event.governance?.model_feedback) ??
     governanceRecord(approvalResult?.model_feedback)
+  );
+}
+
+function governanceAssetOperationAudit(item: GovernanceTimelineItem): Record<string, unknown> | null {
+  const modelFeedback = governanceModelFeedback(item);
+  const approvalResult = governanceApprovalResult(item);
+  return (
+    governanceRecord(item.event.asset_operation_audit) ??
+    governanceRecord(item.event.governance?.asset_operation_audit) ??
+    governanceRecord(modelFeedback?.asset_operation_audit) ??
+    governanceRecord(approvalResult?.asset_operation_audit)
   );
 }
 
@@ -499,10 +529,12 @@ function governanceApprovalAssets(item: GovernanceTimelineItem): AIChatToolGover
   const modelFeedback = governanceModelFeedback(item);
   const sessionGrant = governanceSessionGrant(item);
   const approvalResult = governanceApprovalResult(item);
+  const assetOperationAudit = governanceAssetOperationAudit(item);
   const out: AIChatToolGovernanceAssetRef[] = [];
   const seen = new Set<string>();
   for (const assets of [
     approvalEvent?.assets,
+    assetOperationAudit?.assets,
     item.event.governance?.assets,
     matchedGrant?.assets,
     modelFeedback?.matched_assets,
@@ -513,6 +545,20 @@ function governanceApprovalAssets(item: GovernanceTimelineItem): AIChatToolGover
     appendGovernanceAssets(out, seen, governanceAssetsFromUnknown(assets));
   }
   return out;
+}
+
+function governanceAssetCount(
+  item: GovernanceTimelineItem,
+  assets: AIChatToolGovernanceAssetRef[]
+): number {
+  if (assets.length > 0) return assets.length;
+  const modelFeedback = governanceModelFeedback(item);
+  const assetOperationAudit = governanceAssetOperationAudit(item);
+  for (const source of [assetOperationAudit, modelFeedback, item.event.governance, item.event]) {
+    const count = governanceRecordNumber(source, ['asset_count', 'assetCount']);
+    if (count !== null) return count;
+  }
+  return 0;
 }
 
 function governanceAssetDisplayName(asset: AIChatToolGovernanceAssetRef): string {
@@ -618,16 +664,17 @@ function governanceEventBoolean(
 function governanceIntentText(
   item: GovernanceTimelineItem,
   assets: AIChatToolGovernanceAssetRef[],
+  assetCount: number,
   t: WebappTranslator
 ): string | null {
   const explicitIntent = governanceEventString(item, ['intent', 'model_intent', 'action_intent']);
   if (explicitIntent) return explicitIntent;
   const effect = governanceEventString(item, ['effect']);
   const assetType = governanceEventString(item, ['asset_type']);
-  if (!effect && !assetType && assets.length === 0) return null;
+  if (!effect && !assetType && assetCount === 0) return null;
   return t('consoleChat.governance.intentFallback', {
     effect: effect ? governanceEffectLabel(effect, t) : t('consoleChat.governance.values.unknown'),
-    count: assets.length || 1,
+    count: assetCount || 1,
     assetType: assetType
       ? governanceAssetTypeLabel(assetType, t)
       : t('consoleChat.governance.values.asset'),
@@ -692,9 +739,10 @@ function governanceSummaryRows(
   const effect = governanceEventString(item, ['effect']);
   const riskLevel = governanceEventString(item, ['risk_level']);
   const assetType = governanceEventString(item, ['asset_type']);
+  const assetCount = governanceAssetCount(item, assets);
   return [
-    ['intent', governanceIntentText(item, assets, t)],
-    ['assetCount', assets.length > 0 ? String(assets.length) : null],
+    ['intent', governanceIntentText(item, assets, assetCount, t)],
+    ['assetCount', assetCount > 0 ? String(assetCount) : null],
     ['workspace', workspaces.length > 0 ? workspaces.join(', ') : null],
     ['effect', effect ? governanceEffectLabel(effect, t) : null],
     ['riskLevel', riskLevel ? governanceRiskLabel(riskLevel, t) : null],

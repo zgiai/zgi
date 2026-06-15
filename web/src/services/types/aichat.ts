@@ -157,6 +157,7 @@ export interface AIChatSkillInvocation {
   message?: string;
   error?: string;
   governance?: AIChatToolGovernanceDecision | null;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
 }
 
@@ -498,6 +499,7 @@ export interface AIChatSkillCallEndEventData {
   message?: string;
   result?: Record<string, unknown> | null;
   governance?: AIChatToolGovernanceDecision | null;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
 }
 
@@ -512,6 +514,7 @@ export interface AIChatSkillCallErrorEventData {
   status: 'error';
   message?: string;
   governance?: AIChatToolGovernanceDecision | null;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
 }
 
@@ -607,6 +610,36 @@ export interface AIChatToolGovernanceApprovalEvent extends Record<string, unknow
   grant?: Record<string, unknown>;
 }
 
+export interface AIChatAssetOperationAudit extends Record<string, unknown> {
+  schema_version?: string;
+  event_type?: string;
+  correlation_id?: string;
+  conversation_id?: string;
+  governance_status?: AIChatToolGovernanceDecisionStatus | (string & {});
+  approval_status?: 'pending' | 'approved' | 'rejected' | (string & {});
+  requires_approval?: boolean;
+  decision_reason?: string;
+  tool_id?: string;
+  skill_id?: string;
+  domain?: string;
+  effect?: AIChatToolGovernanceEffect;
+  asset_type?: string;
+  asset_count?: number;
+  risk_level?: AIChatToolGovernanceRiskLevel;
+  permission_tier?: string;
+  reversible?: boolean;
+  bulk_sensitive?: boolean;
+  external_side_effect?: boolean;
+  audit_required?: boolean;
+  idempotency_required?: boolean;
+  permission_scopes?: string[];
+  assets?: AIChatToolGovernanceAssetRef[];
+  approved_by_correlation_id?: string;
+  matched_grant?: Record<string, unknown>;
+  approved_grant?: Record<string, unknown>;
+  session_grant?: Record<string, unknown>;
+}
+
 export interface AIChatToolGovernanceDecision extends Record<string, unknown> {
   status?: AIChatToolGovernanceDecisionStatus;
   requires_approval?: boolean;
@@ -616,6 +649,7 @@ export interface AIChatToolGovernanceDecision extends Record<string, unknown> {
   manifest?: AIChatToolGovernanceManifest;
   assets?: AIChatToolGovernanceAssetRef[];
   approval_event?: AIChatToolGovernanceApprovalEvent;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   matched_grant?: Record<string, unknown>;
   approval_result?: Record<string, unknown>;
   model_feedback?: Record<string, unknown>;
@@ -637,6 +671,7 @@ export interface AIChatToolGovernanceDecisionEventData extends Record<string, un
   risk_level?: AIChatToolGovernanceRiskLevel;
   effect?: AIChatToolGovernanceEffect;
   asset_type?: string;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   approval_status?: 'approved' | 'rejected' | (string & {});
   approval_event?: AIChatToolGovernanceApprovalEvent;
   matched_grant?: Record<string, unknown>;

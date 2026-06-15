@@ -124,6 +124,23 @@ function governanceString(value: unknown): string | undefined {
   return undefined;
 }
 
+function governanceRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function governanceAssetOperationAudit(
+  payload: AIChatToolGovernanceDecisionEventData
+): AIChatToolGovernanceDecisionEventData['asset_operation_audit'] {
+  return (
+    payload.asset_operation_audit ??
+    payload.governance?.asset_operation_audit ??
+    (governanceRecord(payload.model_feedback?.asset_operation_audit) as
+      | AIChatToolGovernanceDecisionEventData['asset_operation_audit']
+      | undefined)
+  );
+}
+
 function toolGovernanceCorrelationId(
   payload: AIChatToolGovernanceDecisionEventData
 ): string | undefined {
@@ -141,6 +158,14 @@ function normalizeToolGovernanceDecisionPayload(
   const governance = payload.governance;
   const approvalEvent = payload.approval_event ?? governance?.approval_event;
   const approvalResult = payload.approval_result ?? governance?.approval_result;
+  const modelFeedback =
+    payload.model_feedback ??
+    governance?.model_feedback ??
+    (approvalResult?.model_feedback as Record<string, unknown> | undefined);
+  const assetOperationAudit = governanceAssetOperationAudit({
+    ...payload,
+    model_feedback: modelFeedback,
+  });
   return {
     ...payload,
     correlation_id: payload.correlation_id ?? governance?.correlation_id,
@@ -150,6 +175,7 @@ function normalizeToolGovernanceDecisionPayload(
     risk_level: payload.risk_level ?? governance?.manifest?.risk_level ?? approvalEvent?.risk_level,
     effect: payload.effect ?? governance?.manifest?.effect ?? approvalEvent?.effect,
     asset_type: payload.asset_type ?? governance?.manifest?.asset_type ?? approvalEvent?.asset_type,
+    asset_operation_audit: assetOperationAudit,
     approval_status:
       payload.approval_status ??
       governance?.approval_status ??
@@ -157,10 +183,7 @@ function normalizeToolGovernanceDecisionPayload(
     approval_event: approvalEvent,
     matched_grant: payload.matched_grant ?? governance?.matched_grant,
     approval_result: approvalResult,
-    model_feedback:
-      payload.model_feedback ??
-      governance?.model_feedback ??
-      (approvalResult?.model_feedback as Record<string, unknown> | undefined),
+    model_feedback: modelFeedback,
     session_grant:
       payload.session_grant ??
       (approvalResult?.session_grant as Record<string, unknown> | undefined),
@@ -549,6 +572,12 @@ function toolGovernanceDecisionEventFromSkillCall(
     risk_level: governance?.manifest?.risk_level ?? approvalEvent?.risk_level,
     effect: governance?.manifest?.effect ?? approvalEvent?.effect,
     asset_type: governance?.manifest?.asset_type ?? approvalEvent?.asset_type,
+    asset_operation_audit:
+      payload.asset_operation_audit ??
+      governance?.asset_operation_audit ??
+      (governance?.model_feedback?.asset_operation_audit as
+        | AIChatToolGovernanceDecisionEventData['asset_operation_audit']
+        | undefined),
     approval_status:
       governance?.approval_status ??
       (approvalResult?.approval_status as AIChatToolGovernanceDecisionEventData['approval_status']),
