@@ -124,8 +124,8 @@ func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *tes
 		want  string
 	}{
 		{name: "fourth file", query: "\u8bfb\u7b2c\u56db\u4e2a\u6587\u4ef6", want: "file-4"},
-		{name: "second excel", query: "\u6458\u8981\u7b2c\u4e8c\u4e2a Excel", want: "file-5"},
-		{name: "second spreadsheet", query: "\u6458\u8981\u7b2c\u4e8c\u4e2a\u8868\u683c", want: "file-5"},
+		{name: "second visible excel", query: "\u6458\u8981\u7b2c\u4e8c\u4e2a Excel", want: "file-2"},
+		{name: "second visible spreadsheet", query: "\u6458\u8981\u7b2c\u4e8c\u4e2a\u8868\u683c", want: "file-2"},
 		{name: "last pdf", query: "\u603b\u7ed3\u6700\u540e\u4e00\u4e2a PDF", want: "file-6"},
 		{name: "selected file", query: "\u603b\u7ed3\u5f53\u524d\u9009\u4e2d\u7684\u6587\u4ef6", want: "file-4"},
 		{name: "exact file name", query: "summarize proposal.pdf", want: "file-3"},
@@ -170,13 +170,13 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testi
 		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for concrete console file read")
 	}
 	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "budget-q2.xlsx is a quarterly budget spreadsheet.",
+		Answer: "budget-q1.xlsx is a quarterly budget spreadsheet.",
 	})
 	if !blocked {
 		t.Fatal("guard did not block direct file-content answer without read_file")
 	}
 	for _, want := range []string{
-		"budget-q2.xlsx",
+		"budget-q1.xlsx",
 		"file-reader",
 		"read_file",
 		"actual content",
@@ -189,7 +189,7 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testi
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "Here is the summary from the file content.",
 		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-4"}},
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
 		},
 	})
 	if blocked {
@@ -199,7 +199,7 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testi
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "Here is a summary, but it came from a different file.",
 		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-4"}},
 		},
 	})
 	if !blocked {
@@ -209,7 +209,7 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testi
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "I tried to read the file, but the tool returned file not found.",
 		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-4"}},
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
 		},
 	})
 	if blocked {

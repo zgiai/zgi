@@ -146,22 +146,22 @@ func TestConsoleFilesSemanticActionDecisionResolvesVisibleFileOrdinals(t *testin
 		{
 			name:  "second visible Excel file",
 			query: "\u8bfb\u53d6\u7b2c\u4e8c\u4e2a Excel",
-			want:  "file-5",
+			want:  "file-2",
 		},
 		{
 			name:  "translate second visible Excel file",
 			query: "\u5e2e\u6211\u7ffb\u8bd1\u7b2c\u4e8c\u4e2a Excel",
-			want:  "file-5",
+			want:  "file-2",
 		},
 		{
 			name:  "summarize second visible Excel file",
 			query: "\u5e2e\u6211\u6458\u8981\u7b2c\u4e8c\u4e2a Excel",
-			want:  "file-5",
+			want:  "file-2",
 		},
 		{
 			name:  "summarize second visible spreadsheet file",
 			query: "\u5e2e\u6211\u6458\u8981\u7b2c\u4e8c\u4e2a\u8868\u683c",
-			want:  "file-5",
+			want:  "file-2",
 		},
 		{
 			name:  "last visible PDF file",
@@ -180,6 +180,23 @@ func TestConsoleFilesSemanticActionDecisionResolvesVisibleFileOrdinals(t *testin
 				t.Fatalf("FileIDs = %q, want %q for query %q", got, tt.want, tt.query)
 			}
 		})
+	}
+}
+
+func TestConsoleFilesSemanticActionDecisionFallsBackToTypedOrdinalWhenVisibleOrdinalMismatchesFormat(t *testing.T) {
+	files := []consoleFilesTestFile{
+		{ID: "file-1", Name: "meeting-notes.txt", Extension: "txt", MimeType: "text/plain"},
+		{ID: "file-2", Name: "product-spec.pdf", Extension: "pdf", MimeType: "application/pdf"},
+		{ID: "file-3", Name: "sales-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{ID: "file-4", Name: "signed-contract.pdf", Extension: "pdf", MimeType: "application/pdf"},
+		{ID: "file-5", Name: "sales-q2.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+	}
+	decision := consoleFilesActionDecisionForParts(consoleFilesSemanticTestParts("\u8bfb\u53d6\u7b2c\u4e8c\u4e2a Excel", files))
+	if !decision.Matched {
+		t.Fatal("Matched = false, want true")
+	}
+	if got, want := strings.Join(decision.FileIDs, ","), "file-5"; got != want {
+		t.Fatalf("FileIDs = %q, want %q", got, want)
 	}
 }
 
