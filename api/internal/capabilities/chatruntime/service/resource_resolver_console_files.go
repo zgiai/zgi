@@ -52,16 +52,18 @@ func plannerResourceRefsFromConsoleFilesQuery(parts *chatRequestParts) []Planner
 	if parts == nil {
 		return nil
 	}
+	query := strings.TrimSpace(parts.Query)
 	if consoleFilesSelectedReferenceFromQuery(parts.Query) {
 		return []PlannerResourceRef{{
 			Type:     resourceTypeFile,
+			Selector: query,
 			Selected: true,
 			Scope:    "selected",
 		}}
 	}
 	ordinal, last, ok := consoleFilesOrdinalFromQuery(parts.Query)
 	if ok {
-		ref := PlannerResourceRef{Type: resourceTypeFile}
+		ref := PlannerResourceRef{Type: resourceTypeFile, Selector: query}
 		if last {
 			ref.OrdinalText = "last"
 		} else {
@@ -259,7 +261,13 @@ func parseEnglishOrdinalToken(token string) (int, bool) {
 func consoleFilesFormatFromQuery(query string) string {
 	text := strings.ToLower(strings.TrimSpace(query))
 	switch {
-	case strings.Contains(text, "excel") || strings.Contains(text, "xlsx") || strings.Contains(text, "xls"):
+	case strings.Contains(text, "excel") ||
+		strings.Contains(text, "xlsx") ||
+		strings.Contains(text, "xls") ||
+		strings.Contains(text, "\u8868\u683c") ||
+		strings.Contains(text, "\u7535\u5b50\u8868\u683c") ||
+		strings.Contains(text, "\u5de5\u4f5c\u8868") ||
+		strings.Contains(text, "\u5de5\u4f5c\u7c3f"):
 		return "excel"
 	case strings.Contains(text, "pdf"):
 		return "pdf"

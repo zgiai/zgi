@@ -364,6 +364,25 @@ func TestSkillRuntimeParametersForPreparedAddsOrdinalFileGovernanceAsset(t *test
 	}
 }
 
+func TestSkillRuntimeParametersForPreparedAddsChineseSpreadsheetGovernanceAsset(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		parts: consoleFilesSemanticTestParts("\u6458\u8981\u7b2c\u4e8c\u4e2a\u8868\u683c", []consoleFilesTestFile{
+			{ID: "file-1", Name: "notes.txt", Extension: "txt"},
+			{ID: "file-2", Name: "budget-q1.xlsx", Extension: "xlsx"},
+			{ID: "file-3", Name: "proposal.pdf", Extension: "pdf"},
+			{ID: "file-4", Name: "budget-q2.xlsx", Extension: "xlsx"},
+		}),
+	}
+
+	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
+	assets := governanceAssetsFromTest(t, governance)
+	if len(assets) != 1 || assets[0]["id"] != "file-4" || assets[0]["name"] != "budget-q2.xlsx" {
+		t.Fatalf("governance assets = %#v, want second spreadsheet file-4", assets)
+	}
+}
+
 func TestSkillRuntimeParametersForPreparedAddsNamedFileGovernanceAsset(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},

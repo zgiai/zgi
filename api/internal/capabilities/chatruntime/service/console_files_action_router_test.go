@@ -154,6 +154,11 @@ func TestConsoleFilesSemanticActionDecisionResolvesVisibleFileOrdinals(t *testin
 			want:  "file-5",
 		},
 		{
+			name:  "summarize second visible spreadsheet file",
+			query: "\u5e2e\u6211\u6458\u8981\u7b2c\u4e8c\u4e2a\u8868\u683c",
+			want:  "file-5",
+		},
+		{
 			name:  "last visible PDF file",
 			query: "\u8bfb\u53d6\u6700\u540e\u4e00\u4e2a PDF",
 			want:  "file-6",
