@@ -559,11 +559,13 @@ func TestConsoleFilesAnswerFromFailedRunKeepsUsefulError(t *testing.T) {
 }
 
 type consoleFilesTestFile struct {
-	ID        string
-	Name      string
-	Extension string
-	MimeType  string
-	Selected  bool
+	ID          string
+	Name        string
+	Extension   string
+	MimeType    string
+	FileType    string
+	WorkspaceID string
+	Selected    bool
 }
 
 func consoleFilesSemanticTestParts(query string, files []consoleFilesTestFile) *chatRequestParts {
@@ -602,12 +604,14 @@ func consoleFilesSemanticTestParts(query string, files []consoleFilesTestFile) *
 				consoleFilesActionCapabilityID,
 			},
 			"metadata": map[string]interface{}{
-				"page":      "console.files",
-				"file_id":   file.ID,
-				"selected":  file.Selected,
-				"name":      file.Name,
-				"extension": file.Extension,
-				"mime_type": file.MimeType,
+				"page":         "console.files",
+				"file_id":      file.ID,
+				"selected":     file.Selected,
+				"name":         file.Name,
+				"extension":    file.Extension,
+				"mime_type":    file.MimeType,
+				"file_type":    file.FileType,
+				"workspace_id": file.WorkspaceID,
 			},
 		})
 	}

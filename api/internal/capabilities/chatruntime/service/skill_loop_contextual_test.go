@@ -85,7 +85,7 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesListToolGuidance(t *te
 	prepared := &PreparedChat{
 		parts: consoleFilesSemanticTestParts("what files are visible", []consoleFilesTestFile{
 			{ID: "file-1", Name: "one.txt", Extension: "txt", MimeType: "text/plain"},
-			{ID: "file-2", Name: "two.pdf", Extension: "pdf", MimeType: "application/pdf", Selected: true},
+			{ID: "file-2", Name: "two.pdf", Extension: "pdf", MimeType: "application/pdf", FileType: "pdf", WorkspaceID: "workspace-2", Selected: true},
 		}),
 	}
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
@@ -101,7 +101,9 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesListToolGuidance(t *te
 		`"capability_id":"file.list_visible"`,
 		`"file_id":"file-1"`,
 		`"file_id":"file-2"`,
+		`"file_type":"pdf"`,
 		`"selected":true`,
+		`"workspace_id":"workspace-2"`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("contextual list guidance missing %q in:\n%s", want, content)

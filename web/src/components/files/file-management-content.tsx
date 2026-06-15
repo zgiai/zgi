@@ -128,6 +128,15 @@ const fileReadCapability: AIChatCapabilityDescriptor = {
   permissions: ['file.view'],
 };
 
+const fileListVisibleCapability: AIChatCapabilityDescriptor = {
+  id: 'file.list_visible',
+  title: 'List visible files',
+  description: 'List files visible on the current files page.',
+  risk: 'low',
+  status: 'available',
+  permissions: ['file.view'],
+};
+
 const fileDeleteCapability: AIChatCapabilityDescriptor = {
   id: 'file.delete',
   title: 'Delete file',
@@ -139,7 +148,9 @@ const fileDeleteCapability: AIChatCapabilityDescriptor = {
 };
 
 function filesAIChatCapabilities(canManage: boolean): AIChatCapabilityDescriptor[] {
-  return canManage ? [fileReadCapability, fileDeleteCapability] : [fileReadCapability];
+  return canManage
+    ? [fileListVisibleCapability, fileReadCapability, fileDeleteCapability]
+    : [fileListVisibleCapability, fileReadCapability];
 }
 
 function compactAIChatContextText(value: string, maxLength = 1200): string {
@@ -341,8 +352,8 @@ function buildFilesAIChatContextItems(params: {
         folder_name: activeFolderName,
         search: searchValue.trim(),
         extension_filter: extensionParam,
-        workspace_id: currentWorkspace?.id,
-        workspace_name: currentWorkspace?.name,
+        workspace_id: isOrganizationMode ? undefined : currentWorkspace?.id,
+        workspace_name: isOrganizationMode ? undefined : currentWorkspace?.name,
         organization_mode: isOrganizationMode,
       },
     },
@@ -369,6 +380,7 @@ function buildFilesAIChatContextItems(params: {
           resource_kind: 'file',
           file_id: file.id,
           visible_index: visibleIndex,
+          visible_ordinal: visibleIndex,
           visible_rank: visibleIndex,
           display_name: file.name,
           name: file.name,

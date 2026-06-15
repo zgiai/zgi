@@ -529,14 +529,21 @@ func consoleFilesPromptVisibleFiles(parts *chatRequestParts) []map[string]interf
 		if idx >= 10 {
 			break
 		}
-		out = append(out, map[string]interface{}{
+		item := map[string]interface{}{
 			"visible_index": idx + 1,
 			"file_id":       file.ID,
 			"name":          file.Title,
 			"extension":     file.Extension,
 			"mime_type":     file.MimeType,
 			"selected":      file.Selected,
-		})
+		}
+		if strings.TrimSpace(file.FileType) != "" {
+			item["file_type"] = strings.TrimSpace(file.FileType)
+		}
+		if strings.TrimSpace(file.WorkspaceID) != "" {
+			item["workspace_id"] = strings.TrimSpace(file.WorkspaceID)
+		}
+		out = append(out, item)
 	}
 	return out
 }

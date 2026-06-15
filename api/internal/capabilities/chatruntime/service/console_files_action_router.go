@@ -522,11 +522,13 @@ func collectSelectedFileIDs(value interface{}, depth int, add func(string)) {
 }
 
 type visibleConsoleFileResource struct {
-	ID        string
-	Title     string
-	Extension string
-	MimeType  string
-	Selected  bool
+	ID          string
+	Title       string
+	Extension   string
+	MimeType    string
+	FileType    string
+	WorkspaceID string
+	Selected    bool
 }
 
 func visibleFileResources(context map[string]interface{}) []visibleConsoleFileResource {
@@ -561,14 +563,24 @@ func visibleFileResources(context map[string]interface{}) []visibleConsoleFileRe
 			stringMetadataValue(resource["mimeType"]),
 			stringMetadataValue(firstMapValue(metadata, "mime_type", "mimeType")),
 		)
+		fileType := firstNonEmptyString(
+			stringMetadataValue(resource["file_type"]),
+			stringMetadataValue(firstMapValue(metadata, "file_type", "file_type_normalized", "format", "category")),
+		)
+		workspaceID := firstNonEmptyString(
+			stringMetadataValue(resource["workspace_id"]),
+			stringMetadataValue(firstMapValue(metadata, "workspace_id", "workspaceId", "team_tenant_id")),
+		)
 		selected := boolMetadataValue(firstMapValue(resource, "selected", "is_selected")) ||
 			boolMetadataValue(firstMapValue(metadata, "selected", "is_selected"))
 		out = append(out, visibleConsoleFileResource{
-			ID:        id,
-			Title:     title,
-			Extension: extension,
-			MimeType:  strings.TrimSpace(mimeType),
-			Selected:  selected,
+			ID:          id,
+			Title:       title,
+			Extension:   extension,
+			MimeType:    strings.TrimSpace(mimeType),
+			FileType:    strings.TrimSpace(fileType),
+			WorkspaceID: strings.TrimSpace(workspaceID),
+			Selected:    selected,
 		})
 	}
 	return out
