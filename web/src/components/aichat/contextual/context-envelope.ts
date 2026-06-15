@@ -102,6 +102,50 @@ function formatCapabilities(item: AIChatContextItem): string {
   return `capabilities=${summary}; highest_capability_risk=${highestRisk ?? 'low'}${omitted}`;
 }
 
+function buildResourceTypeInventory(items: AIChatContextItem[]): string {
+  const counts = new Map<AIChatContextItem['type'], number>();
+  items.forEach(item => {
+    counts.set(item.type, (counts.get(item.type) ?? 0) + 1);
+  });
+
+  return Array.from(counts.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([type, count]) => `${type}=${count}`)
+    .join(', ');
+}
+
+function metadataText(item: AIChatContextItem, key: string): string | undefined {
+  const value = item.metadata?.[key];
+  if (value === undefined || value === null || `${value}`.trim() === '') return undefined;
+  return compactText(`${value}`, 80);
+}
+
+function isFileAsset(item: AIChatContextItem): boolean {
+  return item.type === 'file' || item.metadata?.resource_kind === 'file';
+}
+
+function buildVisibleFileAssetSummary(items: AIChatContextItem[]): string {
+  const fileItems = items.filter(isFileAsset);
+  if (fileItems.length === 0) return '';
+
+  const entries = fileItems
+    .map((item, index) => {
+      const order = metadataText(item, 'visible_index') ?? `${index + 1}`;
+      const fileType =
+        metadataText(item, 'file_type') ??
+        metadataText(item, 'file_type_normalized') ??
+        metadataText(item, 'extension');
+      const fileTypeSuffix = fileType ? ` (${fileType})` : '';
+      return `${order}. ${compactText(item.title, 100)}${fileTypeSuffix}`;
+    })
+    .join(' | ');
+
+  return compactText(
+    `Visible file assets: count=${fileItems.length}; count and list only type=file/resource_kind=file as files; page, selection, log, and custom context items are not files. ${entries}`,
+    1400
+  );
+}
+
 function sanitizeMetadataValue(
   value: AIChatContextMetadata[string]
 ): AIChatOperationMetadataValue | undefined {
@@ -168,7 +212,13 @@ export function buildAIChatContextEnvelope(items: AIChatContextItem[]): string {
     'Current ZGI page context. Use it only to interpret this turn; do not save it as memory unless the user explicitly asks.',
     'Important: AIChat account memory and Agent memory are separate. Do not claim they are shared.',
     'Important: Workflow resources and Agent resources are distinct; a workflow binding does not make the workflow the Agent.',
+    'Important: each numbered item has an explicit type. Count or list assets only when the item type or resource_kind matches the asset type the user asked for; page items are navigation/context, not user assets.',
+    `Context item type inventory: ${buildResourceTypeInventory(items)}.`,
   ];
+  const fileAssetSummary = buildVisibleFileAssetSummary(items);
+  if (fileAssetSummary) {
+    lines.push(fileAssetSummary);
+  }
 
   visibleItems.forEach((item, index) => {
     const details = [
