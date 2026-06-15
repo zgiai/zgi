@@ -67,7 +67,9 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesReadTarget(t *testing.
 	}
 	content := messageContentText(messages[0].Content)
 	for _, want := range []string{
+		"file-reader/list_visible_files",
 		"file-reader/read_file",
+		`"capability_id":"file.list_visible"`,
 		`"capability_id":"file.read"`,
 		"resolved_targets_from_user_request",
 		`"file_id":"file-4"`,
@@ -75,6 +77,34 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesReadTarget(t *testing.
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("contextual read guidance missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesListToolGuidance(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts("what files are visible", []consoleFilesTestFile{
+			{ID: "file-1", Name: "one.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-2", Name: "two.pdf", Extension: "pdf", MimeType: "application/pdf", Selected: true},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	messages := skillLoopAdditionalSystemMessages(prepared)
+	if len(messages) != 1 {
+		t.Fatalf("additional messages = %d, want 1", len(messages))
+	}
+	content := messageContentText(messages[0].Content)
+	for _, want := range []string{
+		"file-reader/list_visible_files",
+		`"capability_id":"file.list_visible"`,
+		`"file_id":"file-1"`,
+		`"file_id":"file-2"`,
+		`"selected":true`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("contextual list guidance missing %q in:\n%s", want, content)
 		}
 	}
 }
@@ -180,7 +210,7 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testi
 	}
 }
 
-func TestSkillLoopFinalAnswerGuardAllowsConsoleFilesListWithoutToolCall(t *testing.T) {
+func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesListWithoutToolCall(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesSemanticTestParts("\u6211\u73b0\u5728\u6709\u54ea\u4e9b\u6587\u4ef6", []consoleFilesTestFile{
 			{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
@@ -190,8 +220,34 @@ func TestSkillLoopFinalAnswerGuardAllowsConsoleFilesListWithoutToolCall(t *testi
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
 	prepared.parts.SkillMode = skillModeAuto
 
-	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
-		t.Fatal("skillLoopFinalAnswerGuard() returned guard for file listing request, want nil")
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for file listing request")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "You have notes.txt and budget-q1.xlsx.",
+	})
+	if !blocked {
+		t.Fatal("guard did not block direct file listing answer without list_visible_files")
+	}
+	for _, want := range []string{
+		"file-reader",
+		"list_visible_files",
+		"visible files",
+	} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("guard message missing %q in:\n%s", want, result.Message)
+		}
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Here are the visible files from the tool result.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "list_visible_files"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after list_visible_files succeeded")
 	}
 }
 

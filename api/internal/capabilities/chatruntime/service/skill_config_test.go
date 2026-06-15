@@ -322,6 +322,29 @@ func TestSkillRuntimeParametersForPreparedAddsSelectedFileGovernanceAsset(t *tes
 	}
 }
 
+func TestSkillRuntimeParametersForPreparedAddsConsoleFilesVisibleFiles(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		parts: consoleFilesSemanticTestParts("what files are visible", []consoleFilesTestFile{
+			{ID: "file-1", Name: "one.pdf", Extension: "pdf"},
+			{ID: "file-2", Name: "selected.xlsx", Extension: "xlsx", Selected: true},
+		}),
+	}
+
+	params := skillRuntimeParametersForPrepared(prepared)
+	files, ok := params["console_files_visible_files"].([]map[string]interface{})
+	if !ok || len(files) != 2 {
+		t.Fatalf("console_files_visible_files = %#v, want 2 visible files", params["console_files_visible_files"])
+	}
+	if files[0]["file_id"] != "file-1" || files[0]["visible_index"] != 1 {
+		t.Fatalf("first visible file = %#v, want file-1 at index 1", files[0])
+	}
+	if files[1]["file_id"] != "file-2" || files[1]["selected"] != true {
+		t.Fatalf("second visible file = %#v, want selected file-2", files[1])
+	}
+}
+
 func TestSkillRuntimeParametersForPreparedAddsOrdinalFileGovernanceAsset(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},

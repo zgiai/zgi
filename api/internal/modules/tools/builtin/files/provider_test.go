@@ -47,6 +47,9 @@ func TestReadFileToolReturnsAccessibleContent(t *testing.T) {
 	if provider.GetEntity().Identity.Name != ProviderID {
 		t.Fatalf("provider name = %q, want %q", provider.GetEntity().Identity.Name, ProviderID)
 	}
+	if _, err := provider.GetTool(ToolListVisibleFiles); err != nil {
+		t.Fatalf("list visible files tool not registered: %v", err)
+	}
 	if _, err := provider.GetTool(ToolDeleteFile); err != nil {
 		t.Fatalf("delete tool not registered: %v", err)
 	}
@@ -81,6 +84,38 @@ func TestReadFileToolReturnsAccessibleContent(t *testing.T) {
 	}
 	if got := file["workspace_id"]; got != workspaceID {
 		t.Fatalf("workspace_id = %#v, want %s", got, workspaceID)
+	}
+}
+
+func TestListVisibleFilesToolReturnsRuntimeContextFiles(t *testing.T) {
+	provider := NewProvider(nil, nil, nil)
+	tool := listVisibleFilesRuntimeTool(t, provider, "org-1")
+
+	messages, err := tool.Invoke(context.Background(), "acct-1", nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	payload := singleJSONPayload(t, messages)
+	if got := payload["count"]; got != 2 {
+		t.Fatalf("count = %#v, want 2", got)
+	}
+	if got := payload["selected_count"]; got != 1 {
+		t.Fatalf("selected_count = %#v, want 1", got)
+	}
+	files, ok := payload["files"].([]interface{})
+	if !ok || len(files) != 2 {
+		t.Fatalf("files = %#v, want 2 files", payload["files"])
+	}
+	first, ok := files[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("first file type = %T, want map", files[0])
+	}
+	if first["file_id"] != "file-1" || first["name"] != "one.txt" || first["visible_index"] != 1 {
+		t.Fatalf("first file = %#v, want ordered visible file metadata", first)
+	}
+	second, ok := files[1].(map[string]interface{})
+	if !ok || second["selected"] != true || second["workspace_id"] != "workspace-1" {
+		t.Fatalf("second file = %#v, want selected workspace file", files[1])
 	}
 }
 
@@ -273,6 +308,39 @@ func readFileRuntimeTool(t *testing.T, provider *Provider, organizationID string
 		InvokeFrom: tools.ToolInvokeFromAIChat,
 		RuntimeParameters: map[string]interface{}{
 			"organization_id": organizationID,
+		},
+	})
+}
+
+func listVisibleFilesRuntimeTool(t *testing.T, provider *Provider, organizationID string) tools.Tool {
+	t.Helper()
+	tool, err := provider.GetTool(ToolListVisibleFiles)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	return tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   organizationID,
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id": organizationID,
+			"console_files_visible_files": []map[string]interface{}{
+				{
+					"visible_index": 1,
+					"file_id":       "file-1",
+					"name":          "one.txt",
+					"extension":     "txt",
+					"mime_type":     "text/plain",
+				},
+				{
+					"visible_index": 2,
+					"file_id":       "file-2",
+					"name":          "two.pdf",
+					"extension":     "pdf",
+					"mime_type":     "application/pdf",
+					"workspace_id":  "workspace-1",
+					"selected":      true,
+				},
+			},
 		},
 	})
 }

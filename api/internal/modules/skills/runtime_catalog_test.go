@@ -414,6 +414,25 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 	}
 }
 
+func TestExpectedSkillToolArgumentsForFileReaderListVisibleFiles(t *testing.T) {
+	expected := ExpectedSkillToolArguments(SkillFileReader, "list_visible_files")
+	if expected == nil {
+		t.Fatalf("ExpectedSkillToolArguments() = nil")
+	}
+	schema, ok := expected["schema"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema type = %T, want map[string]interface{}", expected["schema"])
+	}
+	required, ok := schema["required"].([]string)
+	if ok && len(required) > 0 {
+		t.Fatalf("required = %#v, want no required arguments", required)
+	}
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok || len(properties) != 0 {
+		t.Fatalf("properties = %#v, want no arguments", schema["properties"])
+	}
+}
+
 func TestChartGeneratorContractSupportsBarAndLinePayloads(t *testing.T) {
 	expected := ExpectedSkillToolArguments(SkillChartGenerator, "generate_chart")
 	if expected == nil {

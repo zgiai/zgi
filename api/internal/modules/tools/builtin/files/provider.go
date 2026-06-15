@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	ProviderID     = "files"
-	ToolReadFile   = "read_file"
-	ToolDeleteFile = "delete_file"
+	ProviderID           = "files"
+	ToolListVisibleFiles = "list_visible_files"
+	ToolReadFile         = "read_file"
+	ToolDeleteFile       = "delete_file"
 
 	defaultReadFileMaxChars = 4000
 	maxReadFileMaxChars     = 12000
@@ -64,8 +65,13 @@ func NewProvider(fileService FileService, contentExtractor ContentExtractionServ
 		workspacePerms:   workspacePerms,
 	}
 	provider.RegisterTool(newReadFileTool(fileService, contentExtractor, workspacePerms))
+	provider.RegisterTool(newListVisibleFilesTool())
 	provider.RegisterTool(newDeleteFileTool(fileService, workspacePerms))
 	return provider
+}
+
+type listVisibleFilesTool struct {
+	*builtin.BuiltinTool
 }
 
 type readFileTool struct {
@@ -92,6 +98,31 @@ type readFileContent struct {
 	Text      string
 	FromCache bool
 	Error     error
+}
+
+func newListVisibleFilesTool() tools.Tool {
+	entity := tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     ToolListVisibleFiles,
+			Author:   "System",
+			Provider: ProviderID,
+			Label: tools.I18nText{
+				"en_US": "List Visible Files",
+			},
+			Icon: "list",
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{
+				"en_US": "List files visible in the current AIChat file page context.",
+			},
+			LLM: "List visible file assets from the current Console Files page context. Use this for questions like what files are visible, current files, selected files, or available files. This does not read file contents.",
+		},
+		OutputType: "json",
+		Tags:       []string{"file", "system"},
+	}
+	return &listVisibleFilesTool{
+		BuiltinTool: builtin.NewBuiltinTool(entity, ""),
+	}
 }
 
 func newReadFileTool(fileService FileService, contentExtractor ContentExtractionService, workspacePerms WorkspacePermissionService) tools.Tool {
@@ -178,6 +209,44 @@ func newDeleteFileTool(fileService FileService, workspacePerms WorkspacePermissi
 		BuiltinTool:    builtin.NewBuiltinTool(entity, ""),
 		fileService:    fileService,
 		workspacePerms: workspacePerms,
+	}
+}
+
+func (t *listVisibleFilesTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = params
+	_ = conversationID
+	_ = appID
+	_ = messageID
+
+	files := visibleFilesFromRuntime(t.Runtime())
+	if len(files) == 0 {
+		return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(map[string]interface{}{
+			"status": "completed",
+			"count":  0,
+			"files":  []interface{}{},
+		})}, nil
+	}
+	payloadFiles := make([]interface{}, 0, len(files))
+	selectedCount := 0
+	for _, file := range files {
+		if boolFromAny(file["selected"]) {
+			selectedCount++
+		}
+		payloadFiles = append(payloadFiles, file)
+	}
+	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(map[string]interface{}{
+		"status":         "completed",
+		"count":          len(files),
+		"selected_count": selectedCount,
+		"files":          payloadFiles,
+	})}, nil
+}
+
+func (t *listVisibleFilesTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
+	return &listVisibleFilesTool{
+		BuiltinTool: t.BuiltinTool.ForkToolRuntime(runtime),
 	}
 }
 
@@ -440,6 +509,56 @@ func fileIDParam(params map[string]interface{}) string {
 	return ""
 }
 
+func visibleFilesFromRuntime(runtime *tools.ToolRuntime) []map[string]interface{} {
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return nil
+	}
+	raw, ok := runtime.RuntimeParameters["console_files_visible_files"]
+	if !ok {
+		return nil
+	}
+	items := interfaceSlice(raw)
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		mapped, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		fileID := strings.TrimSpace(firstStringFromMap(mapped, "file_id", "id", "resource_id"))
+		name := strings.TrimSpace(firstStringFromMap(mapped, "name", "title", "filename", "file_name"))
+		if fileID == "" && name == "" {
+			continue
+		}
+		file := map[string]interface{}{}
+		if ordinal := intFromAny(firstValueFromMap(mapped, "visible_index", "visible_ordinal", "ordinal")); ordinal > 0 {
+			file["visible_index"] = ordinal
+		}
+		if fileID != "" {
+			file["file_id"] = fileID
+		}
+		if name != "" {
+			file["name"] = name
+		}
+		if extension := strings.TrimSpace(firstStringFromMap(mapped, "extension", "ext")); extension != "" {
+			file["extension"] = extension
+		}
+		if mimeType := strings.TrimSpace(firstStringFromMap(mapped, "mime_type", "mime")); mimeType != "" {
+			file["mime_type"] = mimeType
+		}
+		if workspaceID := strings.TrimSpace(firstStringFromMap(mapped, "workspace_id", "workspaceId")); workspaceID != "" {
+			file["workspace_id"] = workspaceID
+		}
+		if selected := boolFromAny(firstValueFromMap(mapped, "selected", "is_selected")); selected {
+			file["selected"] = true
+		}
+		out = append(out, file)
+	}
+	return out
+}
+
 func stringValue(params map[string]interface{}, key string) string {
 	if len(params) == 0 {
 		return ""
@@ -452,6 +571,76 @@ func stringValue(params map[string]interface{}, key string) string {
 		return strings.TrimSpace(typed.String())
 	default:
 		return ""
+	}
+}
+
+func firstStringFromMap(params map[string]interface{}, keys ...string) string {
+	value := firstValueFromMap(params, keys...)
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return ""
+	}
+}
+
+func firstValueFromMap(params map[string]interface{}, keys ...string) interface{} {
+	if len(params) == 0 {
+		return nil
+	}
+	for _, key := range keys {
+		if value, ok := params[key]; ok {
+			return value
+		}
+	}
+	return nil
+}
+
+func interfaceSlice(value interface{}) []interface{} {
+	switch typed := value.(type) {
+	case []interface{}:
+		return typed
+	case []map[string]interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func boolFromAny(value interface{}) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
+	}
+}
+
+func intFromAny(value interface{}) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
 	}
 }
 

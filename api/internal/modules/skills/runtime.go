@@ -973,6 +973,16 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"file_id": "file_123", "max_chars": 4000},
 		},
+		SkillFileReader + "/list_visible_files": {
+			SkillID:     SkillFileReader,
+			ToolName:    "list_visible_files",
+			Description: "List files visible in the current Console Files page context without reading file contents.",
+			Schema: objectSchema(
+				map[string]interface{}{},
+				nil,
+			),
+			Example: map[string]interface{}{},
+		},
 		SkillFileReader + "/delete_file": {
 			SkillID:     SkillFileReader,
 			ToolName:    "delete_file",

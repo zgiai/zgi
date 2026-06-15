@@ -24,8 +24,39 @@ func TestFileReaderSystemSkillGovernanceManifest(t *testing.T) {
 	if got := docTimeoutSeconds(*doc); got != 120 {
 		t.Fatalf("timeout_seconds = %d, want 120", got)
 	}
-	if got := toolNames(doc.Tools); !sameStrings(got, []string{"read_file", "delete_file"}) {
-		t.Fatalf("file-reader tools = %v, want read_file/delete_file", got)
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"list_visible_files", "read_file", "delete_file"}) {
+		t.Fatalf("file-reader tools = %v, want list_visible_files/read_file/delete_file", got)
+	}
+	listTool, ok := findSkillTool(*doc, "list_visible_files")
+	if !ok {
+		t.Fatalf("list_visible_files tool not found")
+	}
+	if listTool.ProviderType != tools.ToolProviderTypeBuiltin || listTool.ProviderID != "files" {
+		t.Fatalf("list_visible_files provider = %s/%s, want builtin/files", listTool.ProviderType, listTool.ProviderID)
+	}
+	if listTool.Governance == nil {
+		t.Fatalf("list_visible_files governance manifest missing")
+	}
+	if listTool.Governance.ToolID != "file.list_visible" {
+		t.Fatalf("list tool_id = %q, want file.list_visible", listTool.Governance.ToolID)
+	}
+	if listTool.Governance.Effect != toolgovernance.EffectRead {
+		t.Fatalf("list effect = %q, want read", listTool.Governance.Effect)
+	}
+	if listTool.Governance.AssetType != "file" || listTool.Governance.RiskLevel != toolgovernance.RiskLevelLow {
+		t.Fatalf("list governance = %#v, want low-risk file read", listTool.Governance)
+	}
+	if listTool.Governance.RequiresAssetResolution {
+		t.Fatalf("list requires_asset_resolution = true, want false")
+	}
+	if got := listTool.Governance.PermissionScopes; len(got) != 1 || got[0] != "file:read" {
+		t.Fatalf("list permission_scopes = %#v, want file:read", got)
+	}
+	if listTool.Governance.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyAutoByPermissionTier {
+		t.Fatalf("list default_approval_policy = %q, want auto_by_permission_tier", listTool.Governance.DefaultApprovalPolicy)
+	}
+	if !listTool.Governance.AuditRequired {
+		t.Fatalf("list audit_required = false, want true")
 	}
 	readTool, ok := findSkillTool(*doc, "read_file")
 	if !ok {
