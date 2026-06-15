@@ -327,7 +327,7 @@ func (p *ExtractProcessor) extract(
 			}
 			defer os.RemoveAll(tempDir)
 
-			filePath = filepath.Join(tempDir, uuid.New().String()+filepath.Ext(setting.UploadFile.Key))
+			filePath = filepath.Join(tempDir, uuid.New().String()+uploadFileExtractionExtension(setting.UploadFile))
 			err = p.storage.Download(setting.UploadFile.Key, filePath)
 			if err != nil {
 				return nil, fmt.Errorf("failed to download file: %w", err)
@@ -448,6 +448,56 @@ func (p *ExtractProcessor) extractByStrategy(ctx context.Context, filePath, ext 
 
 func normalizeExtractionStrategy(strategy string) string {
 	return strings.ToLower(strings.TrimSpace(strategy))
+}
+
+func uploadFileExtractionExtension(uploadFile *model.UploadFile) string {
+	if uploadFile == nil {
+		return ""
+	}
+
+	for _, raw := range []string{
+		filepath.Ext(uploadFile.Key),
+		uploadFile.Extension,
+		filepath.Ext(uploadFile.Name),
+		uploadFileMimeTypeExtension(uploadFile.MimeType),
+	} {
+		ext := normalizeFileExtension(raw)
+		if ext != "" {
+			return ext
+		}
+	}
+	return ""
+}
+
+func normalizeFileExtension(raw string) string {
+	ext := strings.ToLower(strings.TrimSpace(raw))
+	if ext == "" {
+		return ""
+	}
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	if ext == "." {
+		return ""
+	}
+	return ext
+}
+
+func uploadFileMimeTypeExtension(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "application/pdf":
+		return ".pdf"
+	case "application/vnd.ms-excel":
+		return ".xls"
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return ".xlsx"
+	case "text/csv", "application/csv":
+		return ".csv"
+	case "text/plain":
+		return ".txt"
+	default:
+		return ""
+	}
 }
 
 func extractionFallbackEnabled(setting *ExtractSetting) bool {

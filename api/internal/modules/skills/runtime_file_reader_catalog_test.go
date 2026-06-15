@@ -21,6 +21,9 @@ func TestFileReaderSystemSkillGovernanceManifest(t *testing.T) {
 	if !sameStrings(doc.Metadata.SupportedCallers, []string{SkillCallerAIChat}) {
 		t.Fatalf("supported callers = %#v, want aichat", doc.Metadata.SupportedCallers)
 	}
+	if got := docTimeoutSeconds(*doc); got != 120 {
+		t.Fatalf("timeout_seconds = %d, want 120", got)
+	}
 	if got := toolNames(doc.Tools); !sameStrings(got, []string{"read_file", "delete_file"}) {
 		t.Fatalf("file-reader tools = %v, want read_file/delete_file", got)
 	}

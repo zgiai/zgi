@@ -9,7 +9,7 @@ tools:
   - read_file
   - delete_file
 max_calls_per_turn: 10
-timeout_seconds: 30
+timeout_seconds: 120
 tool_governance:
   read_file:
     tool_id: file.read
