@@ -253,17 +253,128 @@ func sanitizeModelInvocationRequestPayload(payload map[string]interface{}) map[s
 			continue
 		}
 		role := strings.ToLower(strings.TrimSpace(stringFromAny(message["role"])))
-		if role != "tool" && role != "function" {
-			continue
+		switch role {
+		case "tool", "function":
+			content, exists := message["content"]
+			if !exists {
+				continue
+			}
+			message["content"] = modelInvocationToolContentSummary(content)
+			message["content_redacted"] = true
+		case "user":
+			content, exists := message["content"]
+			if !exists {
+				continue
+			}
+			if summary, ok := modelInvocationUserContentSummary(content); ok {
+				message["content"] = summary
+				message["content_redacted"] = true
+			}
 		}
-		content, exists := message["content"]
-		if !exists {
-			continue
-		}
-		message["content"] = modelInvocationToolContentSummary(content)
-		message["content_redacted"] = true
 	}
 	return payload
+}
+
+func modelInvocationUserContentSummary(content interface{}) (map[string]interface{}, bool) {
+	summary := map[string]interface{}{
+		"redacted": true,
+		"reason":   "user_payload_file_content_omitted_from_model_invocation_metadata",
+	}
+	if content == nil {
+		return nil, false
+	}
+	switch typed := content.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return nil, false
+		}
+		var parsed interface{}
+		if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+			return nil, false
+		}
+		jsonSummary, ok := modelInvocationUserJSONSummary(parsed)
+		if !ok {
+			return nil, false
+		}
+		summary["original_type"] = "string"
+		summary["content_chars"] = len([]rune(typed))
+		summary["json"] = jsonSummary
+	case map[string]interface{}:
+		jsonSummary, ok := modelInvocationUserJSONSummary(typed)
+		if !ok {
+			return nil, false
+		}
+		summary["original_type"] = "object"
+		summary["json"] = jsonSummary
+	default:
+		return nil, false
+	}
+	return summary, true
+}
+
+func modelInvocationUserJSONSummary(value interface{}) (map[string]interface{}, bool) {
+	object, ok := value.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	files := modelInvocationFileItemsFromAny(object["files"])
+	if len(files) == 0 {
+		return nil, false
+	}
+	fileSummaries, redacted := modelInvocationPayloadFilesSummary(files)
+	if !redacted {
+		return nil, false
+	}
+	fields := map[string]interface{}{
+		"files": fileSummaries,
+	}
+	if userQuery := strings.TrimSpace(stringFromAny(object["user_query"])); userQuery != "" {
+		fields["user_query"] = userQuery
+	}
+	if postprocess, ok := modelInvocationPayloadSafeValue(object["postprocess"]); ok {
+		fields["postprocess"] = postprocess
+	}
+	if fallback := strings.TrimSpace(stringFromAny(object["fallback_answer"])); fallback != "" {
+		fields["fallback_answer_chars"] = len([]rune(fallback))
+		fields["fallback_answer_redacted"] = true
+	}
+	return map[string]interface{}{
+		"type":      "object",
+		"json_keys": sortedStringKeys(object),
+		"fields":    fields,
+	}, true
+}
+
+func modelInvocationPayloadSafeValue(value interface{}) (interface{}, bool) {
+	switch typed := value.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return nil, false
+		}
+		return text, true
+	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return typed, true
+	case []interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if safe, ok := modelInvocationPayloadSafeValue(item); ok {
+				out = append(out, safe)
+			}
+		}
+		return out, len(out) > 0
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(typed))
+		for _, key := range sortedStringKeys(typed) {
+			if safe, ok := modelInvocationPayloadSafeValue(typed[key]); ok {
+				out[key] = safe
+			}
+		}
+		return out, len(out) > 0
+	default:
+		return nil, false
+	}
 }
 
 func modelInvocationToolContentSummary(content interface{}) map[string]interface{} {
@@ -342,7 +453,7 @@ func modelInvocationToolObjectSummary(value map[string]interface{}) map[string]i
 	if errorText := strings.TrimSpace(stringFromAny(value["content_error"])); errorText != "" {
 		fields["content_error_chars"] = len([]rune(errorText))
 	}
-	if files, ok := value["files"].([]interface{}); ok {
+	if files := modelInvocationFileItemsFromAny(value["files"]); len(files) > 0 {
 		fields["files"] = modelInvocationToolFilesSummary(files)
 	}
 	if len(fields) > 0 {
@@ -375,7 +486,28 @@ func modelInvocationSafeSummaryValue(value interface{}) (interface{}, bool) {
 }
 
 func modelInvocationToolFilesSummary(files []interface{}) []map[string]interface{} {
+	summaries, _ := modelInvocationPayloadFilesSummary(files)
+	return summaries
+}
+
+func modelInvocationFileItemsFromAny(value interface{}) []interface{} {
+	switch typed := value.(type) {
+	case []interface{}:
+		return typed
+	case []map[string]interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func modelInvocationPayloadFilesSummary(files []interface{}) ([]map[string]interface{}, bool) {
 	out := make([]map[string]interface{}, 0, min(len(files), 20))
+	redacted := false
 	for idx, raw := range files {
 		if idx >= 20 {
 			break
@@ -385,16 +517,29 @@ func modelInvocationToolFilesSummary(files []interface{}) []map[string]interface
 			continue
 		}
 		item := map[string]interface{}{}
-		for _, key := range []string{"visible_index", "file_id", "name", "extension", "mime_type", "file_type", "workspace_id", "selected"} {
+		for _, key := range []string{"visible_index", "id", "file_id", "name", "extension", "mime_type", "file_type", "workspace_id", "content_status", "filtered_reason", "content_truncated", "selected"} {
 			if safe, ok := modelInvocationSafeSummaryValue(file[key]); ok {
 				item[key] = safe
 			}
+		}
+		if preview := strings.TrimSpace(stringFromAny(file["content_preview"])); preview != "" {
+			item["content_preview_chars"] = len([]rune(preview))
+			item["content_preview_redacted"] = true
+			redacted = true
+		}
+		if content := strings.TrimSpace(stringFromAny(file["content"])); content != "" {
+			item["content_chars"] = len([]rune(content))
+			item["content_redacted"] = true
+			redacted = true
+		}
+		if contentError := strings.TrimSpace(stringFromAny(file["content_error"])); contentError != "" {
+			item["content_error_chars"] = len([]rune(contentError))
 		}
 		if len(item) > 0 {
 			out = append(out, item)
 		}
 	}
-	return out
+	return out, redacted
 }
 
 func sortedStringKeys(value map[string]interface{}) []string {
