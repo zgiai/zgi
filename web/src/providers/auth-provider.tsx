@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/store/auth-store';
+import { useOrganizationStore } from '@/store/organization-store';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { clearSessionBoundClientState } from '@/lib/auth/client-state';
 import { sessionManager, type AuthSyncEvent } from '@/lib/auth/session-manager';
@@ -13,7 +14,7 @@ interface AuthProviderProps {
   children: React.ReactNode;
 }
 
-function syncWorkspaceStoreForContextChange(event: AuthSyncEvent): void {
+function syncClientContextStores(event: AuthSyncEvent): void {
   const { payload } = event;
   if (!payload) {
     return;
@@ -21,13 +22,19 @@ function syncWorkspaceStoreForContextChange(event: AuthSyncEvent): void {
 
   const workspaceStore = useWorkspaceStore.getState();
   const workspaceID = payload.currentWorkspaceId;
+  const organizationID = payload.currentOrganizationId;
 
-  if (workspaceID === null || workspaceID === '') {
+  if (organizationID) {
+    const organizationStore = useOrganizationStore.getState();
+    const nextOrganization =
+      organizationStore.organizations.find(organization => organization.id === organizationID) ??
+      null;
+    organizationStore.setCurrentOrganization(nextOrganization);
     workspaceStore.resetForOrganizationSwitch();
     return;
   }
 
-  if (payload.currentOrganizationId) {
+  if (workspaceID === null || workspaceID === '') {
     workspaceStore.resetForOrganizationSwitch();
     return;
   }
@@ -79,10 +86,18 @@ async function handleCrossTabEvent(event: AuthSyncEvent): Promise<void> {
       return;
     }
     case 'CONTEXT_CHANGED': {
-      syncWorkspaceStoreForContextChange(event);
+      syncClientContextStores(event);
       clearProfileClientCache();
+      if (useAuthStore.getState().isAuthenticated) {
+        try {
+          await useAuthStore.getState().refreshProfile({ refresh: true });
+        } catch {
+          // Ignore refresh failures here and let the global auth flow decide next steps.
+        }
+      } else {
+        await useAuthStore.getState().initializeAuth({ force: true });
+      }
       queryClient.clear();
-      await useAuthStore.getState().initializeAuth({ force: true });
       return;
     }
     default:
