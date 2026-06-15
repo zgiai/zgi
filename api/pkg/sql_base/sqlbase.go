@@ -146,6 +146,7 @@ func applyGuardAudit(record *audit.Record, result guard.Result, ok bool) {
 		return
 	}
 	record.GuardVerdict = string(result.Verdict)
+	record.GuardAction = string(result.Action)
 	if reasons, err := json.Marshal(result.Reasons); err == nil {
 		record.GuardReasons = reasons
 	}

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 
 	"github.com/gin-gonic/gin"
 )
@@ -447,6 +449,10 @@ func (h *DataSourceHandler) UpdateGuardPolicy(c *gin.Context) {
 	}
 	policy, err := h.service.UpdateGuardPolicy(c.Request.Context(), organizationID, id, req.Policy)
 	if err != nil {
+		if errors.Is(err, guard.ErrInvalidPolicy) {
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+			return
+		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
@@ -475,6 +481,10 @@ func (h *DataSourceHandler) PreviewGuard(c *gin.Context) {
 	}
 	result, err := h.service.PreviewGuard(c.Request.Context(), organizationID, id, req.SQL, req.Policy)
 	if err != nil {
+		if errors.Is(err, guard.ErrInvalidPolicy) {
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+			return
+		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}

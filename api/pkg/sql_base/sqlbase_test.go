@@ -58,3 +58,36 @@ func TestCheckSQLGuardPrefersAuditContextPolicy(t *testing.T) {
 		t.Fatalf("mode = %s, want warn", result.Policy.Mode)
 	}
 }
+
+func TestCheckSQLGuardSkipsWithoutAuditContext(t *testing.T) {
+	result, guarded, err := checkSQLGuard(
+		context.Background(),
+		"DROP TABLE users",
+		nil,
+		func(ctx context.Context, dataSourceID string) (*guard.Policy, error) {
+			t.Fatal("provider should not be called without audit context")
+			return nil, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("check guard: %v", err)
+	}
+	if guarded {
+		t.Fatalf("guarded = true, result = %#v", result)
+	}
+}
+
+func TestApplyGuardAuditRecordsAction(t *testing.T) {
+	policy := guard.DefaultPolicy()
+	result := guard.Check("DROP TABLE users", policy)
+	record := audit.Record{}
+
+	applyGuardAudit(&record, result, true)
+
+	if record.GuardVerdict != string(guard.VerdictDeny) {
+		t.Fatalf("guard verdict = %s, want deny", record.GuardVerdict)
+	}
+	if record.GuardAction != string(guard.ActionAllow) {
+		t.Fatalf("guard action = %s, want allow", record.GuardAction)
+	}
+}

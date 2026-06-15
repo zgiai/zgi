@@ -2,6 +2,8 @@ package guard
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -11,6 +13,8 @@ const (
 	ModeWarn    Mode = "warn"
 	ModeEnforce Mode = "enforce"
 )
+
+var ErrInvalidPolicy = errors.New("invalid sql guard policy")
 
 type Policy struct {
 	Mode              Mode     `json:"mode"`
@@ -45,9 +49,6 @@ func NormalizePolicy(policy Policy) Policy {
 	if policy.Mode == "" {
 		policy.Mode = defaults.Mode
 	}
-	if policy.Mode != ModeEnforce {
-		policy.Mode = ModeWarn
-	}
 	if policy.BlockStatements == nil {
 		policy.BlockStatements = defaults.BlockStatements
 	}
@@ -62,6 +63,21 @@ func NormalizePolicy(policy Policy) Policy {
 	return policy
 }
 
+func ValidatePolicy(policy Policy) error {
+	if policy.Mode != ModeWarn && policy.Mode != ModeEnforce {
+		return fmt.Errorf("%w: invalid mode %q", ErrInvalidPolicy, policy.Mode)
+	}
+	return nil
+}
+
+func NormalizeAndValidatePolicy(policy Policy) (Policy, error) {
+	policy = NormalizePolicy(policy)
+	if err := ValidatePolicy(policy); err != nil {
+		return Policy{}, err
+	}
+	return policy, nil
+}
+
 func ParsePolicyJSON(data []byte) (Policy, error) {
 	if len(data) == 0 {
 		return DefaultPolicy(), nil
@@ -70,7 +86,7 @@ func ParsePolicyJSON(data []byte) (Policy, error) {
 	if err := json.Unmarshal(data, &policy); err != nil {
 		return Policy{}, err
 	}
-	return NormalizePolicy(policy), nil
+	return NormalizeAndValidatePolicy(policy)
 }
 
 func normalizeList(values []string) []string {

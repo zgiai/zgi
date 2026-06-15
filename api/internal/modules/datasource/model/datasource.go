@@ -108,6 +108,7 @@ type DataSourceSQLOperation struct {
 	ExecutedAt     *time.Time `json:"executed_at" gorm:"type:timestamp"`
 	RequestID      *string    `json:"request_id" gorm:"type:varchar(128)"`
 	GuardVerdict   *string    `json:"guard_verdict" gorm:"type:varchar(16)"`
+	GuardAction    *string    `json:"guard_action" gorm:"type:varchar(16)"`
 	GuardReasons   []byte     `json:"guard_reasons" gorm:"type:jsonb"`
 	GuardPolicy    []byte     `json:"guard_policy" gorm:"type:jsonb"`
 	StartTime      time.Time  `json:"start_time" gorm:"type:timestamp;not null;default:CURRENT_TIMESTAMP"`

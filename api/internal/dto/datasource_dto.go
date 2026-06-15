@@ -370,6 +370,7 @@ type SQLAuditListItem struct {
 	RowCount       *int64     `json:"row_count"`
 	DurationMS     *int64     `json:"duration_ms"`
 	GuardVerdict   *string    `json:"guard_verdict,omitempty"`
+	GuardAction    *string    `json:"guard_action,omitempty"`
 	CreatedBy      string     `json:"created_by"`
 	ExecutedAt     *time.Time `json:"executed_at"`
 	CreatedAt      time.Time  `json:"created_at"`
@@ -441,6 +442,7 @@ func ConvertSQLOperationModelToAuditListItem(op *model.DataSourceSQLOperation) S
 		RowCount:       op.RowCount,
 		DurationMS:     op.DurationMS,
 		GuardVerdict:   op.GuardVerdict,
+		GuardAction:    op.GuardAction,
 		CreatedBy:      op.CreatedBy,
 		ExecutedAt:     op.ExecutedAt,
 		CreatedAt:      op.CreatedAt,

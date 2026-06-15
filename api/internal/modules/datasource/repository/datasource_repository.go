@@ -382,9 +382,9 @@ func (r *PostgresSQLOperationRepository) Create(ctx context.Context, log *model.
 			id, organization_id, workspace_id, data_source_id, table_id, table_name, data_source_name,
 			sql_statement, operation_type, client_type, workflow_run_id, node_id, params_json, row_count,
 			duration_ms, error_code, error_message, executed_at, request_id, guard_verdict,
-			guard_reasons, guard_policy, start_time, end_time, status, created_by, created_at
+			guard_action, guard_reasons, guard_policy, start_time, end_time, status, created_by, created_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	err := r.db.WithContext(ctx).Exec(
 		query,
@@ -408,6 +408,7 @@ func (r *PostgresSQLOperationRepository) Create(ctx context.Context, log *model.
 		log.ExecutedAt,
 		log.RequestID,
 		log.GuardVerdict,
+		log.GuardAction,
 		log.GuardReasons,
 		log.GuardPolicy,
 		log.StartTime,
@@ -449,6 +450,7 @@ func (r *PostgresSQLOperationRepository) Insert(ctx context.Context, records []a
 			ExecutedAt:     &executedAt,
 			RequestID:      stringPtrOrNil(record.RequestID),
 			GuardVerdict:   stringPtrOrNil(record.GuardVerdict),
+			GuardAction:    stringPtrOrNil(record.GuardAction),
 			GuardReasons:   record.GuardReasons,
 			GuardPolicy:    record.GuardPolicy,
 			StartTime:      record.StartTime,

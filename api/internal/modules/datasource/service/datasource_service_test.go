@@ -192,6 +192,9 @@ func TestAuditSQLOperationWarnRecordsGuardAndExecutes(t *testing.T) {
 	if got.GuardVerdict == nil || *got.GuardVerdict != string(guard.VerdictDeny) {
 		t.Fatalf("guard_verdict = %#v, want deny", got.GuardVerdict)
 	}
+	if got.GuardAction == nil || *got.GuardAction != string(guard.ActionAllow) {
+		t.Fatalf("guard_action = %#v, want allow", got.GuardAction)
+	}
 	var reasons []guard.Reason
 	if err := json.Unmarshal(got.GuardReasons, &reasons); err != nil {
 		t.Fatalf("guard_reasons: %v", err)
@@ -255,6 +258,9 @@ func TestAuditSQLOperationEnforceBlocksAndAuditsFailure(t *testing.T) {
 	}
 	if got.GuardVerdict == nil || *got.GuardVerdict != string(guard.VerdictDeny) {
 		t.Fatalf("guard_verdict = %#v, want deny", got.GuardVerdict)
+	}
+	if got.GuardAction == nil || *got.GuardAction != string(guard.ActionDeny) {
+		t.Fatalf("guard_action = %#v, want deny", got.GuardAction)
 	}
 	if got.ErrorMessage == nil || *got.ErrorMessage == "" {
 		t.Fatal("error_message should be recorded")
@@ -346,6 +352,9 @@ func TestAuditSQLOperationAllowedSQLRecordsGuardAllow(t *testing.T) {
 	if got.GuardVerdict == nil || *got.GuardVerdict != string(guard.VerdictAllow) {
 		t.Fatalf("guard_verdict = %#v, want allow", got.GuardVerdict)
 	}
+	if got.GuardAction == nil || *got.GuardAction != string(guard.ActionAllow) {
+		t.Fatalf("guard_action = %#v, want allow", got.GuardAction)
+	}
 	if len(got.GuardPolicy) == 0 {
 		t.Fatal("guard_policy should be recorded")
 	}
@@ -403,6 +412,42 @@ func TestPreviewGuardUsesUpdatedPolicyImmediately(t *testing.T) {
 	}
 	if result.Action != guard.ActionDeny {
 		t.Fatalf("preview action = %s, want deny", result.Action)
+	}
+}
+
+func TestUpdateGuardPolicyRejectsInvalidMode(t *testing.T) {
+	repo := &fakeDataSourceRepo{
+		ds: &model.DataSource{
+			ID:             "datasource-1",
+			OrganizationID: "organization-1",
+			Name:           "main",
+			GuardPolicy:    guard.DefaultPolicyJSON(),
+		},
+	}
+	svc := &dataSourceService{repo: repo}
+
+	policy := guard.DefaultPolicy()
+	policy.Mode = "enfore"
+	if _, err := svc.UpdateGuardPolicy(context.Background(), "organization-1", "datasource-1", policy); err == nil {
+		t.Fatal("expected invalid policy error")
+	}
+}
+
+func TestPreviewGuardRejectsInvalidMode(t *testing.T) {
+	repo := &fakeDataSourceRepo{
+		ds: &model.DataSource{
+			ID:             "datasource-1",
+			OrganizationID: "organization-1",
+			Name:           "main",
+			GuardPolicy:    guard.DefaultPolicyJSON(),
+		},
+	}
+	svc := &dataSourceService{repo: repo}
+
+	policy := guard.DefaultPolicy()
+	policy.Mode = "ENFORCE"
+	if _, err := svc.PreviewGuard(context.Background(), "organization-1", "datasource-1", "SELECT 1", &policy); err == nil {
+		t.Fatal("expected invalid policy error")
 	}
 }
 

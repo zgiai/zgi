@@ -346,7 +346,10 @@ func (s *dataSourceService) UpdateGuardPolicy(ctx context.Context, organizationI
 	if dataSource == nil || dataSource.OrganizationID != organizationID {
 		return guard.Policy{}, fmt.Errorf("data source with id '%s' not found", dataSourceID)
 	}
-	policy = guard.NormalizePolicy(policy)
+	policy, err = guard.NormalizeAndValidatePolicy(policy)
+	if err != nil {
+		return guard.Policy{}, fmt.Errorf("invalid sql guard policy: %w", err)
+	}
 	policyJSON, err := json.Marshal(policy)
 	if err != nil {
 		return guard.Policy{}, fmt.Errorf("failed to encode guard policy: %w", err)
@@ -364,6 +367,10 @@ func (s *dataSourceService) PreviewGuard(ctx context.Context, organizationID, da
 	}
 	if policy != nil {
 		currentPolicy = *policy
+	}
+	currentPolicy, err = guard.NormalizeAndValidatePolicy(currentPolicy)
+	if err != nil {
+		return guard.Result{}, fmt.Errorf("invalid sql guard policy: %w", err)
 	}
 	return guard.Check(sql, currentPolicy), nil
 }
@@ -2700,7 +2707,9 @@ func (s *dataSourceService) logSQLOperationWithResult(ctx context.Context, organ
 	}
 	if guarded {
 		verdict := string(guardResult.Verdict)
+		action := string(guardResult.Action)
 		log.GuardVerdict = &verdict
+		log.GuardAction = &action
 		if reasons, err := json.Marshal(guardResult.Reasons); err == nil {
 			log.GuardReasons = reasons
 		}

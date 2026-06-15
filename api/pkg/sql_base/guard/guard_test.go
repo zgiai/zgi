@@ -123,6 +123,20 @@ func TestEnforceModeDeniesAction(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndValidatePolicyRejectsInvalidMode(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.Mode = "enfore"
+	if _, err := NormalizeAndValidatePolicy(policy); err == nil {
+		t.Fatal("expected invalid mode error")
+	}
+}
+
+func TestParsePolicyJSONRejectsInvalidMode(t *testing.T) {
+	if _, err := ParsePolicyJSON([]byte(`{"mode":"ENFORCE"}`)); err == nil {
+		t.Fatal("expected invalid mode error")
+	}
+}
+
 func assertReason(t *testing.T, result Result, code ReasonCode) {
 	t.Helper()
 	for _, reason := range result.Reasons {

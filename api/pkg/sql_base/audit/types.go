@@ -50,6 +50,7 @@ type Record struct {
 	ErrorCode    string
 	ErrorMessage string
 	GuardVerdict string
+	GuardAction  string
 	GuardReasons []byte
 	GuardPolicy  []byte
 	StartTime    time.Time
