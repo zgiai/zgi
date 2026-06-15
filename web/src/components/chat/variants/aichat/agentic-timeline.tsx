@@ -1,18 +1,15 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { toast } from 'sonner';
 import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
   ExternalLink,
   Loader2,
-  ShieldAlert,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { useT } from '@/i18n/translations';
 import type { ScopedTranslations } from '@/i18n/translations';
@@ -31,13 +28,18 @@ import {
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
+import {
+  ToolGovernanceDecisionCard,
+  type ToolGovernanceDecisionAction,
+  type ToolGovernanceDisplayAsset,
+  type ToolGovernanceDisplayRow,
+} from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import WorkflowRunMonitor from '@/components/chat/ui/workflow-run-monitor';
 import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-run-nodes-list';
 
 type TimelineTone = 'running' | 'success' | 'error';
 type TimelineDebugLabel = keyof typeof TIMELINE_DEBUG_LABEL_KEYS;
 type GovernanceFieldLabel = keyof typeof GOVERNANCE_FIELD_LABEL_KEYS;
-type GovernanceDisplayRow = readonly [GovernanceFieldLabel, string];
 type WebappTranslator = ScopedTranslations<'webapp'>;
 
 const TIMELINE_DEBUG_LABEL_KEYS = {
@@ -849,28 +851,50 @@ function ToolGovernanceDecisionRow({
 }) {
   const t = useT('webapp');
   const { locale } = useLocale();
-  const [rememberForSession, setRememberForSession] = useState(false);
-  const [submittingAction, setSubmittingAction] = useState<'approve' | 'reject' | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
   const currentItem = item;
   const needsApproval = isToolGovernanceNeedsApproval(currentItem);
-  const [isOpen, setIsOpen] = useState(needsApproval);
   const approvalStatus = governanceApprovalStatus(currentItem);
   const title = buildGovernanceTitle(currentItem, t);
   const toolLabel = governanceToolLabel(currentItem, skillDisplayById, locale, t);
   const reason = governanceReason(currentItem);
   const approvalAssets = governanceApprovalAssets(currentItem);
-  const summaryRows: GovernanceDisplayRow[] = governanceSummaryRows(
+  const summaryRows: ToolGovernanceDisplayRow[] = governanceSummaryRows(
     currentItem,
     approvalAssets,
     t
-  ).flatMap(([labelKey, value]) => (value ? [[labelKey, value] as GovernanceDisplayRow] : []));
-  const details: GovernanceDisplayRow[] = governanceFieldRows(currentItem).flatMap(
+  ).flatMap(([labelKey, value]) =>
+    value
+      ? [
+          {
+            key: labelKey,
+            label: t(GOVERNANCE_FIELD_LABEL_KEYS[labelKey]),
+            value,
+          },
+        ]
+      : []
+  );
+  const details: ToolGovernanceDisplayRow[] = governanceFieldRows(currentItem).flatMap(
     ([labelKey, value]) => {
       const formatted = governanceDisplayText(value);
-      return formatted ? [[labelKey, formatted] as GovernanceDisplayRow] : [];
+      return formatted
+        ? [
+            {
+              key: labelKey,
+              label: t(GOVERNANCE_FIELD_LABEL_KEYS[labelKey]),
+              value: formatted,
+            },
+          ]
+        : [];
     }
   );
+  const assets: ToolGovernanceDisplayAsset[] = approvalAssets.map((asset, index) => {
+    const key = `${governanceStringValue(asset.id) ?? governanceAssetDisplayName(asset)}-${index}`;
+    return {
+      key,
+      name: governanceAssetDisplayName(asset),
+      meta: governanceAssetMeta(asset, t) || undefined,
+    };
+  });
   const effect = governanceEventString(currentItem, ['effect']);
   const riskLevel = governanceEventString(currentItem, ['risk_level']);
   const isHighImpact =
@@ -883,222 +907,44 @@ function ToolGovernanceDecisionRow({
     !needsApproval &&
     !approvalStatus &&
     governanceDecisionStatus(currentItem) === 'allowed';
-  const canExpand =
-    summaryRows.length > 0 ||
-    approvalAssets.length > 0 ||
-    details.length > 0 ||
-    Boolean(reason) ||
-    needsApproval ||
-    Boolean(approvalStatus);
   const correlationId =
     currentItem.event.correlation_id ??
     currentItem.event.governance?.correlation_id ??
     governanceApprovalEvent(currentItem)?.correlation_id ??
     '';
-  const canSubmit =
-    needsApproval &&
-    Boolean(correlationId) &&
-    Boolean(onToolGovernanceDecision) &&
-    !submittingAction;
+  const canSubmit = needsApproval && Boolean(correlationId) && Boolean(onToolGovernanceDecision);
 
-  const submitDecision = async (action: 'approve' | 'reject') => {
-    if (!correlationId || submittingAction) return;
-    if (!onToolGovernanceDecision) {
-      const message = t('consoleChat.governance.submitFailed');
-      setSubmitError(message);
-      toast.error(message);
-      return;
+  const submitDecision = async (
+    action: ToolGovernanceDecisionAction,
+    rememberForSession: boolean
+  ) => {
+    if (!correlationId || !onToolGovernanceDecision) {
+      throw new Error(t('consoleChat.governance.submitFailed'));
     }
-    setSubmittingAction(action);
-    setSubmitError(null);
-    try {
-      await onToolGovernanceDecision({
-        conversationId: currentItem.event.conversation_id,
-        messageId: currentItem.event.message_id,
-        correlationId,
-        action,
-        rememberForSession: action === 'approve' ? rememberForSession : false,
-      });
-      toast.success(
-        action === 'approve'
-          ? t('consoleChat.governance.approveSucceeded')
-          : t('consoleChat.governance.rejectSucceeded')
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : t('consoleChat.governance.submitFailed');
-      setSubmitError(message);
-      toast.error(message);
-    } finally {
-      setSubmittingAction(null);
-    }
+    await onToolGovernanceDecision({
+      conversationId: currentItem.event.conversation_id,
+      messageId: currentItem.event.message_id,
+      correlationId,
+      action,
+      rememberForSession: action === 'approve' ? rememberForSession : false,
+    });
   };
 
   return (
-    <div
-      className={cn(
-        'rounded-md border text-xs text-foreground',
-        isHighImpact
-          ? 'border-destructive/35 bg-destructive/10'
-          : isAllowed
-            ? 'border-emerald-500/30 bg-emerald-500/5'
-            : 'border-warning/40 bg-warning/10'
-      )}
-    >
-      <button
-        type="button"
-        className="flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left"
-        onClick={() => canExpand && setIsOpen(open => !open)}
-        aria-expanded={isOpen}
-      >
-        <span
-          className={cn(
-            'flex size-5 shrink-0 items-center justify-center rounded-full border bg-background',
-            isHighImpact
-              ? 'border-destructive/40 text-destructive'
-              : isAllowed
-                ? 'border-emerald-500/30 text-emerald-600'
-                : 'border-warning/40 text-warning'
-          )}
-        >
-          {isAllowed ? <CheckCircle2 className="size-3.5" /> : <ShieldAlert className="size-3.5" />}
-        </span>
-        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
-        {toolLabel ? (
-          <span className="max-w-44 shrink-0 truncate text-muted-foreground">{toolLabel}</span>
-        ) : null}
-        {canExpand ? (
-          <ChevronDown
-            className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', {
-              'rotate-180': isOpen,
-            })}
-          />
-        ) : null}
-      </button>
-      {isOpen ? (
-        <div
-          className={cn(
-            'space-y-2 border-t bg-background/70 px-2.5 py-2',
-            isHighImpact
-              ? 'border-destructive/15'
-              : isAllowed
-                ? 'border-emerald-500/15'
-                : 'border-warning/20'
-          )}
-        >
-          {summaryRows.length > 0 ? (
-            <dl className="grid gap-1.5 rounded-md bg-background/80 p-2 text-[11px] sm:grid-cols-2">
-              {summaryRows.map(([labelKey, value]) => (
-                <div key={labelKey} className="min-w-0">
-                  <dt className="text-muted-foreground">
-                    {t(GOVERNANCE_FIELD_LABEL_KEYS[labelKey])}
-                  </dt>
-                  <dd className="mt-0.5 truncate font-medium text-foreground">{value}</dd>
-                </div>
-              ))}
-            </dl>
-          ) : null}
-          {reason ? (
-            <div className="rounded-md border border-warning/20 bg-warning/5 p-2 text-muted-foreground">
-              <span className="font-medium text-foreground">
-                {t('consoleChat.governance.fields.reason')}
-              </span>
-              <span className="ml-1 break-words">{reason}</span>
-            </div>
-          ) : null}
-          {approvalAssets.length > 0 ? (
-            <div className="rounded-md bg-background/80 p-2 text-[11px]">
-              <div className="mb-1 font-medium text-foreground">
-                {t('consoleChat.governance.fields.assets')}
-              </div>
-              <div className="space-y-1.5">
-                {approvalAssets.map((asset, index) => {
-                  const meta = governanceAssetMeta(asset, t);
-                  return (
-                    <div
-                      key={`${asset.id ?? asset.name ?? index}`}
-                      className="min-w-0 rounded-sm bg-muted/40 px-2 py-1"
-                    >
-                      <div className="truncate font-medium text-foreground">
-                        {governanceAssetDisplayName(asset)}
-                      </div>
-                      {meta ? (
-                        <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
-                          {meta}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-          {details.length > 0 ? (
-            <dl className="grid gap-1 rounded-md bg-background/80 p-2 text-[11px]">
-              {details.map(([labelKey, value]) => (
-                <div key={labelKey} className="grid grid-cols-[104px_minmax(0,1fr)] gap-2">
-                  <dt className="text-muted-foreground">
-                    {t(GOVERNANCE_FIELD_LABEL_KEYS[labelKey])}
-                  </dt>
-                  <dd className="min-w-0 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-foreground/80">
-                    {value}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          ) : null}
-          {needsApproval ? (
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <Checkbox
-                  checked={rememberForSession}
-                  onCheckedChange={checked => setRememberForSession(checked === true)}
-                  disabled={Boolean(submittingAction)}
-                />
-                <span>{t('consoleChat.governance.rememberForSession')}</span>
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  disabled={!canSubmit}
-                  onClick={() => void submitDecision('approve')}
-                >
-                  {submittingAction === 'approve' ? (
-                    <Loader2 className="mr-1 size-3 animate-spin" />
-                  ) : null}
-                  {t('consoleChat.governance.approve')}
-                </Button>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  disabled={!canSubmit}
-                  onClick={() => void submitDecision('reject')}
-                >
-                  {submittingAction === 'reject' ? (
-                    <Loader2 className="mr-1 size-3 animate-spin" />
-                  ) : null}
-                  {t('consoleChat.governance.reject')}
-                </Button>
-              </div>
-              {submitError ? (
-                <div className="text-[11px] text-destructive">{submitError}</div>
-              ) : null}
-            </div>
-          ) : approvalStatus ? (
-            <div className="text-[11px] text-muted-foreground">
-              {approvalStatus === 'approved'
-                ? t('consoleChat.governance.approved')
-                : t('consoleChat.governance.rejected')}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
+    <ToolGovernanceDecisionCard
+      title={title}
+      toolLabel={toolLabel}
+      reason={reason}
+      assets={assets}
+      summaryRows={summaryRows}
+      details={details}
+      needsApproval={needsApproval}
+      approvalStatus={approvalStatus}
+      isHighImpact={isHighImpact}
+      isAllowed={isAllowed}
+      canSubmit={canSubmit}
+      onSubmitDecision={submitDecision}
+    />
   );
 }
 
