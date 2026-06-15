@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -44,7 +46,7 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 	if prepared == nil || prepared.Message == nil {
 		return
 	}
-	invocation := modelInvocationFromTrace(trace, runtimeUserSystemPrompt(prepared))
+	invocation := modelInvocationFromTrace(trace, runtimeUserSystemPrompt(prepared), shouldRedactModelInvocationRequest(prepared))
 	if len(invocation) == 0 {
 		return
 	}
@@ -149,7 +151,7 @@ func mergeModelInvocationMetadata(source map[string]interface{}, invocation map[
 	return metadata
 }
 
-func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPrompt string) map[string]interface{} {
+func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPrompt string, redactRequest bool) map[string]interface{} {
 	phase := strings.TrimSpace(trace.Phase)
 	if phase == "" {
 		phase = "model_call"
@@ -172,7 +174,7 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 		"created_at":  startedAt.Unix(),
 		"duration_ms": trace.DurationMS,
 		"runtime_id":  fmt.Sprintf("model_call:%s:%d:%d", phase, trace.Round, startedAt.UnixNano()),
-		"request":     modelInvocationRequestPayload(trace.Request),
+		"request":     modelInvocationRequestPayload(trace.Request, redactRequest),
 		"response":    modelInvocationResponsePayload(trace.Response, trace.Usage),
 		"usage":       usageMetadata(trace.Usage),
 		"error":       strings.TrimSpace(trace.Error),
@@ -190,6 +192,13 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 		invocation["user_system_prompt"] = strings.TrimSpace(userSystemPrompt)
 	}
 	return compactSkillInvocation(invocation)
+}
+
+func shouldRedactModelInvocationRequest(prepared *PreparedChat) bool {
+	if prepared == nil {
+		return true
+	}
+	return normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent
 }
 
 func runtimeUserSystemPrompt(prepared *PreparedChat) string {
@@ -213,11 +222,14 @@ func modelInvocationTitle(phase string, round int) string {
 	}
 }
 
-func modelInvocationRequestPayload(req *adapter.ChatRequest) map[string]interface{} {
+func modelInvocationRequestPayload(req *adapter.ChatRequest, redactToolContent bool) map[string]interface{} {
 	if req == nil {
 		return map[string]interface{}{}
 	}
 	payload := jsonObjectPayload(req)
+	if redactToolContent {
+		payload = sanitizeModelInvocationRequestPayload(payload)
+	}
 	if strings.TrimSpace(req.Provider) != "" {
 		payload["provider"] = req.Provider
 	}
@@ -225,6 +237,173 @@ func modelInvocationRequestPayload(req *adapter.ChatRequest) map[string]interfac
 		payload["additional_parameters"] = copyStringAnyMap(req.AdditionalParameters)
 	}
 	return payload
+}
+
+func sanitizeModelInvocationRequestPayload(payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return payload
+	}
+	messages, ok := payload["messages"].([]interface{})
+	if !ok {
+		return payload
+	}
+	for _, raw := range messages {
+		message, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(stringFromAny(message["role"])))
+		if role != "tool" && role != "function" {
+			continue
+		}
+		content, exists := message["content"]
+		if !exists {
+			continue
+		}
+		message["content"] = modelInvocationToolContentSummary(content)
+		message["content_redacted"] = true
+	}
+	return payload
+}
+
+func modelInvocationToolContentSummary(content interface{}) map[string]interface{} {
+	summary := map[string]interface{}{
+		"redacted": true,
+		"reason":   "tool_result_content_omitted_from_model_invocation_metadata",
+	}
+	if content == nil {
+		return summary
+	}
+	switch typed := content.(type) {
+	case string:
+		summary["original_type"] = "string"
+		summary["content_chars"] = len([]rune(typed))
+		if strings.TrimSpace(typed) != "" {
+			var parsed interface{}
+			if err := json.Unmarshal([]byte(typed), &parsed); err == nil {
+				summary["json"] = modelInvocationToolJSONSummary(parsed)
+			}
+		}
+	case map[string]interface{}:
+		summary["original_type"] = "object"
+		summary["json"] = modelInvocationToolJSONSummary(typed)
+	case []interface{}:
+		summary["original_type"] = "array"
+		summary["item_count"] = len(typed)
+		summary["json"] = modelInvocationToolJSONSummary(typed)
+	default:
+		summary["original_type"] = fmt.Sprintf("%T", content)
+	}
+	return summary
+}
+
+func modelInvocationToolJSONSummary(value interface{}) map[string]interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return modelInvocationToolObjectSummary(typed)
+	case []interface{}:
+		return map[string]interface{}{
+			"type":       "array",
+			"item_count": len(typed),
+		}
+	default:
+		return map[string]interface{}{"type": fmt.Sprintf("%T", value)}
+	}
+}
+
+func modelInvocationToolObjectSummary(value map[string]interface{}) map[string]interface{} {
+	summary := map[string]interface{}{
+		"type":      "object",
+		"json_keys": sortedStringKeys(value),
+	}
+	fields := map[string]interface{}{}
+	for _, key := range []string{
+		"status",
+		"content_status",
+		"content_chars",
+		"content_truncated",
+		"from_cache",
+		"file_id",
+		"file_ids",
+		"name",
+		"extension",
+		"mime_type",
+		"workspace_id",
+		"count",
+		"selected_count",
+	} {
+		if sanitized, ok := modelInvocationSafeSummaryValue(value[key]); ok {
+			fields[key] = sanitized
+		}
+	}
+	if _, exists := value["content"]; exists {
+		fields["content_redacted"] = true
+	}
+	if errorText := strings.TrimSpace(stringFromAny(value["content_error"])); errorText != "" {
+		fields["content_error_chars"] = len([]rune(errorText))
+	}
+	if files, ok := value["files"].([]interface{}); ok {
+		fields["files"] = modelInvocationToolFilesSummary(files)
+	}
+	if len(fields) > 0 {
+		summary["fields"] = fields
+	}
+	return summary
+}
+
+func modelInvocationSafeSummaryValue(value interface{}) (interface{}, bool) {
+	switch typed := value.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return nil, false
+		}
+		return text, true
+	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return typed, true
+	case []interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if safe, ok := modelInvocationSafeSummaryValue(item); ok {
+				out = append(out, safe)
+			}
+		}
+		return out, len(out) > 0
+	default:
+		return nil, false
+	}
+}
+
+func modelInvocationToolFilesSummary(files []interface{}) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, min(len(files), 20))
+	for idx, raw := range files {
+		if idx >= 20 {
+			break
+		}
+		file, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		item := map[string]interface{}{}
+		for _, key := range []string{"visible_index", "file_id", "name", "extension", "mime_type", "file_type", "workspace_id", "selected"} {
+			if safe, ok := modelInvocationSafeSummaryValue(file[key]); ok {
+				item[key] = safe
+			}
+		}
+		if len(item) > 0 {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func sortedStringKeys(value map[string]interface{}) []string {
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func modelInvocationResponsePayload(message *adapter.Message, usage *adapter.Usage) map[string]interface{} {
