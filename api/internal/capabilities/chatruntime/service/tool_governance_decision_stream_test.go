@@ -163,6 +163,13 @@ func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	if grants := mapSliceFromAny(conversation.Metadata["tool_governance_session_grants"]); len(grants) != 0 {
 		t.Fatalf("session grants = %#v, want none for rejection", grants)
 	}
+	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
+	if continuation["status"] != "rejected" || continuation["approval_status"] != "rejected" {
+		t.Fatalf("tool_governance_continuation = %#v, want rejected", continuation)
+	}
+	if continuation["action"] != "reject" || continuation["reason"] != "keep it for audit" {
+		t.Fatalf("tool_governance_continuation = %#v, want rejected action and reason", continuation)
+	}
 
 	assertToolGovernanceStreamEvents(t, events)
 }
@@ -365,6 +372,10 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileReader, "delete_file", "success") {
 		t.Fatalf("metadata skill_invocations = %#v, want successful file-reader/delete_file tool call", message.Metadata["skill_invocations"])
 	}
+	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
+	if continuation["status"] != "approved" || continuation["approval_status"] != "approved" {
+		t.Fatalf("tool_governance_continuation = %#v, want approved", continuation)
+	}
 	assertToolGovernanceApprovedStreamEvents(t, events)
 }
 
@@ -476,6 +487,12 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 	if conversationGrants[0]["conversation_id"] != conversationID.String() ||
 		conversationGrants[0]["approval_correlation_id"] != "corr-session" {
 		t.Fatalf("conversation session grant = %#v, want approval correlation", conversationGrants[0])
+	}
+	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
+	if continuation["status"] != "approved" ||
+		continuation["approval_status"] != "approved" ||
+		continuation["remember_for_session"] != true {
+		t.Fatalf("tool_governance_continuation = %#v, want approved remembered session", continuation)
 	}
 
 	params := applySkillToolGovernanceRuntimeParameters(nil, &PreparedChat{Conversation: conversation})

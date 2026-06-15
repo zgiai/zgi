@@ -141,6 +141,7 @@ func (s *service) SubmitToolGovernanceDecision(
 	}
 	updatedEvent := resolvedToolGovernanceDecisionEvent(event, resolution)
 	messageMetadata := mergeToolGovernanceDecisionMetadata(message.Metadata, updatedEvent)
+	messageMetadata = resolveToolGovernanceContinuationMetadata(messageMetadata, correlationID, resolution)
 	if approvedGrant := governanceMapFromAny(resolution["approved_grant"]); len(approvedGrant) > 0 {
 		messageMetadata = appendToolGovernanceOneShotGrant(messageMetadata, approvedGrant)
 	}
@@ -420,6 +421,32 @@ func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event ma
 		})
 	}
 	applySkillInvocationSummary(metadata, invocations)
+	return metadata
+}
+
+func resolveToolGovernanceContinuationMetadata(metadata map[string]interface{}, correlationID string, resolution map[string]interface{}) map[string]interface{} {
+	if len(metadata) == 0 {
+		return metadata
+	}
+	continuation := governanceMapFromAny(metadata["tool_governance_continuation"])
+	if len(continuation) == 0 || toolGovernanceCorrelationID(continuation) != strings.TrimSpace(correlationID) {
+		return metadata
+	}
+	approvalStatus := strings.TrimSpace(stringFromAny(resolution["approval_status"]))
+	if approvalStatus == "" {
+		approvalStatus = "resolved"
+	}
+	continuation["status"] = approvalStatus
+	continuation["approval_status"] = approvalStatus
+	for _, key := range []string{"action", "reason", "resolved_at", "resolved_by", "remember_for_session"} {
+		if value, ok := resolution[key]; ok && value != nil {
+			continuation[key] = value
+		}
+	}
+	if feedback := governanceMapFromAny(resolution["model_feedback"]); len(feedback) > 0 {
+		continuation["model_feedback"] = feedback
+	}
+	metadata["tool_governance_continuation"] = compactSkillInvocation(continuation)
 	return metadata
 }
 

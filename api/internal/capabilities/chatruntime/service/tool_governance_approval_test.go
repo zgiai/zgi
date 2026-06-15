@@ -653,6 +653,14 @@ func pendingToolGovernanceDecisionMetadata(correlationID string) map[string]inte
 				},
 			},
 		},
+		"tool_governance_continuation": map[string]interface{}{
+			"status":         "waiting_approval",
+			"correlation_id": correlationID,
+			"skill_id":       "file-reader",
+			"tool_name":      "delete_file",
+			"original_query": "delete file",
+			"resume_policy":  "same_message",
+		},
 	}
 }
 
