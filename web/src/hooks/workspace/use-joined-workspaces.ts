@@ -125,11 +125,6 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
       return;
     }
 
-    if (!currentWorkspace) {
-      selectWorkspace(transformedWorkspaces[0]);
-      return;
-    }
-
     if (currentWorkspace) {
       const stillInWorkspace = transformedWorkspaces.find(w => w.id === currentWorkspace.id);
       if (!stillInWorkspace) {
