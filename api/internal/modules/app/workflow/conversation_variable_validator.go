@@ -73,6 +73,7 @@ func validateRequiredFields(variable dto.Variable, index int) error {
 
 // validateValueType validates that the value_type is one of the supported types
 func validateValueType(valueType, name string) error {
+	normalizedValueType := normalizeConversationVariableValueType(valueType)
 	supportedTypes := map[string]bool{
 		"string":        true,
 		"number":        true,
@@ -84,11 +85,26 @@ func validateValueType(valueType, name string) error {
 		"array_boolean": true,
 	}
 
-	if !supportedTypes[valueType] {
-		return fmt.Errorf("conversation variable '%s' has unsupported value_type '%s'. Supported types: string, number, object, boolean, array_string, array_number, array_object, array_boolean", name, valueType)
+	if !supportedTypes[normalizedValueType] {
+		return fmt.Errorf("conversation variable '%s' has unsupported value_type '%s'. Supported types: string, number, object, boolean, array_string, array_number, array_object, array_boolean, array[string], array[number], array[object], array[boolean]", name, valueType)
 	}
 
 	return nil
+}
+
+func normalizeConversationVariableValueType(valueType string) string {
+	switch strings.ToLower(strings.TrimSpace(valueType)) {
+	case "array[string]":
+		return "array_string"
+	case "array[number]":
+		return "array_number"
+	case "array[object]":
+		return "array_object"
+	case "array[boolean]":
+		return "array_boolean"
+	default:
+		return strings.ToLower(strings.TrimSpace(valueType))
+	}
 }
 
 // validateNameFormat validates that the variable name contains only letters, numbers, and underscores
@@ -133,7 +149,7 @@ func ValidateConversationVariableValue(valueType string, value interface{}, name
 		return nil
 	}
 
-	switch valueType {
+	switch normalizeConversationVariableValueType(valueType) {
 	case "string":
 		if _, ok := value.(string); !ok {
 			return fmt.Errorf("conversation variable '%s' expects string value, got %T", name, value)

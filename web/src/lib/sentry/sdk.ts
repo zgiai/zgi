@@ -9,6 +9,7 @@ interface SentryClientOptions {
   dsn: string;
   environment: string;
   replayEnabled: boolean;
+  tracesSampleRate: number;
   replaysSessionSampleRate: number;
   replaysOnErrorSampleRate: number;
 }
@@ -22,7 +23,7 @@ export function initSentryClient(options: SentryClientOptions): void {
     dsn: options.dsn,
     environment: options.environment,
     integrations: options.replayEnabled ? [Sentry.replayIntegration()] : [],
-    tracesSampleRate: 0,
+    tracesSampleRate: options.tracesSampleRate,
     enableLogs: false,
     replaysSessionSampleRate: options.replayEnabled ? options.replaysSessionSampleRate : 0,
     replaysOnErrorSampleRate: options.replayEnabled ? options.replaysOnErrorSampleRate : 0,

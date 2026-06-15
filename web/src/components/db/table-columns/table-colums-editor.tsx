@@ -21,6 +21,11 @@ import { TrashIcon, AlertCircle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { DbTableColumn } from '@/services/types/db';
 import { Type } from '@/services/types/db';
+import {
+  getDuplicateDbColumnNames,
+  isInvalidDbColumnName,
+  isReservedDbColumnName,
+} from '@/utils/validation';
 
 interface TableColumnsEditorProps {
   columns: readonly DbTableColumn[];
@@ -29,102 +34,6 @@ interface TableColumnsEditorProps {
   showActions?: boolean;
   typeOptions?: ReadonlyArray<{ label: string; value: Type }>;
   onValidationChange?: (state: { hasDuplicateNames: boolean; hasInvalidNames: boolean }) => void;
-}
-
-// Validate column name: lowercase letters, numbers, underscores; must start with a letter.
-function isInvalidColumnName(name: string): boolean {
-  const n = (name || '').trim();
-  if (!n) return true;
-  return !/^[a-z][a-z0-9_]*$/.test(n);
-}
-
-// Reserved keywords list (lowercase). Case-insensitive match; exact token match only.
-const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
-  'add',
-  'all',
-  'alter',
-  'and',
-  'as',
-  'asc',
-  'auto_increment',
-  'autocommit',
-  'between',
-  'bit',
-  'blob',
-  'boolean',
-  'by',
-  'case',
-  'char',
-  'check',
-  'column',
-  'commit',
-  'create',
-  'cross',
-  'date',
-  'datetime',
-  'decimal',
-  'default',
-  'delete',
-  'desc',
-  'distinct',
-  'double',
-  'drop',
-  'else',
-  'enum',
-  'exists',
-  'float',
-  'foreign',
-  'from',
-  'full',
-  'group',
-  'having',
-  'in',
-  'index',
-  'inner',
-  'insert',
-  'int',
-  'integer',
-  'intersect',
-  'into',
-  'is',
-  'join',
-  'left',
-  'like',
-  'lock',
-  'not',
-  'null',
-  'numeric',
-  'on',
-  'or',
-  'order',
-  'outer',
-  'primary',
-  'references',
-  'right',
-  'rollback',
-  'savepoint',
-  'select',
-  'set',
-  'table',
-  'text',
-  'then',
-  'time',
-  'timestamp',
-  'transaction',
-  'union',
-  'unique',
-  'unlock',
-  'update',
-  'values',
-  'varchar',
-  'when',
-  'where',
-] as const);
-
-function isReservedKeywordName(name: string): boolean {
-  const n = (name || '').trim().toLowerCase();
-  if (!n) return false;
-  return RESERVED_KEYWORDS.has(n);
 }
 
 export default function TableColumnsEditor({
@@ -143,20 +52,16 @@ export default function TableColumnsEditor({
 }: TableColumnsEditorProps) {
   const t = useT('dbs');
 
+  const validationColumns = useMemo(
+    () => columns.filter(c => !(disableSystemFields && c.is_system_field)),
+    [columns, disableSystemFields]
+  );
+
   // Duplicate names detection (case-insensitive, ignore empty while editing)
-  const duplicateNameSet = useMemo(() => {
-    const counter = new Map<string, number>();
-    columns.forEach(col => {
-      const n = (col.name || '').trim().toLowerCase();
-      if (!n) return;
-      counter.set(n, (counter.get(n) || 0) + 1);
-    });
-    const dups = new Set<string>();
-    counter.forEach((count, key) => {
-      if (count > 1) dups.add(key);
-    });
-    return dups as ReadonlySet<string>;
-  }, [columns]);
+  const duplicateNameSet = useMemo(
+    () => getDuplicateDbColumnNames(validationColumns),
+    [validationColumns]
+  );
 
   const hasDuplicateNames = useMemo(
     () => Array.from(duplicateNameSet.values()).length > 0,
@@ -165,8 +70,10 @@ export default function TableColumnsEditor({
 
   const hasInvalidNames = useMemo(
     () =>
-      columns.some(c => isInvalidColumnName(c.name || '') || isReservedKeywordName(c.name || '')),
-    [columns]
+      validationColumns.some(
+        c => isInvalidDbColumnName(c.name || '') || isReservedDbColumnName(c.name || '')
+      ),
+    [validationColumns]
   );
 
   // Report validation state to parent if requested
@@ -196,9 +103,9 @@ export default function TableColumnsEditor({
       {columns.map((col, index) => {
         const isSystem = disableSystemFields && Boolean(col.is_system_field);
         const lowerName = (col.name || '').trim().toLowerCase();
-        const isDup = lowerName.length > 0 && duplicateNameSet.has(lowerName);
-        const invalidFormat = isInvalidColumnName(col.name || '');
-        const isReserved = isReservedKeywordName(col.name || '');
+        const isDup = !isSystem && lowerName.length > 0 && duplicateNameSet.has(lowerName);
+        const invalidFormat = !isSystem && isInvalidDbColumnName(col.name || '');
+        const isReserved = !isSystem && isReservedDbColumnName(col.name || '');
         const isInvalid = invalidFormat || isReserved;
         return (
           <TableRow key={col.id || `row-${index}`}>

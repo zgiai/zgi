@@ -69,6 +69,9 @@ const messages = {
     unsupportedTitle: 'Preview is not available for this file',
     unsupportedDescription:
       'Original preview supports images, PDF, HTML, text-like files, DOCX, and XLSX.',
+    unsupportedFormatTitle: '{format} preview is not supported',
+    unsupportedFormatDescription:
+      '{format} files are not supported in browser preview yet. Download the file to view it locally.',
     openInNewTab: 'Open in New Tab',
     unavailableTitle: 'Preview is unavailable',
     downloadOnlyDescription: 'Download the file to view it outside the browser preview.',

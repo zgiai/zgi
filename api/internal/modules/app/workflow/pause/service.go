@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +13,8 @@ import (
 )
 
 var ErrPauseNotFound = errors.New("workflow pause not found")
+
+var runEventLocks sync.Map
 
 type Service struct {
 	db *gorm.DB
@@ -190,34 +193,55 @@ func (s *Service) MarkResumed(ctx context.Context, workflowRunID string) error {
 }
 
 func (s *Service) AppendEvent(ctx context.Context, params AppendEventParams) error {
+	_, err := s.AppendEventPayload(ctx, params)
+	return err
+}
+
+func (s *Service) AppendEventPayload(ctx context.Context, params AppendEventParams) (*RunEventPayload, error) {
 	if s == nil || s.db == nil {
-		return fmt.Errorf("workflow pause service is not initialized")
+		return nil, fmt.Errorf("workflow pause service is not initialized")
 	}
 	eventJSON, err := json.Marshal(params.EventData)
 	if err != nil {
-		return fmt.Errorf("marshal workflow event data: %w", err)
+		return nil, fmt.Errorf("marshal workflow event data: %w", err)
 	}
-	var lastSequence int
-	if err := s.db.WithContext(ctx).Model(&RunEvent{}).
-		Where("workflow_run_id = ?", params.WorkflowRunID).
-		Select("COALESCE(MAX(sequence), 0)").
-		Scan(&lastSequence).Error; err != nil {
-		return fmt.Errorf("load workflow event sequence: %w", err)
+	lockValue, _ := runEventLocks.LoadOrStore(params.WorkflowRunID, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+
+	var event *RunEvent
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lastSequence int
+		if err := tx.Model(&RunEvent{}).
+			Where("workflow_run_id = ?", params.WorkflowRunID).
+			Select("COALESCE(MAX(sequence), 0)").
+			Scan(&lastSequence).Error; err != nil {
+			return fmt.Errorf("load workflow event sequence: %w", err)
+		}
+		event = &RunEvent{
+			ID:            uuid.NewString(),
+			TenantID:      params.TenantID,
+			AppID:         params.AppID,
+			WorkflowRunID: params.WorkflowRunID,
+			Sequence:      lastSequence + 1,
+			EventType:     params.EventType,
+			EventData:     string(eventJSON),
+			CreatedAt:     time.Now(),
+		}
+		if err := tx.Create(event).Error; err != nil {
+			return fmt.Errorf("create workflow event: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
-	event := &RunEvent{
-		ID:            uuid.NewString(),
-		TenantID:      params.TenantID,
-		AppID:         params.AppID,
-		WorkflowRunID: params.WorkflowRunID,
-		Sequence:      lastSequence + 1,
-		EventType:     params.EventType,
-		EventData:     string(eventJSON),
-		CreatedAt:     time.Now(),
-	}
-	if err := s.db.WithContext(ctx).Create(event).Error; err != nil {
-		return fmt.Errorf("create workflow event: %w", err)
-	}
-	return nil
+	return &RunEventPayload{
+		Sequence:  event.Sequence,
+		Event:     event.EventType,
+		Data:      params.EventData,
+		CreatedAt: event.CreatedAt.Unix(),
+	}, nil
 }
 
 func (s *Service) LatestEventSequence(ctx context.Context, tenantID, workflowRunID string) (int, error) {

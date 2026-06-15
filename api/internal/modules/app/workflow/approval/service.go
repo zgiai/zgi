@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	appconfig "github.com/zgiai/zgi/api/config"
+	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 	"github.com/zgiai/zgi/api/pkg/email"
@@ -46,13 +46,18 @@ func (f emailSenderFunc) SendEmail(to []string, subject, body string) error {
 }
 
 type Service struct {
-	db          *gorm.DB
-	emailSender EmailSender
-	smsSender   SMSSender
+	db               *gorm.DB
+	emailSender      EmailSender
+	smsSender        SMSSender
+	shortLinkService shortlinkcap.Service
 }
 
 func NewService(db *gorm.DB) *Service {
 	return NewServiceWithEmailSender(db, emailSenderFunc(email.SendEmail))
+}
+
+func NewServiceWithShortLinkService(db *gorm.DB, shortLinkService shortlinkcap.Service) *Service {
+	return NewServiceWithDependencies(db, emailSenderFunc(email.SendEmail), nil, shortLinkService)
 }
 
 // NewServiceWithEmailSender creates an approval service with an explicit email sender.
@@ -61,11 +66,15 @@ func NewServiceWithEmailSender(db *gorm.DB, sender EmailSender) *Service {
 }
 
 func NewServiceWithSenders(db *gorm.DB, emailSender EmailSender, smsSender SMSSender) *Service {
+	return NewServiceWithDependencies(db, emailSender, smsSender, nil)
+}
+
+func NewServiceWithDependencies(db *gorm.DB, emailSender EmailSender, smsSender SMSSender, shortLinkService shortlinkcap.Service) *Service {
 	sender := emailSender
 	if sender == nil {
 		sender = emailSenderFunc(email.SendEmail)
 	}
-	return &Service{db: db, emailSender: sender, smsSender: smsSender}
+	return &Service{db: db, emailSender: sender, smsSender: smsSender, shortLinkService: shortLinkService}
 }
 
 func (s *Service) CreateOrGetRuntimeForm(ctx context.Context, params CreateRuntimeFormParams) (*RuntimeForm, error) {
@@ -113,7 +122,6 @@ func (s *Service) GetFormByToken(ctx context.Context, token string) (*FormPayloa
 	if err != nil {
 		return nil, err
 	}
-	payload.Token = token
 	return &payload, nil
 }
 
@@ -121,25 +129,6 @@ func (s *Service) DebugAccessTokenByFormID(ctx context.Context, formID string) (
 	if s == nil || s.db == nil {
 		return "", fmt.Errorf("approval service is not initialized")
 	}
-	var recipients []Recipient
-	if err := s.db.WithContext(ctx).
-		Where("form_id = ?", formID).
-		Order("created_at ASC").
-		Find(&recipients).Error; err != nil {
-		return "", fmt.Errorf("load approval recipients: %w", err)
-	}
-	for _, recipient := range recipients {
-		if recipient.AccessToken == "" {
-			continue
-		}
-		if recipient.RecipientType == RecipientTypeWebApp || recipient.RecipientType == RecipientTypeConsole {
-			return recipient.AccessToken, nil
-		}
-	}
-	return s.createConsoleDebugRecipient(ctx, formID)
-}
-
-func (s *Service) createConsoleDebugRecipient(ctx context.Context, formID string) (string, error) {
 	var form Form
 	if err := s.db.WithContext(ctx).First(&form, "id = ?", formID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -147,46 +136,7 @@ func (s *Service) createConsoleDebugRecipient(ctx context.Context, formID string
 		}
 		return "", fmt.Errorf("load approval form: %w", err)
 	}
-	deliveryID := uuid.NewString()
-	deliveryPayload, _ := json.Marshal(map[string]interface{}{"type": RecipientTypeConsole})
-	recipientPayload, _ := json.Marshal(map[string]interface{}{"type": RecipientTypeConsole})
-	var token string
-	var createErr error
-	for attempt := 0; attempt < tokenCreateMaxAttempts; attempt++ {
-		generated, err := newApprovalToken()
-		if err != nil {
-			return "", err
-		}
-		token = generated
-		createErr = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(&Delivery{
-				ID:                 deliveryID,
-				FormID:             formID,
-				DeliveryMethodType: DeliveryTypeWebApp,
-				ChannelPayload:     string(deliveryPayload),
-			}).Error; err != nil {
-				return fmt.Errorf("create approval debug delivery: %w", err)
-			}
-			if err := tx.Create(&Recipient{
-				ID:               uuid.NewString(),
-				FormID:           formID,
-				DeliveryID:       deliveryID,
-				RecipientType:    RecipientTypeConsole,
-				RecipientPayload: string(recipientPayload),
-				AccessToken:      token,
-			}).Error; err != nil {
-				return fmt.Errorf("create approval debug recipient: %w", err)
-			}
-			return nil
-		})
-		if createErr == nil {
-			return token, nil
-		}
-		if !isApprovalTokenConflict(createErr) {
-			return "", createErr
-		}
-	}
-	return "", fmt.Errorf("create approval debug recipient after token retries: %w", createErr)
+	return s.ensureFormAccessToken(ctx, &form)
 }
 
 func (s *Service) SubmitByToken(ctx context.Context, token string, req SubmitRequest, submissionUserID, submissionEndUserID *string) (*Form, error) {
@@ -211,11 +161,13 @@ func (s *Service) SubmitByToken(ctx context.Context, token string, req SubmitReq
 	}
 	now := time.Now()
 	updates := map[string]interface{}{
-		"status":                    FormStatusSubmitted,
-		"selected_action_id":        req.Action,
-		"submitted_data":            string(data),
-		"submitted_at":              now,
-		"completed_by_recipient_id": recipient.ID,
+		"status":             FormStatusSubmitted,
+		"selected_action_id": req.Action,
+		"submitted_data":     string(data),
+		"submitted_at":       now,
+	}
+	if recipient != nil {
+		updates["completed_by_recipient_id"] = recipient.ID
 	}
 	if submissionUserID != nil {
 		updates["submission_user_id"] = *submissionUserID
@@ -510,6 +462,10 @@ func isInternalRunEventKey(key string) bool {
 
 func (s *Service) buildRuntimeForm(ctx context.Context, params CreateRuntimeFormParams) (*Form, []Recipient, []Delivery, error) {
 	formID := uuid.NewString()
+	accessToken, err := newApprovalToken()
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	expiration := expirationTime(params.Config.Timeout)
 	definition := FormDefinition{
 		Content:       params.Config.Content,
@@ -533,6 +489,7 @@ func (s *Service) buildRuntimeForm(ctx context.Context, params CreateRuntimeForm
 		WorkflowRunID:   params.WorkflowRunID,
 		NodeID:          params.NodeID,
 		NodeTitle:       params.NodeTitle,
+		AccessToken:     accessToken,
 		FormDefinition:  string(definitionJSON),
 		RenderedContent: params.Rendered,
 		Status:          FormStatusWaiting,
@@ -580,10 +537,6 @@ func (s *Service) buildRuntimeForm(ctx context.Context, params CreateRuntimeForm
 
 func (s *Service) webAppDelivery(formID string) (Delivery, []Recipient, error) {
 	deliveryID := uuid.NewString()
-	token, err := newApprovalToken()
-	if err != nil {
-		return Delivery{}, nil, err
-	}
 	deliveryPayload, _ := json.Marshal(map[string]interface{}{"type": DeliveryTypeWebApp})
 	recipientPayload, _ := json.Marshal(map[string]interface{}{"type": RecipientTypeWebApp})
 	return Delivery{
@@ -597,7 +550,6 @@ func (s *Service) webAppDelivery(formID string) (Delivery, []Recipient, error) {
 			DeliveryID:       deliveryID,
 			RecipientType:    RecipientTypeWebApp,
 			RecipientPayload: string(recipientPayload),
-			AccessToken:      token,
 		}}, nil
 }
 
@@ -614,10 +566,6 @@ func (s *Service) emailDelivery(ctx context.Context, formID string, cfg EmailSub
 			logger.WarnContext(ctx, "failed to resolve approval email recipient", "type", configured.Type, err)
 			continue
 		}
-		token, err := newApprovalToken()
-		if err != nil {
-			return Delivery{}, nil, err
-		}
 		recipientPayload, _ := json.Marshal(resolved.Payload)
 		recipients = append(recipients, Recipient{
 			ID:               uuid.NewString(),
@@ -625,7 +573,6 @@ func (s *Service) emailDelivery(ctx context.Context, formID string, cfg EmailSub
 			DeliveryID:       deliveryID,
 			RecipientType:    resolved.Type,
 			RecipientPayload: string(recipientPayload),
-			AccessToken:      token,
 		})
 	}
 	return Delivery{
@@ -708,10 +655,6 @@ func (s *Service) smsDelivery(ctx context.Context, formID string, cfg SMSSubmitM
 		if err != nil {
 			return Delivery{}, nil, fmt.Errorf("resolve sms recipient: %w", err)
 		}
-		token, err := newApprovalToken()
-		if err != nil {
-			return Delivery{}, nil, err
-		}
 		recipientPayload, _ := json.Marshal(resolved.Payload)
 		recipients = append(recipients, Recipient{
 			ID:               uuid.NewString(),
@@ -719,7 +662,6 @@ func (s *Service) smsDelivery(ctx context.Context, formID string, cfg SMSSubmitM
 			DeliveryID:       deliveryID,
 			RecipientType:    resolved.Type,
 			RecipientPayload: string(recipientPayload),
-			AccessToken:      token,
 		})
 	}
 	if len(recipients) == 0 {
@@ -815,12 +757,23 @@ func (s *Service) deliverEmailApproval(ctx context.Context, form *Form, delivery
 		logger.WarnContext(ctx, "failed to decode approval email config", "delivery_id", delivery.ID, err)
 		return
 	}
+	formAccessToken, err := s.ensureFormAccessToken(ctx, form)
+	if err != nil {
+		s.recordDeliveryError(ctx, delivery.ID, err)
+		logger.WarnContext(ctx, "failed to load approval form token", "delivery_id", delivery.ID, err)
+		return
+	}
+	link, err := s.approvalShortURL(ctx, formAccessToken, form.ExpirationTime)
+	if err != nil {
+		s.recordDeliveryError(ctx, delivery.ID, err)
+		logger.WarnContext(ctx, "failed to build approval short link", "delivery_id", delivery.ID, err)
+		return
+	}
 	for _, recipient := range recipients {
 		emailAddress := recipientEmail(recipient)
 		if emailAddress == "" {
 			continue
 		}
-		link := approvalURL(recipient.AccessToken)
 		body := strings.ReplaceAll(cfg.Body, "{{#url#}}", link)
 		if body == "" {
 			body = link
@@ -846,6 +799,18 @@ func (s *Service) deliverSMSApproval(ctx context.Context, form *Form, delivery D
 		logger.WarnContext(ctx, "failed to decode approval sms config", "delivery_id", delivery.ID, err)
 		return
 	}
+	formAccessToken, err := s.ensureFormAccessToken(ctx, form)
+	if err != nil {
+		s.recordDeliveryError(ctx, delivery.ID, err)
+		logger.WarnContext(ctx, "failed to load approval form token", "delivery_id", delivery.ID, err)
+		return
+	}
+	shortLink, err := s.approvalShortLink(ctx, formAccessToken, form.ExpirationTime)
+	if err != nil {
+		s.recordDeliveryError(ctx, delivery.ID, err)
+		logger.WarnContext(ctx, "failed to load approval short link", "delivery_id", delivery.ID, err)
+		return
+	}
 	for _, recipient := range recipients {
 		phone := recipientPhone(recipient)
 		if phone == "" {
@@ -855,7 +820,7 @@ func (s *Service) deliverSMSApproval(ctx context.Context, form *Form, delivery D
 			Provider:       strings.TrimSpace(cfg.Provider),
 			Phone:          phone,
 			Template:       strings.TrimSpace(cfg.Template),
-			TemplateParams: approvalSMSTemplateParams(cfg, recipient.AccessToken),
+			TemplateParams: approvalSMSTemplateParams(cfg, shortLink.ShortToken),
 			Source:         "workflow_approval",
 			SourceID:       form.WorkflowRunID,
 		}
@@ -882,6 +847,39 @@ func (s *Service) sendApprovalSMS(ctx context.Context, req notificationsms.Reque
 	}
 	_, err := s.smsSender.Send(ctx, req)
 	return err
+}
+
+func (s *Service) approvalShortURL(ctx context.Context, accessToken string, expiresAt time.Time) (string, error) {
+	shortLink, err := s.approvalShortLink(ctx, accessToken, expiresAt)
+	if err != nil {
+		return "", err
+	}
+	service := s.shortLinkCapability()
+	return service.BuildPublicURL(shortLink.ShortToken)
+}
+
+func (s *Service) approvalShortLink(ctx context.Context, accessToken string, expiresAt time.Time) (*shortlinkcap.ShortLink, error) {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return nil, fmt.Errorf("approval access token is required")
+	}
+	service := s.shortLinkCapability()
+	return service.CreateOrGet(ctx, shortlinkcap.CreateOrGetRequest{
+		TargetKind:  shortlinkcap.TargetKindApprovalForm,
+		TargetToken: accessToken,
+		TargetPath:  approvalTargetPath(accessToken),
+		ExpiresAt:   &expiresAt,
+	})
+}
+
+func (s *Service) shortLinkCapability() shortlinkcap.Service {
+	if s != nil && s.shortLinkService != nil {
+		return s.shortLinkService
+	}
+	if s == nil {
+		return shortlinkcap.NewService(nil)
+	}
+	return shortlinkcap.NewServiceWithDB(s.db)
 }
 
 func (s *Service) recordDeliveryError(ctx context.Context, deliveryID string, err error) {
@@ -921,13 +919,9 @@ func (s *Service) formPayload(ctx context.Context, form *Form) (FormPayload, err
 	if err != nil {
 		return FormPayload{}, err
 	}
-	token := ""
-	var recipient Recipient
-	if err := s.db.WithContext(ctx).
-		Where("form_id = ? AND recipient_type IN ?", form.ID, []string{RecipientTypeWebApp, RecipientTypeConsole}).
-		Order("created_at ASC").
-		First(&recipient).Error; err == nil {
-		token = recipient.AccessToken
+	token, err := s.ensureFormAccessToken(ctx, form)
+	if err != nil {
+		return FormPayload{}, err
 	}
 	return FormPayload{
 		ID:                    form.ID,
@@ -947,6 +941,17 @@ func (s *Service) getFormAndRecipientByToken(ctx context.Context, token string) 
 	if s == nil || s.db == nil {
 		return nil, nil, fmt.Errorf("approval service is not initialized")
 	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, nil, ErrFormNotFound
+	}
+	var form Form
+	if err := s.db.WithContext(ctx).First(&form, "access_token = ?", token).Error; err == nil {
+		return &form, nil, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil, fmt.Errorf("load approval form: %w", err)
+	}
+
 	var recipient Recipient
 	if err := s.db.WithContext(ctx).First(&recipient, "access_token = ?", token).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -954,7 +959,6 @@ func (s *Service) getFormAndRecipientByToken(ctx context.Context, token string) 
 		}
 		return nil, nil, fmt.Errorf("load approval recipient: %w", err)
 	}
-	var form Form
 	if err := s.db.WithContext(ctx).First(&form, "id = ?", recipient.FormID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil, ErrFormNotFound
@@ -962,6 +966,56 @@ func (s *Service) getFormAndRecipientByToken(ctx context.Context, token string) 
 		return nil, nil, fmt.Errorf("load approval form: %w", err)
 	}
 	return &form, &recipient, nil
+}
+
+func requireFormAccessToken(form *Form) (string, error) {
+	if form == nil {
+		return "", ErrFormNotFound
+	}
+	token := strings.TrimSpace(form.AccessToken)
+	if token == "" {
+		return "", fmt.Errorf("approval form access token is required")
+	}
+	return token, nil
+}
+
+func (s *Service) ensureFormAccessToken(ctx context.Context, form *Form) (string, error) {
+	token, err := requireFormAccessToken(form)
+	if err == nil {
+		return token, nil
+	}
+	if form == nil || s == nil || s.db == nil {
+		return "", err
+	}
+
+	var updateErr error
+	for attempt := 0; attempt < tokenCreateMaxAttempts; attempt++ {
+		token, err = newApprovalFormToken(ctx, s.db)
+		if err != nil {
+			return "", err
+		}
+
+		result := s.db.WithContext(ctx).Model(&Form{}).
+			Where("id = ? AND (access_token IS NULL OR TRIM(access_token) = '')", form.ID).
+			Update("access_token", token)
+		if result.Error != nil {
+			if isApprovalTokenConflict(result.Error) {
+				updateErr = result.Error
+				continue
+			}
+			return "", fmt.Errorf("persist approval form access token: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			var reloaded Form
+			if err := s.db.WithContext(ctx).Select("access_token").First(&reloaded, "id = ?", form.ID).Error; err != nil {
+				return "", fmt.Errorf("reload approval form access token: %w", err)
+			}
+			return requireFormAccessToken(&reloaded)
+		}
+		form.AccessToken = token
+		return token, nil
+	}
+	return "", fmt.Errorf("persist approval form access token after token retries: %w", updateErr)
 }
 
 func validateRuntimeParams(params CreateRuntimeFormParams) error {
@@ -1128,14 +1182,6 @@ func isWebAppEnabled(method WebAppSubmitMethod) bool {
 	return *method.Enabled
 }
 
-func approvalURL(token string) string {
-	base := strings.TrimRight(appconfig.Current().Console.WebURL, "/")
-	if base == "" {
-		base = strings.TrimRight(appconfig.Current().Email.ConsoleWebURL, "/")
-	}
-	return base + approvalPublicURLPath + url.PathEscape(token)
-}
-
 func recipientEmail(recipient Recipient) string {
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(recipient.RecipientPayload), &payload); err != nil {
@@ -1170,6 +1216,10 @@ func approvalSMSTemplateParams(cfg SMSSubmitMethod, token string) map[string]str
 
 func approvalLinkCode(token string) string {
 	return url.PathEscape(token)
+}
+
+func approvalTargetPath(token string) string {
+	return approvalPublicURLPath + url.PathEscape(token)
 }
 
 func sanitizeSubject(subject string) string {

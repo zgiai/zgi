@@ -230,7 +230,8 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 
 		iterStart := n.now()
 		result, runErr := executor.Run(ctx, index)
-		duration := n.now().Sub(iterStart).Seconds()
+		iterFinish := n.now()
+		duration := shared.DurationMilliseconds(iterFinish.Sub(iterStart))
 		loopDurationMap[strconv.Itoa(index)] = duration
 		steps++
 		// Aggregate tokens reported by subgraph runtime (LLM gateway computed), no estimation here.

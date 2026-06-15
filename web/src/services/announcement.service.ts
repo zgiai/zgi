@@ -4,6 +4,7 @@ import type { ApiResponseData } from './types/common';
 export interface AnnouncementRuntimePayload {
   id: string;
   token: string;
+  access_token?: string;
   node_id: string;
   title?: string;
   node_title?: string;

@@ -1,16 +1,10 @@
-﻿import { useCallback } from 'react';
-import type { MutableRefObject } from 'react';
+import { useCallback } from 'react';
 import type { AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
-import type {
-  AIChatControllerStore,
-  AIChatModelSelection,
-  AIChatSetControllerState,
-} from '@/components/chat/controllers/aichat';
+import type { AIChatModelSelection } from '@/components/chat/controllers/aichat';
 import {
   canReplaceRootMessage,
   getNextActiveSendingState,
 } from '@/components/chat/controllers/aichat/selectors';
-import type { AIChatRuntimeTransport } from '@/components/chat/transports/aichat-transport';
 import {
   createDraftAIChatConversation,
   createStreamingAIChatMessage,
@@ -25,22 +19,8 @@ import {
   getErrorMessage,
   isAbortError,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
-import type { ChatRuntimeEventAppliers } from '@/components/chat/runtime/controller/use-chat-runtime-event-appliers';
-
-interface UseChatRuntimeMessageActionsArgs {
-  stateRef: MutableRefObject<AIChatControllerStore>;
-  transportRef: MutableRefObject<AIChatRuntimeTransport>;
-  requireModel: boolean;
-  pendingStreamAbortRef: MutableRefObject<AbortController | null>;
-  streamAbortByConversationRef: MutableRefObject<Record<string, AbortController>>;
-  streamingMessageRef: MutableRefObject<{ conversationId: string; messageId: string } | null>;
-  setControllerState: AIChatSetControllerState;
-  markSelectionTarget: (conversationId: string | null) => number;
-  refreshAccountMemoryAfterMemoryMutation: (
-    payload: Parameters<ChatRuntimeEventAppliers['applyMemoryMutation']>[0]
-  ) => void;
-  eventAppliers: ChatRuntimeEventAppliers;
-}
+import { useWorkflowContinuationActions } from './use-chat-runtime-message-actions/continuation';
+import type { UseChatRuntimeMessageActionsArgs } from './use-chat-runtime-message-actions/types';
 
 export function useChatRuntimeMessageActions({
   stateRef,
@@ -281,6 +261,34 @@ export function useChatRuntimeMessageActions({
               applyMemoryMutation(payload, eventId);
               refreshAccountMemoryAfterMemoryMutation(payload);
             },
+            onWorkflowStarted: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowStarted(payload, eventId);
+            },
+            onWorkflowNodeStarted: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowNodeStarted(payload, eventId);
+            },
+            onWorkflowNodeFinished: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowNodeFinished(payload, eventId);
+            },
+            onWorkflowPaused: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowPaused(payload, eventId);
+            },
+            onWorkflowApprovalRequested: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowApprovalRequested(payload, eventId);
+            },
+            onWorkflowFinished: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowFinished(payload, eventId);
+            },
+            onWorkflowFailed: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowFailed(payload, eventId);
+            },
             onMessageChunk: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMessageChunk(payload, eventId);
@@ -386,6 +394,7 @@ export function useChatRuntimeMessageActions({
       applySkillLoadStart,
       applySkillReferenceRead,
       applyStreamError,
+      eventAppliers,
       markSelectionTarget,
       pendingStreamAbortRef,
       requireModel,
@@ -596,6 +605,34 @@ export function useChatRuntimeMessageActions({
               applyMemoryMutation(payload, eventId);
               refreshAccountMemoryAfterMemoryMutation(payload);
             },
+            onWorkflowStarted: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowStarted(payload, eventId);
+            },
+            onWorkflowNodeStarted: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowNodeStarted(payload, eventId);
+            },
+            onWorkflowNodeFinished: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowNodeFinished(payload, eventId);
+            },
+            onWorkflowPaused: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowPaused(payload, eventId);
+            },
+            onWorkflowApprovalRequested: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowApprovalRequested(payload, eventId);
+            },
+            onWorkflowFinished: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowFinished(payload, eventId);
+            },
+            onWorkflowFailed: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyWorkflowFailed(payload, eventId);
+            },
             onMessageChunk: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMessageChunk(payload, eventId);
@@ -681,6 +718,7 @@ export function useChatRuntimeMessageActions({
       applySkillLoadStart,
       applySkillReferenceRead,
       applyStreamError,
+      eventAppliers,
       markSelectionTarget,
       refreshAccountMemoryAfterMemoryMutation,
       setControllerState,
@@ -691,6 +729,18 @@ export function useChatRuntimeMessageActions({
     ]
   );
 
+  const { continueWorkflowApproval, continueWorkflowQuestion } = useWorkflowContinuationActions({
+    stateRef,
+    transportRef,
+    requireModel,
+    pendingStreamAbortRef,
+    streamAbortByConversationRef,
+    streamingMessageRef,
+    setControllerState,
+    markSelectionTarget,
+    refreshAccountMemoryAfterMemoryMutation,
+    eventAppliers,
+  });
   const regenerate = useCallback(
     async (messageId: string, model: AIChatModelSelection) => {
       const activeConversationId = stateRef.current.activeConversationId;
@@ -721,5 +771,7 @@ export function useChatRuntimeMessageActions({
     send,
     regenerate,
     replaceRootMessage,
+    continueWorkflowApproval,
+    continueWorkflowQuestion,
   };
 }

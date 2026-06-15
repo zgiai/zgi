@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+seed_prebuilt_dependency_profiles() {
+  root="${ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR:-/var/lib/zgi-sandbox/dependency-rootfs}"
+  prebuilt="${ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR:-/opt/zgi/prebuilt-dependency-rootfs}"
+  overwrite="${ZGI_SANDBOX_PREBUILT_DEPENDENCY_OVERWRITE:-false}"
+
+  if [ ! -d "$prebuilt" ]; then
+    return 0
+  fi
+
+  mkdir -p "$root"
+
+  for profile_dir in "$prebuilt"/*; do
+    [ -d "$profile_dir" ] || continue
+    profile="$(basename "$profile_dir")"
+    target_dir="$root/$profile"
+
+    if [ -e "$target_dir" ] && [ "$overwrite" != "true" ]; then
+      echo "zgi-sandbox: keeping existing dependency profile $profile" >&2
+      continue
+    fi
+
+    tmp_dir="$root/.${profile}.tmp"
+    rm -rf "$tmp_dir"
+    cp -R "$profile_dir" "$tmp_dir"
+    rm -rf "$target_dir"
+    mv "$tmp_dir" "$target_dir"
+  done
+}
+
+seed_prebuilt_dependency_profiles
+
+exec "$@"

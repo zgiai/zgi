@@ -8,6 +8,9 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
+	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
+	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -67,11 +70,14 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
 	knowledge_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/knowledge"
+	workflow_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
 	"github.com/zgiai/zgi/api/pkg/scheduler"
+	"github.com/zgiai/zgi/api/pkg/sql_base"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
 )
@@ -152,9 +158,12 @@ type ServiceContainer struct {
 	registerService               interfaces.RegisterService
 	fileService                   interfaces.FileService
 	contentExtractor              workflow_file.ContentExtractor
+	contentParseService           contracts.ContentParseService
 
 	// DataSource service
 	dataSourceService service.DataSourceService
+	sqlAuditRecorder  audit.Recorder
+	sqlBase           sql_base.SQLBase
 	promptModule      *promptsmodule.Module
 
 	// Data Library module
@@ -218,6 +227,7 @@ type ServiceContainer struct {
 	automationDefinitionService automationdefinition.Service
 	automationWorkflowRunner    automationaction.AutomationWorkflowRunner
 	notificationSMSService      notificationsms.Service
+	shortLinkService            shortlinkcap.Service
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
@@ -490,6 +500,7 @@ func (c *ServiceContainer) GetOrganizationService() interfaces.OrganizationServi
 			c.getConsoleProvider(),
 			c.GetOfficialRouteBootstrapper(),
 		)
+		c.GetDatasetService().SetOrganizationService(c.organizationService)
 	}
 	return c.organizationService
 }
@@ -555,6 +566,9 @@ func (c *ServiceContainer) GetDatasetService() dataset_service.DatasetService {
 			llmClient,
 			c.GetTaskManager(),
 		)
+		if c.organizationService != nil {
+			c.datasetService.SetOrganizationService(c.organizationService)
+		}
 	}
 	return c.datasetService
 }
@@ -570,6 +584,13 @@ func (c *ServiceContainer) GetFileService() interfaces.FileService {
 		c.fileService = file_service.NewFileServiceWithVision(fileRepo, storageClient, c.db, quotaService, enterpriseService, c.GetLLMClient(), c.GetDefaultModelService())
 	}
 	return c.fileService
+}
+
+func (c *ServiceContainer) GetContentParseService() contracts.ContentParseService {
+	if c.contentParseService == nil {
+		c.contentParseService = contentparsecap.NewModule().Service
+	}
+	return c.contentParseService
 }
 
 func (c *ServiceContainer) GetContentExtractor() workflow_file.ContentExtractor {
@@ -598,10 +619,63 @@ func (c *ServiceContainer) GetDataSourceService() service.DataSourceService {
 		tableRepo := repository.NewPostgresTableRepository(c.db)
 		promptRepo := repository.NewPostgresPromptRepository(c.db)
 		sqlOperationRepo := repository.NewPostgresSQLOperationRepository(c.db)
-		c.dataSourceService = service.NewDataSourceService(dataSourceRepo, tableRepo, promptRepo, sqlOperationRepo, c.GetAccountService(), c.GetFileService(), c.GetOrganizationService(), c.GetResourcePermissionService(), c.GetQuotaService(), c.GetLLMClient(), c.db)
+		c.dataSourceService = service.NewDataSourceService(
+			dataSourceRepo,
+			tableRepo,
+			promptRepo,
+			sqlOperationRepo,
+			c.GetAccountService(),
+			c.GetFileService(),
+			c.GetOrganizationService(),
+			c.GetResourcePermissionService(),
+			c.GetQuotaService(),
+			c.GetLLMClient(),
+			c.GetDefaultModelService(),
+			c.db,
+			service.WithContentParseService(c.GetContentParseService()),
+		)
 	}
 
 	return c.dataSourceService
+}
+
+func (c *ServiceContainer) GetSQLAuditRecorder() audit.Recorder {
+	if c.sqlAuditRecorder == nil {
+		store := repository.NewPostgresSQLOperationRepository(c.db)
+		c.sqlAuditRecorder = audit.NewAsyncRecorder(store)
+	}
+	return c.sqlAuditRecorder
+}
+
+func (c *ServiceContainer) CloseSQLAuditRecorder(ctx context.Context) error {
+	if c == nil || c.sqlAuditRecorder == nil {
+		return nil
+	}
+	return c.sqlAuditRecorder.Close(ctx)
+}
+
+func (c *ServiceContainer) CloseDataSourceSQLAuditRecorder(ctx context.Context) error {
+	if c == nil || c.dataSourceService == nil {
+		return nil
+	}
+	closer, ok := c.dataSourceService.(interface {
+		Close(context.Context) error
+	})
+	if !ok {
+		return nil
+	}
+	return closer.Close(ctx)
+}
+
+func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
+	if c.sqlBase == nil {
+		client, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(c.GetSQLAuditRecorder()))
+		if err != nil {
+			panic("failed to create sql base client: " + err.Error())
+		}
+		c.sqlBase = client
+	}
+	return c.sqlBase
 }
 
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
@@ -791,6 +865,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
 		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
 		_ = c.toolManager.RegisterProvider(database_tools.NewProvider(c.GetDataSourceService(), c.GetOrganizationService()))
+		_ = c.toolManager.RegisterProvider(workflow_tools.NewProvider(c.GetAutomationWorkflowRunner))
 
 		logger.Info("ToolManager initialized with builtin providers")
 	}
@@ -906,6 +981,13 @@ func (c *ServiceContainer) GetNotificationSMSService() notificationsms.Service {
 	return c.notificationSMSService
 }
 
+func (c *ServiceContainer) GetShortLinkService() shortlinkcap.Service {
+	if c.shortLinkService == nil {
+		c.shortLinkService = shortlinkcap.NewServiceWithDB(c.db)
+	}
+	return c.shortLinkService
+}
+
 func (c *ServiceContainer) SetAutomationWorkflowRunner(runner automationaction.AutomationWorkflowRunner) {
 	c.automationWorkflowRunner = runner
 }
@@ -929,6 +1011,7 @@ func (c *ServiceContainer) GetWorkflowEngineFactory() *graph_engine.EngineFactor
 			PromptResolver:              c.GetPromptService(),
 			AutomationDefinitionService: c.GetAutomationDefinitionService(),
 			NotificationSMSService:      c.GetNotificationSMSService(),
+			SQLBase:                     c.GetSQLBase(),
 		})
 		c.workflowEngineFactory = graph_engine.NewEngineFactory(10, nodeRunner)
 	}

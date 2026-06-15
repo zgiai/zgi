@@ -1,0 +1,39 @@
+'use client';
+
+import { useQuery } from '@tanstack/react-query';
+import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
+import { organizationService } from '@/services/organization.service';
+
+interface UseCurrentOrganizationMembersOptions {
+  keyword?: string;
+  page?: number;
+  limit?: number;
+  enabled?: boolean;
+}
+
+export function useCurrentOrganizationMembers(options: UseCurrentOrganizationMembersOptions = {}) {
+  const { keyword, page = 1, limit = 100, enabled = true } = options;
+  const params = {
+    page,
+    limit,
+    keyword: keyword?.trim() || undefined,
+  };
+
+  const query = useQuery({
+    queryKey: ORGANIZATION_KEYS.currentMembers(params),
+    queryFn: () => organizationService.getCurrentOrganizationMembers(params),
+    enabled,
+    staleTime: 2 * 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
+  return {
+    members: query.data?.data ?? [],
+    total: query.data?.total ?? 0,
+    isLoading: query.isLoading,
+    isFetching: query.isFetching,
+    error: query.error,
+    refetch: query.refetch,
+  };
+}

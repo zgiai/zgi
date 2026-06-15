@@ -10,7 +10,7 @@ func TestBuildPromptsUseRegisteredTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(systemPrompt, "Return JSON only") {
+	if !strings.Contains(systemPrompt, "Return one valid JSON object only") {
 		t.Fatalf("system prompt was not rendered from expected template: %q", systemPrompt)
 	}
 
@@ -24,7 +24,8 @@ func TestBuildPromptsUseRegisteredTemplates(t *testing.T) {
 
 	for _, want := range []string{
 		"Use Simplified Chinese.",
-		"Generate 3 suggested questions",
+		"Generate 3 suggested first questions",
+		"AI app",
 		`"agent_name": "Enterprise Assistant Starter"`,
 	} {
 		if !strings.Contains(userPrompt, want) {

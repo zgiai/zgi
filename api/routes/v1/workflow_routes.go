@@ -8,6 +8,7 @@ import (
 
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	agentsHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	workflowHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/workflow"
@@ -48,6 +49,7 @@ type WorkflowRouteDeps struct {
 	Scheduler                   *pkgscheduler.Scheduler
 	EngineFactory               *graph_engine.EngineFactory
 	AutomationRunnerSetter      automationWorkflowRunnerSetter
+	ShortLinkService            shortlinkcap.Service
 }
 
 // RegisterWorkflowRoutes now uses modular services.
@@ -100,20 +102,23 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 		conversation.NewAgentMessageService(messageRepo, conversationRepo),
 	)
 	runtimeLogHandler := workflowHandlerPkg.NewRuntimeLogHandler(workflowRunLogRepo, workflowNodeRuntimeLogRepo)
+	chatRuntimeService := runtimeservice.NewServiceWithDependencies(
+		runtimerepo.NewRepositories(deps.DB),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		deps.OrganizationService,
+	)
 	agentHistoryDispatchHandler := workflowHandlerPkg.NewAgentHistoryDispatchHandler(
 		agentsRepo,
+		handler,
 		agentHistoryHandler,
 		runtimeLogHandler,
-		runtimeservice.NewServiceWithDependencies(
-			runtimerepo.NewRepositories(deps.DB),
-			nil,
-			nil,
-			nil,
-			nil,
-			nil,
-			deps.OrganizationService,
-		),
+		chatRuntimeService,
 	)
+	agentRuntimeLogsHandler := workflowHandlerPkg.NewAgentRuntimeLogsHandler(agentsRepo, chatRuntimeService)
 
 	apps := router.Group("/agents")
 	// Add middleware for workflow routes
@@ -137,9 +142,12 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 
 	apps.POST("/:agent_id/workflows/precheck", handler.PrecheckPublishedWorkflow)
 	apps.POST("/:agent_id/workflows/run", handler.RunPublishedWorkflow)
-	apps.GET("/:agent_id/workflow-runs", handler.GetWorkflowRuns)
-	apps.GET("/:agent_id/workflow-runs/:run_id", handler.GetWorkflowRunDetail)
-	apps.GET("/:agent_id/workflow-runs/:run_id/node-executions", handler.GetWorkflowRunNodeExecutions)
+	apps.GET("/:agent_id/workflow-runs", agentHistoryDispatchHandler.GetWorkflowRuns)
+	apps.GET("/:agent_id/workflow-runs/:run_id", agentHistoryDispatchHandler.GetWorkflowRunDetail)
+	apps.GET("/:agent_id/workflow-runs/:run_id/node-executions", agentHistoryDispatchHandler.GetWorkflowRunNodeExecutions)
+	apps.GET("/:agent_id/runtime-runs", agentRuntimeLogsHandler.GetRuntimeRuns)
+	apps.GET("/:agent_id/runtime-runs/:message_id", agentRuntimeLogsHandler.GetRuntimeRunDetail)
+	apps.GET("/:agent_id/runtime-runs/:message_id/steps", agentRuntimeLogsHandler.GetRuntimeRunSteps)
 	apps.POST("/:agent_id/workflow-runs/:run_id/nodes/:node_log_id/diagnose", handler.ManualDiagnoseNode)
 	apps.GET("/:agent_id/conversations", agentHistoryDispatchHandler.GetConversations)
 	apps.GET("/:agent_id/conversations/:conversation_id", agentHistoryDispatchHandler.GetConversationDetail)
@@ -157,7 +165,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	apps.POST("/:agent_id/runtime-logs", agentHistoryDispatchHandler.GetRuntimeLogs)
 	apps.GET("/:agent_id/workflow-runs/:run_id/nodes", runtimeLogHandler.GetWorkflowRunNodeLogs)
 
-	approvalService := approvalruntime.NewService(deps.DB)
+	approvalService := approvalruntime.NewServiceWithShortLinkService(deps.DB, deps.ShortLinkService)
 	registerApprovalTaskHandlers(deps.TaskRegistry, deps.TaskManager, approvalService, handler)
 	registerApprovalScheduledTasks(deps.Scheduler, approvalService, handler)
 
@@ -168,7 +176,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	approvalRoutes.GET("/forms/:token/events", approvalHandler.GetRunEvents)
 	approvalRoutes.POST("/forms/:token/submit", approvalHandler.SubmitForm)
 
-	announcementService := announcementruntime.NewService(deps.DB)
+	announcementService := announcementruntime.NewServiceWithShortLinkService(deps.DB, deps.ShortLinkService)
 	registerAnnouncementScheduledTasks(deps.Scheduler, announcementService)
 	announcementHandler := announcementruntime.NewHandler(announcementService)
 	announcementRoutes := router.Group("/announcements")
@@ -270,5 +278,8 @@ func validateWorkflowRouteDeps(deps WorkflowRouteDeps) {
 	}
 	if deps.AutomationRunnerSetter == nil {
 		panic("workflow routes require automation runner setter")
+	}
+	if deps.ShortLinkService == nil {
+		panic("workflow routes require short link service")
 	}
 }

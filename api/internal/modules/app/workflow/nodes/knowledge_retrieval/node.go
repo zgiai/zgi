@@ -19,6 +19,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	dservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"github.com/zgiai/zgi/api/pkg/database"
@@ -401,7 +402,10 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 	}
 
 	// 5) Format resources and sort by score desc; build context
-	retrieverResources, ctxText := n.convertHitsToRetrieverResources(docs)
+	retrieverResources, ctxText, err := n.convertHitsToRetrieverResources(docs)
+	if err != nil {
+		return nil, err
+	}
 
 	// 6) Emit retriever resource event
 	select {
@@ -515,7 +519,7 @@ func (n *Node) fetchAvailableDatasets() ([]*datasetmodel.Dataset, error) {
 }
 
 // convertHitsToRetrieverResources converts retrieval hits to workflow retriever resources and builds context text
-func (n *Node) convertHitsToRetrieverResources(docs []DocumentHit) ([]*shared.RetrievalSourceMetadata, string) {
+func (n *Node) convertHitsToRetrieverResources(docs []DocumentHit) ([]*shared.RetrievalSourceMetadata, string, error) {
 	// split by provider (external vs internal zgi)
 	var internalDocs, externalDocs []DocumentHit
 	for _, doc := range docs {
@@ -528,8 +532,13 @@ func (n *Node) convertHitsToRetrieverResources(docs []DocumentHit) ([]*shared.Re
 
 	resources := make([]*shared.RetrievalSourceMetadata, 0, len(docs))
 	ctxBuilder := make([]string, 0, len(docs))
+	filesBaseURL := config.Current().App.FilesURL
 
 	for _, doc := range externalDocs {
+		content, err := dservice.NormalizeKnowledgeImageURLs(doc.PageContent, filesBaseURL)
+		if err != nil {
+			return nil, "", fmt.Errorf("normalize external workflow knowledge image URLs: %w", err)
+		}
 		var scorePtr *float64
 		if doc.Score != 0 {
 			s := doc.Score
@@ -575,7 +584,7 @@ func (n *Node) convertHitsToRetrieverResources(docs []DocumentHit) ([]*shared.Re
 			RetrieverFrom:  strPtr("workflow"),
 			Score:          scorePtr,
 			Title:          strPtr(title),
-			Content:        strPtr(doc.PageContent),
+			Content:        strPtr(content),
 		}
 
 		if doc.Metadata != nil {
@@ -593,12 +602,16 @@ func (n *Node) convertHitsToRetrieverResources(docs []DocumentHit) ([]*shared.Re
 			res.DocMetadata["score"] = doc.Score
 		}
 		resources = append(resources, res)
-		if doc.PageContent != "" {
-			ctxBuilder = append(ctxBuilder, doc.PageContent)
+		if content != "" {
+			ctxBuilder = append(ctxBuilder, content)
 		}
 	}
 
 	for _, doc := range internalDocs {
+		content, err := dservice.NormalizeKnowledgeImageURLs(doc.PageContent, filesBaseURL)
+		if err != nil {
+			return nil, "", fmt.Errorf("normalize workflow knowledge image URLs: %w", err)
+		}
 		var scorePtr *float64
 		if doc.Score != 0 {
 			s := doc.Score
@@ -659,7 +672,7 @@ func (n *Node) convertHitsToRetrieverResources(docs []DocumentHit) ([]*shared.Re
 			RetrieverFrom:  strPtr("workflow"),
 			Score:          scorePtr,
 			Title:          strPtr(title),
-			Content:        strPtr(doc.PageContent),
+			Content:        strPtr(content),
 		}
 		if segmentPosition != 0 {
 			v := segmentPosition
@@ -707,8 +720,8 @@ func (n *Node) convertHitsToRetrieverResources(docs []DocumentHit) ([]*shared.Re
 			}
 		}
 		resources = append(resources, res)
-		if doc.PageContent != "" {
-			ctxBuilder = append(ctxBuilder, doc.PageContent)
+		if content != "" {
+			ctxBuilder = append(ctxBuilder, content)
 		}
 	}
 	// Sort results
@@ -760,7 +773,7 @@ func (n *Node) convertHitsToRetrieverResources(docs []DocumentHit) ([]*shared.Re
 			break
 		}
 	}
-	return resources, contextText
+	return resources, contextText, nil
 }
 
 // recordRateLimitLog records a rate limit violation to the database

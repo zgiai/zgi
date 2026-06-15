@@ -41,6 +41,7 @@ type DatasetCreateRequest struct {
 	Name                   string                 `json:"name" binding:"required"`
 	Description            string                 `json:"description"`
 	Provider               string                 `json:"provider"`
+	Permission             *string                `json:"permission"`
 	EmbeddingModel         *string                `json:"embedding_model"`
 	EmbeddingModelProvider *string                `json:"embedding_model_provider"`
 	RetrievalConfig        map[string]interface{} `json:"retrieval_config"`

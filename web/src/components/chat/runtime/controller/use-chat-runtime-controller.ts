@@ -201,7 +201,13 @@ export function useChatRuntimeController(options?: {
       refreshConversationSilently,
       recoverStreamingConversation,
     });
-  const { send, regenerate, replaceRootMessage } = useChatRuntimeMessageActions({
+  const {
+    send,
+    regenerate,
+    replaceRootMessage,
+    continueWorkflowApproval,
+    continueWorkflowQuestion,
+  } = useChatRuntimeMessageActions({
     stateRef,
     transportRef,
     requireModel,
@@ -250,6 +256,8 @@ export function useChatRuntimeController(options?: {
     send,
     regenerate,
     replaceRootMessage,
+    continueWorkflowApproval,
+    continueWorkflowQuestion,
     stop,
     switchBranch,
   };

@@ -7,26 +7,14 @@ import type {
   SendMessagePayload,
   ChatRunCallbacks,
 } from '@/components/chat/controllers/types';
-import type { Message, TerminalRunStatus } from '@/components/chat/types';
-import { normalizeMessageRunStatus } from '@/components/chat/types';
-import { resolveAnswerMergeMode } from '@/components/chat/utils/answer-merge';
 import { useChatStore } from '@/components/chat/store';
 import { WebAppService } from '@/services/webapp.service';
-import type {
-  WebAppConversation,
-  WebAppConversationDetail,
-  WebAppConversationMessageItem,
-  WebAppRunRequest,
-  WebAppRunSseCallbacks,
-} from '@/services/types/webapp';
+import type { WebAppRunRequest, WebAppRunSseCallbacks } from '@/services/types/webapp';
 import type { WorkflowPrecheckWarning } from '@/services/types/workflow';
 import type { QuestionAnswerChoice } from '@/services/types/workflow';
 import { toast } from 'sonner';
 import { useRunWebAppWorkflowStream } from './use-run-webapp-workflow-stream';
-import {
-  useWorkflowRunEventsStream,
-  type WorkflowRunEventsStreamParams,
-} from '@/hooks/workflow/use-workflow-run-events-stream';
+import { useWorkflowRunEventsStream } from '@/hooks/workflow/use-workflow-run-events-stream';
 import { queryClient } from '@/lib/query-client';
 import { unwrap, mapNode } from '@/utils/webapp/run-mappers';
 import { WEBAPP_KEYS } from '@/hooks/query-keys';
@@ -38,7 +26,6 @@ import {
   useApprovalForm,
   useSubmitApprovalForm,
 } from '@/hooks/workflow/use-approval-form';
-import type { ApprovalRuntimeForm as ApprovalRuntimeFormData } from '@/services/approval.service';
 import {
   parseApprovalRequestedEvent,
   parseApprovalPausedEvent,
@@ -58,264 +45,23 @@ import {
   type QuestionAnswerTranscriptItem,
 } from '@/components/workflow/question-answer/runtime-events';
 import { normalizeQuestionAnswerTranscript } from '@/components/workflow/question-answer/question-answer-transcript';
-import {
-  getWorkflowPrecheckWarnings,
-  normalizeWorkflowBillingCode,
-} from '@/utils/workflow/billing';
+import { getWorkflowPrecheckWarnings } from '@/utils/workflow/billing';
 import { emitWebAppOffline, isWebAppOfflineError } from '@/utils/webapp/errors';
-
-interface ParsedSseRunError {
-  code?: string | number;
-  message?: string;
-}
-
-interface UseWebappConversationTransportOptions {
-  enablePrecheck?: boolean;
-}
-
-interface UseWebappConversationTransportResult {
-  transport: ConversationTransport;
-  precheckWarnings: WorkflowPrecheckWarning[];
-  clearPrecheckWarnings: () => void;
-  latestTaskId: string | null;
-  approvalForm: ApprovalRuntimeFormData | null;
-  approvalToken: string | null;
-  approvalLoading: boolean;
-  approvalError: unknown;
-  approvalSubmitting: boolean;
-  approvalSubmittedAction: string | null;
-  questionAnswerPrompt: {
-    question: string;
-    choices: QuestionAnswerChoice[];
-    round?: number;
-  } | null;
-  questionAnswerSubmitting: boolean;
-  syncQuestionAnswerRuntime: (conversationId?: string) => void;
-  submitApproval: (payload: { inputs: Record<string, unknown>; action: string }) => Promise<void>;
-  submitQuestionAnswerChoice: (
-    conversationId: string,
-    choice: QuestionAnswerChoice
-  ) => Promise<void>;
-  retryApprovalForm: () => void;
-  resumeWorkflowRun: (conversationId: string, message: Message) => void;
-  continueWorkflowRun: (conversationId: string, message: Message) => void;
-}
-
-function getQuestionAnswerTranscriptFromMetadata(
-  metadata: unknown
-): QuestionAnswerTranscriptItem[] {
-  if (!metadata || typeof metadata !== 'object') return [];
-  const record = metadata as Record<string, unknown>;
-  return normalizeQuestionAnswerTranscript(record.questionAnswerTranscript);
-}
-
-function getPendingQuestionAnswerPromptFromMessage(item: WebAppConversationMessageItem):
-  | {
-      question: string;
-      choices: QuestionAnswerChoice[];
-      round?: number;
-    }
-  | null {
-  if (normalizeMessageRunStatus(item.status) !== 'pending_question') return null;
-  const metadataPrompt = parseQuestionAnswerRequestedEvent(item.message_metadata?.questionAnswerPrompt);
-  if (metadataPrompt) {
-    return {
-      question: metadataPrompt.question,
-      choices: metadataPrompt.choices,
-      round: metadataPrompt.round,
-    };
-  }
-  const transcript = getQuestionAnswerTranscriptFromMetadata(item.message_metadata);
-  for (let i = transcript.length - 1; i >= 0; i -= 1) {
-    const entry = transcript[i];
-    if (!entry.question || entry.answer) continue;
-    return {
-      question: entry.question,
-      choices: [],
-      round: entry.round,
-    };
-  }
-  return null;
-}
-
-function parseSseRunError(error: unknown): ParsedSseRunError {
-  const parsed =
-    error && typeof error === 'object'
-      ? (error as Record<string, unknown>)
-      : typeof error === 'string'
-        ? { message: error }
-        : error instanceof Error
-          ? { message: error.message }
-          : {};
-
-  return {
-    code: parsed['code'] as string | number | undefined,
-    message: parsed['message'] as string | undefined,
-  };
-}
-
-function isWorkspaceNotFoundError(error: ParsedSseRunError): boolean {
-  if (normalizeWorkflowBillingCode(error.code) === '205004') return true;
-  return error.message?.toLowerCase() === 'workspace not found';
-}
-
-function stripQuestionAnswerPromptText(data: Record<string, unknown>): Record<string, unknown> {
-  const next = { ...data };
-  delete next.answer;
-  delete next.text;
-  delete next.content;
-  delete next.delta;
-  if (next.outputs && typeof next.outputs === 'object') {
-    const outputs = { ...(next.outputs as Record<string, unknown>) };
-    delete outputs.answer;
-    delete outputs.text;
-    next.outputs = outputs;
-  }
-  return next;
-}
-
-function hasPendingQuestionAnswerMessage(conversationId?: string): boolean {
-  if (!conversationId) return false;
-  const messages = useChatStore.getState().conversations[conversationId]?.messages ?? [];
-  const latestMessage = messages[messages.length - 1];
-  return (
-    latestMessage?.WorkflowRunInfo?.status === 'pending_question' ||
-    latestMessage?.clientState?.status === 'pending_question'
-  );
-}
-
-function getPendingQuestionAnswerPromptFromRuntimeMessage(message?: Message):
-  | {
-      question: string;
-      choices: QuestionAnswerChoice[];
-      round?: number;
-    }
-  | null {
-  const runStatus = message?.WorkflowRunInfo?.status ?? message?.clientState?.status;
-  if (runStatus !== 'pending_question') return null;
-
-  const metadata =
-    message?.messageData?.metadata && typeof message.messageData.metadata === 'object'
-      ? (message.messageData.metadata as Record<string, unknown>)
-      : undefined;
-  const metadataPrompt = parseQuestionAnswerRequestedEvent(
-    message?.messageData?.questionAnswerPrompt ?? metadata?.questionAnswerPrompt
-  );
-  if (metadataPrompt) {
-    return {
-      question: metadataPrompt.question,
-      choices: metadataPrompt.choices,
-      round: metadataPrompt.round,
-    };
-  }
-
-  const transcript = normalizeQuestionAnswerTranscript(
-    message?.messageData?.questionAnswerTranscript ?? metadata?.questionAnswerTranscript
-  );
-  for (let i = transcript.length - 1; i >= 0; i -= 1) {
-    const entry = transcript[i];
-    if (!entry.question || entry.answer) continue;
-    return {
-      question: entry.question,
-      choices: [],
-      round: entry.round,
-    };
-  }
-  return null;
-}
-
-// Map WebAppConversation to ConversationSummary
-function mapWebAppConversationToSummary(item: WebAppConversation): ConversationSummary {
-  return {
-    id: item.id,
-    conversationId: item.id,
-    title: item.name,
-    dialogueCount: item.dialogue_count,
-    updatedAt: item.updated_at * 1000,
-    status: item.status,
-    metadata: {
-      workflow_version_uuid: item.workflow_version_uuid,
-      invoke_from: item.invoke_from,
-      created_at: item.created_at,
-    },
-  };
-}
-
-// Map WebAppConversationMessageItem to Message
-function mapWebAppMessageToMessage(item: WebAppConversationMessageItem): Message {
-  const runStatus = normalizeMessageRunStatus(item.status);
-  const questionAnswerTranscript = getQuestionAnswerTranscriptFromMetadata(item.message_metadata);
-
-  return {
-    messageId: item.id,
-    query: item.query,
-    answer: item.answer,
-    parentId: '',
-    model: null,
-    clientState: {
-      phase: runStatus === 'running' ? 'streaming' : 'completed',
-      status: runStatus && runStatus !== 'running' ? runStatus : undefined,
-      finishedAt: item.created_at * 1000,
-    },
-    WorkflowRunInfo:
-      item.workflow_run_id && runStatus
-        ? {
-            id: item.workflow_run_id,
-            status: runStatus,
-            runNodeInfo: [],
-          }
-        : undefined,
-    messageData: {
-      ...(item.workflow_run_id ? { tempKey: `restore:${item.workflow_run_id}` } : {}),
-      workflow_run_id: item.workflow_run_id,
-      message_id: item.id,
-      created_at: item.created_at,
-      status: item.status,
-      inputs: item.inputs,
-      ...(item.message_metadata ? { metadata: item.message_metadata } : {}),
-      ...(questionAnswerTranscript.length > 0 ? { questionAnswerTranscript } : {}),
-    },
-  };
-}
-
-function normalizeFinalRunStatus(status: unknown): TerminalRunStatus {
-  const normalized = normalizeMessageRunStatus(status);
-  if (normalized === 'completed' || normalized === 'stopped' || normalized === 'expired') {
-    return normalized;
-  }
-  return 'error';
-}
-
-// Map WebAppConversationDetail to ConversationDetail
-function mapWebAppConversationDetailToDetail(data: WebAppConversationDetail): ConversationDetail {
-  const latestPendingQuestion = [...data.messages]
-    .reverse()
-    .map(getPendingQuestionAnswerPromptFromMessage)
-    .find(Boolean);
-
-  return {
-    summary: {
-      id: data.id,
-      conversationId: data.id,
-      title: data.name,
-      dialogueCount: data.dialogue_count,
-      updatedAt: data.updated_at * 1000,
-      status: data.status,
-      metadata: {
-        agent_id: data.agent_id,
-        mode: data.mode,
-        workflow_version_uuid: data.workflow_version_uuid,
-        invoke_from: data.invoke_from,
-        created_at: data.created_at,
-        inputs: data.inputs,
-        ...(latestPendingQuestion ? { questionAnswerPrompt: latestPendingQuestion } : {}),
-      },
-    },
-    messages: data.messages.map(mapWebAppMessageToMessage),
-    loaded: true,
-    loading: false,
-  };
-}
+import type {
+  UseWebappConversationTransportOptions,
+  UseWebappConversationTransportResult,
+} from './use-webapp-transport/types';
+import {
+  getPendingQuestionAnswerPromptFromRuntimeMessage,
+  hasPendingQuestionAnswerMessage,
+  isWorkspaceNotFoundError,
+  mapWebAppConversationDetailToDetail,
+  mapWebAppConversationToSummary,
+  normalizeFinalRunStatus,
+  parseSseRunError,
+  stripQuestionAnswerPromptText,
+} from './use-webapp-transport/mappers';
+import { useWebappWorkflowRunEvents } from './use-webapp-transport/events';
 
 export function useWebappConversationTransport(
   versionUuid: string,
@@ -612,7 +358,11 @@ export function useWebappConversationTransport(
         case 'workflow_failed':
         case 'workflow_succeeded':
         case 'workflow_completed': {
-          if (hasUnresolvedApprovals()) {
+          const isSuccessfulTerminalEvent =
+            event.event === 'workflow_finished' ||
+            event.event === 'workflow_succeeded' ||
+            event.event === 'workflow_completed';
+          if (isSuccessfulTerminalEvent && hasUnresolvedApprovals()) {
             callbacks.onPaused?.({
               workflowRunId:
                 (typeof data.id === 'string' ? data.id : '') ||
@@ -784,349 +534,24 @@ export function useWebappConversationTransport(
     [dispatchApprovalEvent, handleWorkflowPaused, start]
   );
 
-  const startWorkflowRunEventStream = useCallback(
-    (conversationId: string, message: Message, params?: WorkflowRunEventsStreamParams) => {
-      const workflowRunId =
-        (typeof message.WorkflowRunInfo?.id === 'string' ? message.WorkflowRunInfo.id : '') ||
-        (typeof message.messageData?.workflow_run_id === 'string'
-          ? (message.messageData.workflow_run_id as string)
-          : '');
-      if (!conversationId || !workflowRunId) return;
-      if (restoredRunRef.current === workflowRunId) return;
-
-      const tempKey =
-        typeof message.messageData?.tempKey === 'string'
-          ? (message.messageData.tempKey as string)
-          : `restore:${workflowRunId}`;
-      const messageId =
-        message.messageId ||
-        (typeof message.messageData?.message_id === 'string'
-          ? (message.messageData.message_id as string)
-          : undefined);
-
-      restoredRunRef.current = workflowRunId;
-      workflowFinishedRef.current = false;
-      setLatestTaskId(workflowRunId);
-      useChatStore.getState().mergeAiMessage(conversationId, tempKey, {
-        messageId,
-        workflowRunId,
-        conversationId,
-      });
-
-      const effectiveParams =
-        params ??
-        (approvalRuntimeState.cursor > 0
-          ? { after: approvalRuntimeState.cursor, continue_on_pause: true }
-          : { include_snapshot: true, continue_on_pause: true });
-
-      void startWorkflowRunEvents(
-        workflowRunId,
-        {
-          onWorkflowStarted: payload => {
-            const data = unwrap(payload);
-            const serverConversationId =
-              typeof data.conversation_id === 'string'
-                ? (data.conversation_id as string)
-                : conversationId;
-            useChatStore.getState().mergeAiMessage(conversationId, tempKey, {
-              messageId:
-                typeof data.message_id === 'string' ? (data.message_id as string) : messageId,
-              workflowRunId,
-              conversationId: serverConversationId,
-            });
-            useChatStore.getState().resumeAiMessage(conversationId, tempKey, { workflowRunId });
-          },
-          onApprovalRequested: payload => {
-            handleApprovalRequested(payload);
-            const parsed = parseApprovalRequestedEvent(payload);
-            if (parsed.form?.node_id) {
-              useChatStore.getState().updateRunNode(conversationId, tempKey, {
-                status: 'paused',
-                nodeId: parsed.form.node_id,
-                nodeType: 'approval',
-                title: parsed.form.node_title || parsed.form.node_id,
-              });
-            }
-          },
-          onApprovalResultFilled: handleApprovalResultFilled,
-          onApprovalExpired: payload => {
-            handleApprovalExpired(payload);
-            const data = unwrap(payload);
-            useChatStore.getState().finalizeAiMessage(conversationId, tempKey, {
-              status: 'expired',
-              elapsedTime: typeof data.elapsed_time === 'number' ? data.elapsed_time : undefined,
-              messageId:
-                typeof data.message_id === 'string' ? (data.message_id as string) : messageId,
-              workflowRunId,
-              model: null,
-            });
-            setLatestTaskId(null);
-            restoredRunRef.current = null;
-            cancelWorkflowRunEvents();
-          },
-          onQuestionAnswerRequested: payload => {
-            handleQuestionAnswerRequested(payload);
-            const parsed = parseQuestionAnswerRequestedEvent(payload);
-            useChatStore.getState().mergeAiMessage(conversationId, tempKey, {
-              messageData: {
-                questionAnswerTranscript: questionAnswerTranscriptRef.current,
-                ...(parsed
-                  ? {
-                      questionAnswerPrompt: {
-                        question: parsed.question,
-                        choices: parsed.choices,
-                        round: parsed.round,
-                      },
-                    }
-                  : {}),
-              },
-            });
-            useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
-              workflowRunId: parsed?.workflowRunId || workflowRunId,
-              status: 'pending_question',
-            });
-            if (parsed?.nodeId) {
-              useChatStore.getState().updateRunNode(conversationId, tempKey, {
-                status: 'paused',
-                nodeId: parsed.nodeId,
-                nodeType: 'question-answer',
-                title: parsed.nodeTitle || parsed.nodeId,
-              });
-            }
-          },
-          onQuestionAnswerSubmitted: payload => {
-            handleQuestionAnswerSubmitted(payload);
-            useChatStore.getState().mergeAiMessage(conversationId, tempKey, {
-              messageData: {
-                questionAnswerTranscript: questionAnswerTranscriptRef.current,
-                questionAnswerPrompt: null,
-              },
-            });
-          },
-          onWorkflowPaused: payload => {
-            const parsed = parseApprovalPausedEvent(payload);
-            const data = unwrap(payload);
-            if (parsed.isApproval) {
-              handleApprovalRequested(payload);
-              useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
-                elapsedTime: typeof data.elapsed_time === 'number' ? data.elapsed_time : undefined,
-                workflowRunId,
-                status: 'pending_approval',
-              });
-              parsed.nodeIds.forEach(nodeId => {
-                useChatStore.getState().updateRunNode(conversationId, tempKey, {
-                  status: 'paused',
-                  nodeId,
-                  nodeType: 'approval',
-                });
-              });
-              return;
-            }
-            const qaPaused = parseQuestionAnswerPausedEvent(payload);
-            if (!qaPaused.isQuestionAnswer) return;
-            if (qaPaused.prompt) {
-              handleQuestionAnswerRequested(qaPaused.prompt);
-              useChatStore.getState().mergeAiMessage(conversationId, tempKey, {
-                messageData: {
-                  questionAnswerTranscript: questionAnswerTranscriptRef.current,
-                  questionAnswerPrompt: {
-                    question: qaPaused.prompt.question,
-                    choices: qaPaused.prompt.choices,
-                    round: qaPaused.prompt.round,
-                  },
-                },
-              });
-            }
-            useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
-              elapsedTime: typeof data.elapsed_time === 'number' ? data.elapsed_time : undefined,
-              workflowRunId: qaPaused.workflowRunId || workflowRunId,
-              status: 'pending_question',
-            });
-            qaPaused.nodeIds.forEach(nodeId => {
-              useChatStore.getState().updateRunNode(conversationId, tempKey, {
-                status: 'paused',
-                nodeId,
-                nodeType: 'question-answer',
-                title:
-                  qaPaused.prompt?.nodeId === nodeId
-                    ? qaPaused.prompt.nodeTitle || nodeId
-                    : nodeId,
-              });
-            });
-          },
-          onNodeStarted: payload => {
-            useChatStore.getState().resumeAiMessage(conversationId, tempKey, { workflowRunId });
-            useChatStore.getState().updateRunNode(conversationId, tempKey, mapNode(payload, false));
-          },
-          onNodeFinished: payload => {
-            useChatStore.getState().updateRunNode(conversationId, tempKey, mapNode(payload, true));
-          },
-          onTextChunk: payload => {
-            const data = unwrap(payload);
-            const chunk =
-              typeof payload === 'string'
-                ? payload
-                : typeof data.text === 'string'
-                  ? (data.text as string)
-                  : typeof data.answer === 'string'
-                    ? (data.answer as string)
-                    : typeof data.delta === 'string'
-                      ? (data.delta as string)
-                      : '';
-            if (!chunk) return;
-            useChatStore.getState().mergeAiMessage(conversationId, tempKey, {
-              answer: chunk,
-              answerMode: 'append',
-              messageId,
-              workflowRunId,
-              conversationId,
-            });
-          },
-          onMessage: payload => {
-            const data = unwrap(payload);
-            const messageData = isQuestionAnswerPromptMessage(data)
-              ? stripQuestionAnswerPromptText(data)
-              : data;
-            const answer =
-              typeof messageData.answer === 'string'
-                ? (messageData.answer as string)
-                : typeof messageData.text === 'string'
-                  ? (messageData.text as string)
-                  : typeof messageData.content === 'string'
-                    ? (messageData.content as string)
-                    : typeof messageData.delta === 'string'
-                      ? (messageData.delta as string)
-                      : '';
-            const currentMessage = useChatStore
-              .getState()
-              .conversations[
-                conversationId
-              ]?.messages.find(item => item.messageData?.tempKey === tempKey);
-            const answerMode = resolveAnswerMergeMode(currentMessage?.answer ?? '', answer);
-            useChatStore.getState().mergeAiMessage(conversationId, tempKey, {
-              ...(answerMode !== 'skip' ? { answer, answerMode } : {}),
-              messageId:
-                typeof messageData.message_id === 'string'
-                  ? (messageData.message_id as string)
-                  : messageId,
-              workflowRunId:
-                (typeof messageData.workflow_run_id === 'string'
-                  ? (messageData.workflow_run_id as string)
-                  : '') ||
-                (typeof messageData.id === 'string' ? (messageData.id as string) : '') ||
-                workflowRunId,
-              conversationId:
-                typeof messageData.conversation_id === 'string'
-                  ? (messageData.conversation_id as string)
-                  : conversationId,
-            });
-          },
-          onMessageEnd: payload => {
-            const data = unwrap(payload);
-            useChatStore.getState().mergeAiMessage(conversationId, tempKey, {
-              messageId:
-                typeof data.message_id === 'string' ? (data.message_id as string) : messageId,
-              workflowRunId:
-                (typeof data.workflow_run_id === 'string'
-                  ? (data.workflow_run_id as string)
-                  : '') ||
-                (typeof data.id === 'string' ? (data.id as string) : '') ||
-                workflowRunId,
-              conversationId:
-                typeof data.conversation_id === 'string'
-                  ? (data.conversation_id as string)
-                  : conversationId,
-              metadata:
-                data.metadata && typeof data.metadata === 'object'
-                  ? (data.metadata as Record<string, unknown>)
-                  : undefined,
-            });
-          },
-          onWorkflowFinished: payload => {
-            if (hasUnresolvedApprovals()) {
-              useChatStore.getState().pauseAiMessage(conversationId, tempKey, {
-                workflowRunId,
-              });
-              return;
-            }
-            const data = unwrap(payload);
-            const status = normalizeFinalRunStatus(data.status);
-            useChatStore.getState().finalizeAiMessage(conversationId, tempKey, {
-              status,
-              error: getWorkflowRunErrorText(data.error),
-              elapsedTime: typeof data.elapsed_time === 'number' ? data.elapsed_time : undefined,
-              messageId:
-                typeof data.message_id === 'string' ? (data.message_id as string) : messageId,
-              workflowRunId,
-              model: null,
-            });
-            setLatestTaskId(null);
-            workflowFinishedRef.current = true;
-            resetApprovalRuntime();
-            restoredRunRef.current = null;
-            cancelWorkflowRunEvents();
-          },
-          onError: payload => {
-            const errorText =
-              getWorkflowRunErrorText(payload) ?? t('webapp.chat.workflowRunFailed');
-            useChatStore.getState().finalizeAiMessage(conversationId, tempKey, {
-              status: 'error',
-              error: errorText,
-              messageId,
-              workflowRunId,
-            });
-            setLatestTaskId(null);
-            restoredRunRef.current = null;
-          },
-        },
-        effectiveParams,
-        {
-          onClose: () => {
-            restoredRunRef.current = null;
-            if (!workflowFinishedRef.current) {
-              window.setTimeout(() => {
-                if (!workflowFinishedRef.current) {
-                  startWorkflowRunEventStream(conversationId, message);
-                }
-              }, 1000);
-            }
-          },
-        }
-      );
-    },
-    [
-      approvalRuntimeState.cursor,
-      cancelWorkflowRunEvents,
-      getWorkflowRunErrorText,
-      handleApprovalExpired,
-      handleApprovalRequested,
-      handleApprovalResultFilled,
-      handleQuestionAnswerRequested,
-      handleQuestionAnswerSubmitted,
-      hasUnresolvedApprovals,
-      resetApprovalRuntime,
-      startWorkflowRunEvents,
-      t,
-    ]
-  );
-
-  const resumeWorkflowRun = useCallback(
-    (conversationId: string, message: Message) => {
-      startWorkflowRunEventStream(conversationId, message, {
-        include_snapshot: true,
-        continue_on_pause: true,
-      });
-    },
-    [startWorkflowRunEventStream]
-  );
-
-  const continueWorkflowRun = useCallback(
-    (conversationId: string, message: Message) => {
-      startWorkflowRunEventStream(conversationId, message);
-    },
-    [startWorkflowRunEventStream]
-  );
-
+  const { resumeWorkflowRun, continueWorkflowRun } = useWebappWorkflowRunEvents({
+    startWorkflowRunEvents,
+    cancelWorkflowRunEvents,
+    approvalCursor: approvalRuntimeState.cursor,
+    restoredRunRef,
+    workflowFinishedRef,
+    questionAnswerTranscriptRef,
+    setLatestTaskId,
+    getWorkflowRunErrorText,
+    handleApprovalExpired,
+    handleApprovalRequested,
+    handleApprovalResultFilled,
+    handleQuestionAnswerRequested,
+    handleQuestionAnswerSubmitted,
+    hasUnresolvedApprovals,
+    resetApprovalRuntime,
+    workflowRunFailedText: t('webapp.chat.workflowRunFailed'),
+  });
   useEffect(() => {
     if (!approvalToken || !approvalSubmittedAction) return;
     let cancelled = false;
@@ -1417,8 +842,19 @@ export function useWebappConversationTransport(
                   const terminalData = unwrap(ctx) as {
                     id?: string;
                     workflow_run_id?: string;
+                    status?: string;
                   };
-                  if (hasUnresolvedApprovals()) {
+                  const rawStatus =
+                    typeof terminalData.status === 'string'
+                      ? terminalData.status.toLowerCase()
+                      : '';
+                  const isSuccessfulTerminalStatus = ![
+                    'failed',
+                    'error',
+                    'stopped',
+                    'expired',
+                  ].includes(rawStatus);
+                  if (isSuccessfulTerminalStatus && hasUnresolvedApprovals()) {
                     callbacks.onPaused?.({
                       workflowRunId:
                         (typeof terminalData.id === 'string' ? terminalData.id : '') ||

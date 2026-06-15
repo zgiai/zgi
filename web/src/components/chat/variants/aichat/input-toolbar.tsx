@@ -19,6 +19,12 @@ import { cn } from '@/lib/utils';
 import { formatExtensionsForDisplay } from '@/utils/file-helpers';
 import { AIChatMemoryModule } from '@/components/chat/variants/aichat/memory-module';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
+import {
+  imageAttachmentHintTranslationKey,
+  type ScopedTranslatorWithHas,
+  tAttachmentForSurface,
+  type AIChatComposerSurface,
+} from '@/components/chat/variants/aichat/input-area-utils';
 
 interface AIChatInputToolbarProps {
   modelSelectorValue: AIChatModelValue;
@@ -27,6 +33,7 @@ interface AIChatInputToolbarProps {
   modelCapabilityFilter?: { features_vision: boolean };
   hasImageAttachment: boolean;
   isSending: boolean;
+  canStop?: boolean;
   isUploading: boolean;
   isStopping: boolean;
   canSend: boolean;
@@ -41,13 +48,14 @@ interface AIChatInputToolbarProps {
   showMemoryToggle?: boolean;
   enableUpload?: boolean;
   showFileLibraryPicker?: boolean;
+  surface?: AIChatComposerSurface;
   onModelChange: (value: ModelSelectorValue) => void;
   onModelPropsChange: (model: ModelSelectorModelProps | null) => void;
   onUploadDocument: () => void;
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
   onMemoryEnabledChange: (enabled: boolean) => void;
-  onSend: () => void;
+  onSend: () => void | Promise<void>;
   onStop: () => void;
 }
 
@@ -67,6 +75,7 @@ export function AIChatInputToolbar({
   modelCapabilityFilter,
   hasImageAttachment,
   isSending,
+  canStop,
   isUploading,
   isStopping,
   canSend,
@@ -81,6 +90,7 @@ export function AIChatInputToolbar({
   showMemoryToggle = true,
   enableUpload = true,
   showFileLibraryPicker = true,
+  surface = 'aichat',
   onModelChange,
   onModelPropsChange,
   onUploadDocument,
@@ -91,6 +101,7 @@ export function AIChatInputToolbar({
   onStop,
 }: AIChatInputToolbarProps) {
   const t = useT('webapp');
+  const showStopButton = canStop ?? isSending;
 
   return (
     <div className="flex items-center justify-between gap-2 px-1">
@@ -121,7 +132,12 @@ export function AIChatInputToolbar({
               <Info className="size-4 shrink-0 text-muted-foreground" />
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-xs">
-              {t('consoleChat.attachments.imageModelLocked')}
+              {tAttachmentForSurface(
+                t as unknown as ScopedTranslatorWithHas,
+                surface,
+                imageAttachmentHintTranslationKey(surface),
+                'imageModelLocked'
+              )}
             </TooltipContent>
           </Tooltip>
         ) : null}
@@ -172,12 +188,22 @@ export function AIChatInputToolbar({
                 </TooltipTrigger>
                 <TooltipContent side="left" className="max-w-xs">
                   {canUseImage
-                    ? t('consoleChat.attachments.uploadImageTooltip', {
-                        count: attachmentLimit,
-                        size: imageMaxSizeMB,
-                        types: formatExtensionsForDisplay(imageExtensions).join(' / '),
-                      })
-                    : t('consoleChat.attachments.imageVisionRequired')}
+                    ? tAttachmentForSurface(
+                        t as unknown as ScopedTranslatorWithHas,
+                        surface,
+                        'uploadImageTooltip',
+                        'uploadImageTooltip',
+                        {
+                          count: attachmentLimit,
+                          size: imageMaxSizeMB,
+                          types: formatExtensionsForDisplay(imageExtensions).join(' / '),
+                        }
+                      )
+                    : tAttachmentForSurface(
+                        t as unknown as ScopedTranslatorWithHas,
+                        surface,
+                        'imageVisionRequired'
+                      )}
                 </TooltipContent>
               </Tooltip>
               {showFileLibraryPicker ? (
@@ -189,7 +215,7 @@ export function AIChatInputToolbar({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
-        {isSending ? (
+        {showStopButton ? (
           <Button
             isIcon
             variant="destructive"

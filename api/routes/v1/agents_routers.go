@@ -70,6 +70,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)
+	appHandler.SetWorkflowContinuationRunner(workflow.NewWorkflowHandler(workflowService, accountService, fileService, nil, enterpriseService))
 	if workflowTestService == nil {
 		workflowTestService = workflowtest.NewService(workflowtest.NewRepository(db))
 	}
@@ -105,6 +106,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("", appHandler.GetAgentsList)
 	appsGroup.GET("/runnable-webapps", appHandler.GetRunnableWebApps)
 	appsGroup.POST("", appHandler.CreateAgent)
+	appsGroup.GET("/:agent_id/workflow-bindings/candidates", appHandler.ListAgentWorkflowBindingCandidates)
 	appsGroup.GET("/:agent_id", appHandler.GetAgent)
 	appsGroup.GET("/:agent_id/config", appHandler.GetAgentConfig)
 	appsGroup.PUT("/:agent_id/config", appHandler.UpdateAgentConfig)
@@ -120,6 +122,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id/messages", appHandler.ListAgentRuntimeMessages)
 	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/stop", appHandler.StopAgentRuntimeConversation)
 	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id/events", appHandler.StreamAgentRuntimeEvents)
+	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", appHandler.ContinueAgentRuntimeWorkflowApproval)
 	appsGroup.POST("/:agent_id/runtime/messages/:message_id/regenerate", appHandler.RegenerateAgentRuntimeMessage)
 	appsGroup.PUT("/:agent_id", appHandler.UpdateAgent)
 	appsGroup.PATCH("/:agent_id/webapp/status", appHandler.UpdateWebAppStatus)
@@ -148,6 +151,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id/messages", appHandler.ListWebAppAgentRuntimeMessages)
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/stop", appHandler.StopWebAppAgentRuntimeConversation)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id/events", appHandler.StreamWebAppAgentRuntimeEvents)
+	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", appHandler.ContinueWebAppAgentRuntimeWorkflowApproval)
 	protectedWebApps.POST("/:web_app_id/runtime/messages/:message_id/regenerate", appHandler.RegenerateWebAppAgentRuntimeMessage)
 
 	workflowTests := appsGroup.Group("/:agent_id/workflow-tests")

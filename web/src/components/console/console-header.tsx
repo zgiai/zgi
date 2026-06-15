@@ -57,6 +57,10 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
         title: tDash('items.permissions'),
       },
       {
+        match: path => path.startsWith('/dashboard/organization/settings'),
+        title: tDash('items.organizationSettings'),
+      },
+      {
         match: path => path.startsWith('/dashboard/organization/aichat-skills'),
         title: tDash('items.aichatSkills'),
       },

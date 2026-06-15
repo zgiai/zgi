@@ -51,7 +51,7 @@ data.limits.max_file_size_kb == 256
 data.dependency_policy.package_policy.enforced == true
 data.dependency_policy.package_policy.default_action == "deny-unlisted"
 data.dependency_policy.build_policy.enforced == true
-data.dependency_policy.build_policy.max_profile_size_bytes == 536870912
+data.dependency_policy.build_policy.max_profile_size_bytes == 1073741824
 data.dependency_policy.build_policy.build_timeout_seconds == 600
 ```
 

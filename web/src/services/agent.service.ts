@@ -1,6 +1,6 @@
 import { BaseService } from '@/lib/http/services';
 import { wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
-import { http, webappHttp } from '@/lib/http';
+import { webappHttp } from '@/lib/http';
 import type {
   Agent,
   AgentList,
@@ -11,6 +11,7 @@ import type {
   UpdateWebAppStatusRequest,
   UpdateWebAppStatusResponse,
   AgentRuntimeConfig,
+  AgentWorkflowBindingCandidatesResponse,
   UpdateAgentRuntimeConfigRequest,
   AgentMemorySlotConfig,
   AgentMemoryValuesResponse,
@@ -19,9 +20,6 @@ import type {
   PublishAgentResponse,
   AgentPublishedVersionsResponse,
   RollbackAgentPublishedVersionRequest,
-  AgentChatRequest,
-  AgentChatSseEnvelope,
-  AgentChatStreamCallbacks,
   AgentListParams,
   AgentApiKey,
   AgentApiKeyList,
@@ -71,10 +69,15 @@ class AgentService extends BaseService {
   getRunnableWebApps(
     params?: RunnableWebAppsParams
   ): Promise<ApiResponseData<RunnableWebAppsData>> {
-    return this.request<ApiResponseData<RunnableWebAppsData>>('get', '/agents/runnable-webapps', {
-      params,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return this.request<ApiResponseData<RunnableWebAppsData>>(
+      'get',
+      '/agents/runnable-webapps',
+      undefined,
+      {
+        params,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   }
 
   /**
@@ -141,6 +144,14 @@ class AgentService extends BaseService {
     data: UpdateAgentRuntimeConfigRequest
   ): Promise<ApiResponseData<AgentRuntimeConfig>> {
     return this.request('put', `/agents/${agentId}/config`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentWorkflowBindingCandidates(
+    agentId: string
+  ): Promise<ApiResponseData<AgentWorkflowBindingCandidatesResponse>> {
+    return this.request('get', `/agents/${agentId}/workflow-bindings/candidates`, undefined, {
       headers: { 'Content-Type': 'application/json' },
     });
   }
@@ -223,38 +234,6 @@ class AgentService extends BaseService {
   ): Promise<ApiResponseData<GenerateAgentSuggestedQuestionsResponse>> {
     return this.request('post', `/agents/${agentId}/suggested-questions/generate`, data, {
       headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  streamAgentChat(
-    agentId: string,
-    payload: AgentChatRequest,
-    callbacks: AgentChatStreamCallbacks,
-    abortSignal?: AbortSignal
-  ): Promise<{ close: () => void }> {
-    return http.sse<AgentChatSseEnvelope, AgentChatRequest>(`/console/api/agents/${agentId}/chat`, {
-      method: 'POST',
-      body: {
-        ...payload,
-        response_mode: payload.response_mode ?? 'streaming',
-      },
-      abortSignal,
-      isTerminalMessage: message => {
-        const data = message.data as AgentChatSseEnvelope | undefined;
-        const event = data?.event ?? message.event;
-        return event === 'message_end' || event === 'error';
-      },
-      onMessage: message => {
-        const envelope = message.data;
-        const event = envelope.event ?? message.event ?? '';
-        const data = envelope.data ?? {};
-        if (event === 'message_start') callbacks.onMessageStart?.(data);
-        else if (event === 'message') callbacks.onMessage?.(data);
-        else if (event === 'message_end') callbacks.onMessageEnd?.(data);
-        else if (event === 'error') callbacks.onError?.(data);
-      },
-      onError: error => callbacks.onError?.(error),
-      onClose: callbacks.onClose,
     });
   }
 

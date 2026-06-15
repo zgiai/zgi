@@ -207,7 +207,8 @@ const messages = {
       title: 'Announcement title rendered after variables resolve',
       content: 'Announcement content rendered after variables resolve',
       expiration_time: 'Announcement expiration time formatted for display',
-      token: 'Short announcement token for building custom links',
+      token: 'Short link code for SMS link_code or custom short links',
+      access_token: 'Announcement access token for internal /n/{token} links',
       url: 'Public announcement URL',
     },
     questionAnswer: {
@@ -467,6 +468,7 @@ const messages = {
       waitingForReviewer:
         'Waiting for the reviewer to respond. The flow will continue automatically.',
       waitingForReviewerStatus: 'Waiting for reviewer',
+      stopDisabled: 'Approval is in progress. The workflow cannot be stopped manually.',
       required: 'This field is required',
       submitted: 'Approval submitted',
       alreadyCompleted: 'Approval already completed',
@@ -478,6 +480,7 @@ const messages = {
       expired: 'Approval expired',
       expiredDescription:
         'The approval form has expired. The flow will continue through the timeout branch.',
+      closedByWorkflowFailure: 'Approval closed because the workflow failed.',
       finished: 'Flow resumed',
       finishedDescription: 'The approval has been processed and the flow has finished.',
       expiresAt: 'Expires at {time}',

@@ -2,628 +2,24 @@ import React, { useMemo, useState } from 'react';
 import { NODE_THEMES } from '@/components/workflow/nodes/custom/config';
 import { cn } from '@/lib/utils';
 import { AlertTriangle, Check, ChevronDown, ChevronLeft, Copy, Filter, Loader } from 'lucide-react';
-import JsonView from '@uiw/react-json-view';
-import { lightTheme } from '@uiw/react-json-view/light';
 import { useT } from '@/i18n';
 import { formatMs } from '@/utils/format';
 import MarkdownViewer from '@/components/common/markdown-viewer';
-// Unified status for rendering
-export type NodeRunStatus = 'running' | 'succeeded' | 'failed' | 'stopped' | 'paused';
+import type { RuntimeLabel, WorkflowRunNodesListProps } from './types';
+import {
+  getCanvasPreviewRows,
+  getNodeSummary,
+  getNodesElapsedTime,
+  getRuntimeLogSections,
+  groupWorkflowRunItems,
+  isEmptyValue,
+  normalizeNodeRunStatus,
+  previewToneClass,
+  serializeForClipboard,
+} from './utils';
+import { RuntimeStructuredView, RuntimeValuePreview } from './runtime-structured-view';
 
-// New item shape (pure presentational data)
-export interface WorkflowRunNodeListItem {
-  title: string;
-  nodeId: string;
-  executionId?: string;
-  createdAtMs?: number;
-  receivedOrder?: number;
-  nodeType: string; // prefer keyof typeof NODE_THEMES, but allow string fallback for forward compatibility
-  status: NodeRunStatus;
-  nodeInput?: unknown;
-  nodeOutput?: unknown;
-  modelInput?: unknown;
-  processData?: unknown;
-  executionMetadata?: unknown;
-  elapsedTime?: number;
-  error?: string | null;
-  iterationInputs?: unknown;
-  iterationOutputs?: unknown;
-  iterationRounds?: Array<{
-    index: number;
-    nodes: WorkflowRunNodeListItem[];
-    elapsedTime?: number;
-  }>;
-  loopInputs?: unknown;
-  loopOutputs?: unknown;
-  loopRounds?: Array<{
-    index: number;
-    nodes: WorkflowRunNodeListItem[];
-    elapsedTime?: number;
-    variables?: unknown;
-  }>;
-  steps?: number;
-}
-
-// Component props: accept new shape array
-interface WorkflowRunNodesListProps {
-  items: WorkflowRunNodeListItem[];
-  showDetail?: boolean;
-  variant?: 'panel' | 'canvas';
-  hideCanvasNodeChrome?: boolean;
-}
-
-interface WorkflowRunNodeGroup {
-  key: string;
-  executions: WorkflowRunNodeListItem[];
-}
-
-interface RuntimeLogSection {
-  id: string;
-  title: string;
-  value: unknown;
-  accent: string;
-}
-
-interface RuntimeLogPreviewRow {
-  label: string;
-  value: unknown;
-  tone?: 'input' | 'output' | 'meta' | 'warning';
-  maxRecordEntries?: number;
-}
-
-type RuntimeLabel = (key: string, params?: Record<string, string | number>) => string;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const isEmptyValue = (value: unknown): boolean => {
-  if (value === null || value === undefined || value === '') return true;
-  if (Array.isArray(value)) return value.length === 0;
-  if (isRecord(value)) return Object.keys(value).length === 0;
-  return false;
-};
-
-const pickRecordKeys = (value: unknown, keys: string[]): Record<string, unknown> | undefined => {
-  if (!isRecord(value)) return undefined;
-  const result: Record<string, unknown> = {};
-  keys.forEach(key => {
-    if (!isEmptyValue(value[key])) result[key] = value[key];
-  });
-  return Object.keys(result).length > 0 ? result : undefined;
-};
-
-const groupWorkflowRunItems = (items: WorkflowRunNodeListItem[]): WorkflowRunNodeGroup[] => {
-  const order: string[] = [];
-  const groups = new Map<string, WorkflowRunNodeListItem[]>();
-
-  items.forEach(item => {
-    const key = item.nodeId || item.executionId || item.title;
-    if (!groups.has(key)) {
-      groups.set(key, []);
-      order.push(key);
-    }
-    groups.get(key)?.push(item);
-  });
-
-  return order.map(key => ({ key, executions: groups.get(key) ?? [] }));
-};
-
-const getNodeSummary = (
-  item: WorkflowRunNodeListItem,
-  runtimeLabel: RuntimeLabel
-): string | null => {
-  const input = isRecord(item.nodeInput) ? item.nodeInput : undefined;
-  const output = isRecord(item.nodeOutput) ? item.nodeOutput : undefined;
-  const meta = isRecord(item.executionMetadata) ? item.executionMetadata : undefined;
-
-  if (item.nodeType === 'llm') {
-    const model =
-      meta?.resolved_model_name ??
-      pickRecordKeys(item.modelInput, ['model'])?.model ??
-      input?.model;
-    return typeof model === 'string' ? model : null;
-  }
-  if (item.nodeType === 'knowledge-retrieval') {
-    const topK = input?.top_k ?? input?.topK;
-    return topK !== undefined ? runtimeLabel('topKSummary', { count: String(topK) }) : null;
-  }
-  if (item.nodeType === 'iteration') {
-    const current = meta?.iteration_index;
-    const total = item.steps;
-    if (typeof current === 'number' && typeof total === 'number') {
-      return runtimeLabel('batchSummary', { current: current + 1, total });
-    }
-  }
-  if (item.nodeType === 'loop') {
-    const round = meta?.loop_index;
-    if (typeof round === 'number') return runtimeLabel('roundSummary', { round: round + 1 });
-  }
-  if (item.nodeType === 'variable-aggregator' && input) {
-    const count = Object.keys(input).length;
-    return count > 0 ? runtimeLabel('mergeSummary', { count }) : null;
-  }
-  if (output?.status_code !== undefined) return `HTTP ${String(output.status_code)}`;
-  return null;
-};
-
-const getRuntimeLogSections = (
-  item: WorkflowRunNodeListItem,
-  runtimeLabel: RuntimeLabel
-): RuntimeLogSection[] => {
-  const sections: RuntimeLogSection[] = [];
-  const meta = item.executionMetadata;
-  const processData = item.processData;
-
-  const push = (id: string, title: string, value: unknown, accent: string) => {
-    if (!isEmptyValue(value)) sections.push({ id, title, value, accent });
-  };
-
-  if (item.nodeType === 'llm') {
-    const output = isRecord(item.nodeOutput) ? item.nodeOutput : undefined;
-    push('result', runtimeLabel('nodeOutput'), output?.text ?? item.nodeOutput, 'bg-success/50');
-    push(
-      'model',
-      runtimeLabel('modelInfo'),
-      pickRecordKeys(meta, [
-        'resolved_model_provider',
-        'resolved_model_name',
-        'total_tokens',
-        'total_price',
-        'currency',
-      ]),
-      'bg-primary/50'
-    );
-    push('prompt', runtimeLabel('modelRequest'), item.modelInput, 'bg-primary/50');
-  } else {
-    push('input', runtimeLabel('input'), item.nodeInput, 'bg-info/50');
-    push('output', runtimeLabel('output'), item.nodeOutput, 'bg-success/50');
-  }
-
-  if (item.nodeType === 'if-else') {
-    push(
-      'conditions',
-      runtimeLabel('conditions'),
-      pickRecordKeys(item.nodeInput, ['cases', 'conditions']),
-      'bg-info/50'
-    );
-    push('comparisons', runtimeLabel('comparisons'), processData, 'bg-warning/60');
-  }
-  if (item.nodeType === 'iteration') {
-    push(
-      'batch',
-      runtimeLabel('batchInfo'),
-      pickRecordKeys(meta, ['iteration_index', 'iteration_item', 'iteration_id']),
-      'bg-primary/50'
-    );
-  }
-  if (item.nodeType === 'loop') {
-    push(
-      'loop',
-      runtimeLabel('loopInfo'),
-      pickRecordKeys(meta, ['loop_index', 'loop_id', 'loop_variable_map']),
-      'bg-primary/50'
-    );
-    push(
-      'loopConditions',
-      runtimeLabel('loopConditions'),
-      pickRecordKeys(item.nodeInput, ['break_conditions']),
-      'bg-warning/60'
-    );
-  }
-
-  push('process', runtimeLabel('processInfo'), processData, 'bg-warning/60');
-  push('metadata', runtimeLabel('executionMetadata'), meta, 'bg-muted-foreground/40');
-
-  return sections;
-};
-
-const serializeForClipboard = (value: unknown): string => {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-};
-
-const humanizeKey = (key: string): string =>
-  key
-    .replace(/_/g, ' ')
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .trim();
-
-const hiddenReadableRuntimeKeys = new Set([
-  'conversation_id',
-  'dialogue_count',
-  'execution_id',
-  'node_id',
-  'tenant_id',
-  'user_id',
-  'workflow_id',
-  'workflow_run_id',
-  'workspace_id',
-  'sys.conversation_id',
-  'sys.dialogue_count',
-  'sys.user_id',
-  'sys.workflow_id',
-  'sys.workflow_run_id',
-  'sys.workspace_id',
-  'sys.tenant_id',
-]);
-
-const isHiddenReadableRuntimeKey = (key: string): boolean =>
-  key.startsWith('sys.') ? key !== 'sys.query' : hiddenReadableRuntimeKeys.has(key);
-
-const getReadableRuntimeKey = (key: string, runtimeLabel: RuntimeLabel): string => {
-  const runtimeKeyMap: Record<string, string> = {
-    'sys.query': 'userQuestion',
-    'sys.conversation_id': 'conversationId',
-    'sys.dialogue_count': 'dialogueCount',
-  };
-  const labelKey = runtimeKeyMap[key];
-  if (labelKey) return runtimeLabel(labelKey);
-  return humanizeKey(key).replace(/\./g, ' ');
-};
-
-const getReadableRecordEntries = (
-  value: Record<string, unknown>,
-  runtimeLabel: RuntimeLabel
-): Array<[string, string, unknown]> =>
-  Object.entries(value)
-    .filter(([key, entryValue]) => !isHiddenReadableRuntimeKey(key) && !isEmptyValue(entryValue))
-    .map(([key, entryValue]) => [key, getReadableRuntimeKey(key, runtimeLabel), entryValue]);
-
-const getByPath = (value: unknown, path: string[]): unknown => {
-  let current = value;
-  for (const key of path) {
-    if (!isRecord(current)) return undefined;
-    current = current[key];
-  }
-  return current;
-};
-
-const compactValue = (value: unknown, runtimeLabel: RuntimeLabel, maxLength = 180): string => {
-  if (value === null || value === undefined || value === '') return runtimeLabel('noValue');
-  if (typeof value === 'string') {
-    const normalized = value.replace(/\s+/g, ' ').trim();
-    return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) {
-    if (value.length === 0) return runtimeLabel('emptyArray');
-    const first = compactValue(value[0], runtimeLabel, 80);
-    return value.length === 1
-      ? first
-      : runtimeLabel('arrayPreview', { count: value.length, first });
-  }
-  if (isRecord(value)) {
-    const readableEntries = getReadableRecordEntries(value, runtimeLabel);
-    if (readableEntries.length === 0) return runtimeLabel('emptyObject');
-    const simpleEntries = readableEntries
-      .slice(0, 3)
-      .map(([, label, entryValue]) => `${label}: ${compactValue(entryValue, runtimeLabel, 48)}`);
-    return simpleEntries.length > 0
-      ? simpleEntries.join(' · ')
-      : runtimeLabel('fieldCount', { count: readableEntries.length });
-  }
-  return String(value);
-};
-
-const firstAvailableValue = (sources: unknown[]): unknown =>
-  sources.find(value => !isEmptyValue(value));
-
-const getCanvasPreviewRows = (
-  item: WorkflowRunNodeListItem,
-  runtimeLabel: RuntimeLabel
-): RuntimeLogPreviewRow[] => {
-  const input = isRecord(item.nodeInput) ? item.nodeInput : undefined;
-  const output = isRecord(item.nodeOutput) ? item.nodeOutput : undefined;
-  const meta = isRecord(item.executionMetadata) ? item.executionMetadata : undefined;
-  const modelInput = isRecord(item.modelInput) ? item.modelInput : undefined;
-  const rows: RuntimeLogPreviewRow[] = [];
-  const push = (label: string, value: unknown, tone?: RuntimeLogPreviewRow['tone']) => {
-    if (!isEmptyValue(value) && rows.length < 4) rows.push({ label, value, tone });
-  };
-
-  if (item.error) {
-    push(runtimeLabel('error'), item.error, 'warning');
-    return rows;
-  }
-
-  switch (item.nodeType) {
-    case 'start':
-      push(
-        runtimeLabel('userInput'),
-        firstAvailableValue([input?.query, input?.question, input?.message, input]),
-        'input'
-      );
-      break;
-    case 'llm':
-      push(
-        runtimeLabel('reply'),
-        firstAvailableValue([output?.text, output?.answer, output?.result, item.nodeOutput]),
-        'output'
-      );
-      push(
-        runtimeLabel('model'),
-        firstAvailableValue([
-          meta?.resolved_model_name,
-          getByPath(modelInput, ['model']),
-          getByPath(item.modelInput, ['model_config', 'model']),
-        ]),
-        'meta'
-      );
-      push(
-        runtimeLabel('tokenCount'),
-        firstAvailableValue([
-          meta?.total_tokens,
-          getByPath(item.nodeOutput, ['usage', 'total_tokens']),
-        ]),
-        'meta'
-      );
-      break;
-    case 'answer':
-    case 'end':
-      push(
-        runtimeLabel('replyContent'),
-        firstAvailableValue([output?.answer, output?.text, output?.result, item.nodeOutput]),
-        'output'
-      );
-      break;
-    case 'knowledge-retrieval':
-      push(
-        runtimeLabel('query'),
-        firstAvailableValue([input?.query, input?.keyword, input]),
-        'input'
-      );
-      push(
-        runtimeLabel('retrievalResults'),
-        firstAvailableValue([output?.docs, output?.documents, item.nodeOutput]),
-        'output'
-      );
-      break;
-    case 'http-request':
-      push(
-        runtimeLabel('request'),
-        firstAvailableValue([input?.url, input?.method, item.nodeInput]),
-        'input'
-      );
-      push(
-        runtimeLabel('response'),
-        firstAvailableValue([output?.status_code, output?.body, item.nodeOutput]),
-        'output'
-      );
-      break;
-    case 'if-else':
-      push(
-        runtimeLabel('matchedBranch'),
-        firstAvailableValue([output?.branch, output?.result, item.nodeOutput]),
-        'output'
-      );
-      push(runtimeLabel('decisionBasis'), item.processData, 'meta');
-      break;
-    case 'iteration':
-      push(runtimeLabel('currentBatch'), meta?.iteration_index, 'meta');
-      push(
-        runtimeLabel('currentItem'),
-        firstAvailableValue([meta?.iteration_item, input?.item, item.nodeInput]),
-        'input'
-      );
-      push(runtimeLabel('batchOutput'), item.nodeOutput, 'output');
-      break;
-    case 'loop':
-      push(runtimeLabel('currentRound'), meta?.loop_index, 'meta');
-      push(
-        runtimeLabel('loopVariables'),
-        firstAvailableValue([meta?.loop_variable_map, item.loopInputs, item.nodeInput]),
-        'input'
-      );
-      push(
-        runtimeLabel('loopOutput'),
-        firstAvailableValue([item.loopOutputs, item.nodeOutput]),
-        'output'
-      );
-      break;
-    case 'announcement':
-      {
-        const announcementOutput = pickRecordKeys(item.nodeOutput, [
-          'title',
-          'content',
-          'expiration_time',
-          'url',
-          'token',
-        ]);
-        if (announcementOutput) {
-          rows.push({
-            label: runtimeLabel('output'),
-            value: announcementOutput,
-            tone: 'output',
-            maxRecordEntries: 5,
-          });
-        }
-      }
-      break;
-    default:
-      push(runtimeLabel('input'), item.nodeInput, 'input');
-      push(runtimeLabel('output'), item.nodeOutput, 'output');
-      push(runtimeLabel('process'), item.processData, 'meta');
-      break;
-  }
-
-  return rows;
-};
-
-const previewToneClass: Record<NonNullable<RuntimeLogPreviewRow['tone']>, string> = {
-  input: 'border-info/15 bg-info/[0.04]',
-  output: 'border-success/15 bg-success/[0.05]',
-  meta: 'border-primary/15 bg-primary/[0.04]',
-  warning: 'border-destructive/20 bg-destructive/[0.04]',
-};
-
-const RuntimeValuePreview: React.FC<{
-  value: unknown;
-  lines?: number;
-  expandable?: boolean;
-  maxRecordEntries?: number;
-  runtimeLabel: RuntimeLabel;
-}> = ({ value, lines = 2, expandable = false, maxRecordEntries = 3, runtimeLabel }) => {
-  const [expanded, setExpanded] = useState(false);
-  const textValue =
-    typeof value === 'string'
-      ? value
-      : typeof value === 'number' || typeof value === 'boolean'
-        ? String(value)
-        : null;
-  const normalizedTextValue = textValue?.replace(/\s+/g, ' ').trim();
-  const canExpand = Boolean(expandable && normalizedTextValue && normalizedTextValue.length > 90);
-
-  if (isRecord(value)) {
-    const entries = getReadableRecordEntries(value, runtimeLabel).slice(0, maxRecordEntries);
-    return (
-      <div className="grid gap-1">
-        {entries.map(([key, label, entryValue]) => (
-          <div key={key} className="flex min-w-0 gap-1.5">
-            <span className="shrink-0 text-muted-foreground/70">{label}:</span>
-            <span className="min-w-0 truncate text-foreground/80">
-              {compactValue(entryValue, runtimeLabel, expanded ? 500 : 72)}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid gap-1">
-      <div
-        className="break-words text-foreground/85"
-        style={
-          expanded
-            ? { whiteSpace: 'pre-wrap' }
-            : {
-                display: '-webkit-box',
-                WebkitLineClamp: lines,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }
-        }
-      >
-        {expanded && textValue ? textValue : compactValue(value, runtimeLabel)}
-      </div>
-      {canExpand ? (
-        <button
-          type="button"
-          className="w-fit rounded px-1.5 py-0.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/10"
-          onClick={event => {
-            event.stopPropagation();
-            setExpanded(prev => !prev);
-          }}
-        >
-          {expanded ? runtimeLabel('collapse') : runtimeLabel('expandAll')}
-        </button>
-      ) : null}
-    </div>
-  );
-};
-
-const RuntimeStructuredView: React.FC<{ value: unknown; runtimeLabel: RuntimeLabel }> = ({
-  value,
-  runtimeLabel,
-}) => {
-  const [showRaw, setShowRaw] = useState(false);
-
-  if (typeof value === 'string') {
-    return (
-      <div className="whitespace-pre-wrap break-words px-3 py-2 text-[12px] leading-5 text-foreground/85">
-        {value}
-      </div>
-    );
-  }
-
-  const renderReadableValue = () => {
-    if (Array.isArray(value)) {
-      return (
-        <div className="grid gap-1.5 px-2 py-2">
-          <div className="text-[11px] text-muted-foreground">
-            {runtimeLabel('arrayCount', { count: value.length })}
-          </div>
-          {value.slice(0, 8).map((entry, index) => (
-            <div key={index} className="rounded-md bg-background/70 px-2 py-1.5 text-[12px]">
-              <RuntimeValuePreview value={entry} lines={3} runtimeLabel={runtimeLabel} />
-            </div>
-          ))}
-          {value.length > 8 ? (
-            <div className="px-1 text-[11px] text-muted-foreground">
-              {runtimeLabel('arrayMore', { count: value.length - 8 })}
-            </div>
-          ) : null}
-        </div>
-      );
-    }
-
-    if (isRecord(value)) {
-      const entries = getReadableRecordEntries(value, runtimeLabel);
-      if (entries.length === 0) {
-        return (
-          <div className="px-3 py-2 text-[12px] leading-5 text-muted-foreground">
-            {runtimeLabel('technicalFieldsHidden')}
-          </div>
-        );
-      }
-      return (
-        <div className="grid gap-1.5 px-2 py-2">
-          {entries.slice(0, 12).map(([key, label, entryValue]) => (
-            <div
-              key={key}
-              className="grid gap-1 rounded-md bg-background/70 px-2 py-1.5 text-[12px] leading-5"
-            >
-              <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                {label}
-              </div>
-              <RuntimeValuePreview value={entryValue} lines={4} runtimeLabel={runtimeLabel} />
-            </div>
-          ))}
-          {entries.length > 12 ? (
-            <div className="px-1 text-[11px] text-muted-foreground">
-              {runtimeLabel('fieldsMore', { count: entries.length - 12 })}
-            </div>
-          ) : null}
-        </div>
-      );
-    }
-
-    return (
-      <div className="px-3 py-2 text-[12px] leading-5 text-foreground/85">
-        {compactValue(value, runtimeLabel, 320)}
-      </div>
-    );
-  };
-
-  return (
-    <div className="grid gap-1">
-      {renderReadableValue()}
-      <button
-        type="button"
-        className="mx-2 mb-2 w-fit rounded border border-border/50 bg-background px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        onClick={event => {
-          event.stopPropagation();
-          setShowRaw(prev => !prev);
-        }}
-      >
-        {showRaw ? runtimeLabel('hideRawData') : runtimeLabel('rawData')}
-      </button>
-      {showRaw ? (
-        <JsonView
-          value={value ?? {}}
-          style={{ ...lightTheme, background: 'transparent' }}
-          className="border-t border-border/30 p-1 px-2.5 text-[11px]"
-        />
-      ) : null}
-    </div>
-  );
-};
-
-// Render a compact list of node execution states
+export type { NodeRunStatus, WorkflowRunNodeListItem } from './types';
 const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
   items,
   showDetail = true,
@@ -724,13 +120,17 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
       return next;
     });
   };
+  const isRoundOpen = (id: string, defaultOpen = false) =>
+    defaultOpen ? !openSet.has(id) : openSet.has(id);
 
   return (
     <div className={cn('relative', isCanvasDetailOnly ? 'space-y-1.5' : 'space-y-2')}>
       {groupedItems.map(group => {
         const errorOnly = Boolean(errorOnlyByNode[group.key]);
         const visibleExecutions = errorOnly
-          ? group.executions.filter(item => item.status === 'failed' || Boolean(item.error))
+          ? group.executions.filter(
+              item => normalizeNodeRunStatus(item.status) === 'failed' || Boolean(item.error)
+            )
           : group.executions;
         const executions = visibleExecutions;
         if (executions.length === 0) return null;
@@ -751,12 +151,15 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
             : undefined;
         const Icon = theme?.icon;
 
-        const statusCfg = styles[raw.status];
+        const rawStatus = normalizeNodeRunStatus(raw.status);
+        const statusCfg = styles[rawStatus];
         const isIteration = raw.nodeType === 'iteration';
         const isLoop = raw.nodeType === 'loop';
         const isContainer = isIteration || isLoop;
         const rounds = isLoop ? (raw.loopRounds ?? []) : (raw.iterationRounds ?? []);
-        const inContainerRoundsView = isContainer && isContainerRoundsView(itemKey);
+        const shouldInlineContainerRounds = isContainer && isCanvasDetailOnly;
+        const inContainerRoundsView =
+          isContainer && (shouldInlineContainerRounds || isContainerRoundsView(itemKey));
         const debugDetailsId = `${itemKey}-debug-details`;
         const hasDebugDetails =
           showDetail &&
@@ -777,7 +180,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                 raw.processData !== undefined ||
                 raw.executionMetadata !== undefined)));
         const shouldRenderDetailsArea = isContainer
-          ? isOpen(itemKey)
+          ? shouldInlineContainerRounds || isOpen(itemKey)
           : showDetail && isOpen(itemKey);
 
         return (
@@ -823,7 +226,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                   className={cn(
                     'w-5 h-5 flex items-center justify-center rounded text-white shrink-0 shadow-[0_1px_2px_rgba(0,0,0,0.1)] transition-all duration-300',
                     theme?.classNames.iconBg,
-                    raw.status === 'paused' && 'bg-warning text-white shadow-none',
+                    rawStatus === 'paused' && 'bg-warning text-white shadow-none',
                     isOpen(itemKey) ? 'ring-2 ring-background ring-offset-1 scale-105' : ''
                   )}
                   aria-label={raw.nodeType}
@@ -857,14 +260,16 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                     className={cn(
                       'w-1.5 h-1.5 rounded-full shrink-0 shadow-[0_0_4px_rgba(0,0,0,0.1)]',
                       statusCfg.dot,
-                      raw.status === 'running' && 'animate-pulse-subtle'
+                      rawStatus === 'running' && 'animate-pulse-subtle'
                     )}
                   />
-                  {raw.status === 'running' ? (
+                  {rawStatus === 'running' ? (
                     <Loader className="h-3 w-3 animate-spin text-info" />
-                  ) : raw.status === 'paused' ? null : (
+                  ) : rawStatus === 'paused' ? null : (
                     <div className={elapsedTimeClass}>
-                      {formatMs(raw?.elapsedTime ? raw.elapsedTime : 0)}
+                      {typeof raw?.elapsedTime === 'number' && raw.elapsedTime > 0
+                        ? formatMs(raw.elapsedTime)
+                        : '-'}
                     </div>
                   )}
                 </div>
@@ -1367,7 +772,9 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                     </div>
                   </button>
                 )}
-                {isContainer && inContainerRoundsView && (
+                {isContainer &&
+                  inContainerRoundsView &&
+                  !shouldInlineContainerRounds && (
                   <button
                     type="button"
                     className="inline-flex w-fit items-center gap-1 rounded-md border border-border/40 bg-muted/30 px-2 py-1 text-xs text-foreground hover:bg-muted transition-colors"
@@ -1376,11 +783,14 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                     <ChevronLeft className="h-3 w-3" />
                     {t('agents.workflow.backToSummary')}
                   </button>
-                )}
+                  )}
                 {isContainer && inContainerRoundsView && rounds.length > 0 && (
                   <div className="grid gap-1 bg-muted shadow-md rounded-md p-1">
                     {rounds.map(round => {
                       const roundKey = `${itemKey}-round-${round.index}`;
+                      const roundOpen = isRoundOpen(roundKey, shouldInlineContainerRounds);
+                      const roundElapsedTime =
+                        round.elapsedTime ?? getNodesElapsedTime(round.nodes);
                       return (
                         <div
                           key={`round-${itemKey}-${round.index}`}
@@ -1394,7 +804,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                               <ChevronDown
                                 className={cn(
                                   'h-3.5 w-3.5 transition-transform',
-                                  isOpen(roundKey) ? '' : '-rotate-90'
+                                  roundOpen ? '' : '-rotate-90'
                                 )}
                               />
                               <span className="text-xs font-medium text-foreground">
@@ -1406,15 +816,17 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                               </span>
                             </div>
                             <span className={elapsedTimeClass}>
-                              {formatMs(round.elapsedTime ? round.elapsedTime : 0)}
+                              {typeof roundElapsedTime === 'number' && roundElapsedTime > 0
+                                ? formatMs(roundElapsedTime)
+                                : '-'}
                             </span>
                           </div>
-                          {isOpen(roundKey) && (
+                          {roundOpen && (
                             <div className="mt-2">
                               <WorkflowRunNodesList
                                 items={round.nodes}
                                 showDetail={showDetail}
-                                variant={variant}
+                                variant="panel"
                               />
                             </div>
                           )}

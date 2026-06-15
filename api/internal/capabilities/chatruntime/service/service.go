@@ -90,6 +90,9 @@ type RunConfig struct {
 	DatabaseBindings          []AgentDatabaseBinding
 	DatabaseBoundByAccountID  string
 	DatabaseBoundAtUnix       int64
+	WorkflowBindings          []AgentWorkflowBinding
+	WorkflowBoundByAccountID  string
+	WorkflowBoundAtUnix       int64
 	UseMemory                 bool
 	AgentMemoryEnabled        bool
 	AgentMemorySlots          []AgentMemorySlotConfig
@@ -103,6 +106,26 @@ type AgentDatabaseBinding struct {
 	DataSourceID     string   `json:"data_source_id"`
 	TableIDs         []string `json:"table_ids"`
 	WritableTableIDs []string `json:"writable_table_ids,omitempty"`
+}
+type AgentWorkflowBinding struct {
+	BindingID       string                    `json:"binding_id"`
+	Label           string                    `json:"label"`
+	Description     string                    `json:"description,omitempty"`
+	AgentID         string                    `json:"agent_id"`
+	WorkflowID      string                    `json:"workflow_id"`
+	AgentType       string                    `json:"agent_type,omitempty"`
+	VersionStrategy string                    `json:"version_strategy"`
+	VersionUUID     string                    `json:"version_uuid,omitempty"`
+	TimeoutSeconds  int                       `json:"timeout_seconds,omitempty"`
+	StartInputs     []AgentWorkflowStartInput `json:"start_inputs,omitempty"`
+	RequiredInputs  []string                  `json:"required_inputs,omitempty"`
+	DefaultInputKey string                    `json:"default_input_key,omitempty"`
+}
+type AgentWorkflowStartInput struct {
+	Variable string `json:"variable"`
+	Label    string `json:"label,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Required bool   `json:"required,omitempty"`
 }
 type AgentMemoryRuntimeState = agentmemoryruntime.State
 type AgentMemoryPlannerDecision = agentmemoryruntime.Decision
@@ -120,6 +143,11 @@ type Service interface {
 	DeleteConversation(ctx context.Context, scope Scope, id uuid.UUID) error
 	ListMessages(ctx context.Context, scope Scope, conversationID uuid.UUID, page, limit int) ([]*runtimemodel.Message, int64, error)
 	ListMessagesByCaller(ctx context.Context, scope Scope, caller Caller, page, limit int) ([]*runtimemodel.Message, int64, error)
+	ListMessagesByCallerSource(ctx context.Context, scope Scope, caller Caller, source string, page, limit int) ([]*runtimemodel.Message, int64, error)
+	ListMessagesByCallerLogFilters(ctx context.Context, scope Scope, caller Caller, source string, conversationID *uuid.UUID, queryText string, page, limit int) ([]*runtimemodel.Message, int64, error)
+	ListMessagesByCallerRuntimeLogFilters(ctx context.Context, scope Scope, caller Caller, source string, conversationID *uuid.UUID, queryText string, page, limit int) ([]*runtimemodel.Message, int64, error)
+	GetMessageByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error)
+	GetMessageByCallerRuntimeLog(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, source string) (*runtimemodel.Message, *runtimemodel.Conversation, error)
 	DeleteMessage(ctx context.Context, scope Scope, id uuid.UUID) error
 	StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*runtimemodel.Message, error)
 	StopConversation(ctx context.Context, scope Scope, id uuid.UUID) (*StopConversationResult, error)
@@ -129,6 +157,14 @@ type Service interface {
 	PrepareConfiguredRootRegeneration(ctx context.Context, scope Scope, caller Caller, config RunConfig, id uuid.UUID, req runtimedto.RegenerateMessageRequest) (*PreparedChat, error)
 	RunPreparedStream(ctx context.Context, prepared *PreparedChat, onChunk func(string) error, onEvent ...func(StreamEvent) error) (*ChatResult, error)
 	StreamConversationEvents(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, afterID string, onEvent func(StreamEvent) error) error
+	BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
+	RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)
+	AppendWorkflowApprovalContinuationStreamEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)
+	UpdateWorkflowApprovalContinuationStatus(ctx context.Context, continuation *WorkflowApprovalContinuation, status string) (map[string]interface{}, error)
+	PauseWorkflowApprovalContinuation(ctx context.Context, continuation *WorkflowApprovalContinuation, status string) (map[string]interface{}, error)
+	SummarizeWorkflowApprovalContinuation(ctx context.Context, scope Scope, continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	CompleteWorkflowApprovalContinuation(ctx context.Context, continuation *WorkflowApprovalContinuation, answer string, status string) (map[string]interface{}, error)
+	FailWorkflowApprovalContinuation(ctx context.Context, continuation *WorkflowApprovalContinuation, message string) (map[string]interface{}, error)
 	ListSkills(ctx context.Context, scope Scope) ([]skills.SkillDiscoveryMetadata, error)
 	GetSkill(ctx context.Context, scope Scope, skillID string) (*skills.SkillDiscoveryMetadata, error)
 	GetSkillConfig(ctx context.Context, scope Scope) (*SkillConfig, error)

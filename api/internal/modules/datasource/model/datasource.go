@@ -86,19 +86,30 @@ func IsValidOperationStatus(status string) bool {
 // DataSourceSQLOperation represents a user's SQL operation log for data source tables
 // Stored in the data_source_sql_operations table
 type DataSourceSQLOperation struct {
-	ID             string    `json:"id" gorm:"type:uuid;primary_key"`
-	OrganizationID string    `json:"organization_id" gorm:"type:uuid;not null"`
-	DataSourceID   string    `json:"data_source_id" gorm:"type:uuid;not null"`
-	TableID        *string   `json:"table_id" gorm:"type:uuid;not null"`
-	DataSourceName *string   `json:"data_source_name" gorm:"type:varchar(255)"`
-	TableName      *string   `json:"table_name" gorm:"type:varchar(255)"`
-	SqlStatement   string    `json:"sql_statement" gorm:"type:text;not null"`
-	OperationType  string    `json:"operation_type" gorm:"type:varchar(20);not null"`
-	StartTime      time.Time `json:"start_time" gorm:"type:timestamp;not null;default:CURRENT_TIMESTAMP"`
-	EndTime        time.Time `json:"end_time" gorm:"type:timestamp;not null;default:CURRENT_TIMESTAMP"`
-	Status         string    `json:"status" gorm:"type:varchar(10);not null"`
-	CreatedBy      string    `json:"created_by" gorm:"type:varchar(36);not null"`
-	CreatedAt      time.Time `json:"created_at" gorm:"type:timestamp;not null;default:CURRENT_TIMESTAMP"`
+	ID             string     `json:"id" gorm:"type:uuid;primary_key"`
+	OrganizationID string     `json:"organization_id" gorm:"type:uuid;not null"`
+	WorkspaceID    *string    `json:"workspace_id" gorm:"type:uuid"`
+	DataSourceID   string     `json:"data_source_id" gorm:"type:uuid;not null"`
+	TableID        *string    `json:"table_id" gorm:"type:uuid"`
+	DataSourceName *string    `json:"data_source_name" gorm:"type:varchar(255)"`
+	TableName      *string    `json:"table_name" gorm:"type:varchar(255)"`
+	SqlStatement   string     `json:"sql_statement" gorm:"type:text;not null"`
+	OperationType  string     `json:"operation_type" gorm:"type:varchar(20);not null"`
+	ClientType     string     `json:"client_type" gorm:"type:varchar(32);not null;default:unknown"`
+	WorkflowRunID  *string    `json:"workflow_run_id" gorm:"type:varchar(255)"`
+	NodeID         *string    `json:"node_id" gorm:"type:varchar(255)"`
+	ParamsJSON     []byte     `json:"params_json" gorm:"type:jsonb"`
+	RowCount       *int64     `json:"row_count"`
+	DurationMS     *int64     `json:"duration_ms"`
+	ErrorCode      *string    `json:"error_code" gorm:"type:varchar(64)"`
+	ErrorMessage   *string    `json:"error_message" gorm:"type:text"`
+	ExecutedAt     *time.Time `json:"executed_at" gorm:"type:timestamp"`
+	RequestID      *string    `json:"request_id" gorm:"type:varchar(128)"`
+	StartTime      time.Time  `json:"start_time" gorm:"type:timestamp;not null;default:CURRENT_TIMESTAMP"`
+	EndTime        time.Time  `json:"end_time" gorm:"type:timestamp;not null;default:CURRENT_TIMESTAMP"`
+	Status         string     `json:"status" gorm:"type:varchar(10);not null"`
+	CreatedBy      string     `json:"created_by" gorm:"type:varchar(36);not null"`
+	CreatedAt      time.Time  `json:"created_at" gorm:"type:timestamp;not null;default:CURRENT_TIMESTAMP"`
 }
 
 // DataSource represents a user-created data source (PostgreSQL schema)

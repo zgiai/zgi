@@ -3,11 +3,18 @@
 import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, ExternalLink, History, Loader2 } from 'lucide-react';
+import { AlertCircle, Copy, ExternalLink, Filter, History, Loader2, Search, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TableCell, TableRow } from '@/components/ui/table';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { StickyDataTable } from '@/components/common/sticky-data-table';
+import { useAgentRuntimeRunDetail } from '@/hooks/agent/use-agent-runtime-run-detail';
+import { useAgentRuntimeRunSteps } from '@/hooks/agent/use-agent-runtime-run-steps';
+import { useAgentRuntimeRunsInfinite } from '@/hooks/agent/use-agent-runtime-runs';
 import { useAgent } from '@/hooks/agent/use-agents';
 import { useLatestWorkflowVersion } from '@/hooks/workflow/use-workflow';
 import { useWorkflowChatMessages } from '@/hooks/workflow/use-workflow-chat-messages';
@@ -17,9 +24,15 @@ import { useWorkflowRunsInfinite } from '@/hooks/workflow/use-workflow-runs';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n/translations';
 import { AgentType } from '@/services/types/agent';
+import type { AgentRuntimeRunItem } from '@/services/types/agent-runtime-log';
 import type { WorkflowChatMessageItem, WorkflowRunItem } from '@/services/types/workflow';
 import { formatDate, formatWorkflowElapsedMs } from '@/utils/format';
-import { canShowAgentRuntimeLogs, supportsWorkflowDetailPages } from '@/utils/agent-detail-routes';
+import {
+  canShowAgentRuntimeLogs,
+  getAgentDetailEditHref,
+  getWebAppRunHref,
+  supportsAgentRuntimeLogs,
+} from '@/utils/agent-detail-routes';
 import { getErrorMessage } from '@/utils/error-notifications';
 import {
   buildWorkflowRunExecutionItems,
@@ -27,12 +40,18 @@ import {
   buildWorkflowRunSummary,
 } from '@/components/workflow/ui/workflow-run-panel/utils/history-view-data';
 import { cn } from '@/lib/utils';
+import { AgentRuntimeLogDetailDrawer } from './_components/agent-runtime-log-detail-drawer';
 import { LogDetailDrawer, type HistoryTab } from './_components/log-detail-drawer';
 import { LogStatusBadge } from './_components/log-status-badge';
 
 interface AgentLogsPageProps {
   params: Promise<{ agentId: string }>;
 }
+
+type LogRunListItem = WorkflowRunItem | AgentRuntimeRunItem;
+type AgentRuntimeLogSource = 'webapp' | 'console' | 'external-api';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function normalizeTimestamp(value?: number | null): number {
   if (typeof value !== 'number' || Number.isNaN(value)) return 0;
@@ -77,6 +96,20 @@ function buildFallbackSummaryFromExecutions(
   };
 }
 
+function isAgentRuntimeRunItem(item: LogRunListItem): item is AgentRuntimeRunItem {
+  return 'query' in item;
+}
+
+function summarizeLogText(value?: string | null) {
+  return value?.replace(/\s+/g, ' ').trim() ?? '';
+}
+
+function shortenID(value?: string | null) {
+  if (!value) return '-';
+  if (value.length <= 12) return value;
+  return `${value.slice(0, 8)}...${value.slice(-4)}`;
+}
+
 function LogTableSkeleton() {
   return (
     <div className="rounded-xl border">
@@ -93,7 +126,7 @@ function LogTableSkeleton() {
  * @component AgentLogsPage
  * @category Feature
  * @status Stable
- * @description Displays webapp-originated workflow run history under the agent detail area.
+ * @description Displays webapp-originated runtime logs under the agent detail area.
  * @usage Use in the agent detail route alongside workflow and api pages.
  */
 export default function AgentLogsPage({ params }: AgentLogsPageProps) {
@@ -110,18 +143,37 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const [selectedMessageRunId, setSelectedMessageRunId] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<HistoryTab>('execution');
+  const [conversationFilterInput, setConversationFilterInput] = useState('');
+  const [conversationFilter, setConversationFilter] = useState('');
+  const [runtimeLogSource, setRuntimeLogSource] = useState<AgentRuntimeLogSource>('webapp');
+  const [searchFilterInput, setSearchFilterInput] = useState('');
+  const [searchFilter, setSearchFilter] = useState('');
 
   const { agent, isLoading: isAgentLoading, error: agentError } = useAgent(agentId);
   const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canManage = hasPermission('agent.manage');
   const agentDetail = agent?.data ?? null;
   const isPublished = agentDetail?.is_published === true;
-  const isWorkflowAgent = supportsWorkflowDetailPages(agentDetail?.agent_type);
+  const supportsRuntimeLogs = supportsAgentRuntimeLogs(agentDetail?.agent_type);
   const canAccessRuntimeLogs = canShowAgentRuntimeLogs(agentDetail?.agent_type, {
     canView: true,
     canManage,
   });
+  const isAgentRuntime = agentDetail?.agent_type === AgentType.AGENT;
+  const canQueryWorkflowLogs = canAccessRuntimeLogs && isPublished && !isAgentRuntime;
+  const canQueryAgentRuntimeLogs = canAccessRuntimeLogs && isPublished && isAgentRuntime;
   const isConversationWorkflow = agentDetail?.agent_type === AgentType.CONVERSATIONAL_AGENT;
+  const normalizedConversationFilter = conversationFilter.trim();
+  const normalizedSearchFilter = searchFilter.trim();
+  const agentRuntimeRunsQuery = useMemo(
+    () => ({
+      source: runtimeLogSource,
+      ...(runtimeLogSource === 'webapp' ? { triggered_from: 'web-app' } : {}),
+      ...(normalizedConversationFilter ? { conversation_id: normalizedConversationFilter } : {}),
+      ...(normalizedSearchFilter ? { q: normalizedSearchFilter } : {}),
+    }),
+    [normalizedConversationFilter, normalizedSearchFilter, runtimeLogSource]
+  );
 
   const { data: latest } = useLatestWorkflowVersion(
     canAccessRuntimeLogs && isPublished ? agentId : null
@@ -137,35 +189,65 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     reload,
   } = useWorkflowRunsInfinite(
     {
-      agentId: canAccessRuntimeLogs && isPublished ? agentId : null,
+      agentId: canQueryWorkflowLogs ? agentId : null,
       limit: 50,
       query: { triggered_from: 'web-app' },
     },
     {
-      enabled: canAccessRuntimeLogs && isPublished,
+      enabled: canQueryWorkflowLogs,
       staleTime: 30_000,
       refetchOnWindowFocus: false,
     }
   );
 
   const runItems = useMemo(() => pages.flat(), [pages]);
+  const {
+    pages: agentRuntimePages,
+    fetchNextPage: fetchNextAgentRuntimePage,
+    hasNextPage: hasNextAgentRuntimePage,
+    isFetchingNextPage: isFetchingNextAgentRuntimePage,
+    isLoading: isAgentRuntimeRunsLoading,
+    error: agentRuntimeRunsError,
+    reload: reloadAgentRuntimeRuns,
+  } = useAgentRuntimeRunsInfinite(
+    {
+      agentId: canQueryAgentRuntimeLogs ? agentId : null,
+      limit: 50,
+      query: agentRuntimeRunsQuery,
+    },
+    {
+      enabled: canQueryAgentRuntimeLogs,
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+    }
+  );
+  const agentRuntimeRunItems = useMemo(() => agentRuntimePages.flat(), [agentRuntimePages]);
+  const displayRunItems = useMemo<LogRunListItem[]>(
+    () => (isAgentRuntime ? agentRuntimeRunItems : runItems),
+    [agentRuntimeRunItems, isAgentRuntime, runItems]
+  );
+  const selectedAgentRuntimeRun = useMemo(
+    () => agentRuntimeRunItems.find(item => item.id === selectedLogId) ?? null,
+    [agentRuntimeRunItems, selectedLogId]
+  );
   const selectedLog = useMemo(
     () => runItems.find(item => item.id === selectedLogId) ?? null,
     [runItems, selectedLogId]
   );
 
   useEffect(() => {
-    if (!selectedLogId || runItems.some(item => item.id === selectedLogId)) return;
+    if (!selectedLogId || displayRunItems.some(item => item.id === selectedLogId)) return;
     setSelectedLogId(null);
     setSelectedMessageRunId(null);
     setIsDetailOpen(false);
     setActiveTab('execution');
-  }, [runItems, selectedLogId]);
+  }, [displayRunItems, selectedLogId]);
 
   useEffect(() => {
-    if (!focusRunId || isRunsLoading) return;
+    const listLoading = isAgentRuntime ? isAgentRuntimeRunsLoading : isRunsLoading;
+    if (!focusRunId || listLoading) return;
 
-    const inList = runItems.some(item => item.id === focusRunId);
+    const inList = displayRunItems.some(item => item.id === focusRunId);
     if (inList) {
       setSelectedLogId(focusRunId);
       setSelectedMessageRunId(null);
@@ -179,7 +261,14 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
         ? focusTab
         : 'execution'
     );
-  }, [focusRunId, focusTab, isRunsLoading, runItems]);
+  }, [
+    displayRunItems,
+    focusRunId,
+    focusTab,
+    isAgentRuntime,
+    isAgentRuntimeRunsLoading,
+    isRunsLoading,
+  ]);
 
   const effectiveRunId = selectedMessageRunId ?? selectedLogId;
   const isDetailDrawerOpen = isDetailOpen && Boolean(effectiveRunId);
@@ -189,9 +278,9 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     isLoading: isDetailLoading,
     error: detailError,
   } = useWorkflowRunDetail(
-    { agentId: canAccessRuntimeLogs ? agentId : null, runId: effectiveRunId },
+    { agentId: canQueryWorkflowLogs ? agentId : null, runId: effectiveRunId },
     {
-      enabled: Boolean(canAccessRuntimeLogs && isPublished && isDetailOpen && effectiveRunId),
+      enabled: Boolean(canQueryWorkflowLogs && isDetailOpen && effectiveRunId),
       staleTime: 60_000,
       refetchOnWindowFocus: false,
       suppressErrorToast: Boolean(focusRunId),
@@ -203,9 +292,34 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     isLoading: isNodeExecutionsLoading,
     error: nodeExecutionsError,
   } = useWorkflowRunNodeExecutions(
-    { agentId: canAccessRuntimeLogs ? agentId : null, runId: effectiveRunId },
+    { agentId: canQueryWorkflowLogs ? agentId : null, runId: effectiveRunId },
     {
-      enabled: Boolean(canAccessRuntimeLogs && isPublished && isDetailOpen && effectiveRunId),
+      enabled: Boolean(canQueryWorkflowLogs && isDetailOpen && effectiveRunId),
+      staleTime: 60_000,
+      refetchOnWindowFocus: false,
+    }
+  );
+  const {
+    detail: agentRuntimeDetail,
+    isLoading: isAgentRuntimeDetailLoading,
+    error: agentRuntimeDetailLoadError,
+  } = useAgentRuntimeRunDetail(
+    { agentId: canQueryAgentRuntimeLogs ? agentId : null, messageId: effectiveRunId },
+    {
+      enabled: Boolean(canQueryAgentRuntimeLogs && isDetailOpen && effectiveRunId),
+      staleTime: 60_000,
+      refetchOnWindowFocus: false,
+      suppressErrorToast: Boolean(focusRunId),
+    }
+  );
+  const {
+    steps: agentRuntimeSteps,
+    isLoading: isAgentRuntimeStepsLoading,
+    error: agentRuntimeStepsLoadError,
+  } = useAgentRuntimeRunSteps(
+    { agentId: canQueryAgentRuntimeLogs ? agentId : null, messageId: effectiveRunId },
+    {
+      enabled: Boolean(canQueryAgentRuntimeLogs && isDetailOpen && effectiveRunId),
       staleTime: 60_000,
       refetchOnWindowFocus: false,
     }
@@ -218,18 +332,14 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     error: messagesError,
   } = useWorkflowChatMessages(
     {
-      agentId: canAccessRuntimeLogs ? agentId : null,
+      agentId: canQueryWorkflowLogs ? agentId : null,
       conversationId,
       page: 1,
       limit: 100,
     },
     {
       enabled: Boolean(
-        canAccessRuntimeLogs &&
-          isPublished &&
-          isConversationWorkflow &&
-          isDetailOpen &&
-          conversationId
+        canQueryWorkflowLogs && isConversationWorkflow && isDetailOpen && conversationId
       ),
       staleTime: 60_000,
       refetchOnWindowFocus: false,
@@ -275,11 +385,40 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const effectiveSummary = summary ?? fallbackSummary;
   const detailLoading = isDetailLoading || isNodeExecutionsLoading;
   const effectiveDetailError = !detailLoading && !summary && fallbackSummary ? null : detailError;
+  const agentRuntimeDetailLoading = isAgentRuntimeDetailLoading || isAgentRuntimeStepsLoading;
+  const agentRuntimeDetailError = agentRuntimeDetailLoadError || agentRuntimeStepsLoadError;
   const webAppId = latest?.data?.web_app_id;
   const webAppHref =
-    webAppId && agentDetail
-      ? `/webapp/${webAppId}/${agentDetail.agent_type === AgentType.CONVERSATIONAL_AGENT ? 'chat' : 'run'}`
-      : null;
+    webAppId && agentDetail ? getWebAppRunHref(webAppId, agentDetail.agent_type) : null;
+  const listError = isAgentRuntime ? agentRuntimeRunsError : runsError;
+  const listLoading = isAgentRuntime ? isAgentRuntimeRunsLoading : isRunsLoading;
+  const listHasNextPage = isAgentRuntime ? hasNextAgentRuntimePage : hasNextPage;
+  const listIsFetchingNextPage = isAgentRuntime
+    ? isFetchingNextAgentRuntimePage
+    : isFetchingNextPage;
+  const fetchNextListPage = isAgentRuntime ? fetchNextAgentRuntimePage : fetchNextPage;
+  const reloadList = isAgentRuntime ? reloadAgentRuntimeRuns : reload;
+  const hasActiveRuntimeFilters = Boolean(normalizedConversationFilter || normalizedSearchFilter);
+  const hasPendingRuntimeFilterChanges =
+    conversationFilterInput.trim() !== normalizedConversationFilter ||
+    searchFilterInput.trim() !== normalizedSearchFilter;
+  const logTableColumns = useMemo(() => {
+    const columns = [
+      { key: 'runId', header: t('appLogs.columns.runId'), className: 'pl-4' },
+      { key: 'status', header: t('appLogs.columns.status') },
+      { key: 'steps', header: tAgents('workflow.steps') },
+      { key: 'elapsed', header: tAgents('workflow.elapsed') },
+      { key: 'createdAt', header: t('appLogs.columns.createdAt') },
+      { key: 'conversation', header: t('appLogs.columns.conversation') },
+    ];
+    if (!isAgentRuntime) return columns;
+    return [
+      columns[0],
+      { key: 'query', header: t('appLogs.columns.query') },
+      { key: 'answer', header: t('appLogs.columns.answer') },
+      ...columns.slice(1),
+    ];
+  }, [isAgentRuntime, t, tAgents]);
 
   useEffect(() => {
     if (
@@ -291,7 +430,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     ) {
       return;
     }
-    router.replace(`/console/agents/${agentId}/workflow`);
+    router.replace(getAgentDetailEditHref(agentId, agentDetail.agent_type));
   }, [
     agentDetail,
     agentId,
@@ -302,7 +441,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     router,
   ]);
 
-  const handleSelectLog = (item: WorkflowRunItem) => {
+  const handleSelectLog = (item: WorkflowRunItem | AgentRuntimeRunItem) => {
     setSelectedLogId(item.id);
     setSelectedMessageRunId(null);
     setIsDetailOpen(true);
@@ -324,6 +463,71 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const handleBackToSelectedRun = () => {
     setSelectedMessageRunId(null);
     setActiveTab('execution');
+  };
+
+  const resetRuntimeLogSelection = () => {
+    setSelectedLogId(null);
+    setSelectedMessageRunId(null);
+    setIsDetailOpen(false);
+    setActiveTab('execution');
+  };
+
+  const handleApplyRuntimeFilters = () => {
+    const nextConversationFilter = conversationFilterInput.trim();
+    const nextSearchFilter = searchFilterInput.trim();
+    if (nextConversationFilter && !UUID_PATTERN.test(nextConversationFilter)) {
+      toast.error(t('appLogs.filters.invalidConversationId'));
+      return;
+    }
+    setConversationFilterInput(nextConversationFilter);
+    setConversationFilter(nextConversationFilter);
+    setSearchFilterInput(nextSearchFilter);
+    setSearchFilter(nextSearchFilter);
+    resetRuntimeLogSelection();
+  };
+
+  const handleClearRuntimeFilters = () => {
+    setConversationFilterInput('');
+    setConversationFilter('');
+    setSearchFilterInput('');
+    setSearchFilter('');
+    resetRuntimeLogSelection();
+  };
+
+  const handleClearConversationFilter = () => {
+    setConversationFilterInput('');
+    setConversationFilter('');
+    resetRuntimeLogSelection();
+  };
+
+  const handleClearSearchFilter = () => {
+    setSearchFilterInput('');
+    setSearchFilter('');
+    resetRuntimeLogSelection();
+  };
+
+  const handleRuntimeSourceChange = (value: string) => {
+    const nextSource: AgentRuntimeLogSource =
+      value === 'console' || value === 'external-api' ? value : 'webapp';
+    setRuntimeLogSource(nextSource);
+    resetRuntimeLogSelection();
+  };
+
+  const handleFilterByConversation = (conversationId?: string | null) => {
+    if (!conversationId) return;
+    setConversationFilterInput(conversationId);
+    setConversationFilter(conversationId);
+    resetRuntimeLogSelection();
+  };
+
+  const handleCopyConversation = async (conversationId?: string | null) => {
+    if (!conversationId || typeof navigator === 'undefined') return;
+    try {
+      await navigator.clipboard.writeText(conversationId);
+      toast.success(t('appLogs.filters.copiedConversationId'));
+    } catch {
+      toast.error(t('appLogs.filters.copyConversationFailed'));
+    }
   };
 
   const handleDetailOpenChange = (open: boolean) => {
@@ -360,7 +564,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     );
   }
 
-  if (!isWorkflowAgent) {
+  if (!supportsRuntimeLogs) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
@@ -426,22 +630,132 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
 
       <div className="h-0 min-h-0 flex-1 overflow-hidden p-4">
         <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
-          <div className="flex shrink-0 flex-col gap-1 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm font-semibold">{t('appLogs.recentRuns')}</div>
-            <div className="text-xs text-muted-foreground">{t('appLogs.selectRunDescription')}</div>
+          <div className="flex shrink-0 flex-col gap-3 border-b px-4 py-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">{t('appLogs.recentRuns')}</div>
+                <div className="text-xs text-muted-foreground">
+                  {t('appLogs.selectRunDescription')}
+                </div>
+              </div>
+              {isAgentRuntime ? (
+                <Tabs value={runtimeLogSource} onValueChange={handleRuntimeSourceChange}>
+                  <TabsList className="h-8">
+                    <TabsTrigger value="webapp" className="h-6 text-xs">
+                      {t('appLogs.filters.sources.webapp')}
+                    </TabsTrigger>
+                    <TabsTrigger value="console" className="h-6 text-xs">
+                      {t('appLogs.filters.sources.console')}
+                    </TabsTrigger>
+                    <TabsTrigger value="external-api" className="h-6 text-xs">
+                      {t('appLogs.filters.sources.externalApi')}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              ) : null}
+            </div>
+
+            {isAgentRuntime ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex w-full flex-col gap-2 xl:flex-row xl:items-center">
+                  <Input
+                    value={searchFilterInput}
+                    onChange={event => setSearchFilterInput(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key !== 'Enter') return;
+                      event.preventDefault();
+                      handleApplyRuntimeFilters();
+                    }}
+                    placeholder={t('appLogs.filters.searchPlaceholder')}
+                    leftIcon={<Search />}
+                    className="h-8"
+                    containerClassName="min-w-0 xl:w-[360px]"
+                  />
+                  <Input
+                    value={conversationFilterInput}
+                    onChange={event => setConversationFilterInput(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key !== 'Enter') return;
+                      event.preventDefault();
+                      handleApplyRuntimeFilters();
+                    }}
+                    placeholder={t('appLogs.filters.conversationPlaceholder')}
+                    leftIcon={<Filter />}
+                    className="h-8"
+                    containerClassName="min-w-0 xl:w-[360px]"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!hasPendingRuntimeFilterChanges}
+                      onClick={handleApplyRuntimeFilters}
+                    >
+                      {t('appLogs.filters.apply')}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={!hasActiveRuntimeFilters && !hasPendingRuntimeFilterChanges}
+                      onClick={handleClearRuntimeFilters}
+                    >
+                      {t('appLogs.filters.clear')}
+                    </Button>
+                  </div>
+                </div>
+                {hasActiveRuntimeFilters ? (
+                  <div className="flex flex-wrap gap-2">
+                    {normalizedSearchFilter ? (
+                      <Badge variant="subtle" className="gap-1">
+                        <span>
+                          {t('appLogs.filters.searchChip', { keyword: normalizedSearchFilter })}
+                        </span>
+                        <button
+                          type="button"
+                          className="rounded-full p-0.5 hover:bg-background"
+                          onClick={handleClearSearchFilter}
+                          aria-label={t('appLogs.filters.clearSearch')}
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </Badge>
+                    ) : null}
+                    {normalizedConversationFilter ? (
+                      <Badge variant="subtle" className="gap-1">
+                        <span>
+                          {t('appLogs.filters.conversationChip', {
+                            conversationId: shortenID(normalizedConversationFilter),
+                          })}
+                        </span>
+                        <button
+                          type="button"
+                          className="rounded-full p-0.5 hover:bg-background"
+                          onClick={handleClearConversationFilter}
+                          aria-label={t('appLogs.filters.clearConversation')}
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </Badge>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <div className="min-h-0 flex-1 overflow-hidden">
-            {runsError ? (
+            {listError ? (
               <div className="m-4 space-y-3 rounded-xl border border-dashed p-4 text-sm">
-                <div className="text-destructive">{runsError}</div>
-                <Button size="sm" variant="outline" onClick={() => void reload()}>
+                <div className="text-destructive">{listError}</div>
+                <Button size="sm" variant="outline" onClick={() => void reloadList()}>
                   {tAgents('workflow.retry')}
                 </Button>
               </div>
-            ) : isRunsLoading && runItems.length === 0 ? (
+            ) : listLoading && displayRunItems.length === 0 ? (
               <LogTableSkeleton />
-            ) : runItems.length === 0 ? (
+            ) : displayRunItems.length === 0 ? (
               <div className="m-4 rounded-2xl border border-dashed px-4 py-10 text-center">
                 <div className="text-sm font-medium">{t('appLogs.noLogsTitle')}</div>
                 <div className="mt-2 text-sm text-muted-foreground">
@@ -449,37 +763,38 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                 </div>
               </div>
             ) : (
-              <StickyDataTable
+              <StickyDataTable<LogRunListItem>
                 className="h-full"
-                columns={[
-                  { key: 'runId', header: t('appLogs.columns.runId'), className: 'pl-4' },
-                  { key: 'status', header: t('appLogs.columns.status') },
-                  { key: 'steps', header: tAgents('workflow.steps') },
-                  { key: 'elapsed', header: tAgents('workflow.elapsed') },
-                  { key: 'createdAt', header: t('appLogs.columns.createdAt') },
-                  { key: 'conversation', header: t('appLogs.columns.conversation') },
-                ]}
-                data={runItems}
+                columns={logTableColumns}
+                data={displayRunItems}
                 getRowKey={item => item.id}
                 pagination={
-                  hasNextPage ? (
+                  listHasNextPage ? (
                     <div className="flex shrink-0 items-center justify-center border-t px-4 py-3">
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
-                        disabled={isFetchingNextPage}
-                        onClick={() => void fetchNextPage()}
+                        disabled={listIsFetchingNextPage}
+                        onClick={() => void fetchNextListPage()}
                       >
-                        {isFetchingNextPage ? <Loader2 className="size-4 animate-spin" /> : null}
-                        {isFetchingNextPage ? t('appLogs.loadingMore') : t('appLogs.loadMore')}
+                        {listIsFetchingNextPage ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : null}
+                        {listIsFetchingNextPage ? t('appLogs.loadingMore') : t('appLogs.loadMore')}
                       </Button>
                     </div>
                   ) : null
                 }
               >
-                {runItems.map(item => {
+                {displayRunItems.map(item => {
                   const isSelected = item.id === selectedLogId;
+                  const querySummary = isAgentRuntimeRunItem(item)
+                    ? summarizeLogText(item.query)
+                    : '';
+                  const answerSummary = isAgentRuntimeRunItem(item)
+                    ? summarizeLogText(item.answer_preview)
+                    : '';
                   return (
                     <TableRow
                       key={item.id}
@@ -502,6 +817,26 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                           {item.id}
                         </div>
                       </TableCell>
+                      {isAgentRuntime ? (
+                        <>
+                          <TableCell className="max-w-[300px] py-4">
+                            <div
+                              className="line-clamp-2 text-xs leading-5"
+                              title={querySummary || t('appLogs.noQuery')}
+                            >
+                              {querySummary || t('appLogs.noQuery')}
+                            </div>
+                          </TableCell>
+                          <TableCell className="max-w-[340px] py-4">
+                            <div
+                              className="line-clamp-2 text-xs leading-5 text-muted-foreground"
+                              title={answerSummary || t('appLogs.noAnswerYet')}
+                            >
+                              {answerSummary || t('appLogs.noAnswerYet')}
+                            </div>
+                          </TableCell>
+                        </>
+                      ) : null}
                       <TableCell className="py-4">
                         <LogStatusBadge status={item.status} />
                       </TableCell>
@@ -517,8 +852,42 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                         {typeof item.created_at === 'number' ? formatDate(item.created_at) : '-'}
                       </TableCell>
                       <TableCell className="max-w-[260px] py-4">
-                        <div className="truncate" title={item.conversation_id ?? '-'}>
-                          {item.conversation_id ?? '-'}
+                        <div className="flex min-w-0 items-center gap-1">
+                          <div className="min-w-0 truncate" title={item.conversation_id ?? '-'}>
+                            {shortenID(item.conversation_id)}
+                          </div>
+                          {isAgentRuntime && item.conversation_id ? (
+                            <div className="flex opacity-0 transition-opacity group-hover:opacity-100">
+                              <Button
+                                type="button"
+                                size="xs"
+                                variant="ghost"
+                                isIcon
+                                aria-label={t('appLogs.filters.copyConversation')}
+                                title={t('appLogs.filters.copyConversation')}
+                                onClick={event => {
+                                  event.stopPropagation();
+                                  void handleCopyConversation(item.conversation_id);
+                                }}
+                              >
+                                <Copy className="size-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="xs"
+                                variant="ghost"
+                                isIcon
+                                aria-label={t('appLogs.filters.filterConversation')}
+                                title={t('appLogs.filters.filterConversation')}
+                                onClick={event => {
+                                  event.stopPropagation();
+                                  handleFilterByConversation(item.conversation_id);
+                                }}
+                              >
+                                <Filter className="size-3.5" />
+                              </Button>
+                            </div>
+                          ) : null}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -529,28 +898,40 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
           </div>
         </section>
 
-        <LogDetailDrawer
-          open={isDetailDrawerOpen}
-          onOpenChange={handleDetailOpenChange}
-          selectedLogId={selectedLogId}
-          effectiveRunId={effectiveRunId}
-          summary={effectiveSummary}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          detailLoading={detailLoading}
-          executionItems={executionItems}
-          result={result}
-          detailError={effectiveDetailError}
-          nodeExecutionsError={nodeExecutionsError}
-          isConversationWorkflow={isConversationWorkflow}
-          sortedMessages={sortedMessages}
-          isMessagesLoading={isMessagesLoading}
-          messagesError={messagesError}
-          selectedMessageRunId={selectedMessageRunId}
-          onInspectMessage={handleInspectMessage}
-          onBackToSelectedRun={handleBackToSelectedRun}
-          showDeepLinkedHint={Boolean(focusRunId && !selectedLog && fallbackSummary)}
-        />
+        {isAgentRuntime ? (
+          <AgentRuntimeLogDetailDrawer
+            open={isDetailDrawerOpen}
+            onOpenChange={handleDetailOpenChange}
+            selectedRun={selectedAgentRuntimeRun}
+            detail={agentRuntimeDetail}
+            steps={agentRuntimeSteps}
+            isLoading={agentRuntimeDetailLoading}
+            error={agentRuntimeDetailError}
+          />
+        ) : (
+          <LogDetailDrawer
+            open={isDetailDrawerOpen}
+            onOpenChange={handleDetailOpenChange}
+            selectedLogId={selectedLogId}
+            effectiveRunId={effectiveRunId}
+            summary={effectiveSummary}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            detailLoading={detailLoading}
+            executionItems={executionItems}
+            result={result}
+            detailError={effectiveDetailError}
+            nodeExecutionsError={nodeExecutionsError}
+            isConversationWorkflow={isConversationWorkflow}
+            sortedMessages={sortedMessages}
+            isMessagesLoading={isMessagesLoading}
+            messagesError={messagesError}
+            selectedMessageRunId={selectedMessageRunId}
+            onInspectMessage={handleInspectMessage}
+            onBackToSelectedRun={handleBackToSelectedRun}
+            showDeepLinkedHint={Boolean(focusRunId && !selectedLog && fallbackSummary)}
+          />
+        )}
       </div>
     </div>
   );

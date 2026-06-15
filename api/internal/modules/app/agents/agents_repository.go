@@ -17,15 +17,6 @@ type AgentsFilter struct {
 	Internal   *bool
 }
 
-// UserRoleInfo contains user role information for RBAC filtering
-type UserRoleInfo struct {
-	IsOrgAdmin        bool     // Whether user is organization admin
-	IsDeptAdmin       bool     // Whether user is department admin
-	OrganizationIDs   []string // Organization IDs user belongs to
-	DepartmentIDs     []string // Department IDs user belongs to
-	CurrentDepartment string   // User's current department (current=true)
-}
-
 type runnableWebAppItem struct {
 	AgentID       string  `gorm:"column:agent_id"`
 	WorkspaceID   string  `gorm:"column:workspace_id"`
@@ -47,9 +38,7 @@ type AgentsRepository interface {
 	Delete(ctx context.Context, id string, deletedBy string) error
 
 	GetByTenantID(ctx context.Context, tenantID string) ([]Agent, error)
-	GetPaginatedAgents(ctx context.Context, filter AgentsFilter, page, limit int) ([]Agent, int64, error)
 	GetPaginatedAgentsMultipleTenants(ctx context.Context, tenantIDs []string, filter AgentsFilter, page, limit int) ([]Agent, int64, error)
-	GetPaginatedAgentsWithRBAC(ctx context.Context, accountID string, roleInfo *UserRoleInfo, filter AgentsFilter, page, limit int) ([]Agent, int64, error)
 	GetPaginatedAgentsWithPermissions(ctx context.Context, accountID string, permissionContext *PermissionContext, filter AgentsFilter, page, limit int) ([]Agent, int64, error)
 
 	ExistsByName(ctx context.Context, tenantID, name string) (bool, error)
@@ -179,19 +168,25 @@ func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs
 		Where("agents.web_app_status = ?", AgentWebAppStatusActive).
 		Where("agents.tenant_id IN ?", workspaceIDs).
 		Where(`
-			EXISTS (
-				SELECT 1
-				FROM workflows
-				WHERE workflows.agent_id = agents.id
-				  AND workflows.version != ?
+			(
+				agents.agent_type = ?
+				AND EXISTS (
+					SELECT 1
+					FROM agent_published_versions
+					WHERE agent_published_versions.agent_id = agents.id
+					  AND agent_published_versions.deleted_at IS NULL
+				)
 			)
-			OR EXISTS (
-				SELECT 1
-				FROM agent_published_versions
-				WHERE agent_published_versions.agent_id = agents.id
-				  AND agent_published_versions.deleted_at IS NULL
+			OR (
+				agents.agent_type != ?
+				AND EXISTS (
+					SELECT 1
+					FROM workflows
+					WHERE workflows.agent_id = agents.id
+					  AND workflows.version != ?
+				)
 			)
-		`, "draft")
+		`, "AGENT", "AGENT", "draft")
 
 	if workspaceID != "" {
 		query = query.Where("agents.tenant_id = ?", workspaceID)
@@ -205,32 +200,6 @@ func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs
 	}
 
 	return items, nil
-}
-
-// GetPaginatedAgents retrieves paginated agents with filters
-func (r *agentsRepository) GetPaginatedAgents(ctx context.Context, filter AgentsFilter, page, limit int) ([]Agent, int64, error) {
-	var (
-		list  []Agent
-		total int64
-	)
-
-	query := r.db.WithContext(ctx).Model(&Agent{}).Where("deleted_at IS NULL")
-
-	// Apply filters
-	query = r.applyFilters(query, filter)
-
-	// Count
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to count agents: %w", err)
-	}
-
-	// Pagination and ordering
-	offset := (page - 1) * limit
-	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to get paginated agents: %w", err)
-	}
-
-	return list, total, nil
 }
 
 func (r *agentsRepository) GetPaginatedAgentsMultipleTenants(ctx context.Context, tenantIDs []string, filter AgentsFilter, page, limit int) ([]Agent, int64, error) {
@@ -260,32 +229,6 @@ func (r *agentsRepository) GetPaginatedAgentsMultipleTenants(ctx context.Context
 	}
 
 	return list, total, nil
-}
-
-// applyFilters applies filter conditions to the query
-func (r *agentsRepository) applyFilters(query *gorm.DB, filter AgentsFilter) *gorm.DB {
-	// Always filter out soft deleted records
-	query = query.Where("deleted_at IS NULL")
-
-	if filter.TenantID != "" {
-		query = query.Where("tenant_id = ?", filter.TenantID)
-	}
-	if filter.Name != "" {
-		query = query.Where("name ILIKE ?", "%"+filter.Name+"%")
-	}
-	if filter.Keyword != "" {
-		query = query.Where("(name ILIKE ? OR description ILIKE ?)", "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
-	}
-	if filter.AgentsType != "" {
-		query = query.Where("agent_type = ?", filter.AgentsType)
-	}
-	if filter.CreatedBy != "" {
-		query = query.Where("created_by = ?", filter.CreatedBy)
-	}
-	if filter.Internal != nil {
-		query = query.Where("internal = ?", *filter.Internal)
-	}
-	return query
 }
 
 func (r *agentsRepository) applyFiltersMultipleTenants(query *gorm.DB, filter AgentsFilter) *gorm.DB {
@@ -502,177 +445,6 @@ func (r *agentsRepository) HasPublishedWorkflow(ctx context.Context, agentID str
 	}
 
 	return false, nil
-}
-
-// GetPaginatedAgentsWithRBAC retrieves paginated agents with RBAC filtering based on user role
-// Requirement 9.4: Return 500 for database query failures with logging
-func (r *agentsRepository) GetPaginatedAgentsWithRBAC(
-	ctx context.Context,
-	accountID string,
-	roleInfo *UserRoleInfo,
-	filter AgentsFilter,
-	page, limit int,
-) ([]Agent, int64, error) {
-	var (
-		list  []Agent
-		total int64
-	)
-
-	// Build base query
-	query := r.db.WithContext(ctx).Model(&Agent{}).Where("deleted_at IS NULL")
-
-	// Apply RBAC filtering based on user role
-	if roleInfo.IsOrgAdmin {
-		// Organization Admin: can see all agents in all departments within their organizations
-		query = r.buildOrgAdminQuery(query, roleInfo)
-	} else if roleInfo.IsDeptAdmin {
-		// Department Admin: can see all agents in their departments + org-wide shared agents
-		query = r.buildDeptAdminQuery(query, accountID, roleInfo)
-	} else {
-		// Regular Member: apply permission-based filtering
-		query = r.buildRegularMemberQuery(query, accountID, roleInfo)
-	}
-
-	// Apply additional filters (name, agent_type, internal, etc.)
-	query = r.applyAdditionalFilters(query, filter)
-
-	// Count total - Requirement 9.4: Log database errors
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to count agents with RBAC for account %s: database error: %w", accountID, err)
-	}
-
-	// Pagination and ordering - Requirement 9.4: Log database errors
-	offset := (page - 1) * limit
-	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&list).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to get paginated agents with RBAC for account %s (page=%d, limit=%d): database error: %w", accountID, page, limit, err)
-	}
-
-	return list, total, nil
-}
-
-// buildOrgAdminQuery builds query for organization administrators
-// Organization admins can see all agents in all departments within their organizations
-func (r *agentsRepository) buildOrgAdminQuery(query *gorm.DB, roleInfo *UserRoleInfo) *gorm.DB {
-	if len(roleInfo.OrganizationIDs) == 0 {
-		// No organizations, return empty result
-		return query.Where("1 = 0")
-	}
-
-	// Get all tenant IDs that belong to user's organizations
-	query = query.Where("tenant_id IN (?)",
-		r.db.Table("workspaces").
-			Select("id").
-			Where("organization_id IN ?", roleInfo.OrganizationIDs),
-	)
-
-	return query
-}
-
-// buildDeptAdminQuery builds query for department administrators
-// Department admins can see:
-// 1. All agents in their departments (ignoring permission field)
-// 2. Agents with permission='all_group' from their organizations
-func (r *agentsRepository) buildDeptAdminQuery(query *gorm.DB, accountID string, roleInfo *UserRoleInfo) *gorm.DB {
-	// Use LEFT JOIN with agent_extensions to check permission for org-wide agents
-	query = query.Joins("LEFT JOIN agent_extensions ON agents.id = agent_extensions.agent_id")
-
-	// Build OR conditions
-	var conditions *gorm.DB
-
-	// Condition 1: All agents in user's departments (ignore permission field)
-	if len(roleInfo.DepartmentIDs) > 0 {
-		conditions = r.db.Where("agents.tenant_id IN ?", roleInfo.DepartmentIDs)
-	}
-
-	// Condition 2: Organization-wide shared agents (permission='all_group')
-	if len(roleInfo.OrganizationIDs) > 0 {
-		orgCondition := r.db.Where("agent_extensions.permission = ? AND agents.tenant_id IN (?)", "all_group",
-			r.db.Table("workspaces").
-				Select("id").
-				Where("organization_id IN ?", roleInfo.OrganizationIDs),
-		)
-
-		if conditions != nil {
-			conditions = conditions.Or(orgCondition)
-		} else {
-			conditions = orgCondition
-		}
-	}
-
-	// If no conditions were built, return empty result
-	if conditions == nil {
-		return query.Where("1 = 0")
-	}
-
-	query = query.Where(conditions)
-	return query
-}
-
-// buildRegularMemberQuery builds query for regular members
-// They can see:
-// 1. Agents created by themselves (regardless of permission)
-// 2. Agents with permission='all_team' in their departments
-// 3. Agents with permission='all_group' in their organizations
-func (r *agentsRepository) buildRegularMemberQuery(query *gorm.DB, accountID string, roleInfo *UserRoleInfo) *gorm.DB {
-	// Use LEFT JOIN with agent_extensions to check permission
-	query = query.Joins("LEFT JOIN agent_extensions ON agents.id = agent_extensions.agent_id")
-
-	// Build OR conditions
-	conditions := r.db.Where("agents.created_by = ?", accountID)
-
-	// Add department visible agents (all_team)
-	if len(roleInfo.DepartmentIDs) > 0 {
-		conditions = conditions.Or(
-			r.db.Where("agent_extensions.permission = ? AND agents.tenant_id IN ?", "all_team", roleInfo.DepartmentIDs),
-		)
-	}
-
-	// Add organization visible agents (all_group)
-	if len(roleInfo.OrganizationIDs) > 0 {
-		conditions = conditions.Or(
-			r.db.Where("agent_extensions.permission = ? AND agents.tenant_id IN (?)", "all_group",
-				r.db.Table("workspaces").
-					Select("id").
-					Where("organization_id IN ?", roleInfo.OrganizationIDs),
-			),
-		)
-	}
-
-	query = query.Where(conditions)
-
-	return query
-}
-
-// applyAdditionalFilters applies non-RBAC filters (name, keyword, agent_type, internal, is_created_by_me)
-// This method ensures filters work correctly with table aliases when using JOINs
-func (r *agentsRepository) applyAdditionalFilters(query *gorm.DB, filter AgentsFilter) *gorm.DB {
-	// Apply name filter using ILIKE for case-insensitive partial match
-	if filter.Name != "" {
-		query = query.Where("agents.name ILIKE ?", "%"+filter.Name+"%")
-	}
-
-	// Apply keyword filter to search in both name and description
-	if filter.Keyword != "" {
-		query = query.Where("(agents.name ILIKE ? OR agents.description ILIKE ?)", "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
-	}
-
-	// Apply agent_type filter using exact match
-	if filter.AgentsType != "" {
-		query = query.Where("agents.agent_type = ?", filter.AgentsType)
-	}
-
-	// Apply internal filter (true/false/nil)
-	if filter.Internal != nil {
-		query = query.Where("agents.internal = ?", *filter.Internal)
-	}
-
-	// Apply is_created_by_me filter when requested
-	// When CreatedBy is set, filter to show only agents created by this user
-	if filter.CreatedBy != "" {
-		query = query.Where("agents.created_by = ?", filter.CreatedBy)
-	}
-
-	return query
 }
 
 // normalizePaginationParams validates and normalizes pagination parameters

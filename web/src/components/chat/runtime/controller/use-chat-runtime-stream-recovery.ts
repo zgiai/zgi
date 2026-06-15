@@ -271,6 +271,34 @@ export function useChatRuntimeStreamRecovery({
                 eventAppliers.applyMemoryMutation(payload, eventId);
                 refreshAccountMemoryAfterMemoryMutation(payload);
               },
+              onWorkflowStarted: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyWorkflowStarted(payload, eventId);
+              },
+              onWorkflowNodeStarted: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyWorkflowNodeStarted(payload, eventId);
+              },
+              onWorkflowNodeFinished: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyWorkflowNodeFinished(payload, eventId);
+              },
+              onWorkflowPaused: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyWorkflowPaused(payload, eventId);
+              },
+              onWorkflowApprovalRequested: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyWorkflowApprovalRequested(payload, eventId);
+              },
+              onWorkflowFinished: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyWorkflowFinished(payload, eventId);
+              },
+              onWorkflowFailed: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyWorkflowFailed(payload, eventId);
+              },
               onMessageChunk: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyMessageChunk(payload, eventId);

@@ -5,6 +5,10 @@
 // Shared file extension categories used across upload filtering and UI
 export const IMAGE_EXTENSIONS: readonly string[] = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
 
+export function isImageExtension(extension: string | null | undefined): boolean {
+  return IMAGE_EXTENSIONS.includes((extension ?? '').trim().toLowerCase().replace(/^\./, ''));
+}
+
 export const ORIGINAL_PREVIEW_IMAGE_EXTENSIONS: readonly string[] = [
   'jpg',
   'jpeg',

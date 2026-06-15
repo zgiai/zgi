@@ -12,24 +12,33 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useRunnableWebApps } from '@/hooks/agent/use-runnable-webapps';
 import { useT } from '@/i18n/translations';
 import { ICON_BG } from '@/lib/config';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 
 const RECENT_WEBAPP_STORAGE_KEY = 'zgi:webapp:recent';
 
 export default function ConsoleWorkAppHomePage() {
   const t = useT('webapp');
-  const { items, isLoading } = useRunnableWebApps();
+  const currentWorkspace = useCurrentWorkspace();
+  const workspaceId = currentWorkspace?.id ?? null;
+  const recentStorageKey = workspaceId
+    ? `${RECENT_WEBAPP_STORAGE_KEY}:${workspaceId}`
+    : RECENT_WEBAPP_STORAGE_KEY;
+  const { items, isLoading } = useRunnableWebApps({
+    workspaceId,
+    enabled: !!workspaceId,
+  });
   const [search, setSearch] = useState('');
   const [recentIds, setRecentIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const raw = window.localStorage.getItem(RECENT_WEBAPP_STORAGE_KEY);
+      const raw = window.localStorage.getItem(recentStorageKey);
       setRecentIds(raw ? (JSON.parse(raw) as string[]) : []);
     } catch {
       setRecentIds([]);
     }
-  }, []);
+  }, [recentStorageKey]);
 
   const cards = useMemo(
     () =>

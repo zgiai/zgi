@@ -146,7 +146,10 @@ func TestKnowledgeResourcesAndContextBuildsSourceMarkedBlocks(t *testing.T) {
 		},
 	}}
 
-	resources, contextText, blocks := knowledgeResourcesAndContext(records, "\n\n", 12000)
+	resources, contextText, blocks, err := knowledgeResourcesAndContext(records, "\n\n", 12000, "https://api.example.test")
+	if err != nil {
+		t.Fatalf("knowledgeResourcesAndContext() error = %v", err)
+	}
 	if len(resources) != 1 || len(blocks) != 1 {
 		t.Fatalf("resources=%d blocks=%d, want 1 each", len(resources), len(blocks))
 	}
@@ -161,6 +164,38 @@ func TestKnowledgeResourcesAndContextBuildsSourceMarkedBlocks(t *testing.T) {
 	}
 	if !strings.Contains(contextText, "Score: 0.9100") {
 		t.Fatalf("context missing score: %q", contextText)
+	}
+}
+
+func TestKnowledgeResourcesAndContextNormalizesImageURLs(t *testing.T) {
+	records := []scoredKnowledgeRecord{{
+		DatasetID:   "dataset-1",
+		DatasetName: "Herbs",
+		Record: dto.HitTestingRecordResponse{
+			Score: 0.91,
+			Segment: dto.SegmentResponse{
+				ID:         "segment-1",
+				DocumentID: "document-1",
+				Content:    "黄芪图：![figure](images/huangqi.png)",
+				Document: dto.HitTestingDocumentResponse{
+					ID:   "document-1",
+					Name: "黄芪",
+				},
+			},
+		},
+	}}
+
+	resources, contextText, _, err := knowledgeResourcesAndContext(records, "\n\n", 12000, "https://api.lingyoungai.com")
+	if err != nil {
+		t.Fatalf("knowledgeResourcesAndContext() error = %v", err)
+	}
+
+	want := "https://api.lingyoungai.com/images/huangqi.png"
+	if !strings.Contains(resources[0].Content, want) {
+		t.Fatalf("resource content missing normalized URL: %q", resources[0].Content)
+	}
+	if !strings.Contains(contextText, want) {
+		t.Fatalf("context missing normalized URL: %q", contextText)
 	}
 }
 

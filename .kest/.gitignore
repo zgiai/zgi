@@ -1,0 +1,6 @@
+# Kest
+logs/
+reports/
+*.log
+*.db
+.env

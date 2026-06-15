@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ type ConversationRepository interface {
 	Create(ctx context.Context, conversation *runtimemodel.Conversation) error
 	GetScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*runtimemodel.Conversation, error)
 	GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID) (*runtimemodel.Conversation, error)
+	GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Conversation, error)
 	GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 	ListScoped(ctx context.Context, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
@@ -26,6 +28,8 @@ type ConversationRepository interface {
 	StartStreaming(ctx context.Context, id, organizationID, accountID, messageID uuid.UUID) error
 	ClearActiveMessage(ctx context.Context, id, messageID uuid.UUID) error
 	FinishActiveMessage(ctx context.Context, id, messageID uuid.UUID) error
+	FinishWaitingApprovalMessage(ctx context.Context, id, messageID uuid.UUID) error
+	FinishContinuationMessage(ctx context.Context, id, messageID uuid.UUID) error
 	ClearActiveMessages(ctx context.Context, messageIDs []uuid.UUID) error
 	CompleteRootReplacement(ctx context.Context, id, messageID uuid.UUID) error
 	UpdateAfterMessage(ctx context.Context, id uuid.UUID, leafMessageID uuid.UUID) error
@@ -38,11 +42,17 @@ type MessageRepository interface {
 	GetBySourceMessage(ctx context.Context, sourceMessageID uuid.UUID) (*runtimemodel.Message, error)
 	ListByConversationScoped(ctx context.Context, conversationID, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Message, int64, error)
 	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Message, int64, error)
+	ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, limit, offset int) ([]*runtimemodel.Message, int64, error)
+	ListByCallerLogFilterScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error)
+	ListByCallerRuntimeLogScoped(ctx context.Context, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error)
+	GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Message, error)
 	ListBranch(ctx context.Context, leafID uuid.UUID, maxDepth int) ([]*runtimemodel.Message, error)
 	CountByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error)
 	ReplaceRootForStreaming(ctx context.Context, message *runtimemodel.Message) error
 	UpdateCompleted(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
+	UpdateWaitingApproval(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
+	UpdateWaitingQuestion(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateError(ctx context.Context, id uuid.UUID, message string) error
 	MarkStopped(ctx context.Context, id uuid.UUID) error
 	UpdateStoppedAnswer(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
@@ -159,6 +169,19 @@ func (r *conversationRepository) GetByCallerScoped(ctx context.Context, id, orga
 	return &conversation, nil
 }
 
+func (r *conversationRepository) GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Conversation, error) {
+	var conversation runtimemodel.Conversation
+	query := applyRuntimeLogSourceFilter(applyCallerFilter(r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ? AND deleted_at IS NULL", id, organizationID), callerType, callerID), accountID, source, "")
+	if workspaceID != nil && *workspaceID != uuid.Nil {
+		query = query.Where("workspace_id = ?", *workspaceID)
+	}
+	if err := query.Take(&conversation).Error; err != nil {
+		return nil, wrapNotFound(err, "chat runtime conversation")
+	}
+	return &conversation, nil
+}
+
 func (r *conversationRepository) GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error) {
 	var conversation runtimemodel.Conversation
 	err := r.db.WithContext(ctx).
@@ -207,6 +230,44 @@ func applyCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID) *
 		return query.Where("caller_id = ?", *callerID)
 	}
 	return query.Where("caller_id IS NULL")
+}
+
+func applyRuntimeLogCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID, alias string) *gorm.DB {
+	if callerType == "" {
+		callerType = runtimemodel.ConversationCallerAIChat
+	}
+	callerTypeColumn := qualifiedColumn(alias, "caller_type")
+	callerIDColumn := qualifiedColumn(alias, "caller_id")
+	query = query.Where(callerTypeColumn+" = ?", callerType)
+	if callerID != nil && *callerID != uuid.Nil {
+		return query.Where(callerIDColumn+" = ?", *callerID)
+	}
+	return query.Where(callerIDColumn + " IS NULL")
+}
+
+func applyRuntimeLogSourceFilter(query *gorm.DB, accountID uuid.UUID, source string, alias string) *gorm.DB {
+	sourceColumn := qualifiedColumn(alias, "source")
+	sourceWebAppIDColumn := qualifiedColumn(alias, "source_web_app_id")
+	accountIDColumn := qualifiedColumn(alias, "account_id")
+	switch strings.TrimSpace(source) {
+	case runtimemodel.ConversationSourceWebApp:
+		return query.Where(sourceColumn+" = ? AND "+sourceWebAppIDColumn+" IS NOT NULL", runtimemodel.ConversationSourceWebApp)
+	case runtimemodel.ConversationSourceExternalAPI:
+		return query.Where(sourceColumn+" = ?", runtimemodel.ConversationSourceExternalAPI)
+	case runtimemodel.ConversationSourceConsole:
+		return query.Where(sourceColumn+" = ? AND "+accountIDColumn+" = ?", runtimemodel.ConversationSourceConsole, accountID)
+	case "":
+		return query.Where(accountIDColumn+" = ?", accountID)
+	default:
+		return query.Where(sourceColumn+" = ? AND "+accountIDColumn+" = ?", source, accountID)
+	}
+}
+
+func qualifiedColumn(alias string, column string) string {
+	if strings.TrimSpace(alias) == "" {
+		return column
+	}
+	return alias + "." + column
 }
 
 func (r *conversationRepository) UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error {
@@ -304,6 +365,43 @@ func (r *conversationRepository) FinishActiveMessage(ctx context.Context, id, me
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to finish aichat conversation active message: %w", result.Error)
+	}
+	return nil
+}
+
+func (r *conversationRepository) FinishWaitingApprovalMessage(ctx context.Context, id, messageID uuid.UUID) error {
+	result := r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("id = ? AND active_message_id = ? AND deleted_at IS NULL", id, messageID).
+		UpdateColumns(map[string]interface{}{
+			"current_leaf_message_id": messageID,
+			"runtime_status":          runtimemodel.ConversationRuntimeStatusIdle,
+			"active_message_id":       nil,
+			"dialogue_count":          gorm.Expr("dialogue_count + 1"),
+			"updated_at":              time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to finish waiting approval aichat message: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *conversationRepository) FinishContinuationMessage(ctx context.Context, id, messageID uuid.UUID) error {
+	result := r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("id = ? AND active_message_id = ? AND deleted_at IS NULL", id, messageID).
+		UpdateColumns(map[string]interface{}{
+			"current_leaf_message_id": messageID,
+			"runtime_status":          runtimemodel.ConversationRuntimeStatusIdle,
+			"active_message_id":       nil,
+			"updated_at":              time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to finish aichat continuation message: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
 	}
 	return nil
 }
@@ -441,6 +539,21 @@ func (r *messageRepository) GetScoped(ctx context.Context, id, organizationID, a
 	return &message, nil
 }
 
+func (r *messageRepository) GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Message, error) {
+	var message runtimemodel.Message
+	query := applyRuntimeLogSourceFilter(applyRuntimeLogCallerFilter(r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
+		Select("m.*").
+		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
+		Where("m.id = ? AND c.organization_id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL", id, organizationID), callerType, callerID, "c"), accountID, source, "c")
+	if workspaceID != nil && *workspaceID != uuid.Nil {
+		query = query.Where("c.workspace_id = ?", *workspaceID)
+	}
+	if err := query.Take(&message).Error; err != nil {
+		return nil, wrapNotFound(err, "aichat message")
+	}
+	return &message, nil
+}
+
 func (r *messageRepository) GetBySourceMessage(ctx context.Context, sourceMessageID uuid.UUID) (*runtimemodel.Message, error) {
 	var message runtimemodel.Message
 	err := r.db.WithContext(ctx).
@@ -478,6 +591,81 @@ func (r *messageRepository) ListByCallerScoped(ctx context.Context, organization
 	}
 	if err := query.Select("m.*").Order("m.created_at DESC, m.updated_at DESC").Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to list chat runtime messages: %w", err)
+	}
+	return messages, total, nil
+}
+
+func (r *messageRepository) ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, limit, offset int) ([]*runtimemodel.Message, int64, error) {
+	var messages []*runtimemodel.Message
+	var total int64
+	query := applyCallerFilter(r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
+		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
+		Where("c.organization_id = ? AND c.account_id = ? AND c.source = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL", organizationID, accountID, source), callerType, callerID)
+	if source == runtimemodel.ConversationSourceWebApp {
+		query = query.Where("c.source_web_app_id IS NOT NULL")
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count chat runtime messages by source: %w", err)
+	}
+	if err := query.Select("m.*").Order("m.created_at DESC, m.updated_at DESC").Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to list chat runtime messages by source: %w", err)
+	}
+	return messages, total, nil
+}
+
+func (r *messageRepository) ListByCallerLogFilterScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error) {
+	var messages []*runtimemodel.Message
+	var total int64
+	query := applyCallerFilter(r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
+		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
+		Where("c.organization_id = ? AND c.account_id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL", organizationID, accountID), callerType, callerID)
+
+	switch strings.TrimSpace(source) {
+	case runtimemodel.ConversationSourceWebApp:
+		query = query.Where("c.source = ? AND c.source_web_app_id IS NOT NULL", runtimemodel.ConversationSourceWebApp)
+	case runtimemodel.ConversationSourceConsole:
+		query = query.Where("c.source = ?", runtimemodel.ConversationSourceConsole)
+	case "":
+	default:
+		query = query.Where("c.source = ?", source)
+	}
+	if conversationID != nil && *conversationID != uuid.Nil {
+		query = query.Where("m.conversation_id = ?", *conversationID)
+	}
+	if keyword := strings.TrimSpace(queryText); keyword != "" {
+		pattern := "%" + strings.ToLower(keyword) + "%"
+		query = query.Where("(LOWER(COALESCE(m.query, '')) LIKE ? OR LOWER(COALESCE(m.answer, '')) LIKE ?)", pattern, pattern)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count chat runtime messages by log filters: %w", err)
+	}
+	if err := query.Select("m.*").Order("m.created_at DESC, m.updated_at DESC").Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to list chat runtime messages by log filters: %w", err)
+	}
+	return messages, total, nil
+}
+
+func (r *messageRepository) ListByCallerRuntimeLogScoped(ctx context.Context, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error) {
+	var messages []*runtimemodel.Message
+	var total int64
+	query := applyRuntimeLogSourceFilter(applyRuntimeLogCallerFilter(r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
+		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
+		Where("c.organization_id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL", organizationID), callerType, callerID, "c"), accountID, source, "c")
+	if workspaceID != nil && *workspaceID != uuid.Nil {
+		query = query.Where("c.workspace_id = ?", *workspaceID)
+	}
+	if conversationID != nil && *conversationID != uuid.Nil {
+		query = query.Where("m.conversation_id = ?", *conversationID)
+	}
+	if keyword := strings.TrimSpace(queryText); keyword != "" {
+		pattern := "%" + strings.ToLower(keyword) + "%"
+		query = query.Where("(LOWER(COALESCE(m.query, '')) LIKE ? OR LOWER(COALESCE(m.answer, '')) LIKE ?)", pattern, pattern)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count chat runtime messages by runtime log filters: %w", err)
+	}
+	if err := query.Select("m.*").Order("m.created_at DESC, m.updated_at DESC").Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to list chat runtime messages by runtime log filters: %w", err)
 	}
 	return messages, total, nil
 }
@@ -576,7 +764,7 @@ func (r *messageRepository) UpdateCompleted(ctx context.Context, id uuid.UUID, a
 		return fmt.Errorf("failed to marshal aichat message metadata: %w", err)
 	}
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, completableMessageStatuses()).
 		Updates(map[string]interface{}{
 			"answer":     answer,
 			"status":     runtimemodel.MessageStatusCompleted,
@@ -602,13 +790,63 @@ func (r *messageRepository) UpdateMetadata(ctx context.Context, id uuid.UUID, me
 		return fmt.Errorf("failed to marshal aichat message metadata: %w", err)
 	}
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, mutableMessageStatuses()).
 		Updates(map[string]interface{}{
 			"metadata":   datatypes.JSON(metadataJSON),
 			"updated_at": time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to update aichat message metadata: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *messageRepository) UpdateWaitingApproval(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal waiting approval aichat message metadata: %w", err)
+	}
+	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+		Updates(map[string]interface{}{
+			"status":     runtimemodel.MessageStatusWaitingApproval,
+			"error":      nil,
+			"metadata":   datatypes.JSON(metadataJSON),
+			"updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to mark aichat message waiting approval: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *messageRepository) UpdateWaitingQuestion(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal waiting question aichat message metadata: %w", err)
+	}
+	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+		Updates(map[string]interface{}{
+			"status":     runtimemodel.MessageStatusWaitingQuestion,
+			"error":      nil,
+			"metadata":   datatypes.JSON(metadataJSON),
+			"updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to mark aichat message waiting question: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
@@ -659,7 +897,7 @@ func (r *messageRepository) UpdateStoppedAnswer(ctx context.Context, id uuid.UUI
 		return fmt.Errorf("failed to marshal stopped aichat metadata: %w", err)
 	}
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, append(activeMessageStatuses(), runtimemodel.MessageStatusStopped)).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, append(mutableMessageStatuses(), runtimemodel.MessageStatusStopped)).
 		Updates(map[string]interface{}{
 			"answer":     answer,
 			"status":     runtimemodel.MessageStatusStopped,
@@ -774,6 +1012,14 @@ func (r *accessRepository) GetCurrentWorkspaceID(ctx context.Context, accountID 
 
 func activeMessageStatuses() []string {
 	return []string{runtimemodel.MessageStatusPending, runtimemodel.MessageStatusStreaming}
+}
+
+func mutableMessageStatuses() []string {
+	return []string{runtimemodel.MessageStatusPending, runtimemodel.MessageStatusStreaming, runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion}
+}
+
+func completableMessageStatuses() []string {
+	return mutableMessageStatuses()
 }
 
 func wrapNotFound(err error, name string) error {

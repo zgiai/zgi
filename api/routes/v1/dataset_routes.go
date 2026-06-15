@@ -111,7 +111,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	graphFlowTaskRepoObj := graphflow_repo.NewGraphFlowTaskRepository(deps.DB)
 
 	datasetServiceObj := datasetService.NewDatasetService(datasetRepoObj, documentRepoObj, chunkRepoObj, deps.WorkspaceManagementService, fileServiceObj, embeddingService, vectorClient, deps.DefaultModelService, storageInstance, deps.DB, deps.QuotaService, deps.OrganizationService, deps.LLMClient, taskManager)
-	documentServiceObj := datasetService.NewDocumentService(documentRepoObj, datasetRepoObj, deps.WorkspaceManagementService, indexingServiceObj, fileServiceObj, taskManager, graphFlowTaskRepoObj)
+	documentServiceObj := datasetService.NewDocumentService(documentRepoObj, datasetRepoObj, deps.WorkspaceManagementService, indexingServiceObj, fileServiceObj, vectorClient, taskManager, graphFlowTaskRepoObj)
 
 	datasetQueryServiceObj := datasetService.NewDatasetQueryService(datasetQueryRepoObj, datasetServiceObj)
 

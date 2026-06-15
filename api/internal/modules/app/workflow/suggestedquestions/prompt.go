@@ -9,6 +9,7 @@ import (
 type userPromptTemplateData struct {
 	LanguageInstruction string
 	Count               int
+	ApplicationKind     string
 	WorkflowContextJSON string
 }
 
@@ -38,6 +39,18 @@ func buildUserPrompt(ctx WorkflowContext, count int) (string, error) {
 	return tmpl.Render(userPromptTemplateData{
 		LanguageInstruction: languageInstruction,
 		Count:               count,
+		ApplicationKind:     applicationKind(ctx.WorkflowType),
 		WorkflowContextJSON: string(payload),
 	})
+}
+
+func applicationKind(workflowType string) string {
+	switch workflowType {
+	case "AGENT":
+		return "agent web app"
+	case "WORKFLOW", "CONVERSATIONAL_WORKFLOW":
+		return "workflow web app"
+	default:
+		return "AI app"
+	}
 }

@@ -216,6 +216,7 @@ type CodeExecConfig struct {
 	ArtifactTimeoutSeconds       int    `json:"artifact_timeout_seconds"`
 	CleanupTimeoutSeconds        int    `json:"cleanup_timeout_seconds"`
 	EnableNetwork                bool   `json:"enable_network"`
+	SystemOfficeProfile          string `json:"system_office_profile"`
 	MaxNumber                    int64  `json:"max_number"`
 	MinNumber                    int64  `json:"min_number"`
 	MaxStringLength              int    `json:"max_string_length"`

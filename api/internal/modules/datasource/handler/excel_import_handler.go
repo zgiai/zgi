@@ -77,6 +77,40 @@ func (h *DataSourceHandler) ConfirmExcelImport(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *DataSourceHandler) RecognizeExcelImportFields(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+	dataSourceID := c.Param("id")
+	jobID := c.Param("job_id")
+	if dataSourceID == "" || jobID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source id and job id are required")
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.RecognizeExcelImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseManage) {
+		return
+	}
+
+	result, err := h.service.RecognizeExcelImportFields(c.Request.Context(), organizationID, dataSourceID, accountID, jobID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *DataSourceHandler) GetExcelImportJob(c *gin.Context) {
 	organizationID := util.GetOrganizationIDCompat(c)
 	if organizationID == "" {

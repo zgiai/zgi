@@ -159,12 +159,59 @@ type IngestFileToTableRequest struct {
 	Model   *ModelSpec `json:"model,omitempty"`
 }
 
+// ParseFileForTableIngestRequest defines the request for parsing file content
+// before table field recognition.
+type ParseFileForTableIngestRequest struct {
+	FileID  string `json:"file_id" binding:"required"`
+	TableID string `json:"table_id" binding:"required"`
+}
+
+// ParseFileForTableIngestResponse defines the file parsing stage response.
+type ParseFileForTableIngestResponse struct {
+	FileID     string                    `json:"file_id,omitempty"`
+	FileName   string                    `json:"file_name,omitempty"`
+	Message    string                    `json:"message"`
+	Content    string                    `json:"content,omitempty"`
+	Extraction *FileIngestExtractionInfo `json:"extraction,omitempty"`
+	Stage      string                    `json:"stage,omitempty"`
+	Error      *string                   `json:"error,omitempty"`
+}
+
+// ExtractTextToTableRecordsRequest defines the request for recognizing table
+// records from already parsed text content.
+type ExtractTextToTableRecordsRequest struct {
+	FileID      string     `json:"file_id,omitempty"`
+	TableID     string     `json:"table_id" binding:"required"`
+	Content     string     `json:"content"`
+	ContentHash string     `json:"content_hash,omitempty"`
+	Prompt      *string    `json:"prompt,omitempty"`
+	Model       *ModelSpec `json:"model,omitempty"`
+}
+
+// ExtractTextToTableRecordsResponse defines the text recognition stage response.
+type ExtractTextToTableRecordsResponse struct {
+	FileID          string                     `json:"file_id,omitempty"`
+	Records         []map[string]interface{}   `json:"records"`
+	Columns         []TableColumn              `json:"columns"`
+	Message         string                     `json:"message"`
+	FieldExtraction *FileIngestFieldExtraction `json:"field_extraction,omitempty"`
+	ContentHash     string                     `json:"content_hash,omitempty"`
+	Stage           string                     `json:"stage,omitempty"`
+	Error           *string                    `json:"error,omitempty"`
+}
+
 // IngestFileToTableResponse defines the response for ingesting file to table
 type IngestFileToTableResponse struct {
-	Records []map[string]interface{} `json:"records"`
-	Columns []TableColumn            `json:"columns"`
-	Message string                   `json:"message"`
-	Content string                   `json:"content,omitempty"`
+	FileID          string                     `json:"file_id,omitempty"`
+	FileName        string                     `json:"file_name,omitempty"`
+	Records         []map[string]interface{}   `json:"records"`
+	Columns         []TableColumn              `json:"columns"`
+	Message         string                     `json:"message"`
+	Content         string                     `json:"content,omitempty"`
+	Extraction      *FileIngestExtractionInfo  `json:"extraction,omitempty"`
+	FieldExtraction *FileIngestFieldExtraction `json:"field_extraction,omitempty"`
+	Stage           string                     `json:"stage,omitempty"`
+	Error           *string                    `json:"error,omitempty"`
 }
 
 // BatchIngestFileToTableRequest defines the request for ingesting multiple files content into a table
@@ -177,19 +224,69 @@ type BatchIngestFileToTableRequest struct {
 
 // BatchIngestFileToTableResponse defines the response for ingesting multiple files to table
 type BatchIngestFileToTableResponse struct {
-	Results map[string]FileIngestResult `json:"results"`
-	Columns []TableColumn               `json:"columns"`
-	Message string                      `json:"message"`
+	Results      map[string]FileIngestResult `json:"results"`
+	Columns      []TableColumn               `json:"columns"`
+	Message      string                      `json:"message"`
+	TotalCount   int                         `json:"total_count"`
+	SuccessCount int                         `json:"success_count"`
+	FailedCount  int                         `json:"failed_count"`
 }
 
 // FileIngestResult represents the result of ingesting a single file
 type FileIngestResult struct {
-	FileID   string                   `json:"file_id"`
-	FileName string                   `json:"file_name"`
-	Records  []map[string]interface{} `json:"records"`
-	Message  string                   `json:"message"`
-	Content  string                   `json:"content,omitempty"`
-	Error    *string                  `json:"error,omitempty"`
+	FileID          string                     `json:"file_id"`
+	FileName        string                     `json:"file_name"`
+	Records         []map[string]interface{}   `json:"records"`
+	Message         string                     `json:"message"`
+	Content         string                     `json:"content,omitempty"`
+	Extraction      *FileIngestExtractionInfo  `json:"extraction,omitempty"`
+	FieldExtraction *FileIngestFieldExtraction `json:"field_extraction,omitempty"`
+	Stage           string                     `json:"stage,omitempty"`
+	Error           *string                    `json:"error,omitempty"`
+}
+
+// FileIngestExtractionInfo describes the parser path used before field extraction.
+type FileIngestExtractionInfo struct {
+	PrimaryStrategy string              `json:"primary_strategy,omitempty"`
+	ActualStrategy  string              `json:"actual_strategy,omitempty"`
+	FallbackReason  string              `json:"fallback_reason,omitempty"`
+	SourceType      string              `json:"source_type,omitempty"`
+	ContentHash     string              `json:"content_hash,omitempty"`
+	Attempts        []FileIngestAttempt `json:"attempts,omitempty"`
+}
+
+// FileIngestAttempt describes one user-visible extraction attempt in a file ingest run.
+type FileIngestAttempt struct {
+	Method      string `json:"method"`
+	Status      string `json:"status"`
+	Result      string `json:"result,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	DurationMS  int64  `json:"duration_ms,omitempty"`
+	RecordCount int    `json:"record_count,omitempty"`
+}
+
+// FileIngestFieldExtraction contains schema-aware field matches produced after
+// file parsing. It is additive to Records so existing ingest clients can keep
+// using table field names while review UIs can inspect evidence and confidence.
+type FileIngestFieldExtraction struct {
+	Records []FileIngestRecordExtraction `json:"records,omitempty"`
+}
+
+type FileIngestRecordExtraction struct {
+	Fields []FileIngestFieldMatch `json:"fields,omitempty"`
+}
+
+type FileIngestFieldMatch struct {
+	ColumnID            string      `json:"column_id"`
+	ColumnName          string      `json:"column_name,omitempty"`
+	Value               interface{} `json:"value,omitempty"`
+	RawValue            interface{} `json:"raw_value,omitempty"`
+	NormalizedValue     interface{} `json:"normalized_value,omitempty"`
+	NormalizationStatus string      `json:"normalization_status,omitempty"`
+	NormalizationReason string      `json:"normalization_reason,omitempty"`
+	Evidence            string      `json:"evidence,omitempty"`
+	Confidence          *float64    `json:"confidence,omitempty"`
+	Reason              string      `json:"reason,omitempty"`
 }
 
 // DataSourceResponse represents data source response DTO
@@ -308,6 +405,73 @@ type SQLOperationFilter struct {
 	CreatedAtLTE  *time.Time
 }
 
+type SQLAuditFilter struct {
+	DataSourceID  *string
+	TableID       *string
+	ClientType    *string
+	WorkflowRunID *string
+	NodeID        *string
+	CreatedBy     *string
+	OperationType *string
+	Status        *string
+	StartTime     *time.Time
+	EndTime       *time.Time
+}
+
+type ListSQLAuditRequest struct {
+	Page          int        `form:"page" binding:"omitempty,min=1"`
+	Limit         int        `form:"limit" binding:"omitempty,min=1,max=100"`
+	DataSourceID  *string    `form:"data_source_id"`
+	TableID       *string    `form:"table_id"`
+	ClientType    *string    `form:"client_type"`
+	WorkflowRunID *string    `form:"workflow_run_id"`
+	NodeID        *string    `form:"node_id"`
+	CreatedBy     *string    `form:"created_by"`
+	OperationType *string    `form:"operation_type"`
+	Status        *string    `form:"status"`
+	StartTime     *time.Time `form:"start_time"`
+	EndTime       *time.Time `form:"end_time"`
+}
+
+type SQLAuditListItem struct {
+	ID             string     `json:"id"`
+	OrganizationID string     `json:"organization_id"`
+	WorkspaceID    *string    `json:"workspace_id"`
+	DataSourceID   string     `json:"data_source_id"`
+	DataSourceName *string    `json:"data_source_name"`
+	TableID        *string    `json:"table_id"`
+	TableName      *string    `json:"table_name"`
+	ClientType     string     `json:"client_type"`
+	WorkflowRunID  *string    `json:"workflow_run_id,omitempty"`
+	NodeID         *string    `json:"node_id,omitempty"`
+	OperationType  string     `json:"operation_type"`
+	Status         string     `json:"status"`
+	RowCount       *int64     `json:"row_count"`
+	DurationMS     *int64     `json:"duration_ms"`
+	CreatedBy      string     `json:"created_by"`
+	ExecutedAt     *time.Time `json:"executed_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+type SQLAuditDetailResponse struct {
+	SQLAuditListItem
+	SQLStatement string          `json:"sql_statement"`
+	ParamsJSON   json.RawMessage `json:"params_json,omitempty"`
+	ErrorCode    *string         `json:"error_code,omitempty"`
+	ErrorMessage *string         `json:"error_message,omitempty"`
+	RequestID    *string         `json:"request_id,omitempty"`
+	StartTime    time.Time       `json:"start_time"`
+	EndTime      time.Time       `json:"end_time"`
+}
+
+type ListSQLAuditResponse struct {
+	Data    []SQLAuditListItem `json:"data"`
+	HasMore bool               `json:"has_more"`
+	Limit   int                `json:"limit"`
+	Total   int64              `json:"total"`
+	Page    int                `json:"page"`
+}
+
 // ListSQLOperationsByDataSourceIDResponse represents the response for listing SQL operations by data source ID
 type ListSQLOperationsByDataSourceIDResponse struct {
 	Data    []SQLOperationResponse `json:"data"`
@@ -333,6 +497,41 @@ func ConvertSQLOperationModelToResponse(op *model.DataSourceSQLOperation) *SQLOp
 		Status:         op.Status,
 		CreatedBy:      op.CreatedBy,
 		CreatedAt:      op.CreatedAt,
+	}
+}
+
+func ConvertSQLOperationModelToAuditListItem(op *model.DataSourceSQLOperation) SQLAuditListItem {
+	return SQLAuditListItem{
+		ID:             op.ID,
+		OrganizationID: op.OrganizationID,
+		WorkspaceID:    op.WorkspaceID,
+		DataSourceID:   op.DataSourceID,
+		DataSourceName: op.DataSourceName,
+		TableID:        op.TableID,
+		TableName:      op.TableName,
+		ClientType:     op.ClientType,
+		WorkflowRunID:  op.WorkflowRunID,
+		NodeID:         op.NodeID,
+		OperationType:  op.OperationType,
+		Status:         op.Status,
+		RowCount:       op.RowCount,
+		DurationMS:     op.DurationMS,
+		CreatedBy:      op.CreatedBy,
+		ExecutedAt:     op.ExecutedAt,
+		CreatedAt:      op.CreatedAt,
+	}
+}
+
+func ConvertSQLOperationModelToAuditDetail(op *model.DataSourceSQLOperation) SQLAuditDetailResponse {
+	return SQLAuditDetailResponse{
+		SQLAuditListItem: ConvertSQLOperationModelToAuditListItem(op),
+		SQLStatement:     op.SqlStatement,
+		ParamsJSON:       json.RawMessage(op.ParamsJSON),
+		ErrorCode:        op.ErrorCode,
+		ErrorMessage:     op.ErrorMessage,
+		RequestID:        op.RequestID,
+		StartTime:        op.StartTime,
+		EndTime:          op.EndTime,
 	}
 }
 

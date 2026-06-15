@@ -28,6 +28,9 @@ import type {
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
   AIChatStopConversationResponseData,
+  AIChatWorkflowEventData,
+  AIChatWorkflowNodeEventData,
+  AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
@@ -97,12 +100,28 @@ export interface AIChatStreamCallbacks {
     eventId?: string | null
   ) => void;
   onMemoryMutation: (payload: AIChatMemoryMutationEventData, eventId?: string | null) => void;
+  onWorkflowStarted?: (payload: AIChatWorkflowEventData, eventId?: string | null) => void;
+  onWorkflowNodeStarted?: (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => void;
+  onWorkflowNodeFinished?: (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => void;
+  onWorkflowPaused?: (payload: AIChatWorkflowPausedEventData, eventId?: string | null) => void;
+  onWorkflowApprovalRequested?: (
+    payload: AIChatWorkflowPausedEventData,
+    eventId?: string | null
+  ) => void;
+  onWorkflowFinished?: (payload: AIChatWorkflowEventData, eventId?: string | null) => void;
+  onWorkflowFailed?: (payload: AIChatWorkflowEventData, eventId?: string | null) => void;
   onMessageChunk: (payload: AIChatMessageChunkEventData, eventId?: string | null) => void;
   onMessageRetract: (payload: AIChatMessageRetractEventData, eventId?: string | null) => void;
   onMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
   onErrorEvent: (payload: AIChatErrorEventData, eventId?: string | null) => void;
   onRequestError: (error: Error) => void;
   onClose: () => void;
+}
+
+export interface AIChatWorkflowApprovalContinuationPayload {
+  approvalToken: string;
+  inputs: Record<string, unknown>;
+  action: string;
 }
 
 export interface AIChatRuntimeTransport {
@@ -137,6 +156,20 @@ export interface AIChatRuntimeTransport {
   recoverConversationStream(
     conversationId: string,
     params: { messageId: string; afterId?: string },
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
+  continueWorkflowApproval?(
+    conversationId: string,
+    messageId: string,
+    payload: AIChatWorkflowApprovalContinuationPayload | undefined,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
+  continueWorkflowQuestion?(
+    conversationId: string,
+    messageId: string,
+    payload: { inputs: { query: string; question_answer_option_id?: string } },
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;
@@ -199,6 +232,106 @@ export function dispatchAIChatStreamEvent(
     case 'memory_delete':
     case 'memory_clear':
       callbacks.onMemoryMutation((data ?? {}) as AIChatMemoryMutationEventData, eventId);
+      break;
+    case 'workflow_started':
+      callbacks.onWorkflowStarted?.((data ?? {}) as AIChatWorkflowEventData, eventId);
+      break;
+    case 'node_started':
+      callbacks.onWorkflowNodeStarted?.(
+        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        eventId
+      );
+      break;
+    case 'node_finished':
+      callbacks.onWorkflowNodeFinished?.(
+        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        eventId
+      );
+      break;
+    case 'iteration_started':
+    case 'iteration_next':
+    case 'loop_started':
+    case 'loop_next':
+      callbacks.onWorkflowNodeStarted?.(
+        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        eventId
+      );
+      break;
+    case 'iteration_completed':
+    case 'iteration_succeeded':
+    case 'iteration_failed':
+    case 'loop_completed':
+    case 'loop_succeeded':
+    case 'loop_failed':
+      callbacks.onWorkflowNodeFinished?.(
+        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        eventId
+      );
+      break;
+    case 'workflow_paused':
+      callbacks.onWorkflowPaused?.((data ?? {}) as AIChatWorkflowPausedEventData, eventId);
+      break;
+    case 'question_answer_requested':
+      callbacks.onWorkflowPaused?.(
+        { ...((data ?? {}) as AIChatWorkflowPausedEventData), status: 'pending_question' },
+        eventId
+      );
+      break;
+    case 'approval_requested':
+      callbacks.onWorkflowApprovalRequested?.(
+        (data ?? {}) as AIChatWorkflowPausedEventData,
+        eventId
+      );
+      break;
+    case 'approval_result_filled':
+      callbacks.onWorkflowNodeFinished?.(
+        {
+          ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          status: 'success',
+          node_type: 'approval',
+          title: 'Approval submitted',
+          outputs: data,
+        },
+        eventId
+      );
+      break;
+    case 'approval_expired':
+      callbacks.onWorkflowPaused?.(
+        { ...((data ?? {}) as AIChatWorkflowPausedEventData), status: 'expired' },
+        eventId
+      );
+      callbacks.onWorkflowNodeFinished?.(
+        {
+          ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          status: 'failed',
+          node_type: 'approval',
+          title: 'Approval expired',
+          outputs: data,
+        },
+        eventId
+      );
+      break;
+    case 'question_answer_submitted':
+      callbacks.onWorkflowNodeFinished?.(
+        {
+          ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          status: 'running',
+          node_type: 'question-answer',
+        },
+        eventId
+      );
+      break;
+    case 'workflow_finished':
+      callbacks.onWorkflowFinished?.((data ?? {}) as AIChatWorkflowEventData, eventId);
+      break;
+    case 'workflow_failed':
+      callbacks.onWorkflowFailed?.((data ?? {}) as AIChatWorkflowEventData, eventId);
+      break;
+    case 'workflow_stopped':
+      callbacks.onWorkflowFinished?.(
+        { ...((data ?? {}) as AIChatWorkflowEventData), status: 'stopped' },
+        eventId
+      );
       break;
     case 'message':
       callbacks.onMessageChunk((data ?? {}) as AIChatMessageChunkEventData, eventId);

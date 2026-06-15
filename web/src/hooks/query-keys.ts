@@ -11,6 +11,8 @@ export const ORGANIZATION_KEYS = {
   lists: () => [...ORGANIZATION_KEYS.all, 'list'] as const,
   list: (params: unknown) => [...ORGANIZATION_KEYS.lists(), params] as const,
   current: () => [...ORGANIZATION_KEYS.all, 'current'] as const,
+  currentMembers: (params?: unknown) =>
+    [...ORGANIZATION_KEYS.all, 'current-members', params].filter(Boolean),
   roles: (orgId: string) => [...ORGANIZATION_KEYS.all, 'roles', orgId] as const,
   roleDetail: (orgId: string, roleId: string) =>
     [...ORGANIZATION_KEYS.all, 'role-detail', orgId, roleId] as const,
@@ -56,8 +58,16 @@ export const AGENT_KEYS = {
   details: () => [...AGENT_KEYS.all, 'detail'] as const,
   detail: (id: string) => [...AGENT_KEYS.details(), id] as const,
   config: (id: string) => [...AGENT_KEYS.detail(id), 'config'] as const,
+  workflowBindingCandidates: (id: string) =>
+    [...AGENT_KEYS.detail(id), 'workflow-binding-candidates'] as const,
   runnable: (workspaceId?: string | null) =>
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all'] as const,
+  runtimeRuns: (agentId: string, params: unknown) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-runs', params] as const,
+  runtimeRunDetail: (agentId: string, messageId: string) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-run-detail', messageId] as const,
+  runtimeRunSteps: (agentId: string, messageId: string) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-run-steps', messageId] as const,
 } as const;
 
 export const PROMPT_KEYS = {

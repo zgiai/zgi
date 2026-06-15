@@ -1,0 +1,13 @@
+version: 1
+defaults:
+  timeout: 30
+  headers:
+    Content-Type: application/json
+    Accept: application/json
+
+environments:
+  local:
+    base_url: http://127.0.0.1:2679
+
+active_env: local
+log_enabled: true

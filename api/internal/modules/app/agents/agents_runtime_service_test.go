@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -17,6 +18,7 @@ import (
 func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) {
 	got := normalizeAgentEnabledSkillIDs([]string{
 		skills.SkillAgentKnowledge,
+		skills.SkillAgentWorkflow,
 		skills.SkillUserMemory,
 		skills.SkillCalculator,
 		skills.SkillCalculator,
@@ -125,6 +127,121 @@ func (r *publishedRuntimeRepo) GetByID(_ context.Context, id string) (*Agent, er
 
 func (r *publishedRuntimeRepo) GetLatestAgentPublishedVersion(context.Context, string) (*AgentPublishedVersion, error) {
 	return r.version, nil
+}
+
+func TestApplyAgentConfigRequestPersistsWorkflowBindings(t *testing.T) {
+	cfg := &AgentsConfig{}
+	applied, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
+		WorkflowBindings: []dto.AgentWorkflowBinding{
+			{BindingID: " Approval-Flow ", Label: " Approval ", Description: " Needs approval ", AgentID: " Agent-1 ", WorkflowID: " Workflow-1 ", VersionStrategy: "latest_published", TimeoutSeconds: 5},
+			{BindingID: "approval-flow", Label: "Approval v2", AgentID: "agent-1", WorkflowID: "workflow-1", VersionStrategy: "pinned", VersionUUID: " Version-1 "},
+			{BindingID: "missing-agent", WorkflowID: "workflow-2"},
+		},
+	}, "binder-1")
+	if err != nil {
+		t.Fatalf("applyAgentConfigRequestToDraft() error = %v", err)
+	}
+	want := []dto.AgentWorkflowBinding{{
+		BindingID:       "approval-flow",
+		Label:           "Approval v2",
+		AgentID:         "agent-1",
+		WorkflowID:      "workflow-1",
+		VersionStrategy: "pinned",
+		VersionUUID:     "version-1",
+	}}
+	if !reflect.DeepEqual(applied.WorkflowBindings, want) {
+		t.Fatalf("applied WorkflowBindings = %#v, want %#v", applied.WorkflowBindings, want)
+	}
+	var mode dto.AgentRuntimeModeConfig
+	if err := json.Unmarshal([]byte(*cfg.AgentMode), &mode); err != nil {
+		t.Fatalf("unmarshal AgentMode error = %v", err)
+	}
+	if !reflect.DeepEqual(mode.WorkflowBindings, want) {
+		t.Fatalf("mode WorkflowBindings = %#v, want %#v", mode.WorkflowBindings, want)
+	}
+	if mode.WorkflowBoundByAccountID != "binder-1" || mode.WorkflowBoundAtUnix <= 0 {
+		t.Fatalf("workflow grant = %q/%d, want binder-1 with timestamp", mode.WorkflowBoundByAccountID, mode.WorkflowBoundAtUnix)
+	}
+	resp := agentConfigResponse("agent-1", cfg)
+	if !reflect.DeepEqual(resp.WorkflowBindings, want) {
+		t.Fatalf("response WorkflowBindings = %#v, want %#v", resp.WorkflowBindings, want)
+	}
+	snapshot := agentConfigSnapshot("agent-1", cfg)
+	fromSnapshot := agentConfigResponseFromSnapshot("agent-1", snapshot)
+	if !reflect.DeepEqual(fromSnapshot.WorkflowBindings, want) {
+		t.Fatalf("snapshot WorkflowBindings = %#v, want %#v", fromSnapshot.WorkflowBindings, want)
+	}
+	if fromSnapshot.WorkflowBoundByAccountID != "binder-1" || fromSnapshot.WorkflowBoundAtUnix <= 0 {
+		t.Fatalf("snapshot workflow grant = %q/%d, want binder-1 with timestamp", fromSnapshot.WorkflowBoundByAccountID, fromSnapshot.WorkflowBoundAtUnix)
+	}
+}
+
+func TestHydrateAgentWorkflowBindingRuntimeInputsUsesPinnedVersionSchema(t *testing.T) {
+	db, mock := newRunnableWebAppsMockDB(t)
+	service := &agentsService{db: db}
+	workspaceID := "11111111-1111-1111-1111-111111111111"
+	agentID := "22222222-2222-2222-2222-222222222222"
+	latestWorkflowID := "33333333-3333-3333-3333-333333333333"
+	pinnedWorkflowID := "44444444-4444-4444-4444-444444444444"
+	pinnedVersionUUID := "55555555-5555-5555-5555-555555555555"
+
+	columns := []string{"agent_id", "workflow_id", "agent_type", "version_uuid", "version", "graph", "label", "description", "icon", "icon_type", "updated_at"}
+	mock.ExpectQuery(`(?s)SELECT .* FROM "workflows" JOIN agents ON agents.id = workflows.agent_id WHERE .*workflows\.tenant_id.*workflows\.version !=.*agents\.deleted_at IS NULL.*ORDER BY workflows\.agent_id ASC, workflows\.created_at DESC`).
+		WithArgs(workspaceID, "draft", AgentWebAppStatusActive, "WORKFLOW", "CONVERSATIONAL_WORKFLOW").
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(
+			agentID,
+			latestWorkflowID,
+			"WORKFLOW",
+			"latest-version",
+			"v2",
+			workflowGraphWithStartInput("new_input"),
+			"Task workflow",
+			"description",
+			nil,
+			nil,
+			time.Now(),
+		))
+	mock.ExpectQuery(`(?s)SELECT .* FROM "workflows" JOIN agents ON agents.id = workflows.agent_id WHERE .*workflows\.tenant_id.*workflows\.agent_id.*workflows\.id.*workflows\.version_uuid.*LIMIT`).
+		WithArgs(workspaceID, agentID, pinnedWorkflowID, pinnedVersionUUID, "draft", AgentWebAppStatusActive, "WORKFLOW", "CONVERSATIONAL_WORKFLOW", 1).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(
+			agentID,
+			pinnedWorkflowID,
+			"WORKFLOW",
+			pinnedVersionUUID,
+			"v1",
+			workflowGraphWithStartInput("old_input"),
+			"Task workflow",
+			"description",
+			nil,
+			nil,
+			time.Now().Add(-time.Hour),
+		))
+
+	hydrated := service.hydrateAgentWorkflowBindingRuntimeInputs(t.Context(), workspaceID, []dto.AgentWorkflowBinding{{
+		BindingID:       agentID,
+		Label:           "Task workflow",
+		AgentID:         agentID,
+		WorkflowID:      pinnedWorkflowID,
+		VersionStrategy: "pinned",
+		VersionUUID:     pinnedVersionUUID,
+	}})
+
+	if len(hydrated) != 1 || len(hydrated[0].StartInputs) != 1 {
+		t.Fatalf("hydrated bindings = %#v, want one start input", hydrated)
+	}
+	if got := hydrated[0].StartInputs[0].Variable; got != "old_input" {
+		t.Fatalf("hydrated start input = %q, want pinned old_input", got)
+	}
+	if got := hydrated[0].DefaultInputKey; got != "old_input" {
+		t.Fatalf("default input key = %q, want old_input", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func workflowGraphWithStartInput(variable string) string {
+	return `{"nodes":[{"data":{"type":"start","variables":[{"variable":"` + variable + `","label":"` + variable + `","type":"string","required":true}]}}]}`
 }
 
 func TestAgentMemoryReplaceRequestPreservesInvalidRowsForValidation(t *testing.T) {
@@ -245,6 +362,23 @@ func TestApplyAgentConfigRequestPersistsDatabaseBindings(t *testing.T) {
 	fromSnapshot := agentConfigResponseFromSnapshot("agent-1", snapshot)
 	if !reflect.DeepEqual(fromSnapshot.DatabaseBindings, want) {
 		t.Fatalf("snapshot DatabaseBindings = %#v, want %#v", fromSnapshot.DatabaseBindings, want)
+	}
+}
+
+func TestAgentConfigSnapshotPreservesSupportsVision(t *testing.T) {
+	model := "qwen-vl-plus"
+	cfg := &AgentsConfig{
+		ModelVersionID: &model,
+	}
+
+	snapshot := agentConfigSnapshot("agent-1", cfg)
+	if snapshot["supports_vision"] != true {
+		t.Fatalf("snapshot supports_vision = %#v, want true", snapshot["supports_vision"])
+	}
+
+	fromSnapshot := agentConfigResponseFromSnapshot("agent-1", snapshot)
+	if !fromSnapshot.SupportsVision {
+		t.Fatal("fromSnapshot SupportsVision = false, want true")
 	}
 }
 

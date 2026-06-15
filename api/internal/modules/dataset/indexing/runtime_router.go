@@ -11,6 +11,8 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 )
 
+const maxFullDocParentChunkRunes = 2000
+
 // RouterInput is the normalized input for runtime routing.
 type RouterInput struct {
 	DocumentID      string
@@ -82,21 +84,24 @@ func (r *RuntimeRouter) Route(input RouterInput) (*RouterDecision, error) {
 	}
 
 	// 2. Domain Analysis Routing
-	domain := r.domainAnalyzer.Analyze(input.ExtractedOutput)
-	routeMeta["doc_domain"] = domain
-	if domain == "resume" || domain == "invoice" {
-		// Full-Doc model without character limit for resume/invoice
-		mode, rules := r.builder.BuildFullDocRule()
-		routeMeta["matched_by"] = "doc_domain"
-		return &RouterDecision{
-			Matched:       true,
-			RouteName:     "full_doc_model",
-			TargetDocForm: string(ParentChildIndex),
-			TargetMode:    mode,
-			TargetRules:   rules,
-			Reason:        fmt.Sprintf("matched by document domain: %s", domain),
-			RouteMeta:     routeMeta,
-		}, nil
+	extractedRunes, fullDocSizeAllowed := extractedRuneCountUpTo(input.ExtractedOutput, maxFullDocParentChunkRunes)
+	routeMeta["extracted_word_count"] = extractedRunes
+	if fullDocSizeAllowed {
+		domain := r.domainAnalyzer.Analyze(input.ExtractedOutput)
+		routeMeta["doc_domain"] = domain
+		if domain == "resume" || domain == "invoice" {
+			mode, rules := r.builder.BuildFullDocRule()
+			routeMeta["matched_by"] = "doc_domain"
+			return &RouterDecision{
+				Matched:       true,
+				RouteName:     "full_doc_model",
+				TargetDocForm: string(ParentChildIndex),
+				TargetMode:    mode,
+				TargetRules:   rules,
+				Reason:        fmt.Sprintf("matched by document domain: %s", domain),
+				RouteMeta:     routeMeta,
+			}, nil
+		}
 	}
 
 	// 3. Profile Analysis Routing (Structural Scan)
@@ -130,6 +135,54 @@ func extractedElementCount(output *dto.ExtractOutput) int {
 		return 0
 	}
 	return len(output.Elements)
+}
+
+func extractedRuneCountUpTo(output *dto.ExtractOutput, limit int) (int, bool) {
+	if output == nil {
+		return 0, true
+	}
+	if limit < 0 {
+		limit = 0
+	}
+
+	if text := strings.TrimSpace(output.Markdown); text != "" {
+		return runeCountUpTo(text, limit)
+	}
+
+	count := 0
+	hasContent := false
+	for _, element := range output.Elements {
+		content := strings.TrimSpace(element.Content)
+		if content == "" {
+			continue
+		}
+		if hasContent {
+			count++
+			if count > limit {
+				return count, false
+			}
+		}
+		for range content {
+			count++
+			if count > limit {
+				return count, false
+			}
+		}
+		hasContent = true
+	}
+
+	return count, true
+}
+
+func runeCountUpTo(text string, limit int) (int, bool) {
+	count := 0
+	for range text {
+		count++
+		if count > limit {
+			return count, false
+		}
+	}
+	return count, true
 }
 
 func normalizeDocExt(docExt string) string {
