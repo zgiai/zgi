@@ -368,6 +368,124 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	assertToolGovernanceApprovedStreamEvents(t, events)
 }
 
+func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversationGrant(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	metadata := pendingToolGovernanceDecisionMetadata("corr-session")
+	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})
+	governance := invocation["governance"].(map[string]interface{})
+	approvalEvent := governance["approval_event"].(map[string]interface{})
+	approvalEvent["assets"] = []interface{}{
+		map[string]interface{}{
+			"id":           "file-1",
+			"type":         "file",
+			"name":         "report.pdf",
+			"workspace_id": "workspace-1",
+			"source":       "console.files",
+		},
+	}
+	approvalEvent["grant"] = map[string]interface{}{
+		"conversation_id": conversationID.String(),
+		"tool_id":         "file.delete",
+		"effect":          "delete",
+		"asset_type":      "file",
+		"risk_level":      "high",
+		"assets": []interface{}{
+			map[string]interface{}{
+				"id":           "file-1",
+				"type":         "file",
+				"name":         "report.pdf",
+				"workspace_id": "workspace-1",
+			},
+		},
+	}
+
+	conversation := &runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		CallerType:     runtimemodel.ConversationCallerAIChat,
+		Title:          "Files",
+		Status:         runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:  runtimemodel.ConversationRuntimeStatusIdle,
+		Metadata:       map[string]interface{}{},
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	message := &runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "Delete report.pdf",
+		Status:         runtimemodel.MessageStatusWaitingApproval,
+		Metadata:       metadata,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
+	conversationRepo := &toolGovernanceStreamConversationRepo{conversation: conversation}
+	svc := NewService(&repository.Repositories{
+		Access:       toolGovernanceStreamAccessRepo{},
+		Conversation: conversationRepo,
+		Message:      messageRepo,
+	}, &toolGovernanceStreamLLM{}).(*service)
+
+	response, err := svc.SubmitToolGovernanceDecision(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		"corr-session",
+		runtimedto.ToolGovernanceDecisionRequest{Action: "approve", RememberForSession: true},
+	)
+	if err != nil {
+		t.Fatalf("SubmitToolGovernanceDecision() error = %v", err)
+	}
+	if response.ApprovalStatus != "approved" || !response.RememberForSession {
+		t.Fatalf("response = %#v, want approved remembered session", response)
+	}
+	if response.SessionGrant["conversation_id"] != conversationID.String() ||
+		response.SessionGrant["tool_id"] != "file.delete" ||
+		response.SessionGrant["effect"] != "delete" ||
+		response.SessionGrant["asset_type"] != "file" ||
+		response.SessionGrant["risk_level"] != "high" ||
+		response.SessionGrant["approval_correlation_id"] != "corr-session" {
+		t.Fatalf("session grant = %#v, want conversation/tool/effect/asset/risk scoped grant", response.SessionGrant)
+	}
+	grantAssets := mapSliceFromAny(response.SessionGrant["assets"])
+	if len(grantAssets) != 1 || grantAssets[0]["id"] != "file-1" || grantAssets[0]["workspace_id"] != "workspace-1" {
+		t.Fatalf("session grant assets = %#v, want approved file asset", grantAssets)
+	}
+	if !messageRepo.updateMetadataAnyStatusCalled {
+		t.Fatal("UpdateMetadataAnyStatus was not called for approved decision")
+	}
+	if !conversationRepo.updateMetadataCalled {
+		t.Fatal("UpdateMetadata was not called for remembered session grant")
+	}
+	if grants := mapSliceFromAny(message.Metadata["tool_governance_one_shot_grants"]); len(grants) != 1 {
+		t.Fatalf("one-shot grants = %#v, want one approved grant on current message", grants)
+	}
+	conversationGrants := mapSliceFromAny(conversation.Metadata["tool_governance_session_grants"])
+	if len(conversationGrants) != 1 {
+		t.Fatalf("conversation session grants = %#v, want one remembered grant", conversationGrants)
+	}
+	if conversationGrants[0]["conversation_id"] != conversationID.String() ||
+		conversationGrants[0]["approval_correlation_id"] != "corr-session" {
+		t.Fatalf("conversation session grant = %#v, want approval correlation", conversationGrants[0])
+	}
+
+	params := applySkillToolGovernanceRuntimeParameters(nil, &PreparedChat{Conversation: conversation})
+	governanceParams := governanceMapFromAny(params[skillToolGovernanceRuntimeKey])
+	runtimeGrants := mapSliceFromAny(governanceParams["session_grants"])
+	if len(runtimeGrants) != 1 || runtimeGrants[0]["tool_id"] != "file.delete" || runtimeGrants[0]["approval_correlation_id"] != "corr-session" {
+		t.Fatalf("runtime session grants = %#v, want remembered file.delete grant", runtimeGrants)
+	}
+}
+
 func assertToolGovernanceStreamEvents(t *testing.T, events []StreamEvent) {
 	t.Helper()
 	if len(events) == 0 {
