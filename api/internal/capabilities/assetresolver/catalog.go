@@ -157,6 +157,8 @@ func candidatesFromContext(context map[string]interface{}, source string) []Cand
 					candidates = append(candidates, candidatesFromList(item, source+"."+key, true)...)
 				case isResourceListKey(normalizedKey):
 					candidates = append(candidates, candidatesFromList(item, source+"."+key, false)...)
+				case isCapabilityListKey(normalizedKey):
+					continue
 				default:
 					visit(item, depth+1)
 				}
@@ -267,4 +269,8 @@ func isVisibleFileListKey(key string) bool {
 
 func isResourceListKey(key string) bool {
 	return key == "resources" || key == "resource"
+}
+
+func isCapabilityListKey(key string) bool {
+	return key == "capabilities" || key == "capability"
 }

@@ -22,6 +22,32 @@ func TestResolverPrefersSelectedFile(t *testing.T) {
 	}
 }
 
+func TestResolverIgnoresOperationCapabilitiesAsFileCandidates(t *testing.T) {
+	result := Resolve(Request{
+		NormalizedOperationContext: map[string]interface{}{
+			"capabilities": []interface{}{
+				map[string]interface{}{
+					"id":            "file.read",
+					"title":         "Read file",
+					"resource_type": "file",
+					"resource_id":   "file-1",
+				},
+			},
+		},
+		Selectors: []Selector{{Type: "file", FileID: "file-1"}},
+	})
+
+	if len(result.Resolutions) != 1 {
+		t.Fatalf("resolutions len = %d, want 1", len(result.Resolutions))
+	}
+	if result.Resolutions[0].Status != StatusNotFound {
+		t.Fatalf("status = %q, want %q", result.Resolutions[0].Status, StatusNotFound)
+	}
+	if len(result.Assets) != 0 {
+		t.Fatalf("assets = %#v, want none from operation capabilities", result.Assets)
+	}
+}
+
 func TestResolverResolvesVisibleOrdinalOneBased(t *testing.T) {
 	result := Resolve(Request{
 		OperationContext: map[string]interface{}{
