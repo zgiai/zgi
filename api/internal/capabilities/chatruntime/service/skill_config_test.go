@@ -341,6 +341,23 @@ func TestSkillRuntimeParametersForPreparedAddsOrdinalFileGovernanceAsset(t *test
 	}
 }
 
+func TestSkillRuntimeParametersForPreparedAddsNamedFileGovernanceAsset(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		parts: consoleFilesSemanticTestParts("delete file codex-smoke-delete-visible-20260615-1538.txt", []consoleFilesTestFile{
+			{ID: "file-1", Name: "codex-smoke-delete-visible-20260615-1538.txt", Extension: "txt"},
+			{ID: "file-2", Name: "other.txt", Extension: "txt"},
+		}),
+	}
+
+	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
+	assets := governanceAssetsFromTest(t, governance)
+	if len(assets) != 1 || assets[0]["id"] != "file-1" || assets[0]["name"] != "codex-smoke-delete-visible-20260615-1538.txt" {
+		t.Fatalf("governance assets = %#v, want named smoke file", assets)
+	}
+}
+
 func TestSkillRuntimeParametersForPreparedDoesNotAddAmbiguousFileGovernanceAssets(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},

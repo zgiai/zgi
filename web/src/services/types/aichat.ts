@@ -561,6 +561,10 @@ export interface AIChatToolGovernanceAssetRef extends Record<string, unknown> {
   id?: string;
   type?: string;
   name?: string;
+  title?: string;
+  label?: string;
+  filename?: string;
+  file_name?: string;
   workspace_id?: string;
   source?: string;
   metadata?: Record<string, unknown>;

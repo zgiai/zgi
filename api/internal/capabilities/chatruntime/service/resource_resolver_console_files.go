@@ -53,23 +53,47 @@ func plannerResourceRefsFromConsoleFilesQuery(parts *chatRequestParts) []Planner
 		return nil
 	}
 	ordinal, last, ok := consoleFilesOrdinalFromQuery(parts.Query)
-	if !ok {
+	if ok {
+		ref := PlannerResourceRef{Type: resourceTypeFile}
+		if last {
+			ref.OrdinalText = "last"
+		} else {
+			ref.Ordinal = ordinal
+		}
+		if fileType := consoleFilesFormatFromQuery(parts.Query); fileType != "" {
+			if fileType == "pdf" {
+				ref.Extension = "pdf"
+			} else {
+				ref.FileType = fileType
+			}
+		}
+		return []PlannerResourceRef{ref}
+	}
+	return plannerResourceRefsFromNamedVisibleFiles(parts)
+}
+
+func plannerResourceRefsFromNamedVisibleFiles(parts *chatRequestParts) []PlannerResourceRef {
+	if parts == nil {
 		return nil
 	}
-	ref := PlannerResourceRef{Type: resourceTypeFile}
-	if last {
-		ref.OrdinalText = "last"
-	} else {
-		ref.Ordinal = ordinal
-	}
-	if fileType := consoleFilesFormatFromQuery(parts.Query); fileType != "" {
-		if fileType == "pdf" {
-			ref.Extension = "pdf"
-		} else {
-			ref.FileType = fileType
+	collector := newUniqueStringCollector()
+	for _, context := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		for _, id := range collectNamedVisibleFileIDs(parts.Query, context) {
+			collector.add(id)
 		}
 	}
-	return []PlannerResourceRef{ref}
+	ids := collector.values()
+	if len(ids) == 0 {
+		return nil
+	}
+	refs := make([]PlannerResourceRef, 0, len(ids))
+	for _, id := range ids {
+		refs = append(refs, PlannerResourceRef{
+			Type:   resourceTypeFile,
+			FileID: id,
+		})
+	}
+	return refs
 }
 
 func allResourceRefsResolved(results []ResourceResolution) bool {

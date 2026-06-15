@@ -233,6 +233,9 @@ const messages = {
       rejectSucceeded: 'Rejection recorded',
       submitFailed: 'Failed to submit approval decision',
       fields: {
+        assets: 'Assets',
+        assetId: 'ID',
+        assetSource: 'Source',
         reason: 'Reason',
         decision: 'Decision',
         riskLevel: 'Risk',

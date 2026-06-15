@@ -223,6 +223,9 @@ const messages: WebappMessages = {
       rejectSucceeded: '已记录拒绝',
       submitFailed: '提交审批决策失败',
       fields: {
+        assets: '资产',
+        assetId: 'ID',
+        assetSource: '来源',
         reason: '原因',
         decision: '决策',
         riskLevel: '风险',

@@ -18,7 +18,10 @@ import { useT } from '@/i18n/translations';
 import type { ScopedTranslations } from '@/i18n/translations';
 import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
-import type { AIChatSkillInvocation } from '@/services/types/aichat';
+import type {
+  AIChatSkillInvocation,
+  AIChatToolGovernanceAssetRef,
+} from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import { isPendingToolGovernanceInvocation } from '@/components/chat/controllers/aichat/governance';
 import {
@@ -402,6 +405,61 @@ function governanceApprovalEvent(item: GovernanceTimelineItem) {
   return item.event.approval_event ?? item.event.governance?.approval_event;
 }
 
+function governanceRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function governanceStringValue(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function governanceNestedString(
+  value: unknown,
+  keys: readonly string[]
+): string | null {
+  const record = governanceRecord(value);
+  if (!record) return null;
+  for (const key of keys) {
+    const text = governanceStringValue(record[key]);
+    if (text) return text;
+  }
+  return null;
+}
+
+function governanceApprovalAssets(item: GovernanceTimelineItem): AIChatToolGovernanceAssetRef[] {
+  const approvalEvent = governanceApprovalEvent(item);
+  const assets = approvalEvent?.assets ?? item.event.governance?.assets;
+  if (!Array.isArray(assets)) return [];
+  return assets.filter((asset): asset is AIChatToolGovernanceAssetRef =>
+    Boolean(governanceRecord(asset))
+  );
+}
+
+function governanceAssetDisplayName(asset: AIChatToolGovernanceAssetRef): string {
+  return (
+    governanceNestedString(asset, ['name', 'title', 'label', 'filename', 'file_name']) ??
+    governanceNestedString(asset.metadata, ['name', 'title', 'label', 'filename', 'file_name']) ??
+    governanceStringValue(asset.id) ??
+    'asset'
+  );
+}
+
+function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef, t: WebappTranslator): string {
+  const parts = [
+    governanceStringValue(asset.type),
+    governanceStringValue(asset.id)
+      ? `${t('consoleChat.governance.fields.assetId')} ${asset.id}`
+      : null,
+    governanceStringValue(asset.source)
+      ? `${t('consoleChat.governance.fields.assetSource')} ${asset.source}`
+      : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.join(' · ');
+}
+
 function governanceFieldRows(item: GovernanceTimelineItem) {
   const approvalEvent = governanceApprovalEvent(item);
   return [
@@ -496,11 +554,16 @@ function ToolGovernanceDecisionRow({
   const title = buildGovernanceTitle(currentItem, t);
   const toolLabel = governanceToolLabel(currentItem, skillDisplayById, locale, t);
   const reason = governanceReason(currentItem);
+  const approvalAssets = governanceApprovalAssets(currentItem);
   const details = governanceFieldRows(currentItem)
     .map(([labelKey, value]) => [labelKey, governanceDisplayText(value)] as const)
     .filter((row): row is readonly [GovernanceFieldLabel, string] => Boolean(row[1]));
   const canExpand =
-    details.length > 0 || Boolean(reason) || needsApproval || Boolean(approvalStatus);
+    approvalAssets.length > 0 ||
+    details.length > 0 ||
+    Boolean(reason) ||
+    needsApproval ||
+    Boolean(approvalStatus);
   const correlationId =
     currentItem.event.correlation_id ??
     currentItem.event.governance?.correlation_id ??
@@ -578,6 +641,33 @@ function ToolGovernanceDecisionRow({
                 {t('consoleChat.governance.fields.reason')}
               </span>
               <span className="ml-1 break-words">{reason}</span>
+            </div>
+          ) : null}
+          {approvalAssets.length > 0 ? (
+            <div className="rounded-md bg-background/80 p-2 text-[11px]">
+              <div className="mb-1 font-medium text-foreground">
+                {t('consoleChat.governance.fields.assets')}
+              </div>
+              <div className="space-y-1.5">
+                {approvalAssets.map((asset, index) => {
+                  const meta = governanceAssetMeta(asset, t);
+                  return (
+                    <div
+                      key={`${asset.id ?? asset.name ?? index}`}
+                      className="min-w-0 rounded-sm bg-muted/40 px-2 py-1"
+                    >
+                      <div className="truncate font-medium text-foreground">
+                        {governanceAssetDisplayName(asset)}
+                      </div>
+                      {meta ? (
+                        <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                          {meta}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ) : null}
           {details.length > 0 ? (
