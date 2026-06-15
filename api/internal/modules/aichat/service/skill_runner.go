@@ -108,10 +108,14 @@ func (s *service) runPreparedSkillStream(
 	recoverableFailureRoundCount := 0
 	consecutiveRecoverableFailureRounds := 0
 	recoverableFailureCallCount := 0
+	finalAnswerGuardBlockCount := 0
 	skillToolCallCounts := map[string]int{}
+	attemptedToolCalls := []skillToolCallRef{}
+	successfulToolCalls := []skillToolCallRef{}
 	skillUsed := false
 	loadedSkills := map[string]struct{}{}
 	maxSkillSteps := maxSkillStepsForTurn(resolved)
+	finalAnswerGuard := skillLoopFinalAnswerGuard(prepared)
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
 
@@ -132,6 +136,32 @@ func (s *service) runPreparedSkillStream(
 		text := assistantMessageText(planningMessage)
 		if text != "" && len(toolCalls) > 0 && !planningResult.progressStreamed {
 			s.emitAgentProgress(ctx, prepared, text, onEvent)
+		}
+		if len(toolCalls) == 0 {
+			if guardResult, blocked := runFinalAnswerGuard(finalAnswerGuard, finalAnswerGuardRequest{
+				Answer:              text,
+				Round:               round,
+				SkillUsed:           skillUsed,
+				ToolCallCount:       toolCallCount,
+				AttemptedToolCalls:  append([]skillToolCallRef{}, attemptedToolCalls...),
+				SuccessfulToolCalls: append([]skillToolCallRef{}, successfulToolCalls...),
+			}); blocked {
+				finalAnswerGuardBlockCount++
+				if planningResult.answerStreamed && text != "" {
+					s.emitAnswerRetract(ctx, prepared, text, onEvent)
+				}
+				trace := finalAnswerGuardrailTrace(guardResult)
+				traces = append(traces, trace)
+				s.persistSkillTracesBestEffort(persistCtx, prepared, traces)
+				s.logSkillTrace(ctx, prepared, trace)
+				if finalAnswerGuardBlockCount > defaultMaxConsecutiveRecoverableFailureRounds {
+					err := fmt.Errorf("%w: final answer guard blocked too many consecutive replies", ErrInvalidInput)
+					s.emitSkillError(ctx, prepared, failedSkillTrace("guardrail", guardResult.ToolName, err), onEvent)
+					return answerBuilder.String(), usage, err
+				}
+				messages = append(messages, finalAnswerGuardSystemMessage(guardResult, text))
+				continue
+			}
 		}
 		if len(toolCalls) == 0 && prepared.parts.SkillMode == skillModeRequired && !skillUsed {
 			return answerBuilder.String(), usage, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
@@ -198,9 +228,25 @@ func (s *service) runPreparedSkillStream(
 			if result.usedSkill {
 				skillUsed = true
 			}
+			if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") {
+				attemptedToolCalls = append(attemptedToolCalls, skillToolCallRef{
+					SkillID:   strings.TrimSpace(result.trace.SkillID),
+					ToolName:  strings.TrimSpace(result.trace.ToolName),
+					Arguments: copyStringAnyMap(result.trace.Arguments),
+				})
+			}
 			if result.usedTool {
 				toolCallCount++
 				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
+				if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
+					strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
+					successfulToolCalls = append(successfulToolCalls, skillToolCallRef{
+						SkillID:   strings.TrimSpace(result.trace.SkillID),
+						ToolName:  strings.TrimSpace(result.trace.ToolName),
+						Arguments: copyStringAnyMap(result.trace.Arguments),
+					})
+					finalAnswerGuardBlockCount = 0
+				}
 			}
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)
@@ -1021,6 +1067,9 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		runtimeParameters["workspace_id"] = prepared.Scope.WorkspaceID.String()
 	}
 	runtimeParameters = applySkillToolGovernanceRuntimeParameters(runtimeParameters, prepared)
+	if visibleFiles := consoleFilesRuntimeVisibleFiles(prepared); len(visibleFiles) > 0 {
+		runtimeParameters["console_files_visible_files"] = visibleFiles
+	}
 	return skills.ExecutionContext{
 		OrganizationID:    prepared.Scope.OrganizationID.String(),
 		UserID:            prepared.Scope.AccountID.String(),
