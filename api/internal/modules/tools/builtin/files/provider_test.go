@@ -123,6 +123,138 @@ func TestListVisibleFilesToolReturnsRuntimeContextFiles(t *testing.T) {
 	}
 }
 
+func TestConsoleFilesReadFileSupportsDocumentFormats(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	cases := []struct {
+		id        string
+		name      string
+		extension string
+		mimeType  string
+		content   string
+	}{
+		{
+			id:        "file-md",
+			name:      "notes.md",
+			extension: "md",
+			mimeType:  "text/markdown",
+			content:   "# Notes\n\nShip the console files reader.",
+		},
+		{
+			id:        "file-xlsx",
+			name:      "budget.xlsx",
+			extension: "xlsx",
+			mimeType:  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			content:   "| Item | Amount |\n| --- | ---: |\n| Hosting | 42 |",
+		},
+		{
+			id:        "file-pdf",
+			name:      "brief.pdf",
+			extension: "pdf",
+			mimeType:  "application/pdf",
+			content:   "PDF executive brief content",
+		},
+	}
+	fileService := &fakeFileService{files: map[string]*dto.UploadFile{}}
+	extractor := &fakeContentExtractor{contents: map[string]*workflowfile.FileContent{}}
+	visibleFiles := make([]map[string]interface{}, 0, len(cases))
+	for idx, tc := range cases {
+		fileService.files[tc.id] = &dto.UploadFile{
+			ID:             tc.id,
+			OrganizationID: organizationID,
+			Name:           tc.name,
+			Extension:      tc.extension,
+			MimeType:       tc.mimeType,
+			CreatedBy:      accountID,
+			CreatedAt:      time.Unix(1700000200+int64(idx), 0),
+		}
+		extractor.contents[tc.id] = &workflowfile.FileContent{
+			FileID:      tc.id,
+			Content:     tc.content,
+			ContentType: tc.mimeType,
+		}
+		visibleFiles = append(visibleFiles, map[string]interface{}{
+			"visible_index": idx + 1,
+			"file_id":       tc.id,
+			"name":          tc.name,
+			"extension":     tc.extension,
+			"mime_type":     tc.mimeType,
+			"selected":      idx == 1,
+		})
+	}
+	runtime := &tools.ToolRuntime{
+		TenantID:   organizationID,
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":             organizationID,
+			"console_files_visible_files": visibleFiles,
+		},
+	}
+	provider := NewProvider(fileService, extractor, nil)
+
+	listTool, err := provider.GetTool(ToolListVisibleFiles)
+	if err != nil {
+		t.Fatalf("GetTool(list) error = %v", err)
+	}
+	listMessages, err := listTool.ForkToolRuntime(runtime).Invoke(ctx, accountID, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke(list) error = %v", err)
+	}
+	listPayload := singleJSONPayload(t, listMessages)
+	if got := listPayload["count"]; got != len(cases) {
+		t.Fatalf("list count = %#v, want %d", got, len(cases))
+	}
+	listedFiles, ok := listPayload["files"].([]interface{})
+	if !ok || len(listedFiles) != len(cases) {
+		t.Fatalf("listed files = %#v, want %d files", listPayload["files"], len(cases))
+	}
+	for idx, tc := range cases {
+		listed, ok := listedFiles[idx].(map[string]interface{})
+		if !ok {
+			t.Fatalf("listed file %d type = %T, want map", idx, listedFiles[idx])
+		}
+		if listed["file_id"] != tc.id || listed["extension"] != tc.extension || listed["mime_type"] != tc.mimeType {
+			t.Fatalf("listed file %d = %#v, want %s %s %s", idx, listed, tc.id, tc.extension, tc.mimeType)
+		}
+	}
+
+	readTool, err := provider.GetTool(ToolReadFile)
+	if err != nil {
+		t.Fatalf("GetTool(read) error = %v", err)
+	}
+	readTool = readTool.ForkToolRuntime(runtime)
+	for idx, tc := range cases {
+		messages, err := readTool.Invoke(ctx, accountID, map[string]interface{}{"file_id": tc.id}, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("Invoke(read %s) error = %v", tc.id, err)
+		}
+		payload := singleJSONPayload(t, messages)
+		if got := payload["content_status"]; got != "extracted" {
+			t.Fatalf("read %s content_status = %#v, want extracted", tc.id, got)
+		}
+		if got := payload["content"]; got != tc.content {
+			t.Fatalf("read %s content = %#v, want %#v", tc.id, got, tc.content)
+		}
+		file, ok := payload["file"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("read %s file payload type = %T, want map", tc.id, payload["file"])
+		}
+		if file["extension"] != tc.extension || file["mime_type"] != tc.mimeType {
+			t.Fatalf("read %s file payload = %#v, want extension %s and mime %s", tc.id, file, tc.extension, tc.mimeType)
+		}
+		if len(extractor.requestedIDs) <= idx || len(extractor.tenantIDs) <= idx {
+			t.Fatalf("extractor calls = %d ids and %d tenants, want at least %d", len(extractor.requestedIDs), len(extractor.tenantIDs), idx+1)
+		}
+		if gotIDs := extractor.requestedIDs[idx]; len(gotIDs) != 1 || gotIDs[0] != tc.id {
+			t.Fatalf("extractor request %d = %#v, want [%s]", idx, gotIDs, tc.id)
+		}
+		if gotTenant := extractor.tenantIDs[idx]; gotTenant != organizationID {
+			t.Fatalf("extractor tenant %d = %q, want %q", idx, gotTenant, organizationID)
+		}
+	}
+}
+
 func TestReadFileToolRejectsWorkspacePermissionDenied(t *testing.T) {
 	organizationID := uuid.NewString()
 	accountID := uuid.NewString()
@@ -494,10 +626,14 @@ func (s *fakeFileService) DeleteFiles(_ context.Context, fileIDs []string) error
 }
 
 type fakeContentExtractor struct {
-	contents map[string]*workflowfile.FileContent
+	contents     map[string]*workflowfile.FileContent
+	requestedIDs [][]string
+	tenantIDs    []string
 }
 
-func (e *fakeContentExtractor) ExtractMultipleFiles(_ context.Context, fileIDs []string, _ string) ([]*workflowfile.FileContent, error) {
+func (e *fakeContentExtractor) ExtractMultipleFiles(_ context.Context, fileIDs []string, tenantID string) ([]*workflowfile.FileContent, error) {
+	e.requestedIDs = append(e.requestedIDs, append([]string(nil), fileIDs...))
+	e.tenantIDs = append(e.tenantIDs, tenantID)
 	out := make([]*workflowfile.FileContent, 0, len(fileIDs))
 	for _, fileID := range fileIDs {
 		out = append(out, e.contents[fileID])
