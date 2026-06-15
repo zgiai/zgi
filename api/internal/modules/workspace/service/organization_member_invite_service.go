@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	helper "github.com/zgiai/zgi/api/internal/util"
@@ -93,8 +94,14 @@ func (s *organizationService) InviteCurrentOrganizationMember(ctx context.Contex
 			return err
 		}
 		if !alreadyWorkspaceMember {
-			workspaceJoin := newInviteWorkspaceMemberJoin(workspaceID, account.ID, false)
-			if err := tx.WithContext(ctx).Create(workspaceJoin).Error; err != nil {
+			if s.workspaceManagementService == nil {
+				return fmt.Errorf("workspace management service is required to add workspace member")
+			}
+			if err := s.workspaceManagementService.WithTx(tx).AddMember(ctx, &interfaces.AddMemberRequest{
+				WorkspaceID: workspaceID,
+				AccountID:   account.ID,
+				Role:        model.WorkspaceRoleNormal,
+			}); err != nil && !strings.Contains(err.Error(), "already a member") {
 				return fmt.Errorf("failed to add workspace member: %w", err)
 			}
 		}

@@ -2322,7 +2322,7 @@ func (s *AccountService) resolveAnyAccessibleWorkspace(ctx context.Context, acco
 	err := s.db.WithContext(ctx).
 		Table("workspaces").
 		Select("workspaces.*").
-		Joins("JOIN organization_members ON organization_members.organization_id = workspaces.organization_id").
+		Joins("JOIN members AS organization_members ON organization_members.organization_id = workspaces.organization_id").
 		Joins("LEFT JOIN workspace_members ON workspaces.id = workspace_members.workspace_id AND workspace_members.account_id = organization_members.account_id").
 		Where("organization_members.account_id = ?", accountID).
 		Where("workspaces.status = ?", workspace_model.WorkspaceStatusNormal).

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -30,6 +31,9 @@ type fakeOrganizationService struct {
 	getByIDFn                        func(ctx context.Context, organizationID string) (*model.Organization, error)
 	checkAnyManagedWorkspaceFn       func(ctx context.Context, organizationID, accountID string) (bool, error)
 	getMembersPaginatedFn            func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error)
+	existsMemberByNameFn             func(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error)
+	isOrganizationMemberFn           func(ctx context.Context, organizationID, accountID string) (bool, error)
+	addMemberFn                      func(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error
 }
 
 func (f fakeOrganizationService) GetWorkspaceMemberPermissions(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error) {
@@ -88,9 +92,33 @@ func (f fakeOrganizationService) GetOrganizationMembersPaginated(ctx context.Con
 	return &shared_dto.OrganizationMemberPaginationResponse{}, nil
 }
 
+func (f fakeOrganizationService) ExistsMemberByName(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error) {
+	if f.existsMemberByNameFn != nil {
+		return f.existsMemberByNameFn(ctx, organizationID, name, excludeAccountID)
+	}
+	return false, nil
+}
+
+func (f fakeOrganizationService) IsOrganizationMember(ctx context.Context, organizationID, accountID string) (bool, error) {
+	if f.isOrganizationMemberFn != nil {
+		return f.isOrganizationMemberFn(ctx, organizationID, accountID)
+	}
+	return true, nil
+}
+
+func (f fakeOrganizationService) AddMember(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error {
+	if f.addMemberFn != nil {
+		return f.addMemberFn(ctx, req)
+	}
+	return nil
+}
+
 type fakeWorkspaceManagementService struct {
 	interfaces.WorkspaceManagementService
 	getWorkspaceMembersFn func(ctx context.Context, workspaceID string) ([]*interfaces.AccountWithRole, error)
+	getWorkspaceByIDFn    func(ctx context.Context, id string) (*model.Workspace, error)
+	getUserRoleFn         func(ctx context.Context, accountID, workspaceID string) (*model.WorkspaceMemberRole, error)
+	addMemberFn           func(ctx context.Context, req *interfaces.AddMemberRequest) error
 }
 
 func (f fakeWorkspaceManagementService) GetWorkspaceMembers(ctx context.Context, workspaceID string) ([]*interfaces.AccountWithRole, error) {
@@ -100,9 +128,98 @@ func (f fakeWorkspaceManagementService) GetWorkspaceMembers(ctx context.Context,
 	return nil, nil
 }
 
+func (f fakeWorkspaceManagementService) GetWorkspaceByID(ctx context.Context, id string) (*model.Workspace, error) {
+	if f.getWorkspaceByIDFn != nil {
+		return f.getWorkspaceByIDFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (f fakeWorkspaceManagementService) GetUserRole(ctx context.Context, accountID, workspaceID string) (*model.WorkspaceMemberRole, error) {
+	if f.getUserRoleFn != nil {
+		return f.getUserRoleFn(ctx, accountID, workspaceID)
+	}
+	return nil, nil
+}
+
+func (f fakeWorkspaceManagementService) AddMember(ctx context.Context, req *interfaces.AddMemberRequest) error {
+	if f.addMemberFn != nil {
+		return f.addMemberFn(ctx, req)
+	}
+	return nil
+}
+
+type fakeAccountService struct {
+	interfaces.AccountService
+	getUserThroughEmailFn              func(ctx context.Context, email string) (*auth_model.Account, error)
+	createAccountFn                    func(ctx context.Context, req *shared_dto.CreateAccountRequest) (*auth_model.Account, error)
+	ensureAccountContextForWorkspaceFn func(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error)
+	isOrganizationAdminOrOwnerFn       func(ctx context.Context, organizationID, accountID string) (bool, error)
+	isEmailSendIPLimitFn               func(ctx context.Context, ipAddress string) (bool, error)
+	sendDirectAddMemberEmailFn         func(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error
+}
+
+func (f fakeAccountService) GetUserThroughEmail(ctx context.Context, email string) (*auth_model.Account, error) {
+	if f.getUserThroughEmailFn != nil {
+		return f.getUserThroughEmailFn(ctx, email)
+	}
+	return nil, nil
+}
+
+func (f fakeAccountService) CreateAccount(ctx context.Context, req *shared_dto.CreateAccountRequest) (*auth_model.Account, error) {
+	if f.createAccountFn != nil {
+		return f.createAccountFn(ctx, req)
+	}
+	return nil, nil
+}
+
+func (f fakeAccountService) EnsureAccountContextForWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error) {
+	if f.ensureAccountContextForWorkspaceFn != nil {
+		return f.ensureAccountContextForWorkspaceFn(ctx, accountID, organizationID, workspaceID)
+	}
+	return &auth_model.AccountContext{AccountID: accountID}, false, nil
+}
+
+func (f fakeAccountService) IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
+	if f.isOrganizationAdminOrOwnerFn != nil {
+		return f.isOrganizationAdminOrOwnerFn(ctx, organizationID, accountID)
+	}
+	return true, nil
+}
+
+func (f fakeAccountService) IsEmailSendIPLimit(ctx context.Context, ipAddress string) (bool, error) {
+	if f.isEmailSendIPLimitFn != nil {
+		return f.isEmailSendIPLimitFn(ctx, ipAddress)
+	}
+	return false, nil
+}
+
+func (f fakeAccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error {
+	if f.sendDirectAddMemberEmailFn != nil {
+		return f.sendDirectAddMemberEmailFn(ctx, account, groupID, groupName, departmentName, language)
+	}
+	return nil
+}
+
 type fakeDepartmentService struct {
 	workspace_service.DepartmentService
 	getMemberDepartmentFn func(ctx context.Context, organizationID, accountID string) (*model.Department, error)
+	getDepartmentFn       func(ctx context.Context, id string) (*model.Department, error)
+	addMemberFn           func(ctx context.Context, organizationID, departmentID, accountID string) (*model.DepartmentMember, error)
+}
+
+func (f fakeDepartmentService) GetDepartment(ctx context.Context, id string) (*model.Department, error) {
+	if f.getDepartmentFn != nil {
+		return f.getDepartmentFn(ctx, id)
+	}
+	return nil, workspace_service.ErrDepartmentNotFound
+}
+
+func (f fakeDepartmentService) AddMemberToDepartment(ctx context.Context, organizationID, departmentID, accountID string) (*model.DepartmentMember, error) {
+	if f.addMemberFn != nil {
+		return f.addMemberFn(ctx, organizationID, departmentID, accountID)
+	}
+	return &model.DepartmentMember{DepartmentID: departmentID, AccountID: accountID}, nil
 }
 
 func (f fakeDepartmentService) GetMemberDepartment(ctx context.Context, organizationID, accountID string) (*model.Department, error) {
@@ -493,6 +610,86 @@ func TestGetCurrentOrganizationMembersUsesKeyword(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), `"email":"alice@example.com"`)
+}
+
+func TestDirectAddMemberDoesNotJoinWorkspaceWhenDepartmentRejects(t *testing.T) {
+	t.Parallel()
+
+	workspaceAddCalled := false
+	account := &auth_model.Account{
+		ID:     "member-1",
+		Name:   "Alice",
+		Email:  "alice@example.com",
+		Status: auth_model.AccountStatusActive,
+	}
+
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{},
+		workspaceManagementService: fakeWorkspaceManagementService{
+			getWorkspaceByIDFn: func(ctx context.Context, id string) (*model.Workspace, error) {
+				require.Equal(t, "ws-1", id)
+				orgID := "org-1"
+				return &model.Workspace{
+					ID:             id,
+					Name:           "Workspace",
+					Status:         model.WorkspaceStatusNormal,
+					OrganizationID: &orgID,
+				}, nil
+			},
+			addMemberFn: func(ctx context.Context, req *interfaces.AddMemberRequest) error {
+				workspaceAddCalled = true
+				return nil
+			},
+		},
+		accountService: fakeAccountService{
+			getUserThroughEmailFn: func(ctx context.Context, email string) (*auth_model.Account, error) {
+				require.Equal(t, "alice@example.com", email)
+				return account, nil
+			},
+			isOrganizationAdminOrOwnerFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "owner-1", accountID)
+				return true, nil
+			},
+		},
+		departmentService: fakeDepartmentService{
+			getDepartmentFn: func(ctx context.Context, id string) (*model.Department, error) {
+				require.Equal(t, "dept-1", id)
+				return &model.Department{
+					ID:             id,
+					Name:           "Existing Department",
+					OrganizationID: "org-1",
+					Status:         model.DepartmentStatusActive,
+				}, nil
+			},
+			addMemberFn: func(ctx context.Context, organizationID, departmentID, accountID string) (*model.DepartmentMember, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "dept-1", departmentID)
+				require.Equal(t, "member-1", accountID)
+				return nil, workspace_service.ErrMemberAlreadyInDept
+			},
+			getMemberDepartmentFn: func(ctx context.Context, organizationID, accountID string) (*model.Department, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "member-1", accountID)
+				return &model.Department{ID: "dept-existing", Name: "Current Department"}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/members/direct-add")
+	c.Set("account_id", "owner-1")
+	c.Set("organization_id", "org-1")
+	c.Set("account_service", handler.accountService)
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"name":"Alice","email":"alice@example.com","workspace_id":"ws-1","department_id":"dept-1"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.DirectAddMember(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"code":"MemberAlreadyInDepartment"`)
+	require.Contains(t, recorder.Body.String(), `"id":"dept-existing"`)
+	require.False(t, workspaceAddCalled)
 }
 
 func TestOrganizationRoutesRegisterCurrentMembersList(t *testing.T) {

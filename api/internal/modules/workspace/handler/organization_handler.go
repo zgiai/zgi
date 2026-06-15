@@ -1632,27 +1632,6 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 		}
 	}
 
-	existingWorkspaceRole, err := h.workspaceManagementService.GetUserRole(ctx, account.ID, workspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-	if existingWorkspaceRole == nil {
-		if err := h.workspaceManagementService.AddMember(ctx, &interfaces.AddMemberRequest{
-			WorkspaceID: workspaceID,
-			AccountID:   account.ID,
-			Role:        model.WorkspaceRoleNormal,
-		}); err != nil && !strings.Contains(err.Error(), "already a member") {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-	}
-
-	if _, _, err := h.accountService.EnsureAccountContextForWorkspace(ctx, account.ID, organizationID, workspaceID); err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-
 	if deptID != "" {
 		_, err = h.departmentService.AddMemberToDepartment(ctx, organizationID, deptID, account.ID)
 		if err != nil {
@@ -1684,6 +1663,27 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 			response.Fail(c, response.ErrSystemError)
 			return
 		}
+	}
+
+	existingWorkspaceRole, err := h.workspaceManagementService.GetUserRole(ctx, account.ID, workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if existingWorkspaceRole == nil {
+		if err := h.workspaceManagementService.AddMember(ctx, &interfaces.AddMemberRequest{
+			WorkspaceID: workspaceID,
+			AccountID:   account.ID,
+			Role:        model.WorkspaceRoleNormal,
+		}); err != nil && !strings.Contains(err.Error(), "already a member") {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+	}
+
+	if _, _, err := h.accountService.EnsureAccountContextForWorkspace(ctx, account.ID, organizationID, workspaceID); err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
 	}
 
 	sendEmail := false

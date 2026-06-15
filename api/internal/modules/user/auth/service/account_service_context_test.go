@@ -244,7 +244,7 @@ func TestGetAccountContextResolvesAnyAccessibleWorkspaceWhenContextEmpty(t *test
 		admins:  map[string]bool{organizationID: false},
 	}
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT workspaces.* FROM "workspaces" JOIN organization_members ON organization_members.organization_id = workspaces.organization_id LEFT JOIN workspace_members ON workspaces.id = workspace_members.workspace_id AND workspace_members.account_id = organization_members.account_id WHERE organization_members.account_id = $1 AND workspaces.status = $2 AND workspaces.organization_id IS NOT NULL AND ((organization_members.role IN ($3,$4) OR workspace_members.account_id IS NOT NULL)) ORDER BY COALESCE(workspace_members.current, false) DESC, workspaces.created_at DESC LIMIT $5`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT workspaces.* FROM "workspaces" JOIN members AS organization_members ON organization_members.organization_id = workspaces.organization_id LEFT JOIN workspace_members ON workspaces.id = workspace_members.workspace_id AND workspace_members.account_id = organization_members.account_id WHERE organization_members.account_id = $1 AND workspaces.status = $2 AND workspaces.organization_id IS NOT NULL AND ((organization_members.role IN ($3,$4) OR workspace_members.account_id IS NOT NULL)) ORDER BY COALESCE(workspace_members.current, false) DESC, workspaces.created_at DESC LIMIT $5`)).
 		WithArgs("acc-1", string(workspace_model.WorkspaceStatusNormal), workspace_model.OrganizationRoleOwner, workspace_model.OrganizationRoleAdmin, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "status", "organization_id"}).
 			AddRow("ws-1", "Workspace", string(workspace_model.WorkspaceStatusNormal), organizationID))
@@ -276,7 +276,7 @@ func TestGetAccountContextLeavesWorkspaceEmptyWhenNoneAccessible(t *testing.T) {
 		},
 	}
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT workspaces.* FROM "workspaces" JOIN organization_members ON organization_members.organization_id = workspaces.organization_id LEFT JOIN workspace_members ON workspaces.id = workspace_members.workspace_id AND workspace_members.account_id = organization_members.account_id WHERE organization_members.account_id = $1 AND workspaces.status = $2 AND workspaces.organization_id IS NOT NULL AND ((organization_members.role IN ($3,$4) OR workspace_members.account_id IS NOT NULL)) ORDER BY COALESCE(workspace_members.current, false) DESC, workspaces.created_at DESC LIMIT $5`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT workspaces.* FROM "workspaces" JOIN members AS organization_members ON organization_members.organization_id = workspaces.organization_id LEFT JOIN workspace_members ON workspaces.id = workspace_members.workspace_id AND workspace_members.account_id = organization_members.account_id WHERE organization_members.account_id = $1 AND workspaces.status = $2 AND workspaces.organization_id IS NOT NULL AND ((organization_members.role IN ($3,$4) OR workspace_members.account_id IS NOT NULL)) ORDER BY COALESCE(workspace_members.current, false) DESC, workspaces.created_at DESC LIMIT $5`)).
 		WithArgs("acc-1", string(workspace_model.WorkspaceStatusNormal), workspace_model.OrganizationRoleOwner, workspace_model.OrganizationRoleAdmin, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "status", "organization_id"}))
 
