@@ -220,13 +220,82 @@ func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, pr
 }
 
 func toolGovernanceApprovalContinuationMessage(event map[string]interface{}) adapter.Message {
-	return adapter.Message{Role: "system", Content: strings.Join([]string{
+	lines := []string{
 		"The user approved the pending tool governance request for this same AIChat message.",
 		"Continue the original user task. Retry the previously blocked skill tool call only if it is still the correct next step.",
 		"The approval is scoped to the governance grant injected into runtime parameters; do not ask for the same approval again in this continuation.",
+		"The approved governance event is an authoritative asset resolution for the previously blocked tool call.",
+		"If the approved governance event contains asset ids, use those asset ids directly and do not ask the user to identify the approved assets again unless the tool reports that an approved asset is missing or inaccessible.",
 		"Do not claim that the action succeeded until the corresponding skill/tool call actually succeeds.",
-		"Approved governance event JSON: " + compactJSON(event),
-	}, "\n")}
+	}
+	lines = append(lines, toolGovernanceApprovedAssetInstructions(event)...)
+	lines = append(lines, "Approved governance event JSON: "+compactJSON(event))
+	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}
+}
+
+func toolGovernanceApprovedAssetInstructions(event map[string]interface{}) []string {
+	approvalEvent := governanceMapFromAny(event["approval_event"])
+	if len(approvalEvent) == 0 {
+		if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
+			approvalEvent = governanceMapFromAny(governance["approval_event"])
+		}
+	}
+	assets := mapSliceFromAny(approvalEvent["assets"])
+	if len(assets) == 0 {
+		if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
+			assets = mapSliceFromAny(governance["assets"])
+		}
+	}
+	if len(assets) == 0 {
+		return nil
+	}
+
+	assetSummaries := make([]string, 0, min(len(assets), 5))
+	for index, asset := range assets {
+		if index >= 5 {
+			break
+		}
+		id := strings.TrimSpace(stringFromAny(asset["id"]))
+		name := strings.TrimSpace(firstNonEmptyString(
+			stringFromAny(asset["name"]),
+			stringFromAny(asset["title"]),
+			stringFromAny(asset["file_name"]),
+		))
+		assetType := strings.TrimSpace(stringFromAny(asset["type"]))
+		parts := make([]string, 0, 3)
+		if name != "" {
+			parts = append(parts, name)
+		}
+		if assetType != "" {
+			parts = append(parts, "type="+assetType)
+		}
+		if id != "" {
+			parts = append(parts, "id="+id)
+		}
+		if len(parts) > 0 {
+			assetSummaries = append(assetSummaries, strings.Join(parts, " "))
+		}
+	}
+	lines := []string{}
+	if len(assetSummaries) > 0 {
+		lines = append(lines, "Approved assets: "+strings.Join(assetSummaries, "; "))
+	}
+	toolID := strings.TrimSpace(firstNonEmptyString(
+		stringFromAny(approvalEvent["tool_id"]),
+		stringFromAny(event["tool_id"]),
+	))
+	skillID := strings.TrimSpace(firstNonEmptyString(
+		stringFromAny(approvalEvent["skill_id"]),
+		stringFromAny(event["skill_id"]),
+	))
+	toolName := strings.TrimSpace(stringFromAny(event["tool_name"]))
+	if toolID == "file.delete" && skillID == "file-reader" && len(assets) == 1 {
+		if toolName == "" {
+			toolName = "delete_file"
+		}
+		lines = append(lines, "For this approved single-file deletion, call file-reader/"+toolName+" with file_id equal to the approved file asset id before answering.")
+	}
+	return lines
 }
 
 func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtimedto.ToolGovernanceDecisionRequest, event map[string]interface{}) *adapter.ChatRequest {

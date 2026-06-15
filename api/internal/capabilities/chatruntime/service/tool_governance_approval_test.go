@@ -286,7 +286,21 @@ func TestToolGovernanceApprovalContinuationMessageScopesRetryToGrant(t *testing.
 	message := toolGovernanceApprovalContinuationMessage(map[string]interface{}{
 		"correlation_id":  "corr-1",
 		"approval_status": "approved",
+		"tool_name":       "delete_file",
 		"governance": map[string]interface{}{
+			"approval_event": map[string]interface{}{
+				"tool_id":    "file.delete",
+				"skill_id":   "file-reader",
+				"effect":     "delete",
+				"asset_type": "file",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":   "file-1",
+						"type": "file",
+						"name": "smoke.txt",
+					},
+				},
+			},
 			"approval_result": map[string]interface{}{
 				"approved_grant": map[string]interface{}{
 					"conversation_id": "conv-1",
@@ -303,6 +317,10 @@ func TestToolGovernanceApprovalContinuationMessageScopesRetryToGrant(t *testing.
 	for _, want := range []string{
 		"The user approved the pending tool governance request",
 		"The approval is scoped to the governance grant",
+		"authoritative asset resolution",
+		"do not ask the user to identify the approved assets again",
+		"Approved assets: smoke.txt type=file id=file-1",
+		"call file-reader/delete_file with file_id equal to the approved file asset id",
 		"Do not claim that the action succeeded",
 		"corr-1",
 		"file.delete",
