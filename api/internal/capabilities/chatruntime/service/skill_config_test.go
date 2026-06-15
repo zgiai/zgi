@@ -411,6 +411,66 @@ func TestApplySkillToolGovernanceRuntimeParametersPreservesFlatPermissionTier(t 
 	}
 }
 
+func TestSkillRuntimeParametersForPreparedUsesOperationContextPermissionTier(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		parts: &chatRequestParts{
+			Query: "summarize visible files",
+			RawOperationContext: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "advanced",
+				},
+			},
+		},
+	}
+
+	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
+	if governance["permission_tier"] != "advanced" {
+		t.Fatalf("permission_tier = %#v, want advanced", governance["permission_tier"])
+	}
+}
+
+func TestSkillRuntimeParametersForPreparedUsesNormalizedOperationContextPermissionTier(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		parts: &chatRequestParts{
+			Query: "summarize visible files",
+			OperationContext: map[string]interface{}{
+				"toolGovernance": map[string]interface{}{
+					"permissionTier": "full",
+				},
+			},
+		},
+	}
+
+	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
+	if governance["permission_tier"] != "full" {
+		t.Fatalf("permission_tier = %#v, want full", governance["permission_tier"])
+	}
+}
+
+func TestSkillRuntimeParametersForPreparedIgnoresInvalidOperationContextPermissionTier(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		parts: &chatRequestParts{
+			Query: "summarize visible files",
+			RawOperationContext: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "owner",
+				},
+			},
+		},
+	}
+
+	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
+	if governance["permission_tier"] != "basic" {
+		t.Fatalf("permission_tier = %#v, want basic", governance["permission_tier"])
+	}
+}
+
 func governanceRuntimeParamsFromTest(t *testing.T, params map[string]interface{}) map[string]interface{} {
 	t.Helper()
 	governance, ok := params["tool_governance"].(map[string]interface{})

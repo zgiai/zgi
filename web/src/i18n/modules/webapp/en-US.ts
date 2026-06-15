@@ -233,6 +233,16 @@ const messages = {
       approveSucceeded: 'Approval recorded',
       rejectSucceeded: 'Rejection recorded',
       submitFailed: 'Failed to submit approval decision',
+      permissionTiers: {
+        label: 'Tool permissions',
+        basic: 'Basic',
+        advanced: 'Advanced',
+        full: 'Full',
+        basicDescription: 'Ask before changing user assets',
+        advancedDescription: 'Allow ordinary asset changes, ask before destructive actions',
+        fullDescription: 'Run all governed tools without asking when policy allows',
+        fullWarning: 'Full permission is active. High-risk policy blocks still apply.',
+      },
       values: {
         yes: 'Yes',
         no: 'No',

@@ -13,7 +13,14 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
-import { ArrowDown, MessageSquarePlus, PanelLeft, Settings2 } from 'lucide-react';
+import {
+  ArrowDown,
+  MessageSquarePlus,
+  PanelLeft,
+  Settings2,
+  ShieldAlert,
+  ShieldCheck,
+} from 'lucide-react';
 import type {
   ModelSelectorModelProps,
   ModelSelectorValue,
@@ -87,6 +94,10 @@ import {
   type AIChatWorkflowApprovalRequest,
   type AIChatWorkflowApprovalSubmitPayload,
 } from '@/components/chat/variants/aichat/types';
+import type {
+  AIChatOperationContext,
+  AIChatToolGovernancePermissionTier,
+} from '@/components/aichat/contextual/types';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -138,6 +149,16 @@ const CHAT_THEME_PRIMARY: Record<string, string> = {
   slate: '215 20% 45%',
 };
 const AGENT_WORKFLOW_QUESTION_SOURCE = 'agent_workflow_question_answer';
+const TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY = 'zgi:aichat:tool-governance-permission-tier';
+const TOOL_GOVERNANCE_PERMISSION_TIERS: AIChatToolGovernancePermissionTier[] = [
+  'basic',
+  'advanced',
+  'full',
+];
+
+function normalizeToolGovernancePermissionTier(value: unknown): AIChatToolGovernancePermissionTier {
+  return value === 'advanced' || value === 'full' ? value : 'basic';
+}
 
 function normalizeSkillIds(skillIds: string[]) {
   return Array.from(new Set(skillIds.filter(Boolean))).sort();
@@ -237,6 +258,10 @@ export function AIChatShell({
   const [skillPreferenceOpen, setSkillPreferenceOpen] = useState(false);
   const [draftSkillPreferenceIds, setDraftSkillPreferenceIds] = useState<string[]>([]);
   const [inputAreaHeight, setInputAreaHeight] = useState(160);
+  const [toolGovernancePermissionTier, setToolGovernancePermissionTier] =
+    useState<AIChatToolGovernancePermissionTier>('basic');
+  const [toolGovernancePermissionTierLoaded, setToolGovernancePermissionTierLoaded] =
+    useState(false);
   const topologyRef = useRef<{ key: string; topology: ChatMessageTopology } | null>(null);
   const lastErrorToastRef = useRef<string | null>(null);
 
@@ -281,6 +306,19 @@ export function AIChatShell({
     if (!enableAIChatSkillPreference || !skillPreference) return;
     setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
   }, [enableAIChatSkillPreference, skillPreference]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const savedTier = window.localStorage.getItem(TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY);
+    setToolGovernancePermissionTier(normalizeToolGovernancePermissionTier(savedTier));
+    setToolGovernancePermissionTierLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !toolGovernancePermissionTierLoaded) return;
+    window.localStorage.setItem(
+      TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY,
+      toolGovernancePermissionTier
+    );
+  }, [toolGovernancePermissionTier, toolGovernancePermissionTierLoaded]);
   const savedSkillPreferenceIds = useMemo(
     () => skillPreference?.enabled_skill_ids ?? [],
     [skillPreference?.enabled_skill_ids]
@@ -289,6 +327,103 @@ export function AIChatShell({
     () => !areSkillIdsEqual(draftSkillPreferenceIds, savedSkillPreferenceIds),
     [draftSkillPreferenceIds, savedSkillPreferenceIds]
   );
+  const showToolGovernancePermissionControl = surface !== 'agent-webapp';
+  const effectiveToolGovernancePermissionTier = showToolGovernancePermissionControl
+    ? toolGovernancePermissionTier
+    : 'basic';
+  const toolGovernanceOperationContext = useMemo<AIChatOperationContext>(
+    () => ({
+      schema: 'zgi.aichat.operation_context.v1',
+      version: 1,
+      tool_governance: {
+        permission_tier: effectiveToolGovernancePermissionTier,
+      },
+      resources: [],
+      capabilities: [],
+      risk_summary: {
+        requires_confirmation: false,
+      },
+      summary: {
+        resource_count: 0,
+        capability_count: 0,
+        omitted_resource_count: 0,
+        omitted_capability_count: 0,
+      },
+    }),
+    [effectiveToolGovernancePermissionTier]
+  );
+  const toolGovernancePermissionControl = useMemo(() => {
+    if (!showToolGovernancePermissionControl) return null;
+    const description =
+      toolGovernancePermissionTier === 'full'
+        ? t('consoleChat.governance.permissionTiers.fullWarning')
+        : toolGovernancePermissionTier === 'advanced'
+          ? t('consoleChat.governance.permissionTiers.advancedDescription')
+          : t('consoleChat.governance.permissionTiers.basicDescription');
+
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-background/95 px-2.5 py-1.5 text-xs shadow-sm">
+        <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+          {toolGovernancePermissionTier === 'full' ? (
+            <ShieldAlert className="size-3.5 shrink-0 text-destructive" />
+          ) : (
+            <ShieldCheck className="size-3.5 shrink-0 text-primary" />
+          )}
+          <span className="shrink-0 font-medium text-foreground">
+            {t('consoleChat.governance.permissionTiers.label')}
+          </span>
+          <span
+            className={cn(
+              'hidden min-w-0 truncate sm:block',
+              toolGovernancePermissionTier === 'full' && 'text-destructive'
+            )}
+          >
+            {description}
+          </span>
+        </div>
+        <div
+          className="flex shrink-0 items-center rounded-md border bg-muted/40 p-0.5"
+          role="group"
+          aria-label={t('consoleChat.governance.permissionTiers.label')}
+        >
+          {TOOL_GOVERNANCE_PERMISSION_TIERS.map(tier => {
+            const selected = toolGovernancePermissionTier === tier;
+            const label =
+              tier === 'full'
+                ? t('consoleChat.governance.permissionTiers.full')
+                : tier === 'advanced'
+                  ? t('consoleChat.governance.permissionTiers.advanced')
+                  : t('consoleChat.governance.permissionTiers.basic');
+            const title =
+              tier === 'full'
+                ? t('consoleChat.governance.permissionTiers.fullDescription')
+                : tier === 'advanced'
+                  ? t('consoleChat.governance.permissionTiers.advancedDescription')
+                  : t('consoleChat.governance.permissionTiers.basicDescription');
+            return (
+              <button
+                key={tier}
+                type="button"
+                className={cn(
+                  'h-7 rounded px-2.5 text-xs font-medium transition-colors',
+                  selected
+                    ? tier === 'full'
+                      ? 'bg-destructive text-destructive-foreground shadow-sm'
+                      : 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                aria-pressed={selected}
+                title={title}
+                onClick={() => setToolGovernancePermissionTier(tier)}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }, [showToolGovernancePermissionControl, t, toolGovernancePermissionTier]);
 
   const messageTopologyKey = useMemo(
     () => buildChatMessageTopologyKey(activeMessages),
@@ -514,6 +649,7 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: forcedUseMemory ?? useMemory,
+        operationContext: toolGovernanceOperationContext,
       });
       return true;
     },
@@ -527,6 +663,7 @@ export function AIChatShell({
       modelSelectorValue,
       requireModel,
       t,
+      toolGovernanceOperationContext,
     ]
   );
 
@@ -560,6 +697,7 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: forcedUseMemory ?? useMemory,
+        operationContext: toolGovernanceOperationContext,
       });
     },
     [
@@ -570,6 +708,7 @@ export function AIChatShell({
       modelSelectorValue,
       requireModel,
       t,
+      toolGovernanceOperationContext,
     ]
   );
 
@@ -660,6 +799,7 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: Boolean(message.metadata?.use_memory),
+        operationContext: toolGovernanceOperationContext,
       });
     },
     [
@@ -672,6 +812,7 @@ export function AIChatShell({
       modelSelectorValue,
       requireModel,
       t,
+      toolGovernanceOperationContext,
     ]
   );
 
@@ -983,6 +1124,7 @@ export function AIChatShell({
           allowWorkspaceSwitch={allowWorkspaceSwitch}
           inputPlaceholder={inputPlaceholder}
           surface={surface}
+          topAccessory={toolGovernancePermissionControl}
         />
       </main>
 

@@ -63,12 +63,14 @@ export function useChatRuntimeMessageActions({
       files = [],
       parentId: parentIdOverride,
       useMemory = false,
+      operationContext,
     }: {
       query: string;
       model: AIChatModelSelection;
       files?: AIChatMessageFile[];
       parentId?: string | null;
       useMemory?: boolean;
+      operationContext?: unknown;
     }) => {
       const trimmedQuery = query.trim();
       const currentState = stateRef.current;
@@ -181,6 +183,7 @@ export function useChatRuntimeMessageActions({
             ...(files.length > 0 ? { file_ids: files.map(file => file.id) } : {}),
             response_mode: 'streaming',
             parameters: toAIChatParameters(model.parameters),
+            operation_context: operationContext,
             ...(useMemory ? { use_memory: true } : {}),
           },
           {

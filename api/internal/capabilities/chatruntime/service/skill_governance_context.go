@@ -21,7 +21,7 @@ func applySkillToolGovernanceRuntimeParameters(params map[string]interface{}, pr
 		governance = map[string]interface{}{}
 	}
 	if strings.TrimSpace(stringMetadataValue(governance["permission_tier"])) == "" {
-		if tier := strings.TrimSpace(stringMetadataValue(params["tool_governance_permission_tier"])); tier != "" {
+		if tier := skillToolGovernancePermissionTierFromPrepared(params, prepared); tier != "" {
 			governance["permission_tier"] = tier
 		} else {
 			governance["permission_tier"] = string(toolgovernance.PermissionTierBasic)
@@ -43,6 +43,35 @@ func applySkillToolGovernanceRuntimeParameters(params map[string]interface{}, pr
 	}
 	params[skillToolGovernanceRuntimeKey] = governance
 	return params
+}
+
+func skillToolGovernancePermissionTierFromPrepared(params map[string]interface{}, prepared *PreparedChat) string {
+	if tier := normalizeSkillToolGovernancePermissionTier(params["tool_governance_permission_tier"]); tier != "" {
+		return tier
+	}
+	if prepared == nil || prepared.parts == nil {
+		return ""
+	}
+	if tier := skillToolGovernancePermissionTierFromOperationContext(prepared.parts.RawOperationContext); tier != "" {
+		return tier
+	}
+	return skillToolGovernancePermissionTierFromOperationContext(prepared.parts.OperationContext)
+}
+
+func skillToolGovernancePermissionTierFromOperationContext(context map[string]interface{}) string {
+	governance := mapFromOperationContext(firstMapValue(context, "tool_governance", "toolGovernance"))
+	if governance == nil {
+		return ""
+	}
+	return normalizeSkillToolGovernancePermissionTier(firstMapValue(governance, "permission_tier", "permissionTier"))
+}
+
+func normalizeSkillToolGovernancePermissionTier(value interface{}) string {
+	tier := toolgovernance.NormalizePermissionTier(toolgovernance.PermissionTier(stringMetadataValue(value)))
+	if tier == "" {
+		return ""
+	}
+	return string(tier)
 }
 
 func skillToolGovernanceAssetsFromPrepared(prepared *PreparedChat) []map[string]interface{} {

@@ -9,6 +9,7 @@ import {
   type ChangeEvent,
   type ClipboardEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react';
 import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
@@ -170,6 +171,7 @@ interface AIChatInputAreaProps {
   allowWorkspaceSwitch?: boolean;
   inputPlaceholder?: string;
   surface?: AIChatComposerSurface;
+  topAccessory?: ReactNode;
 }
 
 /**
@@ -210,6 +212,7 @@ export function AIChatInputArea({
   allowWorkspaceSwitch = false,
   inputPlaceholder,
   surface = 'aichat',
+  topAccessory,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -866,6 +869,9 @@ export function AIChatInputArea({
             <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {t('consoleChat.modelRequired')}
             </div>
+          ) : null}
+          {!hasActiveWorkflowApprovalRequest && topAccessory ? (
+            <div className="mb-2">{topAccessory}</div>
           ) : null}
           <div className="rounded-2xl border bg-background p-2 shadow-sm focus-within:border-primary/40">
             {hasActiveWorkflowApprovalRequest && activeWorkflowApprovalRequest ? (

@@ -31,6 +31,7 @@ export type AIChatCapabilityStatus =
   | 'disabled'
   | 'preview'
   | (string & {});
+export type AIChatToolGovernancePermissionTier = 'basic' | 'advanced' | 'full';
 
 export type AIChatContextMetadataValue = string | number | boolean | null | undefined;
 export type AIChatContextMetadata = Record<string, AIChatContextMetadataValue>;
@@ -116,6 +117,9 @@ export interface AIChatOperationCapability {
 export interface AIChatOperationContext {
   schema: 'zgi.aichat.operation_context.v1';
   version: 1;
+  tool_governance?: {
+    permission_tier?: AIChatToolGovernancePermissionTier;
+  };
   resources: AIChatOperationResource[];
   capabilities: AIChatOperationCapability[];
   risk_summary: {

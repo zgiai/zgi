@@ -40,6 +40,10 @@ const RISK_RANK: Record<AIChatCapabilityRisk, number> = {
   high: 3,
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function compactText(value: string | undefined, limit = MAX_FIELD_LENGTH): string {
   const text = (value ?? '').replace(/\s+/g, ' ').trim();
   if (text.length <= limit) return text;
@@ -269,6 +273,38 @@ export function buildAIChatOperationContext(items: AIChatContextItem[]): AIChatO
   };
 }
 
+function mergeAIChatOperationContext(
+  pageContext: AIChatOperationContext,
+  requestContext: unknown
+): AIChatOperationContext | undefined {
+  const hasPageContext = pageContext.resources.length > 0 || pageContext.capabilities.length > 0;
+  if (!isRecord(requestContext)) {
+    return hasPageContext ? pageContext : undefined;
+  }
+
+  const incoming = requestContext as Partial<AIChatOperationContext>;
+  return {
+    ...incoming,
+    schema: 'zgi.aichat.operation_context.v1',
+    version: 1,
+    resources: hasPageContext
+      ? pageContext.resources
+      : Array.isArray(incoming.resources)
+        ? incoming.resources
+        : [],
+    capabilities: hasPageContext
+      ? pageContext.capabilities
+      : Array.isArray(incoming.capabilities)
+        ? incoming.capabilities
+        : [],
+    risk_summary: hasPageContext
+      ? pageContext.risk_summary
+      : (incoming.risk_summary ?? pageContext.risk_summary),
+    summary: hasPageContext ? pageContext.summary : (incoming.summary ?? pageContext.summary),
+    tool_governance: incoming.tool_governance ?? pageContext.tool_governance,
+  };
+}
+
 export function createContextualAIChatTransport(
   getContextItems: () => AIChatContextItem[]
 ): AIChatRuntimeTransport {
@@ -289,12 +325,15 @@ export function createContextualAIChatTransport(
       const contextItems = getContextItems();
       const envelope = buildAIChatContextEnvelope(contextItems);
       const operationContext = buildAIChatOperationContext(contextItems);
+      const mergedOperationContext = mergeAIChatOperationContext(
+        operationContext,
+        payload.operation_context
+      );
       return aichatTransport.streamChat(
         {
           ...payload,
           runtime_context: envelope || undefined,
-          operation_context:
-            operationContext.resources.length > 0 ? operationContext : payload.operation_context,
+          operation_context: mergedOperationContext,
         },
         callbacks,
         abortSignal

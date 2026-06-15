@@ -223,6 +223,16 @@ const messages: WebappMessages = {
       approveSucceeded: '已记录批准',
       rejectSucceeded: '已记录拒绝',
       submitFailed: '提交审批决策失败',
+      permissionTiers: {
+        label: '工具权限',
+        basic: '基础',
+        advanced: '高级',
+        full: '完全',
+        basicDescription: '涉及用户资产变更时先询问',
+        advancedDescription: '普通资产变更可自动执行，破坏性操作仍询问',
+        fullDescription: '策略允许时不再询问即可运行治理工具',
+        fullWarning: '完全权限已开启，高风险策略拦截仍会生效。',
+      },
       values: {
         yes: '是',
         no: '否',
