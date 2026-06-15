@@ -2,7 +2,7 @@ const messages = {
   title: 'File Management',
   eyebrow: 'Asset Library',
   description:
-    'Upload and manage source files. Parsed content can be used for follow-up Q&A and knowledge base references.',
+    'Upload and manage source files. Generated chunks can be used for follow-up Q&A and knowledge base references.',
 
   // Sidebar
   sidebar: {
@@ -34,13 +34,13 @@ const messages = {
     totalItems: 'Total {total} items',
     relatedCount: 'Related {count} items',
     notRelated: 'Not Related',
-    pendingCount: '{count} pending',
+    pendingCount: '{count} issue(s)',
     chunkCount: '{count} chunks',
     embeddingCount: '{count} vectors',
     startParseDialog: {
       title: 'Submit Parse',
       description:
-        'Submit a parse task for "{name}". The file will go through parsing, review, and indexing.',
+        'Submit a parse task for "{name}". The file will go through parsing, chunking, and indexing.',
       providerHint: 'The system will automatically choose a parse route by file type.',
       toasts: {
         started: 'Parse request submitted',
@@ -64,7 +64,7 @@ const messages = {
   processingStatus: {
     stored_only: 'Stored only',
     parsing: 'Parsing',
-    confirming: 'Needs review',
+    confirming: 'Needs optimization',
     generating: 'Indexing',
     parse_failed: 'Parse failed',
     ready: 'Ready',
@@ -92,7 +92,7 @@ const messages = {
     batchUnavailable:
       'This batch capability requires backend API support and is not available yet.',
     deleting: 'Deleting...',
-    confirmParse: 'Review',
+    confirmParse: 'View Issues',
     startParse: 'Parse',
     startParsing: 'Submitting...',
     replaceDocument: 'Update Document',
@@ -189,18 +189,18 @@ const messages = {
     fileBreadcrumb: 'Files',
     previewOriginal: 'Preview Original',
     downloadOriginal: 'Download Original',
-    exportParsedContent: 'Export Parsed Content',
-    exportParsedContentUnavailable: 'Parsed content is not ready yet.',
-    exportParsedContentSuccess: 'Parsed content exported',
-    exportParsedContentFailed: 'Failed to export parsed content',
     processing: 'Processing',
     fileType: '{extension} File',
     createdAt: 'Uploaded {time}',
     previewWorkspaceDescription:
-      'Review the original file and parsed content, then resolve marked items.',
+      'Review the original file on the left and manage generated chunks on the right.',
     previewFocus: {
       enter: 'Preview Layout',
       exit: 'Restore Layout',
+    },
+    previewToggle: {
+      hideOriginal: 'Hide Original',
+      showOriginal: 'Show Original',
     },
     loadErrorTitle: 'Failed to load file details',
     loadErrorDescription: 'The file may have been removed or you may not have access.',
@@ -214,9 +214,9 @@ const messages = {
     generationNo: 'Generation',
     nextViews: 'Detail Views',
     nextViewsDescription:
-      'Original preview, parse review, content chunks, index information, and retry actions will be mounted here in the following phase-one frontend tasks.',
+      'Original preview, content chunks, index information, and retry actions will be mounted here in the following phase-one frontend tasks.',
     processingSummary: 'Processing Summary',
-    pendingConfirmationCount: 'Pending Reviews',
+    pendingConfirmationCount: 'Optimization Issues',
     chunkCount: 'Chunks',
     embeddingCount: 'Vectors',
     createdDate: 'Upload Date',
@@ -242,12 +242,12 @@ const messages = {
     workbench: {
       title: 'Processing progress',
       description:
-        '{pending} pending reviews, {chunks} chunks, and {embeddings} vectors generated.',
-      pendingHint: '{count} pending',
+        '{pending} optimization issue(s), {chunks} chunks, and {embeddings} vectors generated.',
+      pendingHint: '{count} issue(s)',
       banners: {
         confirming: {
           title: 'Quality check found marked content',
-          description: 'Quality check found {pending} items that need review.',
+          description: 'Quality check found {pending} item(s) to optimize in chunks.',
         },
         failed: {
           title: 'Processing failed',
@@ -270,7 +270,7 @@ const messages = {
       },
       steps: {
         uploaded: 'Uploaded',
-        parsed: 'Parse content',
+        parsed: 'Parse document',
         quality: 'Quality check',
         chunks: 'Generate chunks',
         index: 'Build Q&A index',
@@ -287,9 +287,9 @@ const messages = {
     },
     tabHints: {
       chunksReady: '{count} chunks generated',
-      chunksWaiting: 'Waiting for review',
+      chunksWaiting: 'Waiting for generation',
       qaReady: 'Ready for questions',
-      qaWaiting: 'Available after review',
+      qaWaiting: 'Available after generation',
     },
     parseReview: {
       title: 'Parse Review',
@@ -360,7 +360,7 @@ const messages = {
       title: 'Content Chunks',
       notReadyTitle: 'Chunks are not ready',
       notReadyDescription:
-        'Chunks become available after parsing, review, and vector generation finish.',
+        'Chunks become available after parsing and vector generation finish.',
       loadErrorTitle: 'Failed to load chunks',
       loadErrorDescription: 'The chunk result may not be ready yet.',
       total: '{count} chunks',
@@ -374,8 +374,14 @@ const messages = {
       searchPlaceholder: 'Search chunk content...',
       filters: {
         all: 'All',
+        issues: 'Needs optimization',
         enabled: 'Enabled',
         disabled: 'Disabled',
+      },
+      issues: {
+        badge: '{count} issue(s)',
+        title: 'This chunk has optimization issues',
+        fallback: 'Needs optimization',
       },
       expandAll: 'Expand all',
       collapseAll: 'Collapse all',
@@ -444,7 +450,7 @@ const messages = {
       reparsing: 'Submitting...',
       confirmTitle: 'Reparse this file?',
       confirmDescription:
-        'The current searchable asset will be unavailable while the file is parsing, reviewing, and indexing again.',
+        'The current searchable asset will be unavailable while the file is parsing, chunking, and indexing again.',
       confirm: 'Reparse',
       toasts: {
         started: 'Reparse request submitted',
@@ -468,8 +474,9 @@ const messages = {
           'The system is extracting document content. This page refreshes every 2 seconds.',
       },
       confirming: {
-        title: 'Parse review required',
-        description: 'Review parse elements before generating chunks and vectors.',
+        title: 'Optimization issues found',
+        description:
+          'The system continued generating chunks and vectors. You can inspect and optimize marked chunk content.',
       },
       generating: {
         title: 'Generating chunks and vectors',

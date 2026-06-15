@@ -175,32 +175,19 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 		return r.failRequest(ctx, request, asset, "quality_check_failed", err)
 	}
 
-	if quality.PendingCount > 0 {
-		if _, err := r.state.MarkConfirming(ctx, datalibraryservice.RunStateInput{
-			OrganizationID:     request.OrganizationID,
-			AssetID:            asset.ID,
-			ProcessingRunID:    runID,
-			GenerationNo:       generationNo,
-			ProcessingProgress: 40,
-			ParseArtifactID:    &persisted.Artifact.ID,
-		}); err != nil {
-			return r.failRequest(ctx, request, asset, "mark_confirming_failed", err)
-		}
-	} else {
-		if _, err := r.state.MarkGenerating(ctx, datalibraryservice.RunStateInput{
-			OrganizationID:     request.OrganizationID,
-			AssetID:            asset.ID,
-			ProcessingRunID:    runID,
-			GenerationNo:       generationNo,
-			ProcessingProgress: 50,
-			ParseArtifactID:    &persisted.Artifact.ID,
-		}); err != nil {
-			return r.failRequest(ctx, request, asset, "mark_generating_failed", err)
-		}
-		if shouldQueueGenerateAfterParse(request.TargetLevel) {
-			if _, err := r.queueGenerateCurrentResultRequest(ctx, request, asset, runID, generationNo); err != nil {
-				return r.failRequest(ctx, request, asset, "generate_enqueue_failed", err)
-			}
+	if _, err := r.state.MarkGenerating(ctx, datalibraryservice.RunStateInput{
+		OrganizationID:     request.OrganizationID,
+		AssetID:            asset.ID,
+		ProcessingRunID:    runID,
+		GenerationNo:       generationNo,
+		ProcessingProgress: 50,
+		ParseArtifactID:    &persisted.Artifact.ID,
+	}); err != nil {
+		return r.failRequest(ctx, request, asset, "mark_generating_failed", err)
+	}
+	if shouldQueueGenerateAfterParse(request.TargetLevel) {
+		if _, err := r.queueGenerateCurrentResultRequest(ctx, request, asset, runID, generationNo); err != nil {
+			return r.failRequest(ctx, request, asset, "generate_enqueue_failed", err)
 		}
 	}
 
@@ -208,7 +195,7 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 		"parse_artifact_id":          persisted.Artifact.ID.String(),
 		"artifact_storage_key":       persisted.ArtifactStorageKey,
 		"pending_confirmation_count": quality.PendingCount,
-		"next_product_status":        nextProductStatusAfterParse(quality.PendingCount),
+		"next_product_status":        model.DocumentAssetProductStatusGenerating,
 		"generation_no":              generationNo,
 		"parse_provider":             parseProviderFromRequest(request),
 	})
@@ -497,13 +484,6 @@ func metadataString(metadata map[string]any, key string) string {
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%v", typed))
 	}
-}
-
-func nextProductStatusAfterParse(pendingCount int64) string {
-	if pendingCount > 0 {
-		return model.DocumentAssetProductStatusConfirming
-	}
-	return model.DocumentAssetProductStatusGenerating
 }
 
 func shouldQueueGenerateAfterParse(targetLevel string) bool {

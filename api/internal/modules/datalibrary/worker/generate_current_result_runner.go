@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/contracts"
 	contentparserepo "github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
@@ -21,6 +22,7 @@ type GenerateCurrentResultRunner struct {
 	artifacts           contentparserepo.ArtifactRepository
 	state               datalibraryservice.FileAssetProcessingStateService
 	artifactPersistence datalibraryservice.ParseArtifactPersistenceService
+	parseConfirmations  repository.ParseConfirmationItemRepository
 	transform           datalibraryservice.ParseArtifactChunkTransformService
 	chunkGeneration     datalibraryservice.DocumentChunkGenerationService
 	embedding           datalibraryservice.DocumentChunkEmbeddingService
@@ -35,6 +37,7 @@ type GenerateCurrentResultRunnerDeps struct {
 	Artifacts           contentparserepo.ArtifactRepository
 	State               datalibraryservice.FileAssetProcessingStateService
 	ArtifactPersistence datalibraryservice.ParseArtifactPersistenceService
+	ParseConfirmations  repository.ParseConfirmationItemRepository
 	Transform           datalibraryservice.ParseArtifactChunkTransformService
 	ChunkGeneration     datalibraryservice.DocumentChunkGenerationService
 	Embedding           datalibraryservice.DocumentChunkEmbeddingService
@@ -59,6 +62,7 @@ func NewGenerateCurrentResultRunner(deps GenerateCurrentResultRunnerDeps) *Gener
 		artifacts:           deps.Artifacts,
 		state:               deps.State,
 		artifactPersistence: deps.ArtifactPersistence,
+		parseConfirmations:  deps.ParseConfirmations,
 		transform:           deps.Transform,
 		chunkGeneration:     deps.ChunkGeneration,
 		embedding:           deps.Embedding,
@@ -135,6 +139,11 @@ func (r *GenerateCurrentResultRunner) Run(ctx context.Context, processingRequest
 	if err != nil {
 		return r.failRequest(ctx, request, asset, "artifact_storage_load_failed", err)
 	}
+	parseQualityItems, err := r.loadPendingParseQualityItems(ctx, request.OrganizationID, asset.ID, runID, generationNo)
+	if err != nil {
+		return r.failRequest(ctx, request, asset, "quality_items_load_failed", err)
+	}
+	attachParseQualityIssues(parseArtifact, parseQualityItems)
 
 	transformResult, err := r.transform.TransformAuto(ctx, datalibraryservice.ParseArtifactAutoChunkTransformInput{
 		TenantID: request.OrganizationID,
@@ -213,6 +222,112 @@ func (r *GenerateCurrentResultRunner) Run(ctx context.Context, processingRequest
 		return err
 	}
 	return r.enqueueDatasetRefSyncs(ctx, ready, generationNo)
+}
+
+func (r *GenerateCurrentResultRunner) loadPendingParseQualityItems(ctx context.Context, organizationID string, assetID uuid.UUID, runID uuid.UUID, generationNo int64) ([]*model.ParseConfirmationItem, error) {
+	if r == nil || r.parseConfirmations == nil {
+		return nil, nil
+	}
+	items := make([]*model.ParseConfirmationItem, 0)
+	offset := 0
+	for {
+		pageItems, total, err := r.parseConfirmations.List(ctx, repository.ParseConfirmationItemListFilter{
+			OrganizationID:  organizationID,
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    &generationNo,
+			Status:          model.ParseConfirmationItemStatusPending,
+			Limit:           200,
+			Offset:          offset,
+		})
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, pageItems...)
+		offset += len(pageItems)
+		if len(pageItems) == 0 || int64(offset) >= total {
+			break
+		}
+	}
+	return items, nil
+}
+
+func attachParseQualityIssues(artifact *contracts.ParseArtifact, items []*model.ParseConfirmationItem) {
+	if artifact == nil || len(artifact.Elements) == 0 || len(items) == 0 {
+		return
+	}
+	issuesByElementIndex := make(map[int][]map[string]any)
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		elementIndex, ok := locatorInt(item.SourceLocatorJSON, "element_index")
+		if !ok || elementIndex < 0 {
+			continue
+		}
+		issue := map[string]any{
+			"id":             item.ID.String(),
+			"type":           item.ItemType,
+			"status":         item.Status,
+			"source_locator": item.SourceLocatorJSON,
+		}
+		if item.ReviewReason != nil && strings.TrimSpace(*item.ReviewReason) != "" {
+			issue["reason"] = strings.TrimSpace(*item.ReviewReason)
+		}
+		if item.Confidence != nil {
+			issue["confidence"] = *item.Confidence
+		}
+		if content := strings.TrimSpace(item.OriginalContent); content != "" {
+			issue["original_content"] = content
+			issue["content_excerpt"] = textExcerpt(content, 120)
+		}
+		issuesByElementIndex[elementIndex] = append(issuesByElementIndex[elementIndex], issue)
+	}
+	for index, issues := range issuesByElementIndex {
+		if index >= len(artifact.Elements) || len(issues) == 0 {
+			continue
+		}
+		if artifact.Elements[index].Metadata == nil {
+			artifact.Elements[index].Metadata = make(map[string]any)
+		}
+		artifact.Elements[index].Metadata["quality_issues"] = issues
+		artifact.Elements[index].Metadata["quality_issue_count"] = len(issues)
+		artifact.Elements[index].Metadata["has_quality_issues"] = true
+	}
+}
+
+func locatorInt(locator map[string]any, key string) (int, bool) {
+	if locator == nil {
+		return 0, false
+	}
+	switch value := locator[key].(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	case float64:
+		return int(value), true
+	case float32:
+		return int(value), true
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func textExcerpt(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "..."
 }
 
 func (r *GenerateCurrentResultRunner) failRequest(ctx context.Context, request *model.ProcessingRequest, asset *model.DocumentAsset, code string, cause error) error {

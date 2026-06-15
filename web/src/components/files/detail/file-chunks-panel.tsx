@@ -3,11 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
+  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Edit3,
   Layers3,
   Loader2,
+  PanelLeftOpen,
   Save,
   Search,
   SearchX,
@@ -16,15 +18,6 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -37,9 +30,22 @@ import { cn } from '@/lib/utils';
 interface FileChunksPanelProps {
   fileId: string;
   enabled: boolean;
+  className?: string;
+  originalPreviewHidden?: boolean;
+  onToggleOriginalPreview?: () => void;
 }
 
-type ChunkFilter = 'all' | 'enabled' | 'disabled';
+type ChunkFilter = 'all' | 'issues' | 'enabled' | 'disabled';
+interface ChunkQualityIssue {
+  id?: string;
+  type?: string;
+  reason?: string;
+  status?: string;
+  confidence?: number;
+}
+type FilesTranslator = ((key: string, values?: Record<string, unknown>) => string) & {
+  has?: (key: string) => boolean;
+};
 
 function ChunkSkeleton() {
   return (
@@ -55,9 +61,15 @@ function ChunkSkeleton() {
   );
 }
 
-export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
+export function FileChunksPanel({
+  fileId,
+  enabled,
+  className,
+  originalPreviewHidden = false,
+  onToggleOriginalPreview,
+}: FileChunksPanelProps) {
   const t = useT('files');
-  const [editingPrimaryChunk, setEditingPrimaryChunk] = useState<FileDocumentChunk | null>(null);
+  const [editingPrimaryChunkId, setEditingPrimaryChunkId] = useState<string | null>(null);
   const [primaryDraft, setPrimaryDraft] = useState('');
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [selectedChunkIds, setSelectedChunkIds] = useState<string[]>([]);
@@ -71,13 +83,13 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
     [response?.items, response?.tree]
   );
   const total = response?.primary_chunk_count ?? response?.total ?? primaryChunks.length;
-  const secondaryTotal = response?.secondary_chunk_count ?? countSecondaryChunks(primaryChunks);
 
   const visibleChunks = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return primaryChunks.filter(chunk => {
       if (filter === 'enabled' && !chunk.enabled) return false;
       if (filter === 'disabled' && chunk.enabled) return false;
+      if (filter === 'issues' && !hasChunkQualityIssues(chunk)) return false;
       if (!keyword) return true;
       return (
         chunk.content.toLowerCase().includes(keyword) ||
@@ -105,18 +117,21 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
   }, [visibleChunkIds]);
 
   const startEditPrimary = (chunk: FileDocumentChunk) => {
-    setEditingPrimaryChunk(chunk);
+    setEditingPrimaryChunkId(chunk.id);
     setPrimaryDraft(chunk.content);
   };
 
-  const savePrimaryChunkContent = async () => {
-    if (!editingPrimaryChunk) return;
+  const cancelEditPrimary = () => {
+    setEditingPrimaryChunkId(null);
+    setPrimaryDraft('');
+  };
+
+  const savePrimaryChunkContent = async (chunk: FileDocumentChunk) => {
     await updateChunk.mutateAsync({
-      chunkId: editingPrimaryChunk.id,
+      chunkId: chunk.id,
       data: { content: primaryDraft },
     });
-    setEditingPrimaryChunk(null);
-    setPrimaryDraft('');
+    cancelEditPrimary();
   };
 
   const toggleChunkEnabled = async (chunk: FileDocumentChunk, checked: boolean) => {
@@ -158,7 +173,7 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
 
   if (!enabled) {
     return (
-      <Alert>
+      <Alert className={className}>
         <AlertCircle className="h-4 w-4" />
         <AlertTitle>{t('detail.chunks.notReadyTitle')}</AlertTitle>
         <AlertDescription>{t('detail.chunks.notReadyDescription')}</AlertDescription>
@@ -166,11 +181,17 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
     );
   }
 
-  if (isLoading) return <ChunkSkeleton />;
+  if (isLoading) {
+    return (
+      <div className={cn('h-full min-h-0 overflow-y-auto p-4 sm:p-5', className)}>
+        <ChunkSkeleton />
+      </div>
+    );
+  }
 
   if (error || !response) {
     return (
-      <Alert variant="destructive">
+      <Alert variant="destructive" className={className}>
         <AlertCircle className="h-4 w-4" />
         <AlertTitle>{t('detail.chunks.loadErrorTitle')}</AlertTitle>
         <AlertDescription>{t('detail.chunks.loadErrorDescription')}</AlertDescription>
@@ -179,84 +200,78 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-xl font-semibold leading-tight text-foreground">{t('detail.chunks.title')}</h2>
-            <Badge variant="outline" className="rounded-full px-3 py-1 text-sm">
+    <div className={cn('flex h-full min-h-0 flex-col overflow-hidden bg-bg-canvas', className)}>
+      <div className="shrink-0 border-b bg-background px-4 py-2.5 sm:px-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="mr-auto flex min-w-[160px] items-center gap-2">
+            <h2 className="text-lg font-semibold leading-tight text-foreground">{t('detail.chunks.title')}</h2>
+            <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-xs">
               {t('detail.chunks.total', { count: total })}
             </Badge>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">{t('detail.index.description')}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full sm:w-72">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+
+          {originalPreviewHidden && onToggleOriginalPreview ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8 gap-1.5 rounded-md px-2.5 text-sm"
+              onClick={onToggleOriginalPreview}
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+              {t('detail.previewToggle.showOriginal')}
+            </Button>
+          ) : null}
+
+          <div className="relative min-w-[220px] flex-1 sm:max-w-[360px]">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
               onChange={event => setSearch(event.target.value)}
               placeholder={t('detail.chunks.searchPlaceholder')}
-              className="h-10 rounded-lg pl-9"
+              className="h-8 rounded-md pl-8 text-sm"
             />
           </div>
           <select
             value={filter}
             onChange={event => setFilter(event.target.value as ChunkFilter)}
-            className="h-10 rounded-lg border border-input bg-background px-4 text-sm font-medium text-foreground shadow-sm"
+            className="h-8 rounded-md border border-input bg-background px-2.5 text-sm font-medium text-foreground shadow-sm"
             aria-label={t('detail.chunks.filters.all')}
           >
             <option value="all">{t('detail.chunks.filters.all')}</option>
+            <option value="issues">{t('detail.chunks.filters.issues')}</option>
             <option value="enabled">{t('detail.chunks.filters.enabled')}</option>
             <option value="disabled">{t('detail.chunks.filters.disabled')}</option>
           </select>
-          <Button variant="outline" className="h-10 gap-2 rounded-lg" onClick={() => setAllExpanded(!allExpanded)}>
+          <Button variant="outline" className="h-8 gap-1.5 rounded-md px-2.5 text-sm" onClick={() => setAllExpanded(!allExpanded)}>
             {allExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             {allExpanded ? t('detail.chunks.collapseAll') : t('detail.chunks.expandAll')}
           </Button>
-          {/* Re-enable these actions after chunk regeneration and creation APIs are implemented. */}
-          {/*
-          <Button variant="outline" className="h-10 gap-2 rounded-lg">
-            <RefreshCw className="h-4 w-4" />
-            {t('detail.chunks.resegment')}
-          </Button>
-          <Button className="h-10 gap-2 rounded-lg">
-            <Plus className="h-4 w-4" />
-            {t('detail.chunks.add')}
-          </Button>
-          */}
         </div>
-      </div>
 
-      <div className="rounded-lg border border-border bg-background px-4 py-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
+          <label className="flex items-center gap-2">
             <Checkbox
               checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
               onCheckedChange={checked => toggleAllVisibleSelected(checked === true)}
               disabled={visibleChunks.length === 0 || updateChunk.isPending}
-              className="h-5 w-5 rounded-full"
+              className="h-4 w-4 rounded-full"
               aria-label={t('detail.chunks.selectAll', { count: visibleChunks.length })}
             />
             <span>{t('detail.chunks.selectAll', { count: visibleChunks.length })}</span>
-            {selectedCount > 0 ? (
-              <>
-                <span className="text-border">|</span>
-                <span className="font-medium text-foreground">
-                  {t('detail.chunks.selectedCount', { count: selectedCount })}
-                </span>
-              </>
-            ) : null}
-            <span className="text-border">|</span>
-            <span>{t('detail.chunks.secondaryCount', { count: secondaryTotal })}</span>
-            <span className="text-border">|</span>
-            <span>{t('detail.chunks.generationNo', { value: response.generation_no })}</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+          </label>
+          {selectedCount > 0 ? (
+            <>
+              <span className="text-border">|</span>
+              <span className="font-medium text-foreground">
+                {t('detail.chunks.selectedCount', { count: selectedCount })}
+              </span>
+            </>
+          ) : null}
+          <div className="ml-auto flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              className="h-9 rounded-lg"
+              className="h-8 rounded-md px-2.5"
               disabled={selectedCount === 0 || updateChunk.isPending}
               onClick={() => void batchSetSelectedEnabled(true)}
             >
@@ -265,111 +280,52 @@ export function FileChunksPanel({ fileId, enabled }: FileChunksPanelProps) {
             <Button
               variant="outline"
               size="sm"
-              className="h-9 rounded-lg"
+              className="h-8 rounded-md px-2.5"
               disabled={selectedCount === 0 || updateChunk.isPending}
               onClick={() => void batchSetSelectedEnabled(false)}
             >
               {t('detail.chunks.batchDisable')}
             </Button>
-            {/* Re-enable after file chunk deletion API is implemented. */}
-            {/*
-            <Button variant="outline" size="sm" className="h-9 rounded-lg text-destructive hover:text-destructive">
-              {t('detail.chunks.delete')}
-            </Button>
-            */}
           </div>
         </div>
       </div>
 
-      {visibleChunks.length === 0 ? (
-        <div className="flex min-h-[280px] items-center justify-center rounded-lg border border-dashed border-border bg-background p-6 text-center">
-          <div>
-            <SearchX className="mx-auto h-8 w-8 text-muted-foreground" />
-            <div className="mt-3 text-sm font-medium text-foreground">
-              {t('detail.chunks.emptyTitle')}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
+        {visibleChunks.length === 0 ? (
+          <div className="flex min-h-[280px] items-center justify-center rounded-lg border border-dashed border-border bg-background p-6 text-center">
+            <div>
+              <SearchX className="mx-auto h-8 w-8 text-muted-foreground" />
+              <div className="mt-3 text-sm font-medium text-foreground">
+                {t('detail.chunks.emptyTitle')}
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t('detail.chunks.emptyDescription')}
+              </p>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t('detail.chunks.emptyDescription')}
-            </p>
           </div>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {visibleChunks.map(chunk => (
-            <PrimaryChunkCard
-              key={chunk.id}
-              chunk={chunk}
-              expanded={expandedIds[chunk.id] ?? false}
-              selected={selectedVisibleIds.includes(chunk.id)}
-              disabled={updateChunk.isPending}
-              onEditPrimary={startEditPrimary}
-              onSelect={toggleChunkSelected}
-              onToggleEnabled={toggleChunkEnabled}
-              onToggleExpanded={toggleExpanded}
-            />
-          ))}
-        </div>
-      )}
-
-      <Dialog
-        open={Boolean(editingPrimaryChunk)}
-        onOpenChange={open => {
-          if (!open) {
-            setEditingPrimaryChunk(null);
-            setPrimaryDraft('');
-          }
-        }}
-      >
-        <DialogContent size="xl">
-          <DialogHeader>
-            <DialogTitle>{t('detail.chunks.editPrimaryTitle')}</DialogTitle>
-            <DialogDescription>
-              {editingPrimaryChunk
-                ? t('detail.chunks.editPrimaryDescription', {
-                    count: editingPrimaryChunk.content.length,
-                  })
-                : null}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-            <Textarea
-              value={primaryDraft}
-              onChange={event => setPrimaryDraft(event.target.value)}
-              className="min-h-[360px] resize-y text-sm leading-6"
-              disabled={updateChunk.isPending}
-            />
-          </DialogBody>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setEditingPrimaryChunk(null);
-                setPrimaryDraft('');
-              }}
-              disabled={updateChunk.isPending}
-            >
-              {t('detail.chunks.cancel')}
-            </Button>
-            <Button
-              className="gap-2"
-              onClick={() => void savePrimaryChunkContent()}
-              disabled={
-                updateChunk.isPending ||
-                !editingPrimaryChunk ||
-                primaryDraft.trim() === '' ||
-                primaryDraft === editingPrimaryChunk.content
-              }
-            >
-              {updateChunk.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              {t('detail.chunks.save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        ) : (
+          <div className="space-y-4">
+            {visibleChunks.map(chunk => (
+              <PrimaryChunkCard
+                key={chunk.id}
+                chunk={chunk}
+                expanded={expandedIds[chunk.id] ?? false}
+                selected={selectedVisibleIds.includes(chunk.id)}
+                editing={editingPrimaryChunkId === chunk.id}
+                draft={editingPrimaryChunkId === chunk.id ? primaryDraft : chunk.content}
+                disabled={updateChunk.isPending}
+                onEditPrimary={startEditPrimary}
+                onCancelEdit={cancelEditPrimary}
+                onDraftChange={setPrimaryDraft}
+                onSavePrimary={savePrimaryChunkContent}
+                onSelect={toggleChunkSelected}
+                onToggleEnabled={toggleChunkEnabled}
+                onToggleExpanded={toggleExpanded}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -378,8 +334,13 @@ function PrimaryChunkCard({
   chunk,
   expanded,
   selected,
+  editing,
+  draft,
   disabled,
   onEditPrimary,
+  onCancelEdit,
+  onDraftChange,
+  onSavePrimary,
   onSelect,
   onToggleEnabled,
   onToggleExpanded,
@@ -387,14 +348,20 @@ function PrimaryChunkCard({
   chunk: FileDocumentChunk;
   expanded: boolean;
   selected: boolean;
+  editing: boolean;
+  draft: string;
   disabled: boolean;
   onEditPrimary: (chunk: FileDocumentChunk) => void;
+  onCancelEdit: () => void;
+  onDraftChange: (value: string) => void;
+  onSavePrimary: (chunk: FileDocumentChunk) => Promise<void>;
   onSelect: (chunkId: string, checked: boolean) => void;
   onToggleEnabled: (chunk: FileDocumentChunk, checked: boolean) => Promise<void>;
   onToggleExpanded: (chunkId: string) => void;
 }) {
   const t = useT('files');
   const children = chunk.children ?? [];
+  const qualityIssues = chunkQualityIssues(chunk);
 
   return (
     <article
@@ -418,6 +385,12 @@ function PrimaryChunkCard({
               <Layers3 className="mr-1 h-3.5 w-3.5" />
               {t('detail.chunks.primary')}
             </Badge>
+            {qualityIssues.length > 0 ? (
+              <Badge variant="warning" className="rounded-full px-3">
+                <AlertTriangle className="mr-1 h-3.5 w-3.5" />
+                {t('detail.chunks.issues.badge', { count: qualityIssues.length })}
+              </Badge>
+            ) : null}
             <span className={cn('text-sm font-medium', chunk.enabled ? 'text-success' : 'text-muted-foreground')}>
               {chunk.enabled ? t('detail.chunks.enabled') : t('detail.chunks.disabled')}
             </span>
@@ -436,7 +409,7 @@ function PrimaryChunkCard({
             size="sm"
             className="h-9 w-9 p-0"
             onClick={() => onEditPrimary(chunk)}
-            disabled={disabled}
+            disabled={disabled || editing}
             aria-label={t('detail.chunks.edit')}
           >
             <Edit3 className="h-4 w-4" />
@@ -453,7 +426,54 @@ function PrimaryChunkCard({
         </div>
       </div>
 
-      <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-foreground">{chunk.content}</p>
+      {qualityIssues.length > 0 ? (
+        <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-sm text-warning">
+          <div className="font-medium">{t('detail.chunks.issues.title')}</div>
+          <div className="mt-1 text-warning/90">
+            {qualityIssues
+              .map(issue => qualityIssueText(issue, t as FilesTranslator))
+              .filter(Boolean)
+              .join('、')}
+          </div>
+        </div>
+      ) : null}
+
+      {editing ? (
+        <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-3">
+          <Textarea
+            value={draft}
+            onChange={event => onDraftChange(event.target.value)}
+            className="min-h-44 resize-y bg-background text-sm leading-6"
+            disabled={disabled}
+            autoFocus
+          />
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs text-muted-foreground">
+              {t('detail.chunks.characters', { count: draft.length })}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={onCancelEdit} disabled={disabled}>
+                {t('detail.chunks.cancel')}
+              </Button>
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={() => void onSavePrimary(chunk)}
+                disabled={disabled || draft.trim() === '' || draft === chunk.content}
+              >
+                {disabled ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                {t('detail.chunks.save')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-foreground">{chunk.content}</p>
+      )}
 
       <div className="mt-5 flex flex-wrap items-center gap-3 text-sm">
         <Badge variant="subtle" className="rounded-full">
@@ -489,6 +509,62 @@ function PrimaryChunkCard({
   );
 }
 
+function hasChunkQualityIssues(chunk: FileDocumentChunk) {
+  if (chunkQualityIssues(chunk).length > 0) {
+    return true;
+  }
+  return (chunk.children ?? []).some(child => chunkQualityIssues(child).length > 0);
+}
+
+function chunkQualityIssues(chunk: FileDocumentChunk): ChunkQualityIssue[] {
+  const raw = chunk.metadata_json?.quality_issues;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .filter((item): item is Record<string, unknown> => item !== null && typeof item === 'object' && !Array.isArray(item))
+    .map(item => ({
+      id: typeof item.id === 'string' ? item.id : undefined,
+      type: typeof item.type === 'string' ? item.type : undefined,
+      reason: typeof item.reason === 'string' ? item.reason : undefined,
+      status: typeof item.status === 'string' ? item.status : undefined,
+      confidence: typeof item.confidence === 'number' ? item.confidence : undefined,
+    }));
+}
+
+function qualityIssueText(issue: ChunkQualityIssue, t: FilesTranslator) {
+  const reasons = (issue.reason ?? '')
+    .split(',')
+    .map(reason => reason.trim())
+    .filter(Boolean)
+    .map(reason => qualityIssueReasonText(reason, t));
+  if (reasons.length > 0) {
+    return reasons.join('、');
+  }
+  return issue.type || t('detail.chunks.issues.fallback');
+}
+
+function qualityIssueReasonText(reason: string, t: FilesTranslator) {
+  switch (reason) {
+    case 'low_confidence_text':
+      return t('detail.parseReview.reviewReasons.lowConfidenceText');
+    case 'low_confidence_table':
+      return t('detail.parseReview.reviewReasons.lowConfidenceTable');
+    case 'low_confidence_image_ocr':
+      return t('detail.parseReview.reviewReasons.lowConfidenceImageOcr');
+    case 'review_required':
+      return t('detail.parseReview.reviewReasons.reviewRequired');
+    case 'ocr_fallback':
+      return t('detail.parseReview.reviewReasons.ocrFallback');
+    case 'local_vlm_fallback':
+      return t('detail.parseReview.reviewReasons.vlmFallback');
+    case 'table_structure_risk':
+      return t('detail.parseReview.reviewReasons.tableStructureRisk');
+    default:
+      return reason;
+  }
+}
+
 function SecondaryChunkRow({
   chunk,
   index,
@@ -518,8 +594,4 @@ function SecondaryChunkRow({
       </div>
     </div>
   );
-}
-
-function countSecondaryChunks(chunks: FileDocumentChunk[]): number {
-  return chunks.reduce((count, chunk) => count + (chunk.children?.length ?? 0), 0);
 }

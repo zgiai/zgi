@@ -206,6 +206,7 @@ func NewModuleWithContentParseRuntime(
 		Artifacts:           contentParseArtifactRepo,
 		State:               fileAssetProcessingStateService,
 		ArtifactPersistence: parseArtifactPersistenceService,
+		ParseConfirmations:  parseConfirmationItemRepo,
 		Transform:           parseArtifactChunkTransformService,
 		ChunkGeneration:     documentChunkGenerationService,
 		Embedding:           documentChunkEmbeddingService,

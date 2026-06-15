@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -8,34 +8,25 @@ import {
   CheckCircle2,
   Circle,
   Download,
-  FileDown,
   FileIcon,
   FileText,
-  Layers3,
   Loader2,
-  Maximize2,
   MessageSquareText,
+  PanelLeftClose,
   RefreshCw,
   TriangleAlert,
 } from 'lucide-react';
-import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { FileVisualParseReviewPanel } from '@/components/files/detail/file-visual-parse-review-panel';
+import { FileOriginalPreviewPanel } from '@/components/files/detail/file-original-preview-panel';
 import { FileChunksPanel } from '@/components/files/detail/file-chunks-panel';
 import { FileQAPanel } from '@/components/files/detail/file-qa-panel';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { fileManageService } from '@/services/file-manage.service';
-import type {
-  FileAssetProductStatus,
-  FileItem,
-  FileParsePreviewElement,
-} from '@/services/types/file';
+import type { FileAssetProductStatus, FileItem } from '@/services/types/file';
 import { useDownloadFile } from '@/hooks/use-files';
 import { useFileDetail } from '@/hooks/file/use-file-detail';
 import { useCreateFileProcessingRequest } from '@/hooks/file/use-file-processing-request';
@@ -283,35 +274,6 @@ function ProcessingWorkbenchOverview({
   );
 }
 
-function buildParsedContent(elements: FileParsePreviewElement[]) {
-  return elements
-    .slice()
-    .sort((a, b) => a.ordinal - b.ordinal)
-    .map(element => {
-      const title = [
-        element.page ? `Page ${element.page}` : null,
-        element.type,
-        element.subtype,
-      ]
-        .filter(Boolean)
-        .join(' / ');
-      return `## ${title}\n\n${element.content || ''}`;
-    })
-    .join('\n\n');
-}
-
-function triggerTextDownload(filename: string, content: string) {
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
 function FileDetailLoading() {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-bg-canvas">
@@ -334,19 +296,66 @@ function FileDetailLoading() {
   );
 }
 
+function FilePreviewChunksWorkbench({
+  file,
+  chunksEnabled,
+}: {
+  file: FileItem;
+  chunksEnabled: boolean;
+}) {
+  const t = useT('files');
+  const [originalPreviewHidden, setOriginalPreviewHidden] = useState(false);
+
+  return (
+    <div
+      className={cn(
+        'grid min-h-0 flex-1 bg-bg-canvas',
+        originalPreviewHidden
+          ? 'grid-cols-1'
+          : 'xl:grid-cols-[minmax(0,1fr)_minmax(480px,0.95fr)]'
+      )}
+    >
+      {!originalPreviewHidden ? (
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden border-r bg-background">
+          <div className="flex min-h-16 shrink-0 items-center justify-between gap-3 border-b bg-background px-4 py-3">
+            <span className="inline-flex rounded-full bg-muted px-4 py-2 text-sm font-semibold text-foreground">
+              {t('detail.tabs.originalPreview')}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 rounded-md px-2.5 text-sm"
+              onClick={() => setOriginalPreviewHidden(true)}
+            >
+              <PanelLeftClose className="h-4 w-4" />
+              {t('detail.previewToggle.hideOriginal')}
+            </Button>
+          </div>
+          <FileOriginalPreviewPanel file={file} className="h-full" hideHeader />
+        </section>
+      ) : null}
+      <section className="min-h-0 min-w-0 overflow-hidden">
+        <FileChunksPanel
+          fileId={file.id}
+          enabled={chunksEnabled}
+          className="h-full"
+          originalPreviewHidden={originalPreviewHidden}
+          onToggleOriginalPreview={() => setOriginalPreviewHidden(current => !current)}
+        />
+      </section>
+    </div>
+  );
+}
+
 export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const router = useRouter();
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const tabAnchorRef = useRef<HTMLDivElement>(null);
-  const autoScrolledFileRef = useRef<string | null>(null);
   const { files: t, common } = useT();
   const { hasPermission } = useAccountPermissions();
   const canDownload = hasPermission('file.download');
   const { downloadFile, isDownloading } = useDownloadFile();
-  const [activeTab, setActiveTab] = useState('preview');
-  const [previewFocusMode, setPreviewFocusMode] = useState(false);
+  const [activeView, setActiveView] = useState<'preview' | 'qa'>('preview');
   const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
-  const [isExportingParsed, setIsExportingParsed] = useState(false);
   const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
     pollProcessingStatus: true,
   });
@@ -354,7 +363,6 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
 
   const detail = data?.data;
   const file = detail?.file;
-  const loadedFileId = file?.id;
   const asset = detail?.asset;
   const processing = detail?.processing;
   const artifactState = detail?.artifact_state;
@@ -363,22 +371,18 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const vectorStatus = summary?.vector_status ?? asset?.vector_status ?? artifactState?.vector_status ?? file?.vector_status;
   const pendingCount =
     processing?.pending_confirmation_count ?? summary?.pending_confirmation_count ?? file?.pending_confirmation_count ?? 0;
-  const hasPendingConfirmations = pendingCount > 0;
   const chunkCount =
     processing?.chunk_count ?? summary?.chunk_count ?? asset?.chunk_count ?? file?.chunk_count ?? artifactState?.chunk_count ?? 0;
   const embeddingCount = processing?.embedding_count ?? file?.embedding_count ?? 0;
-  const parseReviewEnabled = status !== 'stored_only' && status !== 'parsing';
   const chunksEnabled = status === 'ready';
   const qaEnabled = status === 'ready' && vectorStatus === 'ready' && embeddingCount > 0;
   const isFullyReady = status === 'ready' && vectorStatus === 'ready';
   const showProcessingWorkbench = !isFullyReady;
   const showHeaderRefresh = !isFullyReady;
-  const parsedExportEnabled = parseReviewEnabled && status !== 'parse_failed';
   const canRequestProcessing =
     hasPermission('file.manage') || hasPermission('file.upload_create') || canDownload;
   const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
   const showHeaderReparse = canReparse && !isFullyReady;
-  const previewFocusActive = previewFocusMode && activeTab === 'preview';
 
   const statusLabel = useMemo(() => {
     switch (status as FileAssetProductStatus | string) {
@@ -402,25 +406,6 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     if (!file) return;
     await downloadFile(file.id, file.name);
   };
-  const handleExportParsedContent = async () => {
-    if (!file || !parsedExportEnabled) return;
-    setIsExportingParsed(true);
-    try {
-      const response = await fileManageService.getParsePreview(file.id);
-      const content = buildParsedContent(response.data.elements);
-      const baseName = file.name.replace(/\.[^.]+$/, '') || file.name;
-      triggerTextDownload(`${baseName}-parsed-content.txt`, content);
-      toast.success(t('detail.exportParsedContentSuccess'));
-    } catch (exportError) {
-      toast.error(
-        exportError instanceof Error
-          ? exportError.message
-          : t('detail.exportParsedContentFailed')
-      );
-    } finally {
-      setIsExportingParsed(false);
-    }
-  };
   const handleReparse = () => {
     void createProcessingRequest.mutateAsync({
       mode: 'reparse',
@@ -428,50 +413,19 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       force: false,
     });
   };
-  const togglePreviewFocusMode = () => {
-    setPreviewFocusMode(current => !current);
-  };
 
   useEffect(() => {
     if (status === 'confirming') {
-      setActiveTab('preview');
+      setActiveView('preview');
       return;
     }
   }, [status]);
 
   useEffect(() => {
-    if (activeTab !== 'preview' && previewFocusMode) {
-      setPreviewFocusMode(false);
+    if (activeView === 'qa' && !qaEnabled) {
+      setActiveView('preview');
     }
-  }, [activeTab, previewFocusMode]);
-
-  useEffect(() => {
-    if (!previewFocusActive) return;
-    window.requestAnimationFrame(() => {
-      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-  }, [previewFocusActive]);
-
-  useEffect(() => {
-    if (!loadedFileId || isFullyReady || autoScrolledFileRef.current === loadedFileId) return;
-
-    autoScrolledFileRef.current = loadedFileId;
-    window.requestAnimationFrame(() => {
-      const scrollContainer = scrollContainerRef.current;
-      const tabAnchor = tabAnchorRef.current;
-      if (!scrollContainer || !tabAnchor) return;
-
-      const scrollTop =
-        scrollContainer.scrollTop +
-        tabAnchor.getBoundingClientRect().top -
-        scrollContainer.getBoundingClientRect().top;
-
-      scrollContainer.scrollTo({
-        top: scrollTop,
-        behavior: 'smooth',
-      });
-    });
-  }, [loadedFileId, isFullyReady]);
+  }, [activeView, qaEnabled]);
 
   if (isLoading) return <FileDetailLoading />;
 
@@ -496,9 +450,8 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   }
 
   return (
-    <div ref={scrollContainerRef} className="flex h-full min-h-0 flex-col overflow-y-auto bg-background">
-      {!previewFocusActive ? (
-      <div className="border-b bg-background px-4 py-3 sm:px-6">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+      <div className="shrink-0 border-b bg-background px-4 py-3 sm:px-6">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2.5">
@@ -526,6 +479,38 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <div className="flex h-9 items-center rounded-md border border-border bg-muted/30 p-0.5">
+              <Button
+                type="button"
+                variant="ghost"
+                className={cn(
+                  'h-8 gap-1.5 rounded px-3 text-sm',
+                  activeView === 'preview'
+                    ? 'bg-background text-primary shadow-sm hover:bg-background'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                onClick={() => setActiveView('preview')}
+              >
+                <FileText className="h-4 w-4" />
+                {t('detail.tabs.preview')}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className={cn(
+                  'h-8 gap-1.5 rounded px-3 text-sm',
+                  activeView === 'qa'
+                    ? 'bg-background text-primary shadow-sm hover:bg-background'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                onClick={() => setActiveView('qa')}
+                disabled={!qaEnabled}
+                title={!qaEnabled ? t('detail.tabHints.qaWaiting') : undefined}
+              >
+                <MessageSquareText className="h-4 w-4" />
+                {t('detail.tabs.qa')}
+              </Button>
+            </div>
             {showHeaderRefresh ? (
               <Button
                 variant="outline"
@@ -556,20 +541,6 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
                 {t('detail.downloadOriginal')}
               </Button>
             ) : null}
-            <Button
-              variant="outline"
-              className="h-9 gap-2 rounded-md px-3 text-sm"
-              onClick={() => void handleExportParsedContent()}
-              disabled={!parsedExportEnabled || isExportingParsed}
-              title={!parsedExportEnabled ? t('detail.exportParsedContentUnavailable') : undefined}
-            >
-              {isExportingParsed ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileDown className="h-4 w-4" />
-              )}
-              {t('detail.exportParsedContent')}
-            </Button>
             {showHeaderReparse ? (
               <Button
                 variant="outline"
@@ -588,10 +559,9 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           </div>
         </div>
       </div>
-      ) : null}
 
-      {!previewFocusActive && (detail.error?.message || file.last_error_message) ? (
-        <div className="px-4 pt-4 sm:px-6">
+      {detail.error?.message || file.last_error_message ? (
+        <div className="shrink-0 px-4 pt-4 sm:px-6">
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>{t('detail.processingError')}</AlertTitle>
@@ -625,8 +595,8 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         </div>
       ) : null}
 
-      {!previewFocusActive && showProcessingWorkbench ? (
-        <div className="border-b px-4 py-3 sm:px-6">
+      {showProcessingWorkbench ? (
+        <div className="shrink-0 border-b px-4 py-3 sm:px-6">
           <ProcessingWorkbenchOverview
             status={status}
             pendingCount={pendingCount}
@@ -637,121 +607,23 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         </div>
       ) : null}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0">
-        <div ref={tabAnchorRef} />
-        {!previewFocusActive ? (
-        <TabsList className="grid h-auto w-full grid-cols-3 overflow-hidden rounded-none border-x-0 border-t-0 bg-background p-0 text-foreground">
-          <TabsTrigger
-            value="preview"
-            className="min-h-[56px] justify-start gap-2.5 rounded-none border-0 border-r border-border px-4 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-primary data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none"
-          >
-            <span
-              className={cn(
-                'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                activeTab === 'preview'
-                  ? 'bg-primary/10 text-primary'
-                  : hasPendingConfirmations
-                    ? 'bg-warning/10 text-warning'
-                    : 'bg-muted text-muted-foreground'
-              )}
-            >
-              <FileText className="h-4 w-4" />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-semibold">{t('detail.tabs.preview')}</span>
-            </span>
-          </TabsTrigger>
-          <TabsTrigger
-            value="chunks"
-            disabled={!chunksEnabled}
-            className="min-h-[56px] justify-start gap-2.5 rounded-none border-0 border-r border-border px-4 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-primary data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none"
-          >
-            <span
-              className={cn(
-                'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                activeTab === 'chunks' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
-              )}
-            >
-              <Layers3 className="h-4 w-4" />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-semibold">{t('detail.tabs.chunks')}</span>
-              <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
-                {chunksEnabled
-                  ? t('detail.tabHints.chunksReady', { count: chunkCount })
-                  : t('detail.tabHints.chunksWaiting')}
-              </span>
-            </span>
-          </TabsTrigger>
-          <TabsTrigger
-            value="qa"
-            disabled={!qaEnabled}
-            className="min-h-[56px] justify-start gap-2.5 rounded-none border-0 px-4 text-left shadow-none data-[state=active]:border-x-0 data-[state=active]:border-b-2 data-[state=active]:border-b-primary data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none"
-          >
-            <span
-              className={cn(
-                'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                activeTab === 'qa' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
-              )}
-            >
-              <MessageSquareText className="h-4 w-4" />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-semibold">{t('detail.tabs.qa')}</span>
-              <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
-                {qaEnabled ? t('detail.tabHints.qaReady') : t('detail.tabHints.qaWaiting')}
-              </span>
-            </span>
-          </TabsTrigger>
-        </TabsList>
-        ) : null}
-
-        <TabsContent value="preview" className="mt-0">
-          <section>
-            {!previewFocusActive ? (
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 sm:px-6">
-                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                  <h2 className="text-lg font-semibold text-foreground">{t('detail.tabs.preview')}</h2>
-                  <p className="text-sm text-muted-foreground">
-                    {t('detail.previewWorkspaceDescription')}
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  className="h-8 gap-1.5 rounded-md px-3 text-sm"
-                  onClick={togglePreviewFocusMode}
-                >
-                  <Maximize2 className="h-4 w-4" />
-                  {t('detail.previewFocus.enter')}
-                </Button>
-              </div>
-            ) : null}
-            <FileVisualParseReviewPanel
-              file={file}
-              enabled={parseReviewEnabled}
-              canReparse={canReparse}
-              onReparse={() => setReparseConfirmOpen(true)}
-              isReparsing={createProcessingRequest.isPending}
-              previewFocusMode={previewFocusActive}
-              onTogglePreviewFocus={togglePreviewFocusMode}
+      <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
+        {activeView === 'preview' ? (
+          <section className="flex h-full min-h-0 flex-col">
+            <FilePreviewChunksWorkbench file={file} chunksEnabled={chunksEnabled} />
+          </section>
+        ) : (
+          <section className="h-full min-h-0 overflow-y-auto bg-bg-canvas p-4 sm:p-6">
+            <FileQAPanel
+              fileId={file.id}
+              artifactState={artifactState}
+              processing={processing}
+              vectorStatus={vectorStatus}
+              enabled={qaEnabled}
             />
           </section>
-        </TabsContent>
-
-        <TabsContent value="chunks" className="mt-0 bg-bg-canvas p-4 sm:p-6">
-          <FileChunksPanel fileId={file.id} enabled={chunksEnabled} />
-        </TabsContent>
-
-        <TabsContent value="qa" className="mt-0 bg-bg-canvas p-4 sm:p-6">
-          <FileQAPanel
-            fileId={file.id}
-            artifactState={artifactState}
-            processing={processing}
-            vectorStatus={vectorStatus}
-            enabled={qaEnabled}
-          />
-        </TabsContent>
-      </Tabs>
+        )}
+      </main>
 
       <ConfirmDialog
         open={reparseConfirmOpen}

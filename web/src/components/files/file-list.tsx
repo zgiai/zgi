@@ -72,9 +72,6 @@ function getProcessingStatus(file: FileItem): string {
 }
 
 function getEffectiveProcessingStatus(file: FileItem): string {
-  if ((file.pending_confirmation_count ?? 0) > 0) {
-    return 'confirming';
-  }
   return getProcessingStatus(file);
 }
 

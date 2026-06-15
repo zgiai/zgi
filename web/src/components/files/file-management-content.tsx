@@ -125,9 +125,6 @@ function getFileProcessingStatus(file: FileItem): FileAssetProductStatus | strin
 }
 
 function getEffectiveFileProcessingStatus(file: FileItem): FileAssetProductStatus | string {
-  if ((file.pending_confirmation_count ?? 0) > 0) {
-    return 'confirming';
-  }
   return getFileProcessingStatus(file);
 }
 
@@ -139,7 +136,7 @@ function fileMatchesProcessingStatusFilter(
 
   switch (filter) {
     case 'needs_action':
-      return status === 'confirming' || status === 'parse_failed';
+      return status === 'parse_failed' || (file.pending_confirmation_count ?? 0) > 0;
     case 'ready':
       return status === 'ready';
     case 'stored_only':

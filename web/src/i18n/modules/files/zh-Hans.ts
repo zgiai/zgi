@@ -3,7 +3,7 @@ import type { FilesMessages } from './en-US';
 const messages: FilesMessages = {
   title: '文件管理',
   eyebrow: '资产库',
-  description: '上传并管理源文件，解析内容后用于后续问答和知识库引用。',
+  description: '上传并管理源文件，生成切片后用于后续问答和知识库引用。',
 
   // Sidebar
   sidebar: {
@@ -35,12 +35,12 @@ const messages: FilesMessages = {
     totalItems: '共{total}项',
     relatedCount: '已关联{count}条',
     notRelated: '未关联',
-    pendingCount: '{count} 项待确认',
+    pendingCount: '{count} 项待优化',
     chunkCount: '{count} 个切片',
     embeddingCount: '{count} 个向量',
     startParseDialog: {
       title: '提交解析',
-      description: '为「{name}」提交解析任务。文件会进入解析、确认和索引流程。',
+      description: '为「{name}」提交解析任务。文件会进入解析、切片和索引流程。',
       providerHint: '系统会按文件类型自动选择解析路由。',
       toasts: {
         started: '已提交解析请求',
@@ -64,7 +64,7 @@ const messages: FilesMessages = {
   processingStatus: {
     stored_only: '仅存储',
     parsing: '解析中',
-    confirming: '待确认',
+    confirming: '待优化',
     generating: '索引中',
     parse_failed: '解析失败',
     ready: '已就绪',
@@ -91,7 +91,7 @@ const messages: FilesMessages = {
     batchMove: '批量移动',
     batchUnavailable: '该批量能力需要后端接口支持，当前暂不可用。',
     deleting: '删除中...',
-    confirmParse: '去确认',
+    confirmParse: '查看优化',
     startParse: '去解析',
     startParsing: '提交中...',
     replaceDocument: '更新文档',
@@ -181,17 +181,17 @@ const messages: FilesMessages = {
     fileBreadcrumb: '文件',
     previewOriginal: '预览原文件',
     downloadOriginal: '下载原文件',
-    exportParsedContent: '导出解析内容',
-    exportParsedContentUnavailable: '解析内容尚未就绪，暂不能导出。',
-    exportParsedContentSuccess: '解析内容已导出',
-    exportParsedContentFailed: '解析内容导出失败',
     processing: '处理进度',
     fileType: '{extension} 文件',
     createdAt: '上传于 {time}',
-    previewWorkspaceDescription: '核对原文件与解析内容，需处理标记项。',
+    previewWorkspaceDescription: '左侧查看原文件，右侧查看和管理生成的切片。',
     previewFocus: {
       enter: '预览布局',
       exit: '恢复布局',
+    },
+    previewToggle: {
+      hideOriginal: '隐藏原文件',
+      showOriginal: '显示原文件',
     },
     loadErrorTitle: '文件详情加载失败',
     loadErrorDescription: '文件可能已被删除，或当前账号没有访问权限。',
@@ -205,9 +205,9 @@ const messages: FilesMessages = {
     generationNo: '生成批次',
     nextViews: '详情视图',
     nextViewsDescription:
-      '原文件预览、解析确认、内容切片、索引信息和重试操作会在后续阶段一前端任务中挂载到这里。',
+      '原文件预览、内容切片、索引信息和重试操作会在后续阶段一前端任务中挂载到这里。',
     processingSummary: '处理汇总',
-    pendingConfirmationCount: '待确认项',
+    pendingConfirmationCount: '待优化项',
     chunkCount: '切片数',
     embeddingCount: '向量数',
     createdDate: '上传日期',
@@ -225,19 +225,19 @@ const messages: FilesMessages = {
       overview: '概览',
       preview: '文件预览',
       originalPreview: '原文件',
-      parseReview: '解析确认',
+      parseReview: '质量优化',
       chunks: '内容切片',
       index: '索引信息',
       qa: '文档问答',
     },
     workbench: {
       title: '处理进度',
-      description: '质量检查待确认 {pending} 项，已生成 {chunks} 个切片和 {embeddings} 个向量。',
-      pendingHint: '{count} 项待确认',
+      description: '质量检查待优化 {pending} 项，已生成 {chunks} 个切片和 {embeddings} 个向量。',
+      pendingHint: '{count} 项待优化',
       banners: {
         confirming: {
           title: '质量检查发现标记内容',
-          description: '质量检查发现 {pending} 处需要处理。',
+          description: '质量检查发现 {pending} 处待优化内容，可在切片中处理。',
         },
         failed: {
           title: '处理失败',
@@ -249,7 +249,7 @@ const messages: FilesMessages = {
         },
         processing: {
           title: '正在处理文档',
-          description: '系统正在解析内容、生成切片或建立问答索引。',
+          description: '系统正在处理文档、生成切片或建立问答索引。',
         },
         storedOnly: {
           title: '文件仅存储',
@@ -258,7 +258,7 @@ const messages: FilesMessages = {
       },
       steps: {
         uploaded: '已上传',
-        parsed: '解析内容',
+        parsed: '文档解析',
         quality: '质量检查',
         chunks: '生成切片',
         index: '建立问答索引',
@@ -275,21 +275,21 @@ const messages: FilesMessages = {
     },
     tabHints: {
       chunksReady: '已生成 {count} 个切片',
-      chunksWaiting: '等待确认完成',
+      chunksWaiting: '等待生成完成',
       qaReady: '可对本文档提问',
-      qaWaiting: '确认完成后可用',
+      qaWaiting: '生成完成后可用',
     },
     parseReview: {
-      title: '解析确认',
-      notReadyTitle: '解析确认暂不可用',
-      notReadyDescription: '请等待解析完成并进入待确认状态。',
+      title: '质量优化',
+      notReadyTitle: '质量优化暂不可用',
+      notReadyDescription: '请等待解析和切片生成完成。',
       loadErrorTitle: '解析预览加载失败',
       loadErrorDescription: '解析产物可能尚未就绪。',
       elementCount: '{count} 个元素',
-      pendingCount: '{count} 项待确认',
+      pendingCount: '{count} 项待优化',
       pendingReviewTitle: '{count} 处内容需要确认',
       pendingReviewDescription: '先处理标记内容，再生成切片和文档问答。',
-      batchIgnore: '忽略全部待确认项',
+      batchIgnore: '忽略全部待优化项',
       jumpNext: '跳转至下一处',
       emptyTitle: '暂无解析元素',
       emptyDescription: '解析器没有为该文件返回结构化元素。',
@@ -307,7 +307,7 @@ const messages: FilesMessages = {
       ignore: '忽略',
       resolvedHint: '该确认项已处理。',
       status: {
-        pending: '待确认',
+        pending: '待优化',
         kept: '已保留',
         edited: '已修改',
         ignored: '已忽略',
@@ -323,8 +323,8 @@ const messages: FilesMessages = {
       },
       toasts: {
         resolved: '确认项已处理',
-        batchIgnored: '待确认项已忽略',
-        generateQueued: '确认完成，已开始生成。',
+        batchIgnored: '待优化项已忽略',
+        generateQueued: '已开始生成。',
         resolveFailed: '确认项处理失败',
         batchIgnoreFailed: '批量忽略失败',
       },
@@ -346,7 +346,7 @@ const messages: FilesMessages = {
     chunks: {
       title: '内容切片',
       notReadyTitle: '切片尚未就绪',
-      notReadyDescription: '解析、确认和向量生成完成后，才可以查看切片。',
+      notReadyDescription: '解析和向量生成完成后，才可以查看切片。',
       loadErrorTitle: '切片加载失败',
       loadErrorDescription: '当前文件的切片结果可能尚未就绪。',
       total: '{count} 个切片',
@@ -360,8 +360,14 @@ const messages: FilesMessages = {
       searchPlaceholder: '搜索切片内容...',
       filters: {
         all: '全部',
+        issues: '待优化',
         enabled: '已启用',
         disabled: '已停用',
+      },
+      issues: {
+        badge: '待优化 {count}',
+        title: '这个切片有待优化点',
+        fallback: '需要检查',
       },
       expandAll: '展开全部',
       collapseAll: '收起全部',
@@ -423,7 +429,7 @@ const messages: FilesMessages = {
       reparsing: '提交中...',
       confirmTitle: '重新解析这个文件？',
       confirmDescription:
-        '重新解析期间，当前可检索资产会不可用，文件会重新经历解析、确认和索引流程。',
+        '重新解析期间，当前可检索资产会不可用，文件会重新经历解析、切片和索引流程。',
       confirm: '重新解析',
       toasts: {
         started: '已提交重新解析请求',
@@ -444,8 +450,8 @@ const messages: FilesMessages = {
         description: '系统正在提取文档内容，页面会每 2 秒自动刷新。',
       },
       confirming: {
-        title: '需要解析确认',
-        description: '请先确认解析元素，然后再生成切片和向量。',
+        title: '发现待优化点',
+        description: '系统已继续生成切片和向量，可在切片中查看并优化标记内容。',
       },
       generating: {
         title: '正在生成切片和向量',
