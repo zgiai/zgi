@@ -543,6 +543,9 @@ func visibleFilesFromRuntime(runtime *tools.ToolRuntime) []map[string]interface{
 		if !ok {
 			continue
 		}
+		if hasNonFileResourceMarker(mapped) {
+			continue
+		}
 		fileID := strings.TrimSpace(firstStringFromMap(mapped, "file_id", "id", "resource_id"))
 		name := strings.TrimSpace(firstStringFromMap(mapped, "name", "title", "filename", "file_name"))
 		if fileID == "" && name == "" {
@@ -573,6 +576,34 @@ func visibleFilesFromRuntime(runtime *tools.ToolRuntime) []map[string]interface{
 		out = append(out, file)
 	}
 	return out
+}
+
+func hasNonFileResourceMarker(mapped map[string]interface{}) bool {
+	for _, key := range []string{"type", "resource_type", "kind", "resource_kind"} {
+		if value := stringValue(mapped, key); value != "" && !strings.EqualFold(value, "file") {
+			return true
+		}
+	}
+	metadata := mapFromAny(mapped["metadata"])
+	if value := firstStringFromMap(metadata, "resource_kind"); value != "" && !strings.EqualFold(value, "file") {
+		return true
+	}
+	return false
+}
+
+func mapFromAny(value interface{}) map[string]interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return typed
+	case map[string]string:
+		out := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			out[key] = item
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func stringValue(params map[string]interface{}, key string) string {

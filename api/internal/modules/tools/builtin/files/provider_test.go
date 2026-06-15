@@ -391,6 +391,28 @@ func listVisibleFilesRuntimeTool(t *testing.T, provider *Provider, organizationI
 			"organization_id": organizationID,
 			"console_files_visible_files": []map[string]interface{}{
 				{
+					"type":        "page",
+					"resource_id": "console.files",
+					"title":       "console.files",
+				},
+				{
+					"resource_type": "selection",
+					"resource_id":   "selected-files",
+					"title":         "Current selection",
+				},
+				{
+					"kind":        "log",
+					"resource_id": "trace-1",
+					"title":       "Trace context",
+				},
+				{
+					"resource_id": "console.files",
+					"title":       "console.files",
+					"metadata": map[string]interface{}{
+						"resource_kind": "page",
+					},
+				},
+				{
 					"visible_index": 1,
 					"file_id":       "file-1",
 					"name":          "one.txt",
@@ -399,6 +421,7 @@ func listVisibleFilesRuntimeTool(t *testing.T, provider *Provider, organizationI
 				},
 				{
 					"visible_index": 2,
+					"resource_type": "file",
 					"file_id":       "file-2",
 					"name":          "two.pdf",
 					"extension":     "pdf",
