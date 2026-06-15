@@ -394,6 +394,7 @@ func TestParsePPTXDocumentSpecNormalizesAndRejectsInvalidInput(t *testing.T) {
 		{name: "unknown element", raw: `{"slides":[{"elements":[{"type":"video"}]}]}`, want: "unsupported PPTX element type"},
 		{name: "bad color", raw: `{"slides":[{"elements":[{"type":"text","text":"x","style":{"color":"red"}}]}]}`, want: "expected RRGGBB hex color"},
 		{name: "bad table", raw: `{"slides":[{"elements":[{"type":"table"}]}]}`, want: "table requires headers or rows"},
+		{name: "bad shape", raw: `{"slides":[{"elements":[{"type":"shape"}]}]}`, want: "shape requires fill_color or line_color"},
 		{name: "bad line spacing", raw: `{"slides":[{"elements":[{"type":"text","text":"x","style":{"line_spacing":4}}]}]}`, want: "line_spacing must be between 0.5 and 3"},
 		{name: "bad language", raw: `{"language":"not a language","slides":[{"elements":[{"type":"text","text":"x"}]}]}`, want: "presentation.language must be a valid BCP 47 language tag"},
 	}
@@ -446,6 +447,26 @@ func TestParsePPTXDocumentSpecAllowsVisibleBleedShapes(t *testing.T) {
 	require.Contains(t, normalized, `"y":-0.2`)
 }
 
+func TestPPTSlidePlannerPayloadReferenceExamplesAreValid(t *testing.T) {
+	raw, err := os.ReadFile("../../../skills/catalog/ppt-slide-planner/references/pptx-payload-contract.md")
+	require.NoError(t, err)
+	content := string(raw)
+
+	payloadExample := extractJSONExampleAfterMarker(t, content, "## Valid Payload Example")
+	spec, normalized, err := parsePPTXDocumentSpec(payloadExample)
+	require.NoError(t, err)
+	require.NotEmpty(t, normalized)
+	require.Equal(t, "wide", spec.Layout)
+	require.Equal(t, "zh-CN", spec.Language)
+	require.NotEmpty(t, spec.Slides)
+
+	shapeExample := extractJSONExampleAfterMarker(t, content, "## Minimal Valid Shape")
+	_, normalized, err = parsePPTXDocumentSpec(`{"slides":[{"elements":[` + shapeExample + `]}]}`)
+	require.NoError(t, err)
+	require.Contains(t, normalized, `"fill_color":"F8FAFC"`)
+	require.Contains(t, normalized, `"line_color":"CBD5E1"`)
+}
+
 func TestParsePPTXDocumentSpecWrapsLongChineseText(t *testing.T) {
 	raw := `{
   "slides": [
@@ -463,6 +484,19 @@ func TestParsePPTXDocumentSpecWrapsLongChineseText(t *testing.T) {
 	measure := measurePPTXText(element.Text, &element, spec.DefaultStyle, *element.W, false)
 	require.LessOrEqual(t, measure.LongestLineUnits, measure.LineCapacity+pptxLayoutEpsilon)
 	require.LessOrEqual(t, measure.EstimatedHeight, *element.H+pptxFitHeightSlack(*element.H))
+}
+
+func extractJSONExampleAfterMarker(t *testing.T, content string, marker string) string {
+	t.Helper()
+	markerIndex := strings.Index(content, marker)
+	require.NotEqual(t, -1, markerIndex, "marker %q not found", marker)
+	afterMarker := content[markerIndex+len(marker):]
+	fenceStart := strings.Index(afterMarker, "```json")
+	require.NotEqual(t, -1, fenceStart, "json fence after %q not found", marker)
+	jsonStart := fenceStart + len("```json")
+	fenceEnd := strings.Index(afterMarker[jsonStart:], "```")
+	require.NotEqual(t, -1, fenceEnd, "json fence after %q not closed", marker)
+	return strings.TrimSpace(afterMarker[jsonStart : jsonStart+fenceEnd])
 }
 
 func TestParsePPTXDocumentSpecRejectsBadLayout(t *testing.T) {

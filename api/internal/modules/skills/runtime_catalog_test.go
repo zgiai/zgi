@@ -137,6 +137,123 @@ func TestWorkReportSystemSkillMetadata(t *testing.T) {
 	}
 }
 
+func TestPPTSlidePlannerSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillPPTSlidePlanner})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillPPTSlidePlanner)
+	if !ok {
+		t.Fatalf("ppt slide planner skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected ppt slide planner not to have scripts")
+	}
+	if got := toolNames(doc.Tools); len(got) != 0 {
+		t.Fatalf("tools = %v, want no direct tools", got)
+	}
+	for _, trigger := range []string{"PPT", "PowerPoint", "slide planning", "strict per-slide plan", "generate_pptx"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) && !strings.Contains(doc.Instructions, trigger) {
+			t.Fatalf("metadata/instructions missing trigger %q", trigger)
+		}
+	}
+	for _, required := range []string{
+		"strict per-slide construction plan",
+		"Do not call `generate_pptx` from this skill",
+		"actual editable PPTX file is produced by the separate `file-generator` skill",
+		"Do not generate PPTX files directly from this skill",
+		"image, chart, diagram, or video placeholder",
+		"Do not pass Markdown, HTML, comments, prose, partial objects, or unquoted text as `presentation`",
+		"starts with `{`, ends with `}`",
+		"balanced braces/brackets",
+		"unexpected EOF",
+		"body text element over 10 estimated wrapped lines",
+		"text does not fit",
+		"estimated_height * 1.25",
+		"within `0.2` inches of `h`",
+		"4.0 inches estimated height",
+		"4.5 inches estimated height",
+		"`h=5.0` or `h=5.3`",
+		"`min(2.8, h * 0.70)`",
+		"`h <= 3.5`",
+		"`w <= 5.8`",
+		"36-44 pt title",
+		"reserve height from text length and font size",
+		"quality-check.md",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 6 {
+		t.Fatalf("references = %#v, want 6 ppt slide planner references", doc.Metadata.References)
+	}
+	for _, path := range []string{"deck-brief.md", "slide-plan-contract.md", "slide-layout-contract.md", "media-placeholder-contract.md", "pptx-payload-contract.md", "quality-check.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
+func TestContractFieldExtractorSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillContractFieldExtractor})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillContractFieldExtractor)
+	if !ok {
+		t.Fatalf("contract field extractor skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypeHybrid {
+		t.Fatalf("runtime type = %q, want hybrid", doc.Metadata.RuntimeType)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected contract field extractor not to have scripts")
+	}
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"generate_file"}) {
+		t.Fatalf("tools = %v, want generate_file", got)
+	}
+	tool, ok := findSkillTool(*doc, "generate_file")
+	if !ok {
+		t.Fatalf("expected generate_file tool")
+	}
+	if tool.ProviderType != "builtin" || tool.ProviderID != "file_generator" {
+		t.Fatalf("tool provider = %s/%s, want builtin/file_generator", tool.ProviderType, tool.ProviderID)
+	}
+	for _, trigger := range []string{"contract field extraction", "contract ledger", "field list", "confidence"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) && !strings.Contains(doc.Instructions, trigger) {
+			t.Fatalf("metadata/instructions missing trigger %q", trigger)
+		}
+	}
+	for _, required := range []string{
+		"does not read files",
+		"Do not invent",
+		"未提取到",
+		"defaulted",
+		"confidence",
+		"field-templates.md",
+		"field-schema-contract.md",
+		"database-handoff.md",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 7 {
+		t.Fatalf("references = %#v, want 7 contract field references", doc.Metadata.References)
+	}
+	for _, path := range []string{"field-templates.md", "field-schema-contract.md", "extraction-rules.md", "confidence-rules.md", "output-format.md", "contract-ledger-export.md", "database-handoff.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
 func TestSchedulePlannerSystemSkillMetadata(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillSchedulePlanner})
@@ -449,6 +566,108 @@ func TestResumeScreeningSystemSkillMetadata(t *testing.T) {
 		t.Fatalf("references = %#v, want 5 resume screening references", doc.Metadata.References)
 	}
 	for _, path := range []string{"resume-summary.md", "jd-match.md", "screening-criteria.md", "interview-questions.md", "talent-pool-entry.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
+func TestResponseTonePolisherSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillResponseTonePolisher})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillResponseTonePolisher)
+	if !ok {
+		t.Fatalf("response tone polisher skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if len(doc.Tools) != 0 {
+		t.Fatalf("tools = %v, want none", doc.Tools)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected response tone polisher not to have scripts")
+	}
+	for _, trigger := range []string{"polish response", "rewrite tone", "make it natural", "make it less robotic", "humanize this reply"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) {
+			t.Fatalf("description missing trigger %q: %q", trigger, doc.Metadata.Description)
+		}
+	}
+	for _, boundary := range []string{"does not create new facts", "commitments", "file-generator"} {
+		if !strings.Contains(doc.Metadata.WhenToUse, boundary) {
+			t.Fatalf("when_to_use missing boundary %q: %q", boundary, doc.Metadata.WhenToUse)
+		}
+	}
+	for _, required := range []string{
+		"call `request_user_input` instead of writing a plain clarification",
+		"read exactly one relevant reference",
+		"Do not add facts, promises, deadlines, compensation",
+		"Do not remove important caveats, limitations, risks",
+		"Do not imitate a specific living person",
+		"Language Rules",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 5 {
+		t.Fatalf("references = %#v, want 5 response tone polisher references", doc.Metadata.References)
+	}
+	for _, path := range []string{"customer-service.md", "workplace-professional.md", "empathy-support.md", "general-user.md", "concise-friendly.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
+func TestFormInteractionSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillFormInteraction})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillFormInteraction)
+	if !ok {
+		t.Fatalf("form interaction skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
+		t.Fatalf("runtime type = %q, want prompt", doc.Metadata.RuntimeType)
+	}
+	if len(doc.Tools) != 0 {
+		t.Fatalf("tools = %v, want none", doc.Tools)
+	}
+	if doc.Metadata.HasScripts {
+		t.Fatalf("expected form interaction not to have scripts")
+	}
+	for _, trigger := range []string{"form interaction", "structured clarification", "user input", "quick replies", "parameter confirmation"} {
+		if !strings.Contains(doc.Metadata.Description, trigger) {
+			t.Fatalf("description missing trigger %q: %q", trigger, doc.Metadata.Description)
+		}
+	}
+	for _, boundary := range []string{"currently supported message/questions/options contract", "does not add new frontend components", "business logic"} {
+		if !strings.Contains(doc.Metadata.WhenToUse, boundary) {
+			t.Fatalf("when_to_use missing boundary %q: %q", boundary, doc.Metadata.WhenToUse)
+		}
+	}
+	for _, required := range []string{
+		"request_user_input",
+		"message/questions/options",
+		"Do not add unsupported fields",
+		"Do not modify or extend `request_user_input`",
+		"Do not promise fixed frontend widgets",
+		"After calling `request_user_input`, stop the turn",
+	} {
+		if !strings.Contains(doc.Instructions, required) {
+			t.Fatalf("instructions missing %q", required)
+		}
+	}
+	if len(doc.Metadata.References) != 5 {
+		t.Fatalf("references = %#v, want 5 form interaction references", doc.Metadata.References)
+	}
+	for _, path := range []string{"question-shapes.md", "option-rules.md", "validation-guidance.md", "multi-step-flow.md", "file-upload-prompt.md"} {
 		if !hasReference(doc.Metadata.References, path) {
 			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
 		}
@@ -951,6 +1170,8 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 		SkillAgentDatabase,
 		SkillCalculator,
 		SkillFileGenerator,
+		SkillPPTSlidePlanner,
+		SkillContractFieldExtractor,
 		SkillSensitiveRedaction,
 		SkillChartGenerator,
 		SkillIntentRouter,
@@ -984,6 +1205,7 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		{SkillFileGenerator, "generate_docx", []string{"document"}},
 		{SkillFileGenerator, "generate_pdf", []string{"html"}},
 		{SkillFileGenerator, "generate_pptx", []string{"presentation"}},
+		{SkillContractFieldExtractor, "generate_file", []string{"content", "format"}},
 		{SkillSensitiveRedaction, "redact_text", []string{"text"}},
 		{SkillChartGenerator, "generate_chart", []string{"chart_type", "data"}},
 		{SkillIntentRouter, "route_intent", []string{"user_input", "intent_id", "task_type", "confidence", "recommended_action", "evidence", "normalized_request"}},
@@ -1070,6 +1292,8 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		SkillAgentDatabase,
 		SkillCalculator,
 		SkillFileGenerator,
+		SkillPPTSlidePlanner,
+		SkillContractFieldExtractor,
 		SkillSensitiveRedaction,
 		SkillChartGenerator,
 		SkillIntentRouter,

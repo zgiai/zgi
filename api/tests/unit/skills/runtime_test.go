@@ -449,6 +449,38 @@ func TestRuntime_ValidateCatalog_AcceptsIntentRouterSkill(t *testing.T) {
 	}
 }
 
+func TestRuntime_ValidateCatalog_AcceptsPPTSlidePlannerSkill(t *testing.T) {
+	catalogDir := t.TempDir()
+	writePPTSlidePlannerSkill(t, catalogDir)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	if err := runtime.ValidateCatalog(context.Background()); err != nil {
+		t.Fatalf("ValidateCatalog() error = %v", err)
+	}
+	if _, ok := skills.SkillToolArgumentContractFor("ppt-slide-planner", "generate_pptx"); ok {
+		t.Fatal("ppt slide planner must not expose generate_pptx; file-generator owns PPTX generation")
+	}
+}
+
+func TestRuntime_ValidateCatalog_AcceptsContractFieldExtractorSkill(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeContractFieldExtractorSkill(t, catalogDir)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	if err := runtime.ValidateCatalog(context.Background()); err != nil {
+		t.Fatalf("ValidateCatalog() error = %v", err)
+	}
+	contract, ok := skills.SkillToolArgumentContractFor("contract-field-extractor", "generate_file")
+	if !ok {
+		t.Fatal("contract field extractor contract missing")
+	}
+	if contract.Schema["properties"] == nil ||
+		!strings.Contains(fmt.Sprintf("%#v", contract.Schema), "content") ||
+		!strings.Contains(fmt.Sprintf("%#v", contract.Schema), "format") {
+		t.Fatalf("contract field extractor contract = %#v, want content and format schema", contract.Schema)
+	}
+}
+
 func TestRuntime_ValidateCatalog_AcceptsArchitectureDiagramSkill(t *testing.T) {
 	catalogDir := t.TempDir()
 	writeArchitectureDiagramSkill(t, catalogDir)
@@ -591,6 +623,44 @@ func writeFileGeneratorSkill(t *testing.T, catalogDir string) {
 func writeIntentRouterSkill(t *testing.T, catalogDir string) {
 	t.Helper()
 	writeSkillMarkdown(t, catalogDir, "intent-router", testIntentRouterSkillMarkdown())
+}
+
+func writePPTSlidePlannerSkill(t *testing.T, catalogDir string) {
+	t.Helper()
+	writeSkillMarkdown(t, catalogDir, "ppt-slide-planner", `---
+name: ppt-slide-planner
+description: Plan precise PPT slides from strict per-slide plans before PPTX generation through file-generator.
+when_to_use: Use for PPT planning, PowerPoint outline, slides, slide planning, and presentation structure before file generation.
+runtime_type: prompt
+max_calls_per_turn: 5
+timeout_seconds: 60
+---
+
+# PPT Slide Planner Skill
+
+Create a strict per-slide plan and hand the result to file-generator when PPTX output is required.
+`)
+}
+
+func writeContractFieldExtractorSkill(t *testing.T, catalogDir string) {
+	t.Helper()
+	writeSkillMarkdown(t, catalogDir, "contract-field-extractor", `---
+name: contract-field-extractor
+description: Extract configured contract fields from already parsed contract text.
+when_to_use: Use for contract field extraction, contract metadata extraction, and contract ledger output.
+provider_type: builtin
+provider_id: file_generator
+runtime_type: hybrid
+tools:
+  - generate_file
+max_calls_per_turn: 5
+timeout_seconds: 10
+---
+
+# Contract Field Extractor Skill
+
+Extract configured fields and export results only when requested.
+`)
 }
 
 func writeArchitectureDiagramSkill(t *testing.T, catalogDir string) {

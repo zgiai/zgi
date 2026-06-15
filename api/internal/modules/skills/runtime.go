@@ -1199,6 +1199,27 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"content": "# Weekly Work Report\n\n## Summary\n\n...", "format": "md", "filename": "weekly-work-report"},
 		},
+		SkillContractFieldExtractor + "/generate_file": {
+			SkillID:     SkillContractFieldExtractor,
+			ToolName:    "generate_file",
+			Description: "Generate a downloadable JSON, CSV, Markdown, or text file from completed contract field extraction results. Use only after contract text and configured fields have been processed and missing fields are marked explicitly.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"content":   stringValueSchema("Final contract extraction result content to write into the generated file. Preserve missing, uncertain, conflict, confidence, evidence, and source_location fields."),
+					"format":    enumStringSchema("Output format.", []string{"json", "csv", "md", "txt"}),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional document title used by generated file formats that support titles."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"content", "format"},
+			),
+			Example: map[string]interface{}{
+				"content":  `{"contract_summary":{"field_count":2,"extracted_count":1,"missing_count":1},"fields":[{"field_key":"contract_amount","field_label":"Contract Amount","value":"CNY 120,000","normalized_value":"120000","value_type":"money","extraction_status":"extracted","confidence":0.92,"evidence":"The total contract price is CNY 120,000.","source_location":"Section 3","notes":""},{"field_key":"renewal_clause","field_label":"Renewal Clause","value":"Not found","normalized_value":"","value_type":"clause","extraction_status":"missing","confidence":0,"evidence":"","source_location":"","notes":"No explicit renewal clause was found in the contract text."}]}`,
+				"format":   "json",
+				"filename": "contract-field-extraction",
+				"title":    "Contract Field Extraction",
+			},
+		},
 		SkillInternalKnowledge + "/list_accessible_knowledge_bases": {
 			SkillID:     SkillInternalKnowledge,
 			ToolName:    "list_accessible_knowledge_bases",
