@@ -17,12 +17,27 @@ import (
 )
 
 var (
-	ErrOrganizationInvitePermissionDenied = errors.New("organization invite permission denied")
-	ErrOrganizationMemberNotFound         = errors.New("organization member not found")
-	ErrOrganizationOwnerPasswordReset     = errors.New("organization owner password reset denied")
-	ErrSuperAdminPasswordReset            = errors.New("super admin password reset denied")
-	ErrOrganizationInviteWorkspaceInvalid = errors.New("organization invite workspace invalid")
+	ErrOrganizationInvitePermissionDenied  = errors.New("organization invite permission denied")
+	ErrOrganizationMemberNotFound          = errors.New("organization member not found")
+	ErrOrganizationOwnerPasswordReset      = errors.New("organization owner password reset denied")
+	ErrSuperAdminPasswordReset             = errors.New("super admin password reset denied")
+	ErrOrganizationInviteWorkspaceInvalid  = errors.New("organization invite workspace invalid")
+	ErrDirectAddWorkspaceNotFound          = errors.New("direct add workspace not found")
+	ErrDirectAddWorkspaceNotInOrganization = errors.New("direct add workspace not in organization")
+	ErrDirectAddMemberNameExists           = errors.New("direct add member name exists")
 )
+
+type MemberAlreadyInDepartmentError struct {
+	CurrentDepartment *model.Department
+}
+
+func (e *MemberAlreadyInDepartmentError) Error() string {
+	return ErrMemberAlreadyInDept.Error()
+}
+
+func (e *MemberAlreadyInDepartmentError) Unwrap() error {
+	return ErrMemberAlreadyInDept
+}
 
 func (s *organizationService) InviteCurrentOrganizationMember(ctx context.Context, req *shared_dto.InviteCurrentOrganizationMemberRequest) (*shared_dto.InviteCurrentOrganizationMemberResponse, error) {
 	if req == nil {
@@ -151,6 +166,140 @@ func (s *organizationService) InviteCurrentOrganizationMember(ctx context.Contex
 	return resp, nil
 }
 
+func (s *organizationService) DirectAddOrganizationMember(ctx context.Context, req *shared_dto.DirectAddOrganizationMemberRequest) (*shared_dto.DirectAddOrganizationMemberResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("direct add member request is required")
+	}
+
+	organizationID := strings.TrimSpace(req.OrganizationID)
+	operatorAccountID := strings.TrimSpace(req.OperatorAccountID)
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	departmentID := trimOptionalInviteString(req.DepartmentID)
+	email := normalizeAccountEmail(req.Email)
+	name := strings.TrimSpace(req.Name)
+	if organizationID == "" || operatorAccountID == "" || workspaceID == "" || email == "" || name == "" {
+		return nil, fmt.Errorf("invalid direct add member request")
+	}
+
+	password := helper.GenerateString(16)
+	hashedPassword, salt, err := helper.HashPasswordPBKDF2(password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash direct add password: %w", err)
+	}
+
+	var resp *shared_dto.DirectAddOrganizationMemberResponse
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		operatorRole, err := getOrganizationMemberRoleTx(ctx, tx, organizationID, operatorAccountID)
+		if err != nil {
+			return err
+		}
+		if !isOrganizationAdminRole(operatorRole) {
+			return ErrOrganizationInvitePermissionDenied
+		}
+
+		workspace, err := getDirectAddWorkspaceTx(ctx, tx, organizationID, workspaceID)
+		if err != nil {
+			return err
+		}
+
+		var department *model.Department
+		if departmentID != "" {
+			department, err = getDirectAddDepartmentTx(ctx, tx, organizationID, departmentID)
+			if err != nil {
+				return err
+			}
+		}
+
+		nameExists, err := organizationMemberNameExistsTx(ctx, tx, organizationID, name, "")
+		if err != nil {
+			return err
+		}
+		if nameExists {
+			return ErrDirectAddMemberNameExists
+		}
+
+		account, createdAccount, err := getOrCreateDirectAddAccountTx(ctx, tx, email, name, hashedPassword, salt)
+		if err != nil {
+			return err
+		}
+
+		alreadyMember, err := organizationMemberExistsTx(ctx, tx, organizationID, account.ID)
+		if err != nil {
+			return err
+		}
+		if !alreadyMember {
+			memberName := name
+			join := &model.OrganizationMember{
+				OrganizationID: organizationID,
+				AccountID:      account.ID,
+				Role:           model.OrganizationRoleNormal,
+				Name:           &memberName,
+			}
+			if err := tx.WithContext(ctx).Create(join).Error; err != nil {
+				return fmt.Errorf("failed to add organization member: %w", err)
+			}
+		}
+
+		if department != nil {
+			if err := addDirectDepartmentMemberTx(ctx, tx, organizationID, department.ID, account.ID); err != nil {
+				return err
+			}
+		}
+
+		alreadyWorkspaceMember, err := workspaceMemberExistsTx(ctx, tx, workspaceID, account.ID)
+		if err != nil {
+			return err
+		}
+		if !alreadyWorkspaceMember {
+			if s.workspaceManagementService == nil {
+				return fmt.Errorf("workspace management service is required to add workspace member")
+			}
+			if err := s.workspaceManagementService.WithTx(tx).AddMember(ctx, &interfaces.AddMemberRequest{
+				WorkspaceID: workspaceID,
+				AccountID:   account.ID,
+				Role:        model.WorkspaceRoleNormal,
+			}); err != nil && !strings.Contains(err.Error(), "already a member") {
+				return fmt.Errorf("failed to add workspace member: %w", err)
+			}
+		}
+
+		targetWorkspaceSelected, err := ensureInviteAccountContextTx(ctx, tx, account.ID, organizationID, workspaceID)
+		if err != nil {
+			return err
+		}
+		if targetWorkspaceSelected {
+			if err := setInviteCurrentWorkspaceTx(ctx, tx, account.ID, workspaceID); err != nil {
+				return err
+			}
+		}
+
+		resp = &shared_dto.DirectAddOrganizationMemberResponse{
+			AccountID:      account.ID,
+			Email:          account.Email,
+			Name:           account.Name,
+			OrganizationID: organizationID,
+			CreatedAccount: createdAccount,
+			AlreadyMember:  alreadyMember,
+			Workspace: &shared_dto.MemberWorkspaceInfo{
+				ID:   workspace.ID,
+				Name: workspace.Name,
+			},
+		}
+		if department != nil {
+			resp.Department = &shared_dto.MemberDepartmentInfo{
+				ID:   department.ID,
+				Name: department.Name,
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
 func (s *organizationService) ResetCurrentOrganizationMemberPassword(ctx context.Context, req *shared_dto.ResetCurrentOrganizationMemberPasswordRequest) (*shared_dto.ResetCurrentOrganizationMemberPasswordResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("reset password request is required")
@@ -259,6 +408,109 @@ func workspaceMemberExistsTx(ctx context.Context, tx *gorm.DB, workspaceID, acco
 		return false, fmt.Errorf("failed to check workspace membership: %w", err)
 	}
 	return count > 0, nil
+}
+
+func getDirectAddWorkspaceTx(ctx context.Context, tx *gorm.DB, organizationID, workspaceID string) (*model.Workspace, error) {
+	var workspace model.Workspace
+	err := tx.WithContext(ctx).
+		Where("id = ?", workspaceID).
+		First(&workspace).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrDirectAddWorkspaceNotFound
+		}
+		return nil, fmt.Errorf("failed to get direct add workspace: %w", err)
+	}
+	if workspace.Status != model.WorkspaceStatusNormal {
+		return nil, ErrDirectAddWorkspaceNotFound
+	}
+	if workspace.OrganizationID == nil || strings.TrimSpace(*workspace.OrganizationID) != organizationID {
+		return nil, ErrDirectAddWorkspaceNotInOrganization
+	}
+	return &workspace, nil
+}
+
+func getDirectAddDepartmentTx(ctx context.Context, tx *gorm.DB, organizationID, departmentID string) (*model.Department, error) {
+	var department model.Department
+	err := tx.WithContext(ctx).
+		Where("id = ? AND group_id = ?", departmentID, organizationID).
+		First(&department).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrDepartmentNotFound
+		}
+		return nil, fmt.Errorf("failed to get direct add department: %w", err)
+	}
+	return &department, nil
+}
+
+func organizationMemberNameExistsTx(ctx context.Context, tx *gorm.DB, organizationID, name, excludeAccountID string) (bool, error) {
+	var count int64
+	query := tx.WithContext(ctx).
+		Model(&model.OrganizationMember{}).
+		Where("organization_id = ? AND name = ?", organizationID, name)
+	if excludeAccountID != "" {
+		query = query.Where("account_id != ?", excludeAccountID)
+	}
+	if err := query.Count(&count).Error; err != nil {
+		return false, fmt.Errorf("failed to check organization member name: %w", err)
+	}
+	return count > 0, nil
+}
+
+func getOrCreateDirectAddAccountTx(ctx context.Context, tx *gorm.DB, email, name, hashedPassword, salt string) (*auth_model.Account, bool, error) {
+	account, err := getAccountByEmailTx(ctx, tx, email)
+	if err == nil {
+		return account, false, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, fmt.Errorf("failed to query direct add account by email: %w", err)
+	}
+
+	account = &auth_model.Account{
+		ID:           uuid.New().String(),
+		Name:         name,
+		Email:        email,
+		Password:     &hashedPassword,
+		PasswordSalt: &salt,
+		Status:       auth_model.AccountStatusPending,
+	}
+	if err := tx.WithContext(ctx).Create(account).Error; err != nil {
+		return nil, false, fmt.Errorf("failed to create direct add account: %w", err)
+	}
+	return account, true, nil
+}
+
+func addDirectDepartmentMemberTx(ctx context.Context, tx *gorm.DB, organizationID, departmentID, accountID string) error {
+	var existing model.DepartmentMember
+	err := tx.WithContext(ctx).
+		Joins("JOIN departments ON departments.id = department_members.department_id").
+		Where("departments.group_id = ? AND department_members.account_id = ?", organizationID, accountID).
+		First(&existing).Error
+	if err == nil {
+		var currentDepartment model.Department
+		if deptErr := tx.WithContext(ctx).
+			Where("id = ?", existing.DepartmentID).
+			First(&currentDepartment).Error; deptErr != nil {
+			if !errors.Is(deptErr, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("failed to get current department membership: %w", deptErr)
+			}
+			return &MemberAlreadyInDepartmentError{}
+		}
+		return &MemberAlreadyInDepartmentError{CurrentDepartment: &currentDepartment}
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("failed to check direct add department membership: %w", err)
+	}
+
+	member := &model.DepartmentMember{
+		DepartmentID: departmentID,
+		AccountID:    accountID,
+	}
+	if err := tx.WithContext(ctx).Create(member).Error; err != nil {
+		return fmt.Errorf("failed to add direct department member: %w", err)
+	}
+	return nil
 }
 
 func getInviteWorkspaceTx(ctx context.Context, tx *gorm.DB, organizationID, workspaceID string) (*model.Workspace, error) {

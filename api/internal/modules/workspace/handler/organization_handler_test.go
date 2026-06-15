@@ -34,6 +34,7 @@ type fakeOrganizationService struct {
 	existsMemberByNameFn             func(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error)
 	isOrganizationMemberFn           func(ctx context.Context, organizationID, accountID string) (bool, error)
 	addMemberFn                      func(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error
+	directAddMemberFn                func(ctx context.Context, req *shared_dto.DirectAddOrganizationMemberRequest) (*shared_dto.DirectAddOrganizationMemberResponse, error)
 }
 
 func (f fakeOrganizationService) GetWorkspaceMemberPermissions(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error) {
@@ -113,6 +114,22 @@ func (f fakeOrganizationService) AddMember(ctx context.Context, req *shared_dto.
 	return nil
 }
 
+func (f fakeOrganizationService) DirectAddOrganizationMember(ctx context.Context, req *shared_dto.DirectAddOrganizationMemberRequest) (*shared_dto.DirectAddOrganizationMemberResponse, error) {
+	if f.directAddMemberFn != nil {
+		return f.directAddMemberFn(ctx, req)
+	}
+	return &shared_dto.DirectAddOrganizationMemberResponse{
+		AccountID:      "member-1",
+		Email:          "alice@example.com",
+		Name:           "Alice",
+		OrganizationID: req.OrganizationID,
+		Workspace: &shared_dto.MemberWorkspaceInfo{
+			ID:   req.WorkspaceID,
+			Name: "Workspace",
+		},
+	}, nil
+}
+
 type fakeWorkspaceManagementService struct {
 	interfaces.WorkspaceManagementService
 	getWorkspaceMembersFn func(ctx context.Context, workspaceID string) ([]*interfaces.AccountWithRole, error)
@@ -152,6 +169,7 @@ func (f fakeWorkspaceManagementService) AddMember(ctx context.Context, req *inte
 type fakeAccountService struct {
 	interfaces.AccountService
 	getUserThroughEmailFn              func(ctx context.Context, email string) (*auth_model.Account, error)
+	getAccountByIDFn                   func(ctx context.Context, id string) (*auth_model.Account, error)
 	createAccountFn                    func(ctx context.Context, req *shared_dto.CreateAccountRequest) (*auth_model.Account, error)
 	ensureAccountContextForWorkspaceFn func(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error)
 	isOrganizationAdminOrOwnerFn       func(ctx context.Context, organizationID, accountID string) (bool, error)
@@ -164,6 +182,13 @@ func (f fakeAccountService) GetUserThroughEmail(ctx context.Context, email strin
 		return f.getUserThroughEmailFn(ctx, email)
 	}
 	return nil, nil
+}
+
+func (f fakeAccountService) GetAccountByID(ctx context.Context, id string) (*auth_model.Account, error) {
+	if f.getAccountByIDFn != nil {
+		return f.getAccountByIDFn(ctx, id)
+	}
+	return &auth_model.Account{ID: id}, nil
 }
 
 func (f fakeAccountService) CreateAccount(ctx context.Context, req *shared_dto.CreateAccountRequest) (*auth_model.Account, error) {
@@ -612,66 +637,29 @@ func TestGetCurrentOrganizationMembersUsesKeyword(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), `"email":"alice@example.com"`)
 }
 
-func TestDirectAddMemberDoesNotJoinWorkspaceWhenDepartmentRejects(t *testing.T) {
+func TestDirectAddMemberMapsDepartmentConflict(t *testing.T) {
 	t.Parallel()
 
-	workspaceAddCalled := false
-	account := &auth_model.Account{
-		ID:     "member-1",
-		Name:   "Alice",
-		Email:  "alice@example.com",
-		Status: auth_model.AccountStatusActive,
-	}
-
 	handler := &OrganizationHandler{
-		organizationService: fakeOrganizationService{},
-		workspaceManagementService: fakeWorkspaceManagementService{
-			getWorkspaceByIDFn: func(ctx context.Context, id string) (*model.Workspace, error) {
-				require.Equal(t, "ws-1", id)
-				orgID := "org-1"
-				return &model.Workspace{
-					ID:             id,
-					Name:           "Workspace",
-					Status:         model.WorkspaceStatusNormal,
-					OrganizationID: &orgID,
-				}, nil
-			},
-			addMemberFn: func(ctx context.Context, req *interfaces.AddMemberRequest) error {
-				workspaceAddCalled = true
-				return nil
+		organizationService: fakeOrganizationService{
+			directAddMemberFn: func(ctx context.Context, req *shared_dto.DirectAddOrganizationMemberRequest) (*shared_dto.DirectAddOrganizationMemberResponse, error) {
+				require.Equal(t, "org-1", req.OrganizationID)
+				require.Equal(t, "owner-1", req.OperatorAccountID)
+				require.Equal(t, "ws-1", req.WorkspaceID)
+				require.Equal(t, "alice@example.com", req.Email)
+				require.Equal(t, "Alice", req.Name)
+				require.NotNil(t, req.DepartmentID)
+				require.Equal(t, "dept-1", *req.DepartmentID)
+				return nil, &workspace_service.MemberAlreadyInDepartmentError{
+					CurrentDepartment: &model.Department{ID: "dept-existing", Name: "Current Department"},
+				}
 			},
 		},
 		accountService: fakeAccountService{
-			getUserThroughEmailFn: func(ctx context.Context, email string) (*auth_model.Account, error) {
-				require.Equal(t, "alice@example.com", email)
-				return account, nil
-			},
 			isOrganizationAdminOrOwnerFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
 				require.Equal(t, "org-1", organizationID)
 				require.Equal(t, "owner-1", accountID)
 				return true, nil
-			},
-		},
-		departmentService: fakeDepartmentService{
-			getDepartmentFn: func(ctx context.Context, id string) (*model.Department, error) {
-				require.Equal(t, "dept-1", id)
-				return &model.Department{
-					ID:             id,
-					Name:           "Existing Department",
-					OrganizationID: "org-1",
-					Status:         model.DepartmentStatusActive,
-				}, nil
-			},
-			addMemberFn: func(ctx context.Context, organizationID, departmentID, accountID string) (*model.DepartmentMember, error) {
-				require.Equal(t, "org-1", organizationID)
-				require.Equal(t, "dept-1", departmentID)
-				require.Equal(t, "member-1", accountID)
-				return nil, workspace_service.ErrMemberAlreadyInDept
-			},
-			getMemberDepartmentFn: func(ctx context.Context, organizationID, accountID string) (*model.Department, error) {
-				require.Equal(t, "org-1", organizationID)
-				require.Equal(t, "member-1", accountID)
-				return &model.Department{ID: "dept-existing", Name: "Current Department"}, nil
 			},
 		},
 	}
@@ -689,7 +677,6 @@ func TestDirectAddMemberDoesNotJoinWorkspaceWhenDepartmentRejects(t *testing.T) 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.Contains(t, recorder.Body.String(), `"code":"MemberAlreadyInDepartment"`)
 	require.Contains(t, recorder.Body.String(), `"id":"dept-existing"`)
-	require.False(t, workspaceAddCalled)
 }
 
 func TestOrganizationRoutesRegisterCurrentMembersList(t *testing.T) {

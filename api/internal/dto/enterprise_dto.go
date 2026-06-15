@@ -321,6 +321,26 @@ type InviteCurrentOrganizationMemberResponse struct {
 	Workspace       *MemberWorkspaceInfo   `json:"workspace,omitempty"`
 }
 
+type DirectAddOrganizationMemberRequest struct {
+	OrganizationID    string
+	OperatorAccountID string
+	WorkspaceID       string
+	Email             string
+	Name              string
+	DepartmentID      *string
+}
+
+type DirectAddOrganizationMemberResponse struct {
+	AccountID      string                `json:"account_id"`
+	Email          string                `json:"email"`
+	Name           string                `json:"name"`
+	OrganizationID string                `json:"organization_id"`
+	Department     *MemberDepartmentInfo `json:"department,omitempty"`
+	Workspace      *MemberWorkspaceInfo  `json:"workspace,omitempty"`
+	CreatedAccount bool                  `json:"created_account"`
+	AlreadyMember  bool                  `json:"already_member"`
+}
+
 type MemberDepartmentInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
