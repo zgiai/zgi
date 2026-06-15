@@ -195,31 +195,49 @@ func skillLoopFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuar
 		return nil
 	}
 	parts := prepared.parts
-	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
-		!hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext) ||
-		!isFileDeleteIntent(parts.Query) {
+	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		return nil
 	}
 	targets := consoleFilesPromptResolvedTargets(parts)
 	if len(targets) == 0 {
 		return nil
 	}
-	targetSummary := consoleFilesGuardTargetSummary(targets)
-	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		if finalAnswerGuardHasSuccessfulTool(req, skills.SkillFileReader, "delete_file") {
-			return skillloop.FinalAnswerGuardResult{}, false
-		}
-		message := strings.Join([]string{
-			"The user's current files-page request is a concrete file deletion request for " + targetSummary + ".",
+	if hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext) &&
+		isFileDeleteIntent(parts.Query) {
+		return consoleFilesRequiredToolFinalAnswerGuard(targets, "delete_file", []string{
+			"The user's current files-page request is a concrete file deletion request for {target}.",
 			"Do not finish with a natural-language success message yet.",
 			"Load the file-reader skill if needed, then call call_skill_tool with skill_id \"file-reader\", tool_name \"delete_file\", and the resolved file_id for the target file.",
 			"A session approval grant may skip the approval card, but it does not replace the delete_file tool call.",
 			"Only after delete_file succeeds in this turn may you tell the user that the file was deleted. If the tool fails or the file is already missing, report the actual tool result.",
-		}, " ")
+		})
+	}
+	if hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
+		isFileReadIntent(parts.Query) {
+		return consoleFilesRequiredToolFinalAnswerGuard(targets, "read_file", []string{
+			"The user's current files-page request requires reading the actual content of {target}.",
+			"Do not finish from visible page metadata, file names, or prior conversation context.",
+			"Load the file-reader skill if needed, then call call_skill_tool with skill_id \"file-reader\", tool_name \"read_file\", and the resolved file_id for the target file.",
+			"Only after read_file succeeds in this turn may you summarize, translate, quote, or answer from the file content. If the tool fails or returns empty content, report the actual tool result.",
+		})
+	}
+	return nil
+}
+
+func consoleFilesRequiredToolFinalAnswerGuard(targets []map[string]interface{}, toolName string, messageTemplates []string) skillloop.FinalAnswerGuard {
+	targetSummary := consoleFilesGuardTargetSummary(targets)
+	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		if finalAnswerGuardHasSuccessfulTool(req, skills.SkillFileReader, toolName) {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		lines := make([]string, 0, len(messageTemplates))
+		for _, template := range messageTemplates {
+			lines = append(lines, strings.ReplaceAll(template, "{target}", targetSummary))
+		}
 		return skillloop.FinalAnswerGuardResult{
 			SkillID:  skills.SkillFileReader,
-			ToolName: "delete_file",
-			Message:  message,
+			ToolName: toolName,
+			Message:  strings.Join(lines, " "),
 		}, true
 	}
 }
@@ -287,6 +305,9 @@ func consoleFilesPromptVisibleFiles(parts *chatRequestParts) []map[string]interf
 			"visible_index": idx + 1,
 			"file_id":       file.ID,
 			"name":          file.Title,
+			"extension":     file.Extension,
+			"mime_type":     file.MimeType,
+			"selected":      file.Selected,
 		})
 	}
 	return out

@@ -79,6 +79,112 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesReadTarget(t *testing.
 	}
 }
 
+func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *testing.T) {
+	files := []consoleFilesTestFile{
+		{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
+		{ID: "file-2", Name: "budget-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{ID: "file-3", Name: "proposal.pdf", Extension: "pdf", MimeType: "application/pdf"},
+		{ID: "file-4", Name: "contract.md", Extension: "md", MimeType: "text/markdown", Selected: true},
+		{ID: "file-5", Name: "budget-q2.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{ID: "file-6", Name: "signed.pdf", Extension: "pdf", MimeType: "application/pdf"},
+	}
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{name: "fourth file", query: "\u8bfb\u7b2c\u56db\u4e2a\u6587\u4ef6", want: "file-4"},
+		{name: "second excel", query: "\u6458\u8981\u7b2c\u4e8c\u4e2a Excel", want: "file-5"},
+		{name: "last pdf", query: "\u603b\u7ed3\u6700\u540e\u4e00\u4e2a PDF", want: "file-6"},
+		{name: "selected file", query: "\u603b\u7ed3\u5f53\u524d\u9009\u4e2d\u7684\u6587\u4ef6", want: "file-4"},
+		{name: "exact file name", query: "summarize proposal.pdf", want: "file-3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prepared := &PreparedChat{parts: consoleFilesSemanticTestParts(tt.query, files)}
+			prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+			prepared.parts.SkillMode = skillModeAuto
+
+			messages := skillLoopAdditionalSystemMessages(prepared)
+			if len(messages) != 1 {
+				t.Fatalf("additional messages = %d, want 1", len(messages))
+			}
+			content := messageContentText(messages[0].Content)
+			for _, want := range []string{
+				"file-reader/read_file",
+				"resolved_targets_from_user_request",
+				`"file_id":"` + tt.want + `"`,
+				`"extension":"xlsx"`,
+				`"selected":true`,
+			} {
+				if !strings.Contains(content, want) {
+					t.Fatalf("contextual read guidance missing %q in:\n%s", want, content)
+				}
+			}
+		})
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts("\u5e2e\u6211\u603b\u7ed3\u7b2c\u4e8c\u4e2a Excel", []consoleFilesTestFile{
+			{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-2", Name: "budget-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+			{ID: "file-3", Name: "invoice.pdf", Extension: "pdf", MimeType: "application/pdf"},
+			{ID: "file-4", Name: "budget-q2.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for concrete console file read")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "budget-q2.xlsx is a quarterly budget spreadsheet.",
+	})
+	if !blocked {
+		t.Fatal("guard did not block direct file-content answer without read_file")
+	}
+	for _, want := range []string{
+		"budget-q2.xlsx",
+		"file-reader",
+		"read_file",
+		"actual content",
+	} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("guard message missing %q in:\n%s", want, result.Message)
+		}
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Here is the summary from the file content.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "read_file"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after read_file succeeded")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardAllowsConsoleFilesListWithoutToolCall(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts("\u6211\u73b0\u5728\u6709\u54ea\u4e9b\u6587\u4ef6", []consoleFilesTestFile{
+			{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-2", Name: "budget-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		t.Fatal("skillLoopFinalAnswerGuard() returned guard for file listing request, want nil")
+	}
+}
+
 func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{

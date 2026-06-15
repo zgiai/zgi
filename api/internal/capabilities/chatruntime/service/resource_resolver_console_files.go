@@ -52,6 +52,13 @@ func plannerResourceRefsFromConsoleFilesQuery(parts *chatRequestParts) []Planner
 	if parts == nil {
 		return nil
 	}
+	if consoleFilesSelectedReferenceFromQuery(parts.Query) {
+		return []PlannerResourceRef{{
+			Type:     resourceTypeFile,
+			Selected: true,
+			Scope:    "selected",
+		}}
+	}
 	ordinal, last, ok := consoleFilesOrdinalFromQuery(parts.Query)
 	if ok {
 		ref := PlannerResourceRef{Type: resourceTypeFile}
@@ -70,6 +77,30 @@ func plannerResourceRefsFromConsoleFilesQuery(parts *chatRequestParts) []Planner
 		return []PlannerResourceRef{ref}
 	}
 	return plannerResourceRefsFromNamedVisibleFiles(parts)
+}
+
+func consoleFilesSelectedReferenceFromQuery(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	for _, token := range []string{
+		"selected file",
+		"selected files",
+		"current selected file",
+		"currently selected file",
+		"the selected",
+		"\u5f53\u524d\u9009\u4e2d\u6587\u4ef6",
+		"\u5f53\u524d\u9009\u4e2d\u7684\u6587\u4ef6",
+		"\u9009\u4e2d\u6587\u4ef6",
+		"\u9009\u4e2d\u7684\u6587\u4ef6",
+		"\u88ab\u9009\u4e2d\u7684\u6587\u4ef6",
+	} {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func plannerResourceRefsFromNamedVisibleFiles(parts *chatRequestParts) []PlannerResourceRef {
