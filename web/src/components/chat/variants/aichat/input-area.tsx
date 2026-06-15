@@ -854,7 +854,7 @@ export function AIChatInputArea({
       >
         <div
           className={cn(
-            'pointer-events-auto mx-auto w-full transition-[max-width] duration-300 ease-in-out',
+            'pointer-events-none mx-auto w-full transition-[max-width] duration-300 ease-in-out',
             surface === 'agent-draft'
               ? 'max-w-[560px]'
               : isHome && !isLoadingMessages
@@ -863,11 +863,11 @@ export function AIChatInputArea({
           )}
         >
           {modelMissing && !hasActiveWorkflowApprovalRequest ? (
-            <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div className="pointer-events-auto mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {t('consoleChat.modelRequired')}
             </div>
           ) : null}
-          <div className="rounded-2xl border bg-background p-2 shadow-sm focus-within:border-primary/40">
+          <div className="pointer-events-auto rounded-2xl border bg-background p-2 shadow-sm focus-within:border-primary/40">
             {hasActiveWorkflowApprovalRequest && activeWorkflowApprovalRequest ? (
               <div className="rounded-xl border bg-card p-3 shadow-sm">
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2 text-sm">

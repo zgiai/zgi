@@ -918,6 +918,7 @@ export function AIChatShell({
           brand={homeBrand}
           title={homeTitle}
           description={homeDescription}
+          composerHeight={inputAreaHeight}
           surface={surface}
         />
 
