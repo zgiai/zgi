@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import { Users, Settings } from 'lucide-react';
 import {
   useCurrentWorkspace,
-  useIsOrganizationMode,
+  useWorkspaceContextStatus,
   useHasHydrated,
 } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
@@ -27,7 +27,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
+  const contextStatus = useWorkspaceContextStatus();
   const hasHydrated = useHasHydrated();
   const { hasPermission, isLoading: isLoadingPermissions } = useAccountPermissions();
 
@@ -53,13 +53,13 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     if (!hasHydrated || isLoadingPermissions) return;
 
-    if (isOrganizationMode || !currentWorkspace || !hasPermission('workspace.view')) {
+    if (contextStatus !== 'ready' || !currentWorkspace || !hasPermission('workspace.view')) {
       router.replace('/console');
     }
   }, [
     hasHydrated,
     isLoadingPermissions,
-    isOrganizationMode,
+    contextStatus,
     currentWorkspace,
     hasPermission,
     router,
@@ -75,7 +75,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   }
 
   // Don't render if not in workspace context or missing permission (safety check)
-  if (isOrganizationMode || !currentWorkspace || !hasPermission('workspace.view')) {
+  if (contextStatus !== 'ready' || !currentWorkspace || !hasPermission('workspace.view')) {
     return null;
   }
 

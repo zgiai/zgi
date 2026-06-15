@@ -15,6 +15,7 @@ interface AIChatHomeViewProps {
   brand?: React.ReactNode;
   title?: string;
   description?: string;
+  composerHeight?: number;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
 }
 
@@ -34,6 +35,7 @@ export function AIChatHomeView({
   brand,
   title,
   description,
+  composerHeight,
   surface = 'aichat',
 }: AIChatHomeViewProps) {
   const t = useT('webapp');
@@ -41,6 +43,12 @@ export function AIChatHomeView({
   const fallbackText = (ICON_TEXT || APP_NAME.charAt(0) || 'A').slice(0, 2).toUpperCase();
   const resolvedDescription =
     description === '' ? '' : description || t('chat.chooseAssistant');
+  const composerHeightPx = Math.max(96, Math.ceil(composerHeight ?? 140));
+  const anchorStyle = {
+    '--aichat-home-composer-half': `${Math.round(composerHeightPx / 2)}px`,
+    '--aichat-home-title-gap': 'clamp(48px, 9vh, 96px)',
+    '--aichat-home-suggestions-gap': '8px',
+  } as React.CSSProperties;
 
   React.useEffect(() => {
     setIsHydrated(true);
@@ -49,17 +57,27 @@ export function AIChatHomeView({
   return (
     <div
       className={cn(
-        'absolute inset-0 z-0 flex items-center justify-center px-4 text-center transition-all duration-300 ease-in-out',
+        'absolute inset-0 z-0 px-4 text-center transition-all duration-300 ease-in-out',
         isVisible ? 'scale-100 opacity-100' : 'pointer-events-none -z-10 scale-95 opacity-0'
       )}
+      style={anchorStyle}
     >
       <div
         className={cn(
-          'flex w-full animate-in flex-col items-center duration-500 fade-in zoom-in',
-          surface === 'agent-draft' ? '-mt-20 max-w-[560px] gap-8' : '-mt-20 max-w-3xl gap-8'
+          'absolute inset-x-4 top-[58%] flex justify-center sm:top-1/2',
+          'animate-in duration-500 fade-in zoom-in'
         )}
       >
-        <div className="flex flex-col items-center gap-4">
+        <div
+          className={cn(
+            'flex w-full flex-col items-center gap-4',
+            surface === 'agent-draft' ? 'max-w-[560px]' : 'max-w-3xl'
+          )}
+          style={{
+            transform:
+              'translateY(calc(-100% - var(--aichat-home-composer-half) - var(--aichat-home-title-gap)))',
+          }}
+        >
           {brand ? (
             brand
           ) : isHydrated ? (
@@ -85,13 +103,23 @@ export function AIChatHomeView({
             <p className="text-sm text-muted-foreground">{resolvedDescription}</p>
           ) : null}
         </div>
+      </div>
+      <div
+        className={cn(
+          'absolute inset-x-4 top-[58%] flex justify-center sm:top-1/2',
+          'animate-in duration-500 fade-in zoom-in'
+        )}
+      >
         <div
           className={cn(
-            'w-full shrink-0',
-            surface === 'agent-draft' ? 'h-[140px]' : 'h-[140px]'
+            'flex w-full flex-wrap items-center justify-center gap-2',
+            surface === 'agent-draft' ? 'max-w-[560px]' : 'max-w-3xl'
           )}
-        />
-        <div className="flex flex-wrap items-center justify-center gap-2">
+          style={{
+            transform:
+              'translateY(calc(var(--aichat-home-composer-half) + var(--aichat-home-suggestions-gap)))',
+          }}
+        >
           {suggestions.map(suggestion => (
             <Button
               key={suggestion.key}

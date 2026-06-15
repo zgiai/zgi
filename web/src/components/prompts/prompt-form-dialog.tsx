@@ -23,12 +23,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  WorkspaceSelector,
-  type WorkspaceSelectorValue,
-} from '@/components/common/workspace-selector';
 import { useLocale } from '@/hooks/use-locale';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import type { CreatePromptRequest, PromptSummary, PromptType } from '@/services/types/prompt';
 
 interface PromptFormDialogProps {
@@ -69,9 +65,7 @@ export function PromptFormDialog({
   const t = useT('prompts');
   const { locale: currentLocale } = useLocale();
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
 
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [description, setDescription] = useState('');
@@ -88,10 +82,7 @@ export function PromptFormDialog({
 
   const defaultLocale = useMemo(() => normalizePromptLocale(currentLocale), [currentLocale]);
 
-  const effectiveWorkspaceId = useMemo(
-    () => (isOrganizationMode ? selectedWorkspace?.id : currentWorkspace?.id),
-    [currentWorkspace?.id, isOrganizationMode, selectedWorkspace?.id]
-  );
+  const effectiveWorkspaceId = useMemo(() => currentWorkspace?.id, [currentWorkspace?.id]);
 
   useEffect(() => {
     if (!open) return;
@@ -134,7 +125,6 @@ export function PromptFormDialog({
       );
       setCommitMessage(initialDraft?.initial_version?.commit_message ?? '');
       setContentError('');
-      setSelectedWorkspace(undefined);
       setAdvancedOpen(false);
     }
   }, [defaultLocale, initialDraft, initialPrompt, open]);
@@ -190,12 +180,6 @@ export function PromptFormDialog({
           <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
             {t('form.simpleHint')}
           </div>
-          {isOrganizationMode ? (
-            <div className="space-y-2">
-              <Label>{t('fields.workspace')}</Label>
-              <WorkspaceSelector value={selectedWorkspace} onChange={setSelectedWorkspace} autoSelectFirst />
-            </div>
-          ) : null}
           <div className="space-y-2">
             <Label>{t('fields.name')}</Label>
             <Input value={name} onChange={e => setName(e.target.value)} placeholder={t('placeholders.name')} />
