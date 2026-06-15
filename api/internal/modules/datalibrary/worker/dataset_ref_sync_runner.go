@@ -181,12 +181,13 @@ func (r *DatasetRefSyncRunner) copyAssetToDataset(ctx context.Context, ref *data
 	if len(chunks) == 0 {
 		return fmt.Errorf("asset has no ready chunks")
 	}
-	embeddings, err := r.listCurrentEmbeddings(ctx, asset)
+	embeddingProvider, embeddingModel := datasetRefSyncEmbeddingTarget(dataset, asset)
+	embeddings, err := r.listCurrentEmbeddings(ctx, asset, embeddingProvider, embeddingModel)
 	if err != nil {
 		return err
 	}
 
-	document, err := r.createDatasetDocument(ctx, ref, asset, chunks)
+	document, err := r.createDatasetDocument(ctx, ref, asset, chunks, embeddingProvider, embeddingModel)
 	if err != nil {
 		return err
 	}
@@ -230,7 +231,7 @@ func (r *DatasetRefSyncRunner) copyAssetToDataset(ctx context.Context, ref *data
 	return nil
 }
 
-func (r *DatasetRefSyncRunner) createDatasetDocument(ctx context.Context, ref *datalibModel.KnowledgeBaseAssetRef, asset *datalibModel.DocumentAsset, chunks []*datalibModel.DocumentChunk) (*datasetModel.Document, error) {
+func (r *DatasetRefSyncRunner) createDatasetDocument(ctx context.Context, ref *datalibModel.KnowledgeBaseAssetRef, asset *datalibModel.DocumentAsset, chunks []*datalibModel.DocumentChunk, embeddingProvider string, embeddingModel string) (*datasetModel.Document, error) {
 	position, err := r.documents.GetNextPosition(ctx, ref.DatasetID)
 	if err != nil {
 		return nil, fmt.Errorf("get next document position: %w", err)
@@ -283,8 +284,8 @@ func (r *DatasetRefSyncRunner) createDatasetDocument(ctx context.Context, ref *d
 			"asset_id":            asset.ID.String(),
 			"ref_id":              ref.ID.String(),
 			"generation_no":       asset.GenerationNo,
-			"embedding_provider":  stringPtrValue(asset.EmbeddingProvider),
-			"embedding_model":     stringPtrValue(asset.EmbeddingModel),
+			"embedding_provider":  embeddingProvider,
+			"embedding_model":     embeddingModel,
 			"embedding_dimension": intPtrValue(asset.EmbeddingDimension),
 		},
 		ProcessingStartedAt: &now,
@@ -527,9 +528,9 @@ func (r *DatasetRefSyncRunner) listCurrentChunks(ctx context.Context, asset *dat
 	}
 }
 
-func (r *DatasetRefSyncRunner) listCurrentEmbeddings(ctx context.Context, asset *datalibModel.DocumentAsset) (map[uuid.UUID]*datalibModel.DocumentChunkEmbedding, error) {
-	if asset.EmbeddingProvider == nil || *asset.EmbeddingProvider == "" || asset.EmbeddingModel == nil || *asset.EmbeddingModel == "" {
-		return nil, fmt.Errorf("asset embedding model is not configured")
+func (r *DatasetRefSyncRunner) listCurrentEmbeddings(ctx context.Context, asset *datalibModel.DocumentAsset, embeddingProvider string, embeddingModel string) (map[uuid.UUID]*datalibModel.DocumentChunkEmbedding, error) {
+	if strings.TrimSpace(embeddingModel) == "" {
+		return nil, fmt.Errorf("dataset embedding model is not configured")
 	}
 	generationNo := asset.GenerationNo
 	out := map[uuid.UUID]*datalibModel.DocumentChunkEmbedding{}
@@ -538,8 +539,8 @@ func (r *DatasetRefSyncRunner) listCurrentEmbeddings(ctx context.Context, asset 
 			OrganizationID:    asset.OrganizationID,
 			AssetID:           asset.ID,
 			GenerationNo:      &generationNo,
-			EmbeddingProvider: *asset.EmbeddingProvider,
-			EmbeddingModel:    *asset.EmbeddingModel,
+			EmbeddingProvider: strings.TrimSpace(embeddingProvider),
+			EmbeddingModel:    strings.TrimSpace(embeddingModel),
 			Status:            datalibModel.DocumentChunkEmbeddingStatusReady,
 			Limit:             500,
 			Offset:            offset,
@@ -554,6 +555,28 @@ func (r *DatasetRefSyncRunner) listCurrentEmbeddings(ctx context.Context, asset 
 			return out, nil
 		}
 	}
+}
+
+func datasetRefSyncEmbeddingTarget(dataset *datasetModel.Dataset, asset *datalibModel.DocumentAsset) (string, string) {
+	provider := ""
+	modelName := ""
+	if dataset != nil {
+		if dataset.EmbeddingModelProvider != nil {
+			provider = strings.TrimSpace(*dataset.EmbeddingModelProvider)
+		}
+		if dataset.EmbeddingModel != nil {
+			modelName = strings.TrimSpace(*dataset.EmbeddingModel)
+		}
+	}
+	if modelName == "" && asset != nil {
+		if asset.EmbeddingProvider != nil {
+			provider = strings.TrimSpace(*asset.EmbeddingProvider)
+		}
+		if asset.EmbeddingModel != nil {
+			modelName = strings.TrimSpace(*asset.EmbeddingModel)
+		}
+	}
+	return provider, modelName
 }
 
 func groupChildChunksByParent(chunks []*datalibModel.DocumentChunk) map[uuid.UUID][]*datalibModel.DocumentChunk {

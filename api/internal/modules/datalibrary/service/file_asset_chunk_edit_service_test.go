@@ -257,6 +257,111 @@ func TestFileAssetChunkEditServiceUpdatesParentChunkAndRegeneratesChildren(t *te
 	}
 }
 
+func TestFileAssetChunkEditServiceRegeneratesParentChildrenForExistingEmbeddingModels(t *testing.T) {
+	assetID := uuid.New()
+	runID := uuid.New()
+	parentID := uuid.New()
+	childID := uuid.New()
+	assetRepo := &fileAssetStateAssetRepo{
+		asset: &model.DocumentAsset{
+			ID:              assetID,
+			OrganizationID:  "org-1",
+			SourceFileID:    "file-1",
+			ProcessingRunID: &runID,
+			GenerationNo:    1,
+		},
+	}
+	chunkRepo := newFileAssetChunkEditChunkRepo([]*model.DocumentChunk{
+		{
+			ID:              parentID,
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    1,
+			ChunkType:       model.DocumentChunkTypeParent,
+			Content:         "parent",
+			ContentHash:     documentChunkContentHash("parent"),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
+		},
+		{
+			ID:              childID,
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    1,
+			ParentChunkID:   &parentID,
+			ChunkType:       model.DocumentChunkTypeChild,
+			Content:         "old child",
+			ContentHash:     documentChunkContentHash("old child"),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
+		},
+	})
+	embeddingRepo := &documentChunkEmbeddingRepo{items: []*model.DocumentChunkEmbedding{
+		{
+			ID:                uuid.New(),
+			OrganizationID:    "org-1",
+			AssetID:           assetID,
+			ChunkID:           childID,
+			ProcessingRunID:   runID,
+			GenerationNo:      1,
+			EmbeddingProvider: "provider-a",
+			EmbeddingModel:    "model-a",
+			Status:            model.DocumentChunkEmbeddingStatusReady,
+		},
+		{
+			ID:                uuid.New(),
+			OrganizationID:    "org-1",
+			AssetID:           assetID,
+			ChunkID:           childID,
+			ProcessingRunID:   runID,
+			GenerationNo:      1,
+			EmbeddingProvider: "provider-b",
+			EmbeddingModel:    "model-b",
+			Status:            model.DocumentChunkEmbeddingStatusReady,
+		},
+	}}
+	chunkEmbed := &fileAssetChunkEditEmbeddingService{}
+	svc := NewFileAssetChunkEditService(assetRepo, chunkRepo, embeddingRepo, chunkEmbed)
+	content := "updated parent content"
+
+	if _, err := svc.UpdateCurrentFileChunk(context.Background(), FileAssetChunkEditInput{
+		OrganizationID: "org-1",
+		SourceFileID:   "file-1",
+		ChunkID:        parentID,
+		Content:        &content,
+		UpdatedBy:      "user-1",
+	}); err != nil {
+		t.Fatalf("UpdateCurrentFileChunk: %v", err)
+	}
+
+	var newChildIDs []uuid.UUID
+	for _, item := range chunkRepo.items {
+		if item.ParentChunkID != nil && *item.ParentChunkID == parentID {
+			newChildIDs = append(newChildIDs, item.ID)
+		}
+	}
+	if len(newChildIDs) == 0 {
+		t.Fatalf("expected regenerated child chunks")
+	}
+	if chunkEmbed.called != len(newChildIDs)*2 {
+		t.Fatalf("embedding called=%d want %d", chunkEmbed.called, len(newChildIDs)*2)
+	}
+	seen := map[string]bool{}
+	for _, input := range chunkEmbed.inputs {
+		seen[input.Chunk.ID.String()+"|"+input.EmbeddingProvider+"|"+input.EmbeddingModel] = true
+	}
+	for _, childID := range newChildIDs {
+		if !seen[childID.String()+"|provider-a|model-a"] {
+			t.Fatalf("missing provider-a/model-a embedding for child %s", childID)
+		}
+		if !seen[childID.String()+"|provider-b|model-b"] {
+			t.Fatalf("missing provider-b/model-b embedding for child %s", childID)
+		}
+	}
+}
+
 func TestFileAssetChunkEditServiceRejectsStaleGeneration(t *testing.T) {
 	assetID := uuid.New()
 	runID := uuid.New()
@@ -384,6 +489,11 @@ func (r *fileAssetChunkEditChunkRepo) CountByAssetGenerationAndTypes(ctx context
 	return count, nil
 }
 
+func (r *fileAssetChunkEditChunkRepo) DeleteByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) error {
+	r.items = map[uuid.UUID]*model.DocumentChunk{}
+	return nil
+}
+
 func (r *fileAssetChunkEditChunkRepo) DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error {
 	r.items = map[uuid.UUID]*model.DocumentChunk{}
 	return nil
@@ -428,15 +538,21 @@ var _ repository.DocumentChunkRepository = (*fileAssetChunkEditChunkRepo)(nil)
 type fileAssetChunkEditEmbeddingService struct {
 	called    int
 	lastInput GenerateDocumentChunkEmbeddingInput
+	inputs    []GenerateDocumentChunkEmbeddingInput
 }
 
 func (s *fileAssetChunkEditEmbeddingService) GenerateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error) {
 	return nil, nil
 }
 
+func (s *fileAssetChunkEditEmbeddingService) GenerateAdditionalEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error) {
+	return nil, nil
+}
+
 func (s *fileAssetChunkEditEmbeddingService) GenerateChunkEmbedding(ctx context.Context, input GenerateDocumentChunkEmbeddingInput) (*model.DocumentChunkEmbedding, error) {
 	s.called++
 	s.lastInput = input
+	s.inputs = append(s.inputs, input)
 	return &model.DocumentChunkEmbedding{
 		ID:                uuid.New(),
 		OrganizationID:    input.OrganizationID,

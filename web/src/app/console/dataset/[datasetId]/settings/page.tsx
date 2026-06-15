@@ -201,9 +201,6 @@ export default function DatasetSettingsPage() {
       icon_background: iconValue.type === 'text' ? iconValue.iconBackground : undefined,
       workspace_id: workspaceId,
       enable_graph_flow: nextGraphFlowEnabled,
-      embedding_model: currentFormData.embeddingModel || undefined,
-      embedding_model_provider:
-        currentFormData.embeddingModelProvider || dataset.embedding_model_provider || undefined,
       ...(nextGraphFlowEnabled
         ? {
             entity_model: currentFormData.entityModel || undefined,

@@ -35,6 +35,7 @@ import type {
   DocumentExtractionStrategiesResponse,
   DocumentExtractionStrategy,
   DatasetFileCandidateFilter,
+  DatasetFileCandidateEmbeddingResult,
   DatasetFileCandidateList,
   DatasetFileRefCreateResult,
   DatasetFileRefList,
@@ -177,6 +178,17 @@ class DatasetService extends BaseService {
     assetIds: string[]
   ): Promise<ApiResponseData<DatasetFileRefCreateResult>> {
     return this.request('post', `/datasets/${datasetId}/file-refs`, { asset_ids: assetIds });
+  }
+
+  /**
+   * Generate file asset embeddings for the current dataset embedding model.
+   * POST /console/api/datasets/{dataset_id}/file-candidates/{asset_id}/embeddings
+   */
+  generateDatasetFileCandidateEmbeddings(
+    datasetId: string,
+    assetId: string
+  ): Promise<ApiResponseData<DatasetFileCandidateEmbeddingResult>> {
+    return this.request('post', `/datasets/${datasetId}/file-candidates/${assetId}/embeddings`);
   }
 
   /**

@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
+	datasetModel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 )
 
 var (
@@ -45,6 +46,7 @@ type fileAssetChunkEditService struct {
 	chunkEmbed  DocumentChunkEmbeddingService
 	vectorIndex FileAssetVectorIndexService
 	refs        fileAssetChunkEditRefStore
+	datasets    fileAssetChunkEditDatasetStore
 	documents   fileAssetChunkEditDocumentStore
 	refSync     FileAssetChunkEditDatasetRefSyncEnqueuer
 }
@@ -60,7 +62,7 @@ func NewFileAssetChunkEditService(
 	if len(vectorIndex) > 0 {
 		vectorIndexService = vectorIndex[0]
 	}
-	return newFileAssetChunkEditService(assets, chunks, embeddings, chunkEmbed, vectorIndexService, nil, nil, nil)
+	return newFileAssetChunkEditService(assets, chunks, embeddings, chunkEmbed, vectorIndexService, nil, nil, nil, nil)
 }
 
 func NewFileAssetChunkEditServiceWithDatasetRefs(
@@ -72,8 +74,13 @@ func NewFileAssetChunkEditServiceWithDatasetRefs(
 	refs fileAssetChunkEditRefStore,
 	documents fileAssetChunkEditDocumentStore,
 	refSync FileAssetChunkEditDatasetRefSyncEnqueuer,
+	datasets ...fileAssetChunkEditDatasetStore,
 ) FileAssetChunkEditService {
-	return newFileAssetChunkEditService(assets, chunks, embeddings, chunkEmbed, vectorIndex, refs, documents, refSync)
+	var datasetStore fileAssetChunkEditDatasetStore
+	if len(datasets) > 0 {
+		datasetStore = datasets[0]
+	}
+	return newFileAssetChunkEditService(assets, chunks, embeddings, chunkEmbed, vectorIndex, refs, datasetStore, documents, refSync)
 }
 
 func newFileAssetChunkEditService(
@@ -83,6 +90,7 @@ func newFileAssetChunkEditService(
 	chunkEmbed DocumentChunkEmbeddingService,
 	vectorIndex FileAssetVectorIndexService,
 	refs fileAssetChunkEditRefStore,
+	datasets fileAssetChunkEditDatasetStore,
 	documents fileAssetChunkEditDocumentStore,
 	refSync FileAssetChunkEditDatasetRefSyncEnqueuer,
 ) FileAssetChunkEditService {
@@ -93,6 +101,7 @@ func newFileAssetChunkEditService(
 		chunkEmbed:  chunkEmbed,
 		vectorIndex: vectorIndex,
 		refs:        refs,
+		datasets:    datasets,
 		documents:   documents,
 		refSync:     refSync,
 	}
@@ -105,6 +114,10 @@ type fileAssetChunkEditRefStore interface {
 
 type fileAssetChunkEditDocumentStore interface {
 	DisableDocuments(ctx context.Context, datasetID string, documentIDs []string, accountID string) error
+}
+
+type fileAssetChunkEditDatasetStore interface {
+	GetByID(ctx context.Context, id string) (*datasetModel.Dataset, error)
 }
 
 type FileAssetChunkEditDatasetRefSyncEnqueuer interface {
@@ -247,12 +260,36 @@ func (s *fileAssetChunkEditService) rebuildParentChildChunks(ctx context.Context
 	if asset == nil || originalChunk == nil || updatedChunk == nil {
 		return false, nil
 	}
+	oldChildren, err := s.listChildChunksByParent(ctx, asset, updatedChunk.ID)
+	if err != nil {
+		return false, err
+	}
+	oldChildIDs := make([]uuid.UUID, 0, len(oldChildren))
+	for _, child := range oldChildren {
+		if child != nil {
+			oldChildIDs = append(oldChildIDs, child.ID)
+		}
+	}
+	embeddingTargets, err := CollectEmbeddingTargets(ctx, CollectEmbeddingTargetsInput{
+		OrganizationID:    input.OrganizationID,
+		Asset:             asset,
+		AssetID:           asset.ID,
+		ChunkIDs:          oldChildIDs,
+		EmbeddingProvider: input.EmbeddingProvider,
+		EmbeddingModel:    input.EmbeddingModel,
+		Embeddings:        s.embeddings,
+		Refs:              s.refs,
+		Datasets:          s.datasets,
+	})
+	if err != nil {
+		return false, err
+	}
 	if s.vectorIndex != nil {
 		if err := s.vectorIndex.DeleteChildVectorsByParent(ctx, asset, updatedChunk.ID); err != nil {
 			return false, err
 		}
 	}
-	if err := s.deleteChildEmbeddingsByParent(ctx, asset, updatedChunk.ID); err != nil {
+	if err := s.deleteChildEmbeddings(ctx, asset, oldChildren); err != nil {
 		return false, err
 	}
 	if err := s.chunks.DeleteChildrenByParent(ctx, input.OrganizationID, updatedChunk.ID); err != nil {
@@ -300,27 +337,28 @@ func (s *fileAssetChunkEditService) rebuildParentChildChunks(ctx context.Context
 	if !updatedChunk.Enabled || s.chunkEmbed == nil {
 		return false, nil
 	}
-	embeddingProvider, embeddingModel := resolveChunkEditEmbeddingModel(asset, input)
-	for _, item := range items {
-		if _, err := s.chunkEmbed.GenerateChunkEmbedding(ctx, GenerateDocumentChunkEmbeddingInput{
-			OrganizationID:    input.OrganizationID,
-			AssetID:           asset.ID,
-			ProcessingRunID:   updatedChunk.ProcessingRunID,
-			GenerationNo:      updatedChunk.GenerationNo,
-			EmbeddingProvider: embeddingProvider,
-			EmbeddingModel:    embeddingModel,
-			RequestedBy:       input.UpdatedBy,
-			Chunk:             item,
-		}); err != nil {
-			return false, err
+	for _, target := range embeddingTargets {
+		for _, item := range items {
+			if _, err := s.chunkEmbed.GenerateChunkEmbedding(ctx, GenerateDocumentChunkEmbeddingInput{
+				OrganizationID:    input.OrganizationID,
+				AssetID:           asset.ID,
+				ProcessingRunID:   updatedChunk.ProcessingRunID,
+				GenerationNo:      updatedChunk.GenerationNo,
+				EmbeddingProvider: target.Provider,
+				EmbeddingModel:    target.Model,
+				RequestedBy:       input.UpdatedBy,
+				Chunk:             item,
+			}); err != nil {
+				return false, err
+			}
 		}
 	}
 	return true, nil
 }
 
-func (s *fileAssetChunkEditService) deleteChildEmbeddingsByParent(ctx context.Context, asset *model.DocumentAsset, parentChunkID uuid.UUID) error {
-	if s.embeddings == nil || asset == nil || parentChunkID == uuid.Nil {
-		return nil
+func (s *fileAssetChunkEditService) listChildChunksByParent(ctx context.Context, asset *model.DocumentAsset, parentChunkID uuid.UUID) ([]*model.DocumentChunk, error) {
+	if s.chunks == nil || asset == nil || parentChunkID == uuid.Nil {
+		return []*model.DocumentChunk{}, nil
 	}
 	children, _, err := s.chunks.List(ctx, repository.DocumentChunkListFilter{
 		OrganizationID: asset.OrganizationID,
@@ -332,7 +370,14 @@ func (s *fileAssetChunkEditService) deleteChildEmbeddingsByParent(ctx context.Co
 		Offset:         0,
 	})
 	if err != nil {
-		return err
+		return nil, err
+	}
+	return children, nil
+}
+
+func (s *fileAssetChunkEditService) deleteChildEmbeddings(ctx context.Context, asset *model.DocumentAsset, children []*model.DocumentChunk) error {
+	if s.embeddings == nil || asset == nil {
+		return nil
 	}
 	for _, child := range children {
 		if child == nil {

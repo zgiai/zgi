@@ -23,14 +23,23 @@ type DocumentChunkEmbeddingListFilter struct {
 	Offset            int
 }
 
+type DocumentChunkEmbeddingModelTarget struct {
+	EmbeddingProvider string
+	EmbeddingModel    string
+}
+
 type DocumentChunkEmbeddingRepository interface {
 	Create(ctx context.Context, item *model.DocumentChunkEmbedding) error
 	Upsert(ctx context.Context, item *model.DocumentChunkEmbedding) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.DocumentChunkEmbedding, error)
 	FindByChunkModel(ctx context.Context, chunkID uuid.UUID, provider string, embeddingModel string) (*model.DocumentChunkEmbedding, error)
 	List(ctx context.Context, filter DocumentChunkEmbeddingListFilter) ([]*model.DocumentChunkEmbedding, int64, error)
+	ListModelTargetsByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]DocumentChunkEmbeddingModelTarget, error)
+	ListModelTargetsByChunkIDs(ctx context.Context, organizationID string, chunkIDs []uuid.UUID) ([]DocumentChunkEmbeddingModelTarget, error)
 	CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error)
+	CountReadyByAssetGenerationModel(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, provider string, embeddingModel string) (int64, error)
 	DeleteByChunkID(ctx context.Context, organizationID string, chunkID uuid.UUID) error
+	DeleteByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) error
 	DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error
 }
 
@@ -165,6 +174,40 @@ func (r *documentChunkEmbeddingRepository) List(ctx context.Context, filter Docu
 	return items, total, nil
 }
 
+func (r *documentChunkEmbeddingRepository) ListModelTargetsByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]DocumentChunkEmbeddingModelTarget, error) {
+	if organizationID == "" || assetID == uuid.Nil {
+		return []DocumentChunkEmbeddingModelTarget{}, nil
+	}
+	var items []DocumentChunkEmbeddingModelTarget
+	err := r.db.WithContext(ctx).Model(&model.DocumentChunkEmbedding{}).
+		Select("embedding_provider, embedding_model").
+		Where("organization_id = ?", organizationID).
+		Where("asset_id = ?", assetID).
+		Where("embedding_model <> ''").
+		Where("deleted_at IS NULL").
+		Group("embedding_provider, embedding_model").
+		Order("MIN(created_at) ASC").
+		Find(&items).Error
+	return items, err
+}
+
+func (r *documentChunkEmbeddingRepository) ListModelTargetsByChunkIDs(ctx context.Context, organizationID string, chunkIDs []uuid.UUID) ([]DocumentChunkEmbeddingModelTarget, error) {
+	if organizationID == "" || len(chunkIDs) == 0 {
+		return []DocumentChunkEmbeddingModelTarget{}, nil
+	}
+	var items []DocumentChunkEmbeddingModelTarget
+	err := r.db.WithContext(ctx).Model(&model.DocumentChunkEmbedding{}).
+		Select("embedding_provider, embedding_model").
+		Where("organization_id = ?", organizationID).
+		Where("chunk_id IN ?", chunkIDs).
+		Where("embedding_model <> ''").
+		Where("deleted_at IS NULL").
+		Group("embedding_provider, embedding_model").
+		Order("MIN(created_at) ASC").
+		Find(&items).Error
+	return items, err
+}
+
 func (r *documentChunkEmbeddingRepository) CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error) {
 	if organizationID == "" || assetID == uuid.Nil {
 		return 0, nil
@@ -180,6 +223,25 @@ func (r *documentChunkEmbeddingRepository) CountReadyByAssetGeneration(ctx conte
 	return count, err
 }
 
+func (r *documentChunkEmbeddingRepository) CountReadyByAssetGenerationModel(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, provider string, embeddingModel string) (int64, error) {
+	if organizationID == "" || assetID == uuid.Nil || generationNo <= 0 || embeddingModel == "" {
+		return 0, nil
+	}
+	query := r.db.WithContext(ctx).Model(&model.DocumentChunkEmbedding{}).
+		Where("organization_id = ?", organizationID).
+		Where("asset_id = ?", assetID).
+		Where("generation_no = ?", generationNo).
+		Where("embedding_model = ?", embeddingModel).
+		Where("status = ?", model.DocumentChunkEmbeddingStatusReady).
+		Where("deleted_at IS NULL")
+	if provider != "" {
+		query = query.Where("embedding_provider = ?", provider)
+	}
+	var count int64
+	err := query.Count(&count).Error
+	return count, err
+}
+
 func (r *documentChunkEmbeddingRepository) DeleteByChunkID(ctx context.Context, organizationID string, chunkID uuid.UUID) error {
 	if organizationID == "" || chunkID == uuid.Nil {
 		return nil
@@ -187,6 +249,16 @@ func (r *documentChunkEmbeddingRepository) DeleteByChunkID(ctx context.Context, 
 	return r.db.WithContext(ctx).
 		Where("organization_id = ?", organizationID).
 		Where("chunk_id = ?", chunkID).
+		Delete(&model.DocumentChunkEmbedding{}).Error
+}
+
+func (r *documentChunkEmbeddingRepository) DeleteByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) error {
+	if organizationID == "" || assetID == uuid.Nil {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("organization_id = ?", organizationID).
+		Where("asset_id = ?", assetID).
 		Delete(&model.DocumentChunkEmbedding{}).Error
 }
 

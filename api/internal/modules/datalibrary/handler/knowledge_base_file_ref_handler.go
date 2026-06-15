@@ -55,6 +55,7 @@ func (h *KnowledgeBaseFileRefHandler) RegisterDatasetRoutes(router *gin.RouterGr
 	auth := router.Group("", middleware.JWTWithOrganizationAndService(h.accountService))
 	group := auth.Group("/datasets/:dataset_id")
 	group.GET("/file-candidates", h.ListFileCandidates)
+	group.POST("/file-candidates/:asset_id/embeddings", h.GenerateFileCandidateEmbeddings)
 	group.GET("/file-refs", h.ListFileRefs)
 	group.POST("/file-refs", h.CreateFileRefs)
 	group.DELETE("/file-refs/:ref_id", h.RemoveFileRef)
@@ -77,6 +78,34 @@ func (h *KnowledgeBaseFileRefHandler) ListFileCandidates(c *gin.Context) {
 		Keyword:        c.Query("keyword"),
 		Limit:          limit,
 		Offset:         offset,
+	})
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *KnowledgeBaseFileRefHandler) GenerateFileCandidateEmbeddings(c *gin.Context) {
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+		return
+	}
+	assetID, err := uuid.Parse(c.Param("asset_id"))
+	if err != nil || assetID == uuid.Nil {
+		response.Fail(c, response.ErrInvalidParams)
+		return
+	}
+	result, err := h.service.GenerateCandidateEmbeddings(c.Request.Context(), datalibService.KnowledgeBaseFileCandidateEmbeddingRequest{
+		OrganizationID: organizationID,
+		WorkspaceID:    optionalString(util.GetWorkspaceID(c)),
+		DatasetID:      c.Param("dataset_id"),
+		AssetID:        assetID,
+		RequestedBy:    util.GetAccountID(c),
 	})
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())

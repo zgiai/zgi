@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
 	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	datasetModel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 )
 
 const GenerateCurrentResultExecutorKey = "data-library-generate-current-result"
@@ -26,8 +27,10 @@ type GenerateCurrentResultRunner struct {
 	transform           datalibraryservice.ParseArtifactChunkTransformService
 	chunkGeneration     datalibraryservice.DocumentChunkGenerationService
 	embedding           datalibraryservice.DocumentChunkEmbeddingService
+	embeddingTargets    generateCurrentResultEmbeddingTargetStore
 	processingService   datalibraryservice.ProcessingRequestService
 	refs                generateCurrentResultRefStore
+	datasets            generateCurrentResultDatasetStore
 	datasetRefSync      generateCurrentResultDatasetRefSyncEnqueuer
 }
 
@@ -41,14 +44,25 @@ type GenerateCurrentResultRunnerDeps struct {
 	Transform           datalibraryservice.ParseArtifactChunkTransformService
 	ChunkGeneration     datalibraryservice.DocumentChunkGenerationService
 	Embedding           datalibraryservice.DocumentChunkEmbeddingService
+	EmbeddingTargets    generateCurrentResultEmbeddingTargetStore
 	ProcessingService   datalibraryservice.ProcessingRequestService
 	Refs                generateCurrentResultRefStore
+	Datasets            generateCurrentResultDatasetStore
 	DatasetRefSync      generateCurrentResultDatasetRefSyncEnqueuer
 }
 
 type generateCurrentResultRefStore interface {
 	ListActiveByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error)
 	MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*model.KnowledgeBaseAssetRef, error)
+}
+
+type generateCurrentResultEmbeddingTargetStore interface {
+	ListModelTargetsByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]repository.DocumentChunkEmbeddingModelTarget, error)
+	ListModelTargetsByChunkIDs(ctx context.Context, organizationID string, chunkIDs []uuid.UUID) ([]repository.DocumentChunkEmbeddingModelTarget, error)
+}
+
+type generateCurrentResultDatasetStore interface {
+	GetByID(ctx context.Context, id string) (*datasetModel.Dataset, error)
 }
 
 type generateCurrentResultDatasetRefSyncEnqueuer interface {
@@ -66,8 +80,10 @@ func NewGenerateCurrentResultRunner(deps GenerateCurrentResultRunnerDeps) *Gener
 		transform:           deps.Transform,
 		chunkGeneration:     deps.ChunkGeneration,
 		embedding:           deps.Embedding,
+		embeddingTargets:    deps.EmbeddingTargets,
 		processingService:   deps.ProcessingService,
 		refs:                deps.Refs,
+		datasets:            deps.Datasets,
 		datasetRefSync:      deps.DatasetRefSync,
 	}
 }
@@ -114,6 +130,19 @@ func (r *GenerateCurrentResultRunner) Run(ctx context.Context, processingRequest
 		asset.GenerationNo != generationNo ||
 		asset.ParseArtifactID == nil {
 		return r.failRequest(ctx, request, asset, "processing_run_mismatch", datalibraryservice.ErrProcessingRunMismatch)
+	}
+	embeddingTargets, err := datalibraryservice.CollectEmbeddingTargets(ctx, datalibraryservice.CollectEmbeddingTargetsInput{
+		OrganizationID:    request.OrganizationID,
+		Asset:             asset,
+		AssetID:           asset.ID,
+		EmbeddingProvider: requestMetadataString(request.RequestMetadata, "embedding_provider"),
+		EmbeddingModel:    requestMetadataString(request.RequestMetadata, "embedding_model"),
+		Embeddings:        r.embeddingTargets,
+		Refs:              r.refs,
+		Datasets:          r.datasets,
+	})
+	if err != nil {
+		return r.failRequest(ctx, request, asset, "embedding_target_collect_failed", err)
 	}
 
 	if _, err := r.state.MarkGenerating(ctx, datalibraryservice.RunStateInput{
@@ -169,16 +198,14 @@ func (r *GenerateCurrentResultRunner) Run(ctx context.Context, processingRequest
 	if err != nil {
 		return r.failRequest(ctx, request, asset, "chunk_persist_failed", err)
 	}
-	embeddingResult, err := r.embedding.GenerateEmbeddings(ctx, datalibraryservice.GenerateDocumentChunkEmbeddingsInput{
-		OrganizationID:    request.OrganizationID,
-		AssetID:           asset.ID,
-		ProcessingRunID:   runID,
-		GenerationNo:      generationNo,
-		EmbeddingProvider: requestMetadataString(request.RequestMetadata, "embedding_provider"),
-		EmbeddingModel:    requestMetadataString(request.RequestMetadata, "embedding_model"),
-		RequestedBy:       request.RequestedBy,
-		Chunks:            chunkResult.Chunks,
-	})
+	embeddingResult, totalEmbeddingCount, err := r.generateEmbeddingsForTargets(ctx, datalibraryservice.GenerateDocumentChunkEmbeddingsInput{
+		OrganizationID:  request.OrganizationID,
+		AssetID:         asset.ID,
+		ProcessingRunID: runID,
+		GenerationNo:    generationNo,
+		RequestedBy:     request.RequestedBy,
+		Chunks:          chunkResult.Chunks,
+	}, embeddingTargets)
 	if err != nil {
 		return r.failRequest(ctx, request, asset, "embedding_failed", err)
 	}
@@ -208,7 +235,7 @@ func (r *GenerateCurrentResultRunner) Run(ctx context.Context, processingRequest
 		"chunk_count":           chunkResult.PrimaryChunkCount,
 		"primary_chunk_count":   chunkResult.PrimaryChunkCount,
 		"secondary_chunk_count": chunkResult.SecondaryChunkCount,
-		"embedding_count":       embeddingResult.EmbeddingCount,
+		"embedding_count":       totalEmbeddingCount,
 		"embedding_provider":    embeddingResult.EmbeddingProvider,
 		"embedding_model":       embeddingResult.EmbeddingModel,
 		"embedding_dimension":   embeddingResult.EmbeddingDimension,
@@ -222,6 +249,38 @@ func (r *GenerateCurrentResultRunner) Run(ctx context.Context, processingRequest
 		return err
 	}
 	return r.enqueueDatasetRefSyncs(ctx, ready, generationNo)
+}
+
+func (r *GenerateCurrentResultRunner) generateEmbeddingsForTargets(ctx context.Context, base datalibraryservice.GenerateDocumentChunkEmbeddingsInput, targets []datalibraryservice.EmbeddingTarget) (*datalibraryservice.GenerateDocumentChunkEmbeddingsResult, int, error) {
+	if len(targets) == 0 {
+		targets = []datalibraryservice.EmbeddingTarget{{}}
+	}
+	var first *datalibraryservice.GenerateDocumentChunkEmbeddingsResult
+	total := 0
+	for index, target := range targets {
+		input := base
+		input.EmbeddingProvider = target.Provider
+		input.EmbeddingModel = target.Model
+		var (
+			result *datalibraryservice.GenerateDocumentChunkEmbeddingsResult
+			err    error
+		)
+		if index == 0 {
+			result, err = r.embedding.GenerateEmbeddings(ctx, input)
+		} else {
+			result, err = r.embedding.GenerateAdditionalEmbeddings(ctx, input)
+		}
+		if err != nil {
+			return nil, total, err
+		}
+		if first == nil {
+			first = result
+		}
+		if result != nil {
+			total += result.EmbeddingCount
+		}
+	}
+	return first, total, nil
 }
 
 func (r *GenerateCurrentResultRunner) loadPendingParseQualityItems(ctx context.Context, organizationID string, assetID uuid.UUID, runID uuid.UUID, generationNo int64) ([]*model.ParseConfirmationItem, error) {

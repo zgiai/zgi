@@ -134,6 +134,7 @@ func NewModuleWithContentParseRuntime(
 	extractionArtifactRepo := repository.NewExtractionArtifactRepository(db)
 	knowledgeBaseAssetRefRepo := repository.NewKnowledgeBaseAssetRefRepository(db)
 	databaseAssetRefRepo := repository.NewDatabaseAssetRefRepository(db)
+	datasetRepo := datasetRepository.NewDatasetRepository(db)
 	datasetDocumentRepo := datasetRepository.NewDocumentRepository(db)
 	contentParseArtifactRepo := contentParseRepository.NewArtifactRepository(db)
 	fileRepo := fileRepository.NewFileRepository(db)
@@ -176,6 +177,7 @@ func NewModuleWithContentParseRuntime(
 		knowledgeBaseAssetRefRepo,
 		datasetDocumentRepo,
 		nil,
+		datasetRepo,
 	)
 	fileAssetQAService := service.NewFileAssetQAService(documentAssetRepo, documentChunkRepo, documentChunkEmbeddingRepo, fileAssetVectorIndexService, llmClient, defaultModelSvc)
 	fileAssetDeletionService := service.NewFileAssetDeletionService(db, fileAssetVectorIndexService)
@@ -210,8 +212,10 @@ func NewModuleWithContentParseRuntime(
 		Transform:           parseArtifactChunkTransformService,
 		ChunkGeneration:     documentChunkGenerationService,
 		Embedding:           documentChunkEmbeddingService,
+		EmbeddingTargets:    documentChunkEmbeddingRepo,
 		ProcessingService:   processingRequestService,
 		Refs:                knowledgeBaseAssetRefRepo,
+		Datasets:            datasetRepo,
 	})
 
 	return &Module{

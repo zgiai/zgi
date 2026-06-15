@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
@@ -100,9 +100,10 @@ export function useDatasetFileRefs(
     retry: false,
   });
 
-  const refs = useMemo(() => (query.data?.data?.items ?? []) as DatasetFileRef[], [
-    query.data?.data?.items,
-  ]);
+  const refs = useMemo(
+    () => (query.data?.data?.items ?? []) as DatasetFileRef[],
+    [query.data?.data?.items]
+  );
 
   return {
     ...query,
@@ -135,6 +136,31 @@ export function useCreateDatasetFileRefs(datasetId: string) {
       const failedCount = items.length - successCount;
       if (failedCount > 0) {
         toast.error(t('messages.fileRefsCreatePartialFailed', { count: failedCount }));
+      }
+      invalidateDatasetFileRefQueries(queryClient, datasetId);
+    },
+    onError: (error: unknown) => {
+      const message = (error as { message?: string }).message ?? t('messages.actionFailed');
+      toast.error(message);
+    },
+  });
+}
+
+export function useGenerateDatasetFileCandidateEmbeddings(datasetId: string) {
+  const t = useT('datasets');
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (assetId: string) =>
+      datasetService.generateDatasetFileCandidateEmbeddings(datasetId, assetId),
+    onMutate: () => {
+      toast.info(t('messages.fileCandidateEmbeddingGenerating'));
+    },
+    onSuccess: response => {
+      if (response.data?.addable) {
+        toast.success(t('messages.fileCandidateEmbeddingGenerateSuccess'));
+      } else {
+        toast.error(response.data?.reason || t('messages.actionFailed'));
       }
       invalidateDatasetFileRefQueries(queryClient, datasetId);
     },

@@ -285,7 +285,7 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
                   model: data.embeddingModel || '',
                 }}
                 onChange={handleEmbeddingModelChange}
-                disabled={isModelAndRetrievalConfigDisabled}
+                disabled
               />
             </div>
           )}

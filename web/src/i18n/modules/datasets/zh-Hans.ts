@@ -158,6 +158,7 @@ const messages: DatasetMessages = {
       referenceCount: '已关联 {count} 个',
       noReference: '暂无关联',
       openFile: '去文件管理处理',
+      generateDatasetEmbedding: '生成知识库向量',
       resultSummary: '显示 {count} / {total} 个文件资产',
       addSelected: '添加 {count} 个文件',
       filters: {
@@ -179,6 +180,10 @@ const messages: DatasetMessages = {
         embeddingModelMismatch: '模型不匹配',
         missingChunks: '无切块',
         missingEmbedding: '无向量',
+        missingDatasetEmbedding: '缺少知识库向量',
+        missingDatasetEmbeddingDetail:
+          '当前没有与该知识库模型 {model} 对应的向量结果，请点击操作中的生成知识库向量。',
+        datasetEmbeddingModelMissing: '知识库未配置嵌入模型',
         unavailable: '不可添加',
       },
     },
@@ -881,6 +886,8 @@ const messages: DatasetMessages = {
     uploadFailed: '文档上传失败',
     fileRefsCreateSuccess: '已投递 {count} 个文件资产同步任务',
     fileRefsCreatePartialFailed: '{count} 个文件资产未能添加',
+    fileCandidateEmbeddingGenerating: '向量生成中，请稍等',
+    fileCandidateEmbeddingGenerateSuccess: '已生成知识库对应的向量结果',
     fileRefRetrySuccess: '文件资产同步任务已投递',
     deleteSuccess: '文档删除成功',
     deleteFailed: '文档删除失败',

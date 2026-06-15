@@ -34,7 +34,7 @@ import (
 )
 
 type HitTestingService interface {
-	Retrieve(ctx context.Context, dataset *dataset_model.Dataset, query string, accountID string, retrievalModel map[string]interface{}, externalRetrievalModel map[string]interface{}, limit int, source string, queryType string, retrievalMode string) (*dto.HitTestingResponse, error)
+	Retrieve(ctx context.Context, dataset *dataset_model.Dataset, query string, accountID string, retrievalModel map[string]interface{}, externalRetrievalModel map[string]interface{}, limit int, source string, queryType string, retrievalMode string, recordHistory bool) (*dto.HitTestingResponse, error)
 	ExternalRetrieve(ctx context.Context, dataset *dataset_model.Dataset, query string, accountID string, externalRetrievalModel map[string]interface{}) (*dto.HitTestingResponse, error)
 	HitTestingArgsCheck(args *dto.HitTestingRequest) error
 	EscapeQueryForSearch(query string) string
@@ -180,7 +180,7 @@ func buildEmbeddingServiceForHitTesting(
 }
 
 // Retrieve performs dataset hit testing retrieval
-func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model.Dataset, query string, accountID string, retrievalModel map[string]interface{}, externalRetrievalModel map[string]interface{}, limit int, source string, queryType string, retrievalMode string) (*dto.HitTestingResponse, error) {
+func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model.Dataset, query string, accountID string, retrievalModel map[string]interface{}, externalRetrievalModel map[string]interface{}, limit int, source string, queryType string, retrievalMode string, recordHistory bool) (*dto.HitTestingResponse, error) {
 	start := time.Now()
 	logger.Info("HitTesting started", map[string]interface{}{
 		"dataset_id": dataset.ID,
@@ -224,23 +224,25 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 			Records: []dto.HitTestingRecordResponse{},
 		}
 
-		// Save query to database using DatasetQueryService
-		hitCount := 0
-		createReq := &CreateDatasetQueryRequest{
-			DatasetID:     dataset.ID,
-			Content:       query,
-			Source:        source,
-			SourceAppID:   nil,
-			CreatedByRole: "account",
-			CreatedBy:     accountID,
-			Results:       response,
-			ElapsedTime:   float64Ptr(0),
-			HitCount:      &hitCount,
-			QueryType:     queryType,
-		}
+		if recordHistory {
+			// Save query to database using DatasetQueryService
+			hitCount := 0
+			createReq := &CreateDatasetQueryRequest{
+				DatasetID:     dataset.ID,
+				Content:       query,
+				Source:        source,
+				SourceAppID:   nil,
+				CreatedByRole: "account",
+				CreatedBy:     accountID,
+				Results:       response,
+				ElapsedTime:   float64Ptr(0),
+				HitCount:      &hitCount,
+				QueryType:     queryType,
+			}
 
-		if _, err := s.datasetQueryService.CreateDatasetQuery(ctx, createReq); err != nil {
-			logger.Error("Failed to save dataset query", err)
+			if _, err := s.datasetQueryService.CreateDatasetQuery(ctx, createReq); err != nil {
+				logger.Error("Failed to save dataset query", err)
+			}
 		}
 
 		return response, nil
@@ -333,23 +335,25 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 		return nil, err
 	}
 
-	// Save query and results to database using DatasetQueryService
-	hitCount := len(records)
-	createReq := &CreateDatasetQueryRequest{
-		DatasetID:     dataset.ID,
-		Content:       query,
-		Source:        source,
-		SourceAppID:   nil,
-		CreatedByRole: "account",
-		CreatedBy:     accountID,
-		Results:       response,
-		ElapsedTime:   float64Ptr(response.ElapsedTime),
-		HitCount:      &hitCount,
-		QueryType:     queryType,
-	}
+	if recordHistory {
+		// Save query and results to database using DatasetQueryService
+		hitCount := len(records)
+		createReq := &CreateDatasetQueryRequest{
+			DatasetID:     dataset.ID,
+			Content:       query,
+			Source:        source,
+			SourceAppID:   nil,
+			CreatedByRole: "account",
+			CreatedBy:     accountID,
+			Results:       response,
+			ElapsedTime:   float64Ptr(response.ElapsedTime),
+			HitCount:      &hitCount,
+			QueryType:     queryType,
+		}
 
-	if _, err := s.datasetQueryService.CreateDatasetQuery(ctx, createReq); err != nil {
-		logger.Error("Failed to save dataset query", err)
+		if _, err := s.datasetQueryService.CreateDatasetQuery(ctx, createReq); err != nil {
+			logger.Error("Failed to save dataset query", err)
+		}
 	}
 
 	return response, nil

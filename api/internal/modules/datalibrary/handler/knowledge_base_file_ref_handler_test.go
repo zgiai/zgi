@@ -120,6 +120,10 @@ func (s *fakeKnowledgeBaseFileRefHandlerService) CreateRefs(ctx context.Context,
 	return s.createResult, nil
 }
 
+func (s *fakeKnowledgeBaseFileRefHandlerService) GenerateCandidateEmbeddings(ctx context.Context, req service.KnowledgeBaseFileCandidateEmbeddingRequest) (*service.KnowledgeBaseFileCandidateEmbeddingResult, error) {
+	return nil, nil
+}
+
 func (s *fakeKnowledgeBaseFileRefHandlerService) GetRef(ctx context.Context, req service.KnowledgeBaseFileRefGetRequest) (*service.KnowledgeBaseAssetRefView, error) {
 	return nil, nil
 }

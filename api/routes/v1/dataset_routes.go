@@ -128,6 +128,12 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	dataLibraryChunkRepo := datalibRepo.NewDocumentChunkRepository(deps.DB)
 	dataLibraryEmbeddingRepo := datalibRepo.NewDocumentChunkEmbeddingRepository(deps.DB)
 	dataLibraryKBRefRepo := datalibRepo.NewKnowledgeBaseAssetRefRepository(deps.DB)
+	dataLibraryFileRefEmbeddingService := datalibService.NewDocumentChunkEmbeddingService(
+		dataLibraryAssetRepo,
+		dataLibraryEmbeddingRepo,
+		deps.LLMClient,
+		deps.DefaultModelService,
+	)
 	dataLibraryFileRefService := datalibService.NewKnowledgeBaseFileRefService(
 		dataLibraryAssetRepo,
 		dataLibraryChunkRepo,
@@ -136,6 +142,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		fileRepo,
 		datasetRepoObj,
 		documentRepoObj,
+		dataLibraryFileRefEmbeddingService,
 	)
 	dataLibraryTaskDispatcher := datalibWorker.NewFileProcessTaskDispatcher(deps.TaskManager)
 	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, dataLibraryTaskDispatcher, deps.AccountService, documentServiceObj, datasetServiceObj, deps.OrganizationService)

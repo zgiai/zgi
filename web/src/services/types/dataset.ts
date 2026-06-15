@@ -80,7 +80,9 @@ export type DatasetFileCandidateReason =
   | 'already_added'
   | 'embedding_model_mismatch'
   | 'missing_chunks'
-  | 'missing_embedding';
+  | 'missing_embedding'
+  | 'missing_dataset_embedding'
+  | 'dataset_embedding_model_missing';
 
 export interface DatasetFileCandidate {
   file_id: string;
@@ -95,10 +97,14 @@ export interface DatasetFileCandidate {
   reason?: DatasetFileCandidateReason | string;
   embedding_provider?: string;
   embedding_model?: string;
+  target_embedding_provider?: string;
+  target_embedding_model?: string;
   already_added: boolean;
   reference_count?: number;
   chunk_count: number;
   embedding_count: number;
+  target_embedding_count?: number;
+  requires_embedding_generation?: boolean;
 }
 
 export interface DatasetFileCandidateList {
@@ -157,6 +163,18 @@ export interface DatasetFileRefCreateItem {
 
 export interface DatasetFileRefCreateResult {
   items: DatasetFileRefCreateItem[];
+}
+
+export interface DatasetFileCandidateEmbeddingResult {
+  asset_id: string;
+  generation_no: number;
+  embedding_provider?: string;
+  embedding_model?: string;
+  embedding_count: number;
+  target_embedding_count: number;
+  chunk_count: number;
+  addable: boolean;
+  reason?: DatasetFileCandidateReason | string;
 }
 
 export interface DocumentExtractionAttempt {
@@ -894,11 +912,13 @@ export interface HitTestingHistoryResponse {
 export interface HitTestingRequest {
   query: string;
   retrieval_model: InternalRetrievalConfig;
+  record_history?: boolean;
 }
 
 export interface ExternalHitTestingRequest {
   query: string;
   external_retrieval_model: ExternalRetrievalConfig;
+  record_history?: boolean;
 }
 
 // Batch hit testing request interface

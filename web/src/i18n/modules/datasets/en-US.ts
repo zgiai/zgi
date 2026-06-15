@@ -158,6 +158,7 @@ const messages = {
       referenceCount: '{count} linked',
       noReference: 'No links',
       openFile: 'Handle in file management',
+      generateDatasetEmbedding: 'Generate dataset vectors',
       resultSummary: 'Showing {count} of {total} file assets',
       addSelected: 'Add {count} files',
       filters: {
@@ -179,6 +180,10 @@ const messages = {
         embeddingModelMismatch: 'Model mismatch',
         missingChunks: 'No chunks',
         missingEmbedding: 'No embedding',
+        missingDatasetEmbedding: 'Missing dataset vectors',
+        missingDatasetEmbeddingDetail:
+          'This file has no vector result for the dataset model {model}. Use Generate dataset vectors in Actions.',
+        datasetEmbeddingModelMissing: 'Dataset embedding model is not configured',
         unavailable: 'Unavailable',
       },
     },
@@ -892,6 +897,8 @@ const messages = {
     uploadFailed: 'Document upload failed',
     fileRefsCreateSuccess: '{count} file assets queued for sync',
     fileRefsCreatePartialFailed: '{count} file assets could not be added',
+    fileCandidateEmbeddingGenerating: 'Generating vectors. Please wait.',
+    fileCandidateEmbeddingGenerateSuccess: 'Dataset vector result generated',
     fileRefRetrySuccess: 'File asset sync queued',
     deleteSuccess: 'Document deleted successfully',
     deleteFailed: 'Document deletion failed',

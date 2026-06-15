@@ -18,11 +18,13 @@ const (
 	FileCandidateFilterAdded   = "added"
 	FileCandidateFilterAll     = "all"
 
-	FileCandidateReasonNotReady               = "not_ready"
-	FileCandidateReasonAlreadyAdded           = "already_added"
-	FileCandidateReasonEmbeddingModelMismatch = "embedding_model_mismatch"
-	FileCandidateReasonMissingChunks          = "missing_chunks"
-	FileCandidateReasonMissingEmbedding       = "missing_embedding"
+	FileCandidateReasonNotReady                = "not_ready"
+	FileCandidateReasonAlreadyAdded            = "already_added"
+	FileCandidateReasonEmbeddingModelMismatch  = "embedding_model_mismatch"
+	FileCandidateReasonMissingChunks           = "missing_chunks"
+	FileCandidateReasonMissingEmbedding        = "missing_embedding"
+	FileCandidateReasonMissingDatasetEmbedding = "missing_dataset_embedding"
+	FileCandidateReasonDatasetModelMissing     = "dataset_embedding_model_missing"
 )
 
 type knowledgeBaseFileAssetReader interface {
@@ -31,11 +33,13 @@ type knowledgeBaseFileAssetReader interface {
 }
 
 type knowledgeBaseFileChunkReader interface {
+	List(ctx context.Context, filter datalibRepo.DocumentChunkListFilter) ([]*datalibModel.DocumentChunk, int64, error)
 	CountByAssetGenerationAndTypes(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, chunkTypes []string) (int64, error)
 }
 
 type knowledgeBaseFileEmbeddingReader interface {
 	CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error)
+	CountReadyByAssetGenerationModel(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, provider string, embeddingModel string) (int64, error)
 }
 
 type knowledgeBaseFileRefStore interface {
@@ -65,6 +69,7 @@ type KnowledgeBaseFileRefService interface {
 	ListCandidates(ctx context.Context, req KnowledgeBaseFileCandidateRequest) (*KnowledgeBaseFileCandidateResult, error)
 	ListRefs(ctx context.Context, req KnowledgeBaseFileRefListRequest) (*KnowledgeBaseFileRefListResult, error)
 	CreateRefs(ctx context.Context, req KnowledgeBaseFileRefCreateRequest) (*KnowledgeBaseFileRefCreateResult, error)
+	GenerateCandidateEmbeddings(ctx context.Context, req KnowledgeBaseFileCandidateEmbeddingRequest) (*KnowledgeBaseFileCandidateEmbeddingResult, error)
 	GetRef(ctx context.Context, req KnowledgeBaseFileRefGetRequest) (*KnowledgeBaseAssetRefView, error)
 	RetryRef(ctx context.Context, req KnowledgeBaseFileRefRetryRequest) (*KnowledgeBaseFileRefCreateItem, error)
 	MarkRefSyncFailed(ctx context.Context, req KnowledgeBaseFileRefSyncFailureRequest) (*KnowledgeBaseAssetRefView, error)
@@ -87,22 +92,26 @@ type KnowledgeBaseFileCandidateResult struct {
 }
 
 type KnowledgeBaseFileCandidate struct {
-	FileID            string    `json:"file_id"`
-	AssetID           uuid.UUID `json:"asset_id"`
-	Name              string    `json:"name"`
-	FileExtension     string    `json:"file_extension,omitempty"`
-	FileSize          *int64    `json:"file_size,omitempty"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	ProcessingStatus  string    `json:"processing_status"`
-	GenerationNo      int64     `json:"generation_no"`
-	Addable           bool      `json:"addable"`
-	Reason            string    `json:"reason,omitempty"`
-	EmbeddingProvider *string   `json:"embedding_provider,omitempty"`
-	EmbeddingModel    *string   `json:"embedding_model,omitempty"`
-	AlreadyAdded      bool      `json:"already_added"`
-	ReferenceCount    int64     `json:"reference_count"`
-	ChunkCount        int64     `json:"chunk_count"`
-	EmbeddingCount    int64     `json:"embedding_count"`
+	FileID                      string    `json:"file_id"`
+	AssetID                     uuid.UUID `json:"asset_id"`
+	Name                        string    `json:"name"`
+	FileExtension               string    `json:"file_extension,omitempty"`
+	FileSize                    *int64    `json:"file_size,omitempty"`
+	UpdatedAt                   time.Time `json:"updated_at"`
+	ProcessingStatus            string    `json:"processing_status"`
+	GenerationNo                int64     `json:"generation_no"`
+	Addable                     bool      `json:"addable"`
+	Reason                      string    `json:"reason,omitempty"`
+	EmbeddingProvider           *string   `json:"embedding_provider,omitempty"`
+	EmbeddingModel              *string   `json:"embedding_model,omitempty"`
+	TargetEmbeddingProvider     string    `json:"target_embedding_provider,omitempty"`
+	TargetEmbeddingModel        string    `json:"target_embedding_model,omitempty"`
+	AlreadyAdded                bool      `json:"already_added"`
+	ReferenceCount              int64     `json:"reference_count"`
+	ChunkCount                  int64     `json:"chunk_count"`
+	EmbeddingCount              int64     `json:"embedding_count"`
+	TargetEmbeddingCount        int64     `json:"target_embedding_count"`
+	RequiresEmbeddingGeneration bool      `json:"requires_embedding_generation"`
 }
 
 type KnowledgeBaseFileRefCreateRequest struct {
@@ -111,6 +120,26 @@ type KnowledgeBaseFileRefCreateRequest struct {
 	DatasetID      string
 	AssetIDs       []uuid.UUID
 	CreatedBy      string
+}
+
+type KnowledgeBaseFileCandidateEmbeddingRequest struct {
+	OrganizationID string
+	WorkspaceID    *string
+	DatasetID      string
+	AssetID        uuid.UUID
+	RequestedBy    string
+}
+
+type KnowledgeBaseFileCandidateEmbeddingResult struct {
+	AssetID              uuid.UUID `json:"asset_id"`
+	GenerationNo         int64     `json:"generation_no"`
+	EmbeddingProvider    string    `json:"embedding_provider,omitempty"`
+	EmbeddingModel       string    `json:"embedding_model,omitempty"`
+	EmbeddingCount       int64     `json:"embedding_count"`
+	TargetEmbeddingCount int64     `json:"target_embedding_count"`
+	ChunkCount           int64     `json:"chunk_count"`
+	Addable              bool      `json:"addable"`
+	Reason               string    `json:"reason,omitempty"`
 }
 
 type KnowledgeBaseFileRefListRequest struct {
@@ -189,13 +218,14 @@ type KnowledgeBaseFileRefCreateError struct {
 }
 
 type knowledgeBaseFileRefService struct {
-	assets     knowledgeBaseFileAssetReader
-	chunks     knowledgeBaseFileChunkReader
-	embeddings knowledgeBaseFileEmbeddingReader
-	refs       knowledgeBaseFileRefStore
-	files      knowledgeBaseFileFileReader
-	datasets   knowledgeBaseFileDatasetReader
-	documents  knowledgeBaseFileDocumentReader
+	assets              knowledgeBaseFileAssetReader
+	chunks              knowledgeBaseFileChunkReader
+	embeddings          knowledgeBaseFileEmbeddingReader
+	refs                knowledgeBaseFileRefStore
+	files               knowledgeBaseFileFileReader
+	datasets            knowledgeBaseFileDatasetReader
+	documents           knowledgeBaseFileDocumentReader
+	embeddingGeneration DocumentChunkEmbeddingService
 }
 
 func NewKnowledgeBaseFileRefService(
@@ -205,20 +235,27 @@ func NewKnowledgeBaseFileRefService(
 	refs knowledgeBaseFileRefStore,
 	files knowledgeBaseFileFileReader,
 	datasets knowledgeBaseFileDatasetReader,
-	documents ...knowledgeBaseFileDocumentReader,
+	optionalDeps ...any,
 ) KnowledgeBaseFileRefService {
 	var documentReader knowledgeBaseFileDocumentReader
-	if len(documents) > 0 {
-		documentReader = documents[0]
+	var embeddingGeneration DocumentChunkEmbeddingService
+	for _, dep := range optionalDeps {
+		switch typed := dep.(type) {
+		case knowledgeBaseFileDocumentReader:
+			documentReader = typed
+		case DocumentChunkEmbeddingService:
+			embeddingGeneration = typed
+		}
 	}
 	return &knowledgeBaseFileRefService{
-		assets:     assets,
-		chunks:     chunks,
-		embeddings: embeddings,
-		refs:       refs,
-		files:      files,
-		datasets:   datasets,
-		documents:  documentReader,
+		assets:              assets,
+		chunks:              chunks,
+		embeddings:          embeddings,
+		refs:                refs,
+		files:               files,
+		datasets:            datasets,
+		documents:           documentReader,
+		embeddingGeneration: embeddingGeneration,
 	}
 }
 
@@ -283,7 +320,7 @@ func (s *knowledgeBaseFileRefService) ListCandidates(ctx context.Context, req Kn
 			}
 		case FileCandidateFilterAll, "":
 		default:
-			if req.Filter == FileCandidateFilterAddable && !candidate.Addable {
+			if req.Filter == FileCandidateFilterAddable && !candidateVisibleInAddable(candidate) {
 				continue
 			}
 		}
@@ -452,6 +489,84 @@ func (s *knowledgeBaseFileRefService) GetRef(ctx context.Context, req KnowledgeB
 		return nil, err
 	}
 	return newKnowledgeBaseAssetRefView(ref), nil
+}
+
+func (s *knowledgeBaseFileRefService) GenerateCandidateEmbeddings(ctx context.Context, req KnowledgeBaseFileCandidateEmbeddingRequest) (*KnowledgeBaseFileCandidateEmbeddingResult, error) {
+	if err := validateKnowledgeBaseFileRefScope(req.OrganizationID, req.DatasetID); err != nil {
+		return nil, err
+	}
+	if req.AssetID == uuid.Nil {
+		return nil, ErrAssetIDRequired
+	}
+	if s.embeddingGeneration == nil {
+		return nil, ErrEmbeddingServiceRequired
+	}
+	dataset, err := s.datasets.GetByID(ctx, req.DatasetID)
+	if err != nil {
+		return nil, err
+	}
+	if dataset == nil || dataset.OrganizationID != req.OrganizationID {
+		return nil, ErrDatasetNotFound
+	}
+	asset, err := s.assets.GetAssetByID(ctx, req.AssetID)
+	if err != nil {
+		return nil, err
+	}
+	if asset == nil || asset.OrganizationID != req.OrganizationID || !assetInDatasetWorkspace(dataset, asset) {
+		return nil, ErrDocumentAssetNotFound
+	}
+	targetProvider, targetModel := datasetEmbeddingTarget(dataset, asset)
+	if targetModel == "" {
+		return &KnowledgeBaseFileCandidateEmbeddingResult{
+			AssetID:      asset.ID,
+			GenerationNo: asset.GenerationNo,
+			Reason:       FileCandidateReasonDatasetModelMissing,
+		}, nil
+	}
+	chunks, chunkCount, err := s.listCurrentCandidateChunks(ctx, asset)
+	if err != nil {
+		return nil, err
+	}
+	if chunkCount == 0 {
+		return &KnowledgeBaseFileCandidateEmbeddingResult{
+			AssetID:      asset.ID,
+			GenerationNo: asset.GenerationNo,
+			Reason:       FileCandidateReasonMissingChunks,
+		}, nil
+	}
+	embeddingResult, err := s.embeddingGeneration.GenerateAdditionalEmbeddings(ctx, GenerateDocumentChunkEmbeddingsInput{
+		OrganizationID:    req.OrganizationID,
+		AssetID:           asset.ID,
+		ProcessingRunID:   assetProcessingRunID(asset),
+		GenerationNo:      asset.GenerationNo,
+		EmbeddingProvider: targetProvider,
+		EmbeddingModel:    targetModel,
+		RequestedBy:       req.RequestedBy,
+		Chunks:            chunks,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if embeddingResult != nil {
+		targetProvider = embeddingResult.EmbeddingProvider
+		targetModel = embeddingResult.EmbeddingModel
+	}
+	targetEmbeddingCount, err := s.embeddings.CountReadyByAssetGenerationModel(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo, targetProvider, targetModel)
+	if err != nil {
+		return nil, err
+	}
+	reason := evaluateFileCandidateReason(asset, false, chunkCount, targetEmbeddingCount, targetModel)
+	return &KnowledgeBaseFileCandidateEmbeddingResult{
+		AssetID:              asset.ID,
+		GenerationNo:         asset.GenerationNo,
+		EmbeddingProvider:    targetProvider,
+		EmbeddingModel:       targetModel,
+		EmbeddingCount:       int64(embeddingResultCount(embeddingResult)),
+		TargetEmbeddingCount: targetEmbeddingCount,
+		ChunkCount:           chunkCount,
+		Addable:              reason == "",
+		Reason:               reason,
+	}, nil
 }
 
 func (s *knowledgeBaseFileRefService) RetryRef(ctx context.Context, req KnowledgeBaseFileRefRetryRequest) (*KnowledgeBaseFileRefCreateItem, error) {
@@ -631,11 +746,12 @@ func (s *knowledgeBaseFileRefService) evaluateAssetSyncReadiness(ctx context.Con
 	if err != nil {
 		return "", asset.GenerationNo, err
 	}
-	embeddingCount, err := s.embeddings.CountReadyByAssetGeneration(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo)
+	targetProvider, targetModel := datasetEmbeddingTarget(dataset, asset)
+	embeddingCount, err := s.embeddings.CountReadyByAssetGenerationModel(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo, targetProvider, targetModel)
 	if err != nil {
 		return "", asset.GenerationNo, err
 	}
-	reason := evaluateFileCandidateReason(dataset, asset, false, chunkCount, embeddingCount)
+	reason := evaluateFileCandidateReason(asset, false, chunkCount, embeddingCount, targetModel)
 	return reason, asset.GenerationNo, nil
 }
 
@@ -649,6 +765,11 @@ func (s *knowledgeBaseFileRefService) buildCandidate(ctx context.Context, datase
 		return nil, err
 	}
 	embeddingCount, err := s.embeddings.CountReadyByAssetGeneration(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo)
+	if err != nil {
+		return nil, err
+	}
+	targetProvider, targetModel := datasetEmbeddingTarget(dataset, asset)
+	targetEmbeddingCount, err := s.embeddings.CountReadyByAssetGenerationModel(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo, targetProvider, targetModel)
 	if err != nil {
 		return nil, err
 	}
@@ -672,44 +793,45 @@ func (s *knowledgeBaseFileRefService) buildCandidate(ctx context.Context, datase
 		fileSize = &size
 	}
 	candidate := &KnowledgeBaseFileCandidate{
-		FileID:            asset.SourceFileID,
-		AssetID:           asset.ID,
-		Name:              name,
-		FileExtension:     fileExtension,
-		FileSize:          fileSize,
-		UpdatedAt:         asset.UpdatedAt,
-		ProcessingStatus:  asset.ProductStatus,
-		GenerationNo:      asset.GenerationNo,
-		EmbeddingProvider: asset.EmbeddingProvider,
-		EmbeddingModel:    asset.EmbeddingModel,
-		AlreadyAdded:      existing != nil,
-		ReferenceCount:    referenceCount,
-		ChunkCount:        chunkCount,
-		EmbeddingCount:    embeddingCount,
+		FileID:                  asset.SourceFileID,
+		AssetID:                 asset.ID,
+		Name:                    name,
+		FileExtension:           fileExtension,
+		FileSize:                fileSize,
+		UpdatedAt:               asset.UpdatedAt,
+		ProcessingStatus:        asset.ProductStatus,
+		GenerationNo:            asset.GenerationNo,
+		EmbeddingProvider:       asset.EmbeddingProvider,
+		EmbeddingModel:          asset.EmbeddingModel,
+		TargetEmbeddingProvider: targetProvider,
+		TargetEmbeddingModel:    targetModel,
+		AlreadyAdded:            existing != nil,
+		ReferenceCount:          referenceCount,
+		ChunkCount:              chunkCount,
+		EmbeddingCount:          embeddingCount,
+		TargetEmbeddingCount:    targetEmbeddingCount,
 	}
-	candidate.Reason = evaluateFileCandidateReason(dataset, asset, candidate.AlreadyAdded, chunkCount, embeddingCount)
+	candidate.Reason = evaluateFileCandidateReason(asset, candidate.AlreadyAdded, chunkCount, targetEmbeddingCount, targetModel)
 	candidate.Addable = candidate.Reason == ""
+	candidate.RequiresEmbeddingGeneration = candidate.Reason == FileCandidateReasonMissingDatasetEmbedding
 	return candidate, nil
 }
 
-func evaluateFileCandidateReason(dataset *datasetModel.Dataset, asset *datalibModel.DocumentAsset, alreadyAdded bool, chunkCount int64, embeddingCount int64) string {
+func evaluateFileCandidateReason(asset *datalibModel.DocumentAsset, alreadyAdded bool, chunkCount int64, targetEmbeddingCount int64, targetModel string) string {
 	if alreadyAdded {
 		return FileCandidateReasonAlreadyAdded
 	}
-	if asset.ProductStatus != datalibModel.DocumentAssetProductStatusReady || asset.VectorStatus != datalibModel.DocumentAssetVectorStatusReady {
+	if asset.ProductStatus != datalibModel.DocumentAssetProductStatusReady {
 		return FileCandidateReasonNotReady
 	}
 	if chunkCount == 0 {
 		return FileCandidateReasonMissingChunks
 	}
-	if embeddingCount < chunkCount {
-		return FileCandidateReasonMissingEmbedding
+	if targetModel == "" {
+		return FileCandidateReasonDatasetModelMissing
 	}
-	if dataset.EmbeddingModelProvider != nil && asset.EmbeddingProvider != nil && *dataset.EmbeddingModelProvider != *asset.EmbeddingProvider {
-		return FileCandidateReasonEmbeddingModelMismatch
-	}
-	if dataset.EmbeddingModel != nil && asset.EmbeddingModel != nil && *dataset.EmbeddingModel != *asset.EmbeddingModel {
-		return FileCandidateReasonEmbeddingModelMismatch
+	if targetEmbeddingCount < chunkCount {
+		return FileCandidateReasonMissingDatasetEmbedding
 	}
 	return ""
 }
@@ -751,6 +873,78 @@ func candidateMatchesKeyword(asset *datalibModel.DocumentAsset, file *fileModel.
 		return true
 	}
 	return asset != nil && strings.Contains(strings.ToLower(asset.Title), normalizedKeyword)
+}
+
+func candidateVisibleInAddable(candidate *KnowledgeBaseFileCandidate) bool {
+	return candidate != nil && (candidate.Addable || candidate.RequiresEmbeddingGeneration)
+}
+
+func datasetEmbeddingTarget(dataset *datasetModel.Dataset, asset *datalibModel.DocumentAsset) (string, string) {
+	provider := ""
+	modelName := ""
+	if dataset != nil {
+		if dataset.EmbeddingModelProvider != nil {
+			provider = strings.TrimSpace(*dataset.EmbeddingModelProvider)
+		}
+		if dataset.EmbeddingModel != nil {
+			modelName = strings.TrimSpace(*dataset.EmbeddingModel)
+		}
+	}
+	if modelName == "" && asset != nil {
+		if asset.EmbeddingProvider != nil {
+			provider = strings.TrimSpace(*asset.EmbeddingProvider)
+		}
+		if asset.EmbeddingModel != nil {
+			modelName = strings.TrimSpace(*asset.EmbeddingModel)
+		}
+	}
+	return provider, modelName
+}
+
+func (s *knowledgeBaseFileRefService) listCurrentCandidateChunks(ctx context.Context, asset *datalibModel.DocumentAsset) ([]*datalibModel.DocumentChunk, int64, error) {
+	if asset == nil || asset.GenerationNo <= 0 {
+		return nil, 0, nil
+	}
+	generationNo := asset.GenerationNo
+	enabled := true
+	out := make([]*datalibModel.DocumentChunk, 0)
+	for offset := 0; ; offset += 500 {
+		items, total, err := s.chunks.List(ctx, datalibRepo.DocumentChunkListFilter{
+			OrganizationID: asset.OrganizationID,
+			AssetID:        asset.ID,
+			GenerationNo:   &generationNo,
+			ChunkTypes: []string{
+				datalibModel.DocumentChunkTypeChild,
+				datalibModel.DocumentChunkTypeAuto,
+				datalibModel.DocumentChunkTypeManual,
+			},
+			Enabled: &enabled,
+			Status:  datalibModel.DocumentChunkStatusReady,
+			Limit:   500,
+			Offset:  offset,
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, items...)
+		if int64(len(out)) >= total || len(items) == 0 {
+			return out, total, nil
+		}
+	}
+}
+
+func assetProcessingRunID(asset *datalibModel.DocumentAsset) uuid.UUID {
+	if asset == nil || asset.ProcessingRunID == nil {
+		return uuid.Nil
+	}
+	return *asset.ProcessingRunID
+}
+
+func embeddingResultCount(result *GenerateDocumentChunkEmbeddingsResult) int {
+	if result == nil {
+		return 0
+	}
+	return result.EmbeddingCount
 }
 
 var ErrDatasetNotFound = errors.New("dataset not found")

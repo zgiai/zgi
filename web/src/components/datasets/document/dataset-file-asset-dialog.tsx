@@ -29,6 +29,7 @@ import {
 import {
   useCreateDatasetFileRefs,
   useDatasetFileCandidates,
+  useGenerateDatasetFileCandidateEmbeddings,
 } from '@/hooks/dataset/use-dataset-file-refs';
 import type { DatasetFileCandidate } from '@/services/types/dataset';
 import { cn } from '@/lib/utils';
@@ -55,6 +56,10 @@ function candidateReasonKey(reason?: string) {
       return 'documents.fileAssets.reasons.missingChunks';
     case 'missing_embedding':
       return 'documents.fileAssets.reasons.missingEmbedding';
+    case 'missing_dataset_embedding':
+      return 'documents.fileAssets.reasons.missingDatasetEmbedding';
+    case 'dataset_embedding_model_missing':
+      return 'documents.fileAssets.reasons.datasetEmbeddingModelMissing';
     case 'not_ready':
       return 'documents.fileAssets.reasons.notReady';
     default:
@@ -69,9 +74,9 @@ function fileExtension(candidate: DatasetFileCandidate) {
 }
 
 function matchesFilter(candidate: DatasetFileCandidate, filter: CandidateFilter) {
-  if (filter === 'addable') return candidate.addable;
+  if (filter === 'addable') return candidate.addable || candidate.requires_embedding_generation;
   if (filter === 'added') return candidate.already_added;
-  return !candidate.addable && !candidate.already_added;
+  return !candidate.addable && !candidate.requires_embedding_generation && !candidate.already_added;
 }
 
 function processingStatusLabel(t: ReturnType<typeof useT<'datasets'>>, status: string) {
@@ -103,6 +108,7 @@ export function DatasetFileAssetDialog({
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [activeFilter, setActiveFilter] = useState<CandidateFilter>('addable');
   const createRefsMutation = useCreateDatasetFileRefs(datasetId);
+  const generateEmbeddingsMutation = useGenerateDatasetFileCandidateEmbeddings(datasetId);
   const { candidates, total, keyword, setKeyword, isLoading, isFetching } =
     useDatasetFileCandidates(
       datasetId,
@@ -122,7 +128,7 @@ export function DatasetFileAssetDialog({
     () =>
       candidates.reduce(
         (acc, candidate) => {
-          if (candidate.addable) acc.addable += 1;
+          if (candidate.addable || candidate.requires_embedding_generation) acc.addable += 1;
           else if (candidate.already_added) acc.added += 1;
           else acc.blocked += 1;
           return acc;
@@ -174,6 +180,17 @@ export function DatasetFileAssetDialog({
     }
   }, [createRefsMutation, onOpenChange, onSubmitted, selectedAssetIds]);
 
+  const handleGenerateEmbeddings = useCallback(
+    async (candidate: DatasetFileCandidate) => {
+      try {
+        await generateEmbeddingsMutation.mutateAsync(candidate.asset_id);
+      } catch {
+        // The mutation hook already shows the API error toast.
+      }
+    },
+    [generateEmbeddingsMutation]
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -218,7 +235,10 @@ export function DatasetFileAssetDialog({
                   key={filter}
                   type="button"
                   variant={activeFilter === filter ? 'default' : 'outline'}
-                  className={cn('h-9 rounded-lg px-4', activeFilter === filter ? '' : 'bg-background')}
+                  className={cn(
+                    'h-9 rounded-lg px-4',
+                    activeFilter === filter ? '' : 'bg-background'
+                  )}
                   onClick={() => setActiveFilter(filter)}
                 >
                   {t(`documents.fileAssets.filters.${filter}`)}
@@ -229,16 +249,16 @@ export function DatasetFileAssetDialog({
 
           <div className="min-h-0 flex-1 overflow-auto p-5">
             <div className="overflow-hidden rounded-xl border">
-              <Table className="min-w-[1040px] table-fixed">
+              <Table className="min-w-[1280px] table-fixed">
                 <colgroup>
                   <col className="w-[44px]" />
                   <col />
                   <col className="w-[132px]" />
-                  <col className="w-[152px]" />
+                  <col className="w-[260px]" />
                   <col className="w-[112px]" />
-                  <col className="w-[140px]" />
+                  <col className="w-[150px]" />
+                  <col className="w-[160px]" />
                   <col className="w-[170px]" />
-                  <col className="w-[140px]" />
                 </colgroup>
                 <TableHeader className="bg-muted/40">
                   <TableRow className="hover:bg-muted/40">
@@ -256,7 +276,9 @@ export function DatasetFileAssetDialog({
                     <TableHead>{t('documents.fileAssets.chunks')}</TableHead>
                     <TableHead>{t('documents.fileAssets.references')}</TableHead>
                     <TableHead>{t('documents.fileAssets.updatedAt')}</TableHead>
-                    <TableHead className="text-right">{t('documents.fileAssets.actions')}</TableHead>
+                    <TableHead className="text-right">
+                      {t('documents.fileAssets.actions')}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -282,12 +304,24 @@ export function DatasetFileAssetDialog({
                     visibleCandidates.map(candidate => {
                       const selected = selectedSet.has(candidate.asset_id);
                       const addable = candidate.addable;
+                      const requiresEmbeddingGeneration =
+                        candidate.requires_embedding_generation === true;
+                      const needsFileManagement =
+                        !requiresEmbeddingGeneration &&
+                        !candidate.already_added &&
+                        candidate.processing_status !== 'ready';
                       const ext = fileExtension(candidate);
+                      const isGenerating =
+                        generateEmbeddingsMutation.isPending &&
+                        generateEmbeddingsMutation.variables === candidate.asset_id;
                       return (
                         <TableRow
                           key={candidate.asset_id}
                           data-state={selected ? 'selected' : undefined}
-                          className="h-16 hover:bg-muted/30 data-[state=selected]:bg-primary/5"
+                          className={cn(
+                            'h-16 hover:bg-muted/30 data-[state=selected]:bg-primary/5',
+                            requiresEmbeddingGeneration && 'bg-muted/20'
+                          )}
                         >
                           <TableCell className="px-3">
                             <Checkbox
@@ -324,23 +358,49 @@ export function DatasetFileAssetDialog({
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={candidate.processing_status === 'ready' ? 'success' : 'warning'}>
+                            <Badge
+                              variant={
+                                candidate.processing_status === 'ready' ? 'success' : 'warning'
+                              }
+                            >
                               {processingStatusLabel(t, candidate.processing_status)}
                             </Badge>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="max-w-0">
                             {candidate.addable ? (
                               <Badge variant="success">{t('documents.fileAssets.ready')}</Badge>
                             ) : (
-                              <Badge variant={candidate.already_added ? 'subtle' : 'warning'}>
-                                {candidate.already_added
-                                  ? t('documents.fileAssets.reasons.alreadyAdded')
-                                  : t(candidateReasonKey(candidate.reason))}
-                              </Badge>
+                              <div className="min-w-0 space-y-1">
+                                <Badge variant={candidate.already_added ? 'subtle' : 'warning'}>
+                                  {candidate.already_added
+                                    ? t('documents.fileAssets.reasons.alreadyAdded')
+                                    : t(candidateReasonKey(candidate.reason))}
+                                </Badge>
+                                {requiresEmbeddingGeneration ? (
+                                  <div
+                                    className="whitespace-normal break-words text-xs leading-4 text-muted-foreground"
+                                    title={t(
+                                      'documents.fileAssets.reasons.missingDatasetEmbeddingDetail',
+                                      {
+                                        model: candidate.target_embedding_model || '-',
+                                      }
+                                    )}
+                                  >
+                                    {t(
+                                      'documents.fileAssets.reasons.missingDatasetEmbeddingDetail',
+                                      {
+                                        model: candidate.target_embedding_model || '-',
+                                      }
+                                    )}
+                                  </div>
+                                ) : null}
+                              </div>
                             )}
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
-                            {candidate.addable || candidate.already_added
+                            {candidate.addable ||
+                            candidate.already_added ||
+                            requiresEmbeddingGeneration
                               ? candidate.chunk_count
                               : '-'}
                           </TableCell>
@@ -355,11 +415,31 @@ export function DatasetFileAssetDialog({
                             {candidate.updated_at ? formatDate(candidate.updated_at) : '-'}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
-                              <Link href={`/console/files/${candidate.file_id}`}>
-                                {t('documents.fileAssets.openFile')}
-                              </Link>
-                            </Button>
+                            {requiresEmbeddingGeneration ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-2 text-xs"
+                                loading={isGenerating}
+                                disabled={generateEmbeddingsMutation.isPending}
+                                onClick={() => handleGenerateEmbeddings(candidate)}
+                              >
+                                {t('documents.fileAssets.generateDatasetEmbedding')}
+                              </Button>
+                            ) : needsFileManagement ? (
+                              <Button
+                                asChild
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2 text-xs"
+                              >
+                                <Link href={`/console/files/${candidate.file_id}`}>
+                                  {t('documents.fileAssets.openFile')}
+                                </Link>
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">-</span>
+                            )}
                           </TableCell>
                         </TableRow>
                       );

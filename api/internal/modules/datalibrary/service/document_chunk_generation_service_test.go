@@ -144,6 +144,12 @@ func (r *documentChunkGenerationChunkRepo) CountByAssetGenerationAndTypes(ctx co
 	return count, nil
 }
 
+func (r *documentChunkGenerationChunkRepo) DeleteByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) error {
+	r.deletedCalls++
+	r.items = nil
+	return nil
+}
+
 func (r *documentChunkGenerationChunkRepo) DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error {
 	r.deletedCalls++
 	r.items = nil

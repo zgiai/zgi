@@ -486,12 +486,6 @@ func (s *datasetService) UpdateDataset(ctx context.Context, req *UpdateDatasetRe
 	if req.Description != nil {
 		dataset.Description = req.Description
 	}
-	if req.EmbeddingModel != nil {
-		dataset.EmbeddingModel = req.EmbeddingModel
-	}
-	if req.EmbeddingModelProvider != nil {
-		dataset.EmbeddingModelProvider = req.EmbeddingModelProvider
-	}
 	if req.EntityModel != nil {
 		dataset.EntityModel = req.EntityModel
 	}

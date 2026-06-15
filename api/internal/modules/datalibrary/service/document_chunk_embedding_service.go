@@ -28,6 +28,7 @@ const documentChunkEmbeddingBatchSize = 8
 
 type DocumentChunkEmbeddingService interface {
 	GenerateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error)
+	GenerateAdditionalEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error)
 	GenerateChunkEmbedding(ctx context.Context, input GenerateDocumentChunkEmbeddingInput) (*model.DocumentChunkEmbedding, error)
 }
 
@@ -111,6 +112,10 @@ func (s *documentChunkEmbeddingService) GenerateEmbeddings(ctx context.Context, 
 	return s.generateEmbeddings(ctx, input, true)
 }
 
+func (s *documentChunkEmbeddingService) GenerateAdditionalEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error) {
+	return s.generateEmbeddings(ctx, input, false)
+}
+
 func (s *documentChunkEmbeddingService) GenerateChunkEmbedding(ctx context.Context, input GenerateDocumentChunkEmbeddingInput) (*model.DocumentChunkEmbedding, error) {
 	if input.Chunk == nil {
 		return nil, ErrDocumentChunkEmbeddingsRequired
@@ -160,6 +165,16 @@ func (s *documentChunkEmbeddingService) generateEmbeddings(ctx context.Context, 
 		asset.GenerationNo != input.GenerationNo {
 		return nil, ErrProcessingRunMismatch
 	}
+	if clearExisting {
+		if err := s.embeddings.DeleteByAsset(ctx, input.OrganizationID, input.AssetID); err != nil {
+			return nil, err
+		}
+		if s.vectorIndex != nil {
+			if err := s.vectorIndex.DeleteAssetIndex(ctx, asset); err != nil {
+				return nil, fmt.Errorf("delete document chunk vectors: %w", err)
+			}
+		}
+	}
 
 	resolvedProvider, resolvedModel, err := s.resolveEmbeddingModel(ctx, input)
 	if err != nil {
@@ -183,12 +198,6 @@ func (s *documentChunkEmbeddingService) generateEmbeddings(ctx context.Context, 
 	}
 	if len(vectors) != len(leafChunks) {
 		return nil, fmt.Errorf("embedding result count mismatch: got %d, want %d", len(vectors), len(leafChunks))
-	}
-
-	if clearExisting {
-		if err := s.embeddings.DeleteByAssetGeneration(ctx, input.OrganizationID, input.AssetID, input.GenerationNo); err != nil {
-			return nil, err
-		}
 	}
 
 	items := make([]*model.DocumentChunkEmbedding, 0, len(leafChunks))

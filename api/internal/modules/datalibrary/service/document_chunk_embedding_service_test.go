@@ -334,12 +334,74 @@ func (r *documentChunkEmbeddingRepo) List(ctx context.Context, filter repository
 	return r.items, int64(len(r.items)), nil
 }
 
+func (r *documentChunkEmbeddingRepo) ListModelTargetsByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]repository.DocumentChunkEmbeddingModelTarget, error) {
+	seen := map[string]struct{}{}
+	var out []repository.DocumentChunkEmbeddingModelTarget
+	for _, item := range r.items {
+		if item.OrganizationID != organizationID || item.AssetID != assetID || item.EmbeddingModel == "" {
+			continue
+		}
+		key := item.EmbeddingProvider + "\x00" + item.EmbeddingModel
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, repository.DocumentChunkEmbeddingModelTarget{
+			EmbeddingProvider: item.EmbeddingProvider,
+			EmbeddingModel:    item.EmbeddingModel,
+		})
+	}
+	return out, nil
+}
+
+func (r *documentChunkEmbeddingRepo) ListModelTargetsByChunkIDs(ctx context.Context, organizationID string, chunkIDs []uuid.UUID) ([]repository.DocumentChunkEmbeddingModelTarget, error) {
+	allowed := map[uuid.UUID]struct{}{}
+	for _, id := range chunkIDs {
+		allowed[id] = struct{}{}
+	}
+	seen := map[string]struct{}{}
+	var out []repository.DocumentChunkEmbeddingModelTarget
+	for _, item := range r.items {
+		if item.OrganizationID != organizationID || item.EmbeddingModel == "" {
+			continue
+		}
+		if _, ok := allowed[item.ChunkID]; !ok {
+			continue
+		}
+		key := item.EmbeddingProvider + "\x00" + item.EmbeddingModel
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, repository.DocumentChunkEmbeddingModelTarget{
+			EmbeddingProvider: item.EmbeddingProvider,
+			EmbeddingModel:    item.EmbeddingModel,
+		})
+	}
+	return out, nil
+}
+
 func (r *documentChunkEmbeddingRepo) CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error) {
 	var count int64
 	for _, item := range r.items {
 		if item.OrganizationID == organizationID &&
 			item.AssetID == assetID &&
 			item.GenerationNo == generationNo &&
+			item.Status == model.DocumentChunkEmbeddingStatusReady {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (r *documentChunkEmbeddingRepo) CountReadyByAssetGenerationModel(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, provider string, embeddingModel string) (int64, error) {
+	var count int64
+	for _, item := range r.items {
+		if item.OrganizationID == organizationID &&
+			item.AssetID == assetID &&
+			item.GenerationNo == generationNo &&
+			item.EmbeddingProvider == provider &&
+			item.EmbeddingModel == embeddingModel &&
 			item.Status == model.DocumentChunkEmbeddingStatusReady {
 			count++
 		}
@@ -356,6 +418,12 @@ func (r *documentChunkEmbeddingRepo) DeleteByChunkID(ctx context.Context, organi
 		filtered = append(filtered, item)
 	}
 	r.items = filtered
+	return nil
+}
+
+func (r *documentChunkEmbeddingRepo) DeleteByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) error {
+	r.deletedCalls++
+	r.items = nil
 	return nil
 }
 

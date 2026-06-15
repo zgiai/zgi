@@ -141,6 +141,46 @@ func TestGenerateCurrentResultRunnerEnqueuesDatasetRefSyncs(t *testing.T) {
 	}
 }
 
+func TestGenerateCurrentResultRunnerGeneratesEmbeddingsForAllTargets(t *testing.T) {
+	embedding := &fakeGenerateCurrentResultEmbeddingService{}
+	runner := &GenerateCurrentResultRunner{embedding: embedding}
+	assetID := uuid.New()
+	runID := uuid.New()
+
+	result, total, err := runner.generateEmbeddingsForTargets(context.Background(), datalibraryservice.GenerateDocumentChunkEmbeddingsInput{
+		OrganizationID:  "org-1",
+		AssetID:         assetID,
+		ProcessingRunID: runID,
+		GenerationNo:    3,
+		RequestedBy:     "user-1",
+	}, []datalibraryservice.EmbeddingTarget{
+		{Provider: "provider-a", Model: "model-a"},
+		{Provider: "provider-b", Model: "model-b"},
+	})
+	if err != nil {
+		t.Fatalf("generateEmbeddingsForTargets: %v", err)
+	}
+	if result == nil || result.EmbeddingProvider != "provider-a" || result.EmbeddingModel != "model-a" {
+		t.Fatalf("first result=%+v", result)
+	}
+	if total != 2 {
+		t.Fatalf("total=%d want 2", total)
+	}
+	if len(embedding.calls) != 2 {
+		t.Fatalf("calls=%+v", embedding.calls)
+	}
+	if embedding.calls[0].method != "generate" ||
+		embedding.calls[0].provider != "provider-a" ||
+		embedding.calls[0].model != "model-a" {
+		t.Fatalf("first call=%+v", embedding.calls[0])
+	}
+	if embedding.calls[1].method != "additional" ||
+		embedding.calls[1].provider != "provider-b" ||
+		embedding.calls[1].model != "model-b" {
+		t.Fatalf("second call=%+v", embedding.calls[1])
+	}
+}
+
 type singleActiveAssetRepo struct {
 	asset *model.DocumentAsset
 }
@@ -258,6 +298,40 @@ func (r *singleActiveAssetRepo) ListVersionsByAssetID(ctx context.Context, asset
 }
 
 var _ repository.DocumentAssetRepository = (*singleActiveAssetRepo)(nil)
+
+type fakeGenerateCurrentResultEmbeddingService struct {
+	calls []fakeGenerateCurrentResultEmbeddingCall
+}
+
+type fakeGenerateCurrentResultEmbeddingCall struct {
+	method   string
+	provider string
+	model    string
+}
+
+func (s *fakeGenerateCurrentResultEmbeddingService) GenerateEmbeddings(ctx context.Context, input datalibraryservice.GenerateDocumentChunkEmbeddingsInput) (*datalibraryservice.GenerateDocumentChunkEmbeddingsResult, error) {
+	s.calls = append(s.calls, fakeGenerateCurrentResultEmbeddingCall{method: "generate", provider: input.EmbeddingProvider, model: input.EmbeddingModel})
+	return &datalibraryservice.GenerateDocumentChunkEmbeddingsResult{
+		EmbeddingCount:    1,
+		EmbeddingProvider: input.EmbeddingProvider,
+		EmbeddingModel:    input.EmbeddingModel,
+	}, nil
+}
+
+func (s *fakeGenerateCurrentResultEmbeddingService) GenerateAdditionalEmbeddings(ctx context.Context, input datalibraryservice.GenerateDocumentChunkEmbeddingsInput) (*datalibraryservice.GenerateDocumentChunkEmbeddingsResult, error) {
+	s.calls = append(s.calls, fakeGenerateCurrentResultEmbeddingCall{method: "additional", provider: input.EmbeddingProvider, model: input.EmbeddingModel})
+	return &datalibraryservice.GenerateDocumentChunkEmbeddingsResult{
+		EmbeddingCount:    1,
+		EmbeddingProvider: input.EmbeddingProvider,
+		EmbeddingModel:    input.EmbeddingModel,
+	}, nil
+}
+
+func (s *fakeGenerateCurrentResultEmbeddingService) GenerateChunkEmbedding(ctx context.Context, input datalibraryservice.GenerateDocumentChunkEmbeddingInput) (*model.DocumentChunkEmbedding, error) {
+	return nil, nil
+}
+
+var _ datalibraryservice.DocumentChunkEmbeddingService = (*fakeGenerateCurrentResultEmbeddingService)(nil)
 
 type singleActiveProcessingRequestRepo struct {
 	request *model.ProcessingRequest

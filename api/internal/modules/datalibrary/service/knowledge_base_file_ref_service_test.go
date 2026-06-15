@@ -201,12 +201,13 @@ func TestKnowledgeBaseFileRefServiceSkipsCandidateWhenSourceFileArchived(t *test
 	}
 }
 
-func TestKnowledgeBaseFileRefServiceRejectsMismatchedEmbeddingModel(t *testing.T) {
+func TestKnowledgeBaseFileRefServiceRequiresDatasetEmbeddingWhenModelDiffers(t *testing.T) {
 	assetID := uuid.New()
 	datasetProvider := "openai"
 	datasetModelName := "text-embedding-3-small"
 	assetProvider := "openai"
 	assetModelName := "other-model"
+	targetEmbeddingCount := int64(0)
 	svc := newKnowledgeBaseFileRefTestService(&fakeKnowledgeBaseFileRefDeps{
 		dataset: &datasetModel.Dataset{
 			ID:                     "dataset-1",
@@ -229,8 +230,9 @@ func TestKnowledgeBaseFileRefServiceRejectsMismatchedEmbeddingModel(t *testing.T
 		files: map[string]*fileModel.UploadFile{
 			"file-1": {ID: "file-1", Name: "handbook.pdf"},
 		},
-		chunkCount:     1,
-		embeddingCount: 1,
+		chunkCount:           1,
+		embeddingCount:       1,
+		targetEmbeddingCount: &targetEmbeddingCount,
 	})
 
 	result, err := svc.ListCandidates(context.Background(), KnowledgeBaseFileCandidateRequest{
@@ -241,7 +243,11 @@ func TestKnowledgeBaseFileRefServiceRejectsMismatchedEmbeddingModel(t *testing.T
 	if err != nil {
 		t.Fatalf("ListCandidates: %v", err)
 	}
-	if len(result.Items) != 1 || result.Items[0].Addable || result.Items[0].Reason != FileCandidateReasonEmbeddingModelMismatch {
+	if len(result.Items) != 1 ||
+		result.Items[0].Addable ||
+		!result.Items[0].RequiresEmbeddingGeneration ||
+		result.Items[0].Reason != FileCandidateReasonMissingDatasetEmbedding ||
+		result.Items[0].TargetEmbeddingModel != datasetModelName {
 		t.Fatalf("items=%+v", result.Items)
 	}
 }
@@ -571,21 +577,23 @@ func TestKnowledgeBaseFileRefServiceRemovesRef(t *testing.T) {
 }
 
 type fakeKnowledgeBaseFileRefDeps struct {
-	dataset          *datasetModel.Dataset
-	assets           []*datalibModel.DocumentAsset
-	existingRef      *datalibModel.KnowledgeBaseAssetRef
-	refs             []*datalibModel.KnowledgeBaseAssetRef
-	documents        []*datasetModel.Document
-	files            map[string]*fileModel.UploadFile
-	referenceCount   int64
-	chunkCount       int64
-	embeddingCount   int64
-	created          *datalibModel.KnowledgeBaseAssetRef
-	lastRefFilter    datalibRepo.KnowledgeBaseAssetRefListFilter
-	pendingSyncRunID uuid.UUID
-	failedSyncRunID  uuid.UUID
-	removedRefID     uuid.UUID
-	lastAssetFilter  datalibRepo.DocumentAssetListFilter
+	dataset              *datasetModel.Dataset
+	assets               []*datalibModel.DocumentAsset
+	existingRef          *datalibModel.KnowledgeBaseAssetRef
+	refs                 []*datalibModel.KnowledgeBaseAssetRef
+	documents            []*datasetModel.Document
+	files                map[string]*fileModel.UploadFile
+	referenceCount       int64
+	chunkCount           int64
+	embeddingCount       int64
+	targetEmbeddingCount *int64
+	chunks               []*datalibModel.DocumentChunk
+	created              *datalibModel.KnowledgeBaseAssetRef
+	lastRefFilter        datalibRepo.KnowledgeBaseAssetRefListFilter
+	pendingSyncRunID     uuid.UUID
+	failedSyncRunID      uuid.UUID
+	removedRefID         uuid.UUID
+	lastAssetFilter      datalibRepo.DocumentAssetListFilter
 }
 
 func newKnowledgeBaseFileRefTestService(deps *fakeKnowledgeBaseFileRefDeps) KnowledgeBaseFileRefService {
@@ -610,7 +618,18 @@ func (f *fakeKnowledgeBaseFileRefDeps) CountByAssetGenerationAndTypes(ctx contex
 	return f.chunkCount, nil
 }
 
+func (f *fakeKnowledgeBaseFileRefDeps) List(ctx context.Context, filter datalibRepo.DocumentChunkListFilter) ([]*datalibModel.DocumentChunk, int64, error) {
+	return f.chunks, int64(len(f.chunks)), nil
+}
+
 func (f *fakeKnowledgeBaseFileRefDeps) CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error) {
+	return f.embeddingCount, nil
+}
+
+func (f *fakeKnowledgeBaseFileRefDeps) CountReadyByAssetGenerationModel(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, provider string, embeddingModel string) (int64, error) {
+	if f.targetEmbeddingCount != nil {
+		return *f.targetEmbeddingCount, nil
+	}
 	return f.embeddingCount, nil
 }
 
@@ -621,11 +640,6 @@ func (f *fakeKnowledgeBaseFileRefDeps) Create(ctx context.Context, item *datalib
 
 func (f *fakeKnowledgeBaseFileRefDeps) FindActiveByAsset(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, error) {
 	return f.existingRef, nil
-}
-
-func (f *fakeKnowledgeBaseFileRefDeps) List(ctx context.Context, filter datalibRepo.KnowledgeBaseAssetRefListFilter) ([]*datalibModel.KnowledgeBaseAssetRef, int64, error) {
-	f.lastRefFilter = filter
-	return f.refs, int64(len(f.refs)), nil
 }
 
 func (f *fakeKnowledgeBaseFileRefDeps) ListByTenantAndIDs(ctx context.Context, tenantID string, ids []string) (map[string]*fileModel.UploadFile, error) {

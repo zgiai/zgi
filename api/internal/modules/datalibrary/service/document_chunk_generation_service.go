@@ -79,7 +79,7 @@ func (s *documentChunkGenerationService) GenerateChunks(ctx context.Context, inp
 	if len(items) == 0 {
 		return nil, ErrDocumentChunksRequired
 	}
-	if err := s.chunks.DeleteByAssetGeneration(ctx, input.OrganizationID, input.AssetID, input.GenerationNo); err != nil {
+	if err := s.chunks.DeleteByAsset(ctx, input.OrganizationID, input.AssetID); err != nil {
 		return nil, err
 	}
 	if err := s.chunks.CreateBatch(ctx, items); err != nil {
