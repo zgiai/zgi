@@ -1,6 +1,7 @@
 import React from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { useWorkflowStore } from '../../../store';
+import { canPlaceNodeInContainer } from '../../../store/helpers/container-rules';
 import type { WorkflowNode } from '../../../store';
 import { useCreateNodeModal, type OriginatingEdgeInfo } from '../../../hooks/use-create-node-modal';
 import {
@@ -77,21 +78,20 @@ export const useCreationActions = ({
       }),
     [originatingHandle, originatingEdge]
   );
+  const containerContextType = useWorkflowStore(state =>
+    containerContextId
+      ? ((state.nodes.find(n => n.id === containerContextId)?.data || {}) as { type?: string }).type
+      : undefined
+  );
 
   const createNodeByTypeWrapper = React.useCallback(
     (type: string, pos: { x: number; y: number }, initialData?: any) => {
-      if (
-        containerContextId &&
-        (type === 'iteration' ||
-          type === 'approval' ||
-          type === 'announcement' ||
-          type === 'question-answer')
-      ) {
+      if (containerContextId && !canPlaceNodeInContainer(type, containerContextType)) {
         return null;
       }
       return createNodeByType(type, pos, containerContextId, initialData);
     },
-    [containerContextId, createNodeByType]
+    [containerContextId, containerContextType, createNodeByType]
   );
 
   const handleOpenChange = React.useCallback(

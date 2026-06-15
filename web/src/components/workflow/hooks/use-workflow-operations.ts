@@ -296,10 +296,6 @@ const useWorkflowOperations = () => {
 
   const addAnnouncementNode = useCallback(
     (position: { x: number; y: number }, parentId?: string): string | null => {
-      if (parentId) {
-        return null;
-      }
-
       return addNodeWithContainerCheck(
         {
           ...DEFAULT_ANNOUNCEMENT_NODE_DATA,

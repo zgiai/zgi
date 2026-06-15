@@ -3,6 +3,7 @@ import { useWorkflowOperations } from '../../hooks';
 import { NODE_TYPES } from '../../nodes';
 import { useCreateNodeModal } from '../../hooks/use-create-node-modal';
 import { useWorkflowStore } from '../../store';
+import { canPlaceNodeInContainer } from '../../store/helpers/container-rules';
 import { resolveContainerContextId } from './services/context';
 import { createNodeByTypeFactory } from './services/create-node';
 import { useNodeTypesI18n } from './constants/node-types';
@@ -92,6 +93,11 @@ const CreateNodeModal: React.FC<CreateNodeModalProps> = ({
     originatingHandle: activeHandle,
     originatingEdge: activeEdge,
   });
+  const containerContextType = useWorkflowStore(state =>
+    containerContextId
+      ? ((state.nodes.find(n => n.id === containerContextId)?.data || {}) as { type?: string }).type
+      : undefined
+  );
 
   const createNodeByType = React.useMemo(
     () =>
@@ -190,18 +196,7 @@ const CreateNodeModal: React.FC<CreateNodeModalProps> = ({
     // Filter out types that cannot be added
     const filteredTypes = baseTypes.filter(nt => {
       if (containerContextId) {
-        if (
-          nt.type === 'start' ||
-          nt.type === 'end' ||
-          nt.type === 'approval' ||
-          nt.type === 'announcement' ||
-          nt.type === 'question-answer' ||
-          nt.type === 'iteration' ||
-          nt.type === 'loop'
-        ) {
-          return false;
-        }
-        return true;
+        return canPlaceNodeInContainer(nt.type, containerContextType);
       }
       if (nt.type === 'loop-end') return false;
       if (nt.type === 'start') return !hasStartNode;
@@ -227,6 +222,7 @@ const CreateNodeModal: React.FC<CreateNodeModalProps> = ({
     activeEdge,
     i18nTypes,
     containerContextId,
+    containerContextType,
     hasStartNode,
     agentType,
     labels,
