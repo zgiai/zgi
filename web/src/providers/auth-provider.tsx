@@ -13,6 +13,38 @@ interface AuthProviderProps {
   children: React.ReactNode;
 }
 
+function syncWorkspaceStoreForContextChange(event: AuthSyncEvent): void {
+  const { payload } = event;
+  if (!payload) {
+    return;
+  }
+
+  const workspaceStore = useWorkspaceStore.getState();
+  const workspaceID = payload.currentWorkspaceId;
+
+  if (workspaceID === null || workspaceID === '') {
+    workspaceStore.resetForOrganizationSwitch();
+    return;
+  }
+
+  if (payload.currentOrganizationId) {
+    workspaceStore.resetForOrganizationSwitch();
+    return;
+  }
+
+  if (typeof workspaceID !== 'string') {
+    return;
+  }
+
+  const nextWorkspace = workspaceStore.workspaces.find(workspace => workspace.id === workspaceID);
+  if (nextWorkspace) {
+    workspaceStore.selectWorkspace(nextWorkspace);
+    return;
+  }
+
+  workspaceStore.resetForOrganizationSwitch();
+}
+
 async function handleCrossTabEvent(event: AuthSyncEvent): Promise<void> {
   switch (event.type) {
     case 'SIGNED_IN': {
@@ -47,9 +79,7 @@ async function handleCrossTabEvent(event: AuthSyncEvent): Promise<void> {
       return;
     }
     case 'CONTEXT_CHANGED': {
-      if (event.payload?.currentWorkspaceId === null || event.payload?.currentOrganizationId) {
-        useWorkspaceStore.getState().resetForOrganizationSwitch();
-      }
+      syncWorkspaceStoreForContextChange(event);
       clearProfileClientCache();
       queryClient.clear();
       await useAuthStore.getState().initializeAuth({ force: true });
