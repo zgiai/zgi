@@ -75,6 +75,15 @@ func TestProcessTimelineRecorderPersistsToolGovernanceDecisionEvent(t *testing.T
 			"correlation_id": "corr-1",
 			"tool_id":        "file.delete",
 		},
+		"asset_operation_audit": map[string]interface{}{
+			"schema_version":    "tool_governance.asset_operation.v1",
+			"correlation_id":    "corr-1",
+			"tool_id":           "file.delete",
+			"effect":            "delete",
+			"asset_type":        "file",
+			"approval_status":   "pending",
+			"governance_status": "needs_approval",
+		},
 	})
 
 	event, ok := toolGovernanceDecisionEventFromMetadata(prepared.Message.Metadata, "corr-1")
@@ -83,6 +92,10 @@ func TestProcessTimelineRecorderPersistsToolGovernanceDecisionEvent(t *testing.T
 	}
 	if event["runtime_id"] != "tool_governance:corr-1" {
 		t.Fatalf("runtime_id = %#v, want tool_governance:corr-1", event["runtime_id"])
+	}
+	audit := governanceMapFromAny(event["asset_operation_audit"])
+	if audit["tool_id"] != "file.delete" || audit["approval_status"] != "pending" {
+		t.Fatalf("asset_operation_audit = %#v, want persisted audit payload", audit)
 	}
 }
 
@@ -305,6 +318,55 @@ func TestToolGovernanceDecisionMetadataRecordsRejectionWithoutGrant(t *testing.T
 	feedback := governanceMapFromAny(result["model_feedback"])
 	if feedback["status"] != "user_rejected" {
 		t.Fatalf("model_feedback = %#v, want user_rejected", feedback)
+	}
+}
+
+func TestResolvedToolGovernanceDecisionEventUpdatesAssetOperationAudit(t *testing.T) {
+	event := map[string]interface{}{
+		"correlation_id": "corr-1",
+		"governance": map[string]interface{}{
+			"status":            "needs_approval",
+			"requires_approval": true,
+			"asset_operation_audit": map[string]interface{}{
+				"schema_version":    "tool_governance.asset_operation.v1",
+				"correlation_id":    "corr-1",
+				"tool_id":           "file.delete",
+				"effect":            "delete",
+				"asset_type":        "file",
+				"approval_status":   "pending",
+				"governance_status": "needs_approval",
+				"assets": []interface{}{
+					map[string]interface{}{"id": "file-1", "type": "file", "name": "smoke.txt"},
+				},
+			},
+		},
+	}
+	resolvedBy := uuid.New().String()
+	updated := resolvedToolGovernanceDecisionEvent(event, map[string]interface{}{
+		"action":          "approve",
+		"approval_status": "approved",
+		"resolved_at":     "2026-06-15T12:00:00Z",
+		"resolved_by":     resolvedBy,
+		"approved_grant": map[string]interface{}{
+			"conversation_id":         "conversation-1",
+			"tool_id":                 "file.delete",
+			"effect":                  "delete",
+			"asset_type":              "file",
+			"risk_level":              "high",
+			"approval_correlation_id": "corr-1",
+		},
+	})
+
+	audit := governanceMapFromAny(updated["asset_operation_audit"])
+	if audit["approval_status"] != "approved" || audit["action"] != "approve" || audit["resolved_by"] != resolvedBy {
+		t.Fatalf("audit = %#v, want approved resolution metadata", audit)
+	}
+	if audit["approved_by_correlation_id"] != "corr-1" {
+		t.Fatalf("audit = %#v, want approval correlation", audit)
+	}
+	nested := governanceMapFromAny(governanceMapFromAny(updated["governance"])["asset_operation_audit"])
+	if nested["approval_status"] != "approved" || nested["resolved_at"] != "2026-06-15T12:00:00Z" {
+		t.Fatalf("nested audit = %#v, want updated audit payload", nested)
 	}
 }
 

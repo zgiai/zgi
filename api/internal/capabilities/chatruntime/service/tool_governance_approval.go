@@ -299,6 +299,9 @@ func toolGovernanceDecisionEventFromInvocation(invocation map[string]interface{}
 		"runtime_id":      invocation["runtime_id"],
 		"approval_status": invocation["approval_status"],
 	}
+	if audit := governanceMapFromAny(invocation["asset_operation_audit"]); len(audit) > 0 {
+		event["asset_operation_audit"] = audit
+	}
 	if result := governanceMapFromAny(invocation["result"]); len(result) > 0 {
 		if approvalEvent := governanceMapFromAny(result["approval_event"]); len(approvalEvent) > 0 {
 			event["approval_event"] = approvalEvent
@@ -313,6 +316,9 @@ func toolGovernanceDecisionEventFromInvocation(invocation map[string]interface{}
 			event["risk_level"] = manifest["risk_level"]
 			event["effect"] = manifest["effect"]
 			event["asset_type"] = manifest["asset_type"]
+		}
+		if audit := governanceMapFromAny(governance["asset_operation_audit"]); len(audit) > 0 {
+			event["asset_operation_audit"] = audit
 		}
 		if approvalEvent := governanceMapFromAny(governance["approval_event"]); len(approvalEvent) > 0 {
 			event["approval_event"] = approvalEvent
@@ -342,8 +348,41 @@ func resolvedToolGovernanceDecisionEvent(event map[string]interface{}, resolutio
 		updated["requires_approval"] = false
 	}
 	governance["approval_result"] = copyStringAnyMap(resolution)
+	if audit := resolvedToolGovernanceAssetOperationAudit(updated, governance, resolution); len(audit) > 0 {
+		updated["asset_operation_audit"] = audit
+		governance["asset_operation_audit"] = audit
+	}
 	updated["governance"] = governance
 	return compactSkillInvocation(updated)
+}
+
+func resolvedToolGovernanceAssetOperationAudit(event map[string]interface{}, governance map[string]interface{}, resolution map[string]interface{}) map[string]interface{} {
+	audit := governanceMapFromAny(event["asset_operation_audit"])
+	if len(audit) == 0 {
+		audit = governanceMapFromAny(governance["asset_operation_audit"])
+	}
+	if len(audit) == 0 {
+		return nil
+	}
+	approvalStatus := strings.TrimSpace(stringFromAny(resolution["approval_status"]))
+	if approvalStatus != "" {
+		audit["approval_status"] = approvalStatus
+	}
+	for _, key := range []string{"action", "reason", "resolved_at", "resolved_by", "remember_for_session"} {
+		if value, ok := resolution[key]; ok && value != nil {
+			audit[key] = value
+		}
+	}
+	if grant := governanceMapFromAny(resolution["approved_grant"]); len(grant) > 0 {
+		audit["approved_grant"] = grant
+		if correlationID := strings.TrimSpace(stringFromAny(grant["approval_correlation_id"])); correlationID != "" {
+			audit["approved_by_correlation_id"] = correlationID
+		}
+	}
+	if grant := governanceMapFromAny(resolution["session_grant"]); len(grant) > 0 {
+		audit["session_grant"] = grant
+	}
+	return compactSkillInvocation(audit)
 }
 
 func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event map[string]interface{}) map[string]interface{} {
@@ -375,8 +414,9 @@ func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event ma
 			continue
 		}
 		invocations[index] = mergeInvocation(invocation, map[string]interface{}{
-			"approval_status": event["approval_status"],
-			"governance":      event["governance"],
+			"approval_status":       event["approval_status"],
+			"governance":            event["governance"],
+			"asset_operation_audit": event["asset_operation_audit"],
 		})
 	}
 	applySkillInvocationSummary(metadata, invocations)

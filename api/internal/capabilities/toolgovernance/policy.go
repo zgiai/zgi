@@ -42,58 +42,51 @@ func Decide(req Request, policy Policy) Decision {
 	}
 
 	if manifest.ToolID == "" {
-		return base.withStatus(DecisionStatusDenied, "tool_id is required", false)
+		return finalizeDecision(base.withStatus(DecisionStatusDenied, "tool_id is required", false), tier, req.ConversationID)
 	}
 	if !tierAllowed(manifest, tier) {
-		return base.withStatus(DecisionStatusDenied, "permission tier is not allowed for this tool", false)
+		return finalizeDecision(base.withStatus(DecisionStatusDenied, "permission tier is not allowed for this tool", false), tier, req.ConversationID)
 	}
 	if isAssetOperation(manifest) && manifest.RequiresAssetResolution && len(assets) == 0 {
 		decision := base.withStatus(DecisionStatusNeedsResolution, "asset resolution is required before this tool can run", false)
-		decision.ModelFeedback = modelFeedback(decision, tier)
-		return decision
+		return finalizeDecision(decision, tier, req.ConversationID)
 	}
 	if policy.CriticalRiskBlocked && manifest.RiskLevel == RiskLevelCritical {
 		decision := base.withStatus(DecisionStatusBlocked, "critical risk tools are blocked by policy", false)
-		decision.ModelFeedback = modelFeedback(decision, tier)
-		return decision
+		return finalizeDecision(decision, tier, req.ConversationID)
 	}
 	if grant, ok := matchingSessionGrant(req.SessionGrants, req.ConversationID, manifest, assets); ok {
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by matching session grant", false)
 		decision = decision.withMatchedGrant(grant)
-		decision.ModelFeedback = modelFeedback(decision, tier)
-		return decision
+		return finalizeDecision(decision, tier, req.ConversationID)
 	}
 	if manifest.DefaultApprovalPolicy == ApprovalPolicyAlwaysAsk {
-		return base.needsApproval(tier, req.ConversationID, "tool manifest requires approval")
+		return finalizeDecision(base.needsApproval(tier, req.ConversationID, "tool manifest requires approval"), tier, req.ConversationID)
 	}
 	if manifest.DefaultApprovalPolicy == ApprovalPolicyNeverAsk && !policy.hardRequiresApproval(manifest) {
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by manifest approval policy", false)
-		decision.ModelFeedback = modelFeedback(decision, tier)
-		return decision
+		return finalizeDecision(decision, tier, req.ConversationID)
 	}
 	if policy.hardRequiresApproval(manifest) {
-		return base.needsApproval(tier, req.ConversationID, hardApprovalReason(policy, manifest))
+		return finalizeDecision(base.needsApproval(tier, req.ConversationID, hardApprovalReason(policy, manifest)), tier, req.ConversationID)
 	}
 
 	switch tier {
 	case PermissionTierFull:
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by full permission tier", false)
-		decision.ModelFeedback = modelFeedback(decision, tier)
-		return decision
+		return finalizeDecision(decision, tier, req.ConversationID)
 	case PermissionTierAdvanced:
 		if advancedTierAllows(manifest) {
 			decision := base.withStatus(DecisionStatusAllowed, "allowed by advanced permission tier", false)
-			decision.ModelFeedback = modelFeedback(decision, tier)
-			return decision
+			return finalizeDecision(decision, tier, req.ConversationID)
 		}
 	case PermissionTierBasic:
 		if basicTierAllows(manifest) {
 			decision := base.withStatus(DecisionStatusAllowed, "allowed by basic permission tier", false)
-			decision.ModelFeedback = modelFeedback(decision, tier)
-			return decision
+			return finalizeDecision(decision, tier, req.ConversationID)
 		}
 	}
-	return base.needsApproval(tier, req.ConversationID, "permission tier requires user approval for this tool")
+	return finalizeDecision(base.needsApproval(tier, req.ConversationID, "permission tier requires user approval for this tool"), tier, req.ConversationID)
 }
 
 func (d Decision) withStatus(status DecisionStatus, reason string, requiresApproval bool) Decision {
@@ -115,6 +108,12 @@ func (d Decision) withMatchedGrant(grant SessionGrant) Decision {
 	d.MatchedGrant = &grant
 	d.ApprovedByCorrelationID = strings.TrimSpace(grant.ApprovalCorrelationID)
 	return d
+}
+
+func finalizeDecision(decision Decision, tier PermissionTier, conversationID string) Decision {
+	decision.AssetOperationAudit = assetOperationAuditPayload(decision, tier, conversationID)
+	decision.ModelFeedback = modelFeedback(decision, tier)
+	return decision
 }
 
 func approvalEvent(decision Decision, tier PermissionTier, conversationID string) *ApprovalEvent {
@@ -169,7 +168,76 @@ func modelFeedback(decision Decision, tier PermissionTier) map[string]interface{
 			feedback["matched_assets"] = decision.MatchedGrant.Assets
 		}
 	}
+	if len(decision.AssetOperationAudit) > 0 {
+		feedback["asset_operation_audit"] = decision.AssetOperationAudit
+	}
 	return feedback
+}
+
+func assetOperationAuditPayload(decision Decision, tier PermissionTier, conversationID string) map[string]interface{} {
+	manifest := decision.Manifest
+	if !manifest.AuditRequired && !isAssetOperation(manifest) && !decision.RequiresApproval {
+		return nil
+	}
+	audit := map[string]interface{}{
+		"schema_version":       "tool_governance.asset_operation.v1",
+		"event_type":           "asset_operation",
+		"correlation_id":       strings.TrimSpace(decision.CorrelationID),
+		"conversation_id":      strings.TrimSpace(conversationID),
+		"governance_status":    string(decision.Status),
+		"requires_approval":    decision.RequiresApproval,
+		"decision_reason":      strings.TrimSpace(decision.Reason),
+		"tool_id":              manifest.ToolID,
+		"skill_id":             manifest.SkillID,
+		"domain":               manifest.Domain,
+		"effect":               string(manifest.Effect),
+		"asset_type":           manifest.AssetType,
+		"asset_count":          len(decision.Assets),
+		"risk_level":           string(manifest.RiskLevel),
+		"permission_tier":      string(tier),
+		"reversible":           manifest.Reversible,
+		"bulk_sensitive":       manifest.BulkSensitive,
+		"external_side_effect": manifest.ExternalSideEffect,
+		"audit_required":       manifest.AuditRequired,
+		"idempotency_required": manifest.IdempotencyRequired,
+	}
+	if len(manifest.PermissionScopes) > 0 {
+		audit["permission_scopes"] = manifest.PermissionScopes
+	}
+	if len(decision.Assets) > 0 {
+		audit["assets"] = decision.Assets
+	}
+	if decision.RequiresApproval {
+		audit["approval_status"] = "pending"
+	}
+	if decision.ApprovedByCorrelationID != "" {
+		audit["approval_status"] = "approved"
+		audit["approved_by_correlation_id"] = decision.ApprovedByCorrelationID
+	}
+	if decision.MatchedGrant != nil {
+		audit["matched_grant"] = *decision.MatchedGrant
+	}
+	return compactAuditPayload(audit)
+}
+
+func compactAuditPayload(payload map[string]interface{}) map[string]interface{} {
+	for key, value := range payload {
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) == "" {
+				delete(payload, key)
+			}
+		case []AssetRef:
+			if len(typed) == 0 {
+				delete(payload, key)
+			}
+		case []string:
+			if len(typed) == 0 {
+				delete(payload, key)
+			}
+		}
+	}
+	return payload
 }
 
 func (p Policy) withDefaults() Policy {

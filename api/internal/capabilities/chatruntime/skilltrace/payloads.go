@@ -74,6 +74,9 @@ func ToolGovernanceDecisionPayload(ids PayloadIDs, trace skills.SkillTrace) map[
 		payload["risk_level"] = trace.Governance.Manifest.RiskLevel
 		payload["effect"] = trace.Governance.Manifest.Effect
 		payload["asset_type"] = trace.Governance.Manifest.AssetType
+		if len(trace.Governance.AssetOperationAudit) > 0 {
+			payload["asset_operation_audit"] = trace.Governance.AssetOperationAudit
+		}
 		if trace.Governance.ApprovalEvent != nil {
 			payload["approval_event"] = trace.Governance.ApprovalEvent
 		}

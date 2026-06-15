@@ -174,12 +174,13 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 		return invocation
 	case streamEventToolGovernanceDecision:
 		invocation := newSkillInvocation("tool_governance", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "needs_approval"), map[string]interface{}{
-			"conversation_id": payload["conversation_id"],
-			"message_id":      payload["message_id"],
-			"duration_ms":     payload["duration_ms"],
-			"created_at":      payload["created_at"],
-			"governance":      governanceMapFromAny(payload["governance"]),
-			"approval_status": payload["approval_status"],
+			"conversation_id":       payload["conversation_id"],
+			"message_id":            payload["message_id"],
+			"duration_ms":           payload["duration_ms"],
+			"created_at":            payload["created_at"],
+			"governance":            governanceMapFromAny(payload["governance"]),
+			"asset_operation_audit": governanceMapFromAny(payload["asset_operation_audit"]),
+			"approval_status":       payload["approval_status"],
 			"result": map[string]interface{}{
 				"approval_event": governanceMapFromAny(payload["approval_event"]),
 			},

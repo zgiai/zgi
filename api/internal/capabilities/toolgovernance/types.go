@@ -119,6 +119,7 @@ type Decision struct {
 	Manifest                Manifest               `json:"manifest"`
 	Assets                  []AssetRef             `json:"assets,omitempty"`
 	ApprovalEvent           *ApprovalEvent         `json:"approval_event,omitempty"`
+	AssetOperationAudit     map[string]interface{} `json:"asset_operation_audit,omitempty"`
 	ModelFeedback           map[string]interface{} `json:"model_feedback,omitempty"`
 }
 

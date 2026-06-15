@@ -69,6 +69,55 @@ func TestDecideAdvancedDeleteNeedsApproval(t *testing.T) {
 	}
 }
 
+func TestDecideBuildsAssetOperationAuditPayload(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ConversationID: "conversation-1",
+		CorrelationID:  "corr-1",
+		Assets: []AssetRef{{
+			ID:          "file-1",
+			Type:        "file",
+			Name:        "report.pdf",
+			WorkspaceID: "workspace-1",
+			Source:      "console.files",
+		}},
+	}, DefaultPolicy())
+
+	audit := decision.AssetOperationAudit
+	if audit["schema_version"] != "tool_governance.asset_operation.v1" {
+		t.Fatalf("audit = %#v, want schema version", audit)
+	}
+	for key, want := range map[string]interface{}{
+		"event_type":        "asset_operation",
+		"correlation_id":    "corr-1",
+		"conversation_id":   "conversation-1",
+		"governance_status": string(DecisionStatusNeedsApproval),
+		"approval_status":   "pending",
+		"tool_id":           "file.delete",
+		"skill_id":          "internal-files",
+		"domain":            "files",
+		"effect":            "delete",
+		"asset_type":        "file",
+		"asset_count":       1,
+		"risk_level":        "high",
+		"permission_tier":   "basic",
+		"audit_required":    true,
+	} {
+		if audit[key] != want {
+			t.Fatalf("audit[%s] = %#v, want %#v in %#v", key, audit[key], want, audit)
+		}
+	}
+	assets, ok := audit["assets"].([]AssetRef)
+	if !ok || len(assets) != 1 || assets[0].ID != "file-1" || assets[0].WorkspaceID != "workspace-1" {
+		t.Fatalf("audit assets = %#v, want resolved file asset", audit["assets"])
+	}
+	feedbackAudit, ok := decision.ModelFeedback["asset_operation_audit"].(map[string]interface{})
+	if !ok || feedbackAudit["correlation_id"] != "corr-1" {
+		t.Fatalf("model feedback audit = %#v, want audit payload", decision.ModelFeedback["asset_operation_audit"])
+	}
+}
+
 func TestDecideFullDeleteStillNeedsApprovalByDefault(t *testing.T) {
 	decision := Decide(Request{
 		Manifest:       fileManifest(EffectDelete, RiskLevelLow),

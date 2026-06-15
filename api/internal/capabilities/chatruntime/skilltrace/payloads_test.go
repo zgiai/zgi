@@ -3,9 +3,44 @@ package skilltrace
 import (
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
+
+func TestToolGovernanceDecisionPayloadIncludesAssetOperationAudit(t *testing.T) {
+	payload := ToolGovernanceDecisionPayload(PayloadIDs{
+		ConversationID: "conversation-1",
+		MessageID:      "message-1",
+	}, skills.SkillTrace{
+		Kind:     "tool_governance",
+		SkillID:  skills.SkillFileReader,
+		ToolName: "delete_file",
+		Status:   string(toolgovernance.DecisionStatusNeedsApproval),
+		Governance: &toolgovernance.Decision{
+			Status:           toolgovernance.DecisionStatusNeedsApproval,
+			RequiresApproval: true,
+			CorrelationID:    "corr-1",
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "file.delete",
+				Effect:    toolgovernance.EffectDelete,
+				AssetType: "file",
+				RiskLevel: toolgovernance.RiskLevelHigh,
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"schema_version":  "tool_governance.asset_operation.v1",
+				"correlation_id":  "corr-1",
+				"tool_id":         "file.delete",
+				"approval_status": "pending",
+			},
+		},
+	})
+
+	audit, ok := payload["asset_operation_audit"].(map[string]interface{})
+	if !ok || audit["tool_id"] != "file.delete" || audit["approval_status"] != "pending" {
+		t.Fatalf("asset_operation_audit = %#v, want governance audit payload", payload["asset_operation_audit"])
+	}
+}
 
 func TestSummarizeToolResultCompactsAgentKnowledgePayload(t *testing.T) {
 	result := SummarizeToolResult(skills.SkillAgentKnowledge, "retrieve_agent_knowledge", []tools.ToolInvokeMessage{{
