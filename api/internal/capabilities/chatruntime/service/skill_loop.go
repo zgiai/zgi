@@ -79,6 +79,7 @@ func (s *service) runPreparedSkillStream(
 		Resolved:                 resolved,
 		ExecutionContext:         s.skillExecutionContext(prepared),
 		AdditionalSystemMessages: skillLoopAdditionalSystemMessages(prepared),
+		FinalAnswerGuard:         skillLoopFinalAnswerGuard(prepared),
 		OnChunk:                  onChunk,
 	})
 }
@@ -180,11 +181,80 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 		"The user is operating on the Console Files page. Treat visible file resources in operation_context as concrete user assets.",
 		"For requests about reading, previewing, summarizing, analyzing, or translating visible files, use file-reader/read_file with the resolved file_id.",
 		"For requests about deleting or removing a resolved visible file, use file-reader/delete_file with exactly that file_id. Tool governance handles the approval card before deletion; do not ask for a separate natural-language confirmation first.",
+		"If a prior approval or session grant exists, it only skips the approval prompt. You must still call file-reader/delete_file in this turn and wait for the tool result before saying the file was deleted.",
+		"Never claim a file was deleted, removed, updated, created, saved, or otherwise changed based only on previous conversation context.",
 		"If the target file is missing or ambiguous, call request_user_input with a concise clarification instead of guessing.",
 		"Do not call unrelated discovery or domain tools, such as database, knowledge, calculator, or file-generation tools, before completing the requested files-page asset operation.",
 		"Files-page context JSON: " + string(encoded),
 	}, "\n")
 	return adapter.Message{Role: "system", Content: content}, true
+}
+
+func skillLoopFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuard {
+	if prepared == nil || prepared.parts == nil || !skillIDEnabled(prepared.parts.SkillIDs, skills.SkillFileReader) {
+		return nil
+	}
+	parts := prepared.parts
+	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
+		!hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext) ||
+		!isFileDeleteIntent(parts.Query) {
+		return nil
+	}
+	targets := consoleFilesPromptResolvedTargets(parts)
+	if len(targets) == 0 {
+		return nil
+	}
+	targetSummary := consoleFilesGuardTargetSummary(targets)
+	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		if finalAnswerGuardHasSuccessfulTool(req, skills.SkillFileReader, "delete_file") {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		message := strings.Join([]string{
+			"The user's current files-page request is a concrete file deletion request for " + targetSummary + ".",
+			"Do not finish with a natural-language success message yet.",
+			"Load the file-reader skill if needed, then call call_skill_tool with skill_id \"file-reader\", tool_name \"delete_file\", and the resolved file_id for the target file.",
+			"A session approval grant may skip the approval card, but it does not replace the delete_file tool call.",
+			"Only after delete_file succeeds in this turn may you tell the user that the file was deleted. If the tool fails or the file is already missing, report the actual tool result.",
+		}, " ")
+		return skillloop.FinalAnswerGuardResult{
+			SkillID:  skills.SkillFileReader,
+			ToolName: "delete_file",
+			Message:  message,
+		}, true
+	}
+}
+
+func finalAnswerGuardHasSuccessfulTool(req skillloop.FinalAnswerGuardRequest, skillID string, toolName string) bool {
+	for _, call := range req.SuccessfulToolCalls {
+		if strings.EqualFold(strings.TrimSpace(call.SkillID), skillID) &&
+			strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func consoleFilesGuardTargetSummary(targets []map[string]interface{}) string {
+	if len(targets) == 0 {
+		return "the resolved visible file"
+	}
+	parts := make([]string, 0, len(targets))
+	for _, target := range targets {
+		fileID := strings.TrimSpace(stringFromAny(target["file_id"]))
+		name := strings.TrimSpace(stringFromAny(target["name"]))
+		switch {
+		case name != "" && fileID != "":
+			parts = append(parts, fmt.Sprintf("%s (%s)", name, fileID))
+		case name != "":
+			parts = append(parts, name)
+		case fileID != "":
+			parts = append(parts, fileID)
+		}
+	}
+	if len(parts) == 0 {
+		return "the resolved visible file"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func skillIDEnabled(skillIDs []string, target string) bool {

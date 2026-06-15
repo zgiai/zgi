@@ -89,7 +89,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	recoverableFailureRoundCount := 0
 	consecutiveRecoverableFailureRounds := 0
 	recoverableFailureCallCount := 0
+	finalAnswerGuardBlockCount := 0
 	skillToolCallCounts := map[string]int{}
+	successfulToolCalls := []SkillToolCallRef{}
 	skillUsed := false
 	loadedSkills := map[string]struct{}{}
 	maxSkillSteps := maxSkillStepsForTurn(resolved)
@@ -113,6 +115,31 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		text := assistantMessageText(planningMessage)
 		if text != "" && len(toolCalls) > 0 && !planningResult.progressStreamed {
 			r.emitAgentProgress(ctx, prepared, text, nil)
+		}
+		if len(toolCalls) == 0 {
+			if guardResult, blocked := runFinalAnswerGuard(req.FinalAnswerGuard, FinalAnswerGuardRequest{
+				Answer:              text,
+				Round:               round,
+				SkillUsed:           skillUsed,
+				ToolCallCount:       toolCallCount,
+				SuccessfulToolCalls: append([]SkillToolCallRef{}, successfulToolCalls...),
+			}); blocked {
+				finalAnswerGuardBlockCount++
+				if planningResult.answerStreamed && text != "" {
+					r.emitAnswerRetract(ctx, prepared, text, nil)
+				}
+				trace := finalAnswerGuardrailTrace(guardResult)
+				traces = append(traces, trace)
+				r.recordTrace(traces, trace)
+				r.logSkillTrace(ctx, prepared, trace)
+				if finalAnswerGuardBlockCount > defaultMaxConsecutiveRecoverableFailureRounds {
+					err := fmt.Errorf("%w: final answer guard blocked too many consecutive replies", ErrInvalidInput)
+					r.emitSkillError(ctx, prepared, failedSkillTrace("guardrail", guardResult.ToolName, err))
+					return answerBuilder.String(), usage, err
+				}
+				messages = append(messages, finalAnswerGuardSystemMessage(guardResult, text))
+				continue
+			}
 		}
 		if len(toolCalls) == 0 && prepared.parts.SkillMode == "required" && !skillUsed {
 			return answerBuilder.String(), usage, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
@@ -182,6 +209,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if result.usedTool {
 				toolCallCount++
 				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
+				if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
+					strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
+					successfulToolCalls = append(successfulToolCalls, SkillToolCallRef{
+						SkillID:  strings.TrimSpace(result.trace.SkillID),
+						ToolName: strings.TrimSpace(result.trace.ToolName),
+					})
+					finalAnswerGuardBlockCount = 0
+				}
 			}
 			if result.pendingApproval != nil {
 				return answerBuilder.String(), usage, &WorkflowApprovalPendingError{Payload: result.pendingApproval}
@@ -251,6 +286,45 @@ func validAdditionalSystemMessages(input []adapter.Message) []adapter.Message {
 		out = append(out, message)
 	}
 	return out
+}
+
+func runFinalAnswerGuard(guard FinalAnswerGuard, req FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool) {
+	if guard == nil {
+		return FinalAnswerGuardResult{}, false
+	}
+	result, blocked := guard(req)
+	if !blocked {
+		return FinalAnswerGuardResult{}, false
+	}
+	result.Message = strings.TrimSpace(result.Message)
+	if result.Message == "" {
+		result.Message = "The previous candidate final answer was blocked because a required skill/tool call has not succeeded in this turn. Continue planning and call the required skill/tool before claiming completion."
+	}
+	return result, true
+}
+
+func finalAnswerGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {
+	return skills.SkillTrace{
+		Kind:     "guardrail",
+		SkillID:  strings.TrimSpace(result.SkillID),
+		ToolName: strings.TrimSpace(result.ToolName),
+		Status:   "blocked",
+		Error:    strings.TrimSpace(result.Message),
+		Arguments: map[string]interface{}{
+			"next_step": "continue_planning",
+		},
+	}
+}
+
+func finalAnswerGuardSystemMessage(result FinalAnswerGuardResult, candidateAnswer string) adapter.Message {
+	lines := []string{
+		"Runtime guardrail feedback:",
+		strings.TrimSpace(result.Message),
+	}
+	if text := strings.TrimSpace(candidateAnswer); text != "" {
+		lines = append(lines, "Blocked candidate answer:\n"+text)
+	}
+	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}
 }
 
 func messageContent(content interface{}) string {

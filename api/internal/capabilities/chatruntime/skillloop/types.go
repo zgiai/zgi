@@ -102,7 +102,29 @@ type RunRequest struct {
 	Resolved                 *skills.ResolvedSkills
 	ExecutionContext         skills.ExecutionContext
 	AdditionalSystemMessages []adapter.Message
+	FinalAnswerGuard         FinalAnswerGuard
 	OnChunk                  func(string) error
+}
+
+type FinalAnswerGuard func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool)
+
+type FinalAnswerGuardRequest struct {
+	Answer              string
+	Round               int
+	SkillUsed           bool
+	ToolCallCount       int
+	SuccessfulToolCalls []SkillToolCallRef
+}
+
+type FinalAnswerGuardResult struct {
+	SkillID  string
+	ToolName string
+	Message  string
+}
+
+type SkillToolCallRef struct {
+	SkillID  string
+	ToolName string
 }
 
 type ModelInvocationTrace struct {

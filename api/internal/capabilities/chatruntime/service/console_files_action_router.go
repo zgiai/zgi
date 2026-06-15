@@ -23,6 +23,7 @@ const (
 
 var (
 	consoleFilesReadIntentPattern       = regexp.MustCompile(`(?i)\b(read|preview|summari[sz]e|summary|analy[sz]e|analysis|inspect|show)\b`)
+	consoleFilesDeleteIntentPattern     = regexp.MustCompile(`(?i)\b(delete|remove|trash|discard)\b`)
 	consoleFilesCapabilityPattern       = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])file\.read([^a-z0-9_.-]|$)`)
 	consoleFilesDeleteCapabilityPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])file\.delete([^a-z0-9_.-]|$)`)
 )
@@ -331,6 +332,28 @@ func isFileReadIntent(query string) bool {
 		"\u770b\u4e00\u4e0b\u5185\u5bb9",
 		"\u6587\u4ef6\u5185\u5bb9",
 		"\u9884\u89c8",
+	} {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func isFileDeleteIntent(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	if consoleFilesDeleteIntentPattern.MatchString(text) {
+		return true
+	}
+	for _, token := range []string{
+		"\u5220\u9664",
+		"\u5220\u6389",
+		"\u5220\u4e86",
+		"\u79fb\u9664",
+		"\u6e05\u7406",
 	} {
 		if strings.Contains(text, token) {
 			return true

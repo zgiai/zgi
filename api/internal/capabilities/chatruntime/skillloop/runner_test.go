@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
@@ -375,6 +376,131 @@ Use governed file tools.
 	}
 }
 
+func TestRunnerFinalAnswerGuardForcesRequiredToolBeforeCompletion(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a required tool.
+when_to_use: Use when testing final answer guards.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "The file has been deleted."},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"limited-calculator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_eval", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1+1",
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "tool-backed answer"},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "delete file-1"}},
+	})
+	guardCalls := 0
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		FinalAnswerGuard: func(req FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool) {
+			guardCalls++
+			for _, call := range req.SuccessfulToolCalls {
+				if call.SkillID == "limited-calculator" && call.ToolName == "evaluate_expression" {
+					return FinalAnswerGuardResult{}, false
+				}
+			}
+			return FinalAnswerGuardResult{
+				SkillID:  "limited-calculator",
+				ToolName: "evaluate_expression",
+				Message:  "call evaluate_expression before claiming completion",
+			}, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "tool-backed answer" {
+		t.Fatalf("answer = %q, want tool-backed answer", answer)
+	}
+	if guardCalls != 2 {
+		t.Fatalf("guard calls = %d, want 2", guardCalls)
+	}
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want guard-triggered replan plus tool run", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) < 2 || !runnerTestRequestContains(fakeLLM.appChatRequests[1], "Runtime guardrail feedback") {
+		t.Fatalf("second planning request did not include guardrail feedback")
+	}
+	foundGuardrail := false
+	for _, trace := range traces {
+		if trace.Kind == "guardrail" && trace.ToolName == "evaluate_expression" && strings.Contains(trace.Error, "call evaluate_expression") {
+			foundGuardrail = true
+			break
+		}
+	}
+	if !foundGuardrail {
+		t.Fatalf("traces = %#v, want final answer guardrail trace", traces)
+	}
+}
+
 func writeRunnerTestSkill(t *testing.T, catalogDir string, skillID string, content string) {
 	t.Helper()
 
@@ -405,6 +531,7 @@ func runnerTestSkillToolCall(callID string, skillID string, toolName string, arg
 
 type runnerTestLLMClient struct {
 	appChatResponses []*adapter.ChatResponse
+	appChatRequests  []*adapter.ChatRequest
 	appChatCalls     int
 }
 
@@ -437,6 +564,18 @@ func findRunnerTestEvent(events []Event, eventType string) *Event {
 	return nil
 }
 
+func runnerTestRequestContains(req *adapter.ChatRequest, text string) bool {
+	if req == nil {
+		return false
+	}
+	for _, message := range req.Messages {
+		if strings.Contains(messageContent(message.Content), text) {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *runnerTestLLMClient) Chat(ctx context.Context, organizationID string, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {
 	return nil, errors.New("not implemented")
 }
@@ -465,6 +604,7 @@ func (f *runnerTestLLMClient) AppChat(ctx context.Context, appCtx *llmclient.App
 	if f.appChatCalls >= len(f.appChatResponses) {
 		return nil, errors.New("unexpected AppChat call")
 	}
+	f.appChatRequests = append(f.appChatRequests, cloneChatRequest(req))
 	resp := f.appChatResponses[f.appChatCalls]
 	f.appChatCalls++
 	return resp, nil
