@@ -35,7 +35,7 @@ interface DocumentPagePreviewProps<ElementType extends DocumentPreviewElement> {
   selectedElementId?: string;
   onSelectElement: (element: ElementType) => void;
   pageLabel: string;
-  boxesLabel: string;
+  boxesLabel?: string;
   formatElementType: (type: string | undefined) => string;
   className?: string;
 }
@@ -74,7 +74,7 @@ export function DocumentPagePreview<ElementType extends DocumentPreviewElement>(
     <section className={cn('mx-auto w-full max-w-5xl', className)}>
       <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
         <span>{pageLabel}</span>
-        <span>{boxesLabel}</span>
+        {boxesLabel ? <span>{boxesLabel}</span> : null}
       </div>
       <div
         className="relative overflow-hidden rounded-xl border border-border bg-background shadow-sm"

@@ -26,6 +26,7 @@ import { useT } from '@/i18n';
 import type { FileDocumentChunk } from '@/services/types/file';
 import { useFileChunks, useUpdateFileChunk } from '@/hooks/file/use-file-chunks';
 import { cn } from '@/lib/utils';
+import type { FilePreviewLocator } from './file-original-preview-panel';
 
 interface FileChunksPanelProps {
   fileId: string;
@@ -33,15 +34,21 @@ interface FileChunksPanelProps {
   className?: string;
   originalPreviewHidden?: boolean;
   onToggleOriginalPreview?: () => void;
+  onLocateIssue?: (locator: FilePreviewLocator) => void;
 }
 
 type ChunkFilter = 'all' | 'issues' | 'enabled' | 'disabled';
+const SHOW_CHUNK_QUALITY_ISSUES = false;
+
 interface ChunkQualityIssue {
   id?: string;
   type?: string;
   reason?: string;
   status?: string;
   confidence?: number;
+  originalContent?: string;
+  contentExcerpt?: string;
+  sourceLocator?: FilePreviewLocator;
 }
 type FilesTranslator = ((key: string, values?: Record<string, unknown>) => string) & {
   has?: (key: string) => boolean;
@@ -67,6 +74,7 @@ export function FileChunksPanel({
   className,
   originalPreviewHidden = false,
   onToggleOriginalPreview,
+  onLocateIssue,
 }: FileChunksPanelProps) {
   const t = useT('files');
   const [editingPrimaryChunkId, setEditingPrimaryChunkId] = useState<string | null>(null);
@@ -89,7 +97,7 @@ export function FileChunksPanel({
     return primaryChunks.filter(chunk => {
       if (filter === 'enabled' && !chunk.enabled) return false;
       if (filter === 'disabled' && chunk.enabled) return false;
-      if (filter === 'issues' && !hasChunkQualityIssues(chunk)) return false;
+      if (SHOW_CHUNK_QUALITY_ISSUES && filter === 'issues' && !hasChunkQualityIssues(chunk)) return false;
       if (!keyword) return true;
       return (
         chunk.content.toLowerCase().includes(keyword) ||
@@ -115,6 +123,12 @@ export function FileChunksPanel({
   useEffect(() => {
     setSelectedChunkIds(current => current.filter(id => visibleChunkIds.includes(id)));
   }, [visibleChunkIds]);
+
+  useEffect(() => {
+    if (!SHOW_CHUNK_QUALITY_ISSUES && filter === 'issues') {
+      setFilter('all');
+    }
+  }, [filter]);
 
   const startEditPrimary = (chunk: FileDocumentChunk) => {
     setEditingPrimaryChunkId(chunk.id);
@@ -238,7 +252,9 @@ export function FileChunksPanel({
             aria-label={t('detail.chunks.filters.all')}
           >
             <option value="all">{t('detail.chunks.filters.all')}</option>
-            <option value="issues">{t('detail.chunks.filters.issues')}</option>
+            {SHOW_CHUNK_QUALITY_ISSUES ? (
+              <option value="issues">{t('detail.chunks.filters.issues')}</option>
+            ) : null}
             <option value="enabled">{t('detail.chunks.filters.enabled')}</option>
             <option value="disabled">{t('detail.chunks.filters.disabled')}</option>
           </select>
@@ -321,6 +337,7 @@ export function FileChunksPanel({
                 onSelect={toggleChunkSelected}
                 onToggleEnabled={toggleChunkEnabled}
                 onToggleExpanded={toggleExpanded}
+                onLocateIssue={onLocateIssue}
               />
             ))}
           </div>
@@ -344,6 +361,7 @@ function PrimaryChunkCard({
   onSelect,
   onToggleEnabled,
   onToggleExpanded,
+  onLocateIssue,
 }: {
   chunk: FileDocumentChunk;
   expanded: boolean;
@@ -358,10 +376,11 @@ function PrimaryChunkCard({
   onSelect: (chunkId: string, checked: boolean) => void;
   onToggleEnabled: (chunk: FileDocumentChunk, checked: boolean) => Promise<void>;
   onToggleExpanded: (chunkId: string) => void;
+  onLocateIssue?: (locator: FilePreviewLocator) => void;
 }) {
   const t = useT('files');
   const children = chunk.children ?? [];
-  const qualityIssues = chunkQualityIssues(chunk);
+  const qualityIssues = SHOW_CHUNK_QUALITY_ISSUES ? chunkQualityIssues(chunk) : [];
 
   return (
     <article
@@ -427,14 +446,15 @@ function PrimaryChunkCard({
       </div>
 
       {qualityIssues.length > 0 ? (
-        <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-sm text-warning">
+        <div className="mt-4 space-y-2 rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-sm text-warning">
           <div className="font-medium">{t('detail.chunks.issues.title')}</div>
-          <div className="mt-1 text-warning/90">
-            {qualityIssues
-              .map(issue => qualityIssueText(issue, t as FilesTranslator))
-              .filter(Boolean)
-              .join('、')}
-          </div>
+          {qualityIssues.map(issue => (
+            <ChunkIssueRow
+              key={issue.id || `${issue.reason}-${issue.contentExcerpt}`}
+              issue={issue}
+              onLocateIssue={onLocateIssue}
+            />
+          ))}
         </div>
       ) : null}
 
@@ -472,7 +492,13 @@ function PrimaryChunkCard({
           </div>
         </div>
       ) : (
-        <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-foreground">{chunk.content}</p>
+        <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-foreground">
+          <HighlightedChunkContent
+            content={chunk.content}
+            issues={qualityIssues}
+            onLocateIssue={onLocateIssue}
+          />
+        </p>
       )}
 
       <div className="mt-5 flex flex-wrap items-center gap-3 text-sm">
@@ -529,7 +555,202 @@ function chunkQualityIssues(chunk: FileDocumentChunk): ChunkQualityIssue[] {
       reason: typeof item.reason === 'string' ? item.reason : undefined,
       status: typeof item.status === 'string' ? item.status : undefined,
       confidence: typeof item.confidence === 'number' ? item.confidence : undefined,
+      originalContent: typeof item.original_content === 'string' ? item.original_content : undefined,
+      contentExcerpt: typeof item.content_excerpt === 'string' ? item.content_excerpt : undefined,
+      sourceLocator: parseIssueSourceLocator(item),
     }));
+}
+
+function ChunkIssueRow({
+  issue,
+  onLocateIssue,
+}: {
+  issue: ChunkQualityIssue;
+  onLocateIssue?: (locator: FilePreviewLocator) => void;
+}) {
+  const t = useT('files');
+  const locator = issue.sourceLocator;
+  const canLocate = Boolean(locator?.bbox && Number.isFinite(locator.page));
+  const page = locator?.page;
+  const excerpt = issue.contentExcerpt || issue.originalContent;
+
+  return (
+    <div className="rounded border border-warning/20 bg-background/70 px-2.5 py-2 text-warning">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">{qualityIssueText(issue, t as FilesTranslator)}</span>
+        {Number.isFinite(page) ? (
+          <Badge variant="outline" className="border-warning/30 text-warning">
+            {t('detail.chunks.issues.page', { page })}
+          </Badge>
+        ) : null}
+        {canLocate && onLocateIssue ? (
+          <Button
+            type="button"
+            variant="link"
+            className="h-auto p-0 text-warning"
+            onClick={() => onLocateIssue(locator as FilePreviewLocator)}
+          >
+            {t('detail.chunks.issues.locate')}
+          </Button>
+        ) : (
+          <span className="text-xs text-warning/80">{t('detail.chunks.issues.impreciseLocation')}</span>
+        )}
+      </div>
+      {excerpt ? (
+        <div className="mt-1 line-clamp-2 text-xs leading-5 text-warning/85">
+          {t('detail.chunks.issues.excerpt', { text: excerpt })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function HighlightedChunkContent({
+  content,
+  issues,
+  onLocateIssue,
+}: {
+  content: string;
+  issues: ChunkQualityIssue[];
+  onLocateIssue?: (locator: FilePreviewLocator) => void;
+}) {
+  const ranges = issueHighlightRanges(content, issues);
+  if (ranges.length === 0) {
+    return <>{content}</>;
+  }
+  const parts: Array<{ text: string; highlighted: boolean; locator?: FilePreviewLocator }> = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start > cursor) {
+      parts.push({ text: content.slice(cursor, range.start), highlighted: false });
+    }
+    parts.push({ text: content.slice(range.start, range.end), highlighted: true, locator: range.locator });
+    cursor = range.end;
+  }
+  if (cursor < content.length) {
+    parts.push({ text: content.slice(cursor), highlighted: false });
+  }
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.highlighted ? (
+          <mark
+            key={index}
+            role={part.locator && onLocateIssue ? 'button' : undefined}
+            tabIndex={part.locator && onLocateIssue ? 0 : undefined}
+            className={cn(
+              'rounded bg-warning/20 px-0.5 text-warning',
+              part.locator && onLocateIssue && 'cursor-pointer ring-warning/30 hover:ring-2'
+            )}
+            onClick={() => {
+              if (part.locator && onLocateIssue) {
+                onLocateIssue(part.locator);
+              }
+            }}
+            onKeyDown={event => {
+              if (!part.locator || !onLocateIssue) return;
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onLocateIssue(part.locator);
+              }
+            }}
+          >
+            {part.text}
+          </mark>
+        ) : (
+          <span key={index}>{part.text}</span>
+        )
+      )}
+    </>
+  );
+}
+
+function issueHighlightRanges(content: string, issues: ChunkQualityIssue[]) {
+  const ranges: Array<{ start: number; end: number; locator?: FilePreviewLocator }> = [];
+  for (const issue of issues) {
+    const candidates = [issue.originalContent, issue.contentExcerpt]
+      .map(value => normalizeHighlightCandidate(value))
+      .filter((value): value is string => Boolean(value));
+    for (const candidate of candidates) {
+      const start = content.indexOf(candidate);
+      if (start >= 0) {
+        ranges.push({ start, end: start + candidate.length, locator: issue.sourceLocator });
+        break;
+      }
+    }
+  }
+  return mergeRanges(ranges);
+}
+
+function normalizeHighlightCandidate(value?: string) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.endsWith('...') ? trimmed.slice(0, -3).trim() : trimmed;
+}
+
+function mergeRanges(ranges: Array<{ start: number; end: number; locator?: FilePreviewLocator }>) {
+  if (ranges.length <= 1) {
+    return ranges;
+  }
+  const sorted = [...ranges].sort((a, b) => a.start - b.start);
+  const merged: Array<{ start: number; end: number; locator?: FilePreviewLocator }> = [];
+  for (const range of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && range.start <= last.end) {
+      last.end = Math.max(last.end, range.end);
+      last.locator = last.locator || range.locator;
+      continue;
+    }
+    merged.push({ ...range });
+  }
+  return merged;
+}
+
+function parseIssueSourceLocator(item: Record<string, unknown>): FilePreviewLocator | undefined {
+  const raw = item.source_locator;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return undefined;
+  }
+  const locator = raw as Record<string, unknown>;
+  const page = numberValue(locator.page);
+  const bbox = parseIssueBBox(locator.bbox);
+  if (!bbox && page === undefined) {
+    return undefined;
+  }
+  return {
+    id: typeof item.id === 'string' ? item.id : undefined,
+    page,
+    bbox,
+    label: typeof item.reason === 'string' ? item.reason : undefined,
+  };
+}
+
+function parseIssueBBox(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const box = value as Record<string, unknown>;
+  const left = numberValue(box.left);
+  const top = numberValue(box.top);
+  const right = numberValue(box.right);
+  const bottom = numberValue(box.bottom);
+  if (left === undefined || top === undefined || right === undefined || bottom === undefined) {
+    return undefined;
+  }
+  return { left, top, right, bottom };
+}
+
+function numberValue(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
 
 function qualityIssueText(issue: ChunkQualityIssue, t: FilesTranslator) {

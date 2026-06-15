@@ -21,7 +21,10 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { FileOriginalPreviewPanel } from '@/components/files/detail/file-original-preview-panel';
+import {
+  FileOriginalPreviewPanel,
+  type FilePreviewLocator,
+} from '@/components/files/detail/file-original-preview-panel';
 import { FileChunksPanel } from '@/components/files/detail/file-chunks-panel';
 import { FileQAPanel } from '@/components/files/detail/file-qa-panel';
 import { useT } from '@/i18n';
@@ -305,6 +308,11 @@ function FilePreviewChunksWorkbench({
 }) {
   const t = useT('files');
   const [originalPreviewHidden, setOriginalPreviewHidden] = useState(false);
+  const [activePreviewLocator, setActivePreviewLocator] = useState<FilePreviewLocator | null>(null);
+  const locateIssue = (locator: FilePreviewLocator) => {
+    setOriginalPreviewHidden(false);
+    setActivePreviewLocator(locator);
+  };
 
   return (
     <div
@@ -332,7 +340,12 @@ function FilePreviewChunksWorkbench({
               {t('detail.previewToggle.hideOriginal')}
             </Button>
           </div>
-          <FileOriginalPreviewPanel file={file} className="h-full" hideHeader />
+          <FileOriginalPreviewPanel
+            file={file}
+            className="h-full"
+            hideHeader
+            activeLocator={activePreviewLocator}
+          />
         </section>
       ) : null}
       <section className="min-h-0 min-w-0 overflow-hidden">
@@ -342,6 +355,7 @@ function FilePreviewChunksWorkbench({
           className="h-full"
           originalPreviewHidden={originalPreviewHidden}
           onToggleOriginalPreview={() => setOriginalPreviewHidden(current => !current)}
+          onLocateIssue={locateIssue}
         />
       </section>
     </div>
