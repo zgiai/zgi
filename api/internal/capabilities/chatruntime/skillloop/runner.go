@@ -187,7 +187,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		var lastRecoverableTrace skills.SkillTrace
 		for _, call := range toolCalls {
 			stepCount++
-			result := r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, nil)
+			result := r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, userInputGuardState{
+				guard:               req.UserInputGuard,
+				round:               round,
+				skillUsed:           skillUsed,
+				toolCallCount:       toolCallCount,
+				attemptedToolCalls:  append([]SkillToolCallRef{}, attemptedToolCalls...),
+				successfulToolCalls: append([]SkillToolCallRef{}, successfulToolCalls...),
+			}, nil)
 			traces = append(traces, result.trace)
 			r.recordTrace(traces, result.trace)
 			r.logSkillTrace(ctx, prepared, result.trace)
@@ -313,6 +320,21 @@ func runFinalAnswerGuard(guard FinalAnswerGuard, req FinalAnswerGuardRequest) (F
 	return result, true
 }
 
+func runUserInputGuard(guard UserInputGuard, req UserInputGuardRequest) (FinalAnswerGuardResult, bool) {
+	if guard == nil {
+		return FinalAnswerGuardResult{}, false
+	}
+	result, blocked := guard(req)
+	if !blocked {
+		return FinalAnswerGuardResult{}, false
+	}
+	result.Message = strings.TrimSpace(result.Message)
+	if result.Message == "" {
+		result.Message = "The requested user clarification was blocked because runtime context already contains the information needed to continue. Continue planning and call the required skill/tool before asking the user."
+	}
+	return result, true
+}
+
 func finalAnswerGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {
 	return skills.SkillTrace{
 		Kind:     "guardrail",
@@ -322,6 +344,20 @@ func finalAnswerGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace 
 		Error:    strings.TrimSpace(result.Message),
 		Arguments: map[string]interface{}{
 			"next_step": "continue_planning",
+		},
+	}
+}
+
+func userInputGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {
+	return skills.SkillTrace{
+		Kind:     "guardrail",
+		SkillID:  strings.TrimSpace(result.SkillID),
+		ToolName: strings.TrimSpace(result.ToolName),
+		Status:   "blocked",
+		Error:    strings.TrimSpace(result.Message),
+		Arguments: map[string]interface{}{
+			"blocked_tool": "request_user_input",
+			"next_step":    "continue_planning",
 		},
 	}
 }

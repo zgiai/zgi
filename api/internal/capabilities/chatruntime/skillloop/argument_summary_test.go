@@ -3,6 +3,7 @@ package skillloop
 import (
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -48,5 +49,32 @@ func TestSummarizeSkillToolArgumentsKeepsFileReaderAssetIDs(t *testing.T) {
 	}
 	if _, ok := result["content"]; ok {
 		t.Fatalf("content should not be included in file-reader argument summary: %#v", result)
+	}
+}
+
+func TestApplyGovernedAssetArgumentsUsesAllowedGovernanceAsset(t *testing.T) {
+	trace := skills.SkillTrace{
+		Arguments: map[string]interface{}{
+			"file_id":   "file-wrong",
+			"max_chars": 8000,
+		},
+		Governance: &toolgovernance.Decision{
+			Status: toolgovernance.DecisionStatusAllowed,
+			Manifest: toolgovernance.Manifest{
+				Effect:    toolgovernance.EffectRead,
+				AssetType: "file",
+			},
+			Assets: []toolgovernance.AssetRef{{ID: "file-expected", Type: "file"}},
+		},
+	}
+
+	applyGovernedAssetArguments(&trace)
+
+	if trace.Arguments["file_id"] != "file-expected" {
+		t.Fatalf("file_id = %#v, want governed asset", trace.Arguments["file_id"])
+	}
+	rewrite, ok := trace.Arguments["governance_argument_rewrite"].(map[string]interface{})
+	if !ok || rewrite["from_file_id"] != "file-wrong" || rewrite["to_file_id"] != "file-expected" {
+		t.Fatalf("rewrite = %#v, want from/to ids", trace.Arguments["governance_argument_rewrite"])
 	}
 }

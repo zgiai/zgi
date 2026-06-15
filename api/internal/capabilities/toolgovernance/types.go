@@ -118,6 +118,7 @@ type Decision struct {
 	MatchedGrant            *SessionGrant          `json:"matched_grant,omitempty"`
 	Manifest                Manifest               `json:"manifest"`
 	Assets                  []AssetRef             `json:"assets,omitempty"`
+	ExpectedAssets          []AssetRef             `json:"expected_assets,omitempty"`
 	ApprovalEvent           *ApprovalEvent         `json:"approval_event,omitempty"`
 	AssetOperationAudit     map[string]interface{} `json:"asset_operation_audit,omitempty"`
 	ModelFeedback           map[string]interface{} `json:"model_feedback,omitempty"`
@@ -128,6 +129,7 @@ type Request struct {
 	PermissionTier PermissionTier
 	ConversationID string
 	Assets         []AssetRef
+	ExpectedAssets []AssetRef
 	SessionGrants  []SessionGrant
 	CorrelationID  string
 }

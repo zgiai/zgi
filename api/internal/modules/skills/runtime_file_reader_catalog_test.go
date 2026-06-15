@@ -130,3 +130,91 @@ func TestFileReaderSystemSkillGovernanceManifest(t *testing.T) {
 		t.Fatalf("delete audit_required = false, want true")
 	}
 }
+
+func TestFileReaderReadGovernanceAutoAllowsReadTools(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{"file-reader"})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get("file-reader")
+	if !ok {
+		t.Fatalf("file-reader skill was not resolved")
+	}
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	execCtx := ExecutionContext{
+		ConversationID: "conversation-1",
+		RuntimeParameters: map[string]interface{}{
+			"tool_governance_permission_tier": string(toolgovernance.PermissionTierBasic),
+		},
+	}
+
+	for _, tt := range []struct {
+		name      string
+		toolName  string
+		arguments map[string]interface{}
+	}{
+		{
+			name:     "list visible files",
+			toolName: "list_visible_files",
+		},
+		{
+			name:     "read file",
+			toolName: "read_file",
+			arguments: map[string]interface{}{
+				"file_id":   "file-1",
+				"file_name": "report.txt",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tool, ok := findSkillTool(*doc, tt.toolName)
+			if !ok {
+				t.Fatalf("%s tool not found", tt.toolName)
+			}
+			if tool.Governance == nil {
+				t.Fatalf("%s governance manifest missing", tt.toolName)
+			}
+			decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+				Manifest:         *tool.Governance,
+				SkillID:          SkillFileReader,
+				ToolName:         tt.toolName,
+				Arguments:        tt.arguments,
+				ExecutionContext: execCtx,
+			})
+			if err != nil {
+				t.Fatalf("DecideSkillTool() error = %v", err)
+			}
+			if decision.Status != toolgovernance.DecisionStatusAllowed {
+				t.Fatalf("decision status = %s, want allowed: %#v", decision.Status, decision)
+			}
+			if decision.RequiresApproval {
+				t.Fatalf("RequiresApproval = true, want false: %#v", decision)
+			}
+			if decision.ApprovalEvent != nil {
+				t.Fatalf("ApprovalEvent = %#v, want nil", decision.ApprovalEvent)
+			}
+		})
+	}
+
+	deleteTool, ok := findSkillTool(*doc, "delete_file")
+	if !ok {
+		t.Fatalf("delete_file tool not found")
+	}
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: *deleteTool.Governance,
+		SkillID:  SkillFileReader,
+		ToolName: "delete_file",
+		Arguments: map[string]interface{}{
+			"file_id":   "file-1",
+			"file_name": "report.txt",
+		},
+		ExecutionContext: execCtx,
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool(delete_file) error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusNeedsApproval || !decision.RequiresApproval {
+		t.Fatalf("delete decision = %#v, want needs_approval", decision)
+	}
+}

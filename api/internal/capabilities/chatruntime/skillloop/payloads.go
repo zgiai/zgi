@@ -186,3 +186,16 @@ func guardrailPayload(trace skills.SkillTrace) map[string]interface{} {
 		"next_step": "call load_skill with the same skill_id before reading references or calling skill tools",
 	}
 }
+
+func userInputGuardrailPayload(result FinalAnswerGuardResult, blockedMessage string, questions []map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"error":             strings.TrimSpace(result.Message),
+		"status":            "blocked",
+		"blocked_tool":      "request_user_input",
+		"blocked_message":   strings.TrimSpace(blockedMessage),
+		"blocked_questions": userInputQuestionSummaries(questions),
+		"skill_id":          strings.TrimSpace(result.SkillID),
+		"tool_name":         strings.TrimSpace(result.ToolName),
+		"next_step":         "continue planning and call the required skill/tool instead of asking the user to clarify information already resolved in runtime context",
+	}
+}

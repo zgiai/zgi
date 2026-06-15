@@ -381,7 +381,17 @@ func (r *Runtime) CallSkillTool(
 		return nil, fmt.Errorf("tool %s is not available in skill %s", strings.TrimSpace(toolName), doc.Metadata.ID)
 	}
 
-	governanceDecision, governed, preflight, err := r.preflightToolGovernance(ctx, *doc, toolDef, arguments, execCtx, callID)
+	executionArguments := copyStringAnyMap(arguments)
+	if executionArguments == nil {
+		executionArguments = map[string]interface{}{}
+	}
+	var governanceArgumentRewrite map[string]interface{}
+	if rewritten, rewriteSummary, ok := rewriteReadToolArgumentsFromResolvedAsset(toolDef.Governance, executionArguments, execCtx); ok {
+		executionArguments = rewritten
+		governanceArgumentRewrite = rewriteSummary
+	}
+
+	governanceDecision, governed, preflight, err := r.preflightToolGovernance(ctx, *doc, toolDef, executionArguments, execCtx, callID)
 	if preflight != nil {
 		return preflight, err
 	}
@@ -403,7 +413,7 @@ func (r *Runtime) CallSkillTool(
 		ToolName:          toolDef.Name,
 		TenantID:          execCtx.OrganizationID,
 		UserID:            execCtx.UserID,
-		Parameters:        arguments,
+		Parameters:        executionArguments,
 		ConversationID:    execCtx.ConversationID,
 		AppID:             execCtx.AppID,
 		MessageID:         execCtx.MessageID,
@@ -416,7 +426,10 @@ func (r *Runtime) CallSkillTool(
 		ToolName:   toolDef.Name,
 		Status:     "success",
 		DurationMS: time.Since(start).Milliseconds(),
-		Arguments:  summarizeArguments(arguments),
+		Arguments:  summarizeArguments(executionArguments),
+	}
+	if len(governanceArgumentRewrite) > 0 {
+		trace.Arguments["governance_argument_rewrite"] = governanceArgumentRewrite
 	}
 	if governed {
 		trace.Governance = &governanceDecision
@@ -517,17 +530,20 @@ func governanceToolFeedback(decision toolgovernance.Decision) map[string]interfa
 	feedback["reason"] = strings.TrimSpace(decision.Reason)
 	feedback["correlation_id"] = strings.TrimSpace(decision.CorrelationID)
 	feedback["requires_approval"] = decision.RequiresApproval
-	feedback["instruction"] = governanceInstruction(decision.Status)
+	feedback["instruction"] = governanceInstruction(decision)
 	return map[string]interface{}{
 		"governance": feedback,
 	}
 }
 
-func governanceInstruction(status toolgovernance.DecisionStatus) string {
-	switch status {
+func governanceInstruction(decision toolgovernance.Decision) string {
+	switch decision.Status {
 	case toolgovernance.DecisionStatusNeedsApproval:
 		return "The tool was not executed. Explain that user approval is required and wait for approval before retrying this action."
 	case toolgovernance.DecisionStatusNeedsResolution:
+		if len(decision.ExpectedAssets) > 0 {
+			return "The tool was not executed because the tool arguments did not match the resolved target asset. Retry the same tool with the exact ID from expected_assets; do not ask the user to clarify unless expected_assets is ambiguous or empty."
+		}
 		return "The tool was not executed. Ask the user to clarify the target asset or resolve the asset reference before retrying."
 	case toolgovernance.DecisionStatusDenied:
 		return "The tool was not executed. Explain the denial and continue with a safe alternative."

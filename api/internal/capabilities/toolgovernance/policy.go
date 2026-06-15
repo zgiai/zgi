@@ -22,6 +22,7 @@ func Decide(req Request, policy Policy) Decision {
 	policy = policy.withDefaults()
 	manifest := NormalizeManifest(req.Manifest)
 	assets := normalizeAssets(req.Assets)
+	expectedAssets := normalizeAssets(req.ExpectedAssets)
 	tier := NormalizePermissionTier(req.PermissionTier)
 	if tier == "" {
 		tier = policy.DefaultPermissionTier
@@ -35,10 +36,11 @@ func Decide(req Request, policy Policy) Decision {
 	}
 
 	base := Decision{
-		Status:        DecisionStatusAllowed,
-		CorrelationID: correlationID,
-		Manifest:      manifest,
-		Assets:        assets,
+		Status:         DecisionStatusAllowed,
+		CorrelationID:  correlationID,
+		Manifest:       manifest,
+		Assets:         assets,
+		ExpectedAssets: expectedAssets,
 	}
 
 	if manifest.ToolID == "" {
@@ -49,6 +51,10 @@ func Decide(req Request, policy Policy) Decision {
 	}
 	if isAssetOperation(manifest) && manifest.RequiresAssetResolution && len(assets) == 0 {
 		decision := base.withStatus(DecisionStatusNeedsResolution, "asset resolution is required before this tool can run", false)
+		return finalizeDecision(decision, tier, req.ConversationID)
+	}
+	if isAssetOperation(manifest) && manifest.RequiresAssetResolution && len(expectedAssets) > 0 && !assetsMatchExpectedAssets(assets, expectedAssets) {
+		decision := base.withStatus(DecisionStatusNeedsResolution, "tool arguments do not match resolved target assets", false)
 		return finalizeDecision(decision, tier, req.ConversationID)
 	}
 	if policy.CriticalRiskBlocked && manifest.RiskLevel == RiskLevelCritical {
@@ -171,6 +177,10 @@ func modelFeedback(decision Decision, tier PermissionTier) map[string]interface{
 	if len(decision.AssetOperationAudit) > 0 {
 		feedback["asset_operation_audit"] = decision.AssetOperationAudit
 	}
+	if len(decision.ExpectedAssets) > 0 {
+		feedback["expected_assets"] = decision.ExpectedAssets
+		feedback["expected_asset_count"] = len(decision.ExpectedAssets)
+	}
 	return feedback
 }
 
@@ -206,6 +216,9 @@ func assetOperationAuditPayload(decision Decision, tier PermissionTier, conversa
 	}
 	if len(decision.Assets) > 0 {
 		audit["assets"] = decision.Assets
+	}
+	if len(decision.ExpectedAssets) > 0 {
+		audit["expected_assets"] = decision.ExpectedAssets
 	}
 	if decision.RequiresApproval {
 		audit["approval_status"] = "pending"
@@ -345,6 +358,41 @@ func tierAllowed(manifest Manifest, tier PermissionTier) bool {
 		if allowed == tier {
 			return true
 		}
+	}
+	return false
+}
+
+func assetsMatchExpectedAssets(assets []AssetRef, expected []AssetRef) bool {
+	if len(assets) == 0 || len(expected) == 0 {
+		return true
+	}
+	for _, asset := range assets {
+		matched := false
+		for _, expectedAsset := range expected {
+			if assetMatchesExpectedAsset(asset, expectedAsset) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+func assetMatchesExpectedAsset(asset AssetRef, expected AssetRef) bool {
+	if asset.Type != "" && expected.Type != "" && asset.Type != expected.Type {
+		return false
+	}
+	if asset.WorkspaceID != "" && expected.WorkspaceID != "" && asset.WorkspaceID != expected.WorkspaceID {
+		return false
+	}
+	if asset.ID != "" || expected.ID != "" {
+		return asset.ID != "" && expected.ID != "" && asset.ID == expected.ID
+	}
+	if asset.Name != "" || expected.Name != "" {
+		return asset.Name != "" && expected.Name != "" && strings.EqualFold(asset.Name, expected.Name)
 	}
 	return false
 }

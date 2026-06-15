@@ -33,6 +33,7 @@ func TestRequestUserInputCallTerminatesTurnAndEmitsEvent(t *testing.T) {
 		0,
 		map[string]int{},
 		map[string]struct{}{},
+		userInputGuardState{},
 		nil,
 	)
 
@@ -83,6 +84,7 @@ func TestRequestUserInputRejectsInvalidArguments(t *testing.T) {
 		0,
 		map[string]int{},
 		map[string]struct{}{},
+		userInputGuardState{},
 		nil,
 	)
 
@@ -113,6 +115,7 @@ func TestRequestUserInputRequiresVisibleMessage(t *testing.T) {
 		0,
 		map[string]int{},
 		map[string]struct{}{},
+		userInputGuardState{},
 		nil,
 	)
 

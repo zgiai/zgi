@@ -91,6 +91,7 @@ func (s *service) runPreparedSkillStreamWithFinalAnswerGuard(
 		ExecutionContext:         s.skillExecutionContext(prepared),
 		AdditionalSystemMessages: skillLoopAdditionalSystemMessages(prepared),
 		FinalAnswerGuard:         combineFinalAnswerGuards(skillLoopFinalAnswerGuard(prepared), extraFinalAnswerGuard),
+		UserInputGuard:           skillLoopUserInputGuard(prepared),
 		OnChunk:                  onChunk,
 	})
 }
@@ -271,6 +272,32 @@ func skillLoopFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuar
 		})
 	}
 	return nil
+}
+
+func skillLoopUserInputGuard(prepared *PreparedChat) skillloop.UserInputGuard {
+	finalGuard := skillLoopFinalAnswerGuard(prepared)
+	if finalGuard == nil {
+		return nil
+	}
+	return func(req skillloop.UserInputGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		result, blocked := finalGuard(skillloop.FinalAnswerGuardRequest{
+			Answer:              req.Message,
+			Round:               req.Round,
+			SkillUsed:           req.SkillUsed,
+			ToolCallCount:       req.ToolCallCount,
+			AttemptedToolCalls:  req.AttemptedToolCalls,
+			SuccessfulToolCalls: req.SuccessfulToolCalls,
+		})
+		if !blocked {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		result.Message = strings.Join([]string{
+			"The request_user_input call was blocked because the files-page target is already resolved in runtime context.",
+			"Do not ask the user to choose between visible files, repeat a known file name, or confirm information already represented by resolved_targets_from_user_request.",
+			result.Message,
+		}, " ")
+		return result, true
+	}
 }
 
 func consoleFilesListRequiredToolFinalAnswerGuard() skillloop.FinalAnswerGuard {

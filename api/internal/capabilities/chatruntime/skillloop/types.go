@@ -103,10 +103,13 @@ type RunRequest struct {
 	ExecutionContext         skills.ExecutionContext
 	AdditionalSystemMessages []adapter.Message
 	FinalAnswerGuard         FinalAnswerGuard
+	UserInputGuard           UserInputGuard
 	OnChunk                  func(string) error
 }
 
 type FinalAnswerGuard func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool)
+
+type UserInputGuard func(UserInputGuardRequest) (FinalAnswerGuardResult, bool)
 
 type FinalAnswerGuardRequest struct {
 	Answer              string
@@ -121,6 +124,16 @@ type FinalAnswerGuardResult struct {
 	SkillID  string
 	ToolName string
 	Message  string
+}
+
+type UserInputGuardRequest struct {
+	Message             string
+	Questions           []map[string]interface{}
+	Round               int
+	SkillUsed           bool
+	ToolCallCount       int
+	AttemptedToolCalls  []SkillToolCallRef
+	SuccessfulToolCalls []SkillToolCallRef
 }
 
 type SkillToolCallRef struct {

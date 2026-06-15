@@ -237,6 +237,57 @@ func TestSkillLoopFinalAnswerGuardBlocksChineseReadOrdinalWithoutToolCall(t *tes
 	}
 }
 
+func TestSkillLoopUserInputGuardBlocksConsoleFilesClarificationWhenTargetResolved(t *testing.T) {
+	prepared := preparedConsoleFilesGuardReadTest("\u8bf7\u8bfb\u53d6\u7b2c\u4e8c\u4e2a Excel \u6587\u4ef6\uff0c\u5e76\u6458\u8981")
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopUserInputGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopUserInputGuard() = nil, want guard for concrete console file read")
+	}
+	result, blocked := guard(skillloop.UserInputGuardRequest{
+		Message: "页面上有两个 Excel 文件，我需要确认您指的是哪一个。",
+		Questions: []map[string]interface{}{
+			{
+				"id":       "which_excel",
+				"question": "请选择要读取的 Excel 文件",
+				"options": []map[string]interface{}{
+					{"label": "budget-q1.xlsx"},
+					{"label": "budget-q2.xlsx"},
+				},
+			},
+		},
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard did not block clarification after runtime resolved the target file")
+	}
+	for _, want := range []string{
+		"request_user_input",
+		"already resolved",
+		"resolved_targets_from_user_request",
+		"budget-q2.xlsx",
+		"read_file",
+	} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("guard message missing %q in:\n%s", want, result.Message)
+		}
+	}
+
+	_, blocked = guard(skillloop.UserInputGuardRequest{
+		Message: "读取后还需要确认输出格式。",
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-4"}},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after the resolved read_file target had already been attempted")
+	}
+}
+
 func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesListWithoutToolCall(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesSemanticTestParts("\u6211\u73b0\u5728\u6709\u54ea\u4e9b\u6587\u4ef6", []consoleFilesTestFile{

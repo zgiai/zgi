@@ -37,6 +37,7 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 		PermissionTier: governancePermissionTier(params, governance),
 		ConversationID: req.ExecutionContext.ConversationID,
 		Assets:         governanceAssets(params, governance, req.Manifest, req.Arguments),
+		ExpectedAssets: governanceExpectedAssets(params, governance, req.Manifest),
 		SessionGrants:  governanceSessionGrants(params, governance),
 		CorrelationID:  governanceString(params, governance, governanceCorrelationIDKey, "correlation_id"),
 	}, g.policy), nil
@@ -58,11 +59,23 @@ func governancePermissionTier(params map[string]interface{}, governance map[stri
 
 func governanceAssets(params map[string]interface{}, governance map[string]interface{}, manifest toolgovernance.Manifest, arguments map[string]interface{}) []toolgovernance.AssetRef {
 	argumentAssets := assetRefsFromToolArguments(manifest, arguments)
-	runtimeAssets := assetRefsFromAny(firstRuntimeValue(params, governance, governanceAssetsKey, "assets"))
+	runtimeAssets := governanceExpectedAssets(params, governance, manifest)
 	if len(argumentAssets) > 0 {
 		return enrichArgumentAssetRefs(argumentAssets, runtimeAssets)
 	}
+	manifest = toolgovernance.NormalizeManifest(manifest)
+	if manifest.RequiresAssetResolution && len(runtimeAssets) > 0 {
+		return nil
+	}
 	return runtimeAssets
+}
+
+func governanceExpectedAssets(params map[string]interface{}, governance map[string]interface{}, manifest toolgovernance.Manifest) []toolgovernance.AssetRef {
+	manifest = toolgovernance.NormalizeManifest(manifest)
+	if !manifest.RequiresAssetResolution || strings.TrimSpace(manifest.AssetType) == "" {
+		return nil
+	}
+	return assetRefsFromAny(firstRuntimeValue(params, governance, governanceAssetsKey, "assets"))
 }
 
 func enrichArgumentAssetRefs(argumentAssets []toolgovernance.AssetRef, runtimeAssets []toolgovernance.AssetRef) []toolgovernance.AssetRef {
@@ -90,6 +103,58 @@ func enrichArgumentAssetRefs(argumentAssets []toolgovernance.AssetRef, runtimeAs
 		}
 	}
 	return out
+}
+
+func rewriteReadToolArgumentsFromResolvedAsset(manifest *toolgovernance.Manifest, arguments map[string]interface{}, execCtx ExecutionContext) (map[string]interface{}, map[string]interface{}, bool) {
+	if manifest == nil {
+		return nil, nil, false
+	}
+	normalized := toolgovernance.NormalizeManifest(*manifest)
+	if normalized.Effect != toolgovernance.EffectRead ||
+		!strings.EqualFold(strings.TrimSpace(normalized.AssetType), "file") ||
+		!normalized.RequiresAssetResolution {
+		return nil, nil, false
+	}
+	governance := governanceRuntimeParameters(execCtx.RuntimeParameters)
+	expected := governanceExpectedAssets(execCtx.RuntimeParameters, governance, normalized)
+	if len(expected) != 1 {
+		return nil, nil, false
+	}
+	expectedID := strings.TrimSpace(expected[0].ID)
+	if expectedID == "" {
+		return nil, nil, false
+	}
+	actual := assetRefsFromToolArguments(normalized, arguments)
+	if len(actual) == 1 && strings.TrimSpace(actual[0].ID) == expectedID {
+		return nil, nil, false
+	}
+	rewritten := copyStringAnyMap(arguments)
+	if rewritten == nil {
+		rewritten = map[string]interface{}{}
+	}
+	var fromID string
+	var fromName string
+	if len(actual) > 0 {
+		fromID = strings.TrimSpace(actual[0].ID)
+		fromName = strings.TrimSpace(actual[0].Name)
+	}
+	rewritten["file_id"] = expectedID
+	summary := map[string]interface{}{
+		"reason":     "resolved_asset_override",
+		"effect":     string(normalized.Effect),
+		"asset_type": normalized.AssetType,
+		"to_file_id": expectedID,
+	}
+	if fromID != "" {
+		summary["from_file_id"] = fromID
+	}
+	if fromName != "" {
+		summary["from_file_name"] = fromName
+	}
+	if expectedName := strings.TrimSpace(expected[0].Name); expectedName != "" {
+		summary["to_file_name"] = expectedName
+	}
+	return rewritten, summary, true
 }
 
 func matchingRuntimeAsset(asset toolgovernance.AssetRef, runtimeAssets []toolgovernance.AssetRef) (toolgovernance.AssetRef, bool, bool) {

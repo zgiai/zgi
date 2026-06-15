@@ -35,6 +35,30 @@ func TestDecideRequiresResolutionWhenAssetMissing(t *testing.T) {
 	}
 }
 
+func TestDecideRequiresResolutionWhenAssetDoesNotMatchExpectedTarget(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectRead, RiskLevelLow),
+		PermissionTier: PermissionTierBasic,
+		Assets:         []AssetRef{{ID: "file-1", Type: "file", Name: "first.xlsx"}},
+		ExpectedAssets: []AssetRef{{ID: "file-2", Type: "file", Name: "second.xlsx", WorkspaceID: "workspace-1"}},
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusNeedsResolution {
+		t.Fatalf("expected needs_resolution, got %s (%s)", decision.Status, decision.Reason)
+	}
+	if decision.Reason != "tool arguments do not match resolved target assets" {
+		t.Fatalf("reason = %q, want mismatch reason", decision.Reason)
+	}
+	expected, ok := decision.ModelFeedback["expected_assets"].([]AssetRef)
+	if !ok || len(expected) != 1 || expected[0].ID != "file-2" || expected[0].Name != "second.xlsx" {
+		t.Fatalf("expected_assets feedback = %#v", decision.ModelFeedback["expected_assets"])
+	}
+	auditExpected, ok := decision.AssetOperationAudit["expected_assets"].([]AssetRef)
+	if !ok || len(auditExpected) != 1 || auditExpected[0].WorkspaceID != "workspace-1" {
+		t.Fatalf("audit expected_assets = %#v", decision.AssetOperationAudit["expected_assets"])
+	}
+}
+
 func TestDecideBasicCreateNeedsApproval(t *testing.T) {
 	decision := Decide(Request{
 		Manifest: fileManifest(EffectCreate, RiskLevelLow),

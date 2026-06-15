@@ -13,6 +13,15 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
+type userInputGuardState struct {
+	guard               UserInputGuard
+	round               int
+	skillUsed           bool
+	toolCallCount       int
+	attemptedToolCalls  []SkillToolCallRef
+	successfulToolCalls []SkillToolCallRef
+}
+
 func (r *Runner) handleProgressiveSkillCall(
 	ctx context.Context,
 	prepared *PreparedChat,
@@ -22,6 +31,7 @@ func (r *Runner) handleProgressiveSkillCall(
 	currentToolCalls int,
 	skillToolCallCounts map[string]int,
 	loadedSkills map[string]struct{},
+	userInputGuard userInputGuardState,
 	onEvent func(Event) error,
 ) skillStepResult {
 	args, err := skills.ParseArguments(call.Function.Arguments)
@@ -63,7 +73,7 @@ func (r *Runner) handleProgressiveSkillCall(
 		}
 		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
 	case skills.MetaToolRequestUserInput:
-		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, onEvent)
+		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, userInputGuard, onEvent)
 	case skills.MetaToolIntermediateAnswer:
 		return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
 	default:
@@ -78,6 +88,7 @@ func (r *Runner) handleRequestUserInputCall(
 	prepared *PreparedChat,
 	callID string,
 	args map[string]interface{},
+	guardState userInputGuardState,
 	onEvent func(Event) error,
 ) skillStepResult {
 	questions, err := normalizeUserInputRequestArgs(args)
@@ -90,6 +101,18 @@ func (r *Runner) handleRequestUserInputCall(
 		err := fmt.Errorf("%w: message is required", ErrInvalidInput)
 		trace := failedSkillTrace("user_input_request", "", err)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "call request_user_input again with a brief user-visible message and one to five questions")), false, false)
+	}
+	if guardResult, blocked := runUserInputGuard(guardState.guard, UserInputGuardRequest{
+		Message:             visibleMessage,
+		Questions:           cloneQuestionMaps(questions),
+		Round:               guardState.round,
+		SkillUsed:           guardState.skillUsed,
+		ToolCallCount:       guardState.toolCallCount,
+		AttemptedToolCalls:  append([]SkillToolCallRef{}, guardState.attemptedToolCalls...),
+		SuccessfulToolCalls: append([]SkillToolCallRef{}, guardState.successfulToolCalls...),
+	}); blocked {
+		trace := userInputGuardrailTrace(guardResult)
+		return successfulSkillStep(trace, skills.ToolResultMessage(callID, userInputGuardrailPayload(guardResult, visibleMessage, questions)), false, false)
 	}
 	firstQuestion := stringFromInterface(questions[0]["question"])
 	trace := skills.SkillTrace{
@@ -314,7 +337,10 @@ func (r *Runner) handleCallSkillTool(
 		trace.Arguments = argumentSummary
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)
 	}
-	invocation.Trace.Arguments = argumentSummary
+	if !traceHasGovernanceArgumentRewrite(invocation.Trace) {
+		invocation.Trace.Arguments = argumentSummary
+	}
+	applyGovernedAssetArguments(&invocation.Trace)
 	if invocation.Trace.Governance != nil {
 		r.emitEvent(EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
 	}
@@ -372,6 +398,45 @@ func toolGovernanceApprovalPending(trace skills.SkillTrace) bool {
 	return trace.Governance != nil &&
 		trace.Governance.Status == toolgovernance.DecisionStatusNeedsApproval &&
 		trace.Governance.RequiresApproval
+}
+
+func traceHasGovernanceArgumentRewrite(trace skills.SkillTrace) bool {
+	if len(trace.Arguments) == 0 {
+		return false
+	}
+	_, ok := trace.Arguments["governance_argument_rewrite"]
+	return ok
+}
+
+func applyGovernedAssetArguments(trace *skills.SkillTrace) {
+	if trace == nil || trace.Governance == nil {
+		return
+	}
+	decision := trace.Governance
+	if decision.Status != toolgovernance.DecisionStatusAllowed ||
+		decision.Manifest.Effect != toolgovernance.EffectRead ||
+		!strings.EqualFold(strings.TrimSpace(decision.Manifest.AssetType), "file") ||
+		len(decision.Assets) != 1 {
+		return
+	}
+	fileID := strings.TrimSpace(decision.Assets[0].ID)
+	if fileID == "" {
+		return
+	}
+	if trace.Arguments == nil {
+		trace.Arguments = map[string]interface{}{}
+	}
+	previousID := strings.TrimSpace(stringFromInterface(trace.Arguments["file_id"]))
+	trace.Arguments["file_id"] = fileID
+	if previousID != "" && previousID != fileID {
+		trace.Arguments["governance_argument_rewrite"] = map[string]interface{}{
+			"reason":       "governed_asset_trace_alignment",
+			"effect":       string(decision.Manifest.Effect),
+			"asset_type":   decision.Manifest.AssetType,
+			"from_file_id": previousID,
+			"to_file_id":   fileID,
+		}
+	}
 }
 
 func isAgentWorkflowRunTool(skillID string, toolName string) bool {
