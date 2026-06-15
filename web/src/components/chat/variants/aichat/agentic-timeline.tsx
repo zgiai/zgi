@@ -742,14 +742,27 @@ function governanceSummaryRows(
   const riskLevel = governanceEventString(item, ['risk_level']);
   const assetType = governanceEventString(item, ['asset_type']);
   const assetCount = governanceAssetCount(item, assets);
+  const unknown = t('consoleChat.governance.values.unknown');
+  const normalizedEffect = effect?.toLowerCase();
+  const normalizedRiskLevel = riskLevel?.toLowerCase();
+  const isHighImpact =
+    normalizedEffect === 'delete' ||
+    normalizedEffect === 'publish' ||
+    normalizedEffect === 'external_send' ||
+    normalizedRiskLevel === 'high' ||
+    normalizedRiskLevel === 'critical';
+  const shouldSurfaceUnknowns = isToolGovernanceNeedsApproval(item) || isHighImpact;
+  const workspaceValue =
+    workspaces.length > 0 ? workspaces.join(', ') : shouldSurfaceUnknowns ? unknown : null;
+  const reversible = governanceBooleanLabel(governanceEventBoolean(item, ['reversible']), t);
   return [
     ['intent', governanceIntentText(item, assets, assetCount, t)],
     ['assetCount', assetCount > 0 ? String(assetCount) : null],
-    ['workspace', workspaces.length > 0 ? workspaces.join(', ') : null],
+    ['workspace', workspaceValue],
     ['effect', effect ? governanceEffectLabel(effect, t) : null],
     ['riskLevel', riskLevel ? governanceRiskLabel(riskLevel, t) : null],
     ['assetType', assetType ? governanceAssetTypeLabel(assetType, t) : null],
-    ['reversible', governanceBooleanLabel(governanceEventBoolean(item, ['reversible']), t)],
+    ['reversible', reversible ?? (shouldSurfaceUnknowns ? unknown : null)],
     ['bulkSensitive', governanceBooleanLabel(governanceEventBoolean(item, ['bulk_sensitive']), t)],
     [
       'externalSideEffect',

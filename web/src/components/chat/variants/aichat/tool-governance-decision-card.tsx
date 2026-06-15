@@ -69,6 +69,10 @@ export function ToolGovernanceDecisionCard({
     needsApproval ||
     Boolean(approvalStatus);
   const submitEnabled = canSubmit && Boolean(onSubmitDecision) && !submittingAction;
+  const actionsUnavailable =
+    needsApproval && !submittingAction && (!canSubmit || !onSubmitDecision)
+      ? t('consoleChat.governance.actionsUnavailable')
+      : null;
 
   const submitDecision = async (action: ToolGovernanceDecisionAction) => {
     if (!submitEnabled || !onSubmitDecision) return;
@@ -232,6 +236,9 @@ export function ToolGovernanceDecisionCard({
               </div>
               {submitError ? (
                 <div className="text-[11px] text-destructive">{submitError}</div>
+              ) : null}
+              {actionsUnavailable ? (
+                <div className="text-[11px] text-muted-foreground">{actionsUnavailable}</div>
               ) : null}
             </div>
           ) : approvalStatus ? (
