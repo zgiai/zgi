@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,8 +14,11 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
@@ -158,6 +164,189 @@ func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	assertToolGovernanceStreamEvents(t, events)
 }
 
+func TestRunToolGovernanceDecisionStreamApproveExecutesDeleteToolBeforeAnswer(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	provider := "deepseek"
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	metadata := pendingToolGovernanceDecisionMetadata("corr-approve")
+	metadata["configured_skill_ids"] = []interface{}{skills.SkillFileReader}
+	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})
+	governance := invocation["governance"].(map[string]interface{})
+	approvalEvent := governance["approval_event"].(map[string]interface{})
+	approvalEvent["assets"] = []interface{}{
+		map[string]interface{}{
+			"id":           "file-1",
+			"type":         "file",
+			"name":         "report.pdf",
+			"workspace_id": "workspace-1",
+		},
+	}
+	approvalEvent["grant"] = map[string]interface{}{
+		"conversation_id": conversationID.String(),
+		"tool_id":         "file.delete",
+		"effect":          "delete",
+		"asset_type":      "file",
+		"risk_level":      "high",
+		"assets": []interface{}{
+			map[string]interface{}{"id": "file-1", "type": "file", "name": "report.pdf"},
+		},
+	}
+
+	conversation := &runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		CallerType:     runtimemodel.ConversationCallerAIChat,
+		Title:          "Files",
+		Status:         runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:  runtimemodel.ConversationRuntimeStatusIdle,
+		Metadata:       map[string]interface{}{},
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	message := &runtimemodel.Message{
+		ID:              messageID,
+		ConversationID:  conversationID,
+		Query:           "Delete report.pdf",
+		Status:          runtimemodel.MessageStatusWaitingApproval,
+		ModelProvider:   &provider,
+		ModelName:       "deepseek-chat",
+		ModelParameters: map[string]interface{}{},
+		Metadata:        metadata,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	conversation.CurrentLeafMessageID = &messageID
+
+	deleteTool := &toolGovernanceStreamDeleteTool{}
+	runtime := newToolGovernanceStreamSkillRuntime(t, deleteTool)
+	llm := &toolGovernanceStreamLLM{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Deleted report.pdf."},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"file-reader"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							toolGovernanceStreamSkillToolCall("call_delete", skills.SkillFileReader, "delete_file", map[string]interface{}{
+								"file_id": "file-1",
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Deleted report.pdf after calling the delete tool."},
+				}},
+			},
+		},
+	}
+	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
+	conversationRepo := &toolGovernanceStreamConversationRepo{conversation: conversation}
+	svc := NewServiceWithSkillRuntime(
+		&repository.Repositories{
+			Access:       toolGovernanceStreamAccessRepo{},
+			Conversation: conversationRepo,
+			Message:      messageRepo,
+			SkillConfig:  toolGovernanceStreamSkillConfigRepo{skillID: skills.SkillFileReader},
+		},
+		llm,
+		nil,
+		toolGovernanceStreamModelSpecResolver{},
+		nil,
+		nil,
+		nil,
+		runtime,
+		nil,
+	).(*service)
+	svc.events = newStreamEventStore(nil)
+
+	var events []StreamEvent
+	result, err := svc.RunToolGovernanceDecisionStream(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		"corr-approve",
+		runtimedto.ToolGovernanceDecisionRequest{Action: "approve"},
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunToolGovernanceDecisionStream() error = %v", err)
+	}
+	if result.Status != runtimemodel.MessageStatusCompleted {
+		t.Fatalf("result status = %q, want completed", result.Status)
+	}
+	if result.Answer != "Deleted report.pdf after calling the delete tool." {
+		t.Fatalf("result answer = %q, want post-tool final answer", result.Answer)
+	}
+	if len(deleteTool.calls) != 1 || deleteTool.calls[0] != "file-1" {
+		t.Fatalf("delete calls = %#v, want one delete for approved file-1", deleteTool.calls)
+	}
+	if len(llm.appChatRequests) != 4 {
+		t.Fatalf("AppChat requests = %d, want direct answer, guard replan, tool call, final answer", len(llm.appChatRequests))
+	}
+	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "Runtime guardrail feedback") ||
+		!toolGovernanceStreamRequestContains(llm.appChatRequests[1], "approval is not the deletion itself") {
+		t.Fatalf("second planning request missing approval guard feedback")
+	}
+	if !toolGovernanceStreamRequestHasTool(llm.appChatRequests[2], skills.MetaToolCallSkillTool) {
+		t.Fatalf("third planning request should still expose %s tool", skills.MetaToolCallSkillTool)
+	}
+
+	metadataEvent, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, "corr-approve")
+	if !ok {
+		t.Fatalf("tool governance decision not persisted in metadata: %#v", message.Metadata)
+	}
+	if metadataEvent["approval_status"] != "approved" {
+		t.Fatalf("approval_status = %#v, want approved", metadataEvent["approval_status"])
+	}
+	if grants := mapSliceFromAny(message.Metadata["tool_governance_one_shot_grants"]); len(grants) != 1 {
+		t.Fatalf("one-shot grants = %#v, want one approved grant", grants)
+	}
+	if grants := mapSliceFromAny(conversation.Metadata["tool_governance_session_grants"]); len(grants) != 0 {
+		t.Fatalf("session grants = %#v, want none without remember_for_session", grants)
+	}
+	if guardrails := intValueFromAny(message.Metadata["guardrail_count"]); guardrails != 1 {
+		t.Fatalf("guardrail_count = %d in %#v, want 1 from final answer guard", guardrails, message.Metadata)
+	}
+	if toolCalls := intValueFromAny(message.Metadata["tool_call_count"]); toolCalls != 1 {
+		t.Fatalf("tool_call_count = %d in %#v, want 1 from delete tool execution", toolCalls, message.Metadata)
+	}
+	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileReader, "delete_file", "success") {
+		t.Fatalf("metadata skill_invocations = %#v, want successful file-reader/delete_file tool call", message.Metadata["skill_invocations"])
+	}
+	assertToolGovernanceApprovedStreamEvents(t, events)
+}
+
 func assertToolGovernanceStreamEvents(t *testing.T, events []StreamEvent) {
 	t.Helper()
 	if len(events) == 0 {
@@ -193,6 +382,48 @@ func assertToolGovernanceStreamEvents(t *testing.T, events []StreamEvent) {
 	}
 }
 
+func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent) {
+	t.Helper()
+	seen := map[string]bool{}
+	var approvedDecision bool
+	var runtimeAllowedDecision bool
+	for _, event := range events {
+		seen[event.EventType] = true
+		if event.EventType == streamEventToolGovernanceDecision && event.Payload["approval_status"] == "approved" {
+			approvedDecision = true
+		}
+		if event.EventType == streamEventToolGovernanceDecision && event.Payload["decision"] == toolgovernance.DecisionStatusAllowed {
+			governance := governanceMapFromAny(event.Payload["governance"])
+			if governance["approved_by_correlation_id"] != "corr-approve" {
+				t.Fatalf("allowed governance = %#v, want approval correlation corr-approve", governance)
+			}
+			runtimeAllowedDecision = true
+		}
+		if event.EventType == streamEventSkillCallEnd && event.Payload["tool_name"] == "delete_file" {
+			if event.Payload["status"] != "success" {
+				t.Fatalf("delete_file event status = %#v, want success", event.Payload["status"])
+			}
+		}
+	}
+	for _, want := range []string{
+		streamEventMessageStart,
+		streamEventToolGovernanceDecision,
+		streamEventSkillLoadEnd,
+		streamEventSkillCallEnd,
+		streamEventMessageEnd,
+	} {
+		if !seen[want] {
+			t.Fatalf("stream events missing %q in %#v", want, events)
+		}
+	}
+	if !approvedDecision {
+		t.Fatalf("events = %#v, want approved tool governance decision", events)
+	}
+	if !runtimeAllowedDecision {
+		t.Fatalf("events = %#v, want runtime allowed tool governance decision", events)
+	}
+}
+
 func toolGovernanceStreamRequestText(req *adapter.ChatRequest) string {
 	if req == nil {
 		return ""
@@ -202,6 +433,92 @@ func toolGovernanceStreamRequestText(req *adapter.ChatRequest) string {
 		parts = append(parts, messageContentText(message.Content))
 	}
 	return strings.Join(parts, "\n")
+}
+
+func toolGovernanceStreamRequestContains(req *adapter.ChatRequest, want string) bool {
+	return strings.Contains(toolGovernanceStreamRequestText(req), want)
+}
+
+func toolGovernanceStreamRequestHasTool(req *adapter.ChatRequest, toolName string) bool {
+	if req == nil {
+		return false
+	}
+	for _, tool := range req.Tools {
+		if strings.EqualFold(strings.TrimSpace(tool.Function.Name), strings.TrimSpace(toolName)) {
+			return true
+		}
+	}
+	return false
+}
+
+func toolGovernanceStreamHasInvocation(metadata map[string]interface{}, kind string, skillID string, toolName string, status string) bool {
+	for _, invocation := range skillInvocationsFromMetadata(metadata["skill_invocations"]) {
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), kind) &&
+			strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skillID) &&
+			strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), toolName) &&
+			strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), status) {
+			return true
+		}
+	}
+	return false
+}
+
+func toolGovernanceStreamSkillToolCall(callID string, skillID string, toolName string, arguments map[string]interface{}) adapter.ToolCall {
+	payload, _ := json.Marshal(map[string]interface{}{
+		"skill_id":  skillID,
+		"tool_name": toolName,
+		"arguments": arguments,
+	})
+	return adapter.ToolCall{
+		ID:   callID,
+		Type: "function",
+		Function: adapter.FunctionCall{
+			Name:      skills.MetaToolCallSkillTool,
+			Arguments: string(payload),
+		},
+	}
+}
+
+func newToolGovernanceStreamSkillRuntime(t *testing.T, deleteTool *toolGovernanceStreamDeleteTool) *skills.Runtime {
+	t.Helper()
+	catalogDir := t.TempDir()
+	root := filepath.Join(catalogDir, skills.SkillFileReader)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir skill root: %v", err)
+	}
+	skill := `---
+name: file-reader
+description: Governed files service test skill.
+when_to_use: Use when testing AIChat approval continuation.
+provider_type: builtin
+provider_id: governed_files_stream_test
+runtime_type: tool
+tools:
+  - delete_file
+tool_governance:
+  delete_file:
+    tool_id: file.delete
+    domain: files
+    effect: delete
+    asset_type: file
+    risk_level: high
+    requires_asset_resolution: true
+    audit_required: true
+---
+
+# Governed Files
+
+Use governed file tools.
+`
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(skill), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&toolGovernanceStreamFilesProvider{tool: deleteTool}); err != nil {
+		t.Fatalf("register files provider: %v", err)
+	}
+	return skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir).
+		WithToolGovernanceGateway(skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))
 }
 
 type toolGovernanceStreamAccessRepo struct {
@@ -241,6 +558,7 @@ func (r *toolGovernanceStreamConversationRepo) UpdateMetadata(_ context.Context,
 type toolGovernanceStreamMessageRepo struct {
 	repository.MessageRepository
 	message                       *runtimemodel.Message
+	updateMetadataCalled          bool
 	updateMetadataAnyStatusCalled bool
 	updateCompletedCalled         bool
 	updateErrorCalled             bool
@@ -252,6 +570,13 @@ func (r *toolGovernanceStreamMessageRepo) GetScoped(context.Context, uuid.UUID, 
 
 func (r *toolGovernanceStreamMessageRepo) ListBranch(context.Context, uuid.UUID, int) ([]*runtimemodel.Message, error) {
 	return []*runtimemodel.Message{}, nil
+}
+
+func (r *toolGovernanceStreamMessageRepo) UpdateMetadata(_ context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
+	r.updateMetadataCalled = true
+	r.message.Metadata = copyStringAnyMap(metadata)
+	r.message.UpdatedAt = time.Now()
+	return nil
 }
 
 func (r *toolGovernanceStreamMessageRepo) UpdateMetadataAnyStatus(_ context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
@@ -279,10 +604,140 @@ func (r *toolGovernanceStreamMessageRepo) UpdateError(_ context.Context, _ uuid.
 	return nil
 }
 
+type toolGovernanceStreamSkillConfigRepo struct {
+	repository.OrganizationSkillConfigRepository
+	skillID string
+}
+
+func (r toolGovernanceStreamSkillConfigRepo) ListByOrganization(context.Context, uuid.UUID) ([]*runtimemodel.OrganizationSkillConfig, error) {
+	return []*runtimemodel.OrganizationSkillConfig{
+		{SkillID: r.skillID, Enabled: true},
+	}, nil
+}
+
+type toolGovernanceStreamModelSpecResolver struct{}
+
+func (toolGovernanceStreamModelSpecResolver) Resolve(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
+	return ModelSpec{SupportsToolCall: true}, true, nil
+}
+
+type toolGovernanceStreamFilesProvider struct {
+	tool *toolGovernanceStreamDeleteTool
+}
+
+func (p *toolGovernanceStreamFilesProvider) GetEntity() tools.ToolProviderEntity {
+	return tools.ToolProviderEntity{
+		Identity: tools.ToolProviderIdentity{
+			Name:        "governed_files_stream_test",
+			Label:       tools.I18nText{"en_US": "Governed Files Stream Test"},
+			Description: tools.I18nText{"en_US": "Governed files stream test provider"},
+		},
+		ProviderType: tools.ToolProviderTypeBuiltin,
+	}
+}
+
+func (p *toolGovernanceStreamFilesProvider) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (p *toolGovernanceStreamFilesProvider) GetTool(name string) (tools.Tool, error) {
+	if name != "delete_file" {
+		return nil, tools.ErrToolNotFound
+	}
+	return p.tool, nil
+}
+
+func (p *toolGovernanceStreamFilesProvider) GetTools() []tools.Tool {
+	return []tools.Tool{p.tool}
+}
+
+func (p *toolGovernanceStreamFilesProvider) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type toolGovernanceStreamDeleteTool struct {
+	calls []string
+}
+
+func (t *toolGovernanceStreamDeleteTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "delete_file",
+			Provider: "governed_files_stream_test",
+			Label:    tools.I18nText{"en_US": "Delete File"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Delete a file"},
+			LLM:   "Delete the file identified by file_id.",
+		},
+		Parameters: []tools.ToolParameter{
+			{
+				Name:        "file_id",
+				Label:       tools.I18nText{"en_US": "File ID"},
+				Type:        tools.ToolParameterTypeString,
+				Form:        tools.ToolParameterFormLLM,
+				Required:    true,
+				Placeholder: tools.I18nText{"en_US": "file id"},
+			},
+		},
+	}
+}
+
+func (t *toolGovernanceStreamDeleteTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *toolGovernanceStreamDeleteTool) GetTenantID() string {
+	return ""
+}
+
+func (t *toolGovernanceStreamDeleteTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	fileID, _ := toolParameters["file_id"].(string)
+	t.calls = append(t.calls, fileID)
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"deleted_count": 1,
+			"file_id":       fileID,
+		},
+	}}, nil
+}
+
+func (t *toolGovernanceStreamDeleteTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *toolGovernanceStreamDeleteTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *toolGovernanceStreamDeleteTool) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
 type toolGovernanceStreamLLM struct {
-	streamChunks   []string
-	streamRequests []*adapter.ChatRequest
-	appContexts    []*llmclient.AppContext
+	streamChunks     []string
+	streamRequests   []*adapter.ChatRequest
+	appContexts      []*llmclient.AppContext
+	appChatResponses []*adapter.ChatResponse
+	appChatRequests  []*adapter.ChatRequest
 }
 
 func (f *toolGovernanceStreamLLM) Chat(context.Context, string, *adapter.ChatRequest) (*adapter.ChatResponse, error) {
@@ -309,8 +764,13 @@ func (f *toolGovernanceStreamLLM) Rerank(context.Context, string, *adapter.Reran
 	return nil, errors.New("unexpected Rerank call")
 }
 
-func (f *toolGovernanceStreamLLM) AppChat(context.Context, *llmclient.AppContext, *adapter.ChatRequest) (*adapter.ChatResponse, error) {
-	return nil, errors.New("unexpected AppChat call")
+func (f *toolGovernanceStreamLLM) AppChat(_ context.Context, appCtx *llmclient.AppContext, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {
+	f.appContexts = append(f.appContexts, appCtx)
+	f.appChatRequests = append(f.appChatRequests, cloneChatRequest(req))
+	if len(f.appChatRequests) > len(f.appChatResponses) {
+		return nil, errors.New("unexpected AppChat call")
+	}
+	return f.appChatResponses[len(f.appChatRequests)-1], nil
 }
 
 func (f *toolGovernanceStreamLLM) AppChatStream(_ context.Context, appCtx *llmclient.AppContext, req *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
