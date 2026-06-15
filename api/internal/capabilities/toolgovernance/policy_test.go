@@ -163,7 +163,7 @@ func TestDecideSessionGrantAllowsMatchingToolEffectAssetAndRisk(t *testing.T) {
 	}
 }
 
-func TestDecideSessionGrantDoesNotAllowDifferentAsset(t *testing.T) {
+func TestDecideSessionGrantAllowsDifferentAssetWithinSameScopedTool(t *testing.T) {
 	decision := Decide(Request{
 		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
 		PermissionTier: PermissionTierBasic,
@@ -181,13 +181,19 @@ func TestDecideSessionGrantDoesNotAllowDifferentAsset(t *testing.T) {
 		}},
 	}, DefaultPolicy())
 
-	assertNeedsApproval(t, decision, "different asset")
-	if decision.ApprovedByCorrelationID != "" || decision.MatchedGrant != nil {
-		t.Fatalf("decision should not carry matched grant for different asset: %#v", decision)
+	if decision.Status != DecisionStatusAllowed {
+		t.Fatalf("expected session grant to allow same scoped tool, got %s (%s)", decision.Status, decision.Reason)
+	}
+	if decision.ApprovedByCorrelationID != "approval-corr-1" {
+		t.Fatalf("approved_by_correlation_id = %q, want approval-corr-1", decision.ApprovedByCorrelationID)
+	}
+	matchedAssets, ok := decision.ModelFeedback["matched_assets"].([]AssetRef)
+	if !ok || len(matchedAssets) != 1 || matchedAssets[0].ID != "file-2" {
+		t.Fatalf("matched_assets = %#v, want current requested asset", decision.ModelFeedback["matched_assets"])
 	}
 }
 
-func TestDecideSessionGrantRequiresAssetScopeForAssetOperations(t *testing.T) {
+func TestDecideSessionGrantAllowsAssetlessScopedGrant(t *testing.T) {
 	decision := Decide(Request{
 		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
 		PermissionTier: PermissionTierBasic,
@@ -204,10 +210,15 @@ func TestDecideSessionGrantRequiresAssetScopeForAssetOperations(t *testing.T) {
 		}},
 	}, DefaultPolicy())
 
-	assertNeedsApproval(t, decision, "assetless grant")
+	if decision.Status != DecisionStatusAllowed {
+		t.Fatalf("expected assetless scoped grant to allow, got %s (%s)", decision.Status, decision.Reason)
+	}
+	if decision.ApprovedByCorrelationID != "legacy-corr" {
+		t.Fatalf("approved_by_correlation_id = %q, want legacy-corr", decision.ApprovedByCorrelationID)
+	}
 }
 
-func TestDecideSessionGrantDoesNotAllowUnapprovedAdditionalAsset(t *testing.T) {
+func TestDecideSessionGrantAllowsAdditionalAssetWithinSameScopedTool(t *testing.T) {
 	decision := Decide(Request{
 		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
 		PermissionTier: PermissionTierBasic,
@@ -228,7 +239,13 @@ func TestDecideSessionGrantDoesNotAllowUnapprovedAdditionalAsset(t *testing.T) {
 		}},
 	}, DefaultPolicy())
 
-	assertNeedsApproval(t, decision, "unapproved extra asset")
+	if decision.Status != DecisionStatusAllowed {
+		t.Fatalf("expected same scoped grant to allow additional requested assets, got %s (%s)", decision.Status, decision.Reason)
+	}
+	matchedAssets, ok := decision.ModelFeedback["matched_assets"].([]AssetRef)
+	if !ok || len(matchedAssets) != 2 {
+		t.Fatalf("matched_assets = %#v, want current requested asset set", decision.ModelFeedback["matched_assets"])
+	}
 }
 
 func TestDecideSessionGrantMatchesNameOnlyAssetWhenScoped(t *testing.T) {
@@ -272,6 +289,66 @@ func TestDecideSessionGrantDoesNotCrossConversationOrEffect(t *testing.T) {
 
 	decision := Decide(request, DefaultPolicy())
 	assertNeedsApproval(t, decision, "mismatch")
+}
+
+func TestDecideSessionGrantDoesNotMatchDifferentToolAssetTypeOrLowerRisk(t *testing.T) {
+	baseGrant := SessionGrant{
+		ConversationID:        "conversation-1",
+		ToolID:                "file.delete",
+		Effect:                EffectDelete,
+		AssetType:             "file",
+		Assets:                []AssetRef{{ID: "file-1", Type: "file"}},
+		RiskLevel:             RiskLevelHigh,
+		ApprovalCorrelationID: "approval-corr-1",
+		ExpiresAt:             time.Now().Add(time.Hour),
+	}
+
+	tests := []struct {
+		name  string
+		grant SessionGrant
+	}{
+		{
+			name: "different tool",
+			grant: func() SessionGrant {
+				grant := baseGrant
+				grant.ToolID = "file.update"
+				return grant
+			}(),
+		},
+		{
+			name: "different asset type",
+			grant: func() SessionGrant {
+				grant := baseGrant
+				grant.AssetType = "database"
+				return grant
+			}(),
+		},
+		{
+			name: "lower risk",
+			grant: func() SessionGrant {
+				grant := baseGrant
+				grant.RiskLevel = RiskLevelMedium
+				return grant
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision := Decide(Request{
+				Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+				PermissionTier: PermissionTierFull,
+				ConversationID: "conversation-1",
+				Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+				SessionGrants:  []SessionGrant{tt.grant},
+			}, DefaultPolicy())
+
+			assertNeedsApproval(t, decision, tt.name)
+			if decision.ApprovedByCorrelationID != "" || decision.MatchedGrant != nil {
+				t.Fatalf("decision matched mismatched session grant: %#v", decision)
+			}
+		})
+	}
 }
 
 func TestDecideDeniedWhenTierIsNotAllowed(t *testing.T) {
