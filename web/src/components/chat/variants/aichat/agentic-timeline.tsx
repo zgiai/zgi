@@ -387,12 +387,13 @@ function governanceDecisionStatus(item: GovernanceTimelineItem): string {
 }
 
 function governanceApprovalStatus(item: GovernanceTimelineItem): string {
-  return String(
+  const status = String(
     item.event.approval_status ??
       item.event.governance?.approval_status ??
       item.event.governance?.approval_result?.approval_status ??
       ''
   ).toLowerCase();
+  return status === 'approved' || status === 'rejected' ? status : '';
 }
 
 function isToolGovernanceNeedsApproval(item: GovernanceTimelineItem): boolean {
@@ -621,6 +622,33 @@ function governanceAssetWorkspaceIDs(assets: AIChatToolGovernanceAssetRef[]): st
   return values;
 }
 
+function governanceWorkspaceIDs(
+  item: GovernanceTimelineItem,
+  assets: AIChatToolGovernanceAssetRef[]
+): string[] {
+  const seen = new Set<string>();
+  const values: string[] = [];
+  const append = (workspaceID: string | null) => {
+    if (!workspaceID || seen.has(workspaceID)) return;
+    seen.add(workspaceID);
+    values.push(workspaceID);
+  };
+
+  for (const workspaceID of governanceAssetWorkspaceIDs(assets)) {
+    append(workspaceID);
+  }
+  for (const source of [
+    governanceAssetOperationAudit(item),
+    item.event,
+    item.event.governance,
+    item.event.governance?.approval_event,
+    governanceApprovalEvent(item),
+  ]) {
+    append(governanceRecordString(source, ['workspace_id', 'workspaceId']));
+  }
+  return values;
+}
+
 function governanceEventString(
   item: GovernanceTimelineItem,
   keys: readonly string[]
@@ -737,7 +765,7 @@ function governanceSummaryRows(
   assets: AIChatToolGovernanceAssetRef[],
   t: WebappTranslator
 ) {
-  const workspaces = governanceAssetWorkspaceIDs(assets);
+  const workspaces = governanceWorkspaceIDs(item, assets);
   const effect = governanceEventString(item, ['effect']);
   const riskLevel = governanceEventString(item, ['risk_level']);
   const assetType = governanceEventString(item, ['asset_type']);

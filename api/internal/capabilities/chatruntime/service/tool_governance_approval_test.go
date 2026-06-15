@@ -159,6 +159,84 @@ func TestProcessTimelineRecorderPersistsToolGovernanceDecisionEvent(t *testing.T
 	}
 }
 
+func TestProcessTimelineRecorderMarksGovernedToolCallWaitingApproval(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+
+	recorder.RecordEvent(streamEventSkillCallStart, map[string]interface{}{
+		"conversation_id":   prepared.Conversation.ID.String(),
+		"message_id":        prepared.Message.ID.String(),
+		"skill_id":          "file-reader",
+		"tool_name":         "delete_file",
+		"arguments_summary": map[string]interface{}{"file_id": "file-1"},
+	})
+	recorder.RecordEvent(streamEventToolGovernanceDecision, map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"skill_id":        "file-reader",
+		"tool_name":       "delete_file",
+		"status":          "needs_approval",
+		"decision":        "needs_approval",
+		"correlation_id":  "corr-wait",
+		"approval_status": "pending",
+		"approval_event":  map[string]interface{}{"correlation_id": "corr-wait", "tool_id": "file.delete"},
+		"asset_operation_audit": map[string]interface{}{
+			"schema_version":  "tool_governance.asset_operation.v1",
+			"correlation_id":  "corr-wait",
+			"tool_id":         "file.delete",
+			"effect":          "delete",
+			"asset_type":      "file",
+			"approval_status": "pending",
+		},
+		"governance": map[string]interface{}{
+			"status":            "needs_approval",
+			"correlation_id":    "corr-wait",
+			"requires_approval": true,
+			"approval_status":   "pending",
+			"approval_event":    map[string]interface{}{"correlation_id": "corr-wait", "tool_id": "file.delete"},
+		},
+	})
+
+	var toolCall map[string]interface{}
+	var governanceTrace map[string]interface{}
+	for _, invocation := range skillInvocationsFromMetadata(prepared.Message.Metadata["skill_invocations"]) {
+		if invocation["kind"] == "tool_call" {
+			toolCall = invocation
+		}
+		if invocation["kind"] == "tool_governance" {
+			governanceTrace = invocation
+		}
+	}
+	if toolCall == nil || governanceTrace == nil {
+		t.Fatalf("skill_invocations = %#v, want tool_call and tool_governance", prepared.Message.Metadata["skill_invocations"])
+	}
+	if toolCall["status"] != "waiting_approval" {
+		t.Fatalf("tool_call status = %#v, want waiting_approval", toolCall["status"])
+	}
+	if toolGovernanceCorrelationID(toolGovernanceDecisionEventFromInvocation(toolCall)) != "corr-wait" {
+		t.Fatalf("tool_call governance = %#v, want corr-wait", toolCall["governance"])
+	}
+
+	event, ok := toolGovernanceDecisionEventFromMetadata(prepared.Message.Metadata, "corr-wait")
+	if !ok {
+		t.Fatalf("tool governance event not found in %#v", prepared.Message.Metadata)
+	}
+	metadata := mergeToolGovernanceDecisionMetadata(prepared.Message.Metadata, resolvedToolGovernanceDecisionEvent(event, map[string]interface{}{
+		"action":          "reject",
+		"approval_status": "rejected",
+		"reason":          "regression guard",
+	}))
+	for _, invocation := range skillInvocationsFromMetadata(metadata["skill_invocations"]) {
+		if invocation["kind"] == "tool_call" {
+			toolCall = invocation
+			break
+		}
+	}
+	if toolCall["status"] != "rejected" || toolCall["approval_status"] != "rejected" {
+		t.Fatalf("tool_call after rejection = %#v, want rejected approval trace", toolCall)
+	}
+}
+
 func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing.T) {
 	conversationID := uuid.New().String()
 	metadata := map[string]interface{}{

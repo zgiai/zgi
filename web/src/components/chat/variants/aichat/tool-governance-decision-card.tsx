@@ -73,6 +73,12 @@ export function ToolGovernanceDecisionCard({
     needsApproval && !submittingAction && (!canSubmit || !onSubmitDecision)
       ? t('consoleChat.governance.actionsUnavailable')
       : null;
+  const approvalStatusLabel =
+    approvalStatus === 'approved'
+      ? t('consoleChat.governance.approved')
+      : approvalStatus === 'rejected'
+        ? t('consoleChat.governance.rejected')
+        : null;
 
   const submitDecision = async (action: ToolGovernanceDecisionAction) => {
     if (!submitEnabled || !onSubmitDecision) return;
@@ -241,12 +247,8 @@ export function ToolGovernanceDecisionCard({
                 <div className="text-[11px] text-muted-foreground">{actionsUnavailable}</div>
               ) : null}
             </div>
-          ) : approvalStatus ? (
-            <div className="text-[11px] text-muted-foreground">
-              {approvalStatus === 'approved'
-                ? t('consoleChat.governance.approved')
-                : t('consoleChat.governance.rejected')}
-            </div>
+          ) : approvalStatusLabel ? (
+            <div className="text-[11px] text-muted-foreground">{approvalStatusLabel}</div>
           ) : null}
         </div>
       ) : null}

@@ -61,7 +61,7 @@ func Decide(req Request, policy Policy) Decision {
 		decision := base.withStatus(DecisionStatusBlocked, "critical risk tools are blocked by policy", false)
 		return finalizeDecision(decision, tier, req.ConversationID)
 	}
-	if grant, ok := matchingSessionGrant(req.SessionGrants, req.ConversationID, manifest); ok {
+	if grant, ok := matchingSessionGrant(req.SessionGrants, req.ConversationID, manifest, assets); ok {
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by matching session grant", false)
 		decision = decision.withMatchedGrant(grant)
 		return finalizeDecision(decision, tier, req.ConversationID)
@@ -397,7 +397,7 @@ func assetMatchesExpectedAsset(asset AssetRef, expected AssetRef) bool {
 	return false
 }
 
-func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest Manifest) (SessionGrant, bool) {
+func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest Manifest, assets []AssetRef) (SessionGrant, bool) {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
 		return SessionGrant{}, false
@@ -415,6 +415,9 @@ func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest
 			continue
 		}
 		if !grant.ExpiresAt.IsZero() && !grant.ExpiresAt.After(now) {
+			continue
+		}
+		if len(grant.Assets) > 0 && !assetsMatchExpectedAssets(assets, grant.Assets) {
 			continue
 		}
 		return grant, true

@@ -411,20 +411,64 @@ func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event ma
 
 	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
 	for index, invocation := range invocations {
-		if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_governance" {
+		kind := strings.TrimSpace(stringFromAny(invocation["kind"]))
+		if kind == "tool_governance" {
+			if toolGovernanceCorrelationID(toolGovernanceDecisionEventFromInvocation(invocation)) != correlationID {
+				continue
+			}
+			invocations[index] = mergeInvocation(invocation, map[string]interface{}{
+				"approval_status":       event["approval_status"],
+				"governance":            event["governance"],
+				"asset_operation_audit": event["asset_operation_audit"],
+			})
 			continue
 		}
-		if toolGovernanceCorrelationID(toolGovernanceDecisionEventFromInvocation(invocation)) != correlationID {
-			continue
+		if kind == "tool_call" && governedToolCallMatchesDecision(invocation, event, correlationID) {
+			update := map[string]interface{}{
+				"approval_status":       event["approval_status"],
+				"governance":            event["governance"],
+				"asset_operation_audit": event["asset_operation_audit"],
+			}
+			if status := resolvedToolCallStatusFromApproval(event["approval_status"]); status != "" && canUpdateGovernedToolCallStatus(invocation) {
+				update["status"] = status
+			}
+			invocations[index] = mergeInvocation(invocation, update)
 		}
-		invocations[index] = mergeInvocation(invocation, map[string]interface{}{
-			"approval_status":       event["approval_status"],
-			"governance":            event["governance"],
-			"asset_operation_audit": event["asset_operation_audit"],
-		})
 	}
 	applySkillInvocationSummary(metadata, invocations)
 	return metadata
+}
+
+func governedToolCallMatchesDecision(invocation map[string]interface{}, event map[string]interface{}, correlationID string) bool {
+	if toolGovernanceCorrelationID(toolGovernanceDecisionEventFromInvocation(invocation)) == correlationID {
+		return true
+	}
+	if strings.TrimSpace(stringFromAny(invocation["correlation_id"])) == correlationID {
+		return true
+	}
+	return strings.TrimSpace(stringFromAny(invocation["skill_id"])) == strings.TrimSpace(stringFromAny(event["skill_id"])) &&
+		strings.TrimSpace(stringFromAny(invocation["tool_name"])) == strings.TrimSpace(stringFromAny(event["tool_name"])) &&
+		canUpdateGovernedToolCallStatus(invocation)
+}
+
+func resolvedToolCallStatusFromApproval(value interface{}) string {
+	switch strings.TrimSpace(stringFromAny(value)) {
+	case "rejected":
+		return "rejected"
+	case "approved":
+		return "approved"
+	default:
+		return ""
+	}
+}
+
+func canUpdateGovernedToolCallStatus(invocation map[string]interface{}) bool {
+	switch strings.TrimSpace(stringFromAny(invocation["status"])) {
+	case "", "running", "pending", "waiting_approval", "needs_approval", "needs_resolution", "approved":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveToolGovernanceContinuationMetadata(metadata map[string]interface{}, correlationID string, resolution map[string]interface{}) map[string]interface{} {

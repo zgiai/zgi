@@ -46,6 +46,9 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 	}
 	invocation := r.invocationFromEvent(eventType, payload)
 	if len(invocation) > 0 {
+		if strings.TrimSpace(stringFromAny(invocation["kind"])) == "tool_governance" {
+			r.persistGovernedToolCallSuspension(payload)
+		}
 		r.persistInvocation(invocation)
 		copyInvocationRuntimeFields(payload, invocation)
 	}
@@ -332,6 +335,87 @@ func (r *processTimelineRecorder) persistInvocation(invocation map[string]interf
 		return
 	}
 	_ = r.service.repos.Message.UpdateMetadata(r.persistCtx, r.prepared.Message.ID, metadata)
+}
+
+func (r *processTimelineRecorder) persistGovernedToolCallSuspension(payload map[string]interface{}) {
+	if r == nil || r.prepared == nil || r.prepared.Message == nil || len(payload) == 0 {
+		return
+	}
+	status := firstNonEmptyString(payloadString(payload, "status"), payloadString(payload, "decision"))
+	if status == "" {
+		status = strings.TrimSpace(stringFromAny(governanceMapFromAny(payload["governance"])["status"]))
+	}
+	toolCallStatus := governedToolCallPendingStatus(status)
+	if toolCallStatus == "" {
+		return
+	}
+	skillID := payloadString(payload, "skill_id")
+	toolName := payloadString(payload, "tool_name")
+	if skillID == "" || toolName == "" {
+		return
+	}
+	base := invocationRuntimeIdentity(map[string]interface{}{
+		"kind":      "tool_call",
+		"skill_id":  skillID,
+		"tool_name": toolName,
+	})
+	runtimeID := strings.TrimSpace(r.openRuntimeIDs[base])
+	if runtimeID == "" {
+		runtimeID = r.openGovernedToolCallRuntimeID(skillID, toolName)
+	}
+	if runtimeID == "" {
+		return
+	}
+	delete(r.openRuntimeIDs, base)
+	invocation := newSkillInvocation("tool_call", skillID, toolName, toolCallStatus, map[string]interface{}{
+		"runtime_id":             runtimeID,
+		"governance":             governanceMapFromAny(payload["governance"]),
+		"asset_operation_audit":  governanceMapFromAny(payload["asset_operation_audit"]),
+		"approval_status":        payload["approval_status"],
+		"correlation_id":         payload["correlation_id"],
+		"governance_runtime_id":  toolGovernanceRuntimeIDFromEvent(payload),
+		"governance_status":      status,
+		"requires_user_approval": toolCallStatus == "waiting_approval",
+	})
+	r.persistInvocation(invocation)
+}
+
+func (r *processTimelineRecorder) openGovernedToolCallRuntimeID(skillID string, toolName string) string {
+	if r == nil || r.prepared == nil || r.prepared.Message == nil {
+		return ""
+	}
+	var runtimeID string
+	for _, invocation := range skillInvocationsFromMetadata(r.prepared.Message.Metadata["skill_invocations"]) {
+		if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" {
+			continue
+		}
+		if strings.TrimSpace(stringFromAny(invocation["skill_id"])) != skillID ||
+			strings.TrimSpace(stringFromAny(invocation["tool_name"])) != toolName {
+			continue
+		}
+		if !isOpenInvocation(invocation) {
+			continue
+		}
+		if candidate := strings.TrimSpace(stringFromAny(invocation["runtime_id"])); candidate != "" {
+			runtimeID = candidate
+		}
+	}
+	return runtimeID
+}
+
+func governedToolCallPendingStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case "needs_approval":
+		return "waiting_approval"
+	case "needs_resolution":
+		return "needs_resolution"
+	case "denied":
+		return "denied"
+	case "blocked":
+		return "blocked"
+	default:
+		return ""
+	}
 }
 
 func streamBackedTrace(trace skills.SkillTrace) bool {

@@ -406,7 +406,7 @@ func TestPolicyToolGovernanceMatchingSessionGrantCarriesApprovalCorrelation(t *t
 	}
 }
 
-func TestPolicyToolGovernanceMatchingSessionGrantAllowsDifferentRuntimeAsset(t *testing.T) {
+func TestPolicyToolGovernanceMatchingSessionGrantRequiresApprovalForDifferentRuntimeAsset(t *testing.T) {
 	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
 	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
 		Manifest: toolgovernance.Manifest{
@@ -445,11 +445,11 @@ func TestPolicyToolGovernanceMatchingSessionGrantAllowsDifferentRuntimeAsset(t *
 	if err != nil {
 		t.Fatalf("DecideSkillTool() error = %v", err)
 	}
-	if decision.Status != toolgovernance.DecisionStatusAllowed {
-		t.Fatalf("decision status = %s, want allowed: %#v", decision.Status, decision)
+	if decision.Status != toolgovernance.DecisionStatusNeedsApproval {
+		t.Fatalf("decision status = %s, want needs_approval: %#v", decision.Status, decision)
 	}
-	if decision.ApprovedByCorrelationID != "approval-corr-1" {
-		t.Fatalf("approved_by_correlation_id = %q, want approval-corr-1", decision.ApprovedByCorrelationID)
+	if decision.MatchedGrant != nil || decision.ApprovedByCorrelationID != "" {
+		t.Fatalf("decision matched mismatched session grant: %#v", decision)
 	}
 }
 

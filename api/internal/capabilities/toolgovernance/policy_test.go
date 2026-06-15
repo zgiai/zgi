@@ -187,7 +187,7 @@ func TestDecideSessionGrantAllowsMatchingToolEffectAssetAndRisk(t *testing.T) {
 	}
 }
 
-func TestDecideSessionGrantAllowsDifferentAssetWithinSameScopedTool(t *testing.T) {
+func TestDecideSessionGrantRequiresApprovalForDifferentAssetWithinSameScopedTool(t *testing.T) {
 	decision := Decide(Request{
 		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
 		PermissionTier: PermissionTierBasic,
@@ -205,15 +205,9 @@ func TestDecideSessionGrantAllowsDifferentAssetWithinSameScopedTool(t *testing.T
 		}},
 	}, DefaultPolicy())
 
-	if decision.Status != DecisionStatusAllowed {
-		t.Fatalf("expected session grant to allow same scoped tool, got %s (%s)", decision.Status, decision.Reason)
-	}
-	if decision.ApprovedByCorrelationID != "approval-corr-1" {
-		t.Fatalf("approved_by_correlation_id = %q, want approval-corr-1", decision.ApprovedByCorrelationID)
-	}
-	matchedAssets, ok := decision.ModelFeedback["matched_assets"].([]AssetRef)
-	if !ok || len(matchedAssets) != 1 || matchedAssets[0].ID != "file-2" {
-		t.Fatalf("matched_assets = %#v, want current requested asset", decision.ModelFeedback["matched_assets"])
+	assertNeedsApproval(t, decision, "different asset")
+	if decision.MatchedGrant != nil || decision.ApprovedByCorrelationID != "" {
+		t.Fatalf("decision matched mismatched session grant: %#v", decision)
 	}
 }
 
@@ -242,7 +236,7 @@ func TestDecideSessionGrantAllowsAssetlessScopedGrant(t *testing.T) {
 	}
 }
 
-func TestDecideSessionGrantAllowsAdditionalAssetWithinSameScopedTool(t *testing.T) {
+func TestDecideSessionGrantRequiresApprovalForAdditionalAssetWithinSameScopedTool(t *testing.T) {
 	decision := Decide(Request{
 		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
 		PermissionTier: PermissionTierBasic,
@@ -263,12 +257,9 @@ func TestDecideSessionGrantAllowsAdditionalAssetWithinSameScopedTool(t *testing.
 		}},
 	}, DefaultPolicy())
 
-	if decision.Status != DecisionStatusAllowed {
-		t.Fatalf("expected same scoped grant to allow additional requested assets, got %s (%s)", decision.Status, decision.Reason)
-	}
-	matchedAssets, ok := decision.ModelFeedback["matched_assets"].([]AssetRef)
-	if !ok || len(matchedAssets) != 2 {
-		t.Fatalf("matched_assets = %#v, want current requested asset set", decision.ModelFeedback["matched_assets"])
+	assertNeedsApproval(t, decision, "additional asset")
+	if decision.MatchedGrant != nil || decision.ApprovedByCorrelationID != "" {
+		t.Fatalf("decision matched partial session grant: %#v", decision)
 	}
 }
 
