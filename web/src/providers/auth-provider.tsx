@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/store/auth-store';
+import { useWorkspaceStore } from '@/store/workspace-store';
 import { clearSessionBoundClientState } from '@/lib/auth/client-state';
 import { sessionManager, type AuthSyncEvent } from '@/lib/auth/session-manager';
 import { PROFILE_KEYS } from '@/hooks/query-keys';
@@ -46,6 +47,9 @@ async function handleCrossTabEvent(event: AuthSyncEvent): Promise<void> {
       return;
     }
     case 'CONTEXT_CHANGED': {
+      if (event.payload?.currentWorkspaceId === null || event.payload?.currentOrganizationId) {
+        useWorkspaceStore.getState().resetForOrganizationSwitch();
+      }
       clearProfileClientCache();
       queryClient.clear();
       await useAuthStore.getState().initializeAuth({ force: true });
