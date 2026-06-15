@@ -139,6 +139,11 @@ func TestConsoleFilesSemanticActionDecisionResolvesVisibleFileOrdinals(t *testin
 			want:  "file-4",
 		},
 		{
+			name:  "direct Chinese fourth visible file",
+			query: "\u8bfb\u7b2c\u56db\u4e2a\u6587\u4ef6",
+			want:  "file-4",
+		},
+		{
 			name:  "second visible Excel file",
 			query: "\u8bfb\u53d6\u7b2c\u4e8c\u4e2a Excel",
 			want:  "file-5",
@@ -253,6 +258,44 @@ func TestConsoleFilesSemanticActionDecisionDoesNotExecuteAmbiguousVisibleCandida
 	}
 	if len(decision.FileIDs) != 0 {
 		t.Fatalf("FileIDs = %#v, want empty until the user confirms one candidate", decision.FileIDs)
+	}
+}
+
+func TestVisibleFileResourcesExtractsExtensionFromDisplaySubtitle(t *testing.T) {
+	files := visibleFileResources(map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"resource_type": "file",
+				"resource_id":   "file-xlsx",
+				"title":         "18#\u6c34\u7535\u8d39\u786e\u8ba4\u5355-\u543e\u9053",
+				"subtitle":      "xlsx - 53,281 bytes",
+			},
+			map[string]interface{}{
+				"resource_type": "file",
+				"resource_id":   "file-pdf",
+				"title":         "2501.00015v1",
+				"subtitle":      "PDF 1.3 MB",
+			},
+			map[string]interface{}{
+				"resource_type": "file",
+				"resource_id":   "file-unknown",
+				"title":         "untitled",
+				"subtitle":      "\u7ea6 52 KB",
+			},
+		},
+	})
+
+	if len(files) != 3 {
+		t.Fatalf("visibleFileResources() = %d files, want 3", len(files))
+	}
+	if files[0].Extension != "xlsx" {
+		t.Fatalf("xlsx extension = %q, want xlsx", files[0].Extension)
+	}
+	if files[1].Extension != "pdf" {
+		t.Fatalf("pdf extension = %q, want pdf", files[1].Extension)
+	}
+	if files[2].Extension != "" {
+		t.Fatalf("unknown extension = %q, want empty", files[2].Extension)
 	}
 }
 

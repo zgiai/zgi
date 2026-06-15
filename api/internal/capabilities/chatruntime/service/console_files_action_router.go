@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	actiondto "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/dto"
 	actionmodel "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/model"
@@ -367,6 +368,20 @@ func isFileReadIntent(query string) bool {
 			return true
 		}
 	}
+	if strings.Contains(text, "\u8bfb") && containsAnySubstring(text, []string{
+		"\u7b2c",
+		"\u6700\u540e",
+		"\u5f53\u524d",
+		"\u9009\u4e2d",
+		"\u8fd9\u4e2a",
+		"\u5185\u5bb9",
+		"pdf",
+		"excel",
+		"\u8868\u683c",
+		"\u6587\u6863",
+	}) {
+		return true
+	}
 	return false
 }
 
@@ -536,9 +551,10 @@ func visibleFileResources(context map[string]interface{}) []visibleConsoleFileRe
 		)
 		metadata := mapFromOperationContext(resource["metadata"])
 		extension := firstNonEmptyString(
-			stringMetadataValue(resource["extension"]),
-			stringMetadataValue(resource["subtitle"]),
-			stringMetadataValue(firstMapValue(metadata, "extension", "file_extension")),
+			normalizedConsoleFileExtension(stringMetadataValue(resource["extension"])),
+			normalizedConsoleFileExtension(stringMetadataValue(firstMapValue(metadata, "extension", "file_extension"))),
+			knownConsoleFileExtension(fileNameExtension(title)),
+			consoleFileSubtitleExtension(stringMetadataValue(resource["subtitle"])),
 		)
 		mimeType := firstNonEmptyString(
 			stringMetadataValue(resource["mime_type"]),
@@ -550,12 +566,74 @@ func visibleFileResources(context map[string]interface{}) []visibleConsoleFileRe
 		out = append(out, visibleConsoleFileResource{
 			ID:        id,
 			Title:     title,
-			Extension: strings.TrimPrefix(strings.TrimSpace(extension), "."),
+			Extension: extension,
 			MimeType:  strings.TrimSpace(mimeType),
 			Selected:  selected,
 		})
 	}
 	return out
+}
+
+func normalizedConsoleFileExtension(value string) string {
+	extension := normalizedResolverFileExtension(value)
+	if extension == "" {
+		return ""
+	}
+	for _, r := range extension {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return ""
+		}
+	}
+	if len([]rune(extension)) > 16 {
+		return ""
+	}
+	return extension
+}
+
+func consoleFileSubtitleExtension(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	for _, token := range strings.FieldsFunc(value, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		extension := normalizedConsoleFileExtension(token)
+		if isKnownConsoleFileExtension(extension) {
+			return extension
+		}
+	}
+	return ""
+}
+
+func knownConsoleFileExtension(value string) string {
+	extension := normalizedConsoleFileExtension(value)
+	if !isKnownConsoleFileExtension(extension) {
+		return ""
+	}
+	return extension
+}
+
+func isKnownConsoleFileExtension(extension string) bool {
+	switch extension {
+	case "doc", "docx", "html", "json", "md", "ppt", "pptx", "rtf", "txt", "zip":
+		return true
+	}
+	for _, fileType := range []string{"csv", "document", "excel", "image", "pdf"} {
+		if containsString(fileTypeExtensions(fileType), extension) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAnySubstring(text string, needles []string) bool {
+	for _, needle := range needles {
+		if needle != "" && strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func collectNamedVisibleFileIDs(query string, context map[string]interface{}) []string {

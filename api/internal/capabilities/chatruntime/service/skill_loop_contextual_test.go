@@ -161,14 +161,7 @@ func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *tes
 }
 
 func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testing.T) {
-	prepared := &PreparedChat{
-		parts: consoleFilesSemanticTestParts("\u5e2e\u6211\u6458\u8981\u7b2c\u4e8c\u4e2a Excel \u5e76\u7ffb\u8bd1", []consoleFilesTestFile{
-			{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
-			{ID: "file-2", Name: "budget-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
-			{ID: "file-3", Name: "invoice.pdf", Extension: "pdf", MimeType: "application/pdf"},
-			{ID: "file-4", Name: "budget-q2.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
-		}),
-	}
+	prepared := preparedConsoleFilesGuardReadTest("\u5e2e\u6211\u6458\u8981\u7b2c\u4e8c\u4e2a Excel \u5e76\u7ffb\u8bd1")
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
 	prepared.parts.SkillMode = skillModeAuto
 
@@ -221,6 +214,26 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testi
 	})
 	if blocked {
 		t.Fatal("guard blocked after read_file was attempted and failed")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksChineseReadOrdinalWithoutToolCall(t *testing.T) {
+	prepared := preparedConsoleFilesGuardReadTest("\u8bfb\u7b2c\u56db\u4e2a\u6587\u4ef6")
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for Chinese ordinal read request")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "budget-q2.xlsx is visible on the page.",
+	})
+	if !blocked {
+		t.Fatal("guard did not block direct answer for Chinese ordinal read without read_file")
+	}
+	if !strings.Contains(result.Message, "budget-q2.xlsx") || !strings.Contains(result.Message, "read_file") {
+		t.Fatalf("guard message = %q, want target and read_file", result.Message)
 	}
 }
 
@@ -294,6 +307,17 @@ func TestConsoleFilesRequiredToolFinalAnswerGuardRequiresAllTargetFileIDs(t *tes
 	})
 	if blocked {
 		t.Fatal("guard blocked after both target files were read")
+	}
+}
+
+func preparedConsoleFilesGuardReadTest(query string) *PreparedChat {
+	return &PreparedChat{
+		parts: consoleFilesSemanticTestParts(query, []consoleFilesTestFile{
+			{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-2", Name: "budget-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+			{ID: "file-3", Name: "invoice.pdf", Extension: "pdf", MimeType: "application/pdf"},
+			{ID: "file-4", Name: "budget-q2.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		}),
 	}
 }
 
