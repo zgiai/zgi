@@ -182,6 +182,7 @@ const messages = {
     homeDescription:
       'Start a standalone AIChat conversation. This chat no longer uses system workflows.',
     historySubtitle: 'AIChat history',
+    conversationListDescription: 'Browse and switch AIChat conversations.',
     streaming: 'Streaming',
     stopped: 'Stopped',
     streamError: 'The response failed.',

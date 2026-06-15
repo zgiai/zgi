@@ -39,7 +39,7 @@ import {
   selectIsStopping,
 } from '@/components/chat/controllers/aichat/selectors';
 import { Sidebar } from '@/components/chat/variants/common/sidebar';
-import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import {
   useAIChatSkillPreference,
@@ -1161,6 +1161,9 @@ export function AIChatShell({
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
           <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
             <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>
+            <SheetDescription className="sr-only">
+              {t('consoleChat.conversationListDescription')}
+            </SheetDescription>
             <Sidebar
               activeId={activeConversationId}
               conversations={conversationSummaries}

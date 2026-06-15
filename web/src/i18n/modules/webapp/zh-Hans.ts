@@ -172,6 +172,7 @@ const messages: WebappMessages = {
     homeTitle: '有什么可以帮你？',
     homeDescription: '开始一个独立的 AIChat 对话。该对话不再使用系统工作流。',
     historySubtitle: 'AIChat 历史',
+    conversationListDescription: '浏览和切换 AIChat 会话。',
     streaming: '生成中',
     stopped: '已停止',
     streamError: '回复生成失败。',
