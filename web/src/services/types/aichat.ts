@@ -497,6 +497,7 @@ export interface AIChatSkillCallEndEventData {
   status?: AIChatSkillActivityStatus;
   message?: string;
   result?: Record<string, unknown> | null;
+  governance?: AIChatToolGovernanceDecision | null;
   created_at?: number;
 }
 
@@ -510,6 +511,7 @@ export interface AIChatSkillCallErrorEventData {
   duration_ms?: number;
   status: 'error';
   message?: string;
+  governance?: AIChatToolGovernanceDecision | null;
   created_at?: number;
 }
 
@@ -614,6 +616,7 @@ export interface AIChatToolGovernanceDecision extends Record<string, unknown> {
   manifest?: AIChatToolGovernanceManifest;
   assets?: AIChatToolGovernanceAssetRef[];
   approval_event?: AIChatToolGovernanceApprovalEvent;
+  matched_grant?: Record<string, unknown>;
   approval_result?: Record<string, unknown>;
   model_feedback?: Record<string, unknown>;
 }
@@ -636,6 +639,10 @@ export interface AIChatToolGovernanceDecisionEventData extends Record<string, un
   asset_type?: string;
   approval_status?: 'approved' | 'rejected' | (string & {});
   approval_event?: AIChatToolGovernanceApprovalEvent;
+  matched_grant?: Record<string, unknown>;
+  approval_result?: Record<string, unknown>;
+  model_feedback?: Record<string, unknown>;
+  session_grant?: Record<string, unknown>;
 }
 
 export interface AIChatToolGovernanceDecisionRequest {

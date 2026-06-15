@@ -64,6 +64,10 @@ const GOVERNANCE_FIELD_LABEL_KEYS = {
   effect: 'consoleChat.governance.fields.effect',
   assetType: 'consoleChat.governance.fields.assetType',
   correlationId: 'consoleChat.governance.fields.correlationId',
+  matchedGrant: 'consoleChat.governance.fields.matchedGrant',
+  modelFeedback: 'consoleChat.governance.fields.modelFeedback',
+  approvalResult: 'consoleChat.governance.fields.approvalResult',
+  sessionGrant: 'consoleChat.governance.fields.sessionGrant',
   approvalEvent: 'consoleChat.governance.fields.approvalEvent',
 } as const;
 
@@ -431,13 +435,84 @@ function governanceRecordString(value: unknown, keys: readonly string[]): string
   return null;
 }
 
-function governanceApprovalAssets(item: GovernanceTimelineItem): AIChatToolGovernanceAssetRef[] {
-  const approvalEvent = governanceApprovalEvent(item);
-  const assets = approvalEvent?.assets ?? item.event.governance?.assets;
-  if (!Array.isArray(assets)) return [];
-  return assets.filter((asset): asset is AIChatToolGovernanceAssetRef =>
+function governanceApprovalResult(item: GovernanceTimelineItem): Record<string, unknown> | null {
+  return (
+    governanceRecord(item.event.approval_result) ??
+    governanceRecord(item.event.governance?.approval_result)
+  );
+}
+
+function governanceModelFeedback(item: GovernanceTimelineItem): Record<string, unknown> | null {
+  const approvalResult = governanceApprovalResult(item);
+  return (
+    governanceRecord(item.event.model_feedback) ??
+    governanceRecord(item.event.governance?.model_feedback) ??
+    governanceRecord(approvalResult?.model_feedback)
+  );
+}
+
+function governanceMatchedGrant(item: GovernanceTimelineItem): Record<string, unknown> | null {
+  const feedback = governanceModelFeedback(item);
+  return (
+    governanceRecord(item.event.matched_grant) ??
+    governanceRecord(item.event.governance?.matched_grant) ??
+    governanceRecord(feedback?.matched_grant)
+  );
+}
+
+function governanceSessionGrant(item: GovernanceTimelineItem): Record<string, unknown> | null {
+  const approvalResult = governanceApprovalResult(item);
+  return (
+    governanceRecord(item.event.session_grant) ??
+    governanceRecord(approvalResult?.session_grant) ??
+    governanceRecord(approvalResult?.approved_grant)
+  );
+}
+
+function governanceAssetsFromUnknown(value: unknown): AIChatToolGovernanceAssetRef[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((asset): asset is AIChatToolGovernanceAssetRef =>
     Boolean(governanceRecord(asset))
   );
+}
+
+function appendGovernanceAssets(
+  out: AIChatToolGovernanceAssetRef[],
+  seen: Set<string>,
+  assets: AIChatToolGovernanceAssetRef[]
+) {
+  for (const asset of assets) {
+    const key =
+      governanceStringValue(asset.id) ??
+      governanceStringValue(asset.name) ??
+      governanceStringValue(asset.title) ??
+      `${out.length}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(asset);
+  }
+}
+
+function governanceApprovalAssets(item: GovernanceTimelineItem): AIChatToolGovernanceAssetRef[] {
+  const approvalEvent = governanceApprovalEvent(item);
+  const matchedGrant = governanceMatchedGrant(item);
+  const modelFeedback = governanceModelFeedback(item);
+  const sessionGrant = governanceSessionGrant(item);
+  const approvalResult = governanceApprovalResult(item);
+  const out: AIChatToolGovernanceAssetRef[] = [];
+  const seen = new Set<string>();
+  for (const assets of [
+    approvalEvent?.assets,
+    item.event.governance?.assets,
+    matchedGrant?.assets,
+    modelFeedback?.matched_assets,
+    sessionGrant?.assets,
+    governanceRecord(approvalResult?.session_grant)?.assets,
+    governanceRecord(approvalResult?.approved_grant)?.assets,
+  ]) {
+    appendGovernanceAssets(out, seen, governanceAssetsFromUnknown(assets));
+  }
+  return out;
 }
 
 function governanceAssetDisplayName(asset: AIChatToolGovernanceAssetRef): string {
@@ -503,11 +578,13 @@ function governanceEventString(
   keys: readonly string[]
 ): string | null {
   const approvalEvent = governanceApprovalEvent(item);
+  const modelFeedback = governanceModelFeedback(item);
   for (const source of [
     item.event,
     item.event.governance,
     item.event.governance?.manifest,
     approvalEvent,
+    modelFeedback,
   ]) {
     const value = governanceRecordString(source, keys);
     if (value) return value;
@@ -520,11 +597,13 @@ function governanceEventBoolean(
   keys: readonly string[]
 ): boolean | null {
   const approvalEvent = governanceApprovalEvent(item);
+  const modelFeedback = governanceModelFeedback(item);
   for (const source of [
     item.event,
     item.event.governance,
     item.event.governance?.manifest,
     approvalEvent,
+    modelFeedback,
   ]) {
     const record = governanceRecord(source);
     if (!record) continue;
@@ -632,6 +711,10 @@ function governanceSummaryRows(
 
 function governanceFieldRows(item: GovernanceTimelineItem) {
   const approvalEvent = governanceApprovalEvent(item);
+  const matchedGrant = governanceMatchedGrant(item);
+  const modelFeedback = governanceModelFeedback(item);
+  const approvalResult = governanceApprovalResult(item);
+  const sessionGrant = governanceSessionGrant(item);
   return [
     ['decision', item.event.decision ?? item.event.governance?.status ?? item.event.status],
     [
@@ -656,6 +739,10 @@ function governanceFieldRows(item: GovernanceTimelineItem) {
         item.event.governance?.correlation_id ??
         approvalEvent?.correlation_id,
     ],
+    ['matchedGrant', matchedGrant],
+    ['modelFeedback', modelFeedback],
+    ['approvalResult', approvalResult],
+    ['sessionGrant', sessionGrant],
     ['approvalEvent', approvalEvent],
   ] as const satisfies ReadonlyArray<readonly [GovernanceFieldLabel, unknown]>;
 }
@@ -744,6 +831,10 @@ function ToolGovernanceDecisionRow({
     effect === 'external_send' ||
     riskLevel === 'high' ||
     riskLevel === 'critical';
+  const isAllowed =
+    !needsApproval &&
+    !approvalStatus &&
+    governanceDecisionStatus(currentItem) === 'allowed';
   const canExpand =
     summaryRows.length > 0 ||
     approvalAssets.length > 0 ||
@@ -801,7 +892,11 @@ function ToolGovernanceDecisionRow({
     <div
       className={cn(
         'rounded-md border text-xs text-foreground',
-        isHighImpact ? 'border-destructive/35 bg-destructive/10' : 'border-warning/40 bg-warning/10'
+        isHighImpact
+          ? 'border-destructive/35 bg-destructive/10'
+          : isAllowed
+            ? 'border-emerald-500/30 bg-emerald-500/5'
+            : 'border-warning/40 bg-warning/10'
       )}
     >
       <button
@@ -815,10 +910,12 @@ function ToolGovernanceDecisionRow({
             'flex size-5 shrink-0 items-center justify-center rounded-full border bg-background',
             isHighImpact
               ? 'border-destructive/40 text-destructive'
-              : 'border-warning/40 text-warning'
+              : isAllowed
+                ? 'border-emerald-500/30 text-emerald-600'
+                : 'border-warning/40 text-warning'
           )}
         >
-          <ShieldAlert className="size-3.5" />
+          {isAllowed ? <CheckCircle2 className="size-3.5" /> : <ShieldAlert className="size-3.5" />}
         </span>
         <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
         {toolLabel ? (
@@ -836,7 +933,11 @@ function ToolGovernanceDecisionRow({
         <div
           className={cn(
             'space-y-2 border-t bg-background/70 px-2.5 py-2',
-            isHighImpact ? 'border-destructive/15' : 'border-warning/20'
+            isHighImpact
+              ? 'border-destructive/15'
+              : isAllowed
+                ? 'border-emerald-500/15'
+                : 'border-warning/20'
           )}
         >
           {summaryRows.length > 0 ? (

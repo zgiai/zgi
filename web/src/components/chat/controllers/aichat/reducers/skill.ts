@@ -140,6 +140,7 @@ function normalizeToolGovernanceDecisionPayload(
 ): AIChatToolGovernanceDecisionEventData {
   const governance = payload.governance;
   const approvalEvent = payload.approval_event ?? governance?.approval_event;
+  const approvalResult = payload.approval_result ?? governance?.approval_result;
   return {
     ...payload,
     correlation_id: payload.correlation_id ?? governance?.correlation_id,
@@ -149,7 +150,20 @@ function normalizeToolGovernanceDecisionPayload(
     risk_level: payload.risk_level ?? governance?.manifest?.risk_level ?? approvalEvent?.risk_level,
     effect: payload.effect ?? governance?.manifest?.effect ?? approvalEvent?.effect,
     asset_type: payload.asset_type ?? governance?.manifest?.asset_type ?? approvalEvent?.asset_type,
+    approval_status:
+      payload.approval_status ??
+      governance?.approval_status ??
+      (approvalResult?.approval_status as AIChatToolGovernanceDecisionEventData['approval_status']),
     approval_event: approvalEvent,
+    matched_grant: payload.matched_grant ?? governance?.matched_grant,
+    approval_result: approvalResult,
+    model_feedback:
+      payload.model_feedback ??
+      governance?.model_feedback ??
+      (approvalResult?.model_feedback as Record<string, unknown> | undefined),
+    session_grant:
+      payload.session_grant ??
+      (approvalResult?.session_grant as Record<string, unknown> | undefined),
   };
 }
 
@@ -513,6 +527,41 @@ export function applyToolGovernanceDecisionState(
   };
 }
 
+function toolGovernanceDecisionEventFromSkillCall(
+  payload: AIChatSkillCallEndEventData | AIChatSkillCallErrorEventData
+): AIChatToolGovernanceDecisionEventData {
+  const governance = payload.governance ?? undefined;
+  const approvalEvent = governance?.approval_event;
+  const approvalResult = governance?.approval_result;
+  return normalizeToolGovernanceDecisionPayload({
+    conversation_id: payload.conversation_id,
+    message_id: payload.message_id,
+    skill_id: payload.skill_id,
+    tool_name: payload.tool_name,
+    status: governance?.status ?? payload.status,
+    decision: governance?.status ?? payload.status,
+    duration_ms: payload.duration_ms,
+    created_at: payload.created_at,
+    governance,
+    correlation_id: governance?.correlation_id,
+    requires_approval: governance?.requires_approval,
+    reason: governance?.reason,
+    risk_level: governance?.manifest?.risk_level ?? approvalEvent?.risk_level,
+    effect: governance?.manifest?.effect ?? approvalEvent?.effect,
+    asset_type: governance?.manifest?.asset_type ?? approvalEvent?.asset_type,
+    approval_status:
+      governance?.approval_status ??
+      (approvalResult?.approval_status as AIChatToolGovernanceDecisionEventData['approval_status']),
+    approval_event: approvalEvent,
+    matched_grant: governance?.matched_grant,
+    approval_result: approvalResult,
+    model_feedback:
+      governance?.model_feedback ??
+      (approvalResult?.model_feedback as Record<string, unknown> | undefined),
+    session_grant: approvalResult?.session_grant as Record<string, unknown> | undefined,
+  });
+}
+
 export function applySkillCallStartState(
   current: AIChatControllerState,
   payload: AIChatSkillCallStartEventData,
@@ -540,7 +589,7 @@ export function applySkillCallEndState(
   payload: AIChatSkillCallEndEventData,
   eventId?: string | null
 ): AIChatControllerState {
-  return updateSkillInvocationMetadata(
+  const next = updateSkillInvocationMetadata(
     current,
     payload.conversation_id,
     payload.message_id,
@@ -554,8 +603,17 @@ export function applySkillCallEndState(
       duration_ms: payload.duration_ms,
       message: payload.message,
       result: payload.result,
+      governance: payload.governance,
       created_at: payload.created_at,
     }
+  );
+  if (!payload.governance) {
+    return next;
+  }
+  return applyToolGovernanceDecisionState(
+    next,
+    toolGovernanceDecisionEventFromSkillCall(payload),
+    eventId ? `${eventId}:governance` : undefined
   );
 }
 
@@ -564,7 +622,7 @@ export function applySkillCallErrorState(
   payload: AIChatSkillCallErrorEventData,
   eventId?: string | null
 ): AIChatControllerState {
-  return updateSkillInvocationMetadata(
+  const next = updateSkillInvocationMetadata(
     current,
     payload.conversation_id,
     payload.message_id,
@@ -578,8 +636,17 @@ export function applySkillCallErrorState(
       duration_ms: payload.duration_ms,
       message: payload.message,
       error: payload.message,
+      governance: payload.governance,
       created_at: payload.created_at,
     }
+  );
+  if (!payload.governance) {
+    return next;
+  }
+  return applyToolGovernanceDecisionState(
+    next,
+    toolGovernanceDecisionEventFromSkillCall(payload),
+    eventId ? `${eventId}:governance` : undefined
   );
 }
 

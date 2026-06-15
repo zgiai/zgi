@@ -56,6 +56,7 @@ function toolGovernanceEventFromInvocation(
 ): AIChatToolGovernanceDecisionEventData {
   const governance = invocation.governance ?? undefined;
   const approvalEvent = governance?.approval_event;
+  const approvalResult = governance?.approval_result;
   const status = governance?.status ?? invocation.status;
   return {
     conversation_id: message.conversation_id,
@@ -73,7 +74,16 @@ function toolGovernanceEventFromInvocation(
     risk_level: governance?.manifest?.risk_level ?? approvalEvent?.risk_level,
     effect: governance?.manifest?.effect ?? approvalEvent?.effect,
     asset_type: governance?.manifest?.asset_type ?? approvalEvent?.asset_type,
+    approval_status:
+      governance?.approval_status ??
+      (approvalResult?.approval_status as AIChatToolGovernanceDecisionEventData['approval_status']),
     approval_event: approvalEvent,
+    matched_grant: governance?.matched_grant,
+    approval_result: approvalResult,
+    model_feedback:
+      governance?.model_feedback ??
+      (approvalResult?.model_feedback as Record<string, unknown> | undefined),
+    session_grant: approvalResult?.session_grant as Record<string, unknown> | undefined,
   };
 }
 
@@ -337,11 +347,13 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
   );
 
   const skillTimeline = invocations.map((invocation, index): AIChatAgenticTimelineItem => {
-    const correlationId = invocation.governance?.correlation_id ?? index;
+    const correlationId = governanceCorrelationIdFromInvocation(invocation) ?? String(index);
+    const hasGovernance = Boolean(invocation.governance);
     const shouldRenderAsGovernanceDecision =
       invocation.kind === 'tool_governance' ||
+      (hasGovernance && !governanceCorrelationIds.has(correlationId)) ||
       (isPendingToolGovernanceInvocation(invocation) &&
-        !governanceCorrelationIds.has(String(correlationId)));
+        !governanceCorrelationIds.has(correlationId));
 
     if (shouldRenderAsGovernanceDecision) {
       return {
