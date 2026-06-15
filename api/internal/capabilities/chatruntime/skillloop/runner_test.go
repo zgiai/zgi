@@ -501,6 +501,106 @@ Use the calculator tool.
 	}
 }
 
+func TestRunnerFinalAnswerGuardAllowsAnswerAfterRequiredToolAttemptFails(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a required tool.
+when_to_use: Use when testing final answer guards.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"limited-calculator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_eval", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1/",
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "I tried the required tool, but it failed."},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "calculate with the required tool"}},
+	})
+	guardCalls := 0
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		FinalAnswerGuard: func(req FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool) {
+			guardCalls++
+			for _, call := range req.AttemptedToolCalls {
+				if call.SkillID == "limited-calculator" && call.ToolName == "evaluate_expression" {
+					return FinalAnswerGuardResult{}, false
+				}
+			}
+			return FinalAnswerGuardResult{
+				SkillID:  "limited-calculator",
+				ToolName: "evaluate_expression",
+				Message:  "call evaluate_expression before claiming completion",
+			}, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "I tried the required tool, but it failed." {
+		t.Fatalf("answer = %q, want failed-tool explanation", answer)
+	}
+	if guardCalls != 1 {
+		t.Fatalf("guard calls = %d, want 1 after failed tool attempt", guardCalls)
+	}
+}
+
 func writeRunnerTestSkill(t *testing.T, catalogDir string, skillID string, content string) {
 	t.Helper()
 

@@ -168,6 +168,16 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testi
 	if blocked {
 		t.Fatal("guard blocked after read_file succeeded")
 	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "I tried to read the file, but the tool returned file not found.",
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "read_file"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after read_file was attempted and failed")
+	}
 }
 
 func TestSkillLoopFinalAnswerGuardAllowsConsoleFilesListWithoutToolCall(t *testing.T) {
@@ -235,6 +245,16 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *tes
 	})
 	if blocked {
 		t.Fatal("guard blocked after delete_file succeeded")
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "I tried to delete the file, but the tool reported it was not found.",
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "delete_file"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after delete_file was attempted and failed")
 	}
 }
 

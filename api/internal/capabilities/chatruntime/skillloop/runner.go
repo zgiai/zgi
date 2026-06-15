@@ -91,6 +91,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	recoverableFailureCallCount := 0
 	finalAnswerGuardBlockCount := 0
 	skillToolCallCounts := map[string]int{}
+	attemptedToolCalls := []SkillToolCallRef{}
 	successfulToolCalls := []SkillToolCallRef{}
 	skillUsed := false
 	loadedSkills := map[string]struct{}{}
@@ -122,6 +123,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				Round:               round,
 				SkillUsed:           skillUsed,
 				ToolCallCount:       toolCallCount,
+				AttemptedToolCalls:  append([]SkillToolCallRef{}, attemptedToolCalls...),
 				SuccessfulToolCalls: append([]SkillToolCallRef{}, successfulToolCalls...),
 			}); blocked {
 				finalAnswerGuardBlockCount++
@@ -205,6 +207,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if result.usedSkill {
 				skillUsed = true
+			}
+			if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") {
+				attemptedToolCalls = append(attemptedToolCalls, SkillToolCallRef{
+					SkillID:  strings.TrimSpace(result.trace.SkillID),
+					ToolName: strings.TrimSpace(result.trace.ToolName),
+				})
 			}
 			if result.usedTool {
 				toolCallCount++

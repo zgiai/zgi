@@ -113,6 +113,7 @@ type FinalAnswerGuardRequest struct {
 	Round               int
 	SkillUsed           bool
 	ToolCallCount       int
+	AttemptedToolCalls  []SkillToolCallRef
 	SuccessfulToolCalls []SkillToolCallRef
 }
 

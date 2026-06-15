@@ -227,7 +227,8 @@ func skillLoopFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuar
 func consoleFilesRequiredToolFinalAnswerGuard(targets []map[string]interface{}, toolName string, messageTemplates []string) skillloop.FinalAnswerGuard {
 	targetSummary := consoleFilesGuardTargetSummary(targets)
 	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		if finalAnswerGuardHasSuccessfulTool(req, skills.SkillFileReader, toolName) {
+		if finalAnswerGuardHasSuccessfulTool(req, skills.SkillFileReader, toolName) ||
+			finalAnswerGuardHasAttemptedTool(req, skills.SkillFileReader, toolName) {
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
 		lines := make([]string, 0, len(messageTemplates))
@@ -244,6 +245,16 @@ func consoleFilesRequiredToolFinalAnswerGuard(targets []map[string]interface{}, 
 
 func finalAnswerGuardHasSuccessfulTool(req skillloop.FinalAnswerGuardRequest, skillID string, toolName string) bool {
 	for _, call := range req.SuccessfulToolCalls {
+		if strings.EqualFold(strings.TrimSpace(call.SkillID), skillID) &&
+			strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func finalAnswerGuardHasAttemptedTool(req skillloop.FinalAnswerGuardRequest, skillID string, toolName string) bool {
+	for _, call := range req.AttemptedToolCalls {
 		if strings.EqualFold(strings.TrimSpace(call.SkillID), skillID) &&
 			strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
 			return true
