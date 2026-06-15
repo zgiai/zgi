@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 )
 
 func TestMergeSkillInvocationMetadataKeepsToolGovernanceTrace(t *testing.T) {
@@ -230,6 +233,90 @@ func TestToolGovernanceDecisionMetadataRecordsRejectionWithoutGrant(t *testing.T
 	}
 }
 
+func TestSubmitToolGovernanceDecisionRejectsUnresolvedEventWhenMessageNotWaitingApproval(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	messageRepo := &toolGovernanceDecisionMessageRepo{
+		message: &runtimemodel.Message{
+			ID:             messageID,
+			ConversationID: conversationID,
+			Status:         runtimemodel.MessageStatusCompleted,
+			Metadata:       pendingToolGovernanceDecisionMetadata("corr-1"),
+		},
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Access: toolGovernanceDecisionAccessRepo{},
+			Conversation: toolGovernanceDecisionConversationRepo{
+				conversation: &runtimemodel.Conversation{
+					ID:             conversationID,
+					OrganizationID: organizationID,
+					AccountID:      accountID,
+				},
+			},
+			Message: messageRepo,
+		},
+	}
+
+	_, err := svc.SubmitToolGovernanceDecision(context.Background(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}, conversationID, messageID, "corr-1", runtimedto.ToolGovernanceDecisionRequest{Action: "approve"})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("SubmitToolGovernanceDecision() error = %v, want ErrInvalidInput", err)
+	}
+	if messageRepo.updateMetadataAnyStatusCalled {
+		t.Fatalf("UpdateMetadataAnyStatus was called for a non-waiting unresolved approval")
+	}
+}
+
+func TestSubmitToolGovernanceDecisionRejectsNonApprovalGovernanceEvent(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	metadata := pendingToolGovernanceDecisionMetadata("corr-1")
+	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})
+	invocation["status"] = "success"
+	governance := invocation["governance"].(map[string]interface{})
+	governance["status"] = "allowed"
+	governance["requires_approval"] = false
+	messageRepo := &toolGovernanceDecisionMessageRepo{
+		message: &runtimemodel.Message{
+			ID:             messageID,
+			ConversationID: conversationID,
+			Status:         runtimemodel.MessageStatusWaitingApproval,
+			Metadata:       metadata,
+		},
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Access: toolGovernanceDecisionAccessRepo{},
+			Conversation: toolGovernanceDecisionConversationRepo{
+				conversation: &runtimemodel.Conversation{
+					ID:             conversationID,
+					OrganizationID: organizationID,
+					AccountID:      accountID,
+				},
+			},
+			Message: messageRepo,
+		},
+	}
+
+	_, err := svc.SubmitToolGovernanceDecision(context.Background(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}, conversationID, messageID, "corr-1", runtimedto.ToolGovernanceDecisionRequest{Action: "approve"})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("SubmitToolGovernanceDecision() error = %v, want ErrInvalidInput", err)
+	}
+	if messageRepo.updateMetadataAnyStatusCalled {
+		t.Fatalf("UpdateMetadataAnyStatus was called for a non-approval governance event")
+	}
+}
+
 func TestToolGovernanceRejectionLLMRequestCannotCallTools(t *testing.T) {
 	provider := "deepseek"
 	message := &runtimemodel.Message{
@@ -329,6 +416,71 @@ func TestToolGovernanceApprovalContinuationMessageScopesRetryToGrant(t *testing.
 			t.Fatalf("approval continuation prompt missing %q in %q", want, content)
 		}
 	}
+}
+
+func pendingToolGovernanceDecisionMetadata(correlationID string) map[string]interface{} {
+	return map[string]interface{}{
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_governance",
+				"skill_id":  "file-reader",
+				"tool_name": "delete_file",
+				"status":    "needs_approval",
+				"governance": map[string]interface{}{
+					"status":            "needs_approval",
+					"correlation_id":    correlationID,
+					"requires_approval": true,
+					"approval_event": map[string]interface{}{
+						"correlation_id": correlationID,
+						"tool_id":        "file.delete",
+						"skill_id":       "file-reader",
+						"effect":         "delete",
+						"asset_type":     "file",
+						"risk_level":     "high",
+						"grant": map[string]interface{}{
+							"conversation_id": "conversation-1",
+							"tool_id":         "file.delete",
+							"effect":          "delete",
+							"asset_type":      "file",
+							"risk_level":      "high",
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+type toolGovernanceDecisionAccessRepo struct {
+	repository.AccessRepository
+}
+
+func (toolGovernanceDecisionAccessRepo) IsOrganizationMember(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+type toolGovernanceDecisionConversationRepo struct {
+	repository.ConversationRepository
+	conversation *runtimemodel.Conversation
+}
+
+func (r toolGovernanceDecisionConversationRepo) GetScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*runtimemodel.Conversation, error) {
+	return r.conversation, nil
+}
+
+type toolGovernanceDecisionMessageRepo struct {
+	repository.MessageRepository
+	message                       *runtimemodel.Message
+	updateMetadataAnyStatusCalled bool
+}
+
+func (r *toolGovernanceDecisionMessageRepo) GetScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*runtimemodel.Message, error) {
+	return r.message, nil
+}
+
+func (r *toolGovernanceDecisionMessageRepo) UpdateMetadataAnyStatus(context.Context, uuid.UUID, map[string]interface{}) error {
+	r.updateMetadataAnyStatusCalled = true
+	return nil
 }
 
 func TestToolGovernanceSessionGrantKeyIncludesConversationToolEffectAssetAndRisk(t *testing.T) {

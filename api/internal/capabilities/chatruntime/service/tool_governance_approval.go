@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"gorm.io/gorm"
 
@@ -103,6 +104,12 @@ func (s *service) SubmitToolGovernanceDecision(
 			return toolGovernanceDecisionResponse(conversation.ID, message.ID, correlationID, action, approvalStatus, req.RememberForSession, nil, event), nil
 		}
 		return nil, fmt.Errorf("%w: tool governance approval already resolved", ErrInvalidInput)
+	}
+	if err := ensureApprovableToolGovernanceDecisionEvent(event, correlationID); err != nil {
+		return nil, err
+	}
+	if err := ensurePendingToolGovernanceDecisionMessage(message); err != nil {
+		return nil, err
 	}
 
 	resolution := map[string]interface{}{
@@ -212,6 +219,48 @@ func toolGovernanceDecisionResponse(
 		SessionGrant:       sessionGrant,
 		Event:              copyStringAnyMap(event),
 	}
+}
+
+func ensurePendingToolGovernanceDecisionMessage(message *runtimemodel.Message) error {
+	if message == nil {
+		return fmt.Errorf("%w: message is required", ErrInvalidInput)
+	}
+	if message.Status != runtimemodel.MessageStatusWaitingApproval {
+		return fmt.Errorf("%w: message is not waiting for tool governance approval", ErrInvalidInput)
+	}
+	return nil
+}
+
+func ensureApprovableToolGovernanceDecisionEvent(event map[string]interface{}, correlationID string) error {
+	if len(event) == 0 {
+		return fmt.Errorf("%w: tool governance approval event not found", ErrNotFound)
+	}
+	governance := governanceMapFromAny(event["governance"])
+	status := strings.TrimSpace(firstNonEmptyString(
+		valueFromMap(governance, "status"),
+		event["decision"],
+		event["status"],
+	))
+	if status != "needs_approval" {
+		return fmt.Errorf("%w: tool governance event is not awaiting approval", ErrInvalidInput)
+	}
+	if !boolMetadataValue(event["requires_approval"]) && !boolMetadataValue(governance["requires_approval"]) {
+		return fmt.Errorf("%w: tool governance event does not require approval", ErrInvalidInput)
+	}
+	approvalEvent := governanceMapFromAny(event["approval_event"])
+	if len(approvalEvent) == 0 {
+		approvalEvent = governanceMapFromAny(governance["approval_event"])
+	}
+	if len(approvalEvent) == 0 {
+		return fmt.Errorf("%w: tool governance approval event is missing approval metadata", ErrInvalidInput)
+	}
+	if eventCorrelationID := strings.TrimSpace(stringFromAny(approvalEvent["correlation_id"])); eventCorrelationID != "" && eventCorrelationID != correlationID {
+		return fmt.Errorf("%w: tool governance approval event correlation_id mismatch", ErrInvalidInput)
+	}
+	if grant := governanceMapFromAny(approvalEvent["grant"]); len(grant) == 0 {
+		return fmt.Errorf("%w: tool governance approval event is missing a grant scope", ErrInvalidInput)
+	}
+	return nil
 }
 
 func toolGovernanceDecisionEventFromMetadata(metadata map[string]interface{}, correlationID string) (map[string]interface{}, bool) {
