@@ -276,6 +276,9 @@ func TestListDependencyProfileArtifactsReadsRootFSArtifacts(t *testing.T) {
 	if len(artifact.Languages) != 2 || artifact.Languages[0] != "python3" || artifact.Packages[0].Name != "office-tools" {
 		t.Fatalf("unexpected profile catalog metadata: %+v", artifact)
 	}
+	if !artifact.PublicReusable || !artifact.Pinned {
+		t.Fatalf("expected reusable pinned artifact metadata, got %+v", artifact)
+	}
 }
 
 func writeBuiltProfileArtifact(t *testing.T, profileDir string, profile string, files map[string]string) {
@@ -297,15 +300,17 @@ func writeBuiltProfileArtifact(t *testing.T, profileDir string, profile string, 
 		t.Fatalf("checksum artifact: %v", err)
 	}
 	manifest := builtProfileManifest{
-		Name:        profile,
-		Version:     "2026.05.31",
-		Status:      "disabled",
-		Enabled:     false,
-		OwnerScope:  "global",
-		Languages:   []string{"python3", "nodejs"},
-		BaseRuntime: "linux-secure",
-		Checksum:    "profile-source:" + profile + ":2026.05.31",
-		Description: "Managed document automation profile.",
+		Name:           profile,
+		Version:        "2026.05.31",
+		Status:         "disabled",
+		Enabled:        false,
+		OwnerScope:     "global",
+		Languages:      []string{"python3", "nodejs"},
+		BaseRuntime:    "linux-secure",
+		Checksum:       "profile-source:" + profile + ":2026.05.31",
+		Description:    "Managed document automation profile.",
+		PublicReusable: true,
+		Pinned:         true,
 		Packages: []builtProfilePackage{
 			{Ecosystem: "python3", Name: "office-tools", Version: "managed"},
 			{Ecosystem: "nodejs", Name: "office-tools", Version: "managed"},

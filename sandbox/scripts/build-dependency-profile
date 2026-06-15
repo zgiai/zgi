@@ -201,6 +201,8 @@ def main():
         "checksum": data.get("fingerprint") or checksum,
         "estimated_size_bytes": size,
         "description": "Automatically built dependency profile.",
+        "public_reusable": True,
+        "pinned": True,
         "packages": [
             {
                 "ecosystem": pkg.get("ecosystem") or "",
