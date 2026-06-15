@@ -65,17 +65,6 @@ func plannerResourceRefsFromConsoleFilesQuery(parts *chatRequestParts) []Planner
 	if ok {
 		ref := PlannerResourceRef{Type: resourceTypeFile, Selector: query}
 		fileType := consoleFilesFormatFromQuery(parts.Query)
-		if !last && fileType != "" {
-			if file, ok := consoleFilesVisibleFileAtOrdinalMatchingFormat(parts, ordinal, fileType); ok {
-				ref.FileID = file.ID
-				if fileType == "pdf" {
-					ref.Extension = "pdf"
-				} else {
-					ref.FileType = fileType
-				}
-				return []PlannerResourceRef{ref}
-			}
-		}
 		if last {
 			ref.OrdinalText = "last"
 		} else {
@@ -91,33 +80,6 @@ func plannerResourceRefsFromConsoleFilesQuery(parts *chatRequestParts) []Planner
 		return []PlannerResourceRef{ref}
 	}
 	return plannerResourceRefsFromNamedVisibleFiles(parts)
-}
-
-func consoleFilesVisibleFileAtOrdinalMatchingFormat(parts *chatRequestParts, ordinal int, fileType string) (visibleConsoleFileResource, bool) {
-	if parts == nil || ordinal <= 0 || strings.TrimSpace(fileType) == "" {
-		return visibleConsoleFileResource{}, false
-	}
-	for _, context := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
-		files := visibleFileResources(context)
-		if ordinal > len(files) {
-			continue
-		}
-		file := files[ordinal-1]
-		if consoleFilesVisibleFileMatchesFormat(file, fileType) {
-			return file, true
-		}
-	}
-	return visibleConsoleFileResource{}, false
-}
-
-func consoleFilesVisibleFileMatchesFormat(file visibleConsoleFileResource, fileType string) bool {
-	return candidateMatchesFileType(ResourceCandidate{
-		Type:      resourceTypeFile,
-		ID:        file.ID,
-		Title:     file.Title,
-		Extension: file.Extension,
-		MimeType:  file.MimeType,
-	}, fileType)
 }
 
 func consoleFilesSelectedReferenceFromQuery(query string) bool {

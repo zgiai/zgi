@@ -173,8 +173,8 @@ func aiChatActionPlannerSystemPrompt() string {
 		"Set matched=true only when one listed capability clearly satisfies the user's requested action.",
 		"Never invent capability IDs or resources. If the capability or resource is unclear, set matched=false.",
 		"For file.read, plan only reading content from files represented in operation_context.",
-		`For file.read references on a visible files page: "the fourth file" => {"type":"file","visible_index":4}; "the second Excel file" => {"type":"file","visible_index":2,"file_type":"excel"} when the second visible row is Excel; "the last PDF" => {"type":"file","extension":"pdf","ordinal_text":"last"}.`,
-		"For Chinese file.read references on a visible files page: \"\u7b2c\u56db\u4e2a\u6587\u4ef6\" => {\"type\":\"file\",\"visible_index\":4}; \"\u7b2c\u4e8c\u4e2a Excel \u6587\u4ef6\" => {\"type\":\"file\",\"visible_index\":2,\"file_type\":\"excel\"} when the second visible row is Excel; \"\u6700\u540e\u4e00\u4e2a PDF\" => {\"type\":\"file\",\"extension\":\"pdf\",\"ordinal_text\":\"last\"}.",
+		`For file.read references on a visible files page: "the fourth file" => {"type":"file","visible_index":4}; "the second Excel file" => {"type":"file","ordinal":2,"file_type":"excel"}; "the last PDF" => {"type":"file","extension":"pdf","ordinal_text":"last"}.`,
+		"For Chinese file.read references on a visible files page: \"\u7b2c\u56db\u4e2a\u6587\u4ef6\" => {\"type\":\"file\",\"visible_index\":4}; \"\u7b2c\u4e8c\u4e2a Excel \u6587\u4ef6\" => {\"type\":\"file\",\"ordinal\":2,\"file_type\":\"excel\"}; \"\u6700\u540e\u4e00\u4e2a PDF\" => {\"type\":\"file\",\"extension\":\"pdf\",\"ordinal_text\":\"last\"}.",
 		"If the user asks to translate, summarize, explain, or extract the read content after reading, keep file.read as the capability and preserve those operations as postprocess.",
 		"Use confidence from 0 to 1. A confident executable decision should be at least 0.65.",
 	}, "\n")

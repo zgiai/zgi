@@ -144,24 +144,24 @@ func TestConsoleFilesSemanticActionDecisionResolvesVisibleFileOrdinals(t *testin
 			want:  "file-4",
 		},
 		{
-			name:  "second visible Excel file",
+			name:  "second Excel file",
 			query: "\u8bfb\u53d6\u7b2c\u4e8c\u4e2a Excel",
-			want:  "file-2",
+			want:  "file-5",
 		},
 		{
-			name:  "translate second visible Excel file",
+			name:  "translate second Excel file",
 			query: "\u5e2e\u6211\u7ffb\u8bd1\u7b2c\u4e8c\u4e2a Excel",
-			want:  "file-2",
+			want:  "file-5",
 		},
 		{
-			name:  "summarize second visible Excel file",
+			name:  "summarize second Excel file",
 			query: "\u5e2e\u6211\u6458\u8981\u7b2c\u4e8c\u4e2a Excel",
-			want:  "file-2",
+			want:  "file-5",
 		},
 		{
-			name:  "summarize second visible spreadsheet file",
+			name:  "summarize second spreadsheet file",
 			query: "\u5e2e\u6211\u6458\u8981\u7b2c\u4e8c\u4e2a\u8868\u683c",
-			want:  "file-2",
+			want:  "file-5",
 		},
 		{
 			name:  "last visible PDF file",

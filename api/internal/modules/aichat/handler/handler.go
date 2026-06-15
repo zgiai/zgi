@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +63,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/conversations/:id/stop", h.StopConversation)
 	group.GET("/conversations/:id/events", h.StreamConversationEvents)
 	group.GET("/conversations/:id/messages", h.ListMessages)
+	group.GET("/conversations/:id/asset-operation-audits", h.ListAssetOperationAudits)
 	group.DELETE("/messages/:id", h.DeleteMessage)
 	group.POST("/messages/:id/stop", h.StopMessage)
 	group.POST("/messages/:id/regenerate", h.RegenerateMessage)
@@ -346,6 +348,35 @@ func (h *Handler) ListMessages(c *gin.Context) {
 		items = append(items, messageResponse(message))
 	}
 	response.Success(c, runtimedto.ListResponse[runtimedto.MessageResponse]{
+		Data:    items,
+		Page:    page,
+		Limit:   limit,
+		Total:   total,
+		HasMore: int64(page*limit) < total,
+	})
+}
+
+type assetOperationAuditLister interface {
+	ListAssetOperationAudits(ctx context.Context, scope runtimeservice.Scope, conversationID uuid.UUID, page, limit int) ([]runtimeservice.AssetOperationAuditRecord, int64, error)
+}
+
+func (h *Handler) ListAssetOperationAudits(c *gin.Context) {
+	scope, conversationID, ok := h.scopedID(c, "id")
+	if !ok {
+		return
+	}
+	lister, ok := h.service.(assetOperationAuditLister)
+	if !ok {
+		h.fail(c, fmt.Errorf("%w: asset operation audit service is not configured", runtimeservice.ErrInvalidInput))
+		return
+	}
+	page, limit := pagination(c, 1, defaultMessagePageLimit, maxMessagePageLimit)
+	items, total, err := lister.ListAssetOperationAudits(c.Request.Context(), scope, conversationID, page, limit)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, runtimedto.ListResponse[runtimeservice.AssetOperationAuditRecord]{
 		Data:    items,
 		Page:    page,
 		Limit:   limit,
