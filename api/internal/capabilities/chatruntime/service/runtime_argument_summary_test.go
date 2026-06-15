@@ -26,3 +26,26 @@ func TestSummarizeSkillToolArgumentsOmitsDatabaseInternalKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestSummarizeSkillToolArgumentsKeepsFileReaderAssetIDs(t *testing.T) {
+	result := summarizeSkillToolArguments(skills.SkillFileReader, "delete_file", map[string]interface{}{
+		"file_id":       "file-1",
+		"file_ids":      []interface{}{"file-1", "file-2"},
+		"file_name":     "invoice.xlsx",
+		"workspace_id":  "workspace-1",
+		"delete_reason": "user requested it",
+	})
+
+	if result["file_id"] != "file-1" {
+		t.Fatalf("file_id = %#v, want file-1", result["file_id"])
+	}
+	fileIDs, ok := result["file_ids"].([]string)
+	if !ok || len(fileIDs) != 2 {
+		t.Fatalf("file_ids = %#v, want two ids", result["file_ids"])
+	}
+	for _, key := range []string{"file_name", "workspace_id", "delete_reason"} {
+		if _, ok := result[key]; ok {
+			t.Fatalf("%s should not be included in file-reader argument summary: %#v", key, result)
+		}
+	}
+}

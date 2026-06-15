@@ -210,8 +210,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") {
 				attemptedToolCalls = append(attemptedToolCalls, SkillToolCallRef{
-					SkillID:  strings.TrimSpace(result.trace.SkillID),
-					ToolName: strings.TrimSpace(result.trace.ToolName),
+					SkillID:   strings.TrimSpace(result.trace.SkillID),
+					ToolName:  strings.TrimSpace(result.trace.ToolName),
+					Arguments: copyStringAnyMap(result.trace.Arguments),
 				})
 			}
 			if result.usedTool {
@@ -220,8 +221,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
 					strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
 					successfulToolCalls = append(successfulToolCalls, SkillToolCallRef{
-						SkillID:  strings.TrimSpace(result.trace.SkillID),
-						ToolName: strings.TrimSpace(result.trace.ToolName),
+						SkillID:   strings.TrimSpace(result.trace.SkillID),
+						ToolName:  strings.TrimSpace(result.trace.ToolName),
+						Arguments: copyStringAnyMap(result.trace.Arguments),
 					})
 					finalAnswerGuardBlockCount = 0
 				}

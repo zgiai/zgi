@@ -528,6 +528,7 @@ func orderedExtractionStrategies(requested string, available []string) []string 
 	seen := make(map[string]bool, len(order)+1)
 
 	if requested != "" && availableSet[requested] {
+		strategies = append(strategies, requested)
 		seen[requested] = true
 	}
 

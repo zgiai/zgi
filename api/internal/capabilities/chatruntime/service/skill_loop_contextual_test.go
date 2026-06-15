@@ -192,7 +192,7 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testi
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "Here is the summary from the file content.",
 		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file"},
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-4"}},
 		},
 	})
 	if blocked {
@@ -200,9 +200,19 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testi
 	}
 
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Here is a summary, but it came from a different file.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard allowed read_file for the wrong resolved file_id")
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "I tried to read the file, but the tool returned file not found.",
 		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file"},
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-4"}},
 		},
 	})
 	if blocked {
@@ -251,6 +261,38 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesListWithoutToolCall(t *testi
 	}
 }
 
+func TestConsoleFilesRequiredToolFinalAnswerGuardRequiresAllTargetFileIDs(t *testing.T) {
+	guard := consoleFilesRequiredToolFinalAnswerGuard([]map[string]interface{}{
+		{"file_id": "file-1", "name": "one.pdf"},
+		{"file_id": "file-2", "name": "two.pdf"},
+	}, "read_file", []string{"read {target}"})
+
+	if guard == nil {
+		t.Fatal("guard = nil, want guard")
+	}
+
+	_, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "I read one file.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard allowed completion after only one of two target files")
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "I read both files.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after both target files were read")
+	}
+}
+
 func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
@@ -296,7 +338,7 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *tes
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "The file has been deleted.",
 		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "delete_file"},
+			{SkillID: skills.SkillFileReader, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
 		},
 	})
 	if blocked {
@@ -304,9 +346,19 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *tes
 	}
 
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The file has been deleted.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard allowed delete_file for the wrong resolved file_id")
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "I tried to delete the file, but the tool reported it was not found.",
 		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "delete_file"},
+			{SkillID: skills.SkillFileReader, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
 		},
 	})
 	if blocked {

@@ -457,6 +457,7 @@ Use the calculator tool.
 		Messages: []adapter.Message{{Role: "user", Content: "delete file-1"}},
 	})
 	guardCalls := 0
+	sawSuccessfulToolArguments := false
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
@@ -464,6 +465,9 @@ Use the calculator tool.
 			guardCalls++
 			for _, call := range req.SuccessfulToolCalls {
 				if call.SkillID == "limited-calculator" && call.ToolName == "evaluate_expression" {
+					if summary, ok := call.Arguments["expression"].(map[string]interface{}); ok && summary["length"] == 3 {
+						sawSuccessfulToolArguments = true
+					}
 					return FinalAnswerGuardResult{}, false
 				}
 			}
@@ -482,6 +486,9 @@ Use the calculator tool.
 	}
 	if guardCalls != 2 {
 		t.Fatalf("guard calls = %d, want 2", guardCalls)
+	}
+	if !sawSuccessfulToolArguments {
+		t.Fatalf("final answer guard did not receive summarized tool arguments")
 	}
 	if fakeLLM.appChatCalls != 4 {
 		t.Fatalf("AppChat calls = %d, want guard-triggered replan plus tool run", fakeLLM.appChatCalls)

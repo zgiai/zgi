@@ -124,8 +124,9 @@ type FinalAnswerGuardResult struct {
 }
 
 type SkillToolCallRef struct {
-	SkillID  string
-	ToolName string
+	SkillID   string
+	ToolName  string
+	Arguments map[string]interface{}
 }
 
 type ModelInvocationTrace struct {

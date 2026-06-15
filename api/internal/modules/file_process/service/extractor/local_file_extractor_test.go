@@ -133,6 +133,17 @@ func TestExtractProcessorLoadFromUploadFileUsesMetadataExtensionWhenStorageKeyHa
 	}
 }
 
+func TestOrderedExtractionStrategiesStartsWithRequestedAvailableStrategy(t *testing.T) {
+	strategies := orderedExtractionStrategies("local", []string{"mineru", "local", "unstructured"})
+
+	if len(strategies) == 0 || strategies[0] != "local" {
+		t.Fatalf("strategies = %#v, want requested local first", strategies)
+	}
+	if len(strategies) != 3 {
+		t.Fatalf("strategies len = %d, want 3 without duplicates: %#v", len(strategies), strategies)
+	}
+}
+
 func TestExtractProcessorLoadFromUploadFileUsesPDFMetadataExtensionWhenStorageKeyHasNoSuffix(t *testing.T) {
 	key := "tenant/uploads/pdf-object-without-extension"
 	filePath := filepath.Join(t.TempDir(), "source.pdf")

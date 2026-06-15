@@ -291,9 +291,10 @@ func consoleFilesListRequiredToolFinalAnswerGuard() skillloop.FinalAnswerGuard {
 
 func consoleFilesRequiredToolFinalAnswerGuard(targets []map[string]interface{}, toolName string, messageTemplates []string) skillloop.FinalAnswerGuard {
 	targetSummary := consoleFilesGuardTargetSummary(targets)
+	targetFileIDs := consoleFilesGuardTargetFileIDs(targets)
 	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		if finalAnswerGuardHasSuccessfulTool(req, skills.SkillFileReader, toolName) ||
-			finalAnswerGuardHasAttemptedTool(req, skills.SkillFileReader, toolName) {
+		if finalAnswerGuardHasSuccessfulToolForTargets(req, skills.SkillFileReader, toolName, targetFileIDs) ||
+			finalAnswerGuardHasAttemptedToolForTargets(req, skills.SkillFileReader, toolName, targetFileIDs) {
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
 		lines := make([]string, 0, len(messageTemplates))
@@ -309,23 +310,109 @@ func consoleFilesRequiredToolFinalAnswerGuard(targets []map[string]interface{}, 
 }
 
 func finalAnswerGuardHasSuccessfulTool(req skillloop.FinalAnswerGuardRequest, skillID string, toolName string) bool {
-	for _, call := range req.SuccessfulToolCalls {
-		if strings.EqualFold(strings.TrimSpace(call.SkillID), skillID) &&
-			strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
-			return true
-		}
-	}
-	return false
+	return finalAnswerGuardHasSuccessfulToolForTargets(req, skillID, toolName, nil)
+}
+
+func finalAnswerGuardHasSuccessfulToolForTargets(req skillloop.FinalAnswerGuardRequest, skillID string, toolName string, targetFileIDs []string) bool {
+	return finalAnswerGuardHasToolForTargets(req.SuccessfulToolCalls, skillID, toolName, targetFileIDs)
 }
 
 func finalAnswerGuardHasAttemptedTool(req skillloop.FinalAnswerGuardRequest, skillID string, toolName string) bool {
-	for _, call := range req.AttemptedToolCalls {
-		if strings.EqualFold(strings.TrimSpace(call.SkillID), skillID) &&
-			strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
-			return true
+	return finalAnswerGuardHasAttemptedToolForTargets(req, skillID, toolName, nil)
+}
+
+func finalAnswerGuardHasAttemptedToolForTargets(req skillloop.FinalAnswerGuardRequest, skillID string, toolName string, targetFileIDs []string) bool {
+	return finalAnswerGuardHasToolForTargets(req.AttemptedToolCalls, skillID, toolName, targetFileIDs)
+}
+
+func finalAnswerGuardHasToolForTargets(calls []skillloop.SkillToolCallRef, skillID string, toolName string, targetFileIDs []string) bool {
+	if len(targetFileIDs) == 0 {
+		for _, call := range calls {
+			if strings.EqualFold(strings.TrimSpace(call.SkillID), skillID) &&
+				strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
+				return true
+			}
+		}
+		return false
+	}
+	required := map[string]struct{}{}
+	for _, id := range targetFileIDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			required[id] = struct{}{}
 		}
 	}
-	return false
+	if len(required) == 0 {
+		return false
+	}
+	matched := map[string]struct{}{}
+	for _, call := range calls {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skillID) ||
+			!strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
+			continue
+		}
+		actual := skillToolCallFileIDs(call.Arguments)
+		for _, got := range actual {
+			if _, ok := required[got]; ok {
+				matched[got] = struct{}{}
+			}
+		}
+	}
+	return len(matched) == len(required)
+}
+
+func skillToolCallFileIDs(arguments map[string]interface{}) []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	add := func(value interface{}) {
+		switch typed := value.(type) {
+		case []string:
+			for _, item := range typed {
+				if id := strings.TrimSpace(item); id != "" {
+					if _, ok := seen[id]; !ok {
+						seen[id] = struct{}{}
+						out = append(out, id)
+					}
+				}
+			}
+		case []interface{}:
+			for _, item := range typed {
+				if id := strings.TrimSpace(stringFromAny(item)); id != "" {
+					if _, ok := seen[id]; !ok {
+						seen[id] = struct{}{}
+						out = append(out, id)
+					}
+				}
+			}
+		default:
+			if id := strings.TrimSpace(stringFromAny(value)); id != "" {
+				if _, ok := seen[id]; !ok {
+					seen[id] = struct{}{}
+					out = append(out, id)
+				}
+			}
+		}
+	}
+	add(arguments["file_id"])
+	add(arguments["file_ids"])
+	return out
+}
+
+func consoleFilesGuardTargetFileIDs(targets []map[string]interface{}) []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, target := range targets {
+		id := strings.TrimSpace(stringFromAny(target["file_id"]))
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func consoleFilesGuardTargetSummary(targets []map[string]interface{}) string {
