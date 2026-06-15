@@ -78,6 +78,10 @@ func TestReadFileToolReturnsAccessibleContent(t *testing.T) {
 	if got := payload["content_status"]; got != "extracted" {
 		t.Fatalf("content_status = %#v, want extracted", got)
 	}
+	if instruction := stringValue(payload, "instruction"); !strings.Contains(instruction, "Use the returned content field") ||
+		!strings.Contains(instruction, "truncated") {
+		t.Fatalf("instruction = %q, want extracted truncated guidance", instruction)
+	}
 	file, ok := payload["file"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("file payload type = %T, want map", payload["file"])
@@ -217,6 +221,68 @@ func TestReadFileToolFallsBackToFileServiceWhenExtractorMissing(t *testing.T) {
 	}
 	if got := payload["from_cache"]; got != false {
 		t.Fatalf("from_cache = %#v, want false", got)
+	}
+}
+
+func TestReadFileToolInstructionReflectsContentStatus(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	fileService := &fakeFileService{
+		files: map[string]*dto.UploadFile{
+			"empty-file": {
+				ID:             "empty-file",
+				OrganizationID: organizationID,
+				Name:           "empty.xlsx",
+				Extension:      "xlsx",
+				MimeType:       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+				CreatedBy:      accountID,
+			},
+			"error-file": {
+				ID:             "error-file",
+				OrganizationID: organizationID,
+				Name:           "broken.pdf",
+				Extension:      "pdf",
+				MimeType:       "application/pdf",
+				CreatedBy:      accountID,
+			},
+		},
+	}
+	extractor := &fakeContentExtractor{
+		contents: map[string]*workflowfile.FileContent{
+			"empty-file": {FileID: "empty-file", Content: ""},
+			"error-file": {FileID: "error-file", Error: errors.New("parser unavailable")},
+		},
+	}
+	provider := NewProvider(fileService, extractor, nil)
+	tool := readFileRuntimeTool(t, provider, organizationID)
+
+	emptyMessages, err := tool.Invoke(ctx, accountID, map[string]interface{}{"file_id": "empty-file"}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke(empty-file) error = %v", err)
+	}
+	emptyPayload := singleJSONPayload(t, emptyMessages)
+	if got := emptyPayload["content_status"]; got != "empty" {
+		t.Fatalf("empty content_status = %#v, want empty", got)
+	}
+	if instruction := stringValue(emptyPayload, "instruction"); !strings.Contains(instruction, "no extractable text content") {
+		t.Fatalf("empty instruction = %q, want empty-content guidance", instruction)
+	}
+
+	errorMessages, err := tool.Invoke(ctx, accountID, map[string]interface{}{"file_id": "error-file"}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke(error-file) error = %v", err)
+	}
+	errorPayload := singleJSONPayload(t, errorMessages)
+	if got := errorPayload["content_status"]; got != "error" {
+		t.Fatalf("error content_status = %#v, want error", got)
+	}
+	if got := errorPayload["content_error"]; got != "parser unavailable" {
+		t.Fatalf("content_error = %#v, want parser unavailable", got)
+	}
+	if instruction := stringValue(errorPayload, "instruction"); !strings.Contains(instruction, "could not be read") ||
+		!strings.Contains(instruction, "do not claim") {
+		t.Fatalf("error instruction = %q, want error guidance", instruction)
 	}
 }
 

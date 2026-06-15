@@ -145,6 +145,9 @@ func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *tes
 			for _, want := range []string{
 				"file-reader/read_file",
 				"resolved_targets_from_user_request",
+				"target is already resolved",
+				"Do not ask the user to select a file",
+				`content_status "extracted"`,
 				`"file_id":"` + tt.want + `"`,
 				`"extension":"xlsx"`,
 				`"selected":true`,

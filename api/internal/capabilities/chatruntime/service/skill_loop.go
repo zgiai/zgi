@@ -222,6 +222,8 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 		"The user is operating on the Console Files page. Treat visible file resources in operation_context as concrete user assets.",
 		"For requests that only ask what files are visible, available, selected, or present on the Files page, use file-reader/list_visible_files and answer from the tool result.",
 		"For requests about reading, previewing, summarizing, analyzing, or translating visible file contents, use file-reader/read_file with the resolved file_id.",
+		"When resolved_targets_from_user_request is present, the target is already resolved from the current page. Do not ask the user to select a file or repeat the file name before calling read_file/delete_file.",
+		"After read_file returns content_status \"extracted\", answer from the returned content field and continue requested post-processing such as summary or translation. Do not say the file cannot be read.",
 		"For requests about deleting or removing a resolved visible file, use file-reader/delete_file with exactly that file_id. Tool governance handles the approval card before deletion; do not ask for a separate natural-language confirmation first.",
 		"If a prior approval or session grant exists, it only skips the approval prompt. You must still call file-reader/delete_file in this turn and wait for the tool result before saying the file was deleted.",
 		"Never claim a file was deleted, removed, updated, created, saved, or otherwise changed based only on previous conversation context.",

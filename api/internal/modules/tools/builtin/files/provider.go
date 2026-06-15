@@ -472,6 +472,7 @@ func applyContent(payload map[string]interface{}, content readFileContent, maxCh
 		payload["content_truncated"] = false
 		payload["from_cache"] = false
 		payload["content_error"] = content.Error.Error()
+		payload["instruction"] = "The file content could not be read. Explain this error to the user and do not claim to have inspected the file body."
 		return
 	}
 	text := strings.TrimSpace(content.Text)
@@ -485,6 +486,21 @@ func applyContent(payload map[string]interface{}, content readFileContent, maxCh
 	payload["content_chars"] = len([]rune(text))
 	payload["content_truncated"] = truncated
 	payload["from_cache"] = content.FromCache
+	payload["instruction"] = readFileInstruction(status, truncated)
+}
+
+func readFileInstruction(status string, truncated bool) string {
+	switch status {
+	case "extracted":
+		if truncated {
+			return "Use the returned content field as the file body preview to answer the user's request. Mention that the content was truncated if the omitted tail could affect the answer, and ask for a narrower question or retry with a higher max_chars when needed."
+		}
+		return "Use the returned content field as the file body to answer the user's request. Do not ask the user to select the file again or say the file cannot be read."
+	case "empty":
+		return "The file was accessible but no extractable text content was found. Tell the user the file has no extractable text content."
+	default:
+		return "Inspect content_status, content, and content_error before answering."
+	}
 }
 
 func uploadFileWorkspaceID(file *dto.UploadFile) string {
