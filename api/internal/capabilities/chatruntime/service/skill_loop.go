@@ -28,6 +28,17 @@ func (s *service) runPreparedSkillStream(
 	onChunk func(string) error,
 	onEvent func(StreamEvent) error,
 ) (string, *adapter.Usage, error) {
+	return s.runPreparedSkillStreamWithFinalAnswerGuard(ctx, persistCtx, prepared, onChunk, onEvent, nil)
+}
+
+func (s *service) runPreparedSkillStreamWithFinalAnswerGuard(
+	ctx context.Context,
+	persistCtx context.Context,
+	prepared *PreparedChat,
+	onChunk func(string) error,
+	onEvent func(StreamEvent) error,
+	extraFinalAnswerGuard skillloop.FinalAnswerGuard,
+) (string, *adapter.Usage, error) {
 	if s.skillRuntime == nil {
 		return "", nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
 	}
@@ -79,9 +90,29 @@ func (s *service) runPreparedSkillStream(
 		Resolved:                 resolved,
 		ExecutionContext:         s.skillExecutionContext(prepared),
 		AdditionalSystemMessages: skillLoopAdditionalSystemMessages(prepared),
-		FinalAnswerGuard:         skillLoopFinalAnswerGuard(prepared),
+		FinalAnswerGuard:         combineFinalAnswerGuards(skillLoopFinalAnswerGuard(prepared), extraFinalAnswerGuard),
 		OnChunk:                  onChunk,
 	})
+}
+
+func combineFinalAnswerGuards(guards ...skillloop.FinalAnswerGuard) skillloop.FinalAnswerGuard {
+	active := make([]skillloop.FinalAnswerGuard, 0, len(guards))
+	for _, guard := range guards {
+		if guard != nil {
+			active = append(active, guard)
+		}
+	}
+	if len(active) == 0 {
+		return nil
+	}
+	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		for _, guard := range active {
+			if result, blocked := guard(req); blocked {
+				return result, true
+			}
+		}
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
 }
 
 func (s *service) skillExecutionContext(prepared *PreparedChat) skills.ExecutionContext {

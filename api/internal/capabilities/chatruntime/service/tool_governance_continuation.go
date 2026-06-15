@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/gorm"
 )
 
@@ -180,7 +181,7 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		return nil, fmt.Errorf("%w: prepared chat is required", ErrInvalidInput)
 	}
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceApprovalContinuationMessage(event))
-	answer, usage, err := s.runPreparedSkillStream(ctx, context.WithoutCancel(ctx), prepared, nil, onEvent)
+	answer, usage, err := s.runPreparedSkillStreamWithFinalAnswerGuard(ctx, context.WithoutCancel(ctx), prepared, nil, onEvent, toolGovernanceApprovedFinalAnswerGuard(event))
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
@@ -296,6 +297,81 @@ func toolGovernanceApprovedAssetInstructions(event map[string]interface{}) []str
 		lines = append(lines, "For this approved single-file deletion, call file-reader/"+toolName+" with file_id equal to the approved file asset id before answering.")
 	}
 	return lines
+}
+
+func toolGovernanceApprovedFinalAnswerGuard(event map[string]interface{}) skillloop.FinalAnswerGuard {
+	approvalEvent := toolGovernanceApprovalEventFromEvent(event)
+	if len(approvalEvent) == 0 {
+		return nil
+	}
+	toolID := strings.TrimSpace(firstNonEmptyString(
+		approvalEvent["tool_id"],
+		event["tool_id"],
+	))
+	skillID := strings.TrimSpace(firstNonEmptyString(
+		approvalEvent["skill_id"],
+		event["skill_id"],
+	))
+	toolName := strings.TrimSpace(stringFromAny(event["tool_name"]))
+	if toolName == "" && toolID == "file.delete" {
+		toolName = "delete_file"
+	}
+	if toolID != "file.delete" || skillID != skills.SkillFileReader || toolName != "delete_file" {
+		return nil
+	}
+	targetSummary := approvedGovernanceAssetSummary(approvalEvent, event)
+	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		if finalAnswerGuardHasSuccessfulTool(req, skillID, toolName) ||
+			finalAnswerGuardHasAttemptedTool(req, skillID, toolName) {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		return skillloop.FinalAnswerGuardResult{
+			SkillID:  skillID,
+			ToolName: toolName,
+			Message: strings.Join([]string{
+				"The user approved the pending file deletion, but approval is not the deletion itself.",
+				"Before producing a final answer, retry the approved call with call_skill_tool using skill_id \"file-reader\" and tool_name \"delete_file\".",
+				"Use the approved asset id for " + targetSummary + ".",
+				"Only after delete_file is attempted in this continuation may you report the actual outcome.",
+			}, " "),
+		}, true
+	}
+}
+
+func toolGovernanceApprovalEventFromEvent(event map[string]interface{}) map[string]interface{} {
+	approvalEvent := governanceMapFromAny(event["approval_event"])
+	if len(approvalEvent) > 0 {
+		return approvalEvent
+	}
+	if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
+		return governanceMapFromAny(governance["approval_event"])
+	}
+	return nil
+}
+
+func approvedGovernanceAssetSummary(approvalEvent map[string]interface{}, event map[string]interface{}) string {
+	assets := mapSliceFromAny(approvalEvent["assets"])
+	if len(assets) == 0 {
+		if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
+			assets = mapSliceFromAny(governance["assets"])
+		}
+	}
+	if len(assets) == 0 {
+		return "the approved file"
+	}
+	asset := assets[0]
+	name := strings.TrimSpace(firstNonEmptyString(asset["name"], asset["title"], asset["file_name"]))
+	id := strings.TrimSpace(stringFromAny(asset["id"]))
+	switch {
+	case name != "" && id != "":
+		return name + " (" + id + ")"
+	case name != "":
+		return name
+	case id != "":
+		return id
+	default:
+		return "the approved file"
+	}
 }
 
 func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtimedto.ToolGovernanceDecisionRequest, event map[string]interface{}) *adapter.ChatRequest {

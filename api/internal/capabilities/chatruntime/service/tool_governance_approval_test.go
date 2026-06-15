@@ -11,6 +11,8 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestMergeSkillInvocationMetadataKeepsToolGovernanceTrace(t *testing.T) {
@@ -415,6 +417,74 @@ func TestToolGovernanceApprovalContinuationMessageScopesRetryToGrant(t *testing.
 		if !strings.Contains(content, want) {
 			t.Fatalf("approval continuation prompt missing %q in %q", want, content)
 		}
+	}
+}
+
+func TestToolGovernanceApprovedFinalAnswerGuardBlocksUntilDeleteToolAttempted(t *testing.T) {
+	event := map[string]interface{}{
+		"correlation_id":  "corr-1",
+		"approval_status": "approved",
+		"tool_name":       "delete_file",
+		"governance": map[string]interface{}{
+			"approval_event": map[string]interface{}{
+				"tool_id":    "file.delete",
+				"skill_id":   "file-reader",
+				"effect":     "delete",
+				"asset_type": "file",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":   "file-1",
+						"type": "file",
+						"name": "smoke.txt",
+					},
+				},
+			},
+		},
+	}
+
+	guard := toolGovernanceApprovedFinalAnswerGuard(event)
+	if guard == nil {
+		t.Fatal("toolGovernanceApprovedFinalAnswerGuard() = nil, want guard")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The file was deleted.",
+	})
+	if !blocked {
+		t.Fatal("guard did not block final answer before delete_file was attempted")
+	}
+	for _, want := range []string{
+		"approval is not the deletion itself",
+		"delete_file",
+		"smoke.txt (file-1)",
+	} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("guard message missing %q in %q", want, result.Message)
+		}
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The delete_file tool failed because the file was already missing.",
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "delete_file"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after delete_file was attempted")
+	}
+}
+
+func TestToolGovernanceApprovedFinalAnswerGuardIgnoresNonFileDeleteApproval(t *testing.T) {
+	guard := toolGovernanceApprovedFinalAnswerGuard(map[string]interface{}{
+		"tool_name": "read_file",
+		"governance": map[string]interface{}{
+			"approval_event": map[string]interface{}{
+				"tool_id":  "file.read",
+				"skill_id": "file-reader",
+			},
+		},
+	})
+	if guard != nil {
+		t.Fatal("toolGovernanceApprovedFinalAnswerGuard() returned guard for non-delete approval")
 	}
 }
 
