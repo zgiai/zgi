@@ -25,6 +25,7 @@ export interface ToolGovernanceDisplayAsset {
 interface ToolGovernanceDecisionCardProps {
   title: string;
   toolLabel?: string | null;
+  notice?: string | null;
   reason?: string;
   assets: ToolGovernanceDisplayAsset[];
   summaryRows: ToolGovernanceDisplayRow[];
@@ -43,6 +44,7 @@ interface ToolGovernanceDecisionCardProps {
 export function ToolGovernanceDecisionCard({
   title,
   toolLabel,
+  notice,
   reason,
   assets,
   summaryRows,
@@ -164,6 +166,18 @@ export function ToolGovernanceDecisionCard({
                 </div>
               ))}
             </dl>
+          ) : null}
+          {notice ? (
+            <div
+              className={cn(
+                'rounded-md border p-2 leading-relaxed text-muted-foreground',
+                isHighImpact
+                  ? 'border-destructive/20 bg-destructive/5'
+                  : 'border-border bg-muted/30'
+              )}
+            >
+              {notice}
+            </div>
           ) : null}
           {reason ? (
             <div className="rounded-md border border-warning/20 bg-warning/5 p-2 text-muted-foreground">

@@ -234,6 +234,13 @@ const messages = {
       approveSucceeded: 'Approval recorded',
       rejectSucceeded: 'Rejection recorded',
       submitFailed: 'Failed to submit approval decision',
+      notices: {
+        fileDeletePending:
+          'AIChat has not deleted anything yet. Allowing this request will delete {count} file(s); rejecting it will return control to AIChat so it can continue with a safe alternative.',
+        fileDeleteApproved: 'Approval was recorded for deleting {count} file(s).',
+        fileDeleteRejected:
+          'This delete request was rejected. No file was deleted by this approval step.',
+      },
       audit: {
         action: 'Asset audit',
         title: 'Asset operation audit',

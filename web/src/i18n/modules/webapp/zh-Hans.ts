@@ -224,6 +224,12 @@ const messages: WebappMessages = {
       approveSucceeded: '已记录批准',
       rejectSucceeded: '已记录拒绝',
       submitFailed: '提交审批决策失败',
+      notices: {
+        fileDeletePending:
+          'AIChat 尚未删除任何内容。允许后会删除 {count} 个文件；拒绝后会把结果回传给 AIChat，由它继续给出安全替代方案。',
+        fileDeleteApproved: '已记录删除 {count} 个文件的审批。',
+        fileDeleteRejected: '本次删除请求已被拒绝。此审批步骤没有删除任何文件。',
+      },
       audit: {
         action: '资产审计',
         title: '资产操作审计',

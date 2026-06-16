@@ -573,12 +573,49 @@ function governanceAssetDisplayName(asset: AIChatToolGovernanceAssetRef): string
   );
 }
 
+function governanceFileSizeText(bytes: number | null): string | null {
+  if (bytes === null) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes >= 10 * 1024 ? 0 : 1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+}
+
+function uniqueGovernanceAssetMetaParts(parts: Array<string | null>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of parts) {
+    if (!part || seen.has(part)) continue;
+    seen.add(part);
+    out.push(part);
+  }
+  return out;
+}
+
 function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef, t: WebappTranslator): string {
   const workspaceID =
     governanceStringValue(asset.workspace_id) ??
     governanceRecordString(asset.metadata, ['workspace_id', 'workspaceId']);
-  const parts = [
-    governanceStringValue(asset.type),
+  const fileType =
+    governanceRecordString(asset, ['file_type', 'file_type_normalized']) ??
+    governanceRecordString(asset.metadata, ['file_type', 'file_type_normalized']);
+  const extension =
+    governanceRecordString(asset, ['extension', 'extension_normalized']) ??
+    governanceRecordString(asset.metadata, ['extension', 'extension_normalized']);
+  const mimeType =
+    governanceRecordString(asset, ['mime_type', 'mimeType']) ??
+    governanceRecordString(asset.metadata, ['mime_type', 'mimeType']);
+  const size = governanceFileSizeText(
+    governanceRecordNumber(asset, ['size', 'file_size', 'fileSize']) ??
+      governanceRecordNumber(asset.metadata, ['size', 'file_size', 'fileSize'])
+  );
+  const normalizedType = governanceStringValue(asset.type);
+  const normalizedExtension = extension ? extension.replace(/^\./, '') : null;
+  const parts = uniqueGovernanceAssetMetaParts([
+    normalizedType,
+    fileType && fileType !== normalizedType ? fileType : null,
+    normalizedExtension ? `.${normalizedExtension}` : null,
+    size,
+    mimeType,
     workspaceID ? `${t('consoleChat.governance.fields.workspace')} ${workspaceID}` : null,
     governanceStringValue(asset.id)
       ? `${t('consoleChat.governance.fields.assetId')} ${asset.id}`
@@ -586,8 +623,34 @@ function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef, t: WebappTrans
     governanceStringValue(asset.source)
       ? `${t('consoleChat.governance.fields.assetSource')} ${asset.source}`
       : null,
-  ].filter((part): part is string => Boolean(part));
+  ]);
   return parts.join(' · ');
+}
+
+function isFileDeleteGovernance(item: GovernanceTimelineItem): boolean {
+  const effect = governanceEventString(item, ['effect'])?.toLowerCase();
+  const assetType = governanceEventString(item, ['asset_type'])?.toLowerCase();
+  return effect === 'delete' && assetType === 'file';
+}
+
+function governanceNoticeText(
+  item: GovernanceTimelineItem,
+  assetCount: number,
+  t: WebappTranslator
+): string | null {
+  if (!isFileDeleteGovernance(item)) return null;
+  const count = Math.max(assetCount, 1);
+  const approvalStatus = governanceApprovalStatus(item);
+  if (isToolGovernanceNeedsApproval(item)) {
+    return t('consoleChat.governance.notices.fileDeletePending', { count });
+  }
+  if (approvalStatus === 'approved') {
+    return t('consoleChat.governance.notices.fileDeleteApproved', { count });
+  }
+  if (approvalStatus === 'rejected') {
+    return t('consoleChat.governance.notices.fileDeleteRejected', { count });
+  }
+  return null;
 }
 
 function governanceBooleanValue(value: unknown): boolean | null {
@@ -899,6 +962,8 @@ function ToolGovernanceDecisionRow({
   const toolLabel = governanceToolLabel(currentItem, skillDisplayById, locale, t);
   const reason = governanceReason(currentItem);
   const approvalAssets = governanceApprovalAssets(currentItem);
+  const assetCount = governanceAssetCount(currentItem, approvalAssets);
+  const notice = governanceNoticeText(currentItem, assetCount, t);
   const summaryRows: ToolGovernanceDisplayRow[] = governanceSummaryRows(
     currentItem,
     approvalAssets,
@@ -975,6 +1040,7 @@ function ToolGovernanceDecisionRow({
     <ToolGovernanceDecisionCard
       title={title}
       toolLabel={toolLabel}
+      notice={notice}
       reason={reason}
       assets={assets}
       summaryRows={summaryRows}
