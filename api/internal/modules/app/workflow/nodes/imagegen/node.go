@@ -25,6 +25,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const dataURIPrefix = "data:"
+
 var hashPlaceholderPattern = regexp.MustCompile(`\{\{(#[a-zA-Z0-9_]{1,50}(?:\.[a-zA-Z_][a-zA-Z0-9_]{0,29}){1,10}#)\}\}`)
 
 var supportedAspectRatios = map[string]string{
@@ -713,9 +715,16 @@ func (n *Node) renderPrompt() (string, error) {
 }
 
 func (n *Node) saveImage(item llmadapter.ImageItem) (*file.File, error) {
+	itemURL := strings.TrimSpace(item.URL)
 	switch {
-	case strings.TrimSpace(item.URL) != "":
-		return n.fileSaver.SaveRemoteURL(item.URL, file.FileTypeImage)
+	case isDataURI(itemURL):
+		data, mimeType, err := decodeImageDataURI(itemURL)
+		if err != nil {
+			return nil, err
+		}
+		return n.fileSaver.SaveBinaryString(data, mimeType, file.FileTypeImage, nil)
+	case itemURL != "":
+		return n.fileSaver.SaveRemoteURL(itemURL, file.FileTypeImage)
 	case strings.TrimSpace(item.B64JSON) != "":
 		data, err := decodeBase64Image(item.B64JSON)
 		if err != nil {
@@ -725,6 +734,46 @@ func (n *Node) saveImage(item llmadapter.ImageItem) (*file.File, error) {
 	default:
 		return nil, fmt.Errorf("image item does not contain url or b64_json")
 	}
+}
+
+func isDataURI(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	return len(raw) >= len(dataURIPrefix) && strings.EqualFold(raw[:len(dataURIPrefix)], dataURIPrefix)
+}
+
+func decodeImageDataURI(raw string) ([]byte, string, error) {
+	metadata, encoded, ok := strings.Cut(strings.TrimSpace(raw), ",")
+	if !ok || !isDataURI(metadata) {
+		return nil, "", fmt.Errorf("invalid image data URI")
+	}
+
+	mediaSpec := metadata[len("data:"):]
+	parts := strings.Split(mediaSpec, ";")
+	mimeType := strings.TrimSpace(parts[0])
+	if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+		return nil, "", fmt.Errorf("data URI mime type %q is not supported", mimeType)
+	}
+
+	hasBase64Encoding := false
+	for _, part := range parts[1:] {
+		if strings.EqualFold(strings.TrimSpace(part), "base64") {
+			hasBase64Encoding = true
+			break
+		}
+	}
+	if !hasBase64Encoding {
+		return nil, "", fmt.Errorf("image data URI must use base64 encoding")
+	}
+
+	data, err := decodeBase64Image(strings.TrimSpace(encoded))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to decode image data URI: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, "", fmt.Errorf("image data URI payload is empty")
+	}
+
+	return data, mimeType, nil
 }
 
 func resolveSelectorVariable(variablePool *entities.VariablePool, selector []string) entities.Variable {
