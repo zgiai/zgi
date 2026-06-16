@@ -16,21 +16,26 @@ import { getFileDetailKey } from '@/hooks/file/use-file-detail';
 
 export const FILE_CHUNKS_QUERY_KEY = 'file-chunks';
 
-export const getFileChunksKey = (fileId: string, params?: ListFileChunksRequest) => [
+export const getFileChunksKey = (
+  fileId: string,
+  params?: ListFileChunksRequest,
+  queryVersion?: number | string | null
+) => [
   FILE_CHUNKS_QUERY_KEY,
   fileId,
   params ?? {},
+  queryVersion ?? null,
 ];
 
 export function useFileChunks(
   fileId: string,
   params: ListFileChunksRequest = {},
-  options: { enabled?: boolean } = {}
+  options: { enabled?: boolean; queryVersion?: number | string | null } = {}
 ) {
-  const { enabled = true } = options;
+  const { enabled = true, queryVersion = null } = options;
 
   return useQuery<ApiResponseData<ListFileChunksResponse>>({
-    queryKey: getFileChunksKey(fileId, params),
+    queryKey: getFileChunksKey(fileId, params, queryVersion),
     queryFn: () => fileManageService.getFileChunks(fileId, params),
     enabled: enabled && Boolean(fileId),
     retry: false,

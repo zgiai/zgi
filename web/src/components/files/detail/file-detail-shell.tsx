@@ -534,9 +534,11 @@ function FileDetailLoading() {
 function FilePreviewChunksWorkbench({
   file,
   chunksEnabled,
+  chunkQueryVersion,
 }: {
   file: FileItem;
   chunksEnabled: boolean;
+  chunkQueryVersion?: number | string | null;
 }) {
   const t = useT('files');
   const [originalPreviewHidden, setOriginalPreviewHidden] = useState(false);
@@ -584,6 +586,7 @@ function FilePreviewChunksWorkbench({
         <FileChunksPanel
           fileId={file.id}
           enabled={chunksEnabled}
+          queryVersion={chunkQueryVersion}
           className="h-full"
           originalPreviewHidden={originalPreviewHidden}
           onToggleOriginalPreview={() => setOriginalPreviewHidden(current => !current)}
@@ -621,6 +624,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     processing?.pending_confirmation_count ?? summary?.pending_confirmation_count ?? file?.pending_confirmation_count ?? 0;
   const chunkCount =
     processing?.chunk_count ?? summary?.chunk_count ?? asset?.chunk_count ?? file?.chunk_count ?? artifactState?.chunk_count ?? 0;
+  const chunkQueryVersion = summary?.generation_no ?? asset?.generation_no ?? file?.generation_no ?? null;
   const embeddingCount = processing?.embedding_count ?? file?.embedding_count ?? 0;
   const chunksEnabled = status === 'ready';
   const qaEnabled = status === 'ready' && vectorStatus === 'ready' && embeddingCount > 0;
@@ -868,7 +872,11 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
         {activeView === 'preview' ? (
           <section className="flex h-full min-h-0 flex-col">
-            <FilePreviewChunksWorkbench file={file} chunksEnabled={chunksEnabled} />
+            <FilePreviewChunksWorkbench
+              file={file}
+              chunksEnabled={chunksEnabled}
+              chunkQueryVersion={chunkQueryVersion}
+            />
           </section>
         ) : (
           <section className="h-full min-h-0 overflow-y-auto bg-bg-canvas p-4 sm:p-6">

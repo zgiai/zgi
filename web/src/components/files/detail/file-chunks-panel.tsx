@@ -31,6 +31,7 @@ import type { FilePreviewLocator } from './file-original-preview-panel';
 interface FileChunksPanelProps {
   fileId: string;
   enabled: boolean;
+  queryVersion?: number | string | null;
   className?: string;
   originalPreviewHidden?: boolean;
   onToggleOriginalPreview?: () => void;
@@ -71,6 +72,7 @@ function ChunkSkeleton() {
 export function FileChunksPanel({
   fileId,
   enabled,
+  queryVersion,
   className,
   originalPreviewHidden = false,
   onToggleOriginalPreview,
@@ -83,7 +85,7 @@ export function FileChunksPanel({
   const [selectedChunkIds, setSelectedChunkIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<ChunkFilter>('all');
-  const { data, isLoading, error } = useFileChunks(fileId, { limit: 500 }, { enabled });
+  const { data, isLoading, error } = useFileChunks(fileId, { limit: 500 }, { enabled, queryVersion });
   const updateChunk = useUpdateFileChunk(fileId);
   const response = data?.data;
   const primaryChunks = useMemo(
