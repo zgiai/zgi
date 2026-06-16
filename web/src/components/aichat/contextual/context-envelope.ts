@@ -6,6 +6,7 @@ import { aichatTransport } from '@/components/chat/transports/aichat-transport';
 import type {
   AIChatChatRequest,
   AIChatRegenerateMessageRequest,
+  AIChatSkillCallEndEventData,
   AIChatToolGovernanceDecisionRequest,
 } from '@/services/types/aichat';
 import type {
@@ -33,6 +34,10 @@ const MAX_OPERATION_FIELD_LENGTH = 160;
 const MAX_OPERATION_METADATA_KEYS = 32;
 const MAX_OPERATION_METADATA_VALUE_LENGTH = 3200;
 const MAX_OPERATION_ID_LENGTH = 120;
+
+export interface ContextualAIChatTransportOptions {
+  onAssetToolSuccess?: (payload: AIChatSkillCallEndEventData) => void;
+}
 
 const RISK_RANK: Record<AIChatCapabilityRisk, number> = {
   low: 1,
@@ -355,8 +360,68 @@ function mergeAIChatOperationContext(
   };
 }
 
+function contextItemsIncludeCapability(items: AIChatContextItem[], capabilityID: string): boolean {
+  return items.some(item =>
+    (item.capabilities ?? []).some(capability => capability.id === capabilityID)
+  );
+}
+
+function isConsoleFilesContextItem(item: AIChatContextItem): boolean {
+  return (
+    item.href === '/console/files' ||
+    item.metadata?.page === 'console.files' ||
+    item.metadata?.route === '/console/files' ||
+    item.id === 'console.files'
+  );
+}
+
+function isSuccessfulSkillCall(payload: AIChatSkillCallEndEventData): boolean {
+  return !payload.status || payload.status === 'success';
+}
+
+function isFileDeleteSkillCall(payload: AIChatSkillCallEndEventData): boolean {
+  return (
+    payload.tool_name === 'delete_file' ||
+    payload.governance?.manifest?.tool_id === 'file.delete' ||
+    payload.governance?.asset_operation_audit?.tool_id === 'file.delete'
+  );
+}
+
+function shouldNotifyFileDeleteSuccess(
+  payload: AIChatSkillCallEndEventData,
+  items: AIChatContextItem[]
+): boolean {
+  return (
+    isSuccessfulSkillCall(payload) &&
+    isFileDeleteSkillCall(payload) &&
+    items.some(isConsoleFilesContextItem) &&
+    contextItemsIncludeCapability(items, 'file.delete')
+  );
+}
+
+function wrapContextualCallbacks(
+  callbacks: AIChatStreamCallbacks,
+  getContextItems: () => AIChatContextItem[],
+  options?: ContextualAIChatTransportOptions
+): AIChatStreamCallbacks {
+  if (!options?.onAssetToolSuccess) {
+    return callbacks;
+  }
+
+  return {
+    ...callbacks,
+    onSkillCallEnd: (payload, eventId) => {
+      callbacks.onSkillCallEnd(payload, eventId);
+      if (shouldNotifyFileDeleteSuccess(payload, getContextItems())) {
+        options.onAssetToolSuccess?.(payload);
+      }
+    },
+  };
+}
+
 export function createContextualAIChatTransport(
-  getContextItems: () => AIChatContextItem[]
+  getContextItems: () => AIChatContextItem[],
+  options?: ContextualAIChatTransportOptions
 ): AIChatRuntimeTransport {
   const base = aichatTransport;
   return {
@@ -379,13 +444,14 @@ export function createContextualAIChatTransport(
         operationContext,
         payload.operation_context
       );
+      const wrappedCallbacks = wrapContextualCallbacks(callbacks, getContextItems, options);
       return aichatTransport.streamChat(
         {
           ...payload,
           runtime_context: envelope || undefined,
           operation_context: mergedOperationContext,
         },
-        callbacks,
+        wrappedCallbacks,
         abortSignal
       );
     },
@@ -395,9 +461,26 @@ export function createContextualAIChatTransport(
       callbacks: AIChatStreamCallbacks,
       abortSignal?: AbortSignal
     ) {
-      return aichatTransport.regenerateMessage(messageId, payload, callbacks, abortSignal);
+      return aichatTransport.regenerateMessage(
+        messageId,
+        payload,
+        wrapContextualCallbacks(callbacks, getContextItems, options),
+        abortSignal
+      );
     },
-    recoverConversationStream: base.recoverConversationStream.bind(base),
+    recoverConversationStream(
+      conversationId,
+      params: { messageId: string; afterId?: string },
+      callbacks: AIChatStreamCallbacks,
+      abortSignal?: AbortSignal
+    ) {
+      return aichatTransport.recoverConversationStream(
+        conversationId,
+        params,
+        wrapContextualCallbacks(callbacks, getContextItems, options),
+        abortSignal
+      );
+    },
     continueToolGovernanceDecision(
       conversationId: string,
       messageId: string,
@@ -406,12 +489,13 @@ export function createContextualAIChatTransport(
       callbacks: AIChatStreamCallbacks,
       abortSignal?: AbortSignal
     ) {
+      const wrappedCallbacks = wrapContextualCallbacks(callbacks, getContextItems, options);
       return aichatTransport.continueToolGovernanceDecision(
         conversationId,
         messageId,
         correlationId,
         payload,
-        callbacks,
+        wrappedCallbacks,
         abortSignal
       );
     },

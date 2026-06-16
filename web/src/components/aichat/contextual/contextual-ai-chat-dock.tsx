@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import Chat, { useAIChatController, type AIChatModelValue } from '@/components/chat';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
+import { FILES_QUERY_KEY, STORAGE_USAGE_KEY } from '@/hooks/use-files';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import { cn } from '@/lib/utils';
@@ -47,6 +49,7 @@ function ContextBrand({ itemCount }: { itemCount: number }) {
 
 export function ContextualAIChatDock() {
   const user = useCurrentUser();
+  const queryClient = useQueryClient();
   const { isOpen, setOpen, items } = useContextualAIChat();
   const itemsRef = useRef(items);
 
@@ -54,7 +57,18 @@ export function ContextualAIChatDock() {
     itemsRef.current = items;
   }, [items]);
 
-  const transport = useMemo(() => createContextualAIChatTransport(() => itemsRef.current), []);
+  const handleAssetToolSuccess = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: [FILES_QUERY_KEY] });
+    void queryClient.invalidateQueries({ queryKey: [STORAGE_USAGE_KEY] });
+  }, [queryClient]);
+
+  const transport = useMemo(
+    () =>
+      createContextualAIChatTransport(() => itemsRef.current, {
+        onAssetToolSuccess: handleAssetToolSuccess,
+      }),
+    [handleAssetToolSuccess]
+  );
   const controller = useAIChatController({ transport });
   const { init: initController } = controller;
 

@@ -302,6 +302,9 @@ func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
 	if parts.OperationLedger != nil {
 		metadata["operation_ledger"] = copyStringAnyMap(parts.OperationLedger)
 	}
+	if snapshot := consoleFilesContextSnapshot(parts); snapshot != nil {
+		metadata[consoleFilesContextSnapshotKey] = snapshot
+	}
 	if parts.Attachments != nil && len(parts.Attachments.Files) > 0 {
 		metadata["files"] = parts.Attachments.metadataFiles()
 		metadata["file_count"] = len(parts.Attachments.Files)

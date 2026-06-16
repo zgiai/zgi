@@ -149,6 +149,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if err != nil {
 		return nil, err
 	}
+	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, continuation.Event)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured

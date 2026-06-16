@@ -90,7 +90,7 @@ func (s *service) runPreparedSkillStreamWithFinalAnswerGuard(
 		Resolved:                 resolved,
 		ExecutionContext:         s.skillExecutionContext(prepared),
 		AdditionalSystemMessages: skillLoopAdditionalSystemMessages(prepared),
-		FinalAnswerGuard:         combineFinalAnswerGuards(skillLoopFinalAnswerGuard(prepared), extraFinalAnswerGuard),
+		FinalAnswerGuard:         combineFinalAnswerGuards(extraFinalAnswerGuard, skillLoopFinalAnswerGuard(prepared)),
 		UserInputGuard:           skillLoopUserInputGuard(prepared),
 		OnChunk:                  onChunk,
 	})
