@@ -52,6 +52,42 @@ function getConversationTitle(conversation: ConversationSummary, fallback: strin
   return conversation.title?.trim() || fallback;
 }
 
+function isHttpNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+
+  const directStatus = (error as { status?: unknown }).status;
+  if (directStatus === 404) return true;
+
+  const responseStatus = (error as { response?: { status?: unknown } }).response?.status;
+  return responseStatus === 404;
+}
+
+function searchLocalConversations(
+  conversations: ConversationSummary[],
+  normalizedQuery: string,
+  fallbackTitle: string,
+  limit: number
+): ConversationSearchResult[] {
+  if (!normalizedQuery) return [];
+
+  return conversations
+    .filter(conversation =>
+      getConversationTitle(conversation, fallbackTitle).toLowerCase().includes(normalizedQuery)
+    )
+    .slice(0, limit)
+    .map(conversation => {
+      const title = getConversationTitle(conversation, fallbackTitle);
+
+      return {
+        type: 'conversation',
+        conversationId: conversation.id,
+        conversationTitle: title,
+        snippet: title,
+        updatedAt: conversation.updatedAt,
+      };
+    });
+}
+
 function formatConversationTime(updatedAt?: number): string {
   if (!updatedAt) return '';
   const timestamp = updatedAt < 1_000_000_000_000 ? updatedAt * 1000 : updatedAt;
@@ -109,9 +145,22 @@ export function ConversationSearchDialog({
   const debouncedCanSearchRemote =
     debouncedQuery.length >= minRemoteSearchLength && debouncedQuery === normalizedQuery;
   const searchEnabled = open && canSearchRemote && debouncedCanSearchRemote;
+  const newConversationText = t('webapp.chat.newConversation');
   const searchQuery = useQuery({
     queryKey: [...(searchKey ?? ['conversation-search']), debouncedQuery, 20],
-    queryFn: () => search?.(debouncedQuery, 20) ?? Promise.resolve([]),
+    queryFn: async () => {
+      if (!search) return [];
+
+      try {
+        return await search(debouncedQuery, 20);
+      } catch (error) {
+        if (isHttpNotFoundError(error)) {
+          return searchLocalConversations(conversations, debouncedQuery, newConversationText, 20);
+        }
+
+        throw error;
+      }
+    },
     enabled: searchEnabled,
     retry: false,
     staleTime: 60_000,
@@ -119,7 +168,6 @@ export function ConversationSearchDialog({
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
   });
-  const newConversationText = t('webapp.chat.newConversation');
 
   React.useEffect(() => {
     if (!open) {
