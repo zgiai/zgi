@@ -547,22 +547,38 @@ tools:
 runtime_type: tool
 tool_governance:
   file.read:
+    tool_id: file.read
+    skill_id: governance-skill
     domain: files
     effect: read
     asset_type: File
     risk_level: LOW
     requires_asset_resolution: true
+    permission_scopes:
+      - file:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
     audit_required: true
+    idempotency_required: false
   file.delete:
     tool_id: files.delete
+    skill_id: governance-skill
     domain: files
     effect: delete
     asset_type: file
     risk_level: high
+    requires_asset_resolution: true
+    permission_scopes:
+      - file:manage
     default_approval_policy: always_ask
     allowed_permission_tiers:
       - advanced
       - full
+    audit_required: true
+    idempotency_required: false
 ---
 Use governed tools.
 `
@@ -611,6 +627,88 @@ Use governed tools.
 	}
 	if got := deleteTool.Governance.AllowedPermissionTiers; len(got) != 2 || got[0] != toolgovernance.PermissionTierAdvanced || got[1] != toolgovernance.PermissionTierFull {
 		t.Fatalf("file.delete allowed tiers = %#v", got)
+	}
+}
+
+func TestSystemSkillToolGovernanceManifestFailsClosedOnInvalidFrontmatter(t *testing.T) {
+	tests := []struct {
+		name      string
+		fragment  string
+		wantField string
+	}{
+		{
+			name: "invalid risk",
+			fragment: `risk_level: hgh
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic`,
+			wantField: "risk_level",
+		},
+		{
+			name: "invalid approval policy",
+			fragment: `risk_level: low
+    default_approval_policy: always
+    allowed_permission_tiers:
+      - basic`,
+			wantField: "default_approval_policy",
+		},
+		{
+			name: "invalid allowed tier",
+			fragment: `risk_level: low
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - superuser`,
+			wantField: "allowed_permission_tiers",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			catalog := t.TempDir()
+			root := filepath.Join(catalog, "bad-governance")
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatalf("MkdirAll() error = %v", err)
+			}
+			skill := `---
+name: bad-governance
+description: governance test skill
+when_to_use: verify governance manifest validation
+provider_type: builtin
+provider_id: files
+tools:
+  - read_file
+runtime_type: tool
+tool_governance:
+  read_file:
+    tool_id: file.read
+    skill_id: bad-governance
+    domain: files
+    effect: read
+    asset_type: file
+    requires_asset_resolution: true
+    permission_scopes:
+      - file:read
+    ` + tt.fragment + `
+    audit_required: true
+    idempotency_required: false
+---
+Use governed tools.
+`
+			if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(skill), 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			runtime := NewRuntimeWithCatalog(nil, nil, catalog)
+			_, err := runtime.ResolveEnabledSkills(context.Background(), []string{"bad-governance"})
+			if err == nil {
+				t.Fatalf("ResolveEnabledSkills() error = nil, want invalid governance manifest")
+			}
+			message := err.Error()
+			for _, want := range []string{"bad-governance", "read_file", tt.wantField} {
+				if !strings.Contains(message, want) {
+					t.Fatalf("ResolveEnabledSkills() error = %q, want %q", message, want)
+				}
+			}
+		})
 	}
 }
 

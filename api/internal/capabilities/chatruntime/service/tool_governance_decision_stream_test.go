@@ -654,12 +654,21 @@ tools:
 tool_governance:
   delete_file:
     tool_id: file.delete
+    skill_id: file-reader
     domain: files
     effect: delete
     asset_type: file
     risk_level: high
     requires_asset_resolution: true
+    permission_scopes:
+      - file:manage
+    default_approval_policy: always_ask
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
     audit_required: true
+    idempotency_required: false
 ---
 
 # Governed Files

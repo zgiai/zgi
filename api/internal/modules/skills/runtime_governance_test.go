@@ -472,6 +472,76 @@ func TestPolicyToolGovernanceMatchingSessionGrantRequiresApprovalForDifferentRun
 	}
 }
 
+func TestCallSkillToolGovernancePreflightsRunScriptBeforeRunner(t *testing.T) {
+	scriptRunner := &governedScriptRunnerForTest{}
+	runtime := NewRuntimeWithCatalog(nil, nil, "").WithScriptRunner(scriptRunner).WithToolGovernanceGateway(NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))
+	resolved := &ResolvedSkills{Skills: []SkillDocument{governedScriptSkillForTest()}}
+
+	invocation, err := runtime.CallSkillTool(
+		context.Background(),
+		resolved,
+		"governed-script",
+		SkillScriptToolRun,
+		map[string]interface{}{"input": "hello"},
+		ExecutionContext{ConversationID: "conversation-1"},
+		"call_script",
+	)
+	if err != nil {
+		t.Fatalf("CallSkillTool() error = %v", err)
+	}
+	if invocation == nil || invocation.Trace.Kind != "tool_governance" {
+		t.Fatalf("invocation = %#v, want governance preflight result", invocation)
+	}
+	if invocation.Trace.Status != string(toolgovernance.DecisionStatusNeedsApproval) {
+		t.Fatalf("trace status = %s, want needs_approval", invocation.Trace.Status)
+	}
+	if scriptRunner.calls != 0 {
+		t.Fatalf("script runner calls = %d, want 0 before approval", scriptRunner.calls)
+	}
+}
+
+func TestCallSkillToolGovernanceAllowsRunScriptWithMatchingGrant(t *testing.T) {
+	scriptRunner := &governedScriptRunnerForTest{}
+	runtime := NewRuntimeWithCatalog(nil, nil, "").WithScriptRunner(scriptRunner).WithToolGovernanceGateway(NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))
+	resolved := &ResolvedSkills{Skills: []SkillDocument{governedScriptSkillForTest()}}
+
+	invocation, err := runtime.CallSkillTool(
+		context.Background(),
+		resolved,
+		"governed-script",
+		SkillScriptToolRun,
+		map[string]interface{}{"input": "hello"},
+		ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"session_grants": []map[string]interface{}{
+						{
+							"conversation_id":         "conversation-1",
+							"tool_id":                 "skill.run_script",
+							"effect":                  "invoke",
+							"asset_type":              "script",
+							"risk_level":              "high",
+							"approval_correlation_id": "approval-corr-1",
+							"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
+						},
+					},
+				},
+			},
+		},
+		"call_script",
+	)
+	if err != nil {
+		t.Fatalf("CallSkillTool() error = %v", err)
+	}
+	if invocation == nil || invocation.Trace.Kind != "tool_call" || invocation.Trace.Status != "success" {
+		t.Fatalf("invocation = %#v, want successful script tool call", invocation)
+	}
+	if scriptRunner.calls != 1 {
+		t.Fatalf("script runner calls = %d, want 1 after matching grant", scriptRunner.calls)
+	}
+}
+
 func governedRuntimeForTest(t *testing.T) (*Runtime, *ResolvedSkills) {
 	t.Helper()
 	catalogDir := t.TempDir()
@@ -492,20 +562,38 @@ runtime_type: tool
 tool_governance:
   read_file:
     tool_id: file.read
+    skill_id: governed-files
     domain: files
     effect: read
     asset_type: file
     risk_level: low
     requires_asset_resolution: true
+    permission_scopes:
+      - file:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
     audit_required: true
+    idempotency_required: false
   delete_file:
     tool_id: file.delete
+    skill_id: governed-files
     domain: files
     effect: delete
     asset_type: file
     risk_level: high
     requires_asset_resolution: true
+    permission_scopes:
+      - file:manage
+    default_approval_policy: always_ask
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
     audit_required: true
+    idempotency_required: false
 ---
 Use file tools.
 `
@@ -539,12 +627,21 @@ runtime_type: tool
 tool_governance:
   read_file:
     tool_id: file.read
+    skill_id: governed-files
     domain: files
     effect: read
     asset_type: file
     risk_level: low
     requires_asset_resolution: true
+    permission_scopes:
+      - file:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
     audit_required: true
+    idempotency_required: false
 ---
 Use file tools.
 `
@@ -673,4 +770,65 @@ func (t *governedReadToolForTest) ForkToolRuntime(*tools.ToolRuntime) tools.Tool
 
 func (t *governedReadToolForTest) ValidateCredentials(context.Context, map[string]interface{}) error {
 	return nil
+}
+
+func governedScriptSkillForTest() SkillDocument {
+	return SkillDocument{
+		Metadata: SkillMetadata{
+			ID:               "governed-script",
+			Name:             "governed-script",
+			Description:      "Governed script test skill",
+			WhenToUse:        "Use when testing governed scripts.",
+			RuntimeType:      SkillRuntimeTypeTool,
+			HasScripts:       true,
+			ScriptsSupported: true,
+		},
+		Instructions: "Run governed script.",
+		Tools: []SkillToolDefinition{{
+			Name:         SkillScriptToolRun,
+			ProviderType: tools.ToolProviderTypeBuiltin,
+			ProviderID:   "skill-script",
+			Governance: &toolgovernance.Manifest{
+				ToolID:                 "skill.run_script",
+				SkillID:                "governed-script",
+				Domain:                 "skills",
+				Effect:                 toolgovernance.EffectInvoke,
+				AssetType:              "script",
+				RiskLevel:              toolgovernance.RiskLevelHigh,
+				PermissionScopes:       []string{"skill:run"},
+				DefaultApprovalPolicy:  toolgovernance.ApprovalPolicyAlwaysAsk,
+				AllowedPermissionTiers: []toolgovernance.PermissionTier{toolgovernance.PermissionTierBasic, toolgovernance.PermissionTierAdvanced, toolgovernance.PermissionTierFull},
+				AuditRequired:          true,
+			},
+		}},
+	}
+}
+
+type governedScriptRunnerForTest struct {
+	calls int
+}
+
+func (r *governedScriptRunnerForTest) RunSkillScript(ctx context.Context, doc SkillDocument, arguments map[string]interface{}, execCtx ExecutionContext, callID string) (*ToolInvocationResult, error) {
+	_ = ctx
+	_ = doc
+	_ = arguments
+	_ = execCtx
+	_ = callID
+	r.calls++
+	return &ToolInvocationResult{
+		Messages: []tools.ToolInvokeMessage{{
+			Type: tools.ToolInvokeMessageTypeJSON,
+			Data: map[string]interface{}{"status": "ok"},
+		}},
+		Trace: SkillTrace{
+			Kind:     "tool_call",
+			SkillID:  "governed-script",
+			ToolName: SkillScriptToolRun,
+			Status:   "success",
+		},
+	}, nil
+}
+
+func (r *governedScriptRunnerForTest) Configured() bool {
+	return true
 }

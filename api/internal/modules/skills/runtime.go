@@ -279,7 +279,10 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 		return SkillDocument{}, fmt.Errorf("failed to parse custom skill: %w", err)
 	}
 	id := normalizeSkillID(frontmatter.Name)
-	doc := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body)
+	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body)
+	if err != nil {
+		return SkillDocument{}, err
+	}
 	if err := validateCustomSkillDocument(doc); err != nil {
 		return SkillDocument{}, err
 	}
@@ -371,10 +374,23 @@ func (r *Runtime) CallSkillTool(
 		return nil, fmt.Errorf("skill %s is not enabled", normalizeSkillID(skillID))
 	}
 	if strings.TrimSpace(toolName) == SkillScriptToolRun {
+		toolDef, ok := findSkillTool(*doc, toolName)
+		if !ok {
+			return nil, fmt.Errorf("tool %s is not available in skill %s", strings.TrimSpace(toolName), doc.Metadata.ID)
+		}
+		executionArguments := copyStringAnyMap(arguments)
+		if executionArguments == nil {
+			executionArguments = map[string]interface{}{}
+		}
+		if _, _, preflight, err := r.preflightToolGovernance(ctx, *doc, toolDef, executionArguments, execCtx, callID); preflight != nil {
+			return preflight, err
+		} else if err != nil {
+			return nil, err
+		}
 		if !doc.Metadata.ScriptsSupported || r.scriptRunner == nil {
 			return nil, fmt.Errorf("skill %s scripts are not supported", doc.Metadata.ID)
 		}
-		return r.scriptRunner.RunSkillScript(ctx, *doc, arguments, execCtx, callID)
+		return r.scriptRunner.RunSkillScript(ctx, *doc, executionArguments, execCtx, callID)
 	}
 	toolDef, ok := findSkillTool(*doc, toolName)
 	if !ok {
@@ -1698,7 +1714,10 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("failed to parse skill %s: %w", id, err)
 	}
-	doc := buildSkillDocument(id, root, source, frontmatter, body)
+	doc, err := buildSkillDocument(id, root, source, frontmatter, body)
+	if err != nil {
+		return SkillDocument{}, err
+	}
 	r.applyScriptSupport(&doc)
 	if source == SkillSourceCustom {
 		if err := validateCustomSkillDocument(doc); err != nil {
@@ -1712,12 +1731,16 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 	return doc, nil
 }
 
-func buildSkillDocument(id string, root string, source string, frontmatter SkillFrontmatter, body string) SkillDocument {
+func buildSkillDocument(id string, root string, source string, frontmatter SkillFrontmatter, body string) (SkillDocument, error) {
 	whenToUse := strings.TrimSpace(frontmatter.WhenToUse)
 	if normalizeSkillSource(source) == SkillSourceCustom && whenToUse == "" {
 		whenToUse = strings.TrimSpace(frontmatter.Description)
 	}
 	scriptPresent := hasScripts(root)
+	tools, err := buildSkillToolDefinitions(id, frontmatter)
+	if err != nil {
+		return SkillDocument{}, err
+	}
 	return SkillDocument{
 		Metadata: SkillMetadata{
 			ID:               normalizeSkillID(id),
@@ -1738,8 +1761,8 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 			RequiredConfig:   normalizeSkillRequiredConfig(id, frontmatter.RequiredConfig),
 		},
 		Instructions: strings.TrimSpace(body),
-		Tools:        buildSkillToolDefinitions(id, frontmatter),
-	}
+		Tools:        tools,
+	}, nil
 }
 
 func (r *Runtime) applyScriptSupport(doc *SkillDocument) {
@@ -1903,7 +1926,7 @@ func validateCustomSkillDocument(doc SkillDocument) error {
 	return nil
 }
 
-func buildSkillToolDefinitions(skillID string, frontmatter SkillFrontmatter) []SkillToolDefinition {
+func buildSkillToolDefinitions(skillID string, frontmatter SkillFrontmatter) ([]SkillToolDefinition, error) {
 	providerType := frontmatter.ProviderType
 	if providerType == "" {
 		providerType = tools.ToolProviderTypeBuiltin
@@ -1919,33 +1942,34 @@ func buildSkillToolDefinitions(skillID string, frontmatter SkillFrontmatter) []S
 			ProviderType: providerType,
 			ProviderID:   strings.TrimSpace(frontmatter.ProviderID),
 		}
-		if manifest, ok := skillToolGovernanceManifest(skillID, name, frontmatter.ToolGovernance); ok {
+		manifest, ok, err := skillToolGovernanceManifest(skillID, name, frontmatter.ToolGovernance)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			def.Governance = &manifest
 		}
 		defs = append(defs, def)
 	}
-	return defs
+	return defs, nil
 }
 
-func skillToolGovernanceManifest(skillID string, toolName string, manifests map[string]toolgovernance.Manifest) (toolgovernance.Manifest, bool) {
+func skillToolGovernanceManifest(skillID string, toolName string, manifests map[string]toolgovernance.Manifest) (toolgovernance.Manifest, bool, error) {
 	if len(manifests) == 0 {
-		return toolgovernance.Manifest{}, false
+		return toolgovernance.Manifest{}, false, nil
 	}
 	manifest, ok := manifests[strings.TrimSpace(toolName)]
 	if !ok {
 		manifest, ok = manifests[strings.ToLower(strings.TrimSpace(toolName))]
 	}
 	if !ok {
-		return toolgovernance.Manifest{}, false
+		return toolgovernance.Manifest{}, false, nil
 	}
-	manifest = toolgovernance.NormalizeManifest(manifest)
-	if manifest.ToolID == "" {
-		manifest.ToolID = strings.TrimSpace(toolName)
+	normalized, err := toolgovernance.ValidateManifest(manifest)
+	if err != nil {
+		return toolgovernance.Manifest{}, false, fmt.Errorf("skill %s tool %s governance manifest is invalid: %w", normalizeSkillID(skillID), strings.TrimSpace(toolName), err)
 	}
-	if manifest.SkillID == "" {
-		manifest.SkillID = normalizeSkillID(skillID)
-	}
-	return toolgovernance.NormalizeManifest(manifest), true
+	return normalized, true, nil
 }
 
 func (r *Runtime) listReferences(skillID string) []SkillReference {

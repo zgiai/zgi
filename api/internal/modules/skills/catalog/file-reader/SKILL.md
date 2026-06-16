@@ -14,6 +14,7 @@ timeout_seconds: 120
 tool_governance:
   list_visible_files:
     tool_id: file.list_visible
+    skill_id: file-reader
     domain: files
     effect: read
     asset_type: file
@@ -33,6 +34,7 @@ tool_governance:
     idempotency_required: false
   read_file:
     tool_id: file.read
+    skill_id: file-reader
     domain: files
     effect: read
     asset_type: file
@@ -52,6 +54,7 @@ tool_governance:
     idempotency_required: false
   delete_file:
     tool_id: file.delete
+    skill_id: file-reader
     domain: files
     effect: delete
     asset_type: file
