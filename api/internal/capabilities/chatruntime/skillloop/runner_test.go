@@ -20,6 +20,39 @@ import (
 	workflowbuiltin "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
 )
 
+func TestGovernedReadFileTargetSystemMessageAnchorsResolvedAsset(t *testing.T) {
+	message, ok := governedReadFileTargetSystemMessage(skills.SkillTrace{
+		SkillID:  skills.SkillFileReader,
+		ToolName: "read_file",
+		Governance: &toolgovernance.Decision{
+			Status: toolgovernance.DecisionStatusAllowed,
+			Manifest: toolgovernance.Manifest{
+				Effect:    toolgovernance.EffectRead,
+				AssetType: "file",
+			},
+			ExpectedAssets: []toolgovernance.AssetRef{{
+				ID:   "file-expected",
+				Name: "second.xlsx",
+				Type: "file",
+			}},
+		},
+	})
+	if !ok {
+		t.Fatal("governedReadFileTargetSystemMessage() ok = false, want true")
+	}
+	content := fmt.Sprint(message.Content)
+	for _, want := range []string{
+		`resolved file target "second.xlsx"`,
+		"Any earlier assistant progress text",
+		"Do not mention this correction",
+		"Simply answer the user's request",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("message missing %q in:\n%s", want, content)
+		}
+	}
+}
+
 func TestRunnerAllowsBatchRecoverableSkillToolFailures(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()

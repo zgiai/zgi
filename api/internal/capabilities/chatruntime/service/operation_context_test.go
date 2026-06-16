@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 )
 
 func TestOperationContextRecordedAsOperationLedger(t *testing.T) {
@@ -125,6 +126,54 @@ func TestOperationContextRecordedAsOperationLedger(t *testing.T) {
 	}
 	if _, exists := message.Metadata["operation_context"]; exists {
 		t.Fatalf("message metadata contains raw operation_context")
+	}
+}
+
+func TestRegenerateRequestCarriesOperationContext(t *testing.T) {
+	original := consoleFilesSnapshotTestParts("summary the second Excel", []consoleFilesTestFile{
+		{
+			ID:        "file-1",
+			Name:      "notes.txt",
+			Extension: "txt",
+			MimeType:  "text/plain",
+		},
+		{
+			ID:        "file-2",
+			Name:      "budget.xlsx",
+			Extension: "xlsx",
+			MimeType:  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			FileType:  "excel",
+		},
+	})
+
+	parts, err := normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{
+		RuntimeContext:   original.RuntimeContext,
+		OperationContext: original.RawOperationContext,
+	}, &runtimemodel.Message{
+		Query:           "summary the second Excel",
+		ModelName:       "test-model",
+		ModelParameters: map[string]interface{}{},
+		Metadata:        map[string]interface{}{},
+	})
+	if err != nil {
+		t.Fatalf("normalizeRegenerateRequest() error = %v", err)
+	}
+	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		t.Fatalf("regenerate parts missing console files context: %#v", parts.OperationContext)
+	}
+	if !hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		t.Fatalf("regenerate parts missing file.read capability: %#v", parts.OperationContext)
+	}
+	if parts.OperationLedger == nil {
+		t.Fatal("regenerate parts missing operation ledger")
+	}
+
+	metadata := streamingMessageMetadata(parts)
+	if _, ok := metadata["operation_context"]; ok {
+		t.Fatalf("operation_context leaked into metadata: %#v", metadata["operation_context"])
+	}
+	if snapshot := mapFromOperationContext(metadata[consoleFilesContextSnapshotKey]); len(snapshot) == 0 {
+		t.Fatalf("regenerate metadata missing console files snapshot: %#v", metadata)
 	}
 }
 

@@ -25,11 +25,13 @@ type ChatRequest struct {
 }
 
 type RegenerateMessageRequest struct {
-	Query      *string                `json:"query,omitempty"`
-	Model      *string                `json:"model,omitempty"`
-	Provider   *string                `json:"provider,omitempty"`
-	Parameters map[string]interface{} `json:"parameters,omitempty"`
-	UseMemory  *bool                  `json:"use_memory,omitempty"`
+	Query            *string                `json:"query,omitempty"`
+	RuntimeContext   string                 `json:"runtime_context,omitempty"`
+	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
+	Model            *string                `json:"model,omitempty"`
+	Provider         *string                `json:"provider,omitempty"`
+	Parameters       map[string]interface{} `json:"parameters,omitempty"`
+	UseMemory        *bool                  `json:"use_memory,omitempty"`
 }
 
 type ToolGovernanceDecisionRequest struct {

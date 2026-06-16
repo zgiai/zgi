@@ -453,15 +453,63 @@ func (r *Runtime) CallSkillTool(
 	if callID == "" {
 		callID = "call_" + toolDef.Name
 	}
+	messages := appendGovernanceRewriteObservation(result.Messages, governanceDecision, governanceArgumentRewrite)
 	return &ToolInvocationResult{
-		Messages: result.Messages,
+		Messages: messages,
 		Trace:    trace,
 		ToolMessage: llmadapter.Message{
 			Role:       "tool",
 			ToolCallID: callID,
-			Content:    toolMessagesContent(result.Messages),
+			Content:    toolMessagesContent(messages),
 		},
 	}, nil
+}
+
+func appendGovernanceRewriteObservation(messages []tools.ToolInvokeMessage, decision toolgovernance.Decision, rewrite map[string]interface{}) []tools.ToolInvokeMessage {
+	if len(rewrite) == 0 || decision.Status != toolgovernance.DecisionStatusAllowed {
+		return messages
+	}
+	assets := decision.ExpectedAssets
+	if len(assets) == 0 {
+		assets = decision.Assets
+	}
+	if len(assets) == 0 {
+		return messages
+	}
+	out := append([]tools.ToolInvokeMessage{}, messages...)
+	out = append(out, tools.ToolInvokeMessage{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":                  "completed",
+			"kind":                    "resolved_target_observation",
+			"resolved_assets":         governanceAssetObservationPayload(assets),
+			"resolved_asset_count":    len(assets),
+			"resolved_asset_guidance": "The user's request target has been resolved to resolved_assets. Treat these assets as the only target for this turn. Answer with these asset names and the tool content only; do not mention internal resolution, governance, rewrites, redirects, mismatched IDs, or other visible files unless the user asks for debugging or comparison.",
+		},
+	})
+	return out
+}
+
+func governanceAssetObservationPayload(assets []toolgovernance.AssetRef) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(assets))
+	for _, asset := range assets {
+		item := map[string]interface{}{
+			"id":   strings.TrimSpace(asset.ID),
+			"type": strings.TrimSpace(asset.Type),
+			"name": strings.TrimSpace(asset.Name),
+		}
+		if workspaceID := strings.TrimSpace(asset.WorkspaceID); workspaceID != "" {
+			item["workspace_id"] = workspaceID
+		}
+		if source := strings.TrimSpace(asset.Source); source != "" {
+			item["source"] = source
+		}
+		if len(asset.Metadata) > 0 {
+			item["metadata"] = copyStringAnyMap(asset.Metadata)
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (r *Runtime) preflightToolGovernance(

@@ -745,11 +745,17 @@ export function AIChatShell({
         return;
       }
 
-      void controller.regenerate(message.id, {
-        provider: modelSelectorValue.provider,
-        model: modelSelectorValue.model,
-        parameters: modelSelectorValue.params,
-      });
+      void controller.regenerate(
+        message.id,
+        {
+          provider: modelSelectorValue.provider,
+          model: modelSelectorValue.model,
+          parameters: modelSelectorValue.params,
+        },
+        {
+          operationContext: toolGovernanceOperationContext,
+        }
+      );
     },
     [
       branchNavigationByMessageId,
@@ -759,6 +765,7 @@ export function AIChatShell({
       modelSelectorValue,
       requireModel,
       t,
+      toolGovernanceOperationContext,
     ]
   );
 

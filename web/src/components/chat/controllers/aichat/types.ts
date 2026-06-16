@@ -207,11 +207,16 @@ export interface AIChatController {
     operationContext?: unknown;
   }) => Promise<void>;
   stop: () => Promise<void>;
-  regenerate: (messageId: string, model: AIChatModelSelection) => Promise<void>;
+  regenerate: (
+    messageId: string,
+    model: AIChatModelSelection,
+    options?: { operationContext?: unknown }
+  ) => Promise<void>;
   replaceRootMessage: (payload: {
     messageId: string;
     query?: string;
     model?: AIChatModelSelection;
+    operationContext?: unknown;
   }) => Promise<void>;
   continueWorkflowApproval?: (
     conversationId: string,

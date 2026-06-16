@@ -216,14 +216,20 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 	if req.UseMemory != nil {
 		useMemory = *req.UseMemory
 	}
+	runtimeContext := normalizeRuntimeContext(req.RuntimeContext)
+	operationContext, operationLedger := normalizeOperationContext(req.OperationContext)
 
 	return &chatRequestParts{
-		Query:       query,
-		ModelName:   modelName,
-		Provider:    provider,
-		ProviderPtr: providerPtr,
-		Parameters:  params,
-		UseMemory:   useMemory,
+		Query:               query,
+		RuntimeContext:      runtimeContext,
+		RawOperationContext: copyStringAnyMap(req.OperationContext),
+		OperationContext:    operationContext,
+		OperationLedger:     operationLedger,
+		ModelName:           modelName,
+		Provider:            provider,
+		ProviderPtr:         providerPtr,
+		Parameters:          params,
+		UseMemory:           useMemory,
 	}, nil
 }
 

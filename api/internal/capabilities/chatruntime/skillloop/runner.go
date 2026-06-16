@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -258,6 +259,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				return answerBuilder.String(), usage, nil
 			}
 			messages = append(messages, result.toolMessage)
+			if message, ok := governedReadFileTargetSystemMessage(result.trace); ok {
+				messages = append(messages, message)
+			}
 		}
 		if roundHadRecoverableFailure {
 			recoverableFailureRoundCount++
@@ -303,6 +307,44 @@ func validAdditionalSystemMessages(input []adapter.Message) []adapter.Message {
 		out = append(out, message)
 	}
 	return out
+}
+
+func governedReadFileTargetSystemMessage(trace skills.SkillTrace) (adapter.Message, bool) {
+	if trace.Governance == nil ||
+		!strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillFileReader) ||
+		!strings.EqualFold(strings.TrimSpace(trace.ToolName), "read_file") {
+		return adapter.Message{}, false
+	}
+	decision := trace.Governance
+	if decision.Status != toolgovernance.DecisionStatusAllowed ||
+		decision.Manifest.Effect != toolgovernance.EffectRead ||
+		!strings.EqualFold(strings.TrimSpace(decision.Manifest.AssetType), "file") {
+		return adapter.Message{}, false
+	}
+	assets := decision.ExpectedAssets
+	if len(assets) == 0 {
+		assets = decision.Assets
+	}
+	if len(assets) != 1 {
+		return adapter.Message{}, false
+	}
+	fileID := strings.TrimSpace(assets[0].ID)
+	fileName := strings.TrimSpace(assets[0].Name)
+	if fileID == "" && fileName == "" {
+		return adapter.Message{}, false
+	}
+	target := fileName
+	if target == "" {
+		target = fileID
+	}
+	content := strings.Join([]string{
+		"Authoritative files-page target feedback:",
+		fmt.Sprintf("The tool result above is for the resolved file target %q.", target),
+		"Use that resolved file name and the returned file content as the only source for the final answer.",
+		"Any earlier assistant progress text, assistant tool-call arguments, or visible-file ordinal interpretation that named a different file is incorrect for this turn.",
+		"Do not mention this correction, internal resolution, governance, redirects, caches, mismatched IDs, or internal file IDs in the final answer. Simply answer the user's request from the resolved file content.",
+	}, "\n")
+	return adapter.Message{Role: "system", Content: content}, true
 }
 
 func runFinalAnswerGuard(guard FinalAnswerGuard, req FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool) {

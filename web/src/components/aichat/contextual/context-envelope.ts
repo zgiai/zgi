@@ -461,9 +461,20 @@ export function createContextualAIChatTransport(
       callbacks: AIChatStreamCallbacks,
       abortSignal?: AbortSignal
     ) {
+      const contextItems = getContextItems();
+      const envelope = buildAIChatContextEnvelope(contextItems);
+      const operationContext = buildAIChatOperationContext(contextItems);
+      const mergedOperationContext = mergeAIChatOperationContext(
+        operationContext,
+        payload.operation_context
+      );
       return aichatTransport.regenerateMessage(
         messageId,
-        payload,
+        {
+          ...payload,
+          runtime_context: envelope || payload.runtime_context,
+          operation_context: mergedOperationContext,
+        },
         wrapContextualCallbacks(callbacks, getContextItems, options),
         abortSignal
       );

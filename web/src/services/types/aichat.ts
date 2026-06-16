@@ -407,6 +407,8 @@ export interface AIChatChatRequest {
 
 export interface AIChatRegenerateMessageRequest {
   query?: string;
+  runtime_context?: string;
+  operation_context?: unknown;
   model?: string;
   provider?: string;
   parameters?: AIChatModelParameters;

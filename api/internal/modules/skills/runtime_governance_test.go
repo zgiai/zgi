@@ -248,6 +248,25 @@ func TestCallSkillToolGovernanceRewritesReadArgumentsToResolvedAsset(t *testing.
 	if !ok || rewrite["from_file_id"] != "file-wrong" || rewrite["to_file_id"] != "file-expected" {
 		t.Fatalf("rewrite summary = %#v, want from/to file ids", invocation.Trace.Arguments["governance_argument_rewrite"])
 	}
+	if len(invocation.Messages) != 2 {
+		t.Fatalf("messages len = %d, want business result plus governance observation", len(invocation.Messages))
+	}
+	if invocation.Messages[1].Type != tools.ToolInvokeMessageTypeJSON {
+		t.Fatalf("governance observation message = %#v, want JSON", invocation.Messages[1])
+	}
+	observation := invocation.Messages[1].Data
+	if observation["kind"] != "resolved_target_observation" {
+		t.Fatalf("governance observation = %#v, want resolved_target_observation", observation)
+	}
+	if got := strings.TrimSpace(fmt.Sprint(observation["resolved_asset_guidance"])); !strings.Contains(got, "do not mention internal resolution") {
+		t.Fatalf("resolved asset guidance = %q", got)
+	}
+	content := fmt.Sprint(invocation.ToolMessage.Content)
+	for _, want := range []string{"resolved_target_observation", "file-expected", "second.xlsx", "do not mention internal resolution"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("tool message content missing %q in %s", want, content)
+		}
+	}
 }
 
 func TestPolicyToolGovernanceEnrichesArgumentAssetFromRuntimeAsset(t *testing.T) {

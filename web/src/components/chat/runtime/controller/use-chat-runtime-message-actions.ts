@@ -421,10 +421,12 @@ export function useChatRuntimeMessageActions({
       messageId,
       query,
       model,
+      operationContext,
     }: {
       messageId: string;
       query?: string;
       model?: AIChatModelSelection;
+      operationContext?: unknown;
     }) => {
       const trimmedQuery = query?.trim();
       const currentState = stateRef.current;
@@ -535,6 +537,7 @@ export function useChatRuntimeMessageActions({
           messageId,
           {
             query: trimmedQuery || undefined,
+            operation_context: operationContext,
             model: model?.model,
             provider: model?.provider,
             parameters: toAIChatParameters(model?.parameters),
@@ -757,7 +760,11 @@ export function useChatRuntimeMessageActions({
       eventAppliers,
     });
   const regenerate = useCallback(
-    async (messageId: string, model: AIChatModelSelection) => {
+    async (
+      messageId: string,
+      model: AIChatModelSelection,
+      options?: { operationContext?: unknown }
+    ) => {
       const activeConversationId = stateRef.current.activeConversationId;
       if (!activeConversationId) return;
 
@@ -767,7 +774,11 @@ export function useChatRuntimeMessageActions({
       const source = messages.find(message => message.id === messageId);
       if (!source || !source.query.trim()) return;
       if (canReplaceRootMessage(activeConversation, source, messages)) {
-        await replaceRootMessage({ messageId, model });
+        await replaceRootMessage({
+          messageId,
+          model,
+          operationContext: options?.operationContext,
+        });
         return;
       }
       if (!source.parent_id) return;
@@ -777,6 +788,7 @@ export function useChatRuntimeMessageActions({
         model,
         parentId: source.parent_id,
         useMemory: Boolean(source.metadata?.use_memory),
+        operationContext: options?.operationContext,
       });
     },
     [replaceRootMessage, send, stateRef]
