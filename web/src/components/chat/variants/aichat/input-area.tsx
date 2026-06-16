@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,7 +34,13 @@ import {
   filterLowercaseExtensions,
   formatExtensionsForDisplay,
 } from '@/utils/file-helpers';
-import { ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Loader2 } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  HelpCircle,
+  Loader2,
+} from 'lucide-react';
 import {
   AIChatAttachmentStrip,
   AIChatDragUploadOverlay,
@@ -72,6 +79,27 @@ export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId
 const FileSelectorDialog = dynamic(() => import('@/components/files/file-selector-dialog'), {
   ssr: false,
 });
+
+const COMPOSER_TEXTAREA_MIN_HEIGHT = 48;
+const COMPOSER_TEXTAREA_LINE_HEIGHT = 20;
+const COMPOSER_TEXTAREA_VERTICAL_PADDING = 16;
+const COMPOSER_TEXTAREA_MAX_HEIGHT =
+  COMPOSER_TEXTAREA_LINE_HEIGHT * 8 + COMPOSER_TEXTAREA_VERTICAL_PADDING;
+const COMPOSER_TEXTAREA_EXPANDED_MIN_HEIGHT = 360;
+const COMPOSER_TEXTAREA_EXPANDED_MAX_HEIGHT = 720;
+const COMPOSER_TEXTAREA_EXPANDED_VIEWPORT_RATIO = 0.72;
+const COMPOSER_EXPAND_VISIBLE_LINE_COUNT = 4;
+
+function getComposerExpandedMaxHeight(): number {
+  if (typeof window === 'undefined') return COMPOSER_TEXTAREA_EXPANDED_MAX_HEIGHT;
+  return Math.max(
+    COMPOSER_TEXTAREA_EXPANDED_MIN_HEIGHT,
+    Math.min(
+      Math.round(window.innerHeight * COMPOSER_TEXTAREA_EXPANDED_VIEWPORT_RATIO),
+      COMPOSER_TEXTAREA_EXPANDED_MAX_HEIGHT
+    )
+  );
+}
 
 function padDatePart(value: number): string {
   return String(value).padStart(2, '0');
@@ -137,6 +165,23 @@ function isComposingEnterEvent(event: KeyboardEvent<HTMLElement>): boolean {
   };
 
   return nativeEvent.isComposing === true || event.keyCode === 229;
+}
+
+function resizeComposerTextarea(
+  textarea: HTMLTextAreaElement | null,
+  maxHeight = COMPOSER_TEXTAREA_MAX_HEIGHT,
+  minHeight = COMPOSER_TEXTAREA_MIN_HEIGHT,
+  forceMaxHeight = false
+): boolean {
+  if (!textarea) return false;
+  textarea.style.height = 'auto';
+  const nextHeight = forceMaxHeight
+    ? maxHeight
+    : Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+  const isOverflowing = textarea.scrollHeight > maxHeight;
+  textarea.style.height = `${nextHeight}px`;
+  textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden';
+  return isOverflowing;
 }
 
 interface AIChatInputAreaProps {
@@ -220,6 +265,7 @@ export function AIChatInputArea({
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepthRef = useRef(0);
@@ -232,6 +278,8 @@ export function AIChatInputArea({
   );
   const [useMemory, setUseMemory] = useState(false);
   const [isPreparingSend, setIsPreparingSend] = useState(false);
+  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
+  const [isComposerOverflowing, setIsComposerOverflowing] = useState(false);
   const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [ignoredUserInputRequestKey, setIgnoredUserInputRequestKey] = useState<string | null>(null);
@@ -290,6 +338,14 @@ export function AIChatInputArea({
     [allSelectableExtensions]
   );
   const uploadedFiles = useMemo(() => getUploadedAIChatFiles(attachments), [attachments]);
+  const composerLineCount = useMemo(
+    () => Math.max(1, input.split(/\r\n|\r|\n/).length),
+    [input]
+  );
+  const showComposerExpandButton =
+    isComposerExpanded ||
+    isComposerOverflowing ||
+    composerLineCount > COMPOSER_EXPAND_VISIBLE_LINE_COUNT;
   const canClickSend =
     Boolean(input.trim()) &&
     !modelMissing &&
@@ -768,6 +824,57 @@ export function AIChatInputArea({
     [enableUpload, enqueueFiles]
   );
 
+  const handleComposerInputChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) => {
+      onInputChange(event.target.value);
+    },
+    [onInputChange]
+  );
+
+  const adjustComposerTextareaHeight = useCallback(() => {
+    const isOverflowing = resizeComposerTextarea(
+      textareaRef.current,
+      isComposerExpanded ? getComposerExpandedMaxHeight() : COMPOSER_TEXTAREA_MAX_HEIGHT,
+      isComposerExpanded ? COMPOSER_TEXTAREA_EXPANDED_MIN_HEIGHT : COMPOSER_TEXTAREA_MIN_HEIGHT,
+      isComposerExpanded
+    );
+    setIsComposerOverflowing(current => (current === isOverflowing ? current : isOverflowing));
+  }, [isComposerExpanded]);
+
+  useLayoutEffect(() => {
+    adjustComposerTextareaHeight();
+  }, [adjustComposerTextareaHeight, input]);
+
+  useEffect(() => {
+    if (!input.trim() && isComposerExpanded) {
+      setIsComposerExpanded(false);
+    }
+  }, [input, isComposerExpanded]);
+
+  useEffect(() => {
+    window.addEventListener('resize', adjustComposerTextareaHeight);
+    return () => {
+      window.removeEventListener('resize', adjustComposerTextareaHeight);
+    };
+  }, [adjustComposerTextareaHeight]);
+
+  useEffect(() => {
+    if (!isComposerExpanded) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      adjustComposerTextareaHeight();
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [adjustComposerTextareaHeight, isComposerExpanded]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !onHeightChange) return;
@@ -1064,35 +1171,60 @@ export function AIChatInputArea({
                   onRemove={handleRemoveAttachment}
                   onRetry={handleRetryAttachment}
                 />
-                <Textarea
-                  value={input}
-                  onChange={event => onInputChange(event.target.value)}
-                  onPaste={handlePaste}
-                  onCompositionStart={() => {
-                    isComposingRef.current = true;
-                  }}
-                  onCompositionEnd={() => {
-                    isComposingRef.current = false;
-                  }}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      if (isComposingRef.current || isComposingEnterEvent(event)) return;
-                      if (
-                        isSending ||
-                        isPreparingSend ||
-                        isModelInitializing ||
-                        isUploading ||
-                        hasUploadError
-                      ) {
-                        return;
+                <div
+                  className={cn(
+                    'rounded-xl transition-colors duration-200',
+                    isComposerExpanded && 'mb-2 border-b border-border/60 bg-muted/20 pb-2'
+                  )}
+                >
+                  <Textarea
+                    ref={textareaRef}
+                    value={input}
+                    rows={1}
+                    onChange={handleComposerInputChange}
+                    onPaste={handlePaste}
+                    onCompositionStart={() => {
+                      isComposingRef.current = true;
+                    }}
+                    onCompositionEnd={() => {
+                      isComposingRef.current = false;
+                    }}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        if (isComposingRef.current || isComposingEnterEvent(event)) return;
+                        if (
+                          isSending ||
+                          isPreparingSend ||
+                          isModelInitializing ||
+                          isUploading ||
+                          hasUploadError
+                        ) {
+                          return;
+                        }
+                        event.preventDefault();
+                        void handleSend();
                       }
-                      event.preventDefault();
-                      void handleSend();
-                    }
-                  }}
-                  placeholder={inputPlaceholder || t('chat.enterCommand')}
-                  className="max-h-36 min-h-12 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0"
-                />
+                    }}
+                    placeholder={inputPlaceholder || t('chat.enterCommand')}
+                    className={cn(
+                      'min-h-12 resize-none overflow-y-hidden border-0 bg-transparent py-2 pl-3 pr-4 text-sm shadow-none focus-visible:ring-0',
+                      '[scrollbar-width:thin] [scrollbar-color:rgba(113,113,122,0.45)_transparent]',
+                      '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-button]:hidden [&::-webkit-scrollbar-corner]:bg-transparent',
+                      '[&::-webkit-scrollbar-track]:my-2 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent',
+                      '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/35 hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/55',
+                      isComposerExpanded ? 'leading-6' : 'leading-5'
+                    )}
+                    style={{
+                      minHeight: isComposerExpanded
+                        ? COMPOSER_TEXTAREA_EXPANDED_MIN_HEIGHT
+                        : COMPOSER_TEXTAREA_MIN_HEIGHT,
+                      maxHeight: isComposerExpanded
+                        ? `min(${COMPOSER_TEXTAREA_EXPANDED_VIEWPORT_RATIO * 100}vh, ${COMPOSER_TEXTAREA_EXPANDED_MAX_HEIGHT}px)`
+                        : COMPOSER_TEXTAREA_MAX_HEIGHT,
+                      scrollbarGutter: 'stable',
+                    }}
+                  />
+                </div>
               </>
             ) : null}
             <input
@@ -1132,6 +1264,10 @@ export function AIChatInputArea({
                 imageExtensions={imageExtensions}
                 showModelSelector={showModelSelector}
                 showMemoryToggle={showMemoryToggle}
+                showComposerExpandButton={
+                  !hasActiveUserInputRequest && showComposerExpandButton
+                }
+                isComposerExpanded={isComposerExpanded}
                 enableUpload={!hasActiveUserInputRequest && enableUpload}
                 showFileLibraryPicker={showFileLibraryPicker}
                 surface={surface}
@@ -1141,6 +1277,7 @@ export function AIChatInputArea({
                 onUploadImage={handleImageUpload}
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
                 onMemoryEnabledChange={setUseMemory}
+                onToggleComposerExpanded={() => setIsComposerExpanded(current => !current)}
                 onSend={handleSend}
                 onStop={onStop}
               />

@@ -15,6 +15,7 @@ import { useT } from '@/i18n/translations';
 import type { ScopedTranslations } from '@/i18n/translations';
 import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
+import { formatMs } from '@/utils/format';
 import type {
   AIChatMessage,
   AIChatSkillInvocation,
@@ -168,7 +169,7 @@ function getDurationText(durationMs: number | undefined): string | null {
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return null;
   if (durationMs < 0) return null;
   if (durationMs === 0) return '<1ms';
-  return `${durationMs}ms`;
+  return formatMs(durationMs);
 }
 
 function formatDebugValue(value: unknown): string | null {

@@ -1,24 +1,40 @@
 'use client';
 
 import {
+  Brain,
   Calculator,
+  CalendarDays,
+  ChartNoAxesCombined,
   Clock,
+  ClipboardList,
+  Database,
+  FilePlus,
   FileText,
+  Library,
   Sparkles,
   Wrench,
+  Workflow,
   type LucideIcon,
   type LucideProps,
 } from 'lucide-react';
 
 const SKILL_ICON_BY_KEY: Record<string, LucideIcon> = {
+  brain: Brain,
   calculator: Calculator,
+  'calendar-days': CalendarDays,
+  'chart-no-axes-combined': ChartNoAxesCombined,
   clock: Clock,
+  'clipboard-list': ClipboardList,
+  database: Database,
   file: FileText,
   'file-generator': FileText,
+  'file-plus': FilePlus,
   'file-text': FileText,
+  library: Library,
   time: Clock,
   tools: Wrench,
   wrench: Wrench,
+  workflow: Workflow,
   sparkles: Sparkles,
 };
 
