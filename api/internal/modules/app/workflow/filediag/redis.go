@@ -21,7 +21,7 @@ const (
 
 // AppendError records workflow file diagnostics in Redis when Redis is available.
 // It is intentionally best-effort and must never block or fail workflow execution.
-func AppendError(ctx context.Context, event string, message string, fields map[string]string) {
+func AppendError(_ context.Context, event string, message string, fields map[string]string) {
 	client := zredis.GetClient()
 	if client == nil {
 		return
@@ -38,7 +38,11 @@ func AppendError(ctx context.Context, event string, message string, fields map[s
 		values[key] = value
 	}
 
-	writeCtx, cancel := context.WithTimeout(ctx, redisWriteTimeout)
+	go appendErrorValues(client, event, values)
+}
+
+func appendErrorValues(client *goredis.Client, event string, values map[string]interface{}) {
+	writeCtx, cancel := context.WithTimeout(context.Background(), redisWriteTimeout)
 	defer cancel()
 
 	_, err := client.Pipelined(writeCtx, func(pipe goredis.Pipeliner) error {

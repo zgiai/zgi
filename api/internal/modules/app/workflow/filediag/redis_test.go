@@ -3,6 +3,7 @@ package filediag
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	goredis "github.com/redis/go-redis/v9"
@@ -36,13 +37,7 @@ func TestAppendErrorWritesCappedStream(t *testing.T) {
 		"workspace_id":   "workspace-1",
 	})
 
-	length, err := client.XLen(context.Background(), redisStreamKey).Result()
-	if err != nil {
-		t.Fatalf("XLen failed: %v", err)
-	}
-	if length != 1 {
-		t.Fatalf("expected one diagnostic event, got %d", length)
-	}
+	waitForStreamLength(t, client, 1)
 
 	entries, err := client.XRange(context.Background(), redisStreamKey, "-", "+").Result()
 	if err != nil {
@@ -64,5 +59,24 @@ func TestAppendErrorWritesCappedStream(t *testing.T) {
 	}
 	if ttl <= 0 {
 		t.Fatalf("expected stream ttl to be set, got %s", ttl)
+	}
+}
+
+func waitForStreamLength(t *testing.T, client *goredis.Client, want int64) {
+	t.Helper()
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		length, err := client.XLen(context.Background(), redisStreamKey).Result()
+		if err != nil {
+			t.Fatalf("XLen failed: %v", err)
+		}
+		if length == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %d diagnostic event(s), got %d", want, length)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
