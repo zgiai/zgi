@@ -241,6 +241,32 @@ func summarizeFileReaderResult(toolName string, payload map[string]interface{}) 
 		return nil
 	}
 	switch strings.TrimSpace(toolName) {
+	case "list_visible_files":
+		result := compactFields(payload, "status", "count", "selected_count")
+		if files := compactFileReaderFiles(payload["files"]); len(files) > 0 {
+			result["files"] = files
+		}
+		return result
+	case "read_file":
+		result := compactFields(payload, "status", "max_chars", "content_status", "content_chars", "content_truncated", "from_cache")
+		if file := recordFromAny(payload["file"]); len(file) > 0 {
+			for _, field := range []string{"id", "name", "workspace_id", "extension", "mime_type", "size"} {
+				if value, ok := file[field]; ok {
+					result["file_"+field] = value
+				}
+			}
+		}
+		if content := strings.TrimSpace(stringFromAny(payload["content"])); content != "" {
+			result["content_returned_chars"] = len([]rune(content))
+			result["content_redacted"] = true
+		} else if _, exists := payload["content"]; exists {
+			result["content_redacted"] = true
+		}
+		if contentError := strings.TrimSpace(stringFromAny(payload["content_error"])); contentError != "" {
+			result["content_error_chars"] = len([]rune(contentError))
+			result["content_error_present"] = true
+		}
+		return result
 	case "delete_file":
 		result := compactFields(payload, "status", "deleted_count", "reversible", "error")
 		if file := recordFromAny(payload["file"]); len(file) > 0 {
@@ -254,6 +280,39 @@ func summarizeFileReaderResult(toolName string, payload map[string]interface{}) 
 	default:
 		return nil
 	}
+}
+
+func compactFileReaderFiles(value interface{}) []map[string]interface{} {
+	files := recordsFromAny(value)
+	if len(files) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, min(len(files), 20))
+	for index, file := range files {
+		if index >= 20 {
+			break
+		}
+		item := map[string]interface{}{}
+		for _, field := range []string{"visible_index", "id", "file_id", "name", "workspace_id", "extension", "mime_type", "file_type", "size", "selected", "content_status", "content_chars", "content_truncated", "from_cache"} {
+			if value, ok := file[field]; ok && value != nil && value != "" {
+				item[field] = value
+			}
+		}
+		if content := strings.TrimSpace(stringFromAny(file["content"])); content != "" {
+			item["content_returned_chars"] = len([]rune(content))
+			item["content_redacted"] = true
+		} else if _, exists := file["content"]; exists {
+			item["content_redacted"] = true
+		}
+		if preview := strings.TrimSpace(stringFromAny(file["content_preview"])); preview != "" {
+			item["content_preview_chars"] = len([]rune(preview))
+			item["content_preview_redacted"] = true
+		}
+		if len(item) > 0 {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func compactKnowledgeRetrieveResult(payload map[string]interface{}) map[string]interface{} {
@@ -365,6 +424,23 @@ func recordFromAny(value interface{}) map[string]interface{} {
 		return typed
 	default:
 		return map[string]interface{}{}
+	}
+}
+
+func recordsFromAny(value interface{}) []map[string]interface{} {
+	switch typed := value.(type) {
+	case []map[string]interface{}:
+		return typed
+	case []interface{}:
+		out := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if record, ok := item.(map[string]interface{}); ok {
+				out = append(out, record)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }
 

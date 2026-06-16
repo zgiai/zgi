@@ -491,6 +491,7 @@ func TestConsoleFilesActionDecisionDoesNotMatchProfileReadCapability(t *testing.
 }
 
 func TestActionRunResponseForMetadataIsParseableByFrontend(t *testing.T) {
+	const rawPreview = "ACTION_METADATA_SECRET_SHOULD_NOT_PERSIST"
 	now := time.Unix(1700000000, 0)
 	conversationID := uuid.New()
 	messageID := uuid.New()
@@ -523,7 +524,14 @@ func TestActionRunResponseForMetadataIsParseableByFrontend(t *testing.T) {
 		RiskLevel:            actionmodel.RiskLevelLow,
 		RequiresConfirmation: false,
 		Output: map[string]interface{}{"files": []map[string]interface{}{
-			{"id": "file-1", "name": "notes.txt", "content_preview": "hello"},
+			{
+				"id":                "file-1",
+				"name":              "notes.txt",
+				"content_preview":   rawPreview,
+				"content_status":    "extracted",
+				"content_chars":     128,
+				"content_truncated": true,
+			},
 		}},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -540,8 +548,25 @@ func TestActionRunResponseForMetadataIsParseableByFrontend(t *testing.T) {
 	if resp.ConfirmationStatus != "not_required" {
 		t.Fatalf("ConfirmationStatus = %q, want not_required", resp.ConfirmationStatus)
 	}
-	if got := resp.Steps[0].Output["files"]; got == nil {
+	files, ok := resp.Steps[0].Output["files"].([]map[string]interface{})
+	if !ok || len(files) != 1 {
 		t.Fatalf("step output files missing: %#v", resp.Steps[0].Output)
+	}
+	if _, ok := files[0]["content_preview"]; ok {
+		t.Fatalf("content_preview should not be embedded in message metadata: %#v", files[0])
+	}
+	if files[0]["content_preview_redacted"] != true || files[0]["content_preview_chars"] != len([]rune(rawPreview)) {
+		t.Fatalf("file redaction summary = %#v, want preview redaction markers", files[0])
+	}
+	if files[0]["id"] != "file-1" || files[0]["name"] != "notes.txt" || files[0]["content_status"] != "extracted" || files[0]["content_chars"] != 128 || files[0]["content_truncated"] != true {
+		t.Fatalf("file audit fields = %#v, want safe file metadata preserved", files[0])
+	}
+	if resp.Steps[0].Output["files_content_redacted"] != true {
+		t.Fatalf("files_content_redacted = %#v, want true", resp.Steps[0].Output["files_content_redacted"])
+	}
+	originalFiles := step.Output["files"].([]map[string]interface{})
+	if originalFiles[0]["content_preview"] != rawPreview {
+		t.Fatalf("original step output was mutated: %#v", originalFiles[0])
 	}
 }
 

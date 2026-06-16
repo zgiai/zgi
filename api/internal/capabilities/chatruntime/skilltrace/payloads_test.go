@@ -266,3 +266,87 @@ func TestSummarizeToolResultCompactsFileDeletePayload(t *testing.T) {
 		t.Fatalf("file_created_by should not be included in compact trace result: %#v", result)
 	}
 }
+
+func TestSummarizeToolResultCompactsFileReadPayload(t *testing.T) {
+	const rawContent = "SECRET FILE CONTENT SHOULD NOT BE IN TRACE"
+	result := SummarizeToolResult(skills.SkillFileReader, "read_file", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":            "completed",
+			"max_chars":         4000,
+			"content_status":    "extracted",
+			"content":           rawContent,
+			"content_chars":     123,
+			"content_truncated": false,
+			"from_cache":        true,
+			"file": map[string]interface{}{
+				"id":           "file-1",
+				"name":         "invoice.xlsx",
+				"workspace_id": "workspace-1",
+				"extension":    "xlsx",
+				"mime_type":    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+				"size":         42,
+				"created_by":   "account-1",
+			},
+		},
+	}})
+	for key, want := range map[string]interface{}{
+		"status":                 "completed",
+		"max_chars":              4000,
+		"content_status":         "extracted",
+		"content_chars":          123,
+		"content_truncated":      false,
+		"from_cache":             true,
+		"content_returned_chars": len([]rune(rawContent)),
+		"content_redacted":       true,
+		"file_id":                "file-1",
+		"file_name":              "invoice.xlsx",
+		"file_workspace_id":      "workspace-1",
+		"file_extension":         "xlsx",
+		"file_size":              42,
+	} {
+		if result[key] != want {
+			t.Fatalf("%s = %#v, want %#v in %#v", key, result[key], want, result)
+		}
+	}
+	for _, key := range []string{"content", "created_by", "file_created_by"} {
+		if _, ok := result[key]; ok {
+			t.Fatalf("%s should not be included in compact trace result: %#v", key, result)
+		}
+	}
+}
+
+func TestSummarizeToolResultCompactsVisibleFilesPayload(t *testing.T) {
+	const rawPreview = "VISIBLE LIST SHOULD NOT CARRY CONTENT PREVIEW"
+	result := SummarizeToolResult(skills.SkillFileReader, "list_visible_files", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":         "completed",
+			"count":          1,
+			"selected_count": 1,
+			"files": []map[string]interface{}{{
+				"visible_index":   2,
+				"file_id":         "file-2",
+				"name":            "notes.pdf",
+				"workspace_id":    "workspace-1",
+				"extension":       "pdf",
+				"mime_type":       "application/pdf",
+				"selected":        true,
+				"content_preview": rawPreview,
+			}},
+		},
+	}})
+	if result["status"] != "completed" || result["count"] != 1 || result["selected_count"] != 1 {
+		t.Fatalf("summary fields = %#v, want status/count/selected_count", result)
+	}
+	files, ok := result["files"].([]map[string]interface{})
+	if !ok || len(files) != 1 {
+		t.Fatalf("files = %#v, want one compact file", result["files"])
+	}
+	if files[0]["file_id"] != "file-2" || files[0]["name"] != "notes.pdf" || files[0]["content_preview_redacted"] != true {
+		t.Fatalf("file summary = %#v, want safe file fields with preview redaction", files[0])
+	}
+	if _, ok := files[0]["content_preview"]; ok {
+		t.Fatalf("content_preview should not be included in compact trace file: %#v", files[0])
+	}
+}

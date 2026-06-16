@@ -90,7 +90,7 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 	if len(traces) == 0 {
 		return metadata
 	}
-	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	invocations := sanitizeSkillInvocationsForMetadata(skillInvocationsFromMetadata(metadata["skill_invocations"]))
 	for index, trace := range traces {
 		if !visibleSkillInvocationKind(trace.Kind) {
 			continue
@@ -109,8 +109,9 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 	if len(invocations) == 0 {
 		return metadata
 	}
-	stored := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	stored := sanitizeSkillInvocationsForMetadata(skillInvocationsFromMetadata(metadata["skill_invocations"]))
 	for _, invocation := range invocations {
+		invocation = sanitizeSkillInvocationForMetadata(invocation)
 		if !visibleSkillInvocationKind(stringFromAny(invocation["kind"])) {
 			continue
 		}
@@ -517,7 +518,7 @@ func modelInvocationPayloadFilesSummary(files []interface{}) ([]map[string]inter
 			continue
 		}
 		item := map[string]interface{}{}
-		for _, key := range []string{"visible_index", "id", "file_id", "name", "extension", "mime_type", "file_type", "workspace_id", "content_status", "filtered_reason", "content_truncated", "selected"} {
+		for _, key := range []string{"visible_index", "id", "file_id", "name", "extension", "mime_type", "file_type", "workspace_id", "size", "content_status", "content_chars", "filtered_reason", "content_truncated", "from_cache", "selected"} {
 			if safe, ok := modelInvocationSafeSummaryValue(file[key]); ok {
 				item[key] = safe
 			}
@@ -528,8 +529,7 @@ func modelInvocationPayloadFilesSummary(files []interface{}) ([]map[string]inter
 			redacted = true
 		}
 		if content := strings.TrimSpace(stringFromAny(file["content"])); content != "" {
-			item["content_chars"] = len([]rune(content))
-			item["content_redacted"] = true
+			setRedactedTextSummary(item, "content", content)
 			redacted = true
 		}
 		if contentError := strings.TrimSpace(stringFromAny(file["content_error"])); contentError != "" {
@@ -697,7 +697,115 @@ func skillInvocationFromTrace(trace skills.SkillTrace, index int) map[string]int
 	} else if createdAt := numericValueFromMap(trace.Result, "created_at"); createdAt != nil {
 		invocation["created_at"] = createdAt
 	}
-	return compactSkillInvocation(invocation)
+	return sanitizeSkillInvocationForMetadata(compactSkillInvocation(invocation))
+}
+
+func sanitizeSkillInvocationsForMetadata(invocations []map[string]interface{}) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(invocations))
+	for _, invocation := range invocations {
+		out = append(out, sanitizeSkillInvocationForMetadata(invocation))
+	}
+	return out
+}
+
+func sanitizeSkillInvocationForMetadata(invocation map[string]interface{}) map[string]interface{} {
+	if len(invocation) == 0 {
+		return invocation
+	}
+	if strings.TrimSpace(stringFromAny(invocation["skill_id"])) != skills.SkillFileReader {
+		return invocation
+	}
+	result, ok := invocation["result"].(map[string]interface{})
+	if !ok || len(result) == 0 {
+		return invocation
+	}
+	sanitizedResult, changed := sanitizeFileReaderResultForMetadata(result)
+	if !changed {
+		return invocation
+	}
+	out := copyStringAnyMap(invocation)
+	out["result"] = sanitizedResult
+	return out
+}
+
+func sanitizeFileReaderResultForMetadata(result map[string]interface{}) (map[string]interface{}, bool) {
+	out := copyStringAnyMap(result)
+	changed := false
+	if redactTextFieldForMetadata(out, "content", "content") {
+		changed = true
+	}
+	if redactTextFieldForMetadata(out, "content_preview", "content_preview") {
+		changed = true
+	}
+	if redactTextFieldForMetadata(out, "content_error", "content_error") {
+		changed = true
+	}
+	if file, ok := out["file"].(map[string]interface{}); ok && len(file) > 0 {
+		out["file"] = fileReaderMetadataFileSummary(file)
+		changed = true
+	}
+	if files := modelInvocationFileItemsFromAny(out["files"]); len(files) > 0 {
+		fileSummaries, redacted := modelInvocationPayloadFilesSummary(files)
+		if len(fileSummaries) > 0 {
+			out["files"] = fileSummaries
+		}
+		if redacted {
+			out["files_content_redacted"] = true
+		}
+		changed = changed || redacted
+	}
+	return out, changed
+}
+
+func redactTextFieldForMetadata(payload map[string]interface{}, key string, prefix string) bool {
+	if payload == nil {
+		return false
+	}
+	value, exists := payload[key]
+	if !exists {
+		return false
+	}
+	delete(payload, key)
+	setRedactedTextSummary(payload, prefix, strings.TrimSpace(stringFromAny(value)))
+	return true
+}
+
+func setRedactedTextSummary(payload map[string]interface{}, prefix string, text string) {
+	if payload == nil {
+		return
+	}
+	payload[prefix+"_redacted"] = true
+	if text == "" {
+		return
+	}
+	charsKey := prefix + "_chars"
+	if prefix == "content" {
+		if _, exists := payload["content_chars"]; exists {
+			charsKey = "content_returned_chars"
+		}
+	}
+	payload[charsKey] = len([]rune(text))
+}
+
+func fileReaderMetadataFileSummary(file map[string]interface{}) map[string]interface{} {
+	item := map[string]interface{}{}
+	for _, key := range []string{"visible_index", "id", "file_id", "name", "extension", "mime_type", "file_type", "workspace_id", "size", "selected", "content_status", "content_chars", "content_truncated", "from_cache"} {
+		if safe, ok := modelInvocationSafeSummaryValue(file[key]); ok {
+			item[key] = safe
+		}
+	}
+	if preview := strings.TrimSpace(stringFromAny(file["content_preview"])); preview != "" {
+		item["content_preview_chars"] = len([]rune(preview))
+		item["content_preview_redacted"] = true
+	}
+	if content := strings.TrimSpace(stringFromAny(file["content"])); content != "" {
+		setRedactedTextSummary(item, "content", content)
+	}
+	if contentError := strings.TrimSpace(stringFromAny(file["content_error"])); contentError != "" {
+		item["content_error_chars"] = len([]rune(contentError))
+		item["content_error_redacted"] = true
+	}
+	return item
 }
 
 func newSkillInvocation(kind, skillID, toolName, status string, values map[string]interface{}) map[string]interface{} {

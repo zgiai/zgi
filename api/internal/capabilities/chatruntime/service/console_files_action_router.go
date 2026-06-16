@@ -913,11 +913,31 @@ func actionStepResponsesForMetadata(steps []*actionmodel.ActionStep) []actiondto
 			CompletedAt:          unixTimePtr(step.CompletedAt),
 			Error:                step.Error,
 			Input:                nonNilActionMap(step.Input),
-			Output:               nonNilActionMap(step.Output),
+			Output:               actionStepOutputForMetadata(step.Output),
 			Metadata:             nonNilActionMap(step.Metadata),
 			CreatedAt:            step.CreatedAt.Unix(),
 			UpdatedAt:            step.UpdatedAt.Unix(),
 		})
+	}
+	return out
+}
+
+func actionStepOutputForMetadata(output map[string]interface{}) map[string]interface{} {
+	out := copyStringAnyMap(output)
+	if out == nil {
+		out = map[string]interface{}{}
+	}
+	if len(out) == 0 {
+		return out
+	}
+	if files := modelInvocationFileItemsFromAny(out["files"]); len(files) > 0 {
+		fileSummaries, redacted := modelInvocationPayloadFilesSummary(files)
+		if len(fileSummaries) > 0 {
+			out["files"] = fileSummaries
+		}
+		if redacted {
+			out["files_content_redacted"] = true
+		}
 	}
 	return out
 }
