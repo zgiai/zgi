@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import Module from 'node:module';
+import { URL } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const fs = require('node:fs');
 const ts = require('typescript');
 
 Module._extensions['.ts'] = (mod, filename) => {
@@ -48,9 +50,16 @@ const qwenSameModelName = {
   callable: true,
   is_available: true,
 };
+const openaiUnconfiguredModel = {
+  provider: 'openai',
+  model: 'gpt-4.1',
+  status: 'active',
+  callable: false,
+  is_available: false,
+};
 
 const catalogModelKeys = new Set(
-  [deepseekChat, deepseekReasoner, deepseekV4Pro, qwenSameModelName].map(item =>
+  [deepseekChat, deepseekReasoner, deepseekV4Pro, qwenSameModelName, openaiUnconfiguredModel].map(item =>
     getModelSelectionKey(item)
   )
 );
@@ -111,5 +120,20 @@ assert.equal(
   isModelSelectable(deepseekChat, 'catalog', catalogModelKeys, null, null),
   true
 );
+assert.equal(
+  isModelSelectable(openaiUnconfiguredModel, 'available', catalogModelKeys, null, null),
+  false
+);
+assert.equal(
+  isModelSelectable(openaiUnconfiguredModel, 'catalog', catalogModelKeys, null, null),
+  true
+);
+
+const channelDialogSource = fs.readFileSync(
+  new URL('../src/components/channel/channel-dialog.tsx', import.meta.url),
+  'utf8'
+);
+assert.match(channelDialogSource, /selectionPolicy="catalog"/);
+assert.doesNotMatch(channelDialogSource, /selectionPolicy=\{mode === 'create' \? 'catalog' : 'available'\}/);
 
 console.log('model selector restriction tests passed');
