@@ -32,7 +32,7 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 	}
 	params := req.ExecutionContext.RuntimeParameters
 	governance := governanceRuntimeParameters(params)
-	manifest := governanceManifestForArguments(req.Manifest, req.SkillID, req.ToolName, req.Arguments)
+	manifest := governanceManifestForArguments(req.Manifest, req.SkillID, req.ToolName, req.Arguments, params)
 	return toolgovernance.Decide(toolgovernance.Request{
 		Manifest:       manifest,
 		PermissionTier: governancePermissionTier(params, governance),
@@ -63,11 +63,14 @@ func governancePermissionTier(params map[string]interface{}, governance map[stri
 	return toolgovernance.PermissionTier(governanceString(params, governance, governancePermissionTierKey, "permission_tier"))
 }
 
-func governanceManifestForArguments(manifest toolgovernance.Manifest, skillID, toolName string, arguments map[string]interface{}) toolgovernance.Manifest {
+func governanceManifestForArguments(manifest toolgovernance.Manifest, skillID, toolName string, arguments map[string]interface{}, runtimeParams map[string]interface{}) toolgovernance.Manifest {
 	if !isFileGeneratorTool(skillID, toolName) {
 		return manifest
 	}
 	if isManagedFileGenerationTarget(stringMapValue(arguments, "target")) {
+		return manifest
+	}
+	if stringMapValue(arguments, "target") == "" && runtimeDefaultsFileGenerationToManaged(runtimeParams) {
 		return manifest
 	}
 	manifest.DefaultApprovalPolicy = toolgovernance.ApprovalPolicyNeverAsk
@@ -93,6 +96,57 @@ func isManagedFileGenerationTarget(target string) bool {
 	default:
 		return false
 	}
+}
+
+func rewriteFileGeneratorTargetFromRuntimeContext(skillID, toolName string, arguments map[string]interface{}, execCtx ExecutionContext) (map[string]interface{}, map[string]interface{}, bool) {
+	if !isFileGeneratorTool(skillID, toolName) || stringMapValue(arguments, "target") != "" {
+		return nil, nil, false
+	}
+	if !runtimeDefaultsFileGenerationToManaged(execCtx.RuntimeParameters) {
+		return nil, nil, false
+	}
+	rewritten := copyStringAnyMap(arguments)
+	if rewritten == nil {
+		rewritten = map[string]interface{}{}
+	}
+	rewritten["target"] = "managed_file"
+	summary := map[string]interface{}{
+		"reason":    "console_files_page_default_target",
+		"to_target": "managed_file",
+	}
+	if workspaceID := runtimeWorkspaceIDForFileGeneration(execCtx.RuntimeParameters); workspaceID != "" && stringMapValue(rewritten, "workspace_id", "workspaceId") == "" {
+		rewritten["workspace_id"] = workspaceID
+		summary["to_workspace_id"] = workspaceID
+	}
+	return rewritten, summary, true
+}
+
+func runtimeDefaultsFileGenerationToManaged(params map[string]interface{}) bool {
+	if len(params) == 0 {
+		return false
+	}
+	if isManagedFileGenerationTarget(stringMapValue(params, "file_generation_default_target")) {
+		return true
+	}
+	if boolMapValue(params, "console_files_page", "consoleFilesPage") {
+		return true
+	}
+	if len(assetRefsFromAny(params["console_files_visible_files"])) > 0 {
+		return true
+	}
+	return false
+}
+
+func runtimeWorkspaceIDForFileGeneration(params map[string]interface{}) string {
+	if workspaceID := stringMapValue(params, "workspace_id", "workspaceId"); workspaceID != "" {
+		return workspaceID
+	}
+	for _, asset := range assetRefsFromAny(params["console_files_visible_files"]) {
+		if workspaceID := strings.TrimSpace(asset.WorkspaceID); workspaceID != "" {
+			return workspaceID
+		}
+	}
+	return ""
 }
 
 func governanceAssets(params map[string]interface{}, governance map[string]interface{}, manifest toolgovernance.Manifest, arguments map[string]interface{}) []toolgovernance.AssetRef {
@@ -494,6 +548,23 @@ func assetRefsFromIDList(value interface{}, assetType string) []toolgovernance.A
 func stringMapValue(input map[string]interface{}, keys ...string) string {
 	value := firstMapValue(input, keys...)
 	return stringMapScalar(value)
+}
+
+func boolMapValue(input map[string]interface{}, keys ...string) bool {
+	value := firstMapValue(input, keys...)
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "1", "yes", "y", "on":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 func stringSliceMapValue(input map[string]interface{}, keys ...string) []string {

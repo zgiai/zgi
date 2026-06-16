@@ -141,6 +141,71 @@ func TestCreateManagedFileForRuntimeUploadsToFileManagement(t *testing.T) {
 	require.Equal(t, "upload-1", messages[1].Data["upload_file_id"])
 }
 
+func TestCreateGeneratedFileForRuntimeDefaultsToManagedFileOnConsoleFilesPage(t *testing.T) {
+	workspaceID := "workspace-1"
+	managedFiles := &fakeManagedFileService{}
+	workspacePerms := &fakeWorkspacePermissionService{allowed: true}
+
+	messages, err := createGeneratedFileForRuntime(context.Background(), "org-1", &tools.ToolRuntime{
+		TenantID: "org-1",
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":       "org-1",
+			"workspace_id":          workspaceID,
+			"console_files_page":    true,
+			"consoleFilesPage":      true,
+			"console_files_context": "/console/files",
+		},
+	}, generatedFileParams{
+		userID:    "account-1",
+		data:      []byte("hello"),
+		mimeType:  "text/plain",
+		extension: ".txt",
+		filename:  "hello.txt",
+		format:    "txt",
+		target:    generatedFileTargetTemporaryArtifact,
+		services: fileGeneratorServices{
+			managedFiles:   managedFiles,
+			workspacePerms: workspacePerms,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+	require.Equal(t, "hello.txt", managedFiles.filename)
+	require.Equal(t, workspaceID, managedFiles.workspaceID)
+	require.Equal(t, string(generatedFileTargetManagedFile), messages[1].Data["target"])
+	require.Equal(t, "upload-1", messages[1].Data["upload_file_id"])
+}
+
+func TestCreateGeneratedFileForRuntimeUsesVisibleFileWorkspaceForManagedDefault(t *testing.T) {
+	managedFiles := &fakeManagedFileService{}
+	workspacePerms := &fakeWorkspacePermissionService{allowed: true}
+
+	_, err := createGeneratedFileForRuntime(context.Background(), "org-1", &tools.ToolRuntime{
+		TenantID: "org-1",
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":    "org-1",
+			"console_files_page": true,
+			"console_files_visible_files": []map[string]interface{}{
+				{"file_id": "file-1", "name": "source.pdf", "workspace_id": "workspace-from-file"},
+			},
+		},
+	}, generatedFileParams{
+		userID:    "account-1",
+		data:      []byte("hello"),
+		mimeType:  "text/plain",
+		extension: ".txt",
+		filename:  "hello.txt",
+		format:    "txt",
+		target:    generatedFileTargetTemporaryArtifact,
+		services: fileGeneratorServices{
+			managedFiles:   managedFiles,
+			workspacePerms: workspacePerms,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "workspace-from-file", managedFiles.workspaceID)
+}
+
 func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {
 	t.Run("docx", func(t *testing.T) {
 		data, err := renderContent("Hello\nCafé", "docx", "Report")

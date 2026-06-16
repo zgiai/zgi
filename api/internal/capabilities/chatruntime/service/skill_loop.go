@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -142,8 +143,13 @@ func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{
 
 func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interface{} {
 	params := skillRuntimeParameters(prepared.Scope, prepared.RunConfig)
+	if workspaceID := preparedSkillWorkspaceID(prepared); workspaceID != "" {
+		params["workspace_id"] = workspaceID
+	}
 	params = applySkillToolGovernanceRuntimeParameters(params, prepared)
 	if prepared != nil && prepared.parts != nil && isConsoleFilesContext(prepared.parts.RuntimeContext, prepared.parts.RawOperationContext, prepared.parts.OperationContext) {
+		params["console_files_page"] = true
+		params["file_generation_default_target"] = "managed_file"
 		if visibleFiles := consoleFilesPromptVisibleFiles(prepared.parts); len(visibleFiles) > 0 {
 			params["console_files_visible_files"] = visibleFiles
 		}
@@ -154,6 +160,19 @@ func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interf
 		}
 	}
 	return params
+}
+
+func preparedSkillWorkspaceID(prepared *PreparedChat) string {
+	if prepared == nil {
+		return ""
+	}
+	if prepared.Scope.WorkspaceID != nil && *prepared.Scope.WorkspaceID != uuid.Nil {
+		return prepared.Scope.WorkspaceID.String()
+	}
+	if prepared.Conversation != nil && prepared.Conversation.WorkspaceID != nil && *prepared.Conversation.WorkspaceID != uuid.Nil {
+		return prepared.Conversation.WorkspaceID.String()
+	}
+	return ""
 }
 
 func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message {

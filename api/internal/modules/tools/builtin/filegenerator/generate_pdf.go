@@ -165,7 +165,8 @@ func (t *GeneratePDFTool) Invoke(
 	if err != nil {
 		return nil, err
 	}
-	target, err := resolveGeneratedFileTarget(rawStringParam(toolParameters, "target"))
+	rawTarget := rawStringParam(toolParameters, "target")
+	target, err := resolveGeneratedFileTarget(rawTarget)
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +181,7 @@ func (t *GeneratePDFTool) Invoke(
 		lifecycle:      lifecycle,
 		format:         "pdf",
 		target:         target,
+		targetExplicit: strings.TrimSpace(rawTarget) != "",
 		workspaceID:    rawStringParam(toolParameters, "workspace_id"),
 		folderID:       rawStringParam(toolParameters, "folder_id"),
 		services:       t.services,

@@ -220,7 +220,8 @@ func (t *GenerateFileTool) Invoke(
 	if err != nil {
 		return nil, err
 	}
-	target, err := resolveGeneratedFileTarget(rawStringParam(toolParameters, "target"))
+	rawTarget := rawStringParam(toolParameters, "target")
+	target, err := resolveGeneratedFileTarget(rawTarget)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +237,7 @@ func (t *GenerateFileTool) Invoke(
 		lifecycle:      lifecycle,
 		format:         format,
 		target:         target,
+		targetExplicit: strings.TrimSpace(rawTarget) != "",
 		workspaceID:    rawStringParam(toolParameters, "workspace_id"),
 		folderID:       rawStringParam(toolParameters, "folder_id"),
 		services:       t.services,
@@ -252,6 +254,7 @@ type generatedFileParams struct {
 	lifecycle      tool_file.ToolFileLifecycle
 	format         string
 	target         generatedFileTarget
+	targetExplicit bool
 	workspaceID    string
 	folderID       string
 	services       fileGeneratorServices
@@ -266,6 +269,9 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 	}
 	if strings.TrimSpace(params.userID) == "" {
 		return nil, fmt.Errorf("user id is required")
+	}
+	if !params.targetExplicit && runtimeDefaultsGeneratedFileTargetToManaged(runtime) {
+		params.target = generatedFileTargetManagedFile
 	}
 	if params.target == "" {
 		params.target = generatedFileTargetTemporaryArtifact
@@ -333,7 +339,7 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 
 func createManagedFileForRuntime(ctx context.Context, tenantID string, runtime *tools.ToolRuntime, params generatedFileParams) ([]tools.ToolInvokeMessage, error) {
 	organizationID := firstNonEmptyStringParam(runtimeStringParam(runtime, "organization_id"), tenantID)
-	workspaceID := firstNonEmptyStringParam(params.workspaceID, runtimeStringParam(runtime, "workspace_id"))
+	workspaceID := firstNonEmptyStringParam(params.workspaceID, runtimeManagedFileWorkspaceID(runtime))
 	if organizationID == "" {
 		return nil, fmt.Errorf("organization id is required to create a file in File Management")
 	}
@@ -474,6 +480,69 @@ func runtimeAllowedOutputFormats(runtime *tools.ToolRuntime) map[string]struct{}
 		return nil
 	}
 	return allowed
+}
+
+func runtimeDefaultsGeneratedFileTargetToManaged(runtime *tools.ToolRuntime) bool {
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return false
+	}
+	if isManagedFileTargetAlias(runtimeStringParam(runtime, "file_generation_default_target")) {
+		return true
+	}
+	if runtimeBoolParam(runtime, "console_files_page") {
+		return true
+	}
+	if runtimeBoolParam(runtime, "consoleFilesPage") {
+		return true
+	}
+	if raw, ok := runtime.RuntimeParameters["console_files_visible_files"]; ok {
+		switch typed := raw.(type) {
+		case []interface{}:
+			return len(typed) > 0
+		case []map[string]interface{}:
+			return len(typed) > 0
+		}
+	}
+	return false
+}
+
+func runtimeManagedFileWorkspaceID(runtime *tools.ToolRuntime) string {
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return ""
+	}
+	if workspaceID := runtimeStringParam(runtime, "workspace_id"); workspaceID != "" {
+		return workspaceID
+	}
+	raw, ok := runtime.RuntimeParameters["console_files_visible_files"]
+	if !ok {
+		return ""
+	}
+	switch typed := raw.(type) {
+	case []map[string]interface{}:
+		return firstWorkspaceIDFromRuntimeFiles(typed)
+	case []interface{}:
+		files := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if mapped, ok := item.(map[string]interface{}); ok {
+				files = append(files, mapped)
+			}
+		}
+		return firstWorkspaceIDFromRuntimeFiles(files)
+	default:
+		return ""
+	}
+}
+
+func firstWorkspaceIDFromRuntimeFiles(files []map[string]interface{}) string {
+	for _, file := range files {
+		if workspaceID := strings.TrimSpace(stringFromRuntimeAny(file["workspace_id"])); workspaceID != "" {
+			return workspaceID
+		}
+		if workspaceID := strings.TrimSpace(stringFromRuntimeAny(file["workspaceId"])); workspaceID != "" {
+			return workspaceID
+		}
+	}
+	return ""
 }
 
 func collectRuntimeOutputFormats(value interface{}, allowed map[string]struct{}) {
@@ -750,13 +819,23 @@ func resolveToolFileLifecycle(raw string) (tool_file.ToolFileLifecycle, error) {
 }
 
 func resolveGeneratedFileTarget(raw string) (generatedFileTarget, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
 	case "", string(generatedFileTargetTemporaryArtifact), "temporary", "artifact", "download":
 		return generatedFileTargetTemporaryArtifact, nil
 	case string(generatedFileTargetManagedFile), "file_management", "managed", "workspace_file":
 		return generatedFileTargetManagedFile, nil
 	default:
 		return "", fmt.Errorf("unsupported file generation target: %s", raw)
+	}
+}
+
+func isManagedFileTargetAlias(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(generatedFileTargetManagedFile), "file_management", "managed", "workspace_file":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -849,6 +928,25 @@ func runtimeStringParam(runtime *tools.ToolRuntime, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(stringFromRuntimeAny(runtime.RuntimeParameters[key]))
+}
+
+func runtimeBoolParam(runtime *tools.ToolRuntime, key string) bool {
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return false
+	}
+	switch typed := runtime.RuntimeParameters[key].(type) {
+	case bool:
+		return typed
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "1", "yes", "y", "on":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 func stringFromRuntimeAny(value interface{}) string {

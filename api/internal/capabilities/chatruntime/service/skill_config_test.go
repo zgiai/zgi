@@ -301,6 +301,20 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	}
 }
 
+func TestSkillRuntimeParametersForPreparedUsesConversationWorkspaceWhenScopeMissing(t *testing.T) {
+	workspaceID := uuid.New()
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New(), WorkspaceID: &workspaceID},
+		Scope:        Scope{OrganizationID: uuid.New()},
+		RunConfig:    RunConfig{},
+	}
+
+	params := skillRuntimeParametersForPrepared(prepared)
+	if params["workspace_id"] != workspaceID.String() {
+		t.Fatalf("workspace_id = %#v, want conversation workspace %s", params["workspace_id"], workspaceID)
+	}
+}
+
 func TestSkillRuntimeParametersForPreparedAddsSelectedFileGovernanceAsset(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},

@@ -402,6 +402,10 @@ func (r *Runtime) CallSkillTool(
 		executionArguments = map[string]interface{}{}
 	}
 	var governanceArgumentRewrite map[string]interface{}
+	if rewritten, rewriteSummary, ok := rewriteFileGeneratorTargetFromRuntimeContext(doc.Metadata.ID, toolDef.Name, executionArguments, execCtx); ok {
+		executionArguments = rewritten
+		governanceArgumentRewrite = rewriteSummary
+	}
 	if rewritten, rewriteSummary, ok := rewriteReadToolArgumentsFromResolvedAsset(toolDef.Governance, executionArguments, execCtx); ok {
 		executionArguments = rewritten
 		governanceArgumentRewrite = rewriteSummary

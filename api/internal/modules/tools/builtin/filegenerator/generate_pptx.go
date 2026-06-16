@@ -3,6 +3,7 @@ package filegenerator
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
@@ -139,7 +140,8 @@ func (t *GeneratePPTXTool) Invoke(
 	if err != nil {
 		return nil, err
 	}
-	target, err := resolveGeneratedFileTarget(rawStringParam(toolParameters, "target"))
+	rawTarget := rawStringParam(toolParameters, "target")
+	target, err := resolveGeneratedFileTarget(rawTarget)
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +156,7 @@ func (t *GeneratePPTXTool) Invoke(
 		lifecycle:      lifecycle,
 		format:         "pptx",
 		target:         target,
+		targetExplicit: strings.TrimSpace(rawTarget) != "",
 		workspaceID:    rawStringParam(toolParameters, "workspace_id"),
 		folderID:       rawStringParam(toolParameters, "folder_id"),
 		services:       t.services,

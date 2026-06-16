@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/google/uuid"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -1063,10 +1064,14 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	runtimeParameters := map[string]interface{}{
 		"organization_id": prepared.Scope.OrganizationID.String(),
 	}
-	if prepared.Scope.WorkspaceID != nil {
-		runtimeParameters["workspace_id"] = prepared.Scope.WorkspaceID.String()
+	if workspaceID := preparedSkillWorkspaceID(prepared); workspaceID != "" {
+		runtimeParameters["workspace_id"] = workspaceID
 	}
 	runtimeParameters = applySkillToolGovernanceRuntimeParameters(runtimeParameters, prepared)
+	if prepared != nil && prepared.parts != nil && isConsoleFilesContext(prepared.parts) {
+		runtimeParameters["console_files_page"] = true
+		runtimeParameters["file_generation_default_target"] = "managed_file"
+	}
 	if visibleFiles := consoleFilesRuntimeVisibleFiles(prepared); len(visibleFiles) > 0 {
 		runtimeParameters["console_files_visible_files"] = visibleFiles
 	}
@@ -1079,6 +1084,19 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		InvokeFrom:        tools.ToolInvokeFromAIChat,
 		RuntimeParameters: runtimeParameters,
 	}
+}
+
+func preparedSkillWorkspaceID(prepared *PreparedChat) string {
+	if prepared == nil {
+		return ""
+	}
+	if prepared.Scope.WorkspaceID != nil && *prepared.Scope.WorkspaceID != uuid.Nil {
+		return prepared.Scope.WorkspaceID.String()
+	}
+	if prepared.Conversation != nil && prepared.Conversation.WorkspaceID != nil && *prepared.Conversation.WorkspaceID != uuid.Nil {
+		return prepared.Conversation.WorkspaceID.String()
+	}
+	return ""
 }
 
 func (s *service) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, text string, onEvent func(StreamEvent) error) {

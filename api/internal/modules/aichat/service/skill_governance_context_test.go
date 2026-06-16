@@ -56,6 +56,25 @@ func TestSkillExecutionContextDoesNotAddAmbiguousFileGovernanceAssets(t *testing
 	}
 }
 
+func TestSkillExecutionContextUsesConversationWorkspaceWhenScopeMissing(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{ID: uuid.New(), WorkspaceID: &workspaceID},
+		Message:      &aichatmodel.Message{ID: uuid.New()},
+		Scope: Scope{
+			OrganizationID: organizationID,
+			AccountID:      accountID,
+		},
+	}
+
+	params := (&service{}).skillExecutionContext(prepared).RuntimeParameters
+	if params["workspace_id"] != workspaceID.String() {
+		t.Fatalf("workspace_id = %#v, want conversation workspace %s", params["workspace_id"], workspaceID)
+	}
+}
+
 func TestToolGovernanceDecisionPayloadIncludesDecision(t *testing.T) {
 	prepared := preparedGovernanceTestChat("delete selected file", []governanceTestFile{
 		{ID: "file-1", Name: "one.pdf", Extension: "pdf", Selected: true},
