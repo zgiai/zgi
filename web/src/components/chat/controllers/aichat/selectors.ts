@@ -73,7 +73,7 @@ function toolGovernanceEventFromInvocation(
     execution_duration_ms: invocation.duration_ms,
     execution_result: invocation.result,
     governance,
-    correlation_id: governance?.correlation_id,
+    correlation_id: governanceCorrelationIdFromInvocation(invocation),
     requires_approval: governance?.requires_approval,
     reason: governance?.reason,
     risk_level: governance?.manifest?.risk_level ?? approvalEvent?.risk_level,

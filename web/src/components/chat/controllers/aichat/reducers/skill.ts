@@ -144,11 +144,13 @@ function governanceAssetOperationAudit(
 function toolGovernanceCorrelationId(
   payload: AIChatToolGovernanceDecisionEventData
 ): string | undefined {
+  const assetOperationAudit = governanceAssetOperationAudit(payload);
   return (
     governanceString(payload.correlation_id) ??
     governanceString(payload.governance?.correlation_id) ??
     governanceString(payload.approval_event?.correlation_id) ??
-    governanceString(payload.governance?.approval_event?.correlation_id)
+    governanceString(payload.governance?.approval_event?.correlation_id) ??
+    governanceString(assetOperationAudit?.correlation_id)
   );
 }
 
@@ -168,7 +170,8 @@ function normalizeToolGovernanceDecisionPayload(
   });
   return {
     ...payload,
-    correlation_id: payload.correlation_id ?? governance?.correlation_id,
+    correlation_id:
+      payload.correlation_id ?? governance?.correlation_id ?? assetOperationAudit?.correlation_id,
     decision: payload.decision ?? governance?.status ?? payload.status,
     requires_approval: payload.requires_approval ?? governance?.requires_approval,
     reason: payload.reason ?? governance?.reason,
@@ -556,6 +559,12 @@ function toolGovernanceDecisionEventFromSkillCall(
   const governance = payload.governance ?? undefined;
   const approvalEvent = governance?.approval_event;
   const approvalResult = governance?.approval_result;
+  const assetOperationAudit =
+    payload.asset_operation_audit ??
+    governance?.asset_operation_audit ??
+    (governance?.model_feedback?.asset_operation_audit as
+      | AIChatToolGovernanceDecisionEventData['asset_operation_audit']
+      | undefined);
   return normalizeToolGovernanceDecisionPayload({
     conversation_id: payload.conversation_id,
     message_id: payload.message_id,
@@ -571,18 +580,13 @@ function toolGovernanceDecisionEventFromSkillCall(
     execution_duration_ms: payload.duration_ms,
     execution_result: 'result' in payload ? payload.result : undefined,
     governance,
-    correlation_id: governance?.correlation_id,
+    correlation_id: governance?.correlation_id ?? assetOperationAudit?.correlation_id,
     requires_approval: governance?.requires_approval,
     reason: governance?.reason,
     risk_level: governance?.manifest?.risk_level ?? approvalEvent?.risk_level,
     effect: governance?.manifest?.effect ?? approvalEvent?.effect,
     asset_type: governance?.manifest?.asset_type ?? approvalEvent?.asset_type,
-    asset_operation_audit:
-      payload.asset_operation_audit ??
-      governance?.asset_operation_audit ??
-      (governance?.model_feedback?.asset_operation_audit as
-        | AIChatToolGovernanceDecisionEventData['asset_operation_audit']
-        | undefined),
+    asset_operation_audit: assetOperationAudit,
     approval_status:
       governance?.approval_status ??
       (approvalResult?.approval_status as AIChatToolGovernanceDecisionEventData['approval_status']),

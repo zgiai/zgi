@@ -460,10 +460,12 @@ function governanceApprovalEvent(item: GovernanceTimelineItem) {
 }
 
 function governanceItemCorrelationId(item: GovernanceTimelineItem): string | null {
+  const assetOperationAudit = governanceAssetOperationAudit(item);
   return (
     governanceStringValue(item.event.correlation_id) ??
     governanceStringValue(item.event.governance?.correlation_id) ??
-    governanceStringValue(governanceApprovalEvent(item)?.correlation_id)
+    governanceStringValue(governanceApprovalEvent(item)?.correlation_id) ??
+    governanceRecordString(assetOperationAudit, ['correlation_id'])
   );
 }
 
@@ -1101,11 +1103,7 @@ function buildToolGovernanceDecisionViewModel(
     riskLevel === 'critical';
   const isAllowed =
     !needsApproval && !approvalStatus && governanceDecisionStatus(item) === 'allowed';
-  const correlationId =
-    item.event.correlation_id ??
-    item.event.governance?.correlation_id ??
-    governanceApprovalEvent(item)?.correlation_id ??
-    '';
+  const correlationId = governanceItemCorrelationId(item) ?? '';
   const canSubmit = needsApproval && Boolean(correlationId) && Boolean(onToolGovernanceDecision);
 
   const submitDecision = async (
@@ -1346,9 +1344,13 @@ function isWorkflowTimelineItem(
 }
 
 function governedSkillInvocationCorrelationId(invocation: AIChatSkillInvocation): string | null {
+  const modelFeedback = governanceRecord(invocation.governance?.model_feedback);
   return (
     governanceStringValue(invocation.governance?.correlation_id) ??
-    governanceStringValue(invocation.governance?.approval_event?.correlation_id)
+    governanceStringValue(invocation.governance?.approval_event?.correlation_id) ??
+    governanceStringValue(invocation.asset_operation_audit?.correlation_id) ??
+    governanceStringValue(invocation.governance?.asset_operation_audit?.correlation_id) ??
+    governanceRecordString(modelFeedback?.asset_operation_audit, ['correlation_id'])
   );
 }
 
