@@ -225,6 +225,9 @@ export function useChatRuntimeController(options?: {
     transportRef,
     setControllerState,
   });
+  const search = useCallback((query: string, limit: number) => {
+    return transportRef.current.searchConversations?.(query, limit) ?? Promise.resolve([]);
+  }, []);
   const viewModel = useChatRuntimeViewModel({ store, topologyRef });
   return {
     store,
@@ -260,6 +263,7 @@ export function useChatRuntimeController(options?: {
     continueWorkflowQuestion,
     stop,
     switchBranch,
+    search,
   };
 }
 

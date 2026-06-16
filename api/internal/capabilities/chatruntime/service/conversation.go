@@ -249,7 +249,17 @@ func (s *service) SearchByCaller(ctx context.Context, scope Scope, caller Caller
 		return []*SearchResult{}, nil
 	}
 	limit = clampLimit(limit, defaultSearchLimit, maxSearchLimit)
-	rows, err := s.repos.Conversation.SearchByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), query, limit)
+	rows, err := s.repos.Conversation.SearchByCallerScoped(
+		ctx,
+		scope.OrganizationID,
+		scope.AccountID,
+		normalizeCallerType(caller.Type),
+		normalizeCallerID(caller.ID),
+		strings.TrimSpace(caller.Source),
+		normalizeCallerID(caller.SourceWebAppID),
+		query,
+		limit,
+	)
 	if err != nil {
 		return nil, err
 	}

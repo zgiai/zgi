@@ -22,7 +22,7 @@ type ConversationRepository interface {
 	GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 	ListScoped(ctx context.Context, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, queryText string, limit int) ([]*SearchResult, error)
+	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, queryText string, limit int) ([]*SearchResult, error)
 	UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	DeleteScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) error
@@ -231,7 +231,7 @@ func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organiz
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, queryText string, limit int) ([]*SearchResult, error) {
+func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, queryText string, limit int) ([]*SearchResult, error) {
 	keyword := strings.TrimSpace(queryText)
 	if keyword == "" || limit <= 0 {
 		return []*SearchResult{}, nil
@@ -239,7 +239,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 	if callerType == "" {
 		callerType = runtimemodel.ConversationCallerAIChat
 	}
-	pattern := "%" + strings.ToLower(keyword) + "%"
+	pattern := "%" + escapeLikePattern(strings.ToLower(keyword)) + "%"
 
 	type searchRow struct {
 		Type              string     `gorm:"column:type"`
@@ -251,36 +251,31 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 		Rank              int        `gorm:"column:rank"`
 	}
 
-	args := []interface{}{
-		organizationID,
-		accountID,
-		callerType,
-		pattern,
-		pattern,
-		organizationID,
-		accountID,
-		callerType,
-		pattern,
-		pattern,
-	}
 	callerFilter := "c.caller_id IS NULL"
+	callerArgs := []interface{}{}
 	if callerID != nil && *callerID != uuid.Nil {
 		callerFilter = "c.caller_id = ?"
-		args = []interface{}{
-			organizationID,
-			accountID,
-			callerType,
-			*callerID,
-			pattern,
-			pattern,
-			organizationID,
-			accountID,
-			callerType,
-			*callerID,
-			pattern,
-			pattern,
+		callerArgs = append(callerArgs, *callerID)
+	}
+	sourceFilter := ""
+	sourceArgs := []interface{}{}
+	if strings.TrimSpace(source) != "" {
+		sourceFilter += " AND c.source = ?"
+		sourceArgs = append(sourceArgs, strings.TrimSpace(source))
+		if sourceWebAppID != nil && *sourceWebAppID != uuid.Nil {
+			sourceFilter += " AND c.source_web_app_id = ?"
+			sourceArgs = append(sourceArgs, *sourceWebAppID)
 		}
 	}
+	args := []interface{}{organizationID, accountID, callerType}
+	args = append(args, callerArgs...)
+	args = append(args, sourceArgs...)
+	args = append(args, pattern)
+	args = append(args, pattern)
+	args = append(args, organizationID, accountID, callerType)
+	args = append(args, callerArgs...)
+	args = append(args, sourceArgs...)
+	args = append(args, pattern, pattern)
 	args = append(args, limit)
 
 	var rows []searchRow
@@ -301,7 +296,8 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 				AND c.caller_type = ?
 				AND %s
 				AND c.deleted_at IS NULL
-				AND LOWER(COALESCE(c.title, '')) LIKE ?
+				%s
+				AND LOWER(COALESCE(c.title, '')) LIKE ? ESCAPE '\'
 			UNION ALL
 			SELECT
 				'message' AS type,
@@ -309,7 +305,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 				c.title AS conversation_title,
 				m.id AS message_id,
 				CASE
-					WHEN LOWER(COALESCE(m.query, '')) LIKE ? THEN m.query
+					WHEN LOWER(COALESCE(m.query, '')) LIKE ? ESCAPE '\' THEN m.query
 					ELSE m.answer
 				END AS match_text,
 				GREATEST(m.updated_at, c.updated_at) AS updated_at,
@@ -322,14 +318,15 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 				AND %s
 				AND c.deleted_at IS NULL
 				AND m.deleted_at IS NULL
+				%s
 				AND (
-					LOWER(COALESCE(m.query, '')) LIKE ?
-					OR LOWER(COALESCE(m.answer, '')) LIKE ?
+					LOWER(COALESCE(m.query, '')) LIKE ? ESCAPE '\'
+					OR LOWER(COALESCE(m.answer, '')) LIKE ? ESCAPE '\'
 				)
 		) AS matches
 		ORDER BY rank ASC, updated_at DESC
 		LIMIT ?
-	`, callerFilter, callerFilter)
+	`, callerFilter, sourceFilter, callerFilter, sourceFilter)
 
 	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("failed to search chat runtime conversations: %w", err)
@@ -393,6 +390,11 @@ func qualifiedColumn(alias string, column string) string {
 		return column
 	}
 	return alias + "." + column
+}
+
+func escapeLikePattern(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(value)
 }
 
 func (r *conversationRepository) UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error {

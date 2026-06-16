@@ -7,6 +7,7 @@ import type {
   AIChatMessage,
   AIChatMessageListResponse,
   AIChatRegenerateMessageRequest,
+  AIChatSearchResponse,
   AIChatSseEnvelope,
   AIChatStopConversationResponseData,
 } from '@/services/types/aichat';
@@ -16,6 +17,7 @@ import {
 } from '@/components/chat/controllers/aichat';
 import {
   dispatchAIChatStreamEvent,
+  mapAIChatSearchResult,
   type AIChatWorkflowApprovalContinuationPayload,
   type AIChatConversationDetail,
   type AIChatConversationListResult,
@@ -180,6 +182,16 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
 
   async removeConversation(conversationId: string): Promise<void> {
     await this.client.delete(`${this.runtimeBasePath}/conversations/${conversationId}`);
+  }
+
+  async searchConversations(query: string, limit: number) {
+    const response = await this.client.get<AIChatSearchResponse>(
+      `${this.runtimeBasePath}/search`,
+      {
+        params: { query, limit },
+      }
+    );
+    return (response.data ?? []).map(mapAIChatSearchResult);
   }
 
   async stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData> {

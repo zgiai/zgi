@@ -13,11 +13,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { useAIChatSearch } from '@/hooks/aichat/use-aichat-search';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useT } from '@/i18n/translations';
-import type { ConversationSummary } from '@/components/chat/controllers/types';
-import type { AIChatSearchResult } from '@/services/types/aichat';
+import type {
+  ConversationSearchFn,
+  ConversationSearchResult,
+  ConversationSummary,
+} from '@/components/chat/controllers/types';
+import { useQuery } from '@tanstack/react-query';
 
 const recentConversationLimit = 6;
 const minRemoteSearchLength = 2;
@@ -29,6 +32,8 @@ interface ConversationSearchDialogProps {
   activeId: string | null;
   onOpenChange: (open: boolean) => void;
   onSelect: (id: string) => void;
+  search?: ConversationSearchFn;
+  searchKey?: readonly unknown[];
 }
 
 interface ConversationSearchItemProps {
@@ -91,17 +96,29 @@ export function ConversationSearchDialog({
   activeId,
   onOpenChange,
   onSelect,
+  search,
+  searchKey,
 }: ConversationSearchDialogProps) {
   const t = useT();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [query, setQuery] = React.useState('');
   const normalizedQuery = normalizeSearchText(query);
   const debouncedQuery = useDebouncedValue(normalizedQuery, searchDebounceMs);
-  const canSearchRemote = normalizedQuery.length >= minRemoteSearchLength;
+  const hasRemoteSearch = typeof search === 'function';
+  const canSearchRemote = hasRemoteSearch && normalizedQuery.length >= minRemoteSearchLength;
   const debouncedCanSearchRemote =
     debouncedQuery.length >= minRemoteSearchLength && debouncedQuery === normalizedQuery;
   const searchEnabled = open && canSearchRemote && debouncedCanSearchRemote;
-  const searchQuery = useAIChatSearch(debouncedQuery, 20, { enabled: searchEnabled });
+  const searchQuery = useQuery({
+    queryKey: [...(searchKey ?? ['conversation-search']), debouncedQuery, 20],
+    queryFn: () => search?.(debouncedQuery, 20) ?? Promise.resolve([]),
+    enabled: searchEnabled,
+    retry: false,
+    staleTime: 60_000,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+  });
   const newConversationText = t('webapp.chat.newConversation');
 
   React.useEffect(() => {
@@ -131,8 +148,8 @@ export function ConversationSearchDialog({
     [onOpenChange, onSelect]
   );
   const handleSearchResultSelect = React.useCallback(
-    (result: AIChatSearchResult) => {
-      onSelect(result.conversation_id);
+    (result: ConversationSearchResult) => {
+      onSelect(result.conversationId);
       onOpenChange(false);
     },
     [onOpenChange, onSelect]
@@ -204,13 +221,13 @@ export function ConversationSearchDialog({
                   </div>
                 ) : (
                   searchResults.map(result => {
-                    const title = result.conversation_title?.trim() || newConversationText;
-                    const updatedAt = formatConversationTime(result.updated_at);
-                    const isActive = result.conversation_id === activeId;
+                    const title = result.conversationTitle?.trim() || newConversationText;
+                    const updatedAt = formatConversationTime(result.updatedAt);
+                    const isActive = result.conversationId === activeId;
 
                     return (
                       <ConversationSearchItem
-                        key={`${result.type}-${result.conversation_id}-${result.message_id ?? 'title'}`}
+                        key={`${result.type}-${result.conversationId}-${result.messageId ?? 'title'}`}
                         title={title}
                         meta={
                           <>

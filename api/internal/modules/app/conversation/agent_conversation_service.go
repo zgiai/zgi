@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/app/common"
@@ -19,6 +21,7 @@ type AgentConversationService interface {
 	UpdateConversation(ctx context.Context, conversation *AgentConversation) error
 	DeleteConversation(ctx context.Context, id uuid.UUID, deletedBy uuid.UUID) error
 	GetConversationsByAgent(ctx context.Context, agentID, userID uuid.UUID, versionUUID string, page, limit int) ([]*AgentConversation, int64, error)
+	SearchConversationsByAgent(ctx context.Context, agentID, userID uuid.UUID, webAppID string, query string, limit int) ([]*AgentConversationSearchItem, error)
 	GetConversationHistoryByAgent(ctx context.Context, filter AgentConversationHistoryFilter) ([]*AgentConversation, int64, error)
 	GetConversationsByUser(ctx context.Context, agentID uuid.UUID, fromSource string, userID uuid.UUID, limit, offset int) ([]*AgentConversation, int64, error)
 	IncrementDialogueCount(ctx context.Context, conversationID uuid.UUID) error
@@ -49,6 +52,15 @@ type CreateConversationRequest struct {
 	FromEndUserID           *uuid.UUID             `json:"from_end_user_id,omitempty"`
 	FromAccountID           *uuid.UUID             `json:"from_account_id,omitempty"`
 	CreatedBy               *uuid.UUID             `json:"created_by,omitempty"`
+}
+
+type AgentConversationSearchItem struct {
+	Type              string
+	ConversationID    uuid.UUID
+	ConversationTitle string
+	MessageID         *uuid.UUID
+	Snippet           string
+	UpdatedAt         time.Time
 }
 
 // agentConversationService implements AgentConversationService
@@ -187,6 +199,38 @@ func (s *agentConversationService) GetConversationsByAgent(ctx context.Context, 
 	return s.conversationRepo.GetByAgentWithFilters(ctx, agentID, userID, versionUUID, limit, offset)
 }
 
+func (s *agentConversationService) SearchConversationsByAgent(ctx context.Context, agentID, userID uuid.UUID, webAppID string, query string, limit int) ([]*AgentConversationSearchItem, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []*AgentConversationSearchItem{}, nil
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	rows, err := s.conversationRepo.SearchByAgentAndUser(ctx, agentID, userID, webAppID, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]*AgentConversationSearchItem, 0, len(rows))
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		results = append(results, &AgentConversationSearchItem{
+			Type:              row.Type,
+			ConversationID:    row.ConversationID,
+			ConversationTitle: row.ConversationTitle,
+			MessageID:         row.MessageID,
+			Snippet:           searchSnippet(row.MatchText, query, 120),
+			UpdatedAt:         row.UpdatedAt,
+		})
+	}
+	return results, nil
+}
+
 // GetConversationHistoryByAgent retrieves agent conversations for console history views.
 func (s *agentConversationService) GetConversationHistoryByAgent(ctx context.Context, filter AgentConversationHistoryFilter) ([]*AgentConversation, int64, error) {
 	return s.conversationRepo.GetHistoryByAgent(ctx, filter)
@@ -234,4 +278,43 @@ func (s *agentConversationService) UpdateConversationNameIfCurrent(ctx context.C
 // Helper function to create string pointer
 func stringPtr(s string) *string {
 	return &s
+}
+
+func searchSnippet(text string, query string, maxRunes int) string {
+	text = strings.TrimSpace(strings.Join(strings.Fields(text), " "))
+	query = strings.TrimSpace(query)
+	if text == "" || maxRunes <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(text) <= maxRunes {
+		return text
+	}
+	matchStart := 0
+	if query != "" {
+		lowerText := strings.ToLower(text)
+		if idx := strings.Index(lowerText, strings.ToLower(query)); idx >= 0 {
+			matchStart = utf8.RuneCountInString(lowerText[:idx])
+		}
+	}
+	runes := []rune(text)
+	start := matchStart - maxRunes/3
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxRunes
+	if end > len(runes) {
+		end = len(runes)
+		start = end - maxRunes
+		if start < 0 {
+			start = 0
+		}
+	}
+	snippet := string(runes[start:end])
+	if start > 0 {
+		snippet = "..." + snippet
+	}
+	if end < len(runes) {
+		snippet += "..."
+	}
+	return snippet
 }

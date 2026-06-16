@@ -208,6 +208,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	protectedWorkflows.POST("/:web_app_id/run", handler.RunWorkflowByWebAppID)
 
 	// Conversation management (use web_app_id instead of agent_id)
+	protectedWorkflows.GET("/:web_app_id/search", conversationQueryHandler.SearchConversationList)
 	protectedWorkflows.GET("/:web_app_id/conversations", conversationQueryHandler.GetConversationList)
 	protectedWorkflows.GET("/:web_app_id/conversations/:conversation_id", conversationQueryHandler.GetConversationDetail)
 	protectedWorkflows.DELETE("/:web_app_id/conversations/:conversation_id", conversationQueryHandler.DeleteConversation)

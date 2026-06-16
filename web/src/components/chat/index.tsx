@@ -98,6 +98,7 @@ interface SingleChatVariantProps {
   historyWindowSize?: number;
   inputTopNotice?: React.ReactNode;
   inputReplacement?: React.ReactNode;
+  conversationSearchKey?: readonly unknown[];
 }
 
 interface SysChatVariantProps extends SysChatProps {
@@ -110,6 +111,7 @@ interface ImgChatVariantProps {
   modelSelectorValue?: ModelSelectorValue;
   onModelChange?: (value: ModelSelectorValue) => void;
   inputTopNotice?: React.ReactNode;
+  conversationSearchKey?: readonly unknown[];
 }
 
 interface AIChatVariantProps {
@@ -318,6 +320,7 @@ const SingleChatWrapper: React.FC<SingleChatVariantProps> = ({
   historyWindowSize,
   inputTopNotice,
   inputReplacement,
+  conversationSearchKey,
 }) => {
   return (
     <ChatWithController
@@ -341,6 +344,7 @@ const SingleChatWrapper: React.FC<SingleChatVariantProps> = ({
       historyWindowSize={historyWindowSize}
       inputTopNotice={inputTopNotice}
       inputReplacement={inputReplacement}
+      conversationSearchKey={conversationSearchKey}
     />
   );
 };

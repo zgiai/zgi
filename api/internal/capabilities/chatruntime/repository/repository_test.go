@@ -94,7 +94,7 @@ func TestSearchByCallerScopedMapsResults(t *testing.T) {
 		).
 		WillReturnRows(rows)
 
-	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "release", 20)
+	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "", nil, "release", 20)
 	if err != nil {
 		t.Fatalf("SearchByCallerScoped: %v", err)
 	}

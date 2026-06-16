@@ -24,7 +24,10 @@ import {
 } from '@/components/ui/context-menu';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/translations';
-import type { ConversationSummary } from '@/components/chat/controllers/types';
+import type {
+  ConversationSearchFn,
+  ConversationSummary,
+} from '@/components/chat/controllers/types';
 
 function isConversationRunning(conversation: ConversationSummary): boolean {
   const metadata = conversation.metadata;
@@ -63,6 +66,8 @@ interface SidebarProps {
   className?: string;
   backgroundImage?: string;
   onClose?: () => void;
+  search?: ConversationSearchFn;
+  searchKey?: readonly unknown[];
 }
 
 export function Sidebar({
@@ -76,6 +81,8 @@ export function Sidebar({
   className,
   backgroundImage,
   onClose,
+  search,
+  searchKey,
 }: SidebarProps) {
   const t = useT();
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -355,6 +362,8 @@ export function Sidebar({
           onSelect(id);
           onClose?.();
         }}
+        search={search}
+        searchKey={searchKey}
       />
     </div>
   );
