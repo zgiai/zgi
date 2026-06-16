@@ -59,6 +59,15 @@ func TestCheckMaxJoinDepth(t *testing.T) {
 	assertReason(t, result, ReasonMaxJoinDepth)
 }
 
+func TestCheckMaxJoinDepthCanBeDisabled(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.MaxJoinDepth = 0
+	result := Check("SELECT * FROM a JOIN b ON a.id = b.id JOIN c ON b.id = c.id", policy)
+	if result.Verdict != VerdictAllow {
+		t.Fatalf("verdict = %s, reasons = %#v", result.Verdict, result.Reasons)
+	}
+}
+
 func TestCheckExplainAnalyzeWriteStatements(t *testing.T) {
 	policy := DefaultPolicy()
 	policy.Readonly = true
@@ -131,9 +140,37 @@ func TestNormalizeAndValidatePolicyRejectsInvalidMode(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndValidatePolicyRejectsNegativeMaxJoinDepth(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.MaxJoinDepth = -1
+	if _, err := NormalizeAndValidatePolicy(policy); err == nil {
+		t.Fatal("expected invalid max_join_depth error")
+	}
+}
+
 func TestParsePolicyJSONRejectsInvalidMode(t *testing.T) {
 	if _, err := ParsePolicyJSON([]byte(`{"mode":"ENFORCE"}`)); err == nil {
 		t.Fatal("expected invalid mode error")
+	}
+}
+
+func TestParsePolicyJSONDefaultsMissingMaxJoinDepth(t *testing.T) {
+	policy, err := ParsePolicyJSON([]byte(`{"mode":"warn"}`))
+	if err != nil {
+		t.Fatalf("ParsePolicyJSON error = %v", err)
+	}
+	if policy.MaxJoinDepth != DefaultPolicy().MaxJoinDepth {
+		t.Fatalf("max_join_depth = %d, want %d", policy.MaxJoinDepth, DefaultPolicy().MaxJoinDepth)
+	}
+}
+
+func TestParsePolicyJSONPreservesZeroMaxJoinDepth(t *testing.T) {
+	policy, err := ParsePolicyJSON([]byte(`{"mode":"warn","max_join_depth":0}`))
+	if err != nil {
+		t.Fatalf("ParsePolicyJSON error = %v", err)
+	}
+	if policy.MaxJoinDepth != 0 {
+		t.Fatalf("max_join_depth = %d, want 0", policy.MaxJoinDepth)
 	}
 }
 

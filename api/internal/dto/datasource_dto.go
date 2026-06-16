@@ -299,6 +299,8 @@ type SQLOperationResponse struct {
 	StartTime      time.Time `json:"start_time"`
 	EndTime        time.Time `json:"end_time"`
 	Status         string    `json:"status"`
+	GuardVerdict   *string   `json:"guard_verdict,omitempty"`
+	GuardAction    *string   `json:"guard_action,omitempty"`
 	CreatedBy      string    `json:"created_by"`
 	CreatedByName  *string   `json:"created_by_name,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -420,6 +422,8 @@ func ConvertSQLOperationModelToResponse(op *model.DataSourceSQLOperation) *SQLOp
 		StartTime:      op.StartTime,
 		EndTime:        op.EndTime,
 		Status:         op.Status,
+		GuardVerdict:   op.GuardVerdict,
+		GuardAction:    op.GuardAction,
 		CreatedBy:      op.CreatedBy,
 		CreatedAt:      op.CreatedAt,
 	}

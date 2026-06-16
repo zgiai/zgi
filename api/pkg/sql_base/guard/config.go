@@ -27,6 +27,40 @@ type Policy struct {
 	AllowParseFailure bool     `json:"allow_parse_failure"`
 }
 
+type policyJSON struct {
+	Mode              Mode     `json:"mode"`
+	Readonly          bool     `json:"readonly"`
+	AllowMultiStmt    bool     `json:"allow_multi_stmt"`
+	BlockStatements   []string `json:"block_statements"`
+	BlockFunctions    []string `json:"block_functions"`
+	RequireWhere      bool     `json:"require_where"`
+	MaxJoinDepth      *int     `json:"max_join_depth"`
+	AllowParseFailure bool     `json:"allow_parse_failure"`
+}
+
+func (p *Policy) UnmarshalJSON(data []byte) error {
+	var raw policyJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	*p = Policy{
+		Mode:              raw.Mode,
+		Readonly:          raw.Readonly,
+		AllowMultiStmt:    raw.AllowMultiStmt,
+		BlockStatements:   raw.BlockStatements,
+		BlockFunctions:    raw.BlockFunctions,
+		RequireWhere:      raw.RequireWhere,
+		AllowParseFailure: raw.AllowParseFailure,
+	}
+	if raw.MaxJoinDepth == nil {
+		p.MaxJoinDepth = DefaultPolicy().MaxJoinDepth
+	} else {
+		p.MaxJoinDepth = *raw.MaxJoinDepth
+	}
+	return nil
+}
+
 func DefaultPolicy() Policy {
 	return Policy{
 		Mode:            ModeWarn,
@@ -57,15 +91,15 @@ func NormalizePolicy(policy Policy) Policy {
 	}
 	policy.BlockStatements = normalizeList(policy.BlockStatements)
 	policy.BlockFunctions = normalizeList(policy.BlockFunctions)
-	if policy.MaxJoinDepth <= 0 {
-		policy.MaxJoinDepth = defaults.MaxJoinDepth
-	}
 	return policy
 }
 
 func ValidatePolicy(policy Policy) error {
 	if policy.Mode != ModeWarn && policy.Mode != ModeEnforce {
 		return fmt.Errorf("%w: invalid mode %q", ErrInvalidPolicy, policy.Mode)
+	}
+	if policy.MaxJoinDepth < 0 {
+		return fmt.Errorf("%w: max_join_depth must be >= 0", ErrInvalidPolicy)
 	}
 	return nil
 }
