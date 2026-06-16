@@ -1,9 +1,14 @@
 package file
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/filediag"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"go.uber.org/zap"
 )
 
 // FILE_MODEL_IDENTITY is a special identifier used to distinguish between
@@ -32,19 +37,19 @@ const (
 )
 
 type File struct {
-	ZgiModelIdentity string                 `json:"zgi_model_identity"`
-	ID               *string                `json:"id,omitempty"`
-	TenantID         string                 `json:"tenant_id"`
-	Type             FileType               `json:"type"`
-	TransferMethod   FileTransferMethod     `json:"transfer_method"`
-	RemoteURL        *string                `json:"remote_url,omitempty"`
-	RelatedID        *string                `json:"related_id,omitempty"`
-	Filename         *string                `json:"filename,omitempty"`
-	Extension        *string                `json:"extension,omitempty"`
-	MimeType         *string                `json:"mime_type,omitempty"`
-	Size             int64                  `json:"size"`
+	ZgiModelIdentity string             `json:"zgi_model_identity"`
+	ID               *string            `json:"id,omitempty"`
+	TenantID         string             `json:"tenant_id"`
+	Type             FileType           `json:"type"`
+	TransferMethod   FileTransferMethod `json:"transfer_method"`
+	RemoteURL        *string            `json:"remote_url,omitempty"`
+	RelatedID        *string            `json:"related_id,omitempty"`
+	Filename         *string            `json:"filename,omitempty"`
+	Extension        *string            `json:"extension,omitempty"`
+	MimeType         *string            `json:"mime_type,omitempty"`
+	Size             int64              `json:"size"`
 	storageKey       string
-	URL              *string                `json:"url,omitempty"`
+	URL              *string `json:"url,omitempty"`
 }
 
 func NewFile(tenantID string, fileType FileType, transferMethod FileTransferMethod, opts ...FileOption) *File {
@@ -160,9 +165,38 @@ func (f *File) ToDict() map[string]any {
 
 	if url, err := f.GenerateURL(); err == nil && url != nil {
 		result["url"] = *url
+	} else if err != nil {
+		logger.Warn("workflow file URL generation failed during serialization",
+			zap.String("event", "workflow_file_url_generation_failed"),
+			zap.String("file_id", stringPtrValue(f.ID)),
+			zap.String("related_id", stringPtrValue(f.RelatedID)),
+			zap.String("tenant_id", f.TenantID),
+			zap.String("transfer_method", string(f.TransferMethod)),
+			zap.String("file_type", string(f.Type)),
+			zap.String("filename", stringPtrValue(f.Filename)),
+			zap.String("extension", stringPtrValue(f.Extension)),
+			zap.Error(err),
+		)
+		filediag.AppendError(context.Background(), "workflow_file_url_generation_failed", "workflow file URL generation failed during serialization", map[string]string{
+			"file_id":         stringPtrValue(f.ID),
+			"related_id":      stringPtrValue(f.RelatedID),
+			"tenant_id":       f.TenantID,
+			"transfer_method": string(f.TransferMethod),
+			"file_type":       string(f.Type),
+			"filename":        stringPtrValue(f.Filename),
+			"extension":       stringPtrValue(f.Extension),
+			"error":           err.Error(),
+		})
 	}
 
 	return result
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (f *File) Markdown() string {
