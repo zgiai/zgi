@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
@@ -234,83 +233,6 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 	limit = clampLimit(limit, 20, 100)
 	offset := pageOffset(page, limit)
 	return s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), limit, offset)
-}
-
-func (s *service) Search(ctx context.Context, scope Scope, query string, limit int) ([]*SearchResult, error) {
-	return s.SearchByCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, query, limit)
-}
-
-func (s *service) SearchByCaller(ctx context.Context, scope Scope, caller Caller, query string, limit int) ([]*SearchResult, error) {
-	if err := s.ensureMember(ctx, scope); err != nil {
-		return nil, err
-	}
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return []*SearchResult{}, nil
-	}
-	limit = clampLimit(limit, defaultSearchLimit, maxSearchLimit)
-	rows, err := s.repos.Conversation.SearchByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), query, limit)
-	if err != nil {
-		return nil, err
-	}
-	results := make([]*SearchResult, 0, len(rows))
-	for _, row := range rows {
-		if row == nil {
-			continue
-		}
-		results = append(results, &SearchResult{
-			Type:              row.Type,
-			ConversationID:    row.ConversationID,
-			ConversationTitle: row.ConversationTitle,
-			MessageID:         row.MessageID,
-			Snippet:           searchSnippet(row.MatchText, query, searchSnippetRunes),
-			UpdatedAt:         row.UpdatedAt,
-		})
-	}
-	return results, nil
-}
-
-func searchSnippet(text string, query string, maxRunes int) string {
-	text = strings.TrimSpace(collapseWhitespace(text))
-	query = strings.TrimSpace(query)
-	if text == "" || maxRunes <= 0 {
-		return ""
-	}
-	if utf8.RuneCountInString(text) <= maxRunes {
-		return text
-	}
-	matchStart := 0
-	if query != "" {
-		lowerText := strings.ToLower(text)
-		if idx := strings.Index(lowerText, strings.ToLower(query)); idx >= 0 {
-			matchStart = utf8.RuneCountInString(lowerText[:idx])
-		}
-	}
-	runes := []rune(text)
-	start := matchStart - maxRunes/3
-	if start < 0 {
-		start = 0
-	}
-	end := start + maxRunes
-	if end > len(runes) {
-		end = len(runes)
-		start = end - maxRunes
-		if start < 0 {
-			start = 0
-		}
-	}
-	snippet := string(runes[start:end])
-	if start > 0 {
-		snippet = "..." + snippet
-	}
-	if end < len(runes) {
-		snippet += "..."
-	}
-	return snippet
-}
-
-func collapseWhitespace(text string) string {
-	return strings.Join(strings.Fields(text), " ")
 }
 
 func (s *service) GetConversation(ctx context.Context, scope Scope, id uuid.UUID) (*runtimemodel.Conversation, error) {

@@ -21,7 +21,6 @@ import type {
   AIChatMessage,
   AIChatMessageListResponse,
   AIChatRegenerateMessageRequest,
-  AIChatSearchResponse,
   AIChatSkillConfigResponse,
   AIChatSkillDetailResponse,
   AIChatSkillListResponse,
@@ -238,12 +237,6 @@ export const aichatService = {
   listConversations(params: { page?: number; limit?: number } = {}) {
     return http.get<AIChatConversationListResponse>(`${AICHAT_BASE_PATH}/conversations`, {
       params,
-    });
-  },
-
-  search(query: string, limit = 20) {
-    return http.get<AIChatSearchResponse>(`${AICHAT_BASE_PATH}/search`, {
-      params: { query, limit },
     });
   },
 

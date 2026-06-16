@@ -25,8 +25,6 @@ const (
 	maxConversationPageLimit     = 100
 	defaultMessagePageLimit      = 50
 	maxMessagePageLimit          = 200
-	defaultSearchLimit           = 20
-	maxSearchLimit               = 50
 )
 
 type Handler struct {
@@ -51,7 +49,6 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	skillManagement.PUT("/config", h.UpdateSkillConfig)
 	skillManagement.DELETE("/:id", h.DeleteSkill)
 	group.GET("/conversations", h.ListConversations)
-	group.GET("/search", h.Search)
 	group.POST("/conversations", h.CreateConversation)
 	group.GET("/conversations/:id", h.GetConversation)
 	group.PATCH("/conversations/:id", h.UpdateConversation)
@@ -272,27 +269,6 @@ func (h *Handler) ListConversations(c *gin.Context) {
 		Total:   total,
 		HasMore: int64(page*limit) < total,
 	})
-}
-
-func (h *Handler) Search(c *gin.Context) {
-	scope, ok := h.scope(c)
-	if !ok {
-		return
-	}
-	limit := parsePositiveInt(c.Query("limit"), defaultSearchLimit)
-	if limit > maxSearchLimit {
-		limit = maxSearchLimit
-	}
-	results, err := h.service.Search(c.Request.Context(), scope, c.Query("query"), limit)
-	if err != nil {
-		h.fail(c, err)
-		return
-	}
-	items := make([]runtimedto.SearchResultResponse, 0, len(results))
-	for _, item := range results {
-		items = append(items, searchResultResponse(item))
-	}
-	response.Success(c, items)
 }
 
 func (h *Handler) GetConversation(c *gin.Context) {
@@ -839,20 +815,6 @@ func messageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {
 	}
 	if message.SourceMessageID != nil {
 		resp.SourceMessageID = stringPtr(message.SourceMessageID.String())
-	}
-	return resp
-}
-
-func searchResultResponse(result *runtimeservice.SearchResult) runtimedto.SearchResultResponse {
-	resp := runtimedto.SearchResultResponse{
-		Type:              result.Type,
-		ConversationID:    result.ConversationID.String(),
-		ConversationTitle: result.ConversationTitle,
-		Snippet:           result.Snippet,
-		UpdatedAt:         result.UpdatedAt.Unix(),
-	}
-	if result.MessageID != nil {
-		resp.MessageID = stringPtr(result.MessageID.String())
 	}
 	return resp
 }
