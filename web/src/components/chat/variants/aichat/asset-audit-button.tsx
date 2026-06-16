@@ -423,15 +423,28 @@ function statusIcon(status: string) {
 }
 
 function assetDisplayName(asset: AIChatToolGovernanceAssetRef, t: ReturnType<typeof useT<'webapp'>>) {
-  return (
-    stringValue(asset.name) ||
-    stringValue(asset.title) ||
-    stringValue(asset.label) ||
-    stringValue(asset.filename) ||
-    stringValue(asset.file_name) ||
-    stringValue(asset.id) ||
-    t('consoleChat.governance.audit.unknownAsset')
-  );
+  const id = stringValue(asset.id);
+  const assetType = stringValue(asset.type)?.toLowerCase();
+  const fileName = stringValue(asset.filename) || stringValue(asset.file_name);
+  if (fileName) return fileName;
+  const displayName = stringValue(asset.name) || stringValue(asset.title) || stringValue(asset.label);
+  if (displayName && displayName !== id && !looksLikeOpaqueAuditAssetID(displayName)) {
+    return displayName;
+  }
+  if (assetType === 'file') return t('consoleChat.governance.assetTypes.file');
+  return id || t('consoleChat.governance.audit.unknownAsset');
+}
+
+function looksLikeOpaqueAuditAssetID(value: string): boolean {
+  const normalized = value.trim();
+  if (!normalized) return false;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized)) {
+    return true;
+  }
+  if (/^(file|upload_file|asset)[_-][a-z0-9_-]{8,}$/i.test(normalized)) {
+    return true;
+  }
+  return /^[0-9a-f]{24,}$/i.test(normalized);
 }
 
 function assetMeta(asset: AIChatToolGovernanceAssetRef, t: ReturnType<typeof useT<'webapp'>>) {

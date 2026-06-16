@@ -22,7 +22,8 @@ var htmlPDFCSSImportPattern = regexp.MustCompile(`(?i)@import`)
 // GeneratePDFTool creates PDF documents from HTML in the workflow tool file store.
 type GeneratePDFTool struct {
 	*builtin.BuiltinTool
-	runtime *tools.ToolRuntime
+	runtime  *tools.ToolRuntime
+	services fileGeneratorServices
 }
 
 // NewGeneratePDFTool creates a generate_pdf tool.
@@ -43,7 +44,7 @@ func NewGeneratePDFTool(tenantID string) *GeneratePDFTool {
 				"en_US":   "Generate a styled PDF file from HTML and inline CSS.",
 				"zh_Hans": "根据 HTML 和内联 CSS 生成带排版的 PDF 文件。",
 			},
-			LLM: "Generate a styled PDF file from HTML and optional inline CSS. Use this instead of generate_file when the PDF needs layout, tables, colors, page styles, or richer visual formatting. Use self-contained HTML/CSS only; do not reference external URLs or scripts.",
+			LLM: "Generate a styled PDF file from HTML and optional inline CSS. By default, create a temporary downloadable artifact without writing to File Management. Set target=managed_file only when the user explicitly asks to save/create/upload the result into File Management or the current files page. Use this instead of generate_file when the PDF needs layout, tables, colors, page styles, or richer visual formatting. Use self-contained HTML/CSS only; do not reference external URLs or scripts.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -94,17 +95,20 @@ func NewGeneratePDFTool(tenantID string) *GeneratePDFTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "生命周期"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated file is persistent or temporary.", "zh_Hans": "生成文件是持久保存还是临时保存。"},
-				LLMDescription:   "File lifecycle: persistent or temporary. Defaults to persistent.",
+				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary. Ignored when target is managed_file.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
-				Default:          "persistent",
+				Default:          "temporary",
 				SupportVariable:  true,
 				Options: []tools.ToolParameterOption{
 					{Value: "persistent", Label: tools.I18nText{"en_US": "Persistent", "zh_Hans": "持久保存"}},
 					{Value: "temporary", Label: tools.I18nText{"en_US": "Temporary", "zh_Hans": "临时文件"}},
 				},
 			},
+			fileTargetParameter(),
+			fileTargetWorkspaceParameter(),
+			fileTargetFolderParameter(),
 		},
 		OutputType: "file",
 		Tags:       []string{"utilities", "file", "pdf", "html"},
@@ -112,12 +116,17 @@ func NewGeneratePDFTool(tenantID string) *GeneratePDFTool {
 	return &GeneratePDFTool{BuiltinTool: builtin.NewBuiltinTool(entity, tenantID)}
 }
 
+func (t *GeneratePDFTool) withServices(services fileGeneratorServices) *GeneratePDFTool {
+	t.services = services
+	return t
+}
+
 func (t *GeneratePDFTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 	tenantID := t.GetTenantID()
 	if runtime != nil && runtime.TenantID != "" {
 		tenantID = runtime.TenantID
 	}
-	fork := NewGeneratePDFTool(tenantID)
+	fork := NewGeneratePDFTool(tenantID).withServices(t.services)
 	fork.runtime = runtime
 	return fork
 }
@@ -156,6 +165,10 @@ func (t *GeneratePDFTool) Invoke(
 	if err != nil {
 		return nil, err
 	}
+	target, err := resolveGeneratedFileTarget(rawStringParam(toolParameters, "target"))
+	if err != nil {
+		return nil, err
+	}
 	filename := buildFilename(rawStringParam(toolParameters, "filename"), ".pdf")
 	return createGeneratedFileForRuntime(ctx, t.GetTenantID(), t.runtime, generatedFileParams{
 		userID:         userID,
@@ -166,6 +179,10 @@ func (t *GeneratePDFTool) Invoke(
 		filename:       filename,
 		lifecycle:      lifecycle,
 		format:         "pdf",
+		target:         target,
+		workspaceID:    rawStringParam(toolParameters, "workspace_id"),
+		folderID:       rawStringParam(toolParameters, "folder_id"),
+		services:       t.services,
 	})
 }
 

@@ -140,9 +140,11 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
 8. For PPTX, plan the slide layout before writing JSON. Use non-overlapping boxes for titles, text, and tables. Split dense content into more slides instead of shrinking text or stacking elements.
 9. For PPTX with Chinese or other dense text, treat "more text" as more slides, not denser text boxes. Keep body paragraphs short; use bullets, columns, or additional slides before exceeding the readable capacity of a box.
 10. Before calling `generate_pptx`, self-check that each slide's readable content fits within the slide bounds, does not overlap, uses explicit `x`, `y`, `w`, and `h` when the layout matters, and avoids long unbroken lines.
-11. Use `persistent` lifecycle by default unless the user asks for a temporary file.
-12. In the final answer, briefly mention the generated filename and format.
-13. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
+11. Create a temporary downloadable artifact by default. Do not write generated output into File Management unless the user explicitly asks to save, create, or upload it there.
+12. Use `target=managed_file` only when the user explicitly asks to save, create, or upload the generated file into File Management, the current files page, or a known workspace folder. Otherwise omit `target` or use `temporary_artifact`.
+13. For `target=managed_file`, omit `workspace_id` unless a known workspace ID is already provided by runtime context; do not invent IDs.
+14. In the final answer, briefly mention the generated filename and format.
+15. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
 
 ## References
 
@@ -184,14 +186,20 @@ Read exactly one reference after choosing the target format:
 - `format`: `txt`, `md`, `html`, `json`, `csv`, `docx`, `xlsx`, or `pdf`.
 - `filename`: optional display filename. The extension is added automatically.
 - `title`: optional title used by generated HTML and PDF files.
-- `lifecycle`: optional file lifecycle, `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`. Ignored when `target=managed_file`.
+- `target`: optional generation target, `temporary_artifact` or `managed_file`. Defaults to `temporary_artifact`.
+- `workspace_id`: optional workspace ID for `target=managed_file`. Usually omit and use runtime context. Do not invent IDs.
+- `folder_id`: optional folder ID for `target=managed_file` when the user explicitly refers to a known folder. Do not invent IDs.
 
 `generate_docx` accepts:
 
 - `document`: JSON string describing the styled DOCX document.
 - `filename`: optional display filename. The `.docx` extension is added automatically.
 - `title`: optional title hint. Visible content must be in `document.blocks`.
-- `lifecycle`: optional file lifecycle, `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`. Ignored when `target=managed_file`.
+- `target`: optional generation target, `temporary_artifact` or `managed_file`. Defaults to `temporary_artifact`.
+- `workspace_id`: optional workspace ID for `target=managed_file`. Usually omit and use runtime context. Do not invent IDs.
+- `folder_id`: optional folder ID for `target=managed_file` when the user explicitly refers to a known folder. Do not invent IDs.
 
 `generate_pdf` accepts:
 
@@ -199,11 +207,17 @@ Read exactly one reference after choosing the target format:
 - `css`: optional inline CSS appended to the document.
 - `filename`: optional display filename. The `.pdf` extension is added automatically.
 - `title`: optional title used when wrapping an HTML fragment. Visible content must be in `html`.
-- `lifecycle`: optional file lifecycle, `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`. Ignored when `target=managed_file`.
+- `target`: optional generation target, `temporary_artifact` or `managed_file`. Defaults to `temporary_artifact`.
+- `workspace_id`: optional workspace ID for `target=managed_file`. Usually omit and use runtime context. Do not invent IDs.
+- `folder_id`: optional folder ID for `target=managed_file` when the user explicitly refers to a known folder. Do not invent IDs.
 
 `generate_pptx` accepts:
 
 - `presentation`: JSON string describing the editable static PPTX deck.
 - `filename`: optional display filename. The `.pptx` extension is added automatically.
 - `title`: optional title hint. Visible content must be in `presentation.slides`.
-- `lifecycle`: optional file lifecycle, `persistent` or `temporary`. Defaults to `persistent`.
+- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`. Ignored when `target=managed_file`.
+- `target`: optional generation target, `temporary_artifact` or `managed_file`. Defaults to `temporary_artifact`.
+- `workspace_id`: optional workspace ID for `target=managed_file`. Usually omit and use runtime context. Do not invent IDs.
+- `folder_id`: optional folder ID for `target=managed_file` when the user explicitly refers to a known folder. Do not invent IDs.

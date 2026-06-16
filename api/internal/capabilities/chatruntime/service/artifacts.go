@@ -32,6 +32,10 @@ func hydrateMessageGeneratedFileURLs(message *runtimemodel.Message) {
 
 func hydrateGeneratedFileURL(file map[string]interface{}) map[string]interface{} {
 	hydrated := copyStringAnyMap(file)
+	transferMethod := strings.TrimSpace(stringFromAny(hydrated["transfer_method"]))
+	if transferMethod != "" && transferMethod != "tool_file" {
+		return hydrated
+	}
 	fileID := firstNonEmptyString(hydrated["file_id"])
 	extension := normalizedFileExtension(hydrated["extension"])
 	if fileID == "" || extension == "" {
@@ -62,6 +66,14 @@ func persistentGeneratedArtifact(artifact map[string]interface{}) map[string]int
 	copyStringField(out, artifact, "mime_type")
 	copyStringField(out, artifact, "transfer_method")
 	copyStringField(out, artifact, "file_type")
+	copyStringField(out, artifact, "target")
+	copyStringField(out, artifact, "workspace_id")
+	copyStringField(out, artifact, "folder_id")
+	copyStringField(out, artifact, "upload_file_id")
+	if transferMethod := strings.TrimSpace(stringFromAny(artifact["transfer_method"])); transferMethod != "" && transferMethod != "tool_file" {
+		copyStringField(out, artifact, "url")
+		copyStringField(out, artifact, "download_url")
+	}
 	copyStringField(out, artifact, "skill_id")
 	copyStringField(out, artifact, "tool_name")
 	copyStringField(out, artifact, "operation_id")

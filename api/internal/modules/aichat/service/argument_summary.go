@@ -22,7 +22,7 @@ func summarizeSkillToolArguments(skillID string, toolName string, args map[strin
 }
 
 func summarizeFileGeneratorArguments(args map[string]interface{}) map[string]interface{} {
-	summary := summarizeAllowedArguments(args, []string{"format", "filename", "title", "lifecycle"})
+	summary := summarizeAllowedArguments(args, []string{"format", "filename", "title", "lifecycle", "target", "workspace_id", "folder_id"})
 	if content, ok := args["content"].(string); ok {
 		summary["content_length"] = len(content)
 	}

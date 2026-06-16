@@ -11,7 +11,8 @@ import (
 // GenerateDocxTool creates rich Word documents in the workflow tool file store.
 type GenerateDocxTool struct {
 	*builtin.BuiltinTool
-	runtime *tools.ToolRuntime
+	runtime  *tools.ToolRuntime
+	services fileGeneratorServices
 }
 
 // NewGenerateDocxTool creates a generate_docx tool.
@@ -32,7 +33,7 @@ func NewGenerateDocxTool(tenantID string) *GenerateDocxTool {
 				"en_US":   "Generate a styled DOCX file from a structured document specification.",
 				"zh_Hans": "根据结构化文档规格生成带样式的 DOCX 文件。",
 			},
-			LLM: "Generate a styled DOCX file from a JSON document specification. Use this instead of generate_file when the Word document needs headings, fonts, font sizes, bold or colored text, paragraph alignment, spacing, page margins, page breaks, or simple tables. Every runs item must include non-empty text; omit empty runs.",
+			LLM: "Generate a styled DOCX file from a JSON document specification. By default, create a temporary downloadable artifact without writing to File Management. Set target=managed_file only when the user explicitly asks to save/create/upload the result into File Management or the current files page. Use this instead of generate_file when the Word document needs headings, fonts, font sizes, bold or colored text, paragraph alignment, spacing, page margins, page breaks, or simple tables. Every runs item must include non-empty text; omit empty runs.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -72,17 +73,20 @@ func NewGenerateDocxTool(tenantID string) *GenerateDocxTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "生命周期"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated file is persistent or temporary.", "zh_Hans": "生成文件是持久保存还是临时保存。"},
-				LLMDescription:   "File lifecycle: persistent or temporary. Defaults to persistent.",
+				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary. Ignored when target is managed_file.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
-				Default:          "persistent",
+				Default:          "temporary",
 				SupportVariable:  true,
 				Options: []tools.ToolParameterOption{
 					{Value: "persistent", Label: tools.I18nText{"en_US": "Persistent", "zh_Hans": "持久保存"}},
 					{Value: "temporary", Label: tools.I18nText{"en_US": "Temporary", "zh_Hans": "临时文件"}},
 				},
 			},
+			fileTargetParameter(),
+			fileTargetWorkspaceParameter(),
+			fileTargetFolderParameter(),
 		},
 		OutputType: "file",
 		Tags:       []string{"utilities", "file", "docx"},
@@ -90,12 +94,17 @@ func NewGenerateDocxTool(tenantID string) *GenerateDocxTool {
 	return &GenerateDocxTool{BuiltinTool: builtin.NewBuiltinTool(entity, tenantID)}
 }
 
+func (t *GenerateDocxTool) withServices(services fileGeneratorServices) *GenerateDocxTool {
+	t.services = services
+	return t
+}
+
 func (t *GenerateDocxTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 	tenantID := t.GetTenantID()
 	if runtime != nil && runtime.TenantID != "" {
 		tenantID = runtime.TenantID
 	}
-	fork := NewGenerateDocxTool(tenantID)
+	fork := NewGenerateDocxTool(tenantID).withServices(t.services)
 	fork.runtime = runtime
 	return fork
 }
@@ -130,6 +139,10 @@ func (t *GenerateDocxTool) Invoke(
 	if err != nil {
 		return nil, err
 	}
+	target, err := resolveGeneratedFileTarget(rawStringParam(toolParameters, "target"))
+	if err != nil {
+		return nil, err
+	}
 	filename := buildFilename(rawStringParam(toolParameters, "filename"), ".docx")
 	return createGeneratedFileForRuntime(ctx, t.GetTenantID(), t.runtime, generatedFileParams{
 		userID:         userID,
@@ -140,6 +153,10 @@ func (t *GenerateDocxTool) Invoke(
 		filename:       filename,
 		lifecycle:      lifecycle,
 		format:         "docx",
+		target:         target,
+		workspaceID:    rawStringParam(toolParameters, "workspace_id"),
+		folderID:       rawStringParam(toolParameters, "folder_id"),
+		services:       t.services,
 	})
 }
 

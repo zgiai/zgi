@@ -32,8 +32,9 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 	}
 	params := req.ExecutionContext.RuntimeParameters
 	governance := governanceRuntimeParameters(params)
+	manifest := governanceManifestForArguments(req.Manifest, req.SkillID, req.ToolName, req.Arguments)
 	return toolgovernance.Decide(toolgovernance.Request{
-		Manifest:       req.Manifest,
+		Manifest:       manifest,
 		PermissionTier: governancePermissionTier(params, governance),
 		ConversationID: req.ExecutionContext.ConversationID,
 		OrganizationID: req.ExecutionContext.OrganizationID,
@@ -41,8 +42,8 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 		SkillID:        req.SkillID,
 		ProviderType:   string(req.ProviderType),
 		ProviderID:     req.ProviderID,
-		Assets:         governanceAssets(params, governance, req.Manifest, req.Arguments),
-		ExpectedAssets: governanceExpectedAssets(params, governance, req.Manifest),
+		Assets:         governanceAssets(params, governance, manifest, req.Arguments),
+		ExpectedAssets: governanceExpectedAssets(params, governance, manifest),
 		SessionGrants:  governanceSessionGrants(params, governance),
 		CorrelationID:  governanceString(params, governance, governanceCorrelationIDKey, "correlation_id"),
 	}, g.policy), nil
@@ -62,17 +63,66 @@ func governancePermissionTier(params map[string]interface{}, governance map[stri
 	return toolgovernance.PermissionTier(governanceString(params, governance, governancePermissionTierKey, "permission_tier"))
 }
 
+func governanceManifestForArguments(manifest toolgovernance.Manifest, skillID, toolName string, arguments map[string]interface{}) toolgovernance.Manifest {
+	if !isFileGeneratorTool(skillID, toolName) {
+		return manifest
+	}
+	if isManagedFileGenerationTarget(stringMapValue(arguments, "target")) {
+		return manifest
+	}
+	manifest.DefaultApprovalPolicy = toolgovernance.ApprovalPolicyNeverAsk
+	return manifest
+}
+
+func isFileGeneratorTool(skillID, toolName string) bool {
+	if strings.TrimSpace(skillID) != "file-generator" {
+		return false
+	}
+	switch strings.TrimSpace(toolName) {
+	case "generate_file", "generate_docx", "generate_pdf", "generate_pptx":
+		return true
+	default:
+		return false
+	}
+}
+
+func isManagedFileGenerationTarget(target string) bool {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "managed_file", "file_management", "managed", "workspace_file":
+		return true
+	default:
+		return false
+	}
+}
+
 func governanceAssets(params map[string]interface{}, governance map[string]interface{}, manifest toolgovernance.Manifest, arguments map[string]interface{}) []toolgovernance.AssetRef {
 	argumentAssets := assetRefsFromToolArguments(manifest, arguments)
 	runtimeAssets := governanceExpectedAssets(params, governance, manifest)
 	if len(argumentAssets) > 0 {
-		return enrichArgumentAssetRefs(argumentAssets, runtimeAssets)
+		return enrichArgumentAssetRefs(argumentAssets, governanceAssetEnrichmentCandidates(params, runtimeAssets))
 	}
 	manifest = toolgovernance.NormalizeManifest(manifest)
 	if manifest.RequiresAssetResolution && len(runtimeAssets) > 0 {
 		return nil
 	}
 	return runtimeAssets
+}
+
+func governanceAssetEnrichmentCandidates(params map[string]interface{}, runtimeAssets []toolgovernance.AssetRef) []toolgovernance.AssetRef {
+	if len(params) == 0 {
+		return runtimeAssets
+	}
+	visibleFiles := assetRefsFromAny(params["console_files_visible_files"])
+	if len(visibleFiles) == 0 {
+		return runtimeAssets
+	}
+	if len(runtimeAssets) == 0 {
+		return visibleFiles
+	}
+	out := make([]toolgovernance.AssetRef, 0, len(runtimeAssets)+len(visibleFiles))
+	out = append(out, runtimeAssets...)
+	out = append(out, visibleFiles...)
+	return out
 }
 
 func governanceExpectedAssets(params map[string]interface{}, governance map[string]interface{}, manifest toolgovernance.Manifest) []toolgovernance.AssetRef {

@@ -615,12 +615,32 @@ function governanceAssetCount(
 }
 
 function governanceAssetDisplayName(asset: AIChatToolGovernanceAssetRef): string {
-  return (
-    governanceRecordString(asset, ['name', 'title', 'label', 'filename', 'file_name']) ??
-    governanceRecordString(asset.metadata, ['name', 'title', 'label', 'filename', 'file_name']) ??
-    governanceStringValue(asset.id) ??
-    'asset'
-  );
+  const id = governanceStringValue(asset.id);
+  const assetType = governanceStringValue(asset.type)?.toLowerCase();
+  const fileName =
+    governanceRecordString(asset, ['filename', 'file_name']) ??
+    governanceRecordString(asset.metadata, ['filename', 'file_name']);
+  if (fileName) return fileName;
+  const displayName =
+    governanceRecordString(asset, ['name', 'title', 'label']) ??
+    governanceRecordString(asset.metadata, ['name', 'title', 'label']);
+  if (displayName && displayName !== id && !looksLikeOpaqueAssetID(displayName)) {
+    return displayName;
+  }
+  if (assetType === 'file') return 'file';
+  return id ?? 'asset';
+}
+
+function looksLikeOpaqueAssetID(value: string): boolean {
+  const normalized = value.trim();
+  if (!normalized) return false;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized)) {
+    return true;
+  }
+  if (/^(file|upload_file|asset)[_-][a-z0-9_-]{8,}$/i.test(normalized)) {
+    return true;
+  }
+  return /^[0-9a-f]{24,}$/i.test(normalized);
 }
 
 function governanceFileSizeText(bytes: number | null): string | null {
@@ -960,24 +980,11 @@ function governanceToolLabel(
   locale: string,
   t: WebappTranslator
 ): string | null {
-  const skillId = item.event.skill_id ?? item.event.governance?.manifest?.skill_id ?? '';
-  const toolName =
-    item.event.tool_name ??
-    item.event.governance?.manifest?.tool_id ??
-    governanceApprovalEvent(item)?.tool_id ??
-    '';
-  const skill = skillId
-    ? (skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale)).label
-    : '';
-  const tool =
-    skillId && toolName
-      ? getAIChatSkillToolDisplayName(skillId, toolName, locale) || toolName
-      : toolName;
-
-  if (skill && tool) {
-    return t('consoleChat.governance.toolLabel', { skill, tool });
-  }
-  return skill || tool || null;
+  void item;
+  void skillDisplayById;
+  void locale;
+  void t;
+  return null;
 }
 
 function governancePermissionTierLabel(permissionTier: string, t: WebappTranslator): string {
@@ -1117,10 +1124,12 @@ function buildToolGovernanceDecisionViewModel(
     });
   };
 
+  const actionSentence = governanceActionSentence(item, approvalAssets, assetCount, t);
+
   return {
-    title,
+    title: actionSentence || title,
     toolLabel,
-    actionSentence: governanceActionSentence(item, approvalAssets, assetCount, t),
+    actionSentence,
     notice,
     reason,
     assets,

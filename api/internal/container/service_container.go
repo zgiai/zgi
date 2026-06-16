@@ -69,6 +69,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
+	filegenerator_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
 	files_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/files"
 	knowledge_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/knowledge"
 	workflow_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
@@ -158,6 +159,7 @@ type ServiceContainer struct {
 	billingService                interfaces.BillingService
 	registerService               interfaces.RegisterService
 	fileService                   interfaces.FileService
+	fileFolderService             file_service.FileFolderService
 	contentExtractor              workflow_file.ContentExtractor
 	contentParseService           contracts.ContentParseService
 
@@ -587,6 +589,17 @@ func (c *ServiceContainer) GetFileService() interfaces.FileService {
 	return c.fileService
 }
 
+func (c *ServiceContainer) GetFileFolderService() file_service.FileFolderService {
+	if c.fileFolderService == nil {
+		fileFolderRepo := file_repo.NewFileFolderRepository(c.db)
+		fileRepo := file_repo.NewFileRepository(c.db)
+		documentRepo := dataset_repo.NewDocumentRepository(c.db)
+		datasetRepo := dataset_repo.NewDatasetRepository(c.db)
+		c.fileFolderService = file_service.NewFileResourceService(fileFolderRepo, fileRepo, documentRepo, datasetRepo, c.GetAccountService())
+	}
+	return c.fileFolderService
+}
+
 func (c *ServiceContainer) GetContentParseService() contracts.ContentParseService {
 	if c.contentParseService == nil {
 		c.contentParseService = contentparsecap.NewModule().Service
@@ -864,6 +877,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 
 		// Register builtin tool providers
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
+		_ = c.toolManager.RegisterProvider(filegenerator_tools.NewProvider(filegenerator_tools.WithManagedFileServices(c.GetFileService(), c.GetOrganizationService(), c.GetFileFolderService())))
 		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
 		_ = c.toolManager.RegisterProvider(database_tools.NewProvider(c.GetDataSourceService(), c.GetOrganizationService()))
 		_ = c.toolManager.RegisterProvider(files_tools.NewProvider(c.GetFileService(), c.GetContentExtractor(), c.GetOrganizationService()))

@@ -170,6 +170,7 @@ export function ToolGovernanceDecisionCard({
   onSubmitDecision,
 }: ToolGovernanceDecisionCardProps) {
   const t = useT('webapp');
+  void toolLabel;
   const [rememberForSession, setRememberForSession] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<ToolGovernanceDecisionAction | null>(
     null
@@ -253,21 +254,6 @@ export function ToolGovernanceDecisionCard({
           )}
         </span>
         <span className="min-w-0 flex-1 truncate font-medium">{auditText}</span>
-        {approvalStatusLabel ? (
-          <span
-            className={cn(
-              'shrink-0 rounded border bg-background/80 px-1.5 py-0.5 text-[11px]',
-              isRejected
-                ? 'border-destructive/20 text-destructive'
-                : 'border-emerald-500/20 text-emerald-700'
-            )}
-          >
-            {approvalStatusLabel}
-          </span>
-        ) : null}
-        {toolLabel ? (
-          <span className="max-w-44 shrink-0 truncate text-muted-foreground">{toolLabel}</span>
-        ) : null}
       </div>
     );
   }
@@ -302,9 +288,6 @@ export function ToolGovernanceDecisionCard({
           {isAllowed ? <CheckCircle2 className="size-3.5" /> : <ShieldAlert className="size-3.5" />}
         </span>
         <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
-        {toolLabel ? (
-          <span className="max-w-44 shrink-0 truncate text-muted-foreground">{toolLabel}</span>
-        ) : null}
         {canExpand ? (
           <ChevronDown
             className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', {
@@ -520,11 +503,6 @@ export function ToolGovernanceApprovalPanel({
             <div className="text-xs font-medium text-muted-foreground">
               {t('consoleChat.governance.approvalPanel.title')}
             </div>
-            {toolLabelText(approval.toolLabel) ? (
-              <div className="max-w-full truncate text-[11px] text-muted-foreground">
-                {toolLabelText(approval.toolLabel)}
-              </div>
-            ) : null}
           </div>
           <div className="mt-1 break-words text-sm font-medium text-foreground">
             {approval.actionSentence}
@@ -614,9 +592,4 @@ export function ToolGovernanceApprovalPanel({
       ) : null}
     </div>
   );
-}
-
-function toolLabelText(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  return trimmed || null;
 }

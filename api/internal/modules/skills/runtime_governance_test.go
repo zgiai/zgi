@@ -170,6 +170,113 @@ func TestPolicyToolGovernanceRejectsToolArgumentOutsideResolvedAssets(t *testing
 	}
 }
 
+func TestPolicyToolGovernanceFileGeneratorTemporaryArtifactsDoNotNeedApproval(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: fileGeneratorGovernanceManifestForTest(),
+		SkillID:  "file-generator",
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "draft.txt",
+			"target":   "temporary_artifact",
+		},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance_permission_tier": "basic",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusAllowed || decision.RequiresApproval {
+		t.Fatalf("decision = %#v, want allowed without approval for temporary artifact", decision)
+	}
+	if decision.Manifest.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyNeverAsk {
+		t.Fatalf("manifest policy = %q, want temporary artifact override", decision.Manifest.DefaultApprovalPolicy)
+	}
+}
+
+func TestPolicyToolGovernanceFileGeneratorManagedFileUsesCreateApprovalPolicy(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: fileGeneratorGovernanceManifestForTest(),
+		SkillID:  "file-generator",
+		ToolName: "generate_pdf",
+		Arguments: map[string]interface{}{
+			"filename": "report.pdf",
+			"target":   "managed_file",
+		},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance_permission_tier": "basic",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusNeedsApproval || !decision.RequiresApproval {
+		t.Fatalf("decision = %#v, want approval for managed file create on basic tier", decision)
+	}
+	if decision.Manifest.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyAutoByPermissionTier {
+		t.Fatalf("manifest policy = %q, want original create policy", decision.Manifest.DefaultApprovalPolicy)
+	}
+}
+
+func TestPolicyToolGovernanceEnrichesFileArgumentNameFromVisibleFiles(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "file.read",
+			Domain:                  "files",
+			Effect:                  toolgovernance.EffectRead,
+			AssetType:               "file",
+			RiskLevel:               toolgovernance.RiskLevelLow,
+			RequiresAssetResolution: false,
+		},
+		SkillID:   "file-reader",
+		ToolName:  "read_file",
+		Arguments: map[string]interface{}{"file_id": "file-1"},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"console_files_visible_files": []map[string]interface{}{
+					{"file_id": "file-1", "name": "report.pdf", "workspace_id": "workspace-1"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusAllowed {
+		t.Fatalf("decision status = %s, want allowed: %#v", decision.Status, decision)
+	}
+	if len(decision.Assets) != 1 || decision.Assets[0].ID != "file-1" || decision.Assets[0].Name != "report.pdf" {
+		t.Fatalf("assets = %#v, want file-1/report.pdf from visible files", decision.Assets)
+	}
+}
+
+func fileGeneratorGovernanceManifestForTest() toolgovernance.Manifest {
+	return toolgovernance.Manifest{
+		ToolID:                "file.generate",
+		SkillID:               "file-generator",
+		Domain:                "files",
+		Effect:                toolgovernance.EffectCreate,
+		AssetType:             "file",
+		RiskLevel:             toolgovernance.RiskLevelMedium,
+		DefaultApprovalPolicy: toolgovernance.ApprovalPolicyAutoByPermissionTier,
+		AllowedPermissionTiers: []toolgovernance.PermissionTier{
+			toolgovernance.PermissionTierBasic,
+			toolgovernance.PermissionTierAdvanced,
+			toolgovernance.PermissionTierFull,
+		},
+	}
+}
+
 func TestPolicyToolGovernanceRequiresToolArgumentWhenResolvedAssetExists(t *testing.T) {
 	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
 	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
