@@ -19,8 +19,6 @@ import {
   MessageSquarePlus,
   PanelLeft,
   Settings2,
-  ShieldAlert,
-  ShieldCheck,
 } from 'lucide-react';
 import type {
   ModelSelectorModelProps,
@@ -154,11 +152,6 @@ const CHAT_THEME_PRIMARY: Record<string, string> = {
 };
 const AGENT_WORKFLOW_QUESTION_SOURCE = 'agent_workflow_question_answer';
 const TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY = 'zgi:aichat:tool-governance-permission-tier';
-const TOOL_GOVERNANCE_PERMISSION_TIERS: AIChatToolGovernancePermissionTier[] = [
-  'basic',
-  'advanced',
-  'full',
-];
 
 function normalizeToolGovernancePermissionTier(value: unknown): AIChatToolGovernancePermissionTier {
   return value === 'advanced' || value === 'full' ? value : 'basic';
@@ -371,79 +364,6 @@ export function AIChatShell({
         : undefined,
     [effectiveToolGovernancePermissionTier, enableToolGovernance]
   );
-  const toolGovernancePermissionControl = useMemo(() => {
-    if (!showToolGovernancePermissionControl) return null;
-    const description =
-      toolGovernancePermissionTier === 'full'
-        ? t('consoleChat.governance.permissionTiers.fullWarning')
-        : toolGovernancePermissionTier === 'advanced'
-          ? t('consoleChat.governance.permissionTiers.advancedDescription')
-          : t('consoleChat.governance.permissionTiers.basicDescription');
-
-    return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-background/95 px-2.5 py-1.5 text-xs shadow-sm">
-        <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-          {toolGovernancePermissionTier === 'full' ? (
-            <ShieldAlert className="size-3.5 shrink-0 text-destructive" />
-          ) : (
-            <ShieldCheck className="size-3.5 shrink-0 text-primary" />
-          )}
-          <span className="shrink-0 font-medium text-foreground">
-            {t('consoleChat.governance.permissionTiers.label')}
-          </span>
-          <span
-            className={cn(
-              'hidden min-w-0 truncate sm:block',
-              toolGovernancePermissionTier === 'full' && 'text-destructive'
-            )}
-          >
-            {description}
-          </span>
-        </div>
-        <div
-          className="flex shrink-0 items-center rounded-md border bg-muted/40 p-0.5"
-          role="group"
-          aria-label={t('consoleChat.governance.permissionTiers.label')}
-        >
-          {TOOL_GOVERNANCE_PERMISSION_TIERS.map(tier => {
-            const selected = toolGovernancePermissionTier === tier;
-            const label =
-              tier === 'full'
-                ? t('consoleChat.governance.permissionTiers.full')
-                : tier === 'advanced'
-                  ? t('consoleChat.governance.permissionTiers.advanced')
-                  : t('consoleChat.governance.permissionTiers.basic');
-            const title =
-              tier === 'full'
-                ? t('consoleChat.governance.permissionTiers.fullDescription')
-                : tier === 'advanced'
-                  ? t('consoleChat.governance.permissionTiers.advancedDescription')
-                  : t('consoleChat.governance.permissionTiers.basicDescription');
-            return (
-              <button
-                key={tier}
-                type="button"
-                className={cn(
-                  'h-7 rounded px-2.5 text-xs font-medium transition-colors',
-                  selected
-                    ? tier === 'full'
-                      ? 'bg-destructive text-destructive-foreground shadow-sm'
-                      : 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                )}
-                aria-pressed={selected}
-                title={title}
-                onClick={() => setToolGovernancePermissionTier(tier)}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }, [showToolGovernancePermissionControl, t, toolGovernancePermissionTier]);
-
   const messageTopologyKey = useMemo(
     () => buildChatMessageTopologyKey(activeMessages),
     [activeMessages]
@@ -1187,7 +1107,9 @@ export function AIChatShell({
             allowWorkspaceSwitch={allowWorkspaceSwitch}
             inputPlaceholder={inputPlaceholder}
             surface={surface}
-            topAccessory={toolGovernancePermissionControl}
+            showToolGovernancePermissionControl={showToolGovernancePermissionControl}
+            toolGovernancePermissionTier={toolGovernancePermissionTier}
+            onToolGovernancePermissionTierChange={setToolGovernancePermissionTier}
             enableToolGovernanceApprovals={enableToolGovernance}
           />
         </main>

@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { uploadService } from '@/services/upload.service';
 import type { FileItem } from '@/services/types/file';
 import type { AIChatMessageFile, AIChatUserInputRequest } from '@/services/types/aichat';
+import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
 import {
   IMAGE_EXTENSIONS,
   buildFileInputAcceptAttribute,
@@ -216,6 +217,9 @@ interface AIChatInputAreaProps {
   inputPlaceholder?: string;
   surface?: AIChatComposerSurface;
   topAccessory?: ReactNode;
+  showToolGovernancePermissionControl?: boolean;
+  toolGovernancePermissionTier?: AIChatToolGovernancePermissionTier;
+  onToolGovernancePermissionTierChange?: (tier: AIChatToolGovernancePermissionTier) => void;
   enableToolGovernanceApprovals?: boolean;
 }
 
@@ -285,6 +289,9 @@ export function AIChatInputArea({
   inputPlaceholder,
   surface = 'aichat',
   topAccessory,
+  showToolGovernancePermissionControl = false,
+  toolGovernancePermissionTier = 'basic',
+  onToolGovernancePermissionTierChange,
   enableToolGovernanceApprovals = false,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
@@ -1300,6 +1307,9 @@ export function AIChatInputArea({
                 showMemoryToggle={showMemoryToggle}
                 showComposerExpandButton={!hasActiveUserInputRequest && showComposerExpandButton}
                 isComposerExpanded={isComposerExpanded}
+                showToolGovernancePermissionControl={showToolGovernancePermissionControl}
+                toolGovernancePermissionTier={toolGovernancePermissionTier}
+                onToolGovernancePermissionTierChange={onToolGovernancePermissionTierChange}
                 enableUpload={!hasActiveUserInputRequest && enableUpload}
                 showFileLibraryPicker={showFileLibraryPicker}
                 surface={surface}
