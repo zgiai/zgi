@@ -652,6 +652,11 @@ export interface AIChatAssetOperationAudit extends Record<string, unknown> {
   matched_grant?: Record<string, unknown>;
   approved_grant?: Record<string, unknown>;
   session_grant?: Record<string, unknown>;
+  action?: string;
+  reason?: string;
+  resolved_at?: string;
+  resolved_by?: string;
+  remember_for_session?: boolean;
 }
 
 export interface AIChatAssetOperationAuditRecord extends Record<string, unknown> {
@@ -674,8 +679,11 @@ export interface AIChatAssetOperationAuditRecord extends Record<string, unknown>
   governance_status?: AIChatToolGovernanceDecisionStatus | (string & {});
   action?: string;
   reason?: string;
-  resolved_at?: number;
+  resolved_at?: string;
   resolved_by?: string;
+  approved_by_correlation_id?: string;
+  approved_grant?: Record<string, unknown>;
+  session_grant?: Record<string, unknown>;
   requires_approval?: boolean;
   remember_for_session?: boolean;
   asset_count?: number;

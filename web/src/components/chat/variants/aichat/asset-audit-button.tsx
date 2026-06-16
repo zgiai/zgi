@@ -160,12 +160,21 @@ export function AIChatAssetAuditButton({
 function AuditRecordCard({ record }: { record: AIChatAssetOperationAuditRecord }) {
   const t = useT('webapp');
   const status = record.approval_status || record.governance_status || record.status || '';
-  const time = formatAuditTime(record.created_at ?? record.message_created_at);
+  const time = formatAuditTime(record.resolved_at ?? record.created_at ?? record.message_created_at);
   const assets = record.assets ?? [];
   const assetCount = record.asset_count ?? assets.length;
   const toolLabel = formatToolLabel(record, t);
   const effect = record.effect ? formatEffect(record.effect, t) : null;
   const risk = record.risk_level ? formatRisk(record.risk_level, t) : null;
+  const action = record.action ? formatAuditAction(record.action, t) : null;
+  const resolvedBy = stringValue(record.resolved_by);
+  const grantScope = formatGrantScope(record.session_grant ?? record.approved_grant, t);
+  const resolutionItems = [
+    action ? t('consoleChat.governance.audit.resolutionAction', { action }) : null,
+    resolvedBy ? t('consoleChat.governance.audit.resolvedBy', { account: resolvedBy }) : null,
+    record.remember_for_session ? t('consoleChat.governance.audit.rememberedSession') : null,
+    grantScope ? t('consoleChat.governance.audit.sessionGrant', { scope: grantScope }) : null,
+  ].filter((item): item is string => Boolean(item));
 
   return (
     <article className="rounded-lg border bg-background p-3 shadow-sm">
@@ -187,11 +196,25 @@ function AuditRecordCard({ record }: { record: AIChatAssetOperationAuditRecord }
             ) : null}
           </div>
           {assets.length > 0 ? <AuditAssets assets={assets} /> : null}
+          {resolutionItems.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+              {resolutionItems.map(item => (
+                <span key={item}>{item}</span>
+              ))}
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
             <span>{t('consoleChat.governance.audit.source', { source: record.source })}</span>
             <span className="font-mono">{record.correlation_id}</span>
           </div>
-          {record.reason ? <p className="text-xs text-muted-foreground">{record.reason}</p> : null}
+          {record.reason ? (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">
+                {t('consoleChat.governance.fields.reason')}
+              </span>
+              <span className="ml-1">{record.reason}</span>
+            </p>
+          ) : null}
         </div>
       </div>
     </article>
@@ -330,6 +353,37 @@ function formatRisk(risk: string, t: ReturnType<typeof useT<'webapp'>>): string 
   }
 }
 
+function formatAuditAction(action: string, t: ReturnType<typeof useT<'webapp'>>): string {
+  switch (action) {
+    case 'approve':
+    case 'approved':
+      return t('consoleChat.governance.approve');
+    case 'reject':
+    case 'rejected':
+      return t('consoleChat.governance.reject');
+    default:
+      return action;
+  }
+}
+
+function formatGrantScope(
+  grant: Record<string, unknown> | undefined,
+  t: ReturnType<typeof useT<'webapp'>>
+): string | null {
+  if (!grant) return null;
+  const toolID = stringValue(grant.tool_id);
+  const effect = stringValue(grant.effect);
+  const assetType = stringValue(grant.asset_type);
+  const riskLevel = stringValue(grant.risk_level);
+  const parts = [
+    toolID,
+    effect ? formatEffect(effect, t) : null,
+    assetType,
+    riskLevel ? formatRisk(riskLevel, t) : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' / ') : null;
+}
+
 function statusBadgeVariant(status: string): BadgeVariant {
   if (status === 'approved' || status === 'allowed' || status === 'success') return 'success';
   if (status === 'rejected' || status === 'denied' || status === 'blocked' || status === 'error') {
@@ -395,12 +449,17 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function formatAuditTime(timestamp: number | undefined): string | null {
+function formatAuditTime(timestamp: number | string | undefined): string | null {
   if (!timestamp) return null;
+  const date =
+    typeof timestamp === 'string'
+      ? new Date(timestamp)
+      : new Date(timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000);
+  if (Number.isNaN(date.getTime())) return null;
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(new Date(timestamp * 1000));
+  }).format(date);
 }

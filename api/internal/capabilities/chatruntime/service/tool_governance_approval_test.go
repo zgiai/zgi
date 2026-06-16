@@ -508,6 +508,119 @@ func TestResolvedToolGovernanceDecisionEventUpdatesAssetOperationAudit(t *testin
 	}
 }
 
+func TestResolvedToolGovernanceDecisionEventBuildsApprovalResultAndAuditFallback(t *testing.T) {
+	event := map[string]interface{}{
+		"conversation_id":   "conversation-1",
+		"correlation_id":    "corr-1",
+		"skill_id":          "file-reader",
+		"tool_name":         "delete_file",
+		"status":            "needs_approval",
+		"decision":          "needs_approval",
+		"requires_approval": true,
+		"governance": map[string]interface{}{
+			"status":            "needs_approval",
+			"correlation_id":    "corr-1",
+			"requires_approval": true,
+			"reason":            "delete requires approval",
+			"manifest": map[string]interface{}{
+				"skill_id":       "file-reader",
+				"tool_id":        "file.delete",
+				"effect":         "delete",
+				"asset_type":     "file",
+				"risk_level":     "high",
+				"audit_required": true,
+			},
+			"approval_event": map[string]interface{}{
+				"correlation_id": "corr-1",
+				"tool_id":        "file.delete",
+				"skill_id":       "file-reader",
+				"effect":         "delete",
+				"asset_type":     "file",
+				"risk_level":     "high",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":           "file-1",
+						"type":         "file",
+						"name":         "smoke.txt",
+						"workspace_id": "workspace-1",
+					},
+				},
+				"grant": map[string]interface{}{
+					"conversation_id": "conversation-1",
+					"tool_id":         "file.delete",
+					"effect":          "delete",
+					"asset_type":      "file",
+					"risk_level":      "high",
+				},
+			},
+		},
+	}
+	updated := resolvedToolGovernanceDecisionEvent(event, map[string]interface{}{
+		"action":               "approve",
+		"approval_status":      "approved",
+		"reason":               "ok",
+		"resolved_at":          "2026-06-15T12:00:00Z",
+		"resolved_by":          "account-1",
+		"remember_for_session": true,
+		"approved_grant": map[string]interface{}{
+			"conversation_id":         "conversation-1",
+			"tool_id":                 "file.delete",
+			"effect":                  "delete",
+			"asset_type":              "file",
+			"risk_level":              "high",
+			"approval_correlation_id": "corr-1",
+			"assets": []interface{}{
+				map[string]interface{}{"id": "file-1", "type": "file", "name": "smoke.txt", "workspace_id": "workspace-1"},
+			},
+		},
+		"session_grant": map[string]interface{}{
+			"conversation_id":         "conversation-1",
+			"tool_id":                 "file.delete",
+			"effect":                  "delete",
+			"asset_type":              "file",
+			"risk_level":              "high",
+			"approval_correlation_id": "corr-1",
+			"assets": []interface{}{
+				map[string]interface{}{"id": "file-1", "type": "file", "name": "smoke.txt", "workspace_id": "workspace-1"},
+			},
+		},
+	})
+
+	governance := governanceMapFromAny(updated["governance"])
+	result := governanceMapFromAny(governance["approval_result"])
+	if result["correlation_id"] != "corr-1" ||
+		result["tool_id"] != "file.delete" ||
+		result["effect"] != "delete" ||
+		result["asset_type"] != "file" ||
+		result["risk_level"] != "high" ||
+		result["remember_for_session"] != true {
+		t.Fatalf("approval_result = %#v, want correlated approval scope", result)
+	}
+	resultAssets := mapSliceFromAny(result["assets"])
+	if len(resultAssets) != 1 || resultAssets[0]["id"] != "file-1" || resultAssets[0]["workspace_id"] != "workspace-1" {
+		t.Fatalf("approval_result assets = %#v, want approved file asset", resultAssets)
+	}
+
+	audit := governanceMapFromAny(updated["asset_operation_audit"])
+	if audit["schema_version"] != "tool_governance.asset_operation.v1" ||
+		audit["correlation_id"] != "corr-1" ||
+		audit["approval_status"] != "approved" ||
+		audit["action"] != "approve" ||
+		audit["resolved_at"] != "2026-06-15T12:00:00Z" ||
+		audit["resolved_by"] != "account-1" ||
+		audit["remember_for_session"] != true {
+		t.Fatalf("asset_operation_audit = %#v, want resolved fallback audit", audit)
+	}
+	auditAssets := mapSliceFromAny(audit["assets"])
+	if len(auditAssets) != 1 || auditAssets[0]["id"] != "file-1" || auditAssets[0]["workspace_id"] != "workspace-1" {
+		t.Fatalf("audit assets = %#v, want approved file asset", auditAssets)
+	}
+	if governanceMapFromAny(audit["approved_grant"])["approval_correlation_id"] != "corr-1" ||
+		governanceMapFromAny(audit["session_grant"])["approval_correlation_id"] != "corr-1" {
+		t.Fatalf("audit grants = approved %#v session %#v, want replay grants", audit["approved_grant"], audit["session_grant"])
+	}
+}
+
 func TestSubmitToolGovernanceDecisionRejectsUnresolvedEventWhenMessageNotWaitingApproval(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()

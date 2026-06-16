@@ -41,18 +41,35 @@ func TestAssetOperationAuditRecordsFromMessageUsesCanonicalDecisionAndInvocation
 						},
 					},
 					"asset_operation_audit": map[string]interface{}{
-						"schema_version":   "tool_governance.asset_operation.v1",
-						"created_at":       createdAt.Unix() + 10,
-						"correlation_id":   "corr-canonical",
-						"tool_id":          "file.delete",
-						"effect":           "delete",
-						"asset_type":       "file",
-						"risk_level":       "high",
-						"approval_status":  "approved",
-						"action":           "approve",
-						"resolved_at":      "2026-06-15T12:00:10Z",
-						"resolved_by":      "account-1",
-						"remember_session": false,
+						"schema_version":             "tool_governance.asset_operation.v1",
+						"created_at":                 createdAt.Unix() + 10,
+						"correlation_id":             "corr-canonical",
+						"tool_id":                    "file.delete",
+						"effect":                     "delete",
+						"asset_type":                 "file",
+						"risk_level":                 "high",
+						"approval_status":            "approved",
+						"action":                     "approve",
+						"resolved_at":                "2026-06-15T12:00:10Z",
+						"resolved_by":                "account-1",
+						"remember_for_session":       true,
+						"approved_by_correlation_id": "corr-canonical",
+						"approved_grant": map[string]interface{}{
+							"conversation_id":         conversationID.String(),
+							"tool_id":                 "file.delete",
+							"effect":                  "delete",
+							"asset_type":              "file",
+							"risk_level":              "high",
+							"approval_correlation_id": "corr-canonical",
+						},
+						"session_grant": map[string]interface{}{
+							"conversation_id":         conversationID.String(),
+							"tool_id":                 "file.delete",
+							"effect":                  "delete",
+							"asset_type":              "file",
+							"risk_level":              "high",
+							"approval_correlation_id": "corr-canonical",
+						},
 						"assets": []interface{}{
 							map[string]interface{}{
 								"id":           "file-1",
@@ -131,6 +148,15 @@ func TestAssetOperationAuditRecordsFromMessageUsesCanonicalDecisionAndInvocation
 	}
 	if canonical.ApprovalStatus != "approved" || canonical.Action != "approve" || canonical.RequiresApproval {
 		t.Fatalf("canonical approval = status %q action %q requires %v, want approved approve false", canonical.ApprovalStatus, canonical.Action, canonical.RequiresApproval)
+	}
+	if canonical.ResolvedAt != "2026-06-15T12:00:10Z" || canonical.ResolvedBy != "account-1" || !canonical.RememberForSession {
+		t.Fatalf("canonical resolution = resolved_at %q resolved_by %q remember %v, want resolved audit fields", canonical.ResolvedAt, canonical.ResolvedBy, canonical.RememberForSession)
+	}
+	if canonical.ApprovedByCorrelationID != "corr-canonical" {
+		t.Fatalf("canonical approved_by_correlation_id = %q, want corr-canonical", canonical.ApprovedByCorrelationID)
+	}
+	if canonical.ApprovedGrant["tool_id"] != "file.delete" || canonical.SessionGrant["approval_correlation_id"] != "corr-canonical" {
+		t.Fatalf("canonical grants = approved %#v session %#v, want approved/session replay grants", canonical.ApprovedGrant, canonical.SessionGrant)
 	}
 	if canonical.ToolID != "file.delete" || canonical.Effect != "delete" || canonical.RiskLevel != "high" {
 		t.Fatalf("canonical tool fields = %#v, want file.delete delete high", canonical)

@@ -348,13 +348,47 @@ func resolvedToolGovernanceDecisionEvent(event map[string]interface{}, resolutio
 		governance["requires_approval"] = false
 		updated["requires_approval"] = false
 	}
-	governance["approval_result"] = copyStringAnyMap(resolution)
-	if audit := resolvedToolGovernanceAssetOperationAudit(updated, governance, resolution); len(audit) > 0 {
+	approvalResult := toolGovernanceApprovalResultPayload(updated, governance, resolution)
+	governance["approval_result"] = approvalResult
+	if audit := resolvedToolGovernanceAssetOperationAudit(updated, governance, approvalResult); len(audit) > 0 {
 		updated["asset_operation_audit"] = audit
 		governance["asset_operation_audit"] = audit
 	}
 	updated["governance"] = governance
 	return compactSkillInvocation(updated)
+}
+
+func toolGovernanceApprovalResultPayload(event map[string]interface{}, governance map[string]interface{}, resolution map[string]interface{}) map[string]interface{} {
+	result := copyStringAnyMap(resolution)
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	approvalEvent := toolGovernanceApprovalEventFromEvent(event)
+	approvedGrant := governanceMapFromAny(result["approved_grant"])
+	sessionGrant := governanceMapFromAny(result["session_grant"])
+	manifest := governanceMapFromAny(governance["manifest"])
+
+	setStringIfEmpty(result, "correlation_id", toolGovernanceCorrelationID(event))
+	setStringIfEmpty(result, "tool_id", approvalEvent["tool_id"], approvedGrant["tool_id"], sessionGrant["tool_id"], event["tool_id"])
+	setStringIfEmpty(result, "effect", approvalEvent["effect"], approvedGrant["effect"], sessionGrant["effect"], event["effect"], manifest["effect"])
+	setStringIfEmpty(result, "asset_type", approvalEvent["asset_type"], approvedGrant["asset_type"], sessionGrant["asset_type"], event["asset_type"], manifest["asset_type"])
+	setStringIfEmpty(result, "risk_level", approvalEvent["risk_level"], approvedGrant["risk_level"], sessionGrant["risk_level"], event["risk_level"], manifest["risk_level"])
+
+	assets := compactToolGovernanceGrantAssets(firstMapSlice(
+		result["assets"],
+		sessionGrant["assets"],
+		approvedGrant["assets"],
+	))
+	if len(assets) == 0 {
+		assets = compactToolGovernanceGrantAssets(toolGovernanceAssetsFromEvent(event, approvalEvent))
+	}
+	if len(assets) > 0 {
+		result["assets"] = mapsToInterfaceSlice(assets)
+		if int64ValueFromAny(result["asset_count"]) == 0 {
+			result["asset_count"] = len(assets)
+		}
+	}
+	return result
 }
 
 func resolvedToolGovernanceAssetOperationAudit(event map[string]interface{}, governance map[string]interface{}, resolution map[string]interface{}) map[string]interface{} {
@@ -363,7 +397,31 @@ func resolvedToolGovernanceAssetOperationAudit(event map[string]interface{}, gov
 		audit = governanceMapFromAny(governance["asset_operation_audit"])
 	}
 	if len(audit) == 0 {
-		return nil
+		audit = map[string]interface{}{
+			"schema_version": "tool_governance.asset_operation.v1",
+			"event_type":     "asset_operation",
+		}
+	}
+	approvalEvent := toolGovernanceApprovalEventFromEvent(event)
+	approvedGrant := governanceMapFromAny(resolution["approved_grant"])
+	sessionGrant := governanceMapFromAny(resolution["session_grant"])
+	manifest := governanceMapFromAny(governance["manifest"])
+
+	setStringIfEmpty(audit, "correlation_id", resolution["correlation_id"], toolGovernanceCorrelationID(event))
+	setStringIfEmpty(audit, "conversation_id", event["conversation_id"], approvalEvent["conversation_id"], approvedGrant["conversation_id"], sessionGrant["conversation_id"])
+	setStringIfEmpty(audit, "governance_status", governance["status"], event["decision"], event["status"])
+	setStringIfEmpty(audit, "decision_reason", governance["reason"], event["reason"])
+	setStringIfEmpty(audit, "tool_id", resolution["tool_id"], approvalEvent["tool_id"], approvedGrant["tool_id"], sessionGrant["tool_id"], event["tool_id"])
+	setStringIfEmpty(audit, "skill_id", approvalEvent["skill_id"], event["skill_id"], manifest["skill_id"])
+	setStringIfEmpty(audit, "domain", approvalEvent["domain"], manifest["domain"])
+	setStringIfEmpty(audit, "effect", resolution["effect"], approvalEvent["effect"], approvedGrant["effect"], sessionGrant["effect"], event["effect"], manifest["effect"])
+	setStringIfEmpty(audit, "asset_type", resolution["asset_type"], approvalEvent["asset_type"], approvedGrant["asset_type"], sessionGrant["asset_type"], event["asset_type"], manifest["asset_type"])
+	setStringIfEmpty(audit, "risk_level", resolution["risk_level"], approvalEvent["risk_level"], approvedGrant["risk_level"], sessionGrant["risk_level"], event["risk_level"], manifest["risk_level"])
+	setStringIfEmpty(audit, "permission_tier", approvalEvent["permission_tier"], manifest["permission_tier"])
+	if _, ok := audit["requires_approval"]; !ok {
+		if value := firstNonNil(event["requires_approval"], governance["requires_approval"]); value != nil {
+			audit["requires_approval"] = boolMetadataValue(value)
+		}
 	}
 	approvalStatus := strings.TrimSpace(stringFromAny(resolution["approval_status"]))
 	if approvalStatus != "" {
@@ -383,7 +441,31 @@ func resolvedToolGovernanceAssetOperationAudit(event map[string]interface{}, gov
 	if grant := governanceMapFromAny(resolution["session_grant"]); len(grant) > 0 {
 		audit["session_grant"] = grant
 	}
+	assets := compactToolGovernanceGrantAssets(firstMapSlice(
+		audit["assets"],
+		resolution["assets"],
+		sessionGrant["assets"],
+		approvedGrant["assets"],
+	))
+	if len(assets) == 0 {
+		assets = compactToolGovernanceGrantAssets(toolGovernanceAssetsFromEvent(event, approvalEvent))
+	}
+	if len(assets) > 0 {
+		audit["assets"] = mapsToInterfaceSlice(assets)
+		if int64ValueFromAny(audit["asset_count"]) == 0 {
+			audit["asset_count"] = len(assets)
+		}
+	}
 	return compactSkillInvocation(audit)
+}
+
+func setStringIfEmpty(target map[string]interface{}, key string, values ...interface{}) {
+	if strings.TrimSpace(stringFromAny(target[key])) != "" {
+		return
+	}
+	if value := firstNonEmptyString(values...); value != "" {
+		target[key] = value
+	}
 }
 
 func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event map[string]interface{}) map[string]interface{} {
