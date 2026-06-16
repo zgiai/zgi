@@ -22,6 +22,7 @@ type ConversationRepository interface {
 	GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 	ListScoped(ctx context.Context, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
+	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, queryText string, limit int) ([]*SearchResult, error)
 	UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	DeleteScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) error
@@ -98,6 +99,15 @@ type Repositories struct {
 type MessageDeleteResult struct {
 	ConversationID uuid.UUID
 	DeletedCount   int64
+}
+
+type SearchResult struct {
+	Type              string
+	ConversationID    uuid.UUID
+	ConversationTitle string
+	MessageID         *uuid.UUID
+	MatchText         string
+	UpdatedAt         time.Time
 }
 
 func NewRepositories(db *gorm.DB) *Repositories {
@@ -219,6 +229,123 @@ func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organiz
 		return nil, 0, fmt.Errorf("failed to list chat runtime conversations: %w", err)
 	}
 	return conversations, total, nil
+}
+
+func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, queryText string, limit int) ([]*SearchResult, error) {
+	keyword := strings.TrimSpace(queryText)
+	if keyword == "" || limit <= 0 {
+		return []*SearchResult{}, nil
+	}
+	if callerType == "" {
+		callerType = runtimemodel.ConversationCallerAIChat
+	}
+	pattern := "%" + strings.ToLower(keyword) + "%"
+
+	type searchRow struct {
+		Type              string     `gorm:"column:type"`
+		ConversationID    uuid.UUID  `gorm:"column:conversation_id"`
+		ConversationTitle string     `gorm:"column:conversation_title"`
+		MessageID         *uuid.UUID `gorm:"column:message_id"`
+		MatchText         string     `gorm:"column:match_text"`
+		UpdatedAt         time.Time  `gorm:"column:updated_at"`
+		Rank              int        `gorm:"column:rank"`
+	}
+
+	args := []interface{}{
+		organizationID,
+		accountID,
+		callerType,
+		pattern,
+		pattern,
+		organizationID,
+		accountID,
+		callerType,
+		pattern,
+		pattern,
+	}
+	callerFilter := "c.caller_id IS NULL"
+	if callerID != nil && *callerID != uuid.Nil {
+		callerFilter = "c.caller_id = ?"
+		args = []interface{}{
+			organizationID,
+			accountID,
+			callerType,
+			*callerID,
+			pattern,
+			pattern,
+			organizationID,
+			accountID,
+			callerType,
+			*callerID,
+			pattern,
+			pattern,
+		}
+	}
+	args = append(args, limit)
+
+	var rows []searchRow
+	query := fmt.Sprintf(`
+		SELECT *
+		FROM (
+			SELECT
+				'conversation' AS type,
+				c.id AS conversation_id,
+				c.title AS conversation_title,
+				NULL::uuid AS message_id,
+				c.title AS match_text,
+				c.updated_at AS updated_at,
+				0 AS rank
+			FROM chat_runtime_conversations AS c
+			WHERE c.organization_id = ?
+				AND c.account_id = ?
+				AND c.caller_type = ?
+				AND %s
+				AND c.deleted_at IS NULL
+				AND LOWER(COALESCE(c.title, '')) LIKE ?
+			UNION ALL
+			SELECT
+				'message' AS type,
+				c.id AS conversation_id,
+				c.title AS conversation_title,
+				m.id AS message_id,
+				CASE
+					WHEN LOWER(COALESCE(m.query, '')) LIKE ? THEN m.query
+					ELSE m.answer
+				END AS match_text,
+				GREATEST(m.updated_at, c.updated_at) AS updated_at,
+				1 AS rank
+			FROM chat_runtime_messages AS m
+			JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id
+			WHERE c.organization_id = ?
+				AND c.account_id = ?
+				AND c.caller_type = ?
+				AND %s
+				AND c.deleted_at IS NULL
+				AND m.deleted_at IS NULL
+				AND (
+					LOWER(COALESCE(m.query, '')) LIKE ?
+					OR LOWER(COALESCE(m.answer, '')) LIKE ?
+				)
+		) AS matches
+		ORDER BY rank ASC, updated_at DESC
+		LIMIT ?
+	`, callerFilter, callerFilter)
+
+	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("failed to search chat runtime conversations: %w", err)
+	}
+	results := make([]*SearchResult, 0, len(rows))
+	for _, row := range rows {
+		results = append(results, &SearchResult{
+			Type:              row.Type,
+			ConversationID:    row.ConversationID,
+			ConversationTitle: row.ConversationTitle,
+			MessageID:         row.MessageID,
+			MatchText:         row.MatchText,
+			UpdatedAt:         row.UpdatedAt,
+		})
+	}
+	return results, nil
 }
 
 func applyCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID) *gorm.DB {
