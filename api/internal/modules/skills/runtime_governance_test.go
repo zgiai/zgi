@@ -23,6 +23,8 @@ func TestCallSkillToolGovernanceNeedsApprovalDoesNotInvokeEngine(t *testing.T) {
 		"delete_file",
 		map[string]interface{}{"file_id": "file-1"},
 		ExecutionContext{
+			OrganizationID: "organization-1",
+			UserID:         "user-1",
 			ConversationID: "conversation-1",
 			RuntimeParameters: map[string]interface{}{
 				"tool_governance": map[string]interface{}{
@@ -346,6 +348,8 @@ func TestCallSkillToolMatchingSessionGrantAllowsEnginePath(t *testing.T) {
 		"delete_file",
 		map[string]interface{}{"file_id": "file-1"},
 		ExecutionContext{
+			OrganizationID: "organization-1",
+			UserID:         "user-1",
 			ConversationID: "conversation-1",
 			RuntimeParameters: map[string]interface{}{
 				"tool_governance": map[string]interface{}{
@@ -354,6 +358,11 @@ func TestCallSkillToolMatchingSessionGrantAllowsEnginePath(t *testing.T) {
 					"session_grants": []map[string]interface{}{
 						{
 							"conversation_id": "conversation-1",
+							"organization_id": "organization-1",
+							"user_id":         "user-1",
+							"skill_id":        "governed-files",
+							"provider_type":   "builtin",
+							"provider_id":     "files",
 							"tool_id":         "file.delete",
 							"effect":          "delete",
 							"asset_type":      "file",
@@ -383,10 +392,14 @@ func TestPolicyToolGovernanceMatchingSessionGrantCarriesApprovalCorrelation(t *t
 			RiskLevel:               toolgovernance.RiskLevelHigh,
 			RequiresAssetResolution: true,
 		},
-		SkillID:   "file-reader",
-		ToolName:  "delete_file",
-		Arguments: map[string]interface{}{"file_id": "file-1"},
+		SkillID:      "file-reader",
+		ToolName:     "delete_file",
+		ProviderType: tools.ToolProviderTypeBuiltin,
+		ProviderID:   "files",
+		Arguments:    map[string]interface{}{"file_id": "file-1"},
 		ExecutionContext: ExecutionContext{
+			OrganizationID: "organization-1",
+			UserID:         "user-1",
 			ConversationID: "conversation-1",
 			RuntimeParameters: map[string]interface{}{
 				"tool_governance": map[string]interface{}{
@@ -395,6 +408,11 @@ func TestPolicyToolGovernanceMatchingSessionGrantCarriesApprovalCorrelation(t *t
 					"session_grants": []map[string]interface{}{
 						{
 							"conversation_id":         "conversation-1",
+							"organization_id":         "organization-1",
+							"user_id":                 "user-1",
+							"skill_id":                "file-reader",
+							"provider_type":           "builtin",
+							"provider_id":             "files",
 							"tool_id":                 "file.delete",
 							"effect":                  "delete",
 							"asset_type":              "file",
@@ -436,10 +454,14 @@ func TestPolicyToolGovernanceMatchingSessionGrantRequiresApprovalForDifferentRun
 			RiskLevel:               toolgovernance.RiskLevelHigh,
 			RequiresAssetResolution: true,
 		},
-		SkillID:   "file-reader",
-		ToolName:  "delete_file",
-		Arguments: map[string]interface{}{"file_id": "file-2"},
+		SkillID:      "file-reader",
+		ToolName:     "delete_file",
+		ProviderType: tools.ToolProviderTypeBuiltin,
+		ProviderID:   "files",
+		Arguments:    map[string]interface{}{"file_id": "file-2"},
 		ExecutionContext: ExecutionContext{
+			OrganizationID: "organization-1",
+			UserID:         "user-1",
 			ConversationID: "conversation-1",
 			RuntimeParameters: map[string]interface{}{
 				"tool_governance": map[string]interface{}{
@@ -448,6 +470,11 @@ func TestPolicyToolGovernanceMatchingSessionGrantRequiresApprovalForDifferentRun
 					"session_grants": []map[string]interface{}{
 						{
 							"conversation_id":         "conversation-1",
+							"organization_id":         "organization-1",
+							"user_id":                 "user-1",
+							"skill_id":                "file-reader",
+							"provider_type":           "builtin",
+							"provider_id":             "files",
 							"tool_id":                 "file.delete",
 							"effect":                  "delete",
 							"asset_type":              "file",
@@ -512,12 +539,19 @@ func TestCallSkillToolGovernanceAllowsRunScriptWithMatchingGrant(t *testing.T) {
 		SkillScriptToolRun,
 		map[string]interface{}{"input": "hello"},
 		ExecutionContext{
+			OrganizationID: "organization-1",
+			UserID:         "user-1",
 			ConversationID: "conversation-1",
 			RuntimeParameters: map[string]interface{}{
 				"tool_governance": map[string]interface{}{
 					"session_grants": []map[string]interface{}{
 						{
 							"conversation_id":         "conversation-1",
+							"organization_id":         "organization-1",
+							"user_id":                 "user-1",
+							"skill_id":                "governed-script",
+							"provider_type":           "builtin",
+							"provider_id":             "skill-script",
 							"tool_id":                 "skill.run_script",
 							"effect":                  "invoke",
 							"asset_type":              "script",

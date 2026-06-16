@@ -53,6 +53,8 @@ const (
 
 const ApprovalEventTypeAssetToolApproval = "asset_tool_approval"
 
+const DefaultSessionGrantTTL = 24 * time.Hour
+
 type Manifest struct {
 	ToolID                  string           `json:"tool_id" yaml:"tool_id"`
 	SkillID                 string           `json:"skill_id,omitempty" yaml:"skill_id"`
@@ -82,6 +84,11 @@ type AssetRef struct {
 
 type SessionGrant struct {
 	ConversationID        string     `json:"conversation_id"`
+	OrganizationID        string     `json:"organization_id,omitempty"`
+	UserID                string     `json:"user_id,omitempty"`
+	SkillID               string     `json:"skill_id,omitempty"`
+	ProviderType          string     `json:"provider_type,omitempty"`
+	ProviderID            string     `json:"provider_id,omitempty"`
 	ToolID                string     `json:"tool_id"`
 	Effect                Effect     `json:"effect"`
 	AssetType             string     `json:"asset_type,omitempty"`
@@ -128,6 +135,11 @@ type Request struct {
 	Manifest       Manifest
 	PermissionTier PermissionTier
 	ConversationID string
+	OrganizationID string
+	UserID         string
+	SkillID        string
+	ProviderType   string
+	ProviderID     string
 	Assets         []AssetRef
 	ExpectedAssets []AssetRef
 	SessionGrants  []SessionGrant

@@ -12,6 +12,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -239,6 +240,8 @@ func TestProcessTimelineRecorderMarksGovernedToolCallWaitingApproval(t *testing.
 
 func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing.T) {
 	conversationID := uuid.New().String()
+	organizationID := uuid.New()
+	accountID := uuid.New()
 	metadata := map[string]interface{}{
 		"skill_invocations": []interface{}{
 			map[string]interface{}{
@@ -283,12 +286,21 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 		t.Fatalf("governance event not found")
 	}
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	grant := toolGovernanceSessionGrantFromEvent(event, conversationID, now)
+	grant := toolGovernanceSessionGrantFromEvent(event, conversationID, Scope{OrganizationID: organizationID, AccountID: accountID}, now)
 	if grant["conversation_id"] != conversationID || grant["tool_id"] != "file.delete" {
 		t.Fatalf("session grant = %#v, want conversation-bound file.delete grant", grant)
 	}
+	if grant["organization_id"] != organizationID.String() || grant["user_id"] != accountID.String() {
+		t.Fatalf("session grant = %#v, want scope-bound grant", grant)
+	}
 	if grant["approval_correlation_id"] != "corr-1" {
 		t.Fatalf("session grant = %#v, want approval correlation", grant)
+	}
+	if grant["granted_at"] != now.Format(time.RFC3339) {
+		t.Fatalf("session grant = %#v, want granted_at", grant)
+	}
+	if grant["expires_at"] != now.Add(toolgovernance.DefaultSessionGrantTTL).Format(time.RFC3339) {
+		t.Fatalf("session grant = %#v, want default expiry", grant)
 	}
 	grantAssets := mapSliceFromAny(grant["assets"])
 	if len(grantAssets) != 1 || grantAssets[0]["id"] != "file-1" || grantAssets[0]["workspace_id"] != "workspace-1" {
@@ -375,7 +387,7 @@ func TestToolGovernanceSessionGrantFromEventFallsBackToGovernanceAssetsAndCompac
 		},
 	}
 
-	grant := toolGovernanceSessionGrantFromEvent(event, conversationID, time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC))
+	grant := toolGovernanceSessionGrantFromEvent(event, conversationID, Scope{}, time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC))
 	assets := mapSliceFromAny(grant["assets"])
 	if len(assets) != 1 {
 		t.Fatalf("grant assets = %#v, want one compact asset", assets)
@@ -980,6 +992,11 @@ func TestToolGovernanceSessionGrantKeyIncludesConversationToolEffectAssetAndRisk
 
 	for _, variant := range []map[string]interface{}{
 		{"conversation_id": "conversation-2", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high"},
+		{"conversation_id": "conversation-1", "organization_id": "organization-2", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high"},
+		{"conversation_id": "conversation-1", "user_id": "user-2", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high"},
+		{"conversation_id": "conversation-1", "skill_id": "other-skill", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high"},
+		{"conversation_id": "conversation-1", "provider_type": "custom", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high"},
+		{"conversation_id": "conversation-1", "provider_id": "other-provider", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high"},
 		{"conversation_id": "conversation-1", "tool_id": "file.update", "effect": "delete", "asset_type": "file", "risk_level": "high"},
 		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "update", "asset_type": "file", "risk_level": "high"},
 		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "delete", "asset_type": "database", "risk_level": "high"},
@@ -989,8 +1006,8 @@ func TestToolGovernanceSessionGrantKeyIncludesConversationToolEffectAssetAndRisk
 		metadata = appendToolGovernanceSessionGrant(metadata, variant)
 	}
 	grants = mapSliceFromAny(metadata["tool_governance_session_grants"])
-	if len(grants) != 7 {
-		t.Fatalf("session grants = %#v, want one base plus six distinct scoped grants", grants)
+	if len(grants) != 12 {
+		t.Fatalf("session grants = %#v, want one base plus eleven distinct scoped grants", grants)
 	}
 }
 

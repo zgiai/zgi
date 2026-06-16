@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
@@ -382,6 +383,8 @@ Use governed file tools.
 		Prepared: prepared,
 		Resolved: resolved,
 		ExecutionContext: skills.ExecutionContext{
+			OrganizationID: "organization-1",
+			UserID:         "user-1",
 			ConversationID: "conv-1",
 			MessageID:      "msg-1",
 			RuntimeParameters: map[string]interface{}{
@@ -587,6 +590,8 @@ Use governed file tools.
 		Prepared: prepared,
 		Resolved: resolved,
 		ExecutionContext: skills.ExecutionContext{
+			OrganizationID: "organization-1",
+			UserID:         "user-1",
 			ConversationID: "conv-1",
 			MessageID:      "msg-1",
 			RuntimeParameters: map[string]interface{}{
@@ -598,12 +603,18 @@ Use governed file tools.
 					"session_grants": []map[string]interface{}{
 						{
 							"conversation_id":         "conv-1",
+							"organization_id":         "organization-1",
+							"user_id":                 "user-1",
+							"skill_id":                "governed-files",
+							"provider_type":           "builtin",
+							"provider_id":             "governed_files_test",
 							"tool_id":                 "file.delete",
 							"effect":                  "delete",
 							"asset_type":              "file",
 							"assets":                  []map[string]interface{}{{"id": "file-1", "type": "file", "name": "report.pdf"}},
 							"risk_level":              "high",
 							"approval_correlation_id": "approval-corr-1",
+							"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
 						},
 					},
 				},

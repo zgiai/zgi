@@ -366,6 +366,169 @@ func TestDecideSessionGrantDoesNotMatchDifferentToolAssetTypeOrLowerRisk(t *test
 	}
 }
 
+func TestDecideSessionGrantDoesNotCrossIdentityOrRuntimeScope(t *testing.T) {
+	baseGrant := SessionGrant{
+		ConversationID:        "conversation-1",
+		OrganizationID:        "organization-1",
+		UserID:                "user-1",
+		SkillID:               "file-reader",
+		ProviderType:          "builtin",
+		ProviderID:            "files",
+		ToolID:                "file.delete",
+		Effect:                EffectDelete,
+		AssetType:             "file",
+		Assets:                []AssetRef{{ID: "file-1", Type: "file"}},
+		RiskLevel:             RiskLevelHigh,
+		ApprovalCorrelationID: "approval-corr-1",
+		ExpiresAt:             time.Now().Add(time.Hour),
+	}
+	baseRequest := Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ConversationID: "conversation-1",
+		OrganizationID: "organization-1",
+		UserID:         "user-1",
+		SkillID:        "file-reader",
+		ProviderType:   "builtin",
+		ProviderID:     "files",
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+	}
+
+	allowed := baseRequest
+	allowed.SessionGrants = []SessionGrant{baseGrant}
+	decision := Decide(allowed, DefaultPolicy())
+	if decision.Status != DecisionStatusAllowed {
+		t.Fatalf("expected scoped grant to allow, got %s (%s)", decision.Status, decision.Reason)
+	}
+
+	tests := []struct {
+		name  string
+		grant SessionGrant
+	}{
+		{
+			name: "legacy grant missing identity scope",
+			grant: func() SessionGrant {
+				grant := baseGrant
+				grant.OrganizationID = ""
+				grant.UserID = ""
+				grant.SkillID = ""
+				grant.ProviderType = ""
+				grant.ProviderID = ""
+				return grant
+			}(),
+		},
+		{
+			name: "scoped grant without expiry",
+			grant: func() SessionGrant {
+				grant := baseGrant
+				grant.ExpiresAt = time.Time{}
+				return grant
+			}(),
+		},
+		{
+			name: "different organization",
+			grant: func() SessionGrant {
+				grant := baseGrant
+				grant.OrganizationID = "organization-2"
+				return grant
+			}(),
+		},
+		{
+			name: "different user",
+			grant: func() SessionGrant {
+				grant := baseGrant
+				grant.UserID = "user-2"
+				return grant
+			}(),
+		},
+		{
+			name: "different skill",
+			grant: func() SessionGrant {
+				grant := baseGrant
+				grant.SkillID = "other-skill"
+				return grant
+			}(),
+		},
+		{
+			name: "different provider",
+			grant: func() SessionGrant {
+				grant := baseGrant
+				grant.ProviderID = "other-provider"
+				return grant
+			}(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := baseRequest
+			request.SessionGrants = []SessionGrant{tt.grant}
+			decision := Decide(request, DefaultPolicy())
+			assertNeedsApproval(t, decision, tt.name)
+			if decision.MatchedGrant != nil || decision.ApprovedByCorrelationID != "" {
+				t.Fatalf("decision matched cross-scope session grant: %#v", decision)
+			}
+		})
+	}
+}
+
+func TestDecideSessionGrantRequiresRequestScopeForScopedGrant(t *testing.T) {
+	scopedGrant := SessionGrant{
+		ConversationID:        "conversation-1",
+		OrganizationID:        "organization-1",
+		UserID:                "user-1",
+		SkillID:               "file-reader",
+		ProviderType:          "builtin",
+		ProviderID:            "files",
+		ToolID:                "file.delete",
+		Effect:                EffectDelete,
+		AssetType:             "file",
+		Assets:                []AssetRef{{ID: "file-1", Type: "file"}},
+		RiskLevel:             RiskLevelHigh,
+		ApprovalCorrelationID: "approval-corr-1",
+		ExpiresAt:             time.Now().Add(time.Hour),
+	}
+
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ConversationID: "conversation-1",
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+		SessionGrants:  []SessionGrant{scopedGrant},
+	}, DefaultPolicy())
+
+	assertNeedsApproval(t, decision, "unscoped request should not consume scoped grant")
+	if decision.MatchedGrant != nil || decision.ApprovedByCorrelationID != "" {
+		t.Fatalf("decision matched scoped session grant without request scope: %#v", decision)
+	}
+}
+
+func TestDecideSessionGrantRequiresExpiryWhenGrantHasScope(t *testing.T) {
+	scopedGrant := SessionGrant{
+		ConversationID:        "conversation-1",
+		SkillID:               "file-reader",
+		ToolID:                "file.delete",
+		Effect:                EffectDelete,
+		AssetType:             "file",
+		Assets:                []AssetRef{{ID: "file-1", Type: "file"}},
+		RiskLevel:             RiskLevelHigh,
+		ApprovalCorrelationID: "approval-corr-1",
+	}
+
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ConversationID: "conversation-1",
+		SkillID:        "file-reader",
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+		SessionGrants:  []SessionGrant{scopedGrant},
+	}, DefaultPolicy())
+
+	assertNeedsApproval(t, decision, "scoped grant without expiry")
+	if decision.MatchedGrant != nil || decision.ApprovedByCorrelationID != "" {
+		t.Fatalf("decision matched scoped session grant without expiry: %#v", decision)
+	}
+}
+
 func TestDecideDeniedWhenTierIsNotAllowed(t *testing.T) {
 	manifest := fileManifest(EffectRead, RiskLevelLow)
 	manifest.AllowedPermissionTiers = []PermissionTier{PermissionTierAdvanced}
@@ -389,6 +552,11 @@ func TestDecideAlwaysAskBuildsApprovalEventGrant(t *testing.T) {
 		Manifest:       manifest,
 		PermissionTier: PermissionTierAdvanced,
 		ConversationID: "conversation-1",
+		OrganizationID: "organization-1",
+		UserID:         "user-1",
+		SkillID:        "file-reader",
+		ProviderType:   "builtin",
+		ProviderID:     "files",
 		CorrelationID:  "corr-1",
 		Assets:         []AssetRef{{ID: "file-1", Type: "file", Name: "report.pdf"}},
 	}, DefaultPolicy())
@@ -403,8 +571,17 @@ func TestDecideAlwaysAskBuildsApprovalEventGrant(t *testing.T) {
 	if decision.ApprovalEvent.Grant.ConversationID != "conversation-1" {
 		t.Fatalf("expected conversation-bound grant, got %#v", decision.ApprovalEvent.Grant)
 	}
+	if decision.ApprovalEvent.Grant.OrganizationID != "organization-1" || decision.ApprovalEvent.Grant.UserID != "user-1" ||
+		decision.ApprovalEvent.Grant.SkillID != "file-reader" || decision.ApprovalEvent.Grant.ProviderType != "builtin" ||
+		decision.ApprovalEvent.Grant.ProviderID != "files" {
+		t.Fatalf("expected request-scoped grant, got %#v", decision.ApprovalEvent.Grant)
+	}
 	if decision.ApprovalEvent.Grant.ApprovalCorrelationID != "corr-1" {
 		t.Fatalf("expected grant approval correlation, got %#v", decision.ApprovalEvent.Grant)
+	}
+	if decision.ApprovalEvent.Grant.GrantedAt.IsZero() || decision.ApprovalEvent.Grant.ExpiresAt.IsZero() ||
+		decision.ApprovalEvent.Grant.ExpiresAt.Sub(decision.ApprovalEvent.Grant.GrantedAt) != DefaultSessionGrantTTL {
+		t.Fatalf("expected grant TTL %s, got %#v", DefaultSessionGrantTTL, decision.ApprovalEvent.Grant)
 	}
 	if len(decision.ApprovalEvent.Grant.Assets) != 1 || decision.ApprovalEvent.Grant.Assets[0].ID != "file-1" {
 		t.Fatalf("expected grant assets, got %#v", decision.ApprovalEvent.Grant.Assets)

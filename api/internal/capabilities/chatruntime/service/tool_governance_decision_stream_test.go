@@ -198,6 +198,11 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	}
 	approvalEvent["grant"] = map[string]interface{}{
 		"conversation_id": conversationID.String(),
+		"organization_id": organizationID.String(),
+		"user_id":         accountID.String(),
+		"skill_id":        skills.SkillFileReader,
+		"provider_type":   "builtin",
+		"provider_id":     "files",
 		"tool_id":         "file.delete",
 		"effect":          "delete",
 		"asset_type":      "file",
@@ -402,6 +407,9 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 	}
 	approvalEvent["grant"] = map[string]interface{}{
 		"conversation_id": conversationID.String(),
+		"skill_id":        skills.SkillFileReader,
+		"provider_type":   "builtin",
+		"provider_id":     "files",
 		"tool_id":         "file.delete",
 		"effect":          "delete",
 		"asset_type":      "file",
@@ -460,12 +468,20 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 		t.Fatalf("response = %#v, want approved remembered session", response)
 	}
 	if response.SessionGrant["conversation_id"] != conversationID.String() ||
+		response.SessionGrant["organization_id"] != organizationID.String() ||
+		response.SessionGrant["user_id"] != accountID.String() ||
+		response.SessionGrant["skill_id"] != skills.SkillFileReader ||
+		response.SessionGrant["provider_type"] != "builtin" ||
+		response.SessionGrant["provider_id"] != "files" ||
 		response.SessionGrant["tool_id"] != "file.delete" ||
 		response.SessionGrant["effect"] != "delete" ||
 		response.SessionGrant["asset_type"] != "file" ||
 		response.SessionGrant["risk_level"] != "high" ||
 		response.SessionGrant["approval_correlation_id"] != "corr-session" {
-		t.Fatalf("session grant = %#v, want conversation/tool/effect/asset/risk scoped grant", response.SessionGrant)
+		t.Fatalf("session grant = %#v, want identity/runtime/tool/effect/asset/risk scoped grant", response.SessionGrant)
+	}
+	if response.SessionGrant["expires_at"] == "" {
+		t.Fatalf("session grant = %#v, want expires_at", response.SessionGrant)
 	}
 	grantAssets := mapSliceFromAny(response.SessionGrant["assets"])
 	if len(grantAssets) != 1 || grantAssets[0]["id"] != "file-1" || grantAssets[0]["workspace_id"] != "workspace-1" {
@@ -479,14 +495,27 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 	}
 	if grants := mapSliceFromAny(message.Metadata["tool_governance_one_shot_grants"]); len(grants) != 1 {
 		t.Fatalf("one-shot grants = %#v, want one approved grant on current message", grants)
+	} else if grants[0]["organization_id"] != organizationID.String() ||
+		grants[0]["user_id"] != accountID.String() ||
+		grants[0]["skill_id"] != skills.SkillFileReader ||
+		grants[0]["provider_type"] != "builtin" ||
+		grants[0]["provider_id"] != "files" ||
+		grants[0]["expires_at"] == "" {
+		t.Fatalf("one-shot grant = %#v, want complete scoped grant", grants[0])
 	}
 	conversationGrants := mapSliceFromAny(conversation.Metadata["tool_governance_session_grants"])
 	if len(conversationGrants) != 1 {
 		t.Fatalf("conversation session grants = %#v, want one remembered grant", conversationGrants)
 	}
 	if conversationGrants[0]["conversation_id"] != conversationID.String() ||
-		conversationGrants[0]["approval_correlation_id"] != "corr-session" {
-		t.Fatalf("conversation session grant = %#v, want approval correlation", conversationGrants[0])
+		conversationGrants[0]["organization_id"] != organizationID.String() ||
+		conversationGrants[0]["user_id"] != accountID.String() ||
+		conversationGrants[0]["skill_id"] != skills.SkillFileReader ||
+		conversationGrants[0]["provider_type"] != "builtin" ||
+		conversationGrants[0]["provider_id"] != "files" ||
+		conversationGrants[0]["approval_correlation_id"] != "corr-session" ||
+		conversationGrants[0]["expires_at"] == "" {
+		t.Fatalf("conversation session grant = %#v, want complete scoped approval grant", conversationGrants[0])
 	}
 	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
 	if continuation["status"] != "approved" ||
@@ -498,8 +527,16 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 	params := applySkillToolGovernanceRuntimeParameters(nil, &PreparedChat{Conversation: conversation})
 	governanceParams := governanceMapFromAny(params[skillToolGovernanceRuntimeKey])
 	runtimeGrants := mapSliceFromAny(governanceParams["session_grants"])
-	if len(runtimeGrants) != 1 || runtimeGrants[0]["tool_id"] != "file.delete" || runtimeGrants[0]["approval_correlation_id"] != "corr-session" {
-		t.Fatalf("runtime session grants = %#v, want remembered file.delete grant", runtimeGrants)
+	if len(runtimeGrants) != 1 ||
+		runtimeGrants[0]["organization_id"] != organizationID.String() ||
+		runtimeGrants[0]["user_id"] != accountID.String() ||
+		runtimeGrants[0]["skill_id"] != skills.SkillFileReader ||
+		runtimeGrants[0]["provider_type"] != "builtin" ||
+		runtimeGrants[0]["provider_id"] != "files" ||
+		runtimeGrants[0]["tool_id"] != "file.delete" ||
+		runtimeGrants[0]["approval_correlation_id"] != "corr-session" ||
+		runtimeGrants[0]["expires_at"] == "" {
+		t.Fatalf("runtime session grants = %#v, want remembered complete scoped file.delete grant", runtimeGrants)
 	}
 }
 

@@ -44,55 +44,55 @@ func Decide(req Request, policy Policy) Decision {
 	}
 
 	if manifest.ToolID == "" {
-		return finalizeDecision(base.withStatus(DecisionStatusDenied, "tool_id is required", false), tier, req.ConversationID)
+		return finalizeDecision(base.withStatus(DecisionStatusDenied, "tool_id is required", false), tier, req)
 	}
 	if !tierAllowed(manifest, tier) {
-		return finalizeDecision(base.withStatus(DecisionStatusDenied, "permission tier is not allowed for this tool", false), tier, req.ConversationID)
+		return finalizeDecision(base.withStatus(DecisionStatusDenied, "permission tier is not allowed for this tool", false), tier, req)
 	}
 	if isAssetOperation(manifest) && manifest.RequiresAssetResolution && len(assets) == 0 {
 		decision := base.withStatus(DecisionStatusNeedsResolution, "asset resolution is required before this tool can run", false)
-		return finalizeDecision(decision, tier, req.ConversationID)
+		return finalizeDecision(decision, tier, req)
 	}
 	if isAssetOperation(manifest) && manifest.RequiresAssetResolution && len(expectedAssets) > 0 && !assetsMatchExpectedAssets(assets, expectedAssets) {
 		decision := base.withStatus(DecisionStatusNeedsResolution, "tool arguments do not match resolved target assets", false)
-		return finalizeDecision(decision, tier, req.ConversationID)
+		return finalizeDecision(decision, tier, req)
 	}
 	if policy.CriticalRiskBlocked && manifest.RiskLevel == RiskLevelCritical {
 		decision := base.withStatus(DecisionStatusBlocked, "critical risk tools are blocked by policy", false)
-		return finalizeDecision(decision, tier, req.ConversationID)
+		return finalizeDecision(decision, tier, req)
 	}
-	if grant, ok := matchingSessionGrant(req.SessionGrants, req.ConversationID, manifest, assets); ok {
+	if grant, ok := matchingSessionGrant(req, manifest, assets); ok {
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by matching session grant", false)
 		decision = decision.withMatchedGrant(grant)
-		return finalizeDecision(decision, tier, req.ConversationID)
+		return finalizeDecision(decision, tier, req)
 	}
 	if manifest.DefaultApprovalPolicy == ApprovalPolicyAlwaysAsk {
-		return finalizeDecision(base.needsApproval(tier, req.ConversationID, "tool manifest requires approval"), tier, req.ConversationID)
+		return finalizeDecision(base.needsApproval(tier, req, "tool manifest requires approval"), tier, req)
 	}
 	if manifest.DefaultApprovalPolicy == ApprovalPolicyNeverAsk && !policy.hardRequiresApproval(manifest) {
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by manifest approval policy", false)
-		return finalizeDecision(decision, tier, req.ConversationID)
+		return finalizeDecision(decision, tier, req)
 	}
 	if policy.hardRequiresApproval(manifest) {
-		return finalizeDecision(base.needsApproval(tier, req.ConversationID, hardApprovalReason(policy, manifest)), tier, req.ConversationID)
+		return finalizeDecision(base.needsApproval(tier, req, hardApprovalReason(policy, manifest)), tier, req)
 	}
 
 	switch tier {
 	case PermissionTierFull:
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by full permission tier", false)
-		return finalizeDecision(decision, tier, req.ConversationID)
+		return finalizeDecision(decision, tier, req)
 	case PermissionTierAdvanced:
 		if advancedTierAllows(manifest) {
 			decision := base.withStatus(DecisionStatusAllowed, "allowed by advanced permission tier", false)
-			return finalizeDecision(decision, tier, req.ConversationID)
+			return finalizeDecision(decision, tier, req)
 		}
 	case PermissionTierBasic:
 		if basicTierAllows(manifest) {
 			decision := base.withStatus(DecisionStatusAllowed, "allowed by basic permission tier", false)
-			return finalizeDecision(decision, tier, req.ConversationID)
+			return finalizeDecision(decision, tier, req)
 		}
 	}
-	return finalizeDecision(base.needsApproval(tier, req.ConversationID, "permission tier requires user approval for this tool"), tier, req.ConversationID)
+	return finalizeDecision(base.needsApproval(tier, req, "permission tier requires user approval for this tool"), tier, req)
 }
 
 func (d Decision) withStatus(status DecisionStatus, reason string, requiresApproval bool) Decision {
@@ -102,9 +102,9 @@ func (d Decision) withStatus(status DecisionStatus, reason string, requiresAppro
 	return d
 }
 
-func (d Decision) needsApproval(tier PermissionTier, conversationID string, reason string) Decision {
+func (d Decision) needsApproval(tier PermissionTier, req Request, reason string) Decision {
 	d = d.withStatus(DecisionStatusNeedsApproval, reason, true)
-	d.ApprovalEvent = approvalEvent(d, tier, conversationID)
+	d.ApprovalEvent = approvalEvent(d, tier, req)
 	d.ModelFeedback = modelFeedback(d, tier)
 	return d
 }
@@ -116,14 +116,15 @@ func (d Decision) withMatchedGrant(grant SessionGrant) Decision {
 	return d
 }
 
-func finalizeDecision(decision Decision, tier PermissionTier, conversationID string) Decision {
-	decision.AssetOperationAudit = assetOperationAuditPayload(decision, tier, conversationID)
+func finalizeDecision(decision Decision, tier PermissionTier, req Request) Decision {
+	decision.AssetOperationAudit = assetOperationAuditPayload(decision, tier, req)
 	decision.ModelFeedback = modelFeedback(decision, tier)
 	return decision
 }
 
-func approvalEvent(decision Decision, tier PermissionTier, conversationID string) *ApprovalEvent {
+func approvalEvent(decision Decision, tier PermissionTier, req Request) *ApprovalEvent {
 	manifest := decision.Manifest
+	now := time.Now().UTC()
 	return &ApprovalEvent{
 		Type:               ApprovalEventTypeAssetToolApproval,
 		CorrelationID:      decision.CorrelationID,
@@ -139,13 +140,20 @@ func approvalEvent(decision Decision, tier PermissionTier, conversationID string
 		ExternalSideEffect: manifest.ExternalSideEffect,
 		PermissionTier:     tier,
 		Grant: SessionGrant{
-			ConversationID:        strings.TrimSpace(conversationID),
+			ConversationID:        strings.TrimSpace(req.ConversationID),
+			OrganizationID:        strings.TrimSpace(req.OrganizationID),
+			UserID:                strings.TrimSpace(req.UserID),
+			SkillID:               firstNonEmptyString(req.SkillID, manifest.SkillID),
+			ProviderType:          strings.TrimSpace(req.ProviderType),
+			ProviderID:            strings.TrimSpace(req.ProviderID),
 			ToolID:                manifest.ToolID,
 			Effect:                manifest.Effect,
 			AssetType:             manifest.AssetType,
 			Assets:                decision.Assets,
 			RiskLevel:             manifest.RiskLevel,
 			ApprovalCorrelationID: decision.CorrelationID,
+			GrantedAt:             now,
+			ExpiresAt:             now.Add(DefaultSessionGrantTTL),
 		},
 	}
 }
@@ -184,7 +192,7 @@ func modelFeedback(decision Decision, tier PermissionTier) map[string]interface{
 	return feedback
 }
 
-func assetOperationAuditPayload(decision Decision, tier PermissionTier, conversationID string) map[string]interface{} {
+func assetOperationAuditPayload(decision Decision, tier PermissionTier, req Request) map[string]interface{} {
 	manifest := decision.Manifest
 	if !manifest.AuditRequired && !isAssetOperation(manifest) && !decision.RequiresApproval {
 		return nil
@@ -193,12 +201,16 @@ func assetOperationAuditPayload(decision Decision, tier PermissionTier, conversa
 		"schema_version":       "tool_governance.asset_operation.v1",
 		"event_type":           "asset_operation",
 		"correlation_id":       strings.TrimSpace(decision.CorrelationID),
-		"conversation_id":      strings.TrimSpace(conversationID),
+		"conversation_id":      strings.TrimSpace(req.ConversationID),
+		"organization_id":      strings.TrimSpace(req.OrganizationID),
+		"user_id":              strings.TrimSpace(req.UserID),
 		"governance_status":    string(decision.Status),
 		"requires_approval":    decision.RequiresApproval,
 		"decision_reason":      strings.TrimSpace(decision.Reason),
 		"tool_id":              manifest.ToolID,
-		"skill_id":             manifest.SkillID,
+		"skill_id":             firstNonEmptyString(req.SkillID, manifest.SkillID),
+		"provider_type":        strings.TrimSpace(req.ProviderType),
+		"provider_id":          strings.TrimSpace(req.ProviderID),
 		"domain":               manifest.Domain,
 		"effect":               string(manifest.Effect),
 		"asset_type":           manifest.AssetType,
@@ -397,21 +409,31 @@ func assetMatchesExpectedAsset(asset AssetRef, expected AssetRef) bool {
 	return false
 }
 
-func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest Manifest, assets []AssetRef) (SessionGrant, bool) {
-	conversationID = strings.TrimSpace(conversationID)
+func matchingSessionGrant(req Request, manifest Manifest, assets []AssetRef) (SessionGrant, bool) {
+	conversationID := strings.TrimSpace(req.ConversationID)
 	if conversationID == "" {
 		return SessionGrant{}, false
 	}
 	now := time.Now()
-	for _, raw := range grants {
+	for _, raw := range req.SessionGrants {
 		grant := normalizeSessionGrant(raw)
 		if grant.ConversationID != conversationID {
+			continue
+		}
+		if !grantScopeMatches(strings.TrimSpace(req.OrganizationID), grant.OrganizationID) ||
+			!grantScopeMatches(strings.TrimSpace(req.UserID), grant.UserID) ||
+			!grantScopeMatches(strings.TrimSpace(req.SkillID), grant.SkillID) ||
+			!grantScopeMatches(strings.TrimSpace(req.ProviderType), grant.ProviderType) ||
+			!grantScopeMatches(strings.TrimSpace(req.ProviderID), grant.ProviderID) {
 			continue
 		}
 		if grant.ToolID != manifest.ToolID || grant.Effect != manifest.Effect || grant.AssetType != manifest.AssetType {
 			continue
 		}
 		if RiskRank(grant.RiskLevel) < RiskRank(manifest.RiskLevel) {
+			continue
+		}
+		if requiresScopedGrantExpiry(req, grant) && grant.ExpiresAt.IsZero() {
 			continue
 		}
 		if !grant.ExpiresAt.IsZero() && !grant.ExpiresAt.After(now) {
@@ -423,4 +445,35 @@ func matchingSessionGrant(grants []SessionGrant, conversationID string, manifest
 		return grant, true
 	}
 	return SessionGrant{}, false
+}
+
+func grantScopeMatches(requestValue string, grantValue string) bool {
+	requestValue = strings.TrimSpace(requestValue)
+	grantValue = strings.TrimSpace(grantValue)
+	if requestValue == "" {
+		return grantValue == ""
+	}
+	return grantValue == requestValue
+}
+
+func requiresScopedGrantExpiry(req Request, grant SessionGrant) bool {
+	return strings.TrimSpace(req.OrganizationID) != "" ||
+		strings.TrimSpace(req.UserID) != "" ||
+		strings.TrimSpace(req.SkillID) != "" ||
+		strings.TrimSpace(req.ProviderType) != "" ||
+		strings.TrimSpace(req.ProviderID) != "" ||
+		strings.TrimSpace(grant.OrganizationID) != "" ||
+		strings.TrimSpace(grant.UserID) != "" ||
+		strings.TrimSpace(grant.SkillID) != "" ||
+		strings.TrimSpace(grant.ProviderType) != "" ||
+		strings.TrimSpace(grant.ProviderID) != ""
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }

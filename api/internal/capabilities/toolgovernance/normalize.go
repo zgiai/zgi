@@ -109,6 +109,11 @@ func normalizeAssets(assets []AssetRef) []AssetRef {
 
 func normalizeSessionGrant(grant SessionGrant) SessionGrant {
 	grant.ConversationID = strings.TrimSpace(grant.ConversationID)
+	grant.OrganizationID = strings.TrimSpace(grant.OrganizationID)
+	grant.UserID = strings.TrimSpace(grant.UserID)
+	grant.SkillID = strings.TrimSpace(grant.SkillID)
+	grant.ProviderType = strings.TrimSpace(grant.ProviderType)
+	grant.ProviderID = strings.TrimSpace(grant.ProviderID)
 	grant.ToolID = strings.TrimSpace(grant.ToolID)
 	grant.Effect = NormalizeEffect(grant.Effect)
 	grant.AssetType = normalizeAssetType(grant.AssetType)

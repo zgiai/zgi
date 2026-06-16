@@ -12,6 +12,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"gorm.io/gorm"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -132,7 +133,7 @@ func (s *service) SubmitToolGovernanceDecision(
 
 	var sessionGrant map[string]interface{}
 	if action == toolGovernanceActionApprove {
-		approvedGrant := toolGovernanceSessionGrantFromEvent(event, conversation.ID.String(), now)
+		approvedGrant := toolGovernanceSessionGrantFromEvent(event, conversation.ID.String(), scope, now)
 		resolution["approved_grant"] = approvedGrant
 		if req.RememberForSession {
 			sessionGrant = approvedGrant
@@ -579,13 +580,14 @@ func resolveToolGovernanceContinuationMetadata(metadata map[string]interface{}, 
 	return metadata
 }
 
-func toolGovernanceSessionGrantFromEvent(event map[string]interface{}, conversationID string, now time.Time) map[string]interface{} {
+func toolGovernanceSessionGrantFromEvent(event map[string]interface{}, conversationID string, scope Scope, now time.Time) map[string]interface{} {
 	approvalEvent := governanceMapFromAny(event["approval_event"])
 	if len(approvalEvent) == 0 {
 		if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
 			approvalEvent = governanceMapFromAny(governance["approval_event"])
 		}
 	}
+	audit := toolGovernanceAssetOperationAuditFromEvent(event)
 	grant := governanceMapFromAny(approvalEvent["grant"])
 	if grant == nil {
 		grant = map[string]interface{}{}
@@ -605,6 +607,46 @@ func toolGovernanceSessionGrantFromEvent(event map[string]interface{}, conversat
 	if strings.TrimSpace(stringFromAny(grant["risk_level"])) == "" {
 		grant["risk_level"] = firstNonEmptyString(stringFromAny(approvalEvent["risk_level"]), stringFromAny(event["risk_level"]))
 	}
+	if strings.TrimSpace(stringFromAny(grant["organization_id"])) == "" {
+		grant["organization_id"] = firstNonEmptyString(
+			approvalEvent["organization_id"],
+			approvalEvent["organizationId"],
+			audit["organization_id"],
+			audit["organizationId"],
+			event["organization_id"],
+			event["organizationId"],
+			scopeUUIDString(scope.OrganizationID),
+		)
+	}
+	if strings.TrimSpace(firstNonEmptyString(grant["user_id"], grant["account_id"])) == "" {
+		userID := firstNonEmptyString(
+			approvalEvent["user_id"],
+			approvalEvent["userId"],
+			approvalEvent["account_id"],
+			approvalEvent["accountId"],
+			audit["user_id"],
+			audit["userId"],
+			audit["account_id"],
+			audit["accountId"],
+			event["user_id"],
+			event["userId"],
+			event["account_id"],
+			event["accountId"],
+			scopeUUIDString(scope.AccountID),
+		)
+		if userID != "" {
+			grant["user_id"] = userID
+		}
+	}
+	if strings.TrimSpace(stringFromAny(grant["skill_id"])) == "" {
+		grant["skill_id"] = firstNonEmptyString(approvalEvent["skill_id"], approvalEvent["skillId"], event["skill_id"], event["skillId"], audit["skill_id"], audit["skillId"])
+	}
+	if strings.TrimSpace(stringFromAny(grant["provider_type"])) == "" {
+		grant["provider_type"] = firstNonEmptyString(approvalEvent["provider_type"], approvalEvent["providerType"], event["provider_type"], event["providerType"], audit["provider_type"], audit["providerType"])
+	}
+	if strings.TrimSpace(stringFromAny(grant["provider_id"])) == "" {
+		grant["provider_id"] = firstNonEmptyString(approvalEvent["provider_id"], approvalEvent["providerId"], event["provider_id"], event["providerId"], audit["provider_id"], audit["providerId"])
+	}
 	assets := mapSliceFromAny(grant["assets"])
 	if len(assets) == 0 {
 		assets = toolGovernanceAssetsFromEvent(event, approvalEvent)
@@ -620,7 +662,27 @@ func toolGovernanceSessionGrantFromEvent(event map[string]interface{}, conversat
 		)
 	}
 	grant["granted_at"] = now.Format(time.RFC3339)
+	if strings.TrimSpace(stringFromAny(grant["expires_at"])) == "" {
+		grant["expires_at"] = now.Add(toolgovernance.DefaultSessionGrantTTL).Format(time.RFC3339)
+	}
 	return compactSkillInvocation(grant)
+}
+
+func toolGovernanceAssetOperationAuditFromEvent(event map[string]interface{}) map[string]interface{} {
+	if audit := governanceMapFromAny(event["asset_operation_audit"]); len(audit) > 0 {
+		return audit
+	}
+	if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
+		return governanceMapFromAny(governance["asset_operation_audit"])
+	}
+	return nil
+}
+
+func scopeUUIDString(id uuid.UUID) string {
+	if id == uuid.Nil {
+		return ""
+	}
+	return id.String()
 }
 
 func toolGovernanceAssetsFromEvent(event map[string]interface{}, approvalEvent map[string]interface{}) []map[string]interface{} {
@@ -705,6 +767,11 @@ func appendToolGovernanceGrant(metadata map[string]interface{}, key string, gran
 func toolGovernanceSessionGrantKey(grant map[string]interface{}) string {
 	return strings.Join([]string{
 		strings.TrimSpace(stringFromAny(grant["conversation_id"])),
+		strings.TrimSpace(firstNonEmptyString(grant["organization_id"], grant["organizationId"])),
+		strings.TrimSpace(firstNonEmptyString(grant["user_id"], grant["userId"], grant["account_id"], grant["accountId"])),
+		strings.TrimSpace(firstNonEmptyString(grant["skill_id"], grant["skillId"])),
+		strings.TrimSpace(firstNonEmptyString(grant["provider_type"], grant["providerType"])),
+		strings.TrimSpace(firstNonEmptyString(grant["provider_id"], grant["providerId"])),
 		strings.TrimSpace(stringFromAny(grant["tool_id"])),
 		strings.TrimSpace(stringFromAny(grant["effect"])),
 		strings.TrimSpace(stringFromAny(grant["asset_type"])),
