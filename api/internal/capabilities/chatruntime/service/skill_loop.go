@@ -563,6 +563,11 @@ func consoleFilesPromptResolvedTargets(parts *chatRequestParts) []map[string]int
 			namesByID[file.ID] = file.Title
 		}
 	}
+	for _, resource := range result.Resources {
+		if strings.TrimSpace(resource.ID) != "" && strings.TrimSpace(resource.Name) != "" {
+			namesByID[strings.TrimSpace(resource.ID)] = strings.TrimSpace(resource.Name)
+		}
+	}
 	out := make([]map[string]interface{}, 0, len(result.FileIDs))
 	for _, id := range result.FileIDs {
 		item := map[string]interface{}{"file_id": id}

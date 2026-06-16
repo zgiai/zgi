@@ -61,6 +61,13 @@ func plannerResourceRefsFromConsoleFilesQuery(parts *chatRequestParts) []Planner
 			Scope:    "selected",
 		}}
 	}
+	if consoleFilesRecentReferenceFromQuery(parts.Query) {
+		return []PlannerResourceRef{{
+			Type:     resourceTypeFile,
+			Selector: query,
+			Scope:    "recent",
+		}}
+	}
 	ordinal, last, ok := consoleFilesOrdinalFromQuery(parts.Query)
 	if ok {
 		ref := PlannerResourceRef{Type: resourceTypeFile, Selector: query}
@@ -98,6 +105,38 @@ func consoleFilesSelectedReferenceFromQuery(query string) bool {
 		"\u9009\u4e2d\u6587\u4ef6",
 		"\u9009\u4e2d\u7684\u6587\u4ef6",
 		"\u88ab\u9009\u4e2d\u7684\u6587\u4ef6",
+	} {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func consoleFilesRecentReferenceFromQuery(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	for _, token := range []string{
+		"previous file",
+		"previous asset",
+		"recent file",
+		"recent asset",
+		"last used file",
+		"last used asset",
+		"that file",
+		"that asset",
+		"\u521a\u624d\u90a3\u4e2a\u6587\u4ef6",
+		"\u521a\u624d\u90a3\u4e2a\u8d44\u4ea7",
+		"\u521a\u624d\u7684\u6587\u4ef6",
+		"\u521a\u624d\u7684\u8d44\u4ea7",
+		"\u4e0a\u6b21\u90a3\u4e2a\u6587\u4ef6",
+		"\u4e0a\u6b21\u90a3\u4e2a\u8d44\u4ea7",
+		"\u4e0a\u4e00\u4e2a\u6587\u4ef6",
+		"\u4e0a\u4e00\u4e2a\u8d44\u4ea7",
+		"\u4e4b\u524d\u90a3\u4e2a\u6587\u4ef6",
+		"\u4e4b\u524d\u90a3\u4e2a\u8d44\u4ea7",
 	} {
 		if strings.Contains(text, token) {
 			return true

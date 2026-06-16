@@ -50,6 +50,7 @@ func (s *service) buildTokenBudgetMessages(
 	systemPrompt string,
 	parentMessages []*runtimemodel.Message,
 ) (*contextBudgetResult, error) {
+	applyRecentAssetCandidatesFromBranch(parts, parentMessages)
 	baseMessages := []adapter.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: s.currentUserContent(parts, parts.Query)},

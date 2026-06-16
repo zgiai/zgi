@@ -361,6 +361,7 @@ type chatRequestParts struct {
 	Parameters                   map[string]interface{}
 	ContextControl               map[string]interface{}
 	Attachments                  *attachmentBundle
+	RecentAssetCandidates        []ResourceCandidate
 	ModelSupportsVision          bool
 	FunctionCallingKnown         bool
 	ModelSupportsFunctionCalling bool

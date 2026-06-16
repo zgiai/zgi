@@ -256,6 +256,25 @@ func TestResolverResolvesRecentFileScope(t *testing.T) {
 	}
 }
 
+func TestResolverPreservesRecentWhenMergedWithVisibleFile(t *testing.T) {
+	result := Resolve(Request{
+		OperationContext: map[string]interface{}{
+			"visible_files": []interface{}{
+				map[string]interface{}{"file_id": "file-1", "name": "invoice.xlsx", "extension": "xlsx"},
+			},
+			"recent_files": []interface{}{
+				map[string]interface{}{"file_id": "file-1", "name": "invoice.xlsx", "extension": "xlsx"},
+			},
+		},
+		Selectors: []Selector{{Type: "file", Scope: "recent"}},
+	})
+
+	assertResolvedAssetIDs(t, result, "file-1")
+	if got := result.Resolutions[0].Assets[0].Metadata["recent"]; got != true {
+		t.Fatalf("recent metadata = %#v, want true after visible/recent merge", got)
+	}
+}
+
 func TestResolverResolvesChineseRecentFileReference(t *testing.T) {
 	result := Resolve(Request{
 		OperationContext: map[string]interface{}{

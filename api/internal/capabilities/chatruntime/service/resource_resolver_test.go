@@ -3,6 +3,10 @@ package service
 import (
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestResourceResolverPrefersSelectedFile(t *testing.T) {
@@ -154,6 +158,70 @@ func TestResourceResolverResolvesRecentAttachmentCandidate(t *testing.T) {
 	}
 	if got := result.Results[0].Resources[0].Name; got != "previous.xlsx" {
 		t.Fatalf("resource name = %q, want previous.xlsx", got)
+	}
+}
+
+func TestRecentAssetCandidatesFromReadFileTrace(t *testing.T) {
+	messageID := uuid.New()
+	parts := &chatRequestParts{}
+	applyRecentAssetCandidatesFromBranch(parts, []*runtimemodel.Message{{
+		ID:     messageID,
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{map[string]interface{}{
+				"kind":      "tool_call",
+				"skill_id":  skills.SkillFileReader,
+				"tool_name": "read_file",
+				"status":    "success",
+				"result": map[string]interface{}{
+					"file": map[string]interface{}{
+						"id":             "file-1",
+						"name":           "invoice.xlsx",
+						"workspace_id":   "workspace-1",
+						"extension":      "xlsx",
+						"content_status": "extracted",
+					},
+					"content_redacted": true,
+				},
+			}},
+		},
+	}})
+
+	if len(parts.RecentAssetCandidates) != 1 {
+		t.Fatalf("recent candidates = %#v, want one", parts.RecentAssetCandidates)
+	}
+	candidate := parts.RecentAssetCandidates[0]
+	if candidate.ID != "file-1" || candidate.Name != "invoice.xlsx" || candidate.Extension != "xlsx" || !candidate.Recent {
+		t.Fatalf("candidate = %#v, want recent invoice.xlsx", candidate)
+	}
+	if candidate.Metadata["recent_message_id"] != messageID.String() || candidate.Metadata["content_status"] != "extracted" {
+		t.Fatalf("metadata = %#v, want recent message id and content status", candidate.Metadata)
+	}
+}
+
+func TestResourceResolverResolvesRecentCandidateFromChatParts(t *testing.T) {
+	parts := &chatRequestParts{
+		Query: "read the previous file",
+		RecentAssetCandidates: []ResourceCandidate{{
+			Type:      "file",
+			ID:        "file-1",
+			Name:      "invoice.xlsx",
+			Source:    "recent_execution.read_file",
+			Extension: "xlsx",
+			Recent:    true,
+		}},
+		RawOperationContext: map[string]interface{}{
+			"visible_files": []interface{}{
+				map[string]interface{}{"file_id": "file-2", "name": "visible.pdf"},
+			},
+		},
+	}
+
+	result := resolveChatResourceRefs(parts, []PlannerResourceRef{{Type: "file", Scope: "recent"}})
+
+	assertResolvedFileIDs(t, result, "file-1")
+	if got := result.Results[0].Resources[0].Metadata["recent"]; got != true {
+		t.Fatalf("recent metadata = %#v, want true", got)
 	}
 }
 

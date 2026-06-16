@@ -315,10 +315,12 @@ func resourceResolverInputFromChatParts(parts *chatRequestParts) ResourceResolve
 		OperationContext:           parts.RawOperationContext,
 		NormalizedOperationContext: parts.OperationContext,
 	}
+	if len(parts.RecentAssetCandidates) > 0 {
+		input.AttachmentFiles = append(input.AttachmentFiles, parts.RecentAssetCandidates...)
+	}
 	if parts.Attachments == nil || len(parts.Attachments.Files) == 0 {
 		return input
 	}
-	input.AttachmentFiles = make([]ResourceCandidate, 0, len(parts.Attachments.Files))
 	for _, file := range parts.Attachments.Files {
 		input.AttachmentFiles = append(input.AttachmentFiles, ResourceCandidate{
 			Type:      resourceTypeFile,

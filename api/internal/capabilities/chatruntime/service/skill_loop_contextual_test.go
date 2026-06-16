@@ -81,6 +81,41 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesReadTarget(t *testing.
 	}
 }
 
+func TestSkillLoopAdditionalSystemMessagesResolvesRecentFileTarget(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "\u8bf7\u57fa\u4e8e\u521a\u624d\u90a3\u4e2a\u6587\u4ef6\u63d0\u53d6\u7f34\u8d39\u8d26\u6237",
+			RuntimeContext: "route=/console/files capabilities=file.read",
+			SkillIDs:       []string{skills.SkillFileReader},
+			SkillMode:      skillModeAuto,
+			RecentAssetCandidates: []ResourceCandidate{{
+				Type:      resourceTypeFile,
+				ID:        "file-1",
+				Name:      "invoice.xlsx",
+				Source:    "recent_execution.read_file",
+				Extension: "xlsx",
+				Recent:    true,
+			}},
+		},
+	}
+
+	messages := skillLoopAdditionalSystemMessages(prepared)
+	if len(messages) != 1 {
+		t.Fatalf("additional messages = %d, want 1", len(messages))
+	}
+	content := messageContentText(messages[0].Content)
+	for _, want := range []string{
+		"resolved_targets_from_user_request",
+		`"file_id":"file-1"`,
+		"read_file",
+		"target is already resolved",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("contextual recent guidance missing %q in:\n%s", want, content)
+		}
+	}
+}
+
 func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesListToolGuidance(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesSemanticTestParts("what files are visible", []consoleFilesTestFile{
@@ -236,6 +271,49 @@ func TestSkillLoopFinalAnswerGuardBlocksChineseReadOrdinalWithoutToolCall(t *tes
 	}
 	if !strings.Contains(result.Message, "budget-q2.xlsx") || !strings.Contains(result.Message, "read_file") {
 		t.Fatalf("guard message = %q, want target and read_file", result.Message)
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksRecentFileAnswerWithoutToolCall(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "\u8bf7\u57fa\u4e8e\u521a\u624d\u90a3\u4e2a\u6587\u4ef6\u63d0\u53d6\u7f34\u8d39\u8d26\u6237",
+			RuntimeContext: "route=/console/files capabilities=file.read",
+			SkillIDs:       []string{skills.SkillFileReader},
+			SkillMode:      skillModeAuto,
+			RecentAssetCandidates: []ResourceCandidate{{
+				Type:      resourceTypeFile,
+				ID:        "file-1",
+				Name:      "invoice.xlsx",
+				Source:    "recent_execution.read_file",
+				Extension: "xlsx",
+				Recent:    true,
+			}},
+		},
+	}
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for recent file read request")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The account is 123 from the prior answer.",
+	})
+	if !blocked {
+		t.Fatal("guard did not block direct recent-file answer without read_file")
+	}
+	if !strings.Contains(result.Message, "invoice.xlsx") || !strings.Contains(result.Message, "read_file") {
+		t.Fatalf("guard message = %q, want target and read_file", result.Message)
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Here is the extracted account from the file content.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after read_file succeeded for recent file")
 	}
 }
 

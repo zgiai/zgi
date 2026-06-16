@@ -128,6 +128,7 @@ func mergeCandidates(existing Candidate, next Candidate) Candidate {
 		existing.WorkspaceID = next.WorkspaceID
 	}
 	existing.Selected = existing.Selected || next.Selected
+	existing.Recent = existing.Recent || next.Recent
 	existing.Visible = existing.Visible || next.Visible
 	if existing.VisibleOrdinal == 0 {
 		existing.VisibleOrdinal = next.VisibleOrdinal

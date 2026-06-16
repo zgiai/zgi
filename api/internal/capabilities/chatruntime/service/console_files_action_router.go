@@ -356,6 +356,7 @@ func isFileReadIntent(query string) bool {
 		"\u7ffb\u8bd1",
 		"\u6982\u62ec",
 		"\u63d0\u70bc",
+		"\u63d0\u53d6",
 		"\u89e3\u91ca",
 		"\u5206\u6790",
 		"\u67e5\u770b\u5185\u5bb9",

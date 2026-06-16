@@ -360,6 +360,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			if err != nil {
 				return nil, err
 			}
+			applyRecentAssetCandidatesFromBranch(parts, branch)
 			result, err := s.buildTokenBudgetMessages(ctx, spec, parts, systemPrompt, branch)
 			if err != nil {
 				return nil, err
@@ -397,6 +398,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			}
 			mergeRecentExecutionContextMetadata(contextMetadata, recentExecutionMetadata)
 		}
+		applyRecentAssetCandidatesFromBranch(parts, branch)
 	}
 	messages = append(messages, adapter.Message{Role: "user", Content: currentContent})
 	return &contextBudgetResult{Messages: messages, Metadata: contextMetadata}, nil
