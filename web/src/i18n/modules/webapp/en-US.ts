@@ -216,6 +216,21 @@ const messages = {
       resizeHint: 'Drag to resize AIChat assistant',
       sheetDescription: 'Ask AIChat to help with the current ZGI page.',
       contextItems: '{count} context items',
+      contextSummaryEmpty: 'No page context',
+      contextSummaryItem: '{type}: {title}',
+      contextSummaryDetails: 'Context in this chat',
+      contextTypes: {
+        agent: 'Agent',
+        workflow: 'Workflow',
+        file: 'File',
+        task: 'Task',
+        dataset: 'Dataset',
+        database: 'Database',
+        log: 'Log',
+        selection: 'Selection',
+        page: 'Page',
+        context: 'Context',
+      },
       home: {
         filesTitle: 'Work with current files',
         filesDescription:

@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -11,11 +12,17 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { Sparkles, X } from 'lucide-react';
+import { ChevronDown, Sparkles, X } from 'lucide-react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import Chat, { useAIChatController, type AIChatModelValue } from '@/components/chat';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import {
   AGENT_KEYS,
@@ -32,12 +39,10 @@ import { FILES_QUERY_KEY, FILE_FOLDERS_KEY, STORAGE_USAGE_KEY } from '@/hooks/us
 import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
-import { cn } from '@/lib/utils';
 import {
   createContextualAIChatTransport,
   type ContextualAIChatAssetOperation,
 } from './context-envelope';
-import { AIChatContextChips } from './context-chips';
 import { useContextualAIChat } from './contextual-ai-chat-context';
 import type { AIChatContextItem } from './types';
 
@@ -137,6 +142,53 @@ function hasCapability(item: AIChatContextItem | undefined, capabilityId: string
   return Boolean(item?.capabilities?.some(capability => capability.id === capabilityId));
 }
 
+function getContextTypeLabel(
+  type: AIChatContextItem['type'],
+  t: ContextualDockTranslator
+) {
+  switch (type) {
+    case 'agent':
+      return t('consoleChat.contextual.contextTypes.agent');
+    case 'workflow':
+      return t('consoleChat.contextual.contextTypes.workflow');
+    case 'file':
+      return t('consoleChat.contextual.contextTypes.file');
+    case 'task':
+      return t('consoleChat.contextual.contextTypes.task');
+    case 'dataset':
+      return t('consoleChat.contextual.contextTypes.dataset');
+    case 'database':
+      return t('consoleChat.contextual.contextTypes.database');
+    case 'log':
+      return t('consoleChat.contextual.contextTypes.log');
+    case 'selection':
+      return t('consoleChat.contextual.contextTypes.selection');
+    case 'page':
+      return t('consoleChat.contextual.contextTypes.page');
+    default:
+      return t('consoleChat.contextual.contextTypes.context');
+  }
+}
+
+function pickPrimaryContextItem(items: AIChatContextItem[]) {
+  return (
+    items.find(item => item.type === 'file') ??
+    items.find(item => item.type === 'agent') ??
+    items.find(item => item.type === 'workflow') ??
+    items.find(item => item.type === 'page') ??
+    items[0]
+  );
+}
+
+function buildContextSummary(items: AIChatContextItem[], t: ContextualDockTranslator) {
+  const primaryItem = pickPrimaryContextItem(items);
+  if (!primaryItem) return t('consoleChat.contextual.contextSummaryEmpty');
+  return t('consoleChat.contextual.contextSummaryItem', {
+    type: getContextTypeLabel(primaryItem.type, t),
+    title: primaryItem.title,
+  });
+}
+
 function buildSuggestions(
   contextItems: ReturnType<typeof useContextualAIChat>['items'],
   t: ContextualDockTranslator
@@ -188,6 +240,74 @@ function buildSuggestions(
   ];
 }
 
+interface ContextSummaryMenuProps {
+  items: AIChatContextItem[];
+  t: ContextualDockTranslator;
+}
+
+function ContextSummaryMenu({ items, t }: ContextSummaryMenuProps) {
+  const summary = buildContextSummary(items, t);
+  const hasContext = items.length > 0;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="min-w-0 flex-1 !shrink justify-start rounded-full border border-border/70 bg-muted/30 px-3 text-left font-normal text-foreground hover:bg-muted/60"
+          title={summary}
+        >
+          <span className="min-w-0 flex-1 truncate">{summary}</span>
+          {hasContext ? (
+            <span className="ml-2 shrink-0 rounded-full bg-background px-2 py-0.5 text-[11px] leading-none text-muted-foreground">
+              {t('consoleChat.contextual.contextItems', { count: items.length })}
+            </span>
+          ) : null}
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-80 max-w-[calc(100vw-2rem)] p-2">
+        <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">
+          {t('consoleChat.contextual.contextSummaryDetails')}
+        </div>
+        <DropdownMenuSeparator />
+        {hasContext ? (
+          <div className="max-h-72 space-y-1 overflow-y-auto">
+            {items.map(item => (
+              <div
+                key={`${item.type}:${item.id}`}
+                className="min-w-0 rounded-md px-2 py-2 text-sm"
+              >
+                <div className="flex min-w-0 items-start gap-2">
+                  <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium leading-none text-muted-foreground">
+                    {getContextTypeLabel(item.type, t)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium text-foreground" title={item.title}>
+                      {item.title}
+                    </div>
+                    {item.subtitle ? (
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {item.subtitle}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="px-2 py-3 text-sm text-muted-foreground">
+            {t('consoleChat.contextual.contextSummaryEmpty')}
+          </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function ContextBrand({ label }: { label: string }) {
   return (
     <div className="flex size-10 items-center justify-center rounded-full border border-primary/20 bg-primary/10 text-primary">
@@ -220,6 +340,7 @@ function ContextualAIChatPanel({
   suggestions,
   t,
 }: ContextualAIChatPanelProps) {
+  const controlsPortalId = useId();
   const filesPage = items.find(isFilesPageContext);
   const hasContext = items.length > 0;
   const homeTitle = filesPage
@@ -238,25 +359,21 @@ function ContextualAIChatPanel({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <Button
-        type="button"
-        variant="ghost"
-        size="default"
-        isIcon
-        className="absolute right-3 top-3 z-40 size-8 bg-background/90 text-muted-foreground shadow-sm hover:bg-muted hover:text-foreground"
-        onClick={onClose}
-        title={t('consoleChat.contextual.close')}
-      >
-        <X className="size-4" />
-        <span className="sr-only">{t('consoleChat.contextual.close')}</span>
-      </Button>
-      <div
-        className={cn(
-          'border-b border-border/70 bg-background/95 px-4 py-3 pr-14',
-          items.length === 0 && 'sr-only'
-        )}
-      >
-        <AIChatContextChips items={items} maxVisible={3} />
+      <div className="flex min-h-14 shrink-0 items-center gap-2 border-b border-border/70 bg-background/95 px-3 py-2">
+        <div id={controlsPortalId} className="flex shrink-0 items-center" />
+        <ContextSummaryMenu items={items} t={t} />
+        <Button
+          type="button"
+          variant="ghost"
+          size="default"
+          isIcon
+          className="size-8 text-muted-foreground hover:bg-muted hover:text-foreground"
+          onClick={onClose}
+          title={t('consoleChat.contextual.close')}
+        >
+          <X className="size-4" />
+          <span className="sr-only">{t('consoleChat.contextual.close')}</span>
+        </Button>
       </div>
       <div className="min-h-0 flex-1">
         <Chat
@@ -267,6 +384,8 @@ function ContextualAIChatPanel({
           onModelChange={onModelChange}
           variant="embedded"
           embeddedConversationMode="drawer"
+          embeddedConversationControlsMode="external"
+          embeddedConversationControlsPortalId={controlsPortalId}
           allowWorkspaceSwitch
           homeBrand={
             <ContextBrand

@@ -114,8 +114,8 @@ export function AIChatMessageList({
     >
       <div
         className={cn(
-          'mx-auto flex min-h-full w-full min-w-0 flex-col px-4 pb-4 pt-20 sm:px-6 lg:px-8',
-          layout === 'embedded' ? 'max-w-full' : 'max-w-5xl'
+          'mx-auto flex min-h-full w-full min-w-0 flex-col px-4 pb-4 sm:px-6 lg:px-8',
+          layout === 'embedded' ? 'max-w-full pt-6' : 'max-w-5xl pt-20'
         )}
       >
         {isLoadingMessages ? (
