@@ -1,6 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import { toast } from 'sonner';
 import { CheckCircle2, ChevronDown, Loader2, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,9 +29,112 @@ export interface ToolGovernanceDisplayAsset {
   meta?: string;
 }
 
+export interface ToolGovernancePendingApproval {
+  id: string;
+  title: string;
+  toolLabel?: string | null;
+  actionSentence: string;
+  assets: ToolGovernanceDisplayAsset[];
+  riskLabel?: string | null;
+  permissionLabel?: string | null;
+  canSubmit: boolean;
+  isHighImpact: boolean;
+  createdAt?: number;
+  onSubmitDecision?: (
+    action: ToolGovernanceDecisionAction,
+    rememberForSession: boolean
+  ) => void | Promise<void>;
+}
+
+type PendingApprovalEntry = {
+  approval: ToolGovernancePendingApproval;
+  sequence: number;
+  scopeId: string;
+};
+
+type PendingApprovalSubscriber = () => void;
+
+const pendingApprovalEntries = new Map<string, PendingApprovalEntry>();
+const pendingApprovalSubscribers = new Set<PendingApprovalSubscriber>();
+let pendingApprovalSequence = 0;
+const pendingApprovalSnapshots = new Map<string, ToolGovernancePendingApproval | null>();
+const DEFAULT_PENDING_APPROVAL_SCOPE_ID = 'default';
+const ToolGovernancePendingApprovalScopeContext = createContext(
+  DEFAULT_PENDING_APPROVAL_SCOPE_ID
+);
+
+function resolvePendingApprovalSnapshot(scopeId: string): ToolGovernancePendingApproval | null {
+  const entries = Array.from(pendingApprovalEntries.values()).filter(
+    entry => entry.scopeId === scopeId
+  );
+  if (entries.length === 0) return null;
+  entries.sort((left, right) => {
+    const leftTime = left.approval.createdAt ?? 0;
+    const rightTime = right.approval.createdAt ?? 0;
+    if (leftTime !== rightTime) return rightTime - leftTime;
+    return right.sequence - left.sequence;
+  });
+  return entries[0].approval;
+}
+
+function emitPendingApprovalChange(scopeId: string) {
+  pendingApprovalSnapshots.set(scopeId, resolvePendingApprovalSnapshot(scopeId));
+  pendingApprovalSubscribers.forEach(listener => listener());
+}
+
+function subscribePendingApproval(listener: PendingApprovalSubscriber) {
+  pendingApprovalSubscribers.add(listener);
+  return () => {
+    pendingApprovalSubscribers.delete(listener);
+  };
+}
+
+export function ToolGovernancePendingApprovalScopeProvider({
+  children,
+  scopeId,
+}: {
+  children: ReactNode;
+  scopeId: string;
+}) {
+  return (
+    <ToolGovernancePendingApprovalScopeContext.Provider value={scopeId}>
+      {children}
+    </ToolGovernancePendingApprovalScopeContext.Provider>
+  );
+}
+
+export function useToolGovernancePendingApprovalScope() {
+  return useContext(ToolGovernancePendingApprovalScopeContext);
+}
+
+export function publishToolGovernancePendingApproval(
+  approval: ToolGovernancePendingApproval,
+  scopeId = DEFAULT_PENDING_APPROVAL_SCOPE_ID
+) {
+  const sequence = (pendingApprovalSequence += 1);
+  pendingApprovalEntries.set(`${scopeId}:${approval.id}`, { approval, sequence, scopeId });
+  emitPendingApprovalChange(scopeId);
+  return () => {
+    const entryKey = `${scopeId}:${approval.id}`;
+    if (pendingApprovalEntries.get(entryKey)?.sequence !== sequence) return;
+    pendingApprovalEntries.delete(entryKey);
+    emitPendingApprovalChange(scopeId);
+  };
+}
+
+export function useActiveToolGovernancePendingApproval() {
+  const scopeId = useToolGovernancePendingApprovalScope();
+  return useSyncExternalStore(
+    subscribePendingApproval,
+    () => pendingApprovalSnapshots.get(scopeId) ?? null,
+    () => null
+  );
+}
+
 interface ToolGovernanceDecisionCardProps {
   title: string;
   toolLabel?: string | null;
+  actionSentence?: string | null;
   notice?: string | null;
   reason?: string;
   assets: ToolGovernanceDisplayAsset[];
@@ -35,6 +145,7 @@ interface ToolGovernanceDecisionCardProps {
   isHighImpact: boolean;
   isAllowed: boolean;
   canSubmit: boolean;
+  compactAudit?: boolean;
   onSubmitDecision?: (
     action: ToolGovernanceDecisionAction,
     rememberForSession: boolean
@@ -44,6 +155,7 @@ interface ToolGovernanceDecisionCardProps {
 export function ToolGovernanceDecisionCard({
   title,
   toolLabel,
+  actionSentence,
   notice,
   reason,
   assets,
@@ -54,6 +166,7 @@ export function ToolGovernanceDecisionCard({
   isHighImpact,
   isAllowed,
   canSubmit,
+  compactAudit = false,
   onSubmitDecision,
 }: ToolGovernanceDecisionCardProps) {
   const t = useT('webapp');
@@ -104,6 +217,53 @@ export function ToolGovernanceDecisionCard({
       setSubmittingAction(null);
     }
   };
+
+  if (compactAudit && !needsApproval) {
+    const auditText =
+      approvalStatus === 'approved'
+        ? t('consoleChat.governance.approvalPanel.approvedAudit', {
+            action: actionSentence || title,
+          })
+        : approvalStatus === 'rejected'
+          ? t('consoleChat.governance.approvalPanel.rejectedAudit', {
+              action: actionSentence || title,
+            })
+          : title;
+
+    return (
+      <div
+        className={cn(
+          'flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs text-foreground',
+          isHighImpact
+            ? 'border-destructive/25 bg-destructive/5'
+            : isAllowed
+              ? 'border-emerald-500/25 bg-emerald-500/5'
+              : 'border-warning/30 bg-warning/5'
+        )}
+      >
+        <span
+          className={cn(
+            'flex size-5 shrink-0 items-center justify-center rounded-full border bg-background',
+            approvalStatus === 'rejected' || isHighImpact
+              ? 'border-destructive/35 text-destructive'
+              : isAllowed || approvalStatus === 'approved'
+                ? 'border-emerald-500/30 text-emerald-600'
+                : 'border-warning/40 text-warning'
+          )}
+        >
+          {approvalStatus === 'rejected' || (!isAllowed && !approvalStatus) ? (
+            <ShieldAlert className="size-3.5" />
+          ) : (
+            <CheckCircle2 className="size-3.5" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-medium">{auditText}</span>
+        {toolLabel ? (
+          <span className="max-w-44 shrink-0 truncate text-muted-foreground">{toolLabel}</span>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -268,4 +428,188 @@ export function ToolGovernanceDecisionCard({
       ) : null}
     </div>
   );
+}
+
+export function ToolGovernanceApprovalPanel({
+  approval,
+}: {
+  approval: ToolGovernancePendingApproval;
+}) {
+  const t = useT('webapp');
+  const [rememberForSession, setRememberForSession] = useState(false);
+  const [submittingAction, setSubmittingAction] = useState<ToolGovernanceDecisionAction | null>(
+    null
+  );
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const submitEnabled =
+    approval.canSubmit && Boolean(approval.onSubmitDecision) && !submittingAction;
+  const visibleAssets = approval.assets.slice(0, 3);
+  const hiddenAssetCount = Math.max(0, approval.assets.length - visibleAssets.length);
+  const riskPermissionText =
+    approval.riskLabel && approval.permissionLabel
+      ? t('consoleChat.governance.approvalPanel.riskAndPermission', {
+          risk: approval.riskLabel,
+          permission: approval.permissionLabel,
+        })
+      : approval.riskLabel
+        ? t('consoleChat.governance.approvalPanel.riskOnly', { risk: approval.riskLabel })
+        : approval.permissionLabel
+          ? t('consoleChat.governance.approvalPanel.permissionOnly', {
+              permission: approval.permissionLabel,
+            })
+          : null;
+
+  useEffect(() => {
+    setRememberForSession(false);
+    setSubmittingAction(null);
+    setSubmitError(null);
+  }, [approval.id]);
+
+  const submitDecision = async (action: ToolGovernanceDecisionAction) => {
+    if (!submitEnabled || !approval.onSubmitDecision) return;
+    setSubmittingAction(action);
+    setSubmitError(null);
+    try {
+      await approval.onSubmitDecision(action, action === 'approve' ? rememberForSession : false);
+      toast.success(
+        action === 'approve'
+          ? t('consoleChat.governance.approveSucceeded')
+          : t('consoleChat.governance.rejectSucceeded')
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : t('consoleChat.governance.submitFailed');
+      setSubmitError(message);
+      toast.error(message);
+    } finally {
+      setSubmittingAction(null);
+    }
+  };
+
+  return (
+    <div
+      className={cn(
+        'rounded-xl border p-3 shadow-sm',
+        approval.isHighImpact
+          ? 'border-destructive/35 bg-destructive/5'
+          : 'border-warning/35 bg-warning/5'
+      )}
+    >
+      <div className="flex items-start gap-2.5">
+        <span
+          className={cn(
+            'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border bg-background',
+            approval.isHighImpact
+              ? 'border-destructive/35 text-destructive'
+              : 'border-warning/40 text-warning'
+          )}
+        >
+          <ShieldAlert className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div className="text-xs font-medium text-muted-foreground">
+              {t('consoleChat.governance.approvalPanel.title')}
+            </div>
+            {toolLabelText(approval.toolLabel) ? (
+              <div className="max-w-full truncate text-[11px] text-muted-foreground">
+                {toolLabelText(approval.toolLabel)}
+              </div>
+            ) : null}
+          </div>
+          <div className="mt-1 break-words text-sm font-medium text-foreground">
+            {approval.actionSentence}
+          </div>
+          {riskPermissionText ? (
+            <div className="mt-2 inline-flex max-w-full rounded-md border bg-background/80 px-2 py-1 text-[11px] text-muted-foreground">
+              <span className="truncate">{riskPermissionText}</span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-md border bg-background/75 p-2">
+        <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+          {t('consoleChat.governance.approvalPanel.assets')}
+        </div>
+        {visibleAssets.length > 0 ? (
+          <div className="space-y-1.5">
+            {visibleAssets.map(asset => (
+              <div key={asset.key} className="min-w-0 rounded-sm bg-muted/45 px-2 py-1">
+                <div className="truncate text-xs font-medium text-foreground">{asset.name}</div>
+                {asset.meta ? (
+                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                    {asset.meta}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+            {hiddenAssetCount > 0 ? (
+              <div className="px-2 text-[11px] text-muted-foreground">
+                {t('consoleChat.governance.approvalPanel.moreAssets', {
+                  count: hiddenAssetCount,
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground">
+            {t('consoleChat.governance.approvalPanel.noAssets')}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <label className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+          <Checkbox
+            checked={rememberForSession}
+            onCheckedChange={checked => setRememberForSession(checked === true)}
+            disabled={Boolean(submittingAction)}
+          />
+          <span className="min-w-0 break-words">
+            {t('consoleChat.governance.approvalPanel.rememberForSession')}
+          </span>
+        </label>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!submitEnabled}
+            onClick={() => void submitDecision('reject')}
+          >
+            {submittingAction === 'reject' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : null}
+            {t('consoleChat.governance.approvalPanel.reject')}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={approval.isHighImpact ? 'destructive' : 'default'}
+            disabled={!submitEnabled}
+            onClick={() => void submitDecision('approve')}
+          >
+            {submittingAction === 'approve' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : null}
+            {t('consoleChat.governance.approvalPanel.approve')}
+          </Button>
+        </div>
+      </div>
+      {submitError ? <div className="mt-2 text-[11px] text-destructive">{submitError}</div> : null}
+      {!submitEnabled && !submittingAction ? (
+        <div className="mt-2 text-[11px] text-muted-foreground">
+          {t('consoleChat.governance.actionsUnavailable')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function toolLabelText(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed || null;
 }

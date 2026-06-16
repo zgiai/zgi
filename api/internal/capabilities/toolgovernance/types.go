@@ -100,20 +100,21 @@ type SessionGrant struct {
 }
 
 type ApprovalEvent struct {
-	Type               string         `json:"type"`
-	CorrelationID      string         `json:"correlation_id"`
-	ToolID             string         `json:"tool_id"`
-	SkillID            string         `json:"skill_id,omitempty"`
-	Domain             string         `json:"domain,omitempty"`
-	Effect             Effect         `json:"effect"`
-	AssetType          string         `json:"asset_type,omitempty"`
-	RiskLevel          RiskLevel      `json:"risk_level"`
-	Assets             []AssetRef     `json:"assets,omitempty"`
-	Reversible         bool           `json:"reversible"`
-	BulkSensitive      bool           `json:"bulk_sensitive"`
-	ExternalSideEffect bool           `json:"external_side_effect"`
-	PermissionTier     PermissionTier `json:"permission_tier"`
-	Grant              SessionGrant   `json:"grant"`
+	Type               string            `json:"type"`
+	CorrelationID      string            `json:"correlation_id"`
+	ToolID             string            `json:"tool_id"`
+	SkillID            string            `json:"skill_id,omitempty"`
+	Domain             string            `json:"domain,omitempty"`
+	Effect             Effect            `json:"effect"`
+	AssetType          string            `json:"asset_type,omitempty"`
+	RiskLevel          RiskLevel         `json:"risk_level"`
+	Assets             []AssetRef        `json:"assets,omitempty"`
+	Reversible         bool              `json:"reversible"`
+	BulkSensitive      bool              `json:"bulk_sensitive"`
+	ExternalSideEffect bool              `json:"external_side_effect"`
+	PermissionTier     PermissionTier    `json:"permission_tier"`
+	Grant              SessionGrant      `json:"grant"`
+	FrozenInvocation   *FrozenInvocation `json:"frozen_invocation,omitempty"`
 }
 
 type Decision struct {
@@ -127,6 +128,7 @@ type Decision struct {
 	Assets                  []AssetRef             `json:"assets,omitempty"`
 	ExpectedAssets          []AssetRef             `json:"expected_assets,omitempty"`
 	ApprovalEvent           *ApprovalEvent         `json:"approval_event,omitempty"`
+	FrozenInvocation        *FrozenInvocation      `json:"frozen_invocation,omitempty"`
 	AssetOperationAudit     map[string]interface{} `json:"asset_operation_audit,omitempty"`
 	ModelFeedback           map[string]interface{} `json:"model_feedback,omitempty"`
 }

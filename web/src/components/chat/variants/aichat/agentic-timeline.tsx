@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -30,9 +30,12 @@ import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
 import {
   ToolGovernanceDecisionCard,
+  publishToolGovernancePendingApproval,
+  useToolGovernancePendingApprovalScope,
   type ToolGovernanceDecisionAction,
   type ToolGovernanceDisplayAsset,
   type ToolGovernanceDisplayRow,
+  type ToolGovernancePendingApproval,
 } from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import WorkflowRunMonitor from '@/components/chat/ui/workflow-run-monitor';
 import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-run-nodes-list';
@@ -117,6 +120,29 @@ type GovernanceTimelineItem = Extract<
   { type: 'tool_governance_decision' }
 >;
 type WorkflowTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'workflow_run' }>;
+
+interface ToolGovernanceDecisionViewModel {
+  title: string;
+  toolLabel: string | null;
+  actionSentence: string;
+  notice: string | null;
+  reason: string;
+  assets: ToolGovernanceDisplayAsset[];
+  summaryRows: ToolGovernanceDisplayRow[];
+  details: ToolGovernanceDisplayRow[];
+  needsApproval: boolean;
+  approvalStatus: string;
+  isHighImpact: boolean;
+  isAllowed: boolean;
+  canSubmit: boolean;
+  riskLabel: string | null;
+  permissionLabel: string | null;
+  pendingApprovalId: string;
+  onSubmitDecision: (
+    action: ToolGovernanceDecisionAction,
+    rememberForSession: boolean
+  ) => void | Promise<void>;
+}
 
 function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
@@ -927,30 +953,74 @@ function governanceToolLabel(
   return skill || tool || null;
 }
 
-function ToolGovernanceDecisionRow({
-  item,
-  skillDisplayById,
-  onToolGovernanceDecision,
-}: {
-  item: GovernanceTimelineItem;
-  skillDisplayById: AIChatSkillDisplayMap;
+function governancePermissionTierLabel(permissionTier: string, t: WebappTranslator): string {
+  switch (permissionTier) {
+    case 'basic':
+      return t('consoleChat.governance.permissionTiers.basic');
+    case 'advanced':
+      return t('consoleChat.governance.permissionTiers.advanced');
+    case 'full':
+      return t('consoleChat.governance.permissionTiers.full');
+    default:
+      return permissionTier;
+  }
+}
+
+function governanceActionSentence(
+  item: GovernanceTimelineItem,
+  assets: AIChatToolGovernanceAssetRef[],
+  assetCount: number,
+  t: WebappTranslator
+): string {
+  const effect = governanceEventString(item, ['effect'])?.toLowerCase();
+  const assetType = governanceEventString(item, ['asset_type'])?.toLowerCase();
+  const count = Math.max(assetCount, assets.length, 1);
+  const singleAssetName = assets.length === 1 ? governanceAssetDisplayName(assets[0]) : null;
+
+  if (effect === 'delete' && assetType === 'file') {
+    return singleAssetName
+      ? t('consoleChat.governance.approvalPanel.fileDeleteOne', { name: singleAssetName })
+      : t('consoleChat.governance.approvalPanel.fileDeleteMany', { count });
+  }
+
+  if (effect && assetType && singleAssetName) {
+    return t('consoleChat.governance.approvalPanel.genericOne', {
+      effect: governanceEffectLabel(effect, t),
+      assetType: governanceAssetTypeLabel(assetType, t),
+      name: singleAssetName,
+    });
+  }
+
+  if (effect && assetType) {
+    return t('consoleChat.governance.approvalPanel.genericMany', {
+      effect: governanceEffectLabel(effect, t),
+      count,
+      assetType: governanceAssetTypeLabel(assetType, t),
+    });
+  }
+
+  return t('consoleChat.governance.approvalPanel.generic');
+}
+
+function buildToolGovernanceDecisionViewModel(
+  item: GovernanceTimelineItem,
+  skillDisplayById: AIChatSkillDisplayMap,
+  locale: string,
+  t: WebappTranslator,
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
-  ) => void | Promise<void>;
-}) {
-  const t = useT('webapp');
-  const { locale } = useLocale();
-  const currentItem = item;
-  const needsApproval = isToolGovernanceNeedsApproval(currentItem);
-  const approvalStatus = governanceApprovalStatus(currentItem);
-  const title = buildGovernanceTitle(currentItem, t);
-  const toolLabel = governanceToolLabel(currentItem, skillDisplayById, locale, t);
-  const reason = governanceReason(currentItem);
-  const approvalAssets = governanceApprovalAssets(currentItem);
-  const assetCount = governanceAssetCount(currentItem, approvalAssets);
-  const notice = governanceNoticeText(currentItem, assetCount, t);
+  ) => void | Promise<void>
+): ToolGovernanceDecisionViewModel {
+  const needsApproval = isToolGovernanceNeedsApproval(item);
+  const approvalStatus = governanceApprovalStatus(item);
+  const title = buildGovernanceTitle(item, t);
+  const toolLabel = governanceToolLabel(item, skillDisplayById, locale, t);
+  const reason = governanceReason(item);
+  const approvalAssets = governanceApprovalAssets(item);
+  const assetCount = governanceAssetCount(item, approvalAssets);
+  const notice = governanceNoticeText(item, assetCount, t);
   const summaryRows: ToolGovernanceDisplayRow[] = governanceSummaryRows(
-    currentItem,
+    item,
     approvalAssets,
     t
   ).flatMap(([labelKey, value]) =>
@@ -964,7 +1034,7 @@ function ToolGovernanceDecisionRow({
         ]
       : []
   );
-  const details: ToolGovernanceDisplayRow[] = governanceFieldRows(currentItem).flatMap(
+  const details: ToolGovernanceDisplayRow[] = governanceFieldRows(item).flatMap(
     ([labelKey, value]) => {
       const formatted = governanceDisplayText(value);
       return formatted
@@ -986,8 +1056,9 @@ function ToolGovernanceDecisionRow({
       meta: governanceAssetMeta(asset, t) || undefined,
     };
   });
-  const effect = governanceEventString(currentItem, ['effect']);
-  const riskLevel = governanceEventString(currentItem, ['risk_level']);
+  const effect = governanceEventString(item, ['effect'])?.toLowerCase();
+  const riskLevel = governanceEventString(item, ['risk_level'])?.toLowerCase() ?? null;
+  const permissionTier = governanceEventString(item, ['permission_tier']);
   const isHighImpact =
     effect === 'delete' ||
     effect === 'publish' ||
@@ -995,13 +1066,11 @@ function ToolGovernanceDecisionRow({
     riskLevel === 'high' ||
     riskLevel === 'critical';
   const isAllowed =
-    !needsApproval &&
-    !approvalStatus &&
-    governanceDecisionStatus(currentItem) === 'allowed';
+    !needsApproval && !approvalStatus && governanceDecisionStatus(item) === 'allowed';
   const correlationId =
-    currentItem.event.correlation_id ??
-    currentItem.event.governance?.correlation_id ??
-    governanceApprovalEvent(currentItem)?.correlation_id ??
+    item.event.correlation_id ??
+    item.event.governance?.correlation_id ??
+    governanceApprovalEvent(item)?.correlation_id ??
     '';
   const canSubmit = needsApproval && Boolean(correlationId) && Boolean(onToolGovernanceDecision);
 
@@ -1013,29 +1082,95 @@ function ToolGovernanceDecisionRow({
       throw new Error(t('consoleChat.governance.submitFailed'));
     }
     await onToolGovernanceDecision({
-      conversationId: currentItem.event.conversation_id,
-      messageId: currentItem.event.message_id,
+      conversationId: item.event.conversation_id,
+      messageId: item.event.message_id,
       correlationId,
       action,
       rememberForSession: action === 'approve' ? rememberForSession : false,
     });
   };
 
+  return {
+    title,
+    toolLabel,
+    actionSentence: governanceActionSentence(item, approvalAssets, assetCount, t),
+    notice,
+    reason,
+    assets,
+    summaryRows,
+    details,
+    needsApproval,
+    approvalStatus,
+    isHighImpact,
+    isAllowed,
+    canSubmit,
+    riskLabel: riskLevel ? governanceRiskLabel(riskLevel, t) : null,
+    permissionLabel: permissionTier ? governancePermissionTierLabel(permissionTier, t) : null,
+    pendingApprovalId: `${item.event.conversation_id}:${item.event.message_id}:${
+      correlationId || item.id
+    }`,
+    onSubmitDecision: submitDecision,
+  };
+}
+
+function toPendingToolGovernanceApproval(
+  view: ToolGovernanceDecisionViewModel,
+  item: GovernanceTimelineItem
+): ToolGovernancePendingApproval {
+  return {
+    id: view.pendingApprovalId,
+    title: view.title,
+    toolLabel: view.toolLabel,
+    actionSentence: view.actionSentence,
+    assets: view.assets,
+    riskLabel: view.riskLabel,
+    permissionLabel: view.permissionLabel,
+    canSubmit: view.canSubmit,
+    isHighImpact: view.isHighImpact,
+    createdAt: item.created_at ?? item.event.created_at,
+    onSubmitDecision: view.onSubmitDecision,
+  };
+}
+
+function ToolGovernanceDecisionRow({
+  item,
+  skillDisplayById,
+  onToolGovernanceDecision,
+}: {
+  item: GovernanceTimelineItem;
+  skillDisplayById: AIChatSkillDisplayMap;
+  onToolGovernanceDecision?: (
+    payload: AIChatToolGovernanceDecisionSubmitPayload
+  ) => void | Promise<void>;
+}) {
+  const t = useT('webapp');
+  const { locale } = useLocale();
+  const view = buildToolGovernanceDecisionViewModel(
+    item,
+    skillDisplayById,
+    locale,
+    t,
+    onToolGovernanceDecision
+  );
+  if (view.needsApproval) return null;
+
   return (
     <ToolGovernanceDecisionCard
-      title={title}
-      toolLabel={toolLabel}
-      notice={notice}
-      reason={reason}
-      assets={assets}
-      summaryRows={summaryRows}
-      details={details}
-      needsApproval={needsApproval}
-      approvalStatus={approvalStatus}
-      isHighImpact={isHighImpact}
-      isAllowed={isAllowed}
-      canSubmit={canSubmit}
-      onSubmitDecision={submitDecision}
+      title={view.title}
+      toolLabel={view.toolLabel}
+      actionSentence={view.actionSentence}
+      notice={view.notice}
+      reason={view.reason}
+      assets={view.assets}
+      summaryRows={view.summaryRows}
+      details={view.details}
+      needsApproval={view.needsApproval}
+      approvalStatus={view.approvalStatus}
+      isHighImpact={view.isHighImpact}
+      isAllowed={view.isAllowed}
+      canSubmit={view.canSubmit}
+      compactAudit
+      onSubmitDecision={view.onSubmitDecision}
     />
   );
 }
@@ -1250,15 +1385,44 @@ export function AIChatAgenticTimeline({
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
   const { locale } = useLocale();
-  const hasApprovalGatedGovernance = timeline.some(
-    item => item.type === 'tool_governance_decision' && isToolGovernanceNeedsApproval(item)
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const pendingApprovalScopeId = useToolGovernancePendingApprovalScope();
+
+  const pendingGovernanceApprovals = useMemo(
+    () =>
+      timeline.flatMap(item => {
+        if (item.type !== 'tool_governance_decision' || !isToolGovernanceNeedsApproval(item)) {
+          return [];
+        }
+        const view = buildToolGovernanceDecisionViewModel(
+          item,
+          skillDisplayById,
+          locale,
+          t,
+          onToolGovernanceDecision
+        );
+        return [toPendingToolGovernanceApproval(view, item)];
+      }),
+    [locale, onToolGovernanceDecision, skillDisplayById, t, timeline]
   );
-  const [isOpen, setIsOpen] = useState(defaultOpen || hasApprovalGatedGovernance);
+
+  useEffect(() => {
+    const cleanups = pendingGovernanceApprovals.map(approval =>
+      publishToolGovernancePendingApproval(approval, pendingApprovalScopeId)
+    );
+    return () => {
+      cleanups.forEach(cleanup => cleanup());
+    };
+  }, [pendingApprovalScopeId, pendingGovernanceApprovals]);
 
   const events = useMemo(
     () =>
       timeline
-        .filter(item => !isApprovalGatedSkillEvent(item))
+        .filter(
+          item =>
+            !isApprovalGatedSkillEvent(item) &&
+            !(item.type === 'tool_governance_decision' && isToolGovernanceNeedsApproval(item))
+        )
         .map(item => {
           if (item.type === 'progress_text') return item;
           if (item.type === 'intermediate_answer') return item;

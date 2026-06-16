@@ -211,6 +211,28 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 			map[string]interface{}{"id": "file-1", "type": "file", "name": "report.pdf"},
 		},
 	}
+	approvalEvent["frozen_invocation"] = toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: "corr-approve",
+		Manifest: toolgovernance.Manifest{
+			ToolID:    "file.delete",
+			SkillID:   skills.SkillFileReader,
+			Effect:    toolgovernance.EffectDelete,
+			AssetType: "file",
+			RiskLevel: toolgovernance.RiskLevelHigh,
+		},
+		SkillID:      skills.SkillFileReader,
+		ToolName:     "delete_file",
+		ProviderType: "builtin",
+		ProviderID:   "files",
+		Arguments: map[string]interface{}{
+			"file_id": "file-1",
+		},
+		Assets: []toolgovernance.AssetRef{
+			{ID: "file-1", Type: "file", Name: "report.pdf", WorkspaceID: "workspace-1"},
+		},
+		Now: now,
+		TTL: 7 * 24 * time.Hour,
+	})
 
 	conversation := &runtimemodel.Conversation{
 		ID:             conversationID,
@@ -256,45 +278,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	workspacePerms := &toolGovernanceStreamWorkspacePermissionService{allowed: true}
 	runtime := newToolGovernanceStreamSkillRuntime(t, fileService, workspacePerms)
 	llm := &toolGovernanceStreamLLM{
-		appChatResponses: []*adapter.ChatResponse{
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "Deleted report.pdf."},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_load",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolLoadSkill,
-								Arguments: `{"skill_id":"file-reader"}`,
-							},
-						}},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{
-							toolGovernanceStreamSkillToolCall("call_delete", skills.SkillFileReader, "delete_file", map[string]interface{}{
-								"file_id": "file-1",
-							}),
-						},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "Deleted report.pdf after calling the delete tool."},
-				}},
-			},
-		},
+		streamChunks: []string{"Deleted report.pdf."},
 	}
 	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
 	conversationRepo := &toolGovernanceStreamConversationRepo{conversation: conversation}
@@ -335,8 +319,8 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if result.Status != runtimemodel.MessageStatusCompleted {
 		t.Fatalf("result status = %q, want completed", result.Status)
 	}
-	if result.Answer != "Deleted report.pdf after calling the delete tool." {
-		t.Fatalf("result answer = %q, want post-tool final answer", result.Answer)
+	if result.Answer != "Deleted report.pdf." {
+		t.Fatalf("result answer = %q, want direct execution summary", result.Answer)
 	}
 	if len(fileService.deleted) != 1 || fileService.deleted[0] != "file-1" {
 		t.Fatalf("deleted files = %#v, want one delete for approved file-1", fileService.deleted)
@@ -344,15 +328,17 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if len(workspacePerms.codes) != 1 || workspacePerms.codes[0] != workspacemodel.WorkspacePermissionFileManage {
 		t.Fatalf("workspace permission checks = %#v, want file manage check", workspacePerms.codes)
 	}
-	if len(llm.appChatRequests) != 4 {
-		t.Fatalf("AppChat requests = %d, want direct answer, guard replan, tool call, final answer", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 0 {
+		t.Fatalf("AppChat requests = %d, want no model tool-planning calls", len(llm.appChatRequests))
 	}
-	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "Runtime guardrail feedback") ||
-		!toolGovernanceStreamRequestContains(llm.appChatRequests[1], "approval is not the operation itself") {
-		t.Fatalf("second planning request missing approval guard feedback")
+	if len(llm.streamRequests) != 1 {
+		t.Fatalf("AppChatStream requests = %d, want one execution-summary call", len(llm.streamRequests))
 	}
-	if !toolGovernanceStreamRequestHasTool(llm.appChatRequests[2], skills.MetaToolCallSkillTool) {
-		t.Fatalf("third planning request should still expose %s tool", skills.MetaToolCallSkillTool)
+	if toolGovernanceStreamRequestHasTool(llm.streamRequests[0], skills.MetaToolCallSkillTool) {
+		t.Fatalf("execution-summary request should not expose %s tool", skills.MetaToolCallSkillTool)
+	}
+	if !toolGovernanceStreamRequestContains(llm.streamRequests[0], "runtime has already executed the frozen invocation exactly once") {
+		t.Fatalf("execution-summary request missing direct execution context")
 	}
 
 	metadataEvent, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, "corr-approve")
@@ -368,8 +354,8 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if grants := mapSliceFromAny(conversation.Metadata["tool_governance_session_grants"]); len(grants) != 0 {
 		t.Fatalf("session grants = %#v, want none without remember_for_session", grants)
 	}
-	if guardrails := intValueFromAny(message.Metadata["guardrail_count"]); guardrails != 1 {
-		t.Fatalf("guardrail_count = %d in %#v, want 1 from final answer guard", guardrails, message.Metadata)
+	if guardrails := intValueFromAny(message.Metadata["guardrail_count"]); guardrails != 0 {
+		t.Fatalf("guardrail_count = %d in %#v, want no final answer guard replan", guardrails, message.Metadata)
 	}
 	if toolCalls := intValueFromAny(message.Metadata["tool_call_count"]); toolCalls != 1 {
 		t.Fatalf("tool_call_count = %d in %#v, want 1 from delete tool execution", toolCalls, message.Metadata)
@@ -601,8 +587,9 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 	for _, want := range []string{
 		streamEventMessageStart,
 		streamEventToolGovernanceDecision,
-		streamEventSkillLoadEnd,
+		streamEventSkillCallStart,
 		streamEventSkillCallEnd,
+		streamEventMessage,
 		streamEventMessageEnd,
 	} {
 		if !seen[want] {

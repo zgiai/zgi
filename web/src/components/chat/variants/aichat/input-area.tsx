@@ -62,6 +62,10 @@ import type {
   AIChatWorkflowApprovalRequest,
   AIChatWorkflowApprovalSubmitPayload,
 } from '@/components/chat/variants/aichat/types';
+import {
+  ToolGovernanceApprovalPanel,
+  useActiveToolGovernancePendingApproval,
+} from '@/components/chat/variants/aichat/tool-governance-decision-card';
 
 export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
 
@@ -232,6 +236,7 @@ export function AIChatInputArea({
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [ignoredUserInputRequestKey, setIgnoredUserInputRequestKey] = useState<string | null>(null);
   const [submittedApprovalAction, setSubmittedApprovalAction] = useState<string | null>(null);
+  const activeToolGovernanceApproval = useActiveToolGovernancePendingApproval();
   const activeApprovalForm = activeWorkflowApprovalRequest?.approvalForm ?? null;
   const approvalFormQuery = useApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken,
@@ -305,6 +310,9 @@ export function AIChatInputArea({
   const hasActiveUserInputRequest =
     activeQuestions.length > 0 && ignoredUserInputRequestKey !== requestKey;
   const hasActiveWorkflowApprovalRequest = Boolean(activeWorkflowApprovalRequest?.approvalToken);
+  const hasActiveToolGovernanceApproval = Boolean(activeToolGovernanceApproval);
+  const hasBlockingApproval =
+    hasActiveWorkflowApprovalRequest || hasActiveToolGovernanceApproval;
   const activeQuestion = hasActiveUserInputRequest
     ? activeQuestions[Math.min(activeQuestionIndex, activeQuestions.length - 1)]
     : undefined;
@@ -835,7 +843,7 @@ export function AIChatInputArea({
 
   return (
     <>
-      {enableUpload && !hasActiveWorkflowApprovalRequest && isDraggingFiles ? (
+      {enableUpload && !hasBlockingApproval && isDraggingFiles ? (
         <AIChatDragUploadOverlay
           isSending={isSending}
           isUploading={isUploading}
@@ -865,12 +873,12 @@ export function AIChatInputArea({
                 : 'max-w-4xl'
           )}
         >
-          {modelMissing && !hasActiveWorkflowApprovalRequest ? (
+          {modelMissing && !hasBlockingApproval ? (
             <div className="pointer-events-auto mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {t('consoleChat.modelRequired')}
             </div>
           ) : null}
-          {!hasActiveWorkflowApprovalRequest && topAccessory ? (
+          {!hasBlockingApproval && topAccessory ? (
             <div className="pointer-events-auto mb-2">{topAccessory}</div>
           ) : null}
           <div className="pointer-events-auto rounded-2xl border bg-background p-2 shadow-sm focus-within:border-primary/40">
@@ -919,6 +927,8 @@ export function AIChatInputArea({
                   </div>
                 )}
               </div>
+            ) : hasActiveToolGovernanceApproval && activeToolGovernanceApproval ? (
+              <ToolGovernanceApprovalPanel approval={activeToolGovernanceApproval} />
             ) : hasActiveUserInputRequest && activeQuestion ? (
               <div className="mb-2 rounded-xl border bg-muted/30 px-3 py-3">
                 <div className="mb-3 flex items-start gap-2 text-sm">
@@ -1047,7 +1057,7 @@ export function AIChatInputArea({
                 </div>
               </div>
             ) : null}
-            {!hasActiveWorkflowApprovalRequest && !hasActiveUserInputRequest ? (
+            {!hasBlockingApproval && !hasActiveUserInputRequest ? (
               <>
                 <AIChatAttachmentStrip
                   attachments={attachments}
@@ -1101,7 +1111,7 @@ export function AIChatInputArea({
               accept={buildFileInputAcceptAttribute(imageExtensions)}
               onChange={event => handleFilesSelected(event, 'image')}
             />
-            {!hasActiveWorkflowApprovalRequest ? (
+            {!hasBlockingApproval ? (
               <AIChatInputToolbar
                 modelSelectorValue={modelSelectorValue}
                 isModelInitializing={isModelInitializing}

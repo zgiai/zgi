@@ -4,6 +4,7 @@ import {
   createElement,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -77,6 +78,7 @@ import {
   isHiddenSystemSkill,
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillPreferenceDialog } from '@/components/chat/variants/aichat/skill-preference-dialog';
+import { ToolGovernancePendingApprovalScopeProvider } from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import { useAIChatScroll } from '@/components/chat/variants/aichat/use-aichat-scroll';
 import {
   getAIChatMessageErrorInput,
@@ -245,6 +247,7 @@ export function AIChatShell({
   const { locale } = useLocale();
   const isMobile = useIsMobile();
   const isEmbedded = variant === 'embedded';
+  const toolGovernanceApprovalScopeId = useId();
   const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
   const themeStyle = useMemo<CSSProperties | undefined>(() => {
     const primary = themeColor ? CHAT_THEME_PRIMARY[themeColor] : undefined;
@@ -1037,133 +1040,138 @@ export function AIChatShell({
         </div>
       ) : null}
 
-      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-        {!isEmbedded ? (
-          <AIChatHeader
-            isMobile={isMobile}
-            isHome={isHome}
-            title={activeConversation?.title || t('consoleChat.title')}
-            onToggleSidebar={handleToggleSidebar}
-            onStartNew={handleNewChat}
-            rightAction={
-              assetAuditButton || enableAIChatSkillPreference ? (
-                <div className="flex items-center justify-end gap-1">
-                  {assetAuditButton}
-                  {enableAIChatSkillPreference ? (
-                    <Button
-                      variant="ghost"
-                      isIcon
-                      className="size-8 text-muted-foreground"
-                      onClick={() => handleSkillPreferenceOpenChange(true)}
-                      title={t('consoleChat.skillPreferences.action')}
-                    >
-                      <Settings2 className="size-4" />
-                    </Button>
-                  ) : null}
-                </div>
-              ) : undefined
-            }
+      <ToolGovernancePendingApprovalScopeProvider scopeId={toolGovernanceApprovalScopeId}>
+        <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+          {!isEmbedded ? (
+            <AIChatHeader
+              isMobile={isMobile}
+              isHome={isHome}
+              title={activeConversation?.title || t('consoleChat.title')}
+              onToggleSidebar={handleToggleSidebar}
+              onStartNew={handleNewChat}
+              rightAction={
+                assetAuditButton || enableAIChatSkillPreference ? (
+                  <div className="flex items-center justify-end gap-1">
+                    {assetAuditButton}
+                    {enableAIChatSkillPreference ? (
+                      <Button
+                        variant="ghost"
+                        isIcon
+                        className="size-8 text-muted-foreground"
+                        onClick={() => handleSkillPreferenceOpenChange(true)}
+                        title={t('consoleChat.skillPreferences.action')}
+                      >
+                        <Settings2 className="size-4" />
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : undefined
+              }
+            />
+          ) : null}
+
+          {showEmbeddedConversationDrawer && embeddedConversationControlsMode === 'internal' ? (
+            <div
+              className={cn(
+                'absolute z-30',
+                embeddedConversationControlsClassName ?? 'left-3 top-3'
+              )}
+            >
+              {embeddedConversationControls}
+            </div>
+          ) : null}
+
+          {externalControlsPortal && embeddedConversationControls
+            ? createPortal(embeddedConversationControls, externalControlsPortal)
+            : null}
+
+          <AIChatMessageList
+            messages={messages}
+            activeConversation={activeConversation}
+            activeMessageCount={activeMessages.length}
+            branchNavigationByMessageId={branchNavigationByMessageId}
+            isLoadingMessages={isLoadingMessages}
+            isLoadingOlderMessages={isLoadingOlderMessages}
+            isSending={isSending || messageActionsLocked}
+            streamingByMessageId={streamingByMessageId}
+            skillDisplayById={skillDisplayById}
+            editingMessageId={editingMessageId}
+            editingQuery={editingQuery}
+            bottomRef={bottomRef}
+            scrollViewportRef={scrollViewportRef}
+            bottomSpacerHeight={Math.max(inputAreaHeight + 72, 180)}
+            onScroll={handleMessagesScroll}
+            onRegenerate={handleRegenerate}
+            onToolGovernanceDecision={handleToolGovernanceDecision}
+            onSwitchBranch={handleSwitchBranch}
+            onEditStart={handleEditStart}
+            onEditChange={setEditingQuery}
+            onEditCancel={handleEditCancel}
+            onEditSubmit={handleEditSubmit}
+            showAssistantModelMeta={showAssistantModelMeta}
+            layout={isEmbedded ? 'embedded' : 'full'}
+            showMemoryKey={surface !== 'agent-webapp'}
+            showSkillEventDetails={surface !== 'agent-webapp'}
           />
-        ) : null}
 
-        {showEmbeddedConversationDrawer && embeddedConversationControlsMode === 'internal' ? (
-          <div
-            className={cn('absolute z-30', embeddedConversationControlsClassName ?? 'left-3 top-3')}
-          >
-            {embeddedConversationControls}
-          </div>
-        ) : null}
+          <AIChatHomeView
+            isVisible={isHome && !isLoadingMessages}
+            suggestions={suggestions}
+            onSelectSuggestion={setInput}
+            brand={homeBrand}
+            title={homeTitle}
+            description={homeDescription}
+            composerHeight={inputAreaHeight}
+            surface={surface}
+          />
 
-        {externalControlsPortal && embeddedConversationControls
-          ? createPortal(embeddedConversationControls, externalControlsPortal)
-          : null}
+          {showResumeScrollButton ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="absolute left-1/2 z-30 -translate-x-1/2 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
+              style={{ bottom: Math.max(inputAreaHeight + 18, 96) }}
+              onClick={resumeAutoFollow}
+            >
+              <ArrowDown className="mr-1.5 size-4" />
+              {t('consoleChat.resumeAutoScroll')}
+            </Button>
+          ) : null}
 
-        <AIChatMessageList
-          messages={messages}
-          activeConversation={activeConversation}
-          activeMessageCount={activeMessages.length}
-          branchNavigationByMessageId={branchNavigationByMessageId}
-          isLoadingMessages={isLoadingMessages}
-          isLoadingOlderMessages={isLoadingOlderMessages}
-          isSending={isSending || messageActionsLocked}
-          streamingByMessageId={streamingByMessageId}
-          skillDisplayById={skillDisplayById}
-          editingMessageId={editingMessageId}
-          editingQuery={editingQuery}
-          bottomRef={bottomRef}
-          scrollViewportRef={scrollViewportRef}
-          bottomSpacerHeight={Math.max(inputAreaHeight + 72, 180)}
-          onScroll={handleMessagesScroll}
-          onRegenerate={handleRegenerate}
-          onToolGovernanceDecision={handleToolGovernanceDecision}
-          onSwitchBranch={handleSwitchBranch}
-          onEditStart={handleEditStart}
-          onEditChange={setEditingQuery}
-          onEditCancel={handleEditCancel}
-          onEditSubmit={handleEditSubmit}
-          showAssistantModelMeta={showAssistantModelMeta}
-          layout={isEmbedded ? 'embedded' : 'full'}
-          showMemoryKey={surface !== 'agent-webapp'}
-          showSkillEventDetails={surface !== 'agent-webapp'}
-        />
-
-        <AIChatHomeView
-          isVisible={isHome && !isLoadingMessages}
-          suggestions={suggestions}
-          onSelectSuggestion={setInput}
-          brand={homeBrand}
-          title={homeTitle}
-          description={homeDescription}
-          composerHeight={inputAreaHeight}
-          surface={surface}
-        />
-
-        {showResumeScrollButton ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="absolute left-1/2 z-30 -translate-x-1/2 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
-            style={{ bottom: Math.max(inputAreaHeight + 18, 96) }}
-            onClick={resumeAutoFollow}
-          >
-            <ArrowDown className="mr-1.5 size-4" />
-            {t('consoleChat.resumeAutoScroll')}
-          </Button>
-        ) : null}
-
-        <AIChatInputArea
-          isHome={isHome}
-          isLoadingMessages={isLoadingMessages}
-          input={input}
-          modelSelectorValue={modelSelectorValue}
-          modelProps={modelProps}
-          supportsVisionOverride={supportsVisionOverride}
-          isModelInitializing={isModelInitializing}
-          modelMissing={modelMissing}
-          isSending={isSending}
-          canStop={canStopPendingWorkflowInteraction || isSending}
-          isStopping={isStopping}
-          onInputChange={setInput}
-          onSend={handleSend}
-          activeUserInputRequest={activeUserInputRequest}
-          onUserInputRequestSubmit={handleUserInputRequestSubmit}
-          activeWorkflowApprovalRequest={activeWorkflowApprovalRequest}
-          onWorkflowApprovalSubmit={handleWorkflowApprovalSubmit}
-          onStop={controller.stop}
-          onModelChange={onModelChange}
-          onHeightChange={setInputAreaHeight}
-          showModelSelector={showModelSelector}
-          showMemoryToggle={showMemoryToggle}
-          enableUpload={enableUpload}
-          uploadScope={uploadScope}
-          showFileLibraryPicker={showFileLibraryPicker}
-          allowWorkspaceSwitch={allowWorkspaceSwitch}
-          inputPlaceholder={inputPlaceholder}
-          surface={surface}
-          topAccessory={toolGovernancePermissionControl}
-        />
-      </main>
+          <AIChatInputArea
+            isHome={isHome}
+            isLoadingMessages={isLoadingMessages}
+            input={input}
+            modelSelectorValue={modelSelectorValue}
+            modelProps={modelProps}
+            supportsVisionOverride={supportsVisionOverride}
+            isModelInitializing={isModelInitializing}
+            modelMissing={modelMissing}
+            isSending={isSending}
+            canStop={canStopPendingWorkflowInteraction || isSending}
+            isStopping={isStopping}
+            onInputChange={setInput}
+            onSend={handleSend}
+            activeUserInputRequest={activeUserInputRequest}
+            onUserInputRequestSubmit={handleUserInputRequestSubmit}
+            activeWorkflowApprovalRequest={activeWorkflowApprovalRequest}
+            onWorkflowApprovalSubmit={handleWorkflowApprovalSubmit}
+            onStop={controller.stop}
+            onModelChange={onModelChange}
+            onHeightChange={setInputAreaHeight}
+            showModelSelector={showModelSelector}
+            showMemoryToggle={showMemoryToggle}
+            enableUpload={enableUpload}
+            uploadScope={uploadScope}
+            showFileLibraryPicker={showFileLibraryPicker}
+            allowWorkspaceSwitch={allowWorkspaceSwitch}
+            inputPlaceholder={inputPlaceholder}
+            surface={surface}
+            topAccessory={toolGovernancePermissionControl}
+          />
+        </main>
+      </ToolGovernancePendingApprovalScopeProvider>
 
       {!isEmbedded || showEmbeddedConversationDrawer ? (
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>

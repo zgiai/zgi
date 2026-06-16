@@ -91,11 +91,11 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
           >
             {canUseWorkspaceContext ? children : <WorkspaceRequiredState />}
           </main>
+          <ContextualAIChatDock />
         </div>
         <ConsoleMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />
         <ConsoleModelsPreloader />
         <ConsolePageContextRegistration />
-        <ContextualAIChatDock />
       </div>
     </ContextualAIChatProvider>
   );

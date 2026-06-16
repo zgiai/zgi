@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, X } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import Chat, { useAIChatController, type AIChatModelValue } from '@/components/chat';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
+import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 import { FILES_QUERY_KEY, STORAGE_USAGE_KEY } from '@/hooks/use-files';
@@ -16,6 +17,29 @@ import { AIChatContextChips } from './context-chips';
 import { useContextualAIChat } from './contextual-ai-chat-context';
 
 const LOCAL_STORAGE_KEY = 'consoleChat';
+const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1024px)';
+
+function getIsDesktopPanelViewport() {
+  return (
+    typeof window !== 'undefined' && window.matchMedia(DESKTOP_PANEL_MEDIA_QUERY).matches
+  );
+}
+
+function useIsDesktopPanelViewport() {
+  const [isDesktopPanelViewport, setIsDesktopPanelViewport] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mediaQuery = window.matchMedia(DESKTOP_PANEL_MEDIA_QUERY);
+    const handleChange = () => setIsDesktopPanelViewport(mediaQuery.matches);
+
+    handleChange();
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  return isDesktopPanelViewport;
+}
 
 function buildSuggestions(contextItems: ReturnType<typeof useContextualAIChat>['items']) {
   const firstAgent = contextItems.find(item => item.type === 'agent');
@@ -47,10 +71,77 @@ function ContextBrand({ itemCount }: { itemCount: number }) {
   );
 }
 
+interface ContextualAIChatPanelProps {
+  controller: ReturnType<typeof useAIChatController>;
+  isModelInitializing: boolean;
+  items: ReturnType<typeof useContextualAIChat>['items'];
+  modelSelectorValue: AIChatModelValue;
+  onClose: () => void;
+  onModelChange: (value: ModelSelectorValue) => void;
+  suggestions: string[];
+}
+
+function ContextualAIChatPanel({
+  controller,
+  isModelInitializing,
+  items,
+  modelSelectorValue,
+  onClose,
+  onModelChange,
+  suggestions,
+}: ContextualAIChatPanelProps) {
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <Button
+        type="button"
+        variant="ghost"
+        size="default"
+        isIcon
+        className="absolute right-3 top-3 z-40 size-8 bg-background/90 text-muted-foreground shadow-sm hover:bg-muted hover:text-foreground"
+        onClick={onClose}
+        title="Close AIChat assistant"
+      >
+        <X className="size-4" />
+        <span className="sr-only">Close AIChat assistant</span>
+      </Button>
+      <div
+        className={cn(
+          'border-b border-border/70 bg-background/95 px-4 py-3 pr-14',
+          items.length === 0 && 'sr-only'
+        )}
+      >
+        <AIChatContextChips items={items} maxVisible={3} />
+      </div>
+      <div className="min-h-0 flex-1">
+        <Chat
+          mode="aichat"
+          controller={controller}
+          modelSelectorValue={modelSelectorValue}
+          isModelInitializing={isModelInitializing}
+          onModelChange={onModelChange}
+          variant="embedded"
+          embeddedConversationMode="drawer"
+          allowWorkspaceSwitch
+          homeBrand={<ContextBrand itemCount={items.length} />}
+          homeTitle={items.length > 0 ? 'Work with the current context' : 'AIChat assistant'}
+          homeDescription={
+            items.length > 0
+              ? 'AIChat will include the visible context chips in this turn.'
+              : 'Ask AIChat to help create, review, or plan work in ZGI.'
+          }
+          inputPlaceholder="Ask about this page or tell AIChat what to do..."
+          suggestions={suggestions}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function ContextualAIChatDock() {
   const user = useCurrentUser();
   const queryClient = useQueryClient();
   const { isOpen, setOpen, items } = useContextualAIChat();
+  const isDesktopPanelViewport = useIsDesktopPanelViewport();
   const itemsRef = useRef(items);
 
   useEffect(() => {
@@ -156,6 +247,32 @@ export function ContextualAIChatDock() {
   );
 
   const suggestions = useMemo(() => buildSuggestions(items), [items]);
+  const panel = (
+    <ContextualAIChatPanel
+      controller={controller}
+      isModelInitializing={isModelInitializing}
+      items={items}
+      modelSelectorValue={modelSelectorValue}
+      onClose={() => setOpen(false)}
+      onModelChange={handleModelChange}
+      suggestions={suggestions}
+    />
+  );
+
+  if (isDesktopPanelViewport === null) {
+    return null;
+  }
+
+  if (isDesktopPanelViewport) {
+    return isOpen ? (
+      <aside
+        aria-label="AIChat assistant"
+        className="hidden h-full min-h-0 w-[440px] shrink-0 border-l border-border/70 bg-background shadow-sm lg:flex"
+      >
+        {panel}
+      </aside>
+    ) : null;
+  }
 
   return (
     <Sheet open={isOpen} onOpenChange={setOpen}>
@@ -169,37 +286,7 @@ export function ContextualAIChatDock() {
         <SheetDescription className="sr-only">
           Ask AIChat to help with the current ZGI page.
         </SheetDescription>
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div
-            className={cn(
-              'border-b border-border/70 bg-background/95 px-4 py-3',
-              items.length === 0 && 'sr-only'
-            )}
-          >
-            <AIChatContextChips items={items} maxVisible={3} />
-          </div>
-          <div className="min-h-0 flex-1">
-            <Chat
-              mode="aichat"
-              controller={controller}
-              modelSelectorValue={modelSelectorValue}
-              isModelInitializing={isModelInitializing}
-              onModelChange={handleModelChange}
-              variant="embedded"
-              embeddedConversationMode="drawer"
-              allowWorkspaceSwitch
-              homeBrand={<ContextBrand itemCount={items.length} />}
-              homeTitle={items.length > 0 ? 'Work with the current context' : 'AIChat assistant'}
-              homeDescription={
-                items.length > 0
-                  ? 'AIChat will include the visible context chips in this turn.'
-                  : 'Ask AIChat to help create, review, or plan work in ZGI.'
-              }
-              inputPlaceholder="Ask about this page or tell AIChat what to do..."
-              suggestions={suggestions}
-            />
-          </div>
-        </div>
+        {panel}
       </SheetContent>
     </Sheet>
   );

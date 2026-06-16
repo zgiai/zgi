@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/gorm"
 )
 
@@ -180,6 +183,13 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 	if prepared == nil || prepared.LLMRequest == nil {
 		return nil, fmt.Errorf("%w: prepared chat is required", ErrInvalidInput)
 	}
+	if result, handled, err := s.runToolGovernanceApprovedFrozenContinuation(ctx, context.WithoutCancel(ctx), prepared, event, onEvent); handled {
+		if err != nil {
+			s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
+			return nil, newFinalizedStreamError(err)
+		}
+		return result, nil
+	}
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceApprovalContinuationMessage(event))
 	answer, usage, err := s.runPreparedSkillStreamWithFinalAnswerGuard(ctx, context.WithoutCancel(ctx), prepared, nil, onEvent, toolGovernanceApprovedFinalAnswerGuard(event))
 	if err != nil {
@@ -198,6 +208,186 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 	}
 	s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func (s *service) runToolGovernanceApprovedFrozenContinuation(
+	ctx context.Context,
+	persistCtx context.Context,
+	prepared *PreparedChat,
+	event map[string]interface{},
+	onEvent func(StreamEvent) error,
+) (*ChatResult, bool, error) {
+	frozen, ok, err := toolGovernanceFrozenInvocationFromEvent(event)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	if err := validateToolGovernanceFrozenInvocation(frozen, toolGovernanceCorrelationID(event)); err != nil {
+		return nil, true, err
+	}
+	if s.skillRuntime == nil {
+		return nil, true, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
+	}
+	if prepared.parts == nil {
+		return nil, true, fmt.Errorf("%w: prepared chat parts are required", ErrInvalidInput)
+	}
+
+	custom, err := s.customSkillCatalogEntries(ctx, prepared.Scope.OrganizationID)
+	if err != nil {
+		return nil, true, err
+	}
+	resolved, err := s.skillRuntime.ResolveEnabledSkillsWithCustom(ctx, prepared.parts.SkillIDs, custom)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(resolved.Skills) == 0 {
+		return nil, true, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
+	}
+
+	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
+	args := copyStringAnyMap(frozen.Arguments)
+	if args == nil {
+		args = map[string]interface{}{}
+	}
+	callID := strings.TrimSpace(frozen.IdempotencyKey)
+	if callID == "" {
+		callID = strings.TrimSpace(frozen.ID)
+	}
+	timeline.RecordInvocationStart(frozen.SkillID, frozen.ToolName, args)
+	invocation, err := s.skillRuntime.CallSkillTool(
+		ctx,
+		resolved,
+		frozen.SkillID,
+		frozen.ToolName,
+		args,
+		s.skillExecutionContext(prepared),
+		callID,
+	)
+	if invocation == nil {
+		if err == nil {
+			err = fmt.Errorf("%w: frozen skill tool returned no invocation result", ErrInvalidInput)
+		}
+		return nil, true, err
+	}
+	if invocation.Trace.Governance != nil {
+		timeline.RecordEvent(streamEventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
+		if invocation.Trace.Governance.Status != toolgovernance.DecisionStatusAllowed {
+			return nil, true, fmt.Errorf("%w: frozen invocation was not allowed after approval", ErrInvalidInput)
+		}
+	}
+	if err != nil {
+		timeline.RecordInvocationError(invocation.Trace)
+		return nil, true, err
+	}
+	timeline.RecordInvocationEnd(invocation.Trace)
+	for _, artifact := range skillArtifactsFromToolMessages(prepared, invocation.Trace, invocation.Messages) {
+		s.persistGeneratedArtifactBestEffort(persistCtx, prepared, artifact)
+		timeline.Emit(streamEventSkillArtifactCreated, artifact)
+	}
+
+	prepared.LLMRequest = toolGovernanceExecutionResultLLMRequest(prepared.Message, event, invocation)
+	stream, err := s.openChatStream(ctx, prepared)
+	if err != nil {
+		return nil, true, err
+	}
+	answer, usage, err := s.collectStreamAnswerWithEvents(ctx, prepared, stream, onEvent, nil)
+	if err != nil {
+		return nil, true, err
+	}
+	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
+		return nil, true, err
+	}
+	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, true, nil
+}
+
+func toolGovernanceFrozenInvocationFromEvent(event map[string]interface{}) (toolgovernance.FrozenInvocation, bool, error) {
+	approvalEvent := toolGovernanceApprovalEventFromEvent(event)
+	governance := governanceMapFromAny(event["governance"])
+	candidates := []interface{}{
+		event["frozen_invocation"],
+		approvalEvent["frozen_invocation"],
+		governance["frozen_invocation"],
+	}
+	if nestedApproval := governanceMapFromAny(governance["approval_event"]); len(nestedApproval) > 0 {
+		candidates = append(candidates, nestedApproval["frozen_invocation"])
+	}
+	for _, candidate := range candidates {
+		frozen, ok, err := toolgovernance.FrozenInvocationFromAny(candidate)
+		if err != nil || ok {
+			return frozen, ok, err
+		}
+	}
+	return toolgovernance.FrozenInvocation{}, false, nil
+}
+
+func validateToolGovernanceFrozenInvocation(frozen toolgovernance.FrozenInvocation, correlationID string) error {
+	if strings.TrimSpace(frozen.SkillID) == "" || strings.TrimSpace(frozen.ToolName) == "" {
+		return fmt.Errorf("%w: frozen invocation is missing skill or tool", ErrInvalidInput)
+	}
+	if len(frozen.Arguments) == 0 && len(frozen.Assets) == 0 && len(frozen.ExpectedAssets) == 0 {
+		return fmt.Errorf("%w: frozen invocation is missing arguments and asset targets", ErrInvalidInput)
+	}
+	if strings.TrimSpace(frozen.CorrelationID) != "" &&
+		strings.TrimSpace(correlationID) != "" &&
+		strings.TrimSpace(frozen.CorrelationID) != strings.TrimSpace(correlationID) {
+		return fmt.Errorf("%w: frozen invocation correlation_id mismatch", ErrInvalidInput)
+	}
+	if !toolgovernance.FrozenInvocationHashMatches(frozen) {
+		return fmt.Errorf("%w: frozen invocation hash mismatch", ErrInvalidInput)
+	}
+	if frozen.ExpiresAt != nil && time.Now().UTC().After(frozen.ExpiresAt.UTC()) {
+		return fmt.Errorf("%w: frozen invocation expired", ErrInvalidInput)
+	}
+	return nil
+}
+
+func toolGovernanceExecutionResultLLMRequest(
+	message *runtimemodel.Message,
+	event map[string]interface{},
+	invocation *skills.ToolInvocationResult,
+) *adapter.ChatRequest {
+	provider := ""
+	if message != nil && message.ModelProvider != nil {
+		provider = strings.TrimSpace(*message.ModelProvider)
+	}
+	model := ""
+	userQuery := ""
+	if message != nil {
+		model = strings.TrimSpace(message.ModelName)
+		userQuery = strings.TrimSpace(message.Query)
+	}
+	toolResult := map[string]interface{}{}
+	if invocation != nil {
+		toolResult["trace"] = invocation.Trace
+		toolResult["messages"] = invocation.Messages
+		toolResult["tool_message"] = invocation.ToolMessage.Content
+	}
+	content := strings.Join([]string{
+		"Original user request:\n" + userQuery,
+		"The user approved the pending governed tool call, and the runtime has already executed the frozen invocation exactly once.",
+		"Approved governance event JSON:\n" + compactJSON(event),
+		"Executed tool result JSON:\n" + compactJSON(toolResult),
+	}, "\n\n")
+	chatReq := &adapter.ChatRequest{
+		Provider: provider,
+		Model:    model,
+		Stream:   true,
+		Messages: []adapter.Message{
+			{
+				Role:    "system",
+				Content: "You are continuing an AIChat turn after a governed tool call was approved and executed by runtime. Do not call tools. Answer in the user's language. State the actual outcome based only on the executed tool result, and mention any error or limitation plainly.",
+			},
+			{Role: "user", Content: content},
+		},
+	}
+	if message != nil {
+		applyModelParameters(chatReq, message.ModelParameters)
+	}
+	return chatReq
 }
 
 func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, prepared *PreparedChat, req runtimedto.ToolGovernanceDecisionRequest, event map[string]interface{}, onEvent func(StreamEvent) error) (*ChatResult, error) {

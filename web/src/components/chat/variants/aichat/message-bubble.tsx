@@ -453,11 +453,14 @@ export function AIChatMessageBubble({
         (item.type === 'skill_event' &&
           (item.invocation.status === 'error' || item.invocation.status === 'blocked')) ||
         (item.type === 'tool_governance_decision' &&
-          (String(
-            item.event.decision ?? item.event.governance?.status ?? item.event.status ?? ''
-          ).toLowerCase() === 'needs_approval' ||
-            item.event.requires_approval === true ||
-            item.event.governance?.requires_approval === true))
+          ['approved', 'rejected'].includes(
+            String(
+              item.event.approval_status ??
+                item.event.governance?.approval_status ??
+                item.event.governance?.approval_result?.approval_status ??
+                ''
+            ).toLowerCase()
+          ))
     );
   const errorDisplay = useMemo(
     () =>

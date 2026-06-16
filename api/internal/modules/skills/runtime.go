@@ -564,6 +564,26 @@ func (r *Runtime) preflightToolGovernance(
 		trace.Error = err.Error()
 		return decision, true, &ToolInvocationResult{Trace: trace}, err
 	}
+	if decision.Status == toolgovernance.DecisionStatusNeedsApproval && decision.RequiresApproval {
+		frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+			CorrelationID:  decision.CorrelationID,
+			Manifest:       decision.Manifest,
+			SkillID:        doc.Metadata.ID,
+			ToolName:       toolDef.Name,
+			ProviderType:   string(toolDef.ProviderType),
+			ProviderID:     toolDef.ProviderID,
+			Arguments:      copyStringAnyMap(arguments),
+			Assets:         decision.Assets,
+			ExpectedAssets: decision.ExpectedAssets,
+			Now:            start,
+		})
+		decision.FrozenInvocation = &frozen
+		if decision.ApprovalEvent != nil {
+			decision.ApprovalEvent.FrozenInvocation = &frozen
+		}
+		trace.Governance = &decision
+		trace.Result = governanceTraceResult(decision)
+	}
 	if decision.Status == toolgovernance.DecisionStatusAllowed {
 		return decision, true, nil, nil
 	}
