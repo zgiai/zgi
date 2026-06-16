@@ -38,8 +38,9 @@ func (f *fakeImageInvoker) Invoke(ctx context.Context, accountID, appID, appType
 }
 
 type fakeFileSaver struct {
-	remoteURLs []string
-	binaryData [][]byte
+	remoteURLs      []string
+	binaryData      [][]byte
+	binaryMimeTypes []string
 }
 
 func (f *fakeFileSaver) SaveRemoteURL(url string, fileType file.FileType) (*file.File, error) {
@@ -66,6 +67,7 @@ func (f *fakeFileSaver) SaveBinaryString(data []byte, mimeType string, fileType 
 	buf := make([]byte, len(data))
 	copy(buf, data)
 	f.binaryData = append(f.binaryData, buf)
+	f.binaryMimeTypes = append(f.binaryMimeTypes, mimeType)
 	signedURL := "https://internal.example/b64.png"
 	filename := "b64.png"
 	extension := ".png"
@@ -84,6 +86,45 @@ func (f *fakeFileSaver) SaveBinaryString(data []byte, mimeType string, fileType 
 }
 
 var _ llmnode.FileSaver = (*fakeFileSaver)(nil)
+
+func TestNodeSaveImage_PersistsDataURLAsBinary(t *testing.T) {
+	payload := []byte("png-binary")
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(payload)
+	fileSaver := &fakeFileSaver{}
+	node := &Node{fileSaver: fileSaver}
+
+	_, err := node.saveImage(llmadapter.ImageItem{URL: dataURL})
+	if err != nil {
+		t.Fatalf("saveImage returned error: %v", err)
+	}
+
+	if len(fileSaver.remoteURLs) != 0 {
+		t.Fatalf("remoteURLs = %#v, want none for data URL", fileSaver.remoteURLs)
+	}
+	if len(fileSaver.binaryData) != 1 || string(fileSaver.binaryData[0]) != string(payload) {
+		t.Fatalf("binaryData = %#v, want decoded data URL payload", fileSaver.binaryData)
+	}
+	if len(fileSaver.binaryMimeTypes) != 1 || fileSaver.binaryMimeTypes[0] != "image/png" {
+		t.Fatalf("binaryMimeTypes = %#v, want image/png", fileSaver.binaryMimeTypes)
+	}
+}
+
+func TestNodeSaveImage_InvalidDataURLFailsWithoutRemoteFetch(t *testing.T) {
+	fileSaver := &fakeFileSaver{}
+	node := &Node{fileSaver: fileSaver}
+
+	_, err := node.saveImage(llmadapter.ImageItem{URL: "data:image/png;base64,not-valid"})
+	if err == nil {
+		t.Fatalf("saveImage error = nil, want invalid data URL error")
+	}
+
+	if len(fileSaver.remoteURLs) != 0 {
+		t.Fatalf("remoteURLs = %#v, want none for invalid data URL", fileSaver.remoteURLs)
+	}
+	if len(fileSaver.binaryData) != 0 {
+		t.Fatalf("binaryData = %#v, want none for invalid data URL", fileSaver.binaryData)
+	}
+}
 
 func TestParseNodeDataFromConfig_AppliesDefaults(t *testing.T) {
 	config := map[string]any{
