@@ -617,12 +617,6 @@ function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef, t: WebappTrans
     size,
     mimeType,
     workspaceID ? `${t('consoleChat.governance.fields.workspace')} ${workspaceID}` : null,
-    governanceStringValue(asset.id)
-      ? `${t('consoleChat.governance.fields.assetId')} ${asset.id}`
-      : null,
-    governanceStringValue(asset.source)
-      ? `${t('consoleChat.governance.fields.assetSource')} ${asset.source}`
-      : null,
   ]);
   return parts.join(' · ');
 }
@@ -865,10 +859,6 @@ function governanceSummaryRows(
 
 function governanceFieldRows(item: GovernanceTimelineItem) {
   const approvalEvent = governanceApprovalEvent(item);
-  const matchedGrant = governanceMatchedGrant(item);
-  const modelFeedback = governanceModelFeedback(item);
-  const approvalResult = governanceApprovalResult(item);
-  const sessionGrant = governanceSessionGrant(item);
   return [
     ['decision', item.event.decision ?? item.event.governance?.status ?? item.event.status],
     [
@@ -893,11 +883,6 @@ function governanceFieldRows(item: GovernanceTimelineItem) {
         item.event.governance?.correlation_id ??
         approvalEvent?.correlation_id,
     ],
-    ['matchedGrant', matchedGrant],
-    ['modelFeedback', modelFeedback],
-    ['approvalResult', approvalResult],
-    ['sessionGrant', sessionGrant],
-    ['approvalEvent', approvalEvent],
   ] as const satisfies ReadonlyArray<readonly [GovernanceFieldLabel, unknown]>;
 }
 
