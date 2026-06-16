@@ -13,7 +13,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/gorm"
 )
 
@@ -282,20 +281,16 @@ func toolGovernanceApprovedAssetInstructions(event map[string]interface{}) []str
 	if len(assetSummaries) > 0 {
 		lines = append(lines, "Approved assets: "+strings.Join(assetSummaries, "; "))
 	}
-	toolID := strings.TrimSpace(firstNonEmptyString(
-		stringFromAny(approvalEvent["tool_id"]),
-		stringFromAny(event["tool_id"]),
-	))
-	skillID := strings.TrimSpace(firstNonEmptyString(
-		stringFromAny(approvalEvent["skill_id"]),
-		stringFromAny(event["skill_id"]),
-	))
-	toolName := strings.TrimSpace(stringFromAny(event["tool_name"]))
-	if toolID == "file.delete" && skillID == "file-reader" && len(assets) == 1 {
-		if toolName == "" {
-			toolName = "delete_file"
+	skillID, toolName, toolID := toolGovernanceApprovedToolRef(event, approvalEvent)
+	if skillID != "" && toolName != "" {
+		targetIDInstruction := "approved asset ids as the target identifiers required by the tool"
+		if len(assets) == 1 {
+			targetIDInstruction = "the approved asset id as the target identifier required by the tool"
 		}
-		lines = append(lines, "For this approved single-file deletion, call file-reader/"+toolName+" with file_id equal to the approved file asset id before answering.")
+		if toolID == "file.delete" && skillID == "file-reader" && len(assets) == 1 {
+			targetIDInstruction = "file_id equal to the approved file asset id"
+		}
+		lines = append(lines, "For this approved governed operation, call "+skillID+"/"+toolName+" with "+targetIDInstruction+" before answering.")
 	}
 	return lines
 }
@@ -305,19 +300,8 @@ func toolGovernanceApprovedFinalAnswerGuard(event map[string]interface{}) skilll
 	if len(approvalEvent) == 0 {
 		return nil
 	}
-	toolID := strings.TrimSpace(firstNonEmptyString(
-		approvalEvent["tool_id"],
-		event["tool_id"],
-	))
-	skillID := strings.TrimSpace(firstNonEmptyString(
-		approvalEvent["skill_id"],
-		event["skill_id"],
-	))
-	toolName := strings.TrimSpace(stringFromAny(event["tool_name"]))
-	if toolName == "" && toolID == "file.delete" {
-		toolName = "delete_file"
-	}
-	if toolID != "file.delete" || skillID != skills.SkillFileReader || toolName != "delete_file" {
+	skillID, toolName, _ := toolGovernanceApprovedToolRef(event, approvalEvent)
+	if skillID == "" || toolName == "" {
 		return nil
 	}
 	targetSummary := approvedGovernanceAssetSummary(approvalEvent, event)
@@ -330,13 +314,41 @@ func toolGovernanceApprovedFinalAnswerGuard(event map[string]interface{}) skilll
 			SkillID:  skillID,
 			ToolName: toolName,
 			Message: strings.Join([]string{
-				"The user approved the pending file deletion, but approval is not the deletion itself.",
-				"Before producing a final answer, retry the approved call with call_skill_tool using skill_id \"file-reader\" and tool_name \"delete_file\".",
-				"Use the approved asset id for " + targetSummary + ".",
-				"Only after delete_file is attempted in this continuation may you report the actual outcome.",
+				"The user approved the pending governed tool call, but approval is not the operation itself.",
+				"Before producing a final answer, retry the approved call with call_skill_tool using skill_id \"" + skillID + "\" and tool_name \"" + toolName + "\".",
+				"Use the approved asset id for " + targetSummary + " when the tool needs a target.",
+				"Only after " + toolName + " is attempted in this continuation may you report the actual outcome.",
 			}, " "),
 		}, true
 	}
+}
+
+func toolGovernanceApprovedToolRef(event map[string]interface{}, approvalEvent map[string]interface{}) (string, string, string) {
+	if len(approvalEvent) == 0 {
+		approvalEvent = toolGovernanceApprovalEventFromEvent(event)
+	}
+	governance := governanceMapFromAny(event["governance"])
+	toolID := strings.TrimSpace(firstNonEmptyString(
+		approvalEvent["tool_id"],
+		event["tool_id"],
+		governance["tool_id"],
+	))
+	skillID := strings.TrimSpace(firstNonEmptyString(
+		approvalEvent["skill_id"],
+		event["skill_id"],
+		governance["skill_id"],
+	))
+	toolName := strings.TrimSpace(firstNonEmptyString(
+		event["tool_name"],
+		approvalEvent["tool_name"],
+		governance["tool_name"],
+	))
+	// Compatibility for older file deletion approval events that carried only
+	// file.delete as the governed tool id.
+	if toolName == "" && toolID == "file.delete" && skillID == "file-reader" {
+		toolName = "delete_file"
+	}
+	return skillID, toolName, toolID
 }
 
 func toolGovernanceApprovalEventFromEvent(event map[string]interface{}) map[string]interface{} {
@@ -358,7 +370,7 @@ func approvedGovernanceAssetSummary(approvalEvent map[string]interface{}, event 
 		}
 	}
 	if len(assets) == 0 {
-		return "the approved file"
+		return "the approved asset"
 	}
 	asset := assets[0]
 	name := strings.TrimSpace(firstNonEmptyString(asset["name"], asset["title"], asset["file_name"]))
@@ -371,7 +383,7 @@ func approvedGovernanceAssetSummary(approvalEvent map[string]interface{}, event 
 	case id != "":
 		return id
 	default:
-		return "the approved file"
+		return "the approved asset"
 	}
 }
 

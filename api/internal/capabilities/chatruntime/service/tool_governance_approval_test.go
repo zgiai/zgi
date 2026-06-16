@@ -851,7 +851,7 @@ func TestToolGovernanceApprovedFinalAnswerGuardBlocksUntilDeleteToolAttempted(t 
 		t.Fatal("guard did not block final answer before delete_file was attempted")
 	}
 	for _, want := range []string{
-		"approval is not the deletion itself",
+		"approval is not the operation itself",
 		"delete_file",
 		"smoke.txt (file-1)",
 	} {
@@ -871,18 +871,53 @@ func TestToolGovernanceApprovedFinalAnswerGuardBlocksUntilDeleteToolAttempted(t 
 	}
 }
 
-func TestToolGovernanceApprovedFinalAnswerGuardIgnoresNonFileDeleteApproval(t *testing.T) {
+func TestToolGovernanceApprovedFinalAnswerGuardBlocksGenericApprovedTool(t *testing.T) {
 	guard := toolGovernanceApprovedFinalAnswerGuard(map[string]interface{}{
-		"tool_name": "read_file",
+		"tool_name": "publish_agent",
 		"governance": map[string]interface{}{
 			"approval_event": map[string]interface{}{
-				"tool_id":  "file.read",
-				"skill_id": "file-reader",
+				"tool_id":    "agent.publish",
+				"skill_id":   "agent-manager",
+				"effect":     "publish",
+				"asset_type": "agent",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":   "agent-1",
+						"type": "agent",
+						"name": "Support Agent",
+					},
+				},
 			},
 		},
 	})
-	if guard != nil {
-		t.Fatal("toolGovernanceApprovedFinalAnswerGuard() returned guard for non-delete approval")
+	if guard == nil {
+		t.Fatal("toolGovernanceApprovedFinalAnswerGuard() = nil, want generic approved tool guard")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The agent has been published.",
+	})
+	if !blocked {
+		t.Fatal("guard did not block final answer before approved tool was attempted")
+	}
+	for _, want := range []string{
+		"approval is not the operation itself",
+		"agent-manager",
+		"publish_agent",
+		"Support Agent (agent-1)",
+	} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("guard message missing %q in %q", want, result.Message)
+		}
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The publish_agent tool failed.",
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: "agent-manager", ToolName: "publish_agent"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after approved tool was attempted")
 	}
 }
 

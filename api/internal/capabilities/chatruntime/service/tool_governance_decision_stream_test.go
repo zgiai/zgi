@@ -348,7 +348,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 		t.Fatalf("AppChat requests = %d, want direct answer, guard replan, tool call, final answer", len(llm.appChatRequests))
 	}
 	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "Runtime guardrail feedback") ||
-		!toolGovernanceStreamRequestContains(llm.appChatRequests[1], "approval is not the deletion itself") {
+		!toolGovernanceStreamRequestContains(llm.appChatRequests[1], "approval is not the operation itself") {
 		t.Fatalf("second planning request missing approval guard feedback")
 	}
 	if !toolGovernanceStreamRequestHasTool(llm.appChatRequests[2], skills.MetaToolCallSkillTool) {
