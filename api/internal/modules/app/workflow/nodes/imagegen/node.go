@@ -25,6 +25,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const dataURIPrefix = "data:"
+
 var hashPlaceholderPattern = regexp.MustCompile(`\{\{(#[a-zA-Z0-9_]{1,50}(?:\.[a-zA-Z_][a-zA-Z0-9_]{0,29}){1,10}#)\}\}`)
 
 var supportedAspectRatios = map[string]string{
@@ -735,7 +737,8 @@ func (n *Node) saveImage(item llmadapter.ImageItem) (*file.File, error) {
 }
 
 func isDataURI(raw string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(raw)), "data:")
+	raw = strings.TrimSpace(raw)
+	return len(raw) >= len(dataURIPrefix) && strings.EqualFold(raw[:len(dataURIPrefix)], dataURIPrefix)
 }
 
 func decodeImageDataURI(raw string) ([]byte, string, error) {
@@ -765,6 +768,9 @@ func decodeImageDataURI(raw string) ([]byte, string, error) {
 	data, err := decodeBase64Image(strings.TrimSpace(encoded))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to decode image data URI: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, "", fmt.Errorf("image data URI payload is empty")
 	}
 
 	return data, mimeType, nil

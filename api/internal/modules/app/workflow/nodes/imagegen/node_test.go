@@ -126,6 +126,23 @@ func TestNodeSaveImage_InvalidDataURLFailsWithoutRemoteFetch(t *testing.T) {
 	}
 }
 
+func TestNodeSaveImage_EmptyDataURLPayloadFailsWithoutSaving(t *testing.T) {
+	fileSaver := &fakeFileSaver{}
+	node := &Node{fileSaver: fileSaver}
+
+	_, err := node.saveImage(llmadapter.ImageItem{URL: "data:image/png;base64,"})
+	if err == nil {
+		t.Fatalf("saveImage error = nil, want empty data URL payload error")
+	}
+
+	if len(fileSaver.remoteURLs) != 0 {
+		t.Fatalf("remoteURLs = %#v, want none for empty data URL payload", fileSaver.remoteURLs)
+	}
+	if len(fileSaver.binaryData) != 0 {
+		t.Fatalf("binaryData = %#v, want none for empty data URL payload", fileSaver.binaryData)
+	}
+}
+
 func TestParseNodeDataFromConfig_AppliesDefaults(t *testing.T) {
 	config := map[string]any{
 		"id": "image-node-1",
