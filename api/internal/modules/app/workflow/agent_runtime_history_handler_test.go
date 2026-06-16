@@ -1044,6 +1044,14 @@ func (s *fakeRuntimeHistoryService) ListConversationsByCaller(ctx context.Contex
 	return nil, 0, fmt.Errorf("not implemented")
 }
 
+func (s *fakeRuntimeHistoryService) Search(ctx context.Context, scope runtimeservice.Scope, query string, limit int) ([]*runtimeservice.SearchResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) SearchByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, query string, limit int) ([]*runtimeservice.SearchResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (s *fakeRuntimeHistoryService) GetConversation(ctx context.Context, scope runtimeservice.Scope, id uuid.UUID) (*runtimemodel.Conversation, error) {
 	return nil, fmt.Errorf("not implemented")
 }

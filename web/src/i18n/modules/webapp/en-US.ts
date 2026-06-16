@@ -6,6 +6,7 @@ const messages = {
     deleteDescription: 'Are you sure you want to delete {conversationTitle}?',
     renameConversation: 'Rename conversation',
     conversations: 'Conversations',
+    recentConversations: 'Recent conversations',
     openConversations: 'Open conversations',
     alreadyInDraft: 'You are already in a new conversation',
     noHistory: 'No history yet',

@@ -349,6 +349,17 @@ export interface AIChatMessage {
   updated_at: number;
 }
 
+export type AIChatSearchResultType = 'conversation' | 'message';
+
+export interface AIChatSearchResult {
+  type: AIChatSearchResultType;
+  conversation_id: string;
+  conversation_title: string;
+  message_id?: string;
+  snippet: string;
+  updated_at: number;
+}
+
 export interface AIChatPageData<T> {
   data: T[];
   page: number;
@@ -359,6 +370,7 @@ export interface AIChatPageData<T> {
 
 export type AIChatConversationListResponse = ApiResponseData<AIChatPageData<AIChatConversation>>;
 export type AIChatMessageListResponse = ApiResponseData<AIChatPageData<AIChatMessage>>;
+export type AIChatSearchResponse = ApiResponseData<AIChatSearchResult[]>;
 
 export interface AIChatCreateConversationRequest {
   title: string;

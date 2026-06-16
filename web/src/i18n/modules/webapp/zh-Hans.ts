@@ -8,6 +8,7 @@ const messages: WebappMessages = {
     deleteDescription: '确定要删除 {conversationTitle} 吗?',
     renameConversation: '重命名会话',
     conversations: '会话管理',
+    recentConversations: '近期会话',
     openConversations: '打开会话列表',
     alreadyInDraft: '您已经处于新会话中',
     noHistory: '暂无历史记录',
