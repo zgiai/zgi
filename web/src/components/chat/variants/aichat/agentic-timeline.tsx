@@ -79,7 +79,7 @@ const GOVERNANCE_FIELD_LABEL_KEYS = {
 } as const;
 
 const assistantMarkdownClassName =
-  'prose prose-sm min-w-0 max-w-full dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9';
+  'prose prose-sm min-w-0 max-w-full overflow-hidden dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9';
 
 const TRANSIENT_PROGRESS_TEXT_KEYS = [
   'consoleChat.skills.agentic.thinking',
@@ -1559,7 +1559,7 @@ export function AIChatAgenticTimeline({
         </span>
       </div>
       <CollapsibleContent>
-        <div className="space-y-2">
+        <div className="min-w-0 space-y-2">
           {events.map(item =>
             isProgressTextItem(item) ? (
               isTransientProgressItem(item) ? (
@@ -1578,7 +1578,7 @@ export function AIChatAgenticTimeline({
                   )}
                 >
                   <MarkdownViewer
-                    className="md-viewer break-words"
+                    className="md-viewer min-w-0 max-w-full overflow-hidden break-words"
                     content={buildProgressText(item, skillDisplayById, locale, t)}
                     renderIdentity={item.id}
                   />
@@ -1596,7 +1596,7 @@ export function AIChatAgenticTimeline({
                 ) : null}
                 <div className={assistantMarkdownClassName}>
                   <MarkdownViewer
-                    className="md-viewer break-words"
+                    className="md-viewer min-w-0 max-w-full overflow-hidden break-words"
                     content={item.content}
                     isStreaming={item.status === 'streaming'}
                     renderIdentity={item.answer_id || item.id}

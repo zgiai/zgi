@@ -19,7 +19,6 @@ import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useDatasets } from '@/hooks/dataset/use-datasets';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-import { useMediaQuery } from '@/hooks/use-media-query';
 import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
@@ -294,7 +293,6 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
   const [publishedVersionsOpen, setPublishedVersionsOpen] = useState(false);
   const [previewSheetOpen, setPreviewSheetOpen] = useState(false);
-  const isTwoXlViewport = useMediaQuery('(min-width: 1536px)');
   const [publishedVersions, setPublishedVersions] = useState<AgentPublishedVersionListItem[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   const [isRollingBackVersion, setIsRollingBackVersion] = useState(false);
@@ -504,12 +502,6 @@ export function useAgentRuntimePageModel(agentId: string) {
   useEffect(() => {
     initChatController(null);
   }, [initChatController]);
-
-  useEffect(() => {
-    if (isTwoXlViewport && previewSheetOpen) {
-      setPreviewSheetOpen(false);
-    }
-  }, [isTwoXlViewport, previewSheetOpen]);
 
   const applyRuntimePayload = useCallback((payload: UpdateAgentRuntimeConfigRequest) => {
     setSystemPrompt(payload.system_prompt);
@@ -1037,7 +1029,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     aiChatContext,
     isLoading: isAgentLoading || isConfigLoading || isPermissionsLoading,
     leaveGuardNode,
-    isTwoXlViewport,
     previewSheetOpen,
     setPreviewSheetOpen: handlePreviewSheetOpenChange,
     header: {

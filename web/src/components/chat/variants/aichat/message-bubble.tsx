@@ -604,7 +604,7 @@ export function AIChatMessageBubble({
         </div>
       </div>
 
-      <div className="flex justify-start gap-3">
+      <div className="flex min-w-0 justify-start gap-3">
         <div
           className={cn(
             'mt-1 flex size-7 shrink-0 items-center justify-center rounded-full',
@@ -617,7 +617,7 @@ export function AIChatMessageBubble({
             <Bot className="size-4" />
           )}
         </div>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 max-w-full flex-1 overflow-hidden">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {showAssistantModelMeta && message.model_name ? (
               <span>{message.model_name}</span>
@@ -665,9 +665,9 @@ export function AIChatMessageBubble({
           ) : null}
 
           {answer ? (
-            <div className="prose prose-sm min-w-0 max-w-full dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
+            <div className="prose prose-sm min-w-0 max-w-full overflow-hidden dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
               <MarkdownViewer
-                className="md-viewer min-w-0 max-w-full break-words"
+                className="md-viewer min-w-0 max-w-full overflow-hidden break-words"
                 content={displayAnswer}
                 isStreaming={isStreaming}
                 renderIdentity={message.id}

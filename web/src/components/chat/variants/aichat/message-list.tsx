@@ -128,7 +128,7 @@ export function AIChatMessageList({
             ))}
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className="min-w-0 space-y-8">
             {isLoadingOlderMessages ? (
               <div className="flex h-8 items-center justify-center text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
