@@ -12,17 +12,30 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Sparkles, X } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import Chat, { useAIChatController, type AIChatModelValue } from '@/components/chat';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
+import {
+  AGENT_KEYS,
+  AUTOMATION_KEYS,
+  DATASET_KEYS,
+  DB_KEYS,
+  FILE_KEYS,
+  PROMPT_KEYS,
+  WORKFLOW_KEYS,
+  WORKSPACE_KEYS,
+} from '@/hooks/query-keys';
 import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
-import { FILES_QUERY_KEY, STORAGE_USAGE_KEY } from '@/hooks/use-files';
+import { FILES_QUERY_KEY, FILE_FOLDERS_KEY, STORAGE_USAGE_KEY } from '@/hooks/use-files';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import { cn } from '@/lib/utils';
-import { createContextualAIChatTransport } from './context-envelope';
+import {
+  createContextualAIChatTransport,
+  type ContextualAIChatAssetOperation,
+} from './context-envelope';
 import { AIChatContextChips } from './context-chips';
 import { useContextualAIChat } from './contextual-ai-chat-context';
 
@@ -33,12 +46,7 @@ const DEFAULT_DESKTOP_PANEL_WIDTH_RATIO = 0.3;
 const MIN_DESKTOP_PANEL_WIDTH = 640;
 const MAX_DESKTOP_PANEL_WIDTH_RATIO = 0.72;
 const MIN_DESKTOP_CONTENT_WIDTH = 360;
-
-function getIsDesktopPanelViewport() {
-  return (
-    typeof window !== 'undefined' && window.matchMedia(DESKTOP_PANEL_MEDIA_QUERY).matches
-  );
-}
+const ASSET_OPERATION_REFRESH_DEDUPE_MS = 1800;
 
 function useIsDesktopPanelViewport() {
   const [isDesktopPanelViewport, setIsDesktopPanelViewport] = useState<boolean | null>(null);
@@ -90,6 +98,23 @@ function storeDesktopPanelWidth(width: number) {
     DESKTOP_PANEL_WIDTH_STORAGE_KEY,
     String(clampDesktopPanelWidth(width))
   );
+}
+
+function getAssetOperationRefreshKey(operation: ContextualAIChatAssetOperation) {
+  return [
+    operation.assetType,
+    operation.effect,
+    operation.toolId ?? operation.toolName,
+    operation.assetId ?? operation.assetName ?? 'unknown',
+  ].join('|');
+}
+
+function pruneAssetOperationRefreshDedupe(cache: Map<string, number>, now: number) {
+  for (const [key, timestamp] of cache.entries()) {
+    if (now - timestamp > ASSET_OPERATION_REFRESH_DEDUPE_MS * 4) {
+      cache.delete(key);
+    }
+  }
 }
 
 function buildSuggestions(contextItems: ReturnType<typeof useContextualAIChat>['items']) {
@@ -195,22 +220,77 @@ export function ContextualAIChatDock() {
   const isDesktopPanelViewport = useIsDesktopPanelViewport();
   const [desktopPanelWidth, setDesktopPanelWidth] = useState<number | null>(null);
   const itemsRef = useRef(items);
+  const assetOperationRefreshRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
 
-  const handleAssetToolSuccess = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: [FILES_QUERY_KEY] });
-    void queryClient.invalidateQueries({ queryKey: [STORAGE_USAGE_KEY] });
-  }, [queryClient]);
+  const invalidateQueries = useCallback(
+    (queryKey: QueryKey) => {
+      void queryClient.invalidateQueries({ queryKey });
+    },
+    [queryClient]
+  );
+
+  const handleAssetOperationSuccess = useCallback(
+    (operation: ContextualAIChatAssetOperation) => {
+      const now = Date.now();
+      const dedupeKey = getAssetOperationRefreshKey(operation);
+      const lastRefreshAt = assetOperationRefreshRef.current.get(dedupeKey);
+      if (lastRefreshAt && now - lastRefreshAt < ASSET_OPERATION_REFRESH_DEDUPE_MS) {
+        return;
+      }
+      pruneAssetOperationRefreshDedupe(assetOperationRefreshRef.current, now);
+      assetOperationRefreshRef.current.set(dedupeKey, now);
+
+      switch (operation.assetType) {
+        case 'file':
+          invalidateQueries([FILES_QUERY_KEY]);
+          invalidateQueries([FILE_FOLDERS_KEY]);
+          invalidateQueries([STORAGE_USAGE_KEY]);
+          invalidateQueries(FILE_KEYS.all);
+          break;
+        case 'agent':
+          invalidateQueries(AGENT_KEYS.all);
+          break;
+        case 'workflow':
+        case 'workflow_run':
+          invalidateQueries(WORKFLOW_KEYS.all);
+          invalidateQueries(WORKFLOW_KEYS.runDetails());
+          break;
+        case 'automation':
+          invalidateQueries(AUTOMATION_KEYS.all);
+          break;
+        case 'knowledge':
+        case 'dataset':
+        case 'document':
+          invalidateQueries(DATASET_KEYS.all);
+          break;
+        case 'database':
+        case 'db':
+        case 'database_table':
+          invalidateQueries(DB_KEYS.all);
+          break;
+        case 'prompt':
+          invalidateQueries(PROMPT_KEYS.all);
+          break;
+        case 'workspace':
+          invalidateQueries(WORKSPACE_KEYS.all);
+          break;
+        default:
+          break;
+      }
+    },
+    [invalidateQueries]
+  );
 
   const transport = useMemo(
     () =>
       createContextualAIChatTransport(() => itemsRef.current, {
-        onAssetToolSuccess: handleAssetToolSuccess,
+        onAssetOperationSuccess: handleAssetOperationSuccess,
       }),
-    [handleAssetToolSuccess]
+    [handleAssetOperationSuccess]
   );
   const controller = useAIChatController({ transport });
   const { init: initController } = controller;

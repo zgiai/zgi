@@ -4,9 +4,12 @@ import type {
 } from '@/components/chat/transports/aichat-transport';
 import { aichatTransport } from '@/components/chat/transports/aichat-transport';
 import type {
+  AIChatAssetOperationAudit,
   AIChatChatRequest,
   AIChatRegenerateMessageRequest,
+  AIChatSkillArtifactCreatedEventData,
   AIChatSkillCallEndEventData,
+  AIChatToolGovernanceAssetRef,
   AIChatToolGovernanceDecisionRequest,
 } from '@/services/types/aichat';
 import type {
@@ -37,6 +40,31 @@ const MAX_OPERATION_ID_LENGTH = 120;
 
 export interface ContextualAIChatTransportOptions {
   onAssetToolSuccess?: (payload: AIChatSkillCallEndEventData) => void;
+  onAssetOperationSuccess?: (operation: ContextualAIChatAssetOperation) => void;
+}
+
+export type ContextualAIChatAssetOperationEffect =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'publish'
+  | 'invoke'
+  | 'schedule'
+  | 'external_send'
+  | 'unknown';
+
+export type ContextualAIChatAssetOperationSource = 'skill_call' | 'skill_artifact';
+
+export interface ContextualAIChatAssetOperation {
+  assetType: string;
+  effect: ContextualAIChatAssetOperationEffect;
+  source: ContextualAIChatAssetOperationSource;
+  skillId: string;
+  toolName: string;
+  toolId?: string;
+  assetId?: string;
+  assetName?: string;
+  payload: AIChatSkillCallEndEventData | AIChatSkillArtifactCreatedEventData;
 }
 
 const RISK_RANK: Record<AIChatCapabilityRisk, number> = {
@@ -360,12 +388,6 @@ function mergeAIChatOperationContext(
   };
 }
 
-function contextItemsIncludeCapability(items: AIChatContextItem[], capabilityID: string): boolean {
-  return items.some(item =>
-    (item.capabilities ?? []).some(capability => capability.id === capabilityID)
-  );
-}
-
 function isConsoleFilesContextItem(item: AIChatContextItem): boolean {
   return (
     item.href === '/console/files' ||
@@ -379,24 +401,351 @@ function isSuccessfulSkillCall(payload: AIChatSkillCallEndEventData): boolean {
   return !payload.status || payload.status === 'success';
 }
 
-function isFileDeleteSkillCall(payload: AIChatSkillCallEndEventData): boolean {
-  return (
-    payload.tool_name === 'delete_file' ||
-    payload.governance?.manifest?.tool_id === 'file.delete' ||
-    payload.governance?.asset_operation_audit?.tool_id === 'file.delete'
+function textValue(value: unknown): string | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+  const text = `${value}`.trim();
+  return text || undefined;
+}
+
+function firstText(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const text = textValue(value);
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+function normalizeToken(value: unknown): string | undefined {
+  const text = textValue(value)?.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  return text?.replace(/^_+|_+$/g, '') || undefined;
+}
+
+function normalizeAssetType(value: unknown): string | undefined {
+  const token = normalizeToken(value);
+  if (!token) return undefined;
+
+  if (
+    [
+      'file',
+      'files',
+      'upload_file',
+      'managed_file',
+      'workspace_file',
+      'local_file',
+    ].includes(token)
+  ) {
+    return 'file';
+  }
+  if (['agent', 'agents', 'app', 'webapp', 'web_app'].includes(token)) return 'agent';
+  if (['workflow', 'workflows', 'workflow_run', 'workflow_runs'].includes(token)) {
+    return token.includes('run') ? 'workflow_run' : 'workflow';
+  }
+  if (['automation', 'automations', 'scheduled_task', 'task', 'tasks'].includes(token)) {
+    return 'automation';
+  }
+  if (['knowledge', 'knowledge_base', 'dataset', 'datasets', 'document'].includes(token)) {
+    return 'knowledge';
+  }
+  if (['database', 'databases', 'db', 'dbs', 'table', 'database_table'].includes(token)) {
+    return 'database';
+  }
+  if (['prompt', 'prompts'].includes(token)) return 'prompt';
+  if (['workspace', 'workspaces'].includes(token)) return 'workspace';
+
+  return token;
+}
+
+function inferEffectFromText(value: unknown): ContextualAIChatAssetOperationEffect {
+  const token = normalizeToken(value);
+  if (!token) return 'unknown';
+  if (token.includes('delete') || token.includes('remove')) return 'delete';
+  if (token.includes('publish')) return 'publish';
+  if (token.includes('schedule')) return 'schedule';
+  if (
+    token.includes('invoke') ||
+    token.includes('execute') ||
+    token.includes('run') ||
+    token.includes('call')
+  ) {
+    return 'invoke';
+  }
+  if (
+    token.includes('update') ||
+    token.includes('edit') ||
+    token.includes('rename') ||
+    token.includes('move')
+  ) {
+    return 'update';
+  }
+  if (
+    token.includes('create') ||
+    token.includes('add') ||
+    token.includes('upload') ||
+    token.includes('generate') ||
+    token.includes('save')
+  ) {
+    return 'create';
+  }
+  return 'unknown';
+}
+
+function normalizeEffect(value: unknown): ContextualAIChatAssetOperationEffect {
+  const token = normalizeToken(value);
+  if (!token || token === 'none' || token === 'read' || token === 'list' || token === 'search') {
+    return 'unknown';
+  }
+  if (
+    token === 'create' ||
+    token === 'update' ||
+    token === 'delete' ||
+    token === 'publish' ||
+    token === 'invoke' ||
+    token === 'schedule' ||
+    token === 'external_send'
+  ) {
+    return token;
+  }
+  return inferEffectFromText(token);
+}
+
+function inferAssetTypeFromToolID(toolID: string | undefined): string | undefined {
+  const token = normalizeToken(toolID);
+  if (!token) return undefined;
+  if (token.startsWith('file_')) return 'file';
+  if (token.startsWith('agent_')) return 'agent';
+  if (token.startsWith('workflow_')) return 'workflow';
+  if (token.startsWith('automation_') || token.startsWith('task_')) return 'automation';
+  if (token.startsWith('knowledge_') || token.startsWith('dataset_')) return 'knowledge';
+  if (token.startsWith('database_') || token.startsWith('db_') || token.startsWith('table_')) {
+    return 'database';
+  }
+  if (token.startsWith('prompt_')) return 'prompt';
+  if (token.startsWith('workspace_')) return 'workspace';
+  return undefined;
+}
+
+function firstAssetReferenceValue(
+  assets: AIChatToolGovernanceAssetRef[],
+  keys: Array<keyof AIChatToolGovernanceAssetRef>
+): string | undefined {
+  for (const asset of assets) {
+    for (const key of keys) {
+      const value = textValue(asset[key]);
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
+
+function auditFromRecord(record: Record<string, unknown> | undefined) {
+  return record as AIChatAssetOperationAudit | undefined;
+}
+
+function skillCallAuditRecords(payload: AIChatSkillCallEndEventData): AIChatAssetOperationAudit[] {
+  const feedback = recordValue(payload.governance?.model_feedback);
+  const feedbackAudit = auditFromRecord(recordValue(feedback?.asset_operation_audit));
+  return [
+    payload.asset_operation_audit,
+    payload.governance?.asset_operation_audit,
+    feedbackAudit,
+  ].filter((audit): audit is AIChatAssetOperationAudit => Boolean(audit));
+}
+
+function artifactAuditRecords(
+  payload: AIChatSkillArtifactCreatedEventData
+): AIChatAssetOperationAudit[] {
+  return [payload.asset_operation_audit, payload.file?.asset_operation_audit].filter(
+    (audit): audit is AIChatAssetOperationAudit => Boolean(audit)
   );
 }
 
-function shouldNotifyFileDeleteSuccess(
+function skillCallAssetReferences(
+  payload: AIChatSkillCallEndEventData
+): AIChatToolGovernanceAssetRef[] {
+  return [
+    ...(payload.governance?.assets ?? []),
+    ...(payload.governance?.approval_event?.assets ?? []),
+    ...skillCallAuditRecords(payload).flatMap(audit => audit.assets ?? []),
+  ];
+}
+
+function artifactAssetReferences(
+  payload: AIChatSkillArtifactCreatedEventData
+): AIChatToolGovernanceAssetRef[] {
+  return artifactAuditRecords(payload).flatMap(audit => audit.assets ?? []);
+}
+
+function hasManagedFileSignal(record: Record<string, unknown> | undefined): boolean {
+  if (!record) return false;
+  const target = normalizeToken(record.target);
+  const transferMethod = normalizeToken(record.transfer_method);
+  const downloadURL = textValue(record.download_url);
+  const url = textValue(record.url);
+  return (
+    target === 'managed_file' ||
+    target === 'file_management' ||
+    target === 'workspace_file' ||
+    transferMethod === 'local_file' ||
+    Boolean(textValue(record.upload_file_id)) ||
+    downloadURL?.includes('/console/api/files/') === true ||
+    url?.includes('/console/api/files/') === true
+  );
+}
+
+function skillCallHasManagedFileResult(payload: AIChatSkillCallEndEventData): boolean {
+  const result = recordValue(payload.result);
+  return hasManagedFileSignal(result) || hasManagedFileSignal(recordValue(result?.file));
+}
+
+function artifactHasManagedFileResult(payload: AIChatSkillArtifactCreatedEventData): boolean {
+  const artifact = recordValue(payload);
+  return hasManagedFileSignal(artifact) || hasManagedFileSignal(recordValue(payload.file));
+}
+
+function shouldEmitFileOperation(
+  operation: Pick<ContextualAIChatAssetOperation, 'effect' | 'source'>,
+  items: AIChatContextItem[],
+  hasManagedFileResult: boolean
+): boolean {
+  if (operation.effect === 'delete') return true;
+  if (operation.effect === 'create') return hasManagedFileResult;
+  if (operation.effect === 'update') return hasManagedFileResult || items.some(isConsoleFilesContextItem);
+  return true;
+}
+
+function isMutatingEffect(effect: ContextualAIChatAssetOperationEffect): boolean {
+  return effect !== 'unknown';
+}
+
+function operationFromSkillCall(
   payload: AIChatSkillCallEndEventData,
   items: AIChatContextItem[]
-): boolean {
-  return (
-    isSuccessfulSkillCall(payload) &&
-    isFileDeleteSkillCall(payload) &&
-    items.some(isConsoleFilesContextItem) &&
-    contextItemsIncludeCapability(items, 'file.delete')
+): ContextualAIChatAssetOperation | null {
+  if (!isSuccessfulSkillCall(payload)) return null;
+
+  const audits = skillCallAuditRecords(payload);
+  const primaryAudit = audits[0];
+  const assets = skillCallAssetReferences(payload);
+  const toolID = firstText(
+    primaryAudit?.tool_id,
+    payload.governance?.manifest?.tool_id,
+    payload.governance?.approval_event?.tool_id
   );
+  const result = recordValue(payload.result);
+  const assetType =
+    normalizeAssetType(
+      firstText(
+        primaryAudit?.asset_type,
+        payload.governance?.manifest?.asset_type,
+        payload.governance?.approval_event?.asset_type,
+        firstAssetReferenceValue(assets, ['type'])
+      )
+    ) ??
+    inferAssetTypeFromToolID(toolID) ??
+    (payload.skill_id === 'file-generator' ? 'file' : undefined);
+  const effect = normalizeEffect(
+    firstText(
+      primaryAudit?.effect,
+      primaryAudit?.action,
+      payload.governance?.manifest?.effect,
+      payload.governance?.approval_event?.effect,
+      toolID,
+      payload.tool_name
+    )
+  );
+
+  if (!assetType || !isMutatingEffect(effect)) return null;
+
+  const hasManagedFileResult = skillCallHasManagedFileResult(payload);
+  if (
+    assetType === 'file' &&
+    !shouldEmitFileOperation({ effect, source: 'skill_call' }, items, hasManagedFileResult)
+  ) {
+    return null;
+  }
+
+  return {
+    assetType,
+    effect,
+    source: 'skill_call',
+    skillId: payload.skill_id,
+    toolName: payload.tool_name,
+    toolId: toolID,
+    assetId: firstText(
+      result?.upload_file_id,
+      result?.file_id,
+      result?.id,
+      firstAssetReferenceValue(assets, ['id'])
+    ),
+    assetName: firstText(
+      result?.filename,
+      result?.name,
+      result?.title,
+      firstAssetReferenceValue(assets, ['filename', 'file_name', 'name', 'title', 'label'])
+    ),
+    payload,
+  };
+}
+
+function operationFromSkillArtifact(
+  payload: AIChatSkillArtifactCreatedEventData,
+  items: AIChatContextItem[]
+): ContextualAIChatAssetOperation | null {
+  const audits = artifactAuditRecords(payload);
+  const primaryAudit = audits[0];
+  const assets = artifactAssetReferences(payload);
+  const toolID = firstText(primaryAudit?.tool_id);
+  const artifact = recordValue(payload);
+  const file = recordValue(payload.file);
+  const assetType =
+    normalizeAssetType(
+      firstText(primaryAudit?.asset_type, firstAssetReferenceValue(assets, ['type']))
+    ) ??
+    inferAssetTypeFromToolID(toolID) ??
+    'file';
+  const effect = normalizeEffect(
+    firstText(primaryAudit?.effect, primaryAudit?.action, toolID, payload.tool_name)
+  );
+
+  if (!assetType || !isMutatingEffect(effect)) return null;
+
+  const hasManagedFileResult = artifactHasManagedFileResult(payload);
+  if (
+    assetType === 'file' &&
+    !shouldEmitFileOperation({ effect, source: 'skill_artifact' }, items, hasManagedFileResult)
+  ) {
+    return null;
+  }
+
+  return {
+    assetType,
+    effect,
+    source: 'skill_artifact',
+    skillId: payload.skill_id,
+    toolName: payload.tool_name,
+    toolId: toolID,
+    assetId: firstText(
+      artifact?.upload_file_id,
+      file?.upload_file_id,
+      artifact?.file_id,
+      file?.file_id,
+      artifact?.id,
+      file?.id,
+      firstAssetReferenceValue(assets, ['id'])
+    ),
+    assetName: firstText(
+      artifact?.filename,
+      file?.filename,
+      artifact?.name,
+      file?.name,
+      firstAssetReferenceValue(assets, ['filename', 'file_name', 'name', 'title', 'label'])
+    ),
+    payload,
+  };
 }
 
 function wrapContextualCallbacks(
@@ -404,7 +753,7 @@ function wrapContextualCallbacks(
   getContextItems: () => AIChatContextItem[],
   options?: ContextualAIChatTransportOptions
 ): AIChatStreamCallbacks {
-  if (!options?.onAssetToolSuccess) {
+  if (!options?.onAssetToolSuccess && !options?.onAssetOperationSuccess) {
     return callbacks;
   }
 
@@ -412,8 +761,18 @@ function wrapContextualCallbacks(
     ...callbacks,
     onSkillCallEnd: (payload, eventId) => {
       callbacks.onSkillCallEnd(payload, eventId);
-      if (shouldNotifyFileDeleteSuccess(payload, getContextItems())) {
+      const operation = operationFromSkillCall(payload, getContextItems());
+      if (!operation) return;
+      options?.onAssetOperationSuccess?.(operation);
+      if (operation.assetType === 'file') {
         options.onAssetToolSuccess?.(payload);
+      }
+    },
+    onSkillArtifactCreated: (payload, eventId) => {
+      callbacks.onSkillArtifactCreated(payload, eventId);
+      const operation = operationFromSkillArtifact(payload, getContextItems());
+      if (operation) {
+        options?.onAssetOperationSuccess?.(operation);
       }
     },
   };
