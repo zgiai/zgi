@@ -21,6 +21,13 @@ func TestMergeGeneratedArtifactMetadataPersistsHydratableFile(t *testing.T) {
 		"transfer_method": "tool_file",
 		"skill_id":        "sandbox-backtest-mcp-eval",
 		"tool_name":       "run_script",
+		"operation_id":    "tool_governance:corr-1",
+		"correlation_id":  "corr-1",
+		"asset_operation_audit": map[string]interface{}{
+			"correlation_id":  "corr-1",
+			"tool_id":         "file.generate_pdf",
+			"approval_status": "approved",
+		},
 	})
 
 	files := generatedFilesFromMetadata(metadata["generated_files"])
@@ -35,6 +42,13 @@ func TestMergeGeneratedArtifactMetadataPersistsHydratableFile(t *testing.T) {
 	}
 	if metadata["generated_file_count"] != 1 {
 		t.Fatalf("generated_file_count = %#v, want 1", metadata["generated_file_count"])
+	}
+	if files[0]["operation_id"] != "tool_governance:corr-1" || files[0]["correlation_id"] != "corr-1" {
+		t.Fatalf("stored generated file operation fields = %#v", files[0])
+	}
+	audit := governanceMapFromAny(files[0]["asset_operation_audit"])
+	if audit["tool_id"] != "file.generate_pdf" || audit["approval_status"] != "approved" {
+		t.Fatalf("stored generated file audit = %#v", files[0]["asset_operation_audit"])
 	}
 }
 

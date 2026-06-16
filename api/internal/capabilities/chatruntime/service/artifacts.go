@@ -64,8 +64,13 @@ func persistentGeneratedArtifact(artifact map[string]interface{}) map[string]int
 	copyStringField(out, artifact, "file_type")
 	copyStringField(out, artifact, "skill_id")
 	copyStringField(out, artifact, "tool_name")
+	copyStringField(out, artifact, "operation_id")
+	copyStringField(out, artifact, "correlation_id")
 	copyScalarField(out, artifact, "size")
 	copyScalarField(out, artifact, "created_at")
+	if audit := governanceMapFromAny(artifact["asset_operation_audit"]); len(audit) > 0 {
+		out["asset_operation_audit"] = audit
+	}
 	return out
 }
 

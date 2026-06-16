@@ -265,6 +265,9 @@ export interface AIChatGeneratedFile {
   download_url?: string;
   transfer_method: string;
   file_type?: string;
+  operation_id?: string;
+  correlation_id?: string;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   created_at: number;
 }
 
@@ -534,6 +537,9 @@ export interface AIChatSkillArtifactFile {
   download_url?: string;
   transfer_method?: string;
   file_type?: string;
+  operation_id?: string;
+  correlation_id?: string;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
 }
 
@@ -731,6 +737,11 @@ export interface AIChatToolGovernanceDecisionEventData extends Record<string, un
   approval_result?: Record<string, unknown>;
   model_feedback?: Record<string, unknown>;
   session_grant?: Record<string, unknown>;
+  execution_status?: string;
+  execution_error?: string;
+  execution_message?: string;
+  execution_duration_ms?: number;
+  execution_result?: Record<string, unknown> | null;
 }
 
 export interface AIChatToolGovernanceDecisionRequest {

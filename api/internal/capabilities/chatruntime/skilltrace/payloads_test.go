@@ -42,6 +42,53 @@ func TestToolGovernanceDecisionPayloadIncludesAssetOperationAudit(t *testing.T) 
 	}
 }
 
+func TestSkillArtifactsFromToolMessagesIncludesGovernanceOperation(t *testing.T) {
+	artifacts := SkillArtifactsFromToolMessages(PayloadIDs{
+		ConversationID: "conversation-1",
+		MessageID:      "message-1",
+	}, skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileReader,
+		ToolName: "generate_pdf",
+		Status:   "success",
+		Governance: &toolgovernance.Decision{
+			CorrelationID: "corr-file-create",
+			AssetOperationAudit: map[string]interface{}{
+				"correlation_id":  "corr-file-create",
+				"tool_id":         "file.generate_pdf",
+				"approval_status": "approved",
+			},
+		},
+	}, []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeFile,
+		Text: "http://files.example/file.pdf?download=1",
+		Meta: map[string]interface{}{
+			"file": map[string]interface{}{
+				"id":              "file-1",
+				"filename":        "file.pdf",
+				"extension":       ".pdf",
+				"mime_type":       "application/pdf",
+				"size":            int64(128),
+				"url":             "http://files.example/file.pdf",
+				"download_url":    "http://files.example/file.pdf?download=1",
+				"transfer_method": "tool_file",
+			},
+		},
+	}})
+
+	if len(artifacts) != 1 {
+		t.Fatalf("artifacts = %#v, want one artifact", artifacts)
+	}
+	if artifacts[0]["correlation_id"] != "corr-file-create" ||
+		artifacts[0]["operation_id"] != "tool_governance:corr-file-create" {
+		t.Fatalf("artifact operation fields = %#v", artifacts[0])
+	}
+	audit, ok := artifacts[0]["asset_operation_audit"].(map[string]interface{})
+	if !ok || audit["tool_id"] != "file.generate_pdf" || audit["approval_status"] != "approved" {
+		t.Fatalf("asset_operation_audit = %#v, want governance audit payload", artifacts[0]["asset_operation_audit"])
+	}
+}
+
 func TestSummarizeToolResultCompactsAgentKnowledgePayload(t *testing.T) {
 	result := SummarizeToolResult(skills.SkillAgentKnowledge, "retrieve_agent_knowledge", []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,

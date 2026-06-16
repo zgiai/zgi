@@ -491,6 +491,15 @@ func skillArtifactFromToolFile(ids PayloadIDs, trace skills.SkillTrace, message 
 	if fileType := stringFromAny(file["type"]); fileType != "" {
 		artifact["file_type"] = fileType
 	}
+	if trace.Governance != nil {
+		if correlationID := strings.TrimSpace(trace.Governance.CorrelationID); correlationID != "" {
+			artifact["correlation_id"] = correlationID
+			artifact["operation_id"] = "tool_governance:" + correlationID
+		}
+		if len(trace.Governance.AssetOperationAudit) > 0 {
+			artifact["asset_operation_audit"] = trace.Governance.AssetOperationAudit
+		}
+	}
 	return artifact
 }
 

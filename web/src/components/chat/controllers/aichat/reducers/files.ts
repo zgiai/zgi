@@ -150,6 +150,9 @@ function normalizeSkillArtifactFile(
     download_url: file?.download_url ?? payload.download_url,
     transfer_method: file?.transfer_method ?? payload.transfer_method ?? 'tool_file',
     file_type: file?.file_type ?? payload.file_type,
+    operation_id: file?.operation_id ?? payload.operation_id,
+    correlation_id: file?.correlation_id ?? payload.correlation_id,
+    asset_operation_audit: file?.asset_operation_audit ?? payload.asset_operation_audit,
     created_at: file?.created_at ?? payload.created_at ?? Math.floor(Date.now() / 1000),
   };
 }
@@ -288,4 +291,3 @@ export function applyFileParseErrorState(
         : { ...file, id: payload.file_id }
   );
 }
-

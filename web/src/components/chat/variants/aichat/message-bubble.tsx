@@ -408,6 +408,9 @@ export function AIChatMessageBubble({
   const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
   const isBillingAdmin = organizationRole === 'owner' || organizationRole === 'admin';
   const isStreaming = message.status === 'pending' || message.status === 'streaming';
+  const isWaitingForUser =
+    message.status === 'waiting_approval' || message.status === 'waiting_question';
+  const isActiveMessage = isStreaming || isWaitingForUser;
   const isError = message.status === 'error';
   const isStopped = message.status === 'stopped';
   const isSensitiveBlocked =
@@ -418,10 +421,11 @@ export function AIChatMessageBubble({
   const branchCount = branchNavigation?.total ?? 1;
   const canCreateBranch = hasParent && branchCount < MAX_AICHAT_BRANCHES;
   const canEdit =
-    Boolean(onEditStart && (canReplaceRoot || canCreateBranch)) && !isSending && !isStreaming;
+    Boolean(onEditStart && (canReplaceRoot || canCreateBranch)) && !isSending && !isActiveMessage;
   const canRegenerateMessage = Boolean(onRegenerate && (canReplaceRoot || canCreateBranch));
-  const canSwitchBranch = Boolean(branchNavigation && onSwitchBranch) && !isSending && !isStreaming;
-  const shouldHideAssistantToolbar = isLastMessage && isStreaming;
+  const canSwitchBranch =
+    Boolean(branchNavigation && onSwitchBranch) && !isSending && !isActiveMessage;
+  const shouldHideAssistantToolbar = isLastMessage && isActiveMessage;
   const toolbarVisibility = isLastMessage
     ? 'opacity-100'
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
@@ -437,6 +441,12 @@ export function AIChatMessageBubble({
   );
   const hasGeneratedImagePreviews = generatedImagePreviewFilesForDisplay.length > 0;
   const answer = displayAnswer.trim();
+  const waitingMessage =
+    message.status === 'waiting_approval'
+      ? t('consoleChat.waitingApprovalMessage')
+      : message.status === 'waiting_question'
+        ? t('consoleChat.waitingQuestionMessage')
+        : null;
   const userInputRequest = hideUserInputRequest ? undefined : message.metadata?.user_input_request;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
@@ -447,7 +457,7 @@ export function AIChatMessageBubble({
   const displayTimeline = timeline.length > 0 ? timeline : historicalTimeline;
   const hasTimeline = displayTimeline.length > 0;
   const shouldOpenTimelineByDefault =
-    isStreaming ||
+    isActiveMessage ||
     displayTimeline.some(
       item =>
         (item.type === 'skill_event' &&
@@ -583,7 +593,7 @@ export function AIChatMessageBubble({
               <UserMessageToolbar
                 query={message.query}
                 canEdit={canEdit}
-                isDisabled={isSending || isStreaming}
+                isDisabled={isSending || isActiveMessage}
                 toolbarVisibility={toolbarVisibility}
                 onEdit={() => onEditStart?.(message)}
               />
@@ -617,6 +627,14 @@ export function AIChatMessageBubble({
                 {t('consoleChat.streaming')}
               </span>
             ) : null}
+            {!isStreaming && isWaitingForUser ? (
+              <span className="inline-flex items-center gap-1">
+                <Loader2 className="size-3 animate-spin" />
+                {message.status === 'waiting_approval'
+                  ? t('consoleChat.waitingApproval')
+                  : t('consoleChat.waitingQuestion')}
+              </span>
+            ) : null}
             {isStopped && answer ? (
               <span
                 className="inline-flex items-center"
@@ -630,7 +648,9 @@ export function AIChatMessageBubble({
 
           {hasTimeline ? (
             <AIChatAgenticTimeline
-              key={`${message.id}-${isStreaming ? 'streaming' : 'history'}-${shouldOpenTimelineByDefault ? 'open' : 'closed'}`}
+              key={`${message.id}-${isActiveMessage ? 'active' : 'history'}-${
+                shouldOpenTimelineByDefault ? 'open' : 'closed'
+              }`}
               timeline={displayTimeline}
               skillDisplayById={skillDisplayById}
               defaultOpen={shouldOpenTimelineByDefault}
@@ -650,6 +670,8 @@ export function AIChatMessageBubble({
                 renderIdentity={message.id}
               />
             </div>
+          ) : waitingMessage ? (
+            <div className="text-sm text-muted-foreground">{waitingMessage}</div>
           ) : isStreaming && !hasTimeline && !userInputRequest && !hasGeneratedImagePreviews ? (
             <div className="space-y-2 pt-1">
               <Skeleton className="h-4 w-2/3" />
@@ -724,7 +746,7 @@ export function AIChatMessageBubble({
             <AssistantMessageToolbar
               answer={answer}
               canRegenerate={canRegenerateMessage}
-              isDisabled={isSending || isStreaming}
+              isDisabled={isSending || isActiveMessage}
               toolbarVisibility={toolbarVisibility}
               branchNavigation={branchNavigation}
               canSwitchBranch={canSwitchBranch}

@@ -73,6 +73,9 @@ const GOVERNANCE_FIELD_LABEL_KEYS = {
   effect: 'consoleChat.governance.fields.effect',
   assetType: 'consoleChat.governance.fields.assetType',
   correlationId: 'consoleChat.governance.fields.correlationId',
+  executionStatus: 'consoleChat.governance.fields.executionStatus',
+  executionError: 'consoleChat.governance.fields.executionError',
+  executionDuration: 'consoleChat.governance.fields.executionDuration',
   matchedGrant: 'consoleChat.governance.fields.matchedGrant',
   modelFeedback: 'consoleChat.governance.fields.modelFeedback',
   approvalResult: 'consoleChat.governance.fields.approvalResult',
@@ -454,6 +457,14 @@ function governanceReason(item: GovernanceTimelineItem): string {
 
 function governanceApprovalEvent(item: GovernanceTimelineItem) {
   return item.event.approval_event ?? item.event.governance?.approval_event;
+}
+
+function governanceItemCorrelationId(item: GovernanceTimelineItem): string | null {
+  return (
+    governanceStringValue(item.event.correlation_id) ??
+    governanceStringValue(item.event.governance?.correlation_id) ??
+    governanceStringValue(governanceApprovalEvent(item)?.correlation_id)
+  );
 }
 
 function governanceRecord(value: unknown): Record<string, unknown> | null {
@@ -922,6 +933,9 @@ function governanceFieldRows(item: GovernanceTimelineItem) {
         item.event.governance?.correlation_id ??
         approvalEvent?.correlation_id,
     ],
+    ['executionStatus', item.event.execution_status],
+    ['executionError', item.event.execution_error],
+    ['executionDuration', getDurationText(item.event.execution_duration_ms)],
   ] as const satisfies ReadonlyArray<readonly [GovernanceFieldLabel, unknown]>;
 }
 
@@ -1322,9 +1336,25 @@ function isWorkflowTimelineItem(
   return 'type' in item && item.type === 'workflow_run';
 }
 
-function isApprovalGatedSkillEvent(item: AIChatAgenticTimelineItem): boolean {
+function governedSkillInvocationCorrelationId(invocation: AIChatSkillInvocation): string | null {
+  return (
+    governanceStringValue(invocation.governance?.correlation_id) ??
+    governanceStringValue(invocation.governance?.approval_event?.correlation_id)
+  );
+}
+
+function isGovernedSkillEvent(
+  item: AIChatAgenticTimelineItem,
+  governanceCorrelationIds: ReadonlySet<string>
+): boolean {
   if (item.type !== 'skill_event') return false;
-  return isPendingToolGovernanceInvocation(item.invocation);
+  if (isPendingToolGovernanceInvocation(item.invocation)) return true;
+  const correlationId = governedSkillInvocationCorrelationId(item.invocation);
+  return Boolean(
+    correlationId &&
+      governanceCorrelationIds.has(correlationId) &&
+      item.invocation.kind !== 'tool_governance'
+  );
 }
 
 function isTransientProgressItem(
@@ -1431,12 +1461,26 @@ export function AIChatAgenticTimeline({
     };
   }, [pendingApprovalScopeId, pendingGovernanceApprovals]);
 
+  const governanceCorrelationIds = useMemo(
+    () =>
+      new Set(
+        timeline
+          .flatMap(item =>
+            item.type === 'tool_governance_decision'
+              ? [governanceItemCorrelationId(item)]
+              : []
+          )
+          .filter((correlationId): correlationId is string => Boolean(correlationId))
+      ),
+    [timeline]
+  );
+
   const events = useMemo(
     () =>
       timeline
         .filter(
           item =>
-            !isApprovalGatedSkillEvent(item) &&
+            !isGovernedSkillEvent(item, governanceCorrelationIds) &&
             !(item.type === 'tool_governance_decision' && isToolGovernanceNeedsApproval(item))
         )
         .map(item => {
@@ -1462,7 +1506,7 @@ export function AIChatAgenticTimeline({
               item.invocation.error,
           };
         }),
-    [locale, skillDisplayById, t, timeline]
+    [governanceCorrelationIds, locale, skillDisplayById, t, timeline]
   );
 
   if (events.length === 0) return null;

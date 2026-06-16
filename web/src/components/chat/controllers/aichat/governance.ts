@@ -7,9 +7,14 @@ export function governanceStatusFromInvocation(invocation: AIChatSkillInvocation
 export function governanceCorrelationIdFromInvocation(
   invocation: AIChatSkillInvocation
 ): string | undefined {
-  const correlationId = invocation.governance?.correlation_id;
-  if (typeof correlationId === 'string' && correlationId.trim()) {
-    return correlationId.trim();
+  const candidates = [
+    invocation.governance?.correlation_id,
+    invocation.governance?.approval_event?.correlation_id,
+  ];
+  for (const correlationId of candidates) {
+    if (typeof correlationId === 'string' && correlationId.trim()) {
+      return correlationId.trim();
+    }
   }
   return undefined;
 }
