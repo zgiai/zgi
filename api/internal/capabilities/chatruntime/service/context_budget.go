@@ -9,6 +9,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 const (
@@ -23,6 +24,7 @@ const (
 	recentExecutionContextBudgetChars   = 12000
 	recentIntermediateAnswerBudgetChars = 4000
 	recentTraceArgumentBudgetChars      = 600
+	recentTraceResultBudgetChars        = 900
 )
 
 type contextBudgetResult struct {
@@ -576,7 +578,100 @@ func formatToolHistoryInvocation(index int, invocation map[string]interface{}) s
 	if args := compactJSONForPrompt(invocation["arguments"], recentTraceArgumentBudgetChars); args != "" {
 		parts = append(parts, "arguments="+args)
 	}
+	if result := compactToolHistoryResultForPrompt(invocation); result != "" {
+		parts = append(parts, "result="+result)
+	}
 	return strings.Join(parts, " ") + "\n"
+}
+
+func compactToolHistoryResultForPrompt(invocation map[string]interface{}) string {
+	if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" {
+		return ""
+	}
+	if strings.TrimSpace(stringFromAny(invocation["skill_id"])) != skills.SkillFileReader {
+		return ""
+	}
+	switch strings.TrimSpace(stringFromAny(invocation["tool_name"])) {
+	case "list_visible_files", "read_file", "delete_file":
+	default:
+		return ""
+	}
+	result := redactedToolHistoryResultValue(invocation["result"], 0)
+	return compactJSONForPrompt(result, recentTraceResultBudgetChars)
+}
+
+func redactedToolHistoryResultValue(value interface{}, depth int) interface{} {
+	if value == nil || depth > 5 {
+		return nil
+	}
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		if len(typed) == 0 {
+			return nil
+		}
+		out := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			if shouldRedactToolHistoryResultKey(key) {
+				out[key+"_redacted"] = true
+				continue
+			}
+			if redacted := redactedToolHistoryResultValue(item, depth+1); redacted != nil {
+				out[key] = redacted
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case []interface{}:
+		if len(typed) == 0 {
+			return nil
+		}
+		limit := minInt(len(typed), 20)
+		out := make([]interface{}, 0, limit)
+		for _, item := range typed[:limit] {
+			if redacted := redactedToolHistoryResultValue(item, depth+1); redacted != nil {
+				out = append(out, redacted)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case []map[string]interface{}:
+		if len(typed) == 0 {
+			return nil
+		}
+		limit := minInt(len(typed), 20)
+		out := make([]interface{}, 0, limit)
+		for _, item := range typed[:limit] {
+			if redacted := redactedToolHistoryResultValue(item, depth+1); redacted != nil {
+				out = append(out, redacted)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return nil
+		}
+		return compactForPrompt(text, 240)
+	default:
+		return typed
+	}
+}
+
+func shouldRedactToolHistoryResultKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch normalized {
+	case "content", "content_preview", "content_error":
+		return true
+	default:
+		return false
+	}
 }
 
 func compactJSONForPrompt(value interface{}, maxChars int) string {

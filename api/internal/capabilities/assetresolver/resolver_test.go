@@ -233,6 +233,65 @@ func TestResolverMergesSelectedIDsWithVisibleFileDetails(t *testing.T) {
 	}
 }
 
+func TestResolverResolvesRecentFileScope(t *testing.T) {
+	result := Resolve(Request{
+		OperationContext: map[string]interface{}{
+			"visible_files": []interface{}{
+				map[string]interface{}{"file_id": "file-1", "name": "visible.pdf"},
+			},
+			"recent_files": []interface{}{
+				map[string]interface{}{"file_id": "file-2", "name": "recent.xlsx", "workspace_id": "workspace-1"},
+			},
+		},
+		Selectors: []Selector{{Type: "file", Scope: "recent"}},
+	})
+
+	assertResolvedAssetIDs(t, result, "file-2")
+	asset := result.Assets[0]
+	if asset.Name != "recent.xlsx" || asset.WorkspaceID != "workspace-1" {
+		t.Fatalf("asset = %#v, want recent file details", asset)
+	}
+	if got := result.Resolutions[0].Assets[0].Metadata["recent"]; got != true {
+		t.Fatalf("recent metadata = %#v, want true", got)
+	}
+}
+
+func TestResolverResolvesChineseRecentFileReference(t *testing.T) {
+	result := Resolve(Request{
+		OperationContext: map[string]interface{}{
+			"resources": []interface{}{
+				map[string]interface{}{"resource_type": "file", "resource_id": "file-1", "title": "old.pdf"},
+				map[string]interface{}{"resource_type": "file", "resource_id": "file-2", "title": "recent.pdf", "metadata": map[string]interface{}{"recent": true}},
+			},
+		},
+		Selectors: []Selector{{Type: "file", Selector: "\u521a\u624d\u90a3\u4e2a\u6587\u4ef6"}},
+	})
+
+	assertResolvedAssetIDs(t, result, "file-2")
+}
+
+func TestResolverReturnsAmbiguousForMultipleRecentFiles(t *testing.T) {
+	result := Resolve(Request{
+		OperationContext: map[string]interface{}{
+			"recent_files": []interface{}{
+				map[string]interface{}{"file_id": "file-1", "name": "one.pdf"},
+				map[string]interface{}{"file_id": "file-2", "name": "two.pdf"},
+			},
+		},
+		Selectors: []Selector{{Type: "file", Source: "previous file"}},
+	})
+
+	if got := result.Resolutions[0].Status; got != StatusAmbiguous {
+		t.Fatalf("status = %q, want %q", got, StatusAmbiguous)
+	}
+	if got := len(result.Resolutions[0].Candidates); got != 2 {
+		t.Fatalf("candidate count = %d, want 2", got)
+	}
+	if len(result.Assets) != 0 {
+		t.Fatalf("assets = %#v, want none for ambiguous recent reference", result.Assets)
+	}
+}
+
 func TestResolverDirectIDMustMatchFilters(t *testing.T) {
 	result := Resolve(Request{
 		OperationContext: map[string]interface{}{

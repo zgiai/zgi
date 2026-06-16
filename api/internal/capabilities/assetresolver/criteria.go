@@ -9,6 +9,7 @@ type criteria struct {
 	assetType      string
 	directID       string
 	selectedOnly   bool
+	recentOnly     bool
 	hasOrdinal     bool
 	ordinal        int
 	ordinalLast    bool
@@ -51,6 +52,12 @@ func criteriaFromSelector(selector Selector) criteria {
 		boolValue(selector.Metadata["selected"]) ||
 		isSelectedScope(selector.Scope) ||
 		isSelectedScope(stringValue(selector.Metadata["scope"]))
+	out.recentOnly =
+		boolValue(firstMapValue(selector.Metadata, "recent", "is_recent", "last_used")) ||
+			isRecentScope(selector.Scope) ||
+			isRecentScope(selector.Selector) ||
+			isRecentScope(selector.Source) ||
+			isRecentScope(stringValue(firstMapValue(selector.Metadata, "scope", "selector", "reference")))
 	out.titleContains = firstNonEmptyString(selector.TitleContains, stringValue(selector.Metadata["title_contains"]), stringValue(selector.Metadata["contains"]))
 	out.nameContains = firstNonEmptyString(selector.NameContains, stringValue(selector.Metadata["name_contains"]), stringValue(selector.Metadata["filename_contains"]))
 	out.fuzzyName = firstNonEmptyString(selector.FuzzyName, selector.Title, selector.Name, stringValue(selector.Metadata["fuzzy_name"]), stringValue(selector.Metadata["title"]), stringValue(selector.Metadata["name"]), stringValue(selector.Metadata["filename"]))

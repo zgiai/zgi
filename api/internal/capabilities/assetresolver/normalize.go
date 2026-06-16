@@ -175,6 +175,36 @@ func isSelectedScope(value string) bool {
 	return scope == "selected" || scope == "selectedfile" || scope == "selectedfiles"
 }
 
+func isRecentScope(value string) bool {
+	text := strings.ToLower(strings.TrimSpace(value))
+	if text == "" {
+		return false
+	}
+	scope := normalizeKey(text)
+	switch scope {
+	case "recent", "recentasset", "recentassets", "recentfile", "recentfiles", "previous", "previousasset", "previousfile", "lastused", "lastusedasset", "lastusedfile":
+		return true
+	}
+	for _, phrase := range []string{
+		"last used",
+		"previous asset",
+		"previous file",
+		"recent asset",
+		"recent file",
+		"\u521a\u624d",
+		"\u521a\u521a",
+		"\u4e0a\u6b21",
+		"\u4e0a\u4e00\u4e2a",
+		"\u4e4b\u524d\u90a3\u4e2a",
+		"\u521a\u624d\u90a3\u4e2a",
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 func compactStrings(values []string) []string {
 	collector := newUniqueStringCollector()
 	for _, value := range values {

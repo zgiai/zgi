@@ -130,6 +130,25 @@ func TestAIChatActionPlannerPreservesTranslatePostprocess(t *testing.T) {
 	}
 }
 
+func TestAIChatActionPlannerPreservesRecentFileScope(t *testing.T) {
+	fakeLLM := &fakeAIChatActionPlannerLLM{
+		response: aiChatActionPlannerResponse(`{"matched":true,"confidence":0.87,"capability_id":"file.read","intent":"read_recent_file","resource_refs":[{"type":"file","scope":"recent"}],"reason":"user referred to the previous file"}`),
+	}
+
+	decision := newAIChatActionPlanner(fakeLLM).Plan(context.Background(), testAIChatActionPlanRequest("read that previous file"))
+
+	if !decision.Matched {
+		t.Fatalf("Matched = false, want true; decision=%#v", decision)
+	}
+	if len(decision.ResourceRefs) != 1 || decision.ResourceRefs[0].Scope != "recent" {
+		t.Fatalf("ResourceRefs = %#v, want scope recent", decision.ResourceRefs)
+	}
+	systemPrompt, ok := fakeLLM.requests[0].Messages[0].Content.(string)
+	if !ok || !strings.Contains(systemPrompt, `"scope":"selected|recent`) {
+		t.Fatalf("system prompt = %#v, want scope schema guidance", fakeLLM.requests[0].Messages[0].Content)
+	}
+}
+
 func TestAIChatActionPlannerLLMErrorReturnsNoMatch(t *testing.T) {
 	fakeLLM := &fakeAIChatActionPlannerLLM{err: errors.New("planner model unavailable")}
 

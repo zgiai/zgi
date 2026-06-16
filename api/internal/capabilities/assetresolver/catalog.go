@@ -155,6 +155,8 @@ func candidatesFromContext(context map[string]interface{}, source string) []Cand
 				switch {
 				case isVisibleFileListKey(normalizedKey):
 					candidates = append(candidates, candidatesFromList(item, source+"."+key, true)...)
+				case isRecentFileListKey(normalizedKey):
+					candidates = append(candidates, recentCandidatesFromList(item, source+"."+key)...)
 				case isResourceListKey(normalizedKey):
 					candidates = append(candidates, candidatesFromList(item, source+"."+key, false)...)
 				case isCapabilityListKey(normalizedKey):
@@ -174,6 +176,14 @@ func candidatesFromContext(context map[string]interface{}, source string) []Cand
 		}
 	}
 	visit(context, 0)
+	return candidates
+}
+
+func recentCandidatesFromList(value interface{}, source string) []Candidate {
+	candidates := candidatesFromList(value, source, true)
+	for index := range candidates {
+		candidates[index].Recent = true
+	}
 	return candidates
 }
 
@@ -253,6 +263,8 @@ func candidateFromMap(value map[string]interface{}, source string, allowImplicit
 		),
 		Selected: boolValue(firstMapValue(value, "selected", "is_selected")) ||
 			boolValue(firstMapValue(metadata, "selected", "is_selected")),
+		Recent: boolValue(firstMapValue(value, "recent", "is_recent", "last_used")) ||
+			boolValue(firstMapValue(metadata, "recent", "is_recent", "last_used")),
 		Visible:  true,
 		Metadata: copyStringAnyMap(metadata),
 	}, true
@@ -261,6 +273,15 @@ func candidateFromMap(value map[string]interface{}, source string, allowImplicit
 func isVisibleFileListKey(key string) bool {
 	switch key {
 	case "visiblefiles", "visiblefile", "visiblefileresources", "visiblefileids":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRecentFileListKey(key string) bool {
+	switch key {
+	case "recentassets", "recentasset", "recentfiles", "recentfile", "recentfileresources", "lastasset", "lastfile", "previousasset", "previousfile":
 		return true
 	default:
 		return false

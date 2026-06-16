@@ -25,6 +25,16 @@ func selectedCandidates(candidates []Candidate) []Candidate {
 	return out
 }
 
+func recentCandidates(candidates []Candidate) []Candidate {
+	out := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Recent {
+			out = append(out, candidate)
+		}
+	}
+	return out
+}
+
 func visibleCandidates(candidates []Candidate) []Candidate {
 	out := make([]Candidate, 0, len(candidates))
 	for _, candidate := range candidates {

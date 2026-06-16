@@ -77,6 +77,7 @@ type ResourceCandidate struct {
 	MimeType       string                 `json:"mime_type,omitempty"`
 	FileType       string                 `json:"file_type,omitempty"`
 	Selected       bool                   `json:"selected,omitempty"`
+	Recent         bool                   `json:"recent,omitempty"`
 	Visible        bool                   `json:"visible,omitempty"`
 	VisibleOrdinal int                    `json:"visible_ordinal,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
@@ -226,6 +227,7 @@ func assetResolverCandidateFromResourceCandidate(candidate ResourceCandidate) as
 		MimeType:       candidate.MimeType,
 		FileType:       candidate.FileType,
 		Selected:       candidate.Selected,
+		Recent:         candidate.Recent,
 		Visible:        candidate.Visible,
 		VisibleOrdinal: candidate.VisibleOrdinal,
 		Metadata:       copyStringAnyMap(candidate.Metadata),
@@ -243,6 +245,7 @@ func resourceCandidateFromAssetResolverCandidate(candidate assetresolver.Candida
 		MimeType:       candidate.MimeType,
 		FileType:       candidate.FileType,
 		Selected:       candidate.Selected,
+		Recent:         candidate.Recent,
 		Visible:        candidate.Visible,
 		VisibleOrdinal: candidate.VisibleOrdinal,
 		Metadata:       copyStringAnyMap(candidate.Metadata),
@@ -440,6 +443,9 @@ func actionResourceRefFromCandidate(candidate ResourceCandidate) actiondto.Resou
 	if candidate.Selected {
 		metadata["selected"] = true
 	}
+	if candidate.Recent {
+		metadata["recent"] = true
+	}
 	if candidate.VisibleOrdinal > 0 {
 		metadata["visible_ordinal"] = candidate.VisibleOrdinal
 	}
@@ -569,6 +575,7 @@ func mergeResourceCandidates(existing ResourceCandidate, next ResourceCandidate)
 		existing.FileType = next.FileType
 	}
 	existing.Selected = existing.Selected || next.Selected
+	existing.Recent = existing.Recent || next.Recent
 	existing.Visible = existing.Visible || next.Visible
 	if existing.VisibleOrdinal == 0 {
 		existing.VisibleOrdinal = next.VisibleOrdinal

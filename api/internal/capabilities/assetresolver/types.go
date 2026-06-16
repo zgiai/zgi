@@ -39,6 +39,7 @@ type Candidate struct {
 	FileType       string                 `json:"file_type,omitempty"`
 	WorkspaceID    string                 `json:"workspace_id,omitempty"`
 	Selected       bool                   `json:"selected,omitempty"`
+	Recent         bool                   `json:"recent,omitempty"`
 	Visible        bool                   `json:"visible,omitempty"`
 	VisibleOrdinal int                    `json:"visible_ordinal,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`

@@ -52,6 +52,10 @@ func (r Resolver) resolveOne(catalog catalog, selector Selector, limit int) Reso
 	if criteria.selectedOnly {
 		return resolveMatched(selector, selected, allFiles, "selected file matched", "multiple selected files matched", "selected file was not found", limit)
 	}
+	recent := filterCandidates(recentCandidates(allFiles), criteria)
+	if criteria.recentOnly {
+		return resolveMatched(selector, recent, allFiles, "recent file matched", "multiple recent files matched", "recent file was not found", limit)
+	}
 	if len(selected) > 0 && !criteria.hasOrdinal && !criteria.hasNameMatcher {
 		if len(selected) == 1 {
 			return resolution(selector, StatusResolved, "selected file matched", []Candidate{selected[0]}, nil, limit)
@@ -122,6 +126,9 @@ func assetFromCandidate(candidate Candidate) Asset {
 	}
 	if candidate.Selected {
 		metadata["selected"] = true
+	}
+	if candidate.Recent {
+		metadata["recent"] = true
 	}
 	if candidate.VisibleOrdinal > 0 {
 		metadata["visible_ordinal"] = candidate.VisibleOrdinal

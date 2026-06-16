@@ -138,6 +138,25 @@ func TestResourceResolverAutoResolvesExactlyOneVisibleCandidate(t *testing.T) {
 	assertResolvedFileIDs(t, result, "file-1")
 }
 
+func TestResourceResolverResolvesRecentAttachmentCandidate(t *testing.T) {
+	input := ResourceResolverInput{
+		AttachmentFiles: []ResourceCandidate{
+			{Type: "file", ID: "file-1", Name: "previous.xlsx", Source: "chat.trace", Recent: true},
+			{Type: "file", ID: "file-2", Name: "visible.pdf", Source: "console.files", Visible: true},
+		},
+	}
+
+	result := NewResourceResolver().Resolve(input, []PlannerResourceRef{{Type: "file", Scope: "recent"}})
+
+	assertResolvedFileIDs(t, result, "file-1")
+	if got := result.Results[0].Resources[0].Metadata["recent"]; got != true {
+		t.Fatalf("recent metadata = %#v, want true", got)
+	}
+	if got := result.Results[0].Resources[0].Name; got != "previous.xlsx" {
+		t.Fatalf("resource name = %q, want previous.xlsx", got)
+	}
+}
+
 func TestResourceResolverReturnsNotFoundWhenFilteredOrdinalIsMissing(t *testing.T) {
 	input := ResourceResolverInput{
 		OperationContext: map[string]interface{}{
