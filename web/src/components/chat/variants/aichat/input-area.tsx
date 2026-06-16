@@ -34,13 +34,7 @@ import {
   filterLowercaseExtensions,
   formatExtensionsForDisplay,
 } from '@/utils/file-helpers';
-import {
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  HelpCircle,
-  Loader2,
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Loader2 } from 'lucide-react';
 import {
   AIChatAttachmentStrip,
   AIChatDragUploadOverlay,
@@ -72,6 +66,7 @@ import type {
 import {
   ToolGovernanceApprovalPanel,
   useActiveToolGovernancePendingApproval,
+  type ToolGovernancePendingApproval,
 } from '@/components/chat/variants/aichat/tool-governance-decision-card';
 
 export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
@@ -221,6 +216,34 @@ interface AIChatInputAreaProps {
   inputPlaceholder?: string;
   surface?: AIChatComposerSurface;
   topAccessory?: ReactNode;
+  enableToolGovernanceApprovals?: boolean;
+}
+
+function ToolGovernancePendingApprovalBridge({
+  enabled,
+  onApprovalChange,
+}: {
+  enabled: boolean;
+  onApprovalChange: (approval: ToolGovernancePendingApproval | null) => void;
+}) {
+  if (!enabled) return null;
+  return <ActiveToolGovernancePendingApprovalBridge onApprovalChange={onApprovalChange} />;
+}
+
+function ActiveToolGovernancePendingApprovalBridge({
+  onApprovalChange,
+}: {
+  onApprovalChange: (approval: ToolGovernancePendingApproval | null) => void;
+}) {
+  const approval = useActiveToolGovernancePendingApproval();
+
+  useEffect(() => {
+    onApprovalChange(approval);
+  }, [approval, onApprovalChange]);
+
+  useEffect(() => () => onApprovalChange(null), [onApprovalChange]);
+
+  return null;
 }
 
 /**
@@ -262,6 +285,7 @@ export function AIChatInputArea({
   inputPlaceholder,
   surface = 'aichat',
   topAccessory,
+  enableToolGovernanceApprovals = false,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -284,7 +308,8 @@ export function AIChatInputArea({
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [ignoredUserInputRequestKey, setIgnoredUserInputRequestKey] = useState<string | null>(null);
   const [submittedApprovalAction, setSubmittedApprovalAction] = useState<string | null>(null);
-  const activeToolGovernanceApproval = useActiveToolGovernancePendingApproval();
+  const [activeToolGovernanceApproval, setActiveToolGovernanceApproval] =
+    useState<ToolGovernancePendingApproval | null>(null);
   const activeApprovalForm = activeWorkflowApprovalRequest?.approvalForm ?? null;
   const approvalFormQuery = useApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken,
@@ -338,10 +363,7 @@ export function AIChatInputArea({
     [allSelectableExtensions]
   );
   const uploadedFiles = useMemo(() => getUploadedAIChatFiles(attachments), [attachments]);
-  const composerLineCount = useMemo(
-    () => Math.max(1, input.split(/\r\n|\r|\n/).length),
-    [input]
-  );
+  const composerLineCount = useMemo(() => Math.max(1, input.split(/\r\n|\r|\n/).length), [input]);
   const showComposerExpandButton =
     isComposerExpanded ||
     isComposerOverflowing ||
@@ -366,9 +388,11 @@ export function AIChatInputArea({
   const hasActiveUserInputRequest =
     activeQuestions.length > 0 && ignoredUserInputRequestKey !== requestKey;
   const hasActiveWorkflowApprovalRequest = Boolean(activeWorkflowApprovalRequest?.approvalToken);
-  const hasActiveToolGovernanceApproval = Boolean(activeToolGovernanceApproval);
-  const hasBlockingApproval =
-    hasActiveWorkflowApprovalRequest || hasActiveToolGovernanceApproval;
+  const effectiveToolGovernanceApproval = enableToolGovernanceApprovals
+    ? activeToolGovernanceApproval
+    : null;
+  const hasActiveToolGovernanceApproval = Boolean(effectiveToolGovernanceApproval);
+  const hasBlockingApproval = hasActiveWorkflowApprovalRequest || hasActiveToolGovernanceApproval;
   const activeQuestion = hasActiveUserInputRequest
     ? activeQuestions[Math.min(activeQuestionIndex, activeQuestions.length - 1)]
     : undefined;
@@ -395,6 +419,12 @@ export function AIChatInputArea({
   useEffect(() => {
     setSubmittedApprovalAction(null);
   }, [activeWorkflowApprovalRequest?.approvalToken]);
+
+  useEffect(() => {
+    if (!enableToolGovernanceApprovals) {
+      setActiveToolGovernanceApproval(null);
+    }
+  }, [enableToolGovernanceApprovals]);
 
   const questionKeyForIndex = useCallback(
     (index: number) => activeQuestions[index]?.id || `q${index + 1}`,
@@ -950,6 +980,10 @@ export function AIChatInputArea({
 
   return (
     <>
+      <ToolGovernancePendingApprovalBridge
+        enabled={enableToolGovernanceApprovals}
+        onApprovalChange={setActiveToolGovernanceApproval}
+      />
       {enableUpload && !hasBlockingApproval && isDraggingFiles ? (
         <AIChatDragUploadOverlay
           isSending={isSending}
@@ -1034,8 +1068,8 @@ export function AIChatInputArea({
                   </div>
                 )}
               </div>
-            ) : hasActiveToolGovernanceApproval && activeToolGovernanceApproval ? (
-              <ToolGovernanceApprovalPanel approval={activeToolGovernanceApproval} />
+            ) : hasActiveToolGovernanceApproval && effectiveToolGovernanceApproval ? (
+              <ToolGovernanceApprovalPanel approval={effectiveToolGovernanceApproval} />
             ) : hasActiveUserInputRequest && activeQuestion ? (
               <div className="mb-2 rounded-xl border bg-muted/30 px-3 py-3">
                 <div className="mb-3 flex items-start gap-2 text-sm">
@@ -1264,9 +1298,7 @@ export function AIChatInputArea({
                 imageExtensions={imageExtensions}
                 showModelSelector={showModelSelector}
                 showMemoryToggle={showMemoryToggle}
-                showComposerExpandButton={
-                  !hasActiveUserInputRequest && showComposerExpandButton
-                }
+                showComposerExpandButton={!hasActiveUserInputRequest && showComposerExpandButton}
                 isComposerExpanded={isComposerExpanded}
                 enableUpload={!hasActiveUserInputRequest && enableUpload}
                 showFileLibraryPicker={showFileLibraryPicker}

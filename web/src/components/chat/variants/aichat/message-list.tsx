@@ -41,6 +41,7 @@ interface AIChatMessageListProps {
   layout?: 'full' | 'embedded';
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  enableToolGovernanceApprovals?: boolean;
 }
 
 function isReplaceableRootStatus(status: AIChatMessage['status']): boolean {
@@ -100,6 +101,7 @@ export function AIChatMessageList({
   layout = 'full',
   showMemoryKey = true,
   showSkillEventDetails = true,
+  enableToolGovernanceApprovals = false,
 }: AIChatMessageListProps) {
   return (
     <ScrollArea
@@ -158,6 +160,7 @@ export function AIChatMessageList({
                 showAssistantModelMeta={showAssistantModelMeta}
                 showMemoryKey={showMemoryKey}
                 showSkillEventDetails={showSkillEventDetails}
+                enableToolGovernanceApprovals={enableToolGovernanceApprovals}
               />
             ))}
             <div ref={bottomRef} className="shrink-0" style={{ height: bottomSpacerHeight }} />

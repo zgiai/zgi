@@ -239,7 +239,7 @@ export function AgentRuntimeHeader({
               size="sm"
               aria-pressed={isPreviewOpen}
               className={cn(
-                'inline-flex items-center gap-1.5 rounded-md border px-2 text-white shadow-none transition-colors focus-visible:ring-emerald-500/30 focus-visible:ring-offset-1 active:border-emerald-700 active:bg-emerald-700 sm:px-3.5 2xl:hidden',
+                'inline-flex items-center gap-1.5 rounded-md border px-2 text-white shadow-none transition-colors focus-visible:ring-emerald-500/30 focus-visible:ring-offset-1 active:border-emerald-700 active:bg-emerald-700 sm:px-3.5',
                 isPreviewOpen
                   ? 'border-emerald-600 bg-emerald-600 ring-2 ring-emerald-400/25 hover:border-emerald-700 hover:bg-emerald-700'
                   : 'border-emerald-600/30 bg-emerald-600 hover:border-emerald-700 hover:bg-emerald-700'

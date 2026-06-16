@@ -1,13 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import {
-  AlertCircle,
-  CheckCircle2,
-  ChevronDown,
-  ExternalLink,
-  Loader2,
-} from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -100,6 +94,7 @@ interface AIChatAgenticTimelineProps {
   defaultOpen?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  enableToolGovernanceApprovals?: boolean;
   messageStatus?: AIChatMessage['status'];
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
@@ -526,7 +521,9 @@ function governanceModelFeedback(item: GovernanceTimelineItem): Record<string, u
   );
 }
 
-function governanceAssetOperationAudit(item: GovernanceTimelineItem): Record<string, unknown> | null {
+function governanceAssetOperationAudit(
+  item: GovernanceTimelineItem
+): Record<string, unknown> | null {
   const modelFeedback = governanceModelFeedback(item);
   const approvalResult = governanceApprovalResult(item);
   return (
@@ -1170,10 +1167,12 @@ function toPendingToolGovernanceApproval(
 function ToolGovernanceDecisionRow({
   item,
   skillDisplayById,
+  enableToolGovernanceApprovals,
   onToolGovernanceDecision,
 }: {
   item: GovernanceTimelineItem;
   skillDisplayById: AIChatSkillDisplayMap;
+  enableToolGovernanceApprovals: boolean;
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
@@ -1187,7 +1186,11 @@ function ToolGovernanceDecisionRow({
     t,
     onToolGovernanceDecision
   );
-  if (view.needsApproval) return null;
+  if (view.needsApproval && enableToolGovernanceApprovals) return null;
+
+  const needsApproval = enableToolGovernanceApprovals ? view.needsApproval : false;
+  const canSubmit = enableToolGovernanceApprovals ? view.canSubmit : false;
+  const onSubmitDecision = enableToolGovernanceApprovals ? view.onSubmitDecision : undefined;
 
   return (
     <ToolGovernanceDecisionCard
@@ -1199,13 +1202,13 @@ function ToolGovernanceDecisionRow({
       assets={view.assets}
       summaryRows={view.summaryRows}
       details={view.details}
-      needsApproval={view.needsApproval}
+      needsApproval={needsApproval}
       approvalStatus={view.approvalStatus}
       isHighImpact={view.isHighImpact}
       isAllowed={view.isAllowed}
-      canSubmit={view.canSubmit}
-      compactAudit
-      onSubmitDecision={view.onSubmitDecision}
+      canSubmit={canSubmit}
+      compactAudit={!view.needsApproval}
+      onSubmitDecision={onSubmitDecision}
     />
   );
 }
@@ -1436,6 +1439,7 @@ export function AIChatAgenticTimeline({
   defaultOpen = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
+  enableToolGovernanceApprovals = false,
   messageStatus,
   onToolGovernanceDecision,
 }: AIChatAgenticTimelineProps) {
@@ -1444,25 +1448,31 @@ export function AIChatAgenticTimeline({
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const pendingApprovalScopeId = useToolGovernancePendingApprovalScope();
 
-  const pendingGovernanceApprovals = useMemo(
-    () => {
-      if (!canPublishPendingGovernanceApproval(messageStatus)) return [];
-      return timeline.flatMap(item => {
-        if (item.type !== 'tool_governance_decision' || !isToolGovernanceNeedsApproval(item)) {
-          return [];
-        }
-        const view = buildToolGovernanceDecisionViewModel(
-          item,
-          skillDisplayById,
-          locale,
-          t,
-          onToolGovernanceDecision
-        );
-        return [toPendingToolGovernanceApproval(view, item)];
-      });
-    },
-    [locale, messageStatus, onToolGovernanceDecision, skillDisplayById, t, timeline]
-  );
+  const pendingGovernanceApprovals = useMemo(() => {
+    if (!enableToolGovernanceApprovals) return [];
+    if (!canPublishPendingGovernanceApproval(messageStatus)) return [];
+    return timeline.flatMap(item => {
+      if (item.type !== 'tool_governance_decision' || !isToolGovernanceNeedsApproval(item)) {
+        return [];
+      }
+      const view = buildToolGovernanceDecisionViewModel(
+        item,
+        skillDisplayById,
+        locale,
+        t,
+        onToolGovernanceDecision
+      );
+      return [toPendingToolGovernanceApproval(view, item)];
+    });
+  }, [
+    enableToolGovernanceApprovals,
+    locale,
+    messageStatus,
+    onToolGovernanceDecision,
+    skillDisplayById,
+    t,
+    timeline,
+  ]);
 
   useEffect(() => {
     const cleanups = pendingGovernanceApprovals.map(approval =>
@@ -1478,9 +1488,7 @@ export function AIChatAgenticTimeline({
       new Set(
         timeline
           .flatMap(item =>
-            item.type === 'tool_governance_decision'
-              ? [governanceItemCorrelationId(item)]
-              : []
+            item.type === 'tool_governance_decision' ? [governanceItemCorrelationId(item)] : []
           )
           .filter((correlationId): correlationId is string => Boolean(correlationId))
       ),
@@ -1493,7 +1501,11 @@ export function AIChatAgenticTimeline({
         .filter(
           item =>
             !isGovernedSkillEvent(item, governanceCorrelationIds) &&
-            !(item.type === 'tool_governance_decision' && isToolGovernanceNeedsApproval(item))
+            !(
+              enableToolGovernanceApprovals &&
+              item.type === 'tool_governance_decision' &&
+              isToolGovernanceNeedsApproval(item)
+            )
         )
         .map(item => {
           if (item.type === 'progress_text') return item;
@@ -1518,7 +1530,7 @@ export function AIChatAgenticTimeline({
               item.invocation.error,
           };
         }),
-    [governanceCorrelationIds, locale, skillDisplayById, t, timeline]
+    [enableToolGovernanceApprovals, governanceCorrelationIds, locale, skillDisplayById, t, timeline]
   );
 
   if (events.length === 0) return null;
@@ -1598,6 +1610,7 @@ export function AIChatAgenticTimeline({
                 key={item.id}
                 item={item}
                 skillDisplayById={skillDisplayById}
+                enableToolGovernanceApprovals={enableToolGovernanceApprovals}
                 onToolGovernanceDecision={onToolGovernanceDecision}
               />
             ) : isWorkflowTimelineItem(item) ? (

@@ -75,6 +75,7 @@ interface AIChatMessageBubbleProps {
   showAssistantModelMeta?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  enableToolGovernanceApprovals?: boolean;
 }
 
 const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
@@ -400,6 +401,7 @@ export function AIChatMessageBubble({
   showAssistantModelMeta = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
+  enableToolGovernanceApprovals = false,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
   const tGlobal = useT();
@@ -656,6 +658,7 @@ export function AIChatMessageBubble({
               defaultOpen={shouldOpenTimelineByDefault}
               showMemoryKey={showMemoryKey}
               showSkillEventDetails={showSkillEventDetails}
+              enableToolGovernanceApprovals={enableToolGovernanceApprovals}
               messageStatus={message.status}
               onToolGovernanceDecision={onToolGovernanceDecision}
             />

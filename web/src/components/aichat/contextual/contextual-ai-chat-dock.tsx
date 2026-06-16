@@ -29,6 +29,7 @@ import {
 } from '@/hooks/query-keys';
 import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 import { FILES_QUERY_KEY, FILE_FOLDERS_KEY, STORAGE_USAGE_KEY } from '@/hooks/use-files';
+import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import { cn } from '@/lib/utils';
@@ -38,9 +39,10 @@ import {
 } from './context-envelope';
 import { AIChatContextChips } from './context-chips';
 import { useContextualAIChat } from './contextual-ai-chat-context';
+import type { AIChatContextItem } from './types';
 
 const LOCAL_STORAGE_KEY = 'consoleChat';
-const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1024px)';
+const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1440px)';
 const DESKTOP_PANEL_WIDTH_STORAGE_KEY = 'consoleChat.aiChatDockWidth';
 const DEFAULT_DESKTOP_PANEL_WIDTH_RATIO = 0.3;
 const MIN_DESKTOP_PANEL_WIDTH = 640;
@@ -117,32 +119,80 @@ function pruneAssetOperationRefreshDedupe(cache: Map<string, number>, now: numbe
   }
 }
 
-function buildSuggestions(contextItems: ReturnType<typeof useContextualAIChat>['items']) {
+type ContextualDockTranslator = ReturnType<typeof useT<'webapp'>>;
+
+function isFilesPageContext(item: AIChatContextItem) {
+  return (
+    item.type === 'page' &&
+    (item.id === 'console.files' || item.metadata?.page === 'console.files')
+  );
+}
+
+function getNumberMetadata(item: AIChatContextItem | undefined, key: string) {
+  const value = item?.metadata?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function hasCapability(item: AIChatContextItem | undefined, capabilityId: string) {
+  return Boolean(item?.capabilities?.some(capability => capability.id === capabilityId));
+}
+
+function buildSuggestions(
+  contextItems: ReturnType<typeof useContextualAIChat>['items'],
+  t: ContextualDockTranslator
+) {
+  const filesPage = contextItems.find(isFilesPageContext);
+  if (filesPage) {
+    const visibleFileCount = getNumberMetadata(filesPage, 'visible_file_count');
+    const selectedFileCount = getNumberMetadata(filesPage, 'selected_file_count');
+    const canDelete = hasCapability(filesPage, 'file.delete');
+
+    const suggestions = [
+      t('consoleChat.contextual.suggestions.filesListVisible'),
+      selectedFileCount > 0
+        ? t('consoleChat.contextual.suggestions.filesSummarizeSelected')
+        : visibleFileCount > 0
+          ? t('consoleChat.contextual.suggestions.filesSummarizeFirst')
+          : t('consoleChat.contextual.suggestions.filesExplainEmpty'),
+      t('consoleChat.contextual.suggestions.filesOrganizeVisible'),
+    ];
+
+    if (selectedFileCount === 1 && canDelete) {
+      suggestions.push(t('consoleChat.contextual.suggestions.filesDeleteSelected'));
+    }
+
+    return suggestions;
+  }
+
   const firstAgent = contextItems.find(item => item.type === 'agent');
   if (firstAgent) {
     return [
-      `Check whether ${firstAgent.title} is ready to publish`,
-      `Generate test questions for ${firstAgent.title}`,
-      `Explain the main risks for ${firstAgent.title}`,
+      t('consoleChat.contextual.suggestions.agentReview', { title: firstAgent.title }),
+      t('consoleChat.contextual.suggestions.agentTestQuestions', { title: firstAgent.title }),
+      t('consoleChat.contextual.suggestions.agentRisks', { title: firstAgent.title }),
     ];
   }
 
   if (contextItems.length > 0) {
     return [
-      'Summarize the current page context',
-      'Tell me what I can do next',
-      'Create a safe action plan for this task',
+      t('consoleChat.contextual.suggestions.pageSummarize'),
+      t('consoleChat.contextual.suggestions.pageNextSteps'),
+      t('consoleChat.contextual.suggestions.pageExplainContext'),
     ];
   }
 
-  return ['Help me create an Agent', 'Review what I am working on', 'Plan a task I can automate'];
+  return [
+    t('consoleChat.contextual.suggestions.emptySummarize'),
+    t('consoleChat.contextual.suggestions.emptyNextSteps'),
+    t('consoleChat.contextual.suggestions.emptyReview'),
+  ];
 }
 
-function ContextBrand({ itemCount }: { itemCount: number }) {
+function ContextBrand({ label }: { label: string }) {
   return (
     <div className="flex size-10 items-center justify-center rounded-full border border-primary/20 bg-primary/10 text-primary">
       <Sparkles className="size-5" />
-      <span className="sr-only">{itemCount} context items</span>
+      <span className="sr-only">{label}</span>
     </div>
   );
 }
@@ -155,17 +205,37 @@ interface ContextualAIChatPanelProps {
   onClose: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
   suggestions: string[];
+  t: ContextualDockTranslator;
+  enableToolGovernance: boolean;
 }
 
 function ContextualAIChatPanel({
   controller,
+  enableToolGovernance,
   isModelInitializing,
   items,
   modelSelectorValue,
   onClose,
   onModelChange,
   suggestions,
+  t,
 }: ContextualAIChatPanelProps) {
+  const filesPage = items.find(isFilesPageContext);
+  const hasContext = items.length > 0;
+  const homeTitle = filesPage
+    ? t('consoleChat.contextual.home.filesTitle')
+    : hasContext
+      ? t('consoleChat.contextual.home.contextTitle')
+      : t('consoleChat.contextual.home.emptyTitle');
+  const homeDescription = filesPage
+    ? t('consoleChat.contextual.home.filesDescription')
+    : hasContext
+      ? t('consoleChat.contextual.home.contextDescription')
+      : t('consoleChat.contextual.home.emptyDescription');
+  const inputPlaceholder = filesPage
+    ? t('consoleChat.contextual.input.filesPlaceholder')
+    : t('consoleChat.contextual.input.placeholder');
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <Button
@@ -175,10 +245,10 @@ function ContextualAIChatPanel({
         isIcon
         className="absolute right-3 top-3 z-40 size-8 bg-background/90 text-muted-foreground shadow-sm hover:bg-muted hover:text-foreground"
         onClick={onClose}
-        title="Close AIChat assistant"
+        title={t('consoleChat.contextual.close')}
       >
         <X className="size-4" />
-        <span className="sr-only">Close AIChat assistant</span>
+        <span className="sr-only">{t('consoleChat.contextual.close')}</span>
       </Button>
       <div
         className={cn(
@@ -198,15 +268,16 @@ function ContextualAIChatPanel({
           variant="embedded"
           embeddedConversationMode="drawer"
           allowWorkspaceSwitch
-          homeBrand={<ContextBrand itemCount={items.length} />}
-          homeTitle={items.length > 0 ? 'Work with the current context' : 'AIChat assistant'}
-          homeDescription={
-            items.length > 0
-              ? 'AIChat will include the visible context chips in this turn.'
-              : 'Ask AIChat to help create, review, or plan work in ZGI.'
+          homeBrand={
+            <ContextBrand
+              label={t('consoleChat.contextual.contextItems', { count: items.length })}
+            />
           }
-          inputPlaceholder="Ask about this page or tell AIChat what to do..."
+          homeTitle={homeTitle}
+          homeDescription={homeDescription}
+          inputPlaceholder={inputPlaceholder}
           suggestions={suggestions}
+          enableToolGovernance={enableToolGovernance}
         />
       </div>
     </div>
@@ -214,6 +285,7 @@ function ContextualAIChatPanel({
 }
 
 export function ContextualAIChatDock() {
+  const t = useT('webapp');
   const user = useCurrentUser();
   const queryClient = useQueryClient();
   const { isOpen, setOpen, items } = useContextualAIChat();
@@ -378,12 +450,15 @@ export function ContextualAIChatDock() {
     [user?.id]
   );
 
-  const suggestions = useMemo(() => buildSuggestions(items), [items]);
+  const enableToolGovernance = useMemo(() => items.some(isFilesPageContext), [items]);
+  const suggestions = useMemo(() => buildSuggestions(items, t), [items, t]);
   useEffect(() => {
     if (!isDesktopPanelViewport) return;
     const resolveWidth = () => {
       setDesktopPanelWidth(previous =>
-        clampDesktopPanelWidth(previous ?? getStoredDesktopPanelWidth() ?? getDefaultDesktopPanelWidth())
+        clampDesktopPanelWidth(
+          previous ?? getStoredDesktopPanelWidth() ?? getDefaultDesktopPanelWidth()
+        )
       );
     };
 
@@ -449,7 +524,9 @@ export function ContextualAIChatDock() {
 
   const desktopPanelStyle = useMemo<CSSProperties>(
     () => ({
-      width: desktopPanelWidth ?? `max(${DEFAULT_DESKTOP_PANEL_WIDTH_RATIO * 100}vw, ${MIN_DESKTOP_PANEL_WIDTH}px)`,
+      width:
+        desktopPanelWidth ??
+        `max(${DEFAULT_DESKTOP_PANEL_WIDTH_RATIO * 100}vw, ${MIN_DESKTOP_PANEL_WIDTH}px)`,
     }),
     [desktopPanelWidth]
   );
@@ -463,6 +540,8 @@ export function ContextualAIChatDock() {
       onClose={() => setOpen(false)}
       onModelChange={handleModelChange}
       suggestions={suggestions}
+      t={t}
+      enableToolGovernance={enableToolGovernance}
     />
   );
 
@@ -473,16 +552,16 @@ export function ContextualAIChatDock() {
   if (isDesktopPanelViewport) {
     return isOpen ? (
       <aside
-        aria-label="AIChat assistant"
-        className="relative hidden h-full min-h-0 min-w-[640px] shrink-0 border-l border-border/70 bg-background shadow-sm lg:flex"
+        aria-label={t('consoleChat.contextual.assistantLabel')}
+        className="relative hidden h-full min-h-0 min-w-[640px] shrink-0 overflow-hidden border-l border-border/70 bg-background shadow-sm lg:flex"
         style={desktopPanelStyle}
       >
         <div
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize AIChat assistant"
+          aria-label={t('consoleChat.contextual.resize')}
           tabIndex={0}
-          title="Drag to resize AIChat assistant"
+          title={t('consoleChat.contextual.resizeHint')}
           className="group absolute inset-y-0 left-0 z-50 flex w-3 -translate-x-1/2 cursor-col-resize items-center justify-center outline-none"
           onPointerDown={handleResizePointerDown}
           onKeyDown={handleResizeKeyDown}
@@ -502,9 +581,9 @@ export function ContextualAIChatDock() {
         overlayClassName="bg-transparent backdrop-blur-none"
         className="flex h-full min-h-0 w-[min(720px,100vw)] max-w-none flex-col overflow-hidden p-0 sm:max-w-none"
       >
-        <SheetTitle className="sr-only">AIChat assistant</SheetTitle>
+        <SheetTitle className="sr-only">{t('consoleChat.contextual.assistantLabel')}</SheetTitle>
         <SheetDescription className="sr-only">
-          Ask AIChat to help with the current ZGI page.
+          {t('consoleChat.contextual.sheetDescription')}
         </SheetDescription>
         {panel}
       </SheetContent>

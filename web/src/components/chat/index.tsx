@@ -149,6 +149,7 @@ interface AIChatVariantProps {
   showAssistantModelMeta?: boolean;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
   themeColor?: string;
+  enableToolGovernance?: boolean;
 }
 
 type ChatProps =
