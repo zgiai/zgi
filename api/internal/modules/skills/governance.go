@@ -249,21 +249,106 @@ func assetRefsFromToolArguments(manifest toolgovernance.Manifest, arguments map[
 
 	idKeys := []string{"asset_id", "resource_id", assetType + "_id", "id"}
 	nameKeys := []string{"asset_name", "resource_name", assetType + "_name", "name"}
-	if assetType == "file" {
+	switch assetType {
+	case "file":
 		idKeys = []string{"file_id", "upload_file_id", "asset_id", "resource_id", "id"}
-		nameKeys = []string{"file_name", "filename", "asset_name", "resource_name", "name"}
+		nameKeys = []string{"file_name", "filename", "output_filename", "title", "asset_name", "resource_name", "name"}
+	case "knowledge_base":
+		ids := stringSliceMapValue(arguments, "dataset_ids", "datasetIds", "knowledge_base_ids", "knowledgeBaseIds", "asset_ids", "assetIds")
+		if len(ids) == 0 {
+			ids = stringSliceMapValue(arguments, "dataset_id", "datasetId", "knowledge_base_id", "knowledgeBaseId", "asset_id", "assetId", "id")
+		}
+		if len(ids) > 0 {
+			return assetRefsFromIDs(assetType, ids, "tool_arguments", nil)
+		}
+		idKeys = []string{"dataset_id", "datasetId", "knowledge_base_id", "knowledgeBaseId", "asset_id", "resource_id", "id"}
+		nameKeys = []string{"dataset_name", "datasetName", "knowledge_base_name", "knowledgeBaseName", "asset_name", "resource_name", "name"}
+	case "database":
+		idKeys = []string{"data_source_id", "dataSourceId", "database_id", "databaseId", "asset_id", "resource_id", "id"}
+		nameKeys = []string{"data_source_name", "dataSourceName", "database_name", "databaseName", "asset_name", "resource_name", "name"}
+	case "database_table":
+		idKeys = []string{"table_id", "tableId", "database_table_id", "databaseTableId", "asset_id", "resource_id", "id"}
+		nameKeys = []string{"table_name", "tableName", "database_table_name", "databaseTableName", "asset_name", "resource_name", "name"}
+	case "workflow":
+		idKeys = []string{"binding_id", "bindingId", "workflow_id", "workflowId", "workflow_binding_id", "workflowBindingId", "asset_id", "resource_id", "id"}
+		nameKeys = []string{"binding_name", "bindingName", "workflow_name", "workflowName", "asset_name", "resource_name", "name"}
+	case "workflow_run":
+		idKeys = []string{"workflow_run_id", "workflowRunId", "run_id", "runId", "asset_id", "resource_id", "id"}
+		nameKeys = []string{"workflow_run_name", "workflowRunName", "run_name", "runName", "asset_name", "resource_name", "name"}
 	}
+
+	metadata := assetMetadataFromToolArguments(assetType, arguments)
 	asset := toolgovernance.AssetRef{
 		ID:          stringMapValue(arguments, idKeys...),
 		Type:        assetType,
 		Name:        stringMapValue(arguments, nameKeys...),
 		WorkspaceID: stringMapValue(arguments, "workspace_id", "workspaceId"),
 		Source:      "tool_arguments",
+		Metadata:    metadata,
 	}
 	if asset.ID == "" && asset.Name == "" {
 		return nil
 	}
 	return []toolgovernance.AssetRef{asset}
+}
+
+func assetRefsFromIDs(assetType string, ids []string, source string, metadata map[string]interface{}) []toolgovernance.AssetRef {
+	out := make([]toolgovernance.AssetRef, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		out = append(out, toolgovernance.AssetRef{
+			ID:       id,
+			Type:     assetType,
+			Source:   strings.TrimSpace(source),
+			Metadata: copyGovernanceMetadata(metadata),
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func assetMetadataFromToolArguments(assetType string, arguments map[string]interface{}) map[string]interface{} {
+	if len(arguments) == 0 {
+		return nil
+	}
+	metadata := map[string]interface{}{}
+	if assetType == "database_table" {
+		if dataSourceID := stringMapValue(arguments, "data_source_id", "dataSourceId", "database_id", "databaseId"); dataSourceID != "" {
+			metadata["data_source_id"] = dataSourceID
+		}
+		if count := recordCountFromArguments(arguments); count > 0 {
+			metadata["record_count"] = count
+		}
+	}
+	if assetType == "file" {
+		if format := stringMapValue(arguments, "format", "chart_type"); format != "" {
+			metadata["format"] = format
+		}
+		if lifecycle := stringMapValue(arguments, "lifecycle"); lifecycle != "" {
+			metadata["lifecycle"] = lifecycle
+		}
+	}
+	if len(metadata) == 0 {
+		return nil
+	}
+	return metadata
+}
+
+func recordCountFromArguments(arguments map[string]interface{}) int {
+	value := firstMapValue(arguments, "records", "rows")
+	switch typed := value.(type) {
+	case []interface{}:
+		return len(typed)
+	case []map[string]interface{}:
+		return len(typed)
+	default:
+		return 0
+	}
 }
 
 func sessionGrantsFromAny(value interface{}) []toolgovernance.SessionGrant {
@@ -344,6 +429,39 @@ func assetRefsFromIDList(value interface{}, assetType string) []toolgovernance.A
 func stringMapValue(input map[string]interface{}, keys ...string) string {
 	value := firstMapValue(input, keys...)
 	return stringMapScalar(value)
+}
+
+func stringSliceMapValue(input map[string]interface{}, keys ...string) []string {
+	value := firstMapValue(input, keys...)
+	switch typed := value.(type) {
+	case []string:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if item = strings.TrimSpace(item); item != "" {
+				out = append(out, item)
+			}
+		}
+		return out
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := stringMapScalar(item); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	case string:
+		parts := strings.Split(typed, ",")
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func stringMapScalar(value interface{}) string {

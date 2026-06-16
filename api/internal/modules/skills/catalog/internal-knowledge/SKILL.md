@@ -10,6 +10,47 @@ tools:
   - retrieve_knowledge
 max_calls_per_turn: 20
 timeout_seconds: 30
+tool_governance:
+  list_accessible_knowledge_bases:
+    tool_id: knowledge.list_accessible
+    skill_id: internal-knowledge
+    domain: knowledge
+    effect: read
+    asset_type: knowledge_base
+    risk_level: low
+    requires_asset_resolution: false
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - knowledge:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  retrieve_knowledge:
+    tool_id: knowledge.retrieve
+    skill_id: internal-knowledge
+    domain: knowledge
+    effect: read
+    asset_type: knowledge_base
+    risk_level: low
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - knowledge:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
 display:
   icon: library
   category: knowledge

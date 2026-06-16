@@ -15,6 +15,147 @@ tools:
   - delete_table_records
 max_calls_per_turn: 40
 timeout_seconds: 30
+tool_governance:
+  list_accessible_databases:
+    tool_id: database.list_accessible
+    skill_id: internal-database
+    domain: database
+    effect: read
+    asset_type: database
+    risk_level: low
+    requires_asset_resolution: false
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - database:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  list_database_tables:
+    tool_id: database.list_tables
+    skill_id: internal-database
+    domain: database
+    effect: read
+    asset_type: database
+    risk_level: low
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - database:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  describe_database_table:
+    tool_id: database.describe_table
+    skill_id: internal-database
+    domain: database
+    effect: read
+    asset_type: database_table
+    risk_level: low
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - database:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  query_table_records:
+    tool_id: database.query_records
+    skill_id: internal-database
+    domain: database
+    effect: read
+    asset_type: database_table
+    risk_level: low
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - database:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  insert_table_records:
+    tool_id: database.insert_records
+    skill_id: internal-database
+    domain: database
+    effect: create
+    asset_type: database_table
+    risk_level: medium
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: true
+    external_side_effect: false
+    permission_scopes:
+      - database:write
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: true
+  update_table_records:
+    tool_id: database.update_records
+    skill_id: internal-database
+    domain: database
+    effect: update
+    asset_type: database_table
+    risk_level: medium
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: true
+    external_side_effect: false
+    permission_scopes:
+      - database:write
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: true
+  delete_table_records:
+    tool_id: database.delete_records
+    skill_id: internal-database
+    domain: database
+    effect: delete
+    asset_type: database_table
+    risk_level: high
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: true
+    external_side_effect: false
+    permission_scopes:
+      - database:write
+    default_approval_policy: always_ask
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: true
 display:
   icon: database
   category: database

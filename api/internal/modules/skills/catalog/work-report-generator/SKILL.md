@@ -9,6 +9,27 @@ tools:
   - generate_file
 max_calls_per_turn: 3
 timeout_seconds: 5
+tool_governance:
+  generate_file:
+    tool_id: file.generate_report
+    skill_id: work-report-generator
+    domain: files
+    effect: create
+    asset_type: file
+    risk_level: medium
+    requires_asset_resolution: false
+    reversible: true
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - file:create
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
 display:
   icon: clipboard-list
   category: productivity

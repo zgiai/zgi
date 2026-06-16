@@ -9,6 +9,27 @@ tools:
   - generate_chart
 max_calls_per_turn: 5
 timeout_seconds: 5
+tool_governance:
+  generate_chart:
+    tool_id: chart.generate
+    skill_id: chart-generator
+    domain: files
+    effect: create
+    asset_type: file
+    risk_level: medium
+    requires_asset_resolution: false
+    reversible: true
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - file:create
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
 display:
   icon: chart-no-axes-combined
   category: visualization

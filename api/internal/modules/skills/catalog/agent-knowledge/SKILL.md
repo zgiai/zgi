@@ -9,6 +9,27 @@ tools:
   - retrieve_agent_knowledge
 max_calls_per_turn: 20
 timeout_seconds: 30
+tool_governance:
+  retrieve_agent_knowledge:
+    tool_id: knowledge.retrieve_agent
+    skill_id: agent-knowledge
+    domain: knowledge
+    effect: read
+    asset_type: knowledge_base
+    risk_level: low
+    requires_asset_resolution: false
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - knowledge:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
 display:
   icon: library
   category: knowledge

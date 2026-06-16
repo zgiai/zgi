@@ -12,6 +12,87 @@ tools:
   - generate_pptx
 max_calls_per_turn: 5
 timeout_seconds: 60
+tool_governance:
+  generate_file:
+    tool_id: file.generate
+    skill_id: file-generator
+    domain: files
+    effect: create
+    asset_type: file
+    risk_level: medium
+    requires_asset_resolution: false
+    reversible: true
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - file:create
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  generate_docx:
+    tool_id: file.generate_docx
+    skill_id: file-generator
+    domain: files
+    effect: create
+    asset_type: file
+    risk_level: medium
+    requires_asset_resolution: false
+    reversible: true
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - file:create
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  generate_pdf:
+    tool_id: file.generate_pdf
+    skill_id: file-generator
+    domain: files
+    effect: create
+    asset_type: file
+    risk_level: medium
+    requires_asset_resolution: false
+    reversible: true
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - file:create
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  generate_pptx:
+    tool_id: file.generate_pptx
+    skill_id: file-generator
+    domain: files
+    effect: create
+    asset_type: file
+    risk_level: medium
+    requires_asset_resolution: false
+    reversible: true
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - file:create
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
 display:
   icon: file-plus
   category: productivity
