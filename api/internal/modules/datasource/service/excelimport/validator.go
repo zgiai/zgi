@@ -12,7 +12,7 @@ import (
 
 var (
 	tableNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
-	fieldNamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+	fieldNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	systemFieldNames = map[string]struct{}{
 		"id":           {},
 		"uuid":         {},

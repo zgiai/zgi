@@ -21,13 +21,9 @@ import type { Db, CreateDbRequest, UpdateDbRequest } from '@/services/types/db';
 import { useCreateDb, useUpdateDb } from '@/hooks/db/use-dbs';
 import { useT } from '@/i18n';
 import { ChevronLeft, Database as DatabaseIcon, Pencil } from 'lucide-react';
-import {
-  WorkspaceSelector,
-  type WorkspaceSelectorValue,
-} from '@/components/common/workspace-selector';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
+import { useCurrentWorkspace, type Workspace } from '@/store/workspace-store';
 
 interface CreateDbDialogProps {
   open: boolean;
@@ -39,8 +35,6 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
   const isEdit = false;
   const db = undefined as Db | undefined;
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
-  const requiresWorkspaceSelection = !isEdit && isOrganizationMode;
 
   const createDb = useCreateDb();
   const updateDb = useUpdateDb(db?.id);
@@ -89,12 +83,12 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
   const [formData, setFormData] = useState<{
     name: string;
     description: string;
-    workspace?: WorkspaceSelectorValue;
+    workspace?: Workspace;
   }>(() => buildFormDataFromDb(db));
 
   useEffect(() => {
     if (!open) return;
-    if (currentWorkspace && !requiresWorkspaceSelection) {
+    if (currentWorkspace) {
       if (formData.workspace?.id !== currentWorkspace.id) {
         setFormData(prev => ({
           ...prev,
@@ -107,7 +101,7 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
     // In edit mode, respect db.workspace_id initialization to avoid overriding.
     if (isEdit) return;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, isEdit, formData.workspace, currentWorkspace, requiresWorkspaceSelection]);
+  }, [open, isEdit, formData.workspace, currentWorkspace]);
 
   function handleInputChange<K extends keyof typeof formData>(
     field: K,
@@ -152,9 +146,7 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setHasSubmitted(true);
-    const workspaceId = requiresWorkspaceSelection
-      ? formData.workspace?.id || ''
-      : formData.workspace?.id || db?.workspace_id || currentWorkspace?.id || '';
+    const workspaceId = formData.workspace?.id || db?.workspace_id || currentWorkspace?.id || '';
     if (!isNameValid || !workspaceId) return;
 
     const iconPayload = iconValueToDatasetPayload(iconValue, {
@@ -256,25 +248,6 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
                   className="resize-none"
                 />
               </div>
-
-              {requiresWorkspaceSelection ? (
-                <div className="space-y-2.5">
-                  <Label className="flex items-center gap-1 text-sm font-semibold">
-                    {t('createModal.workspaceLabel')} <span className="text-destructive">*</span>
-                  </Label>
-                  <WorkspaceSelector
-                    value={formData.workspace}
-                    placeholder={t('createModal.workspacePlaceholder')}
-                    autoSelectFirst
-                    onChange={workspace => handleInputChange('workspace', workspace)}
-                  />
-                  {hasSubmitted && !formData.workspace?.id ? (
-                    <p className="text-xs text-destructive font-medium animate-in fade-in slide-in-from-top-1">
-                      {t('validation.workspace.required')}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
 
               {/* Advanced Settings */}
               <div className="space-y-3">

@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 
 interface MarkdownImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   className?: string;
+  frameClassName?: string;
   imageClassName?: string;
 }
 
@@ -14,6 +15,7 @@ export function MarkdownImage({
   src,
   alt,
   className,
+  frameClassName,
   imageClassName,
   ...props
 }: MarkdownImageProps) {
@@ -29,6 +31,15 @@ export function MarkdownImage({
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
   }, [blobUrl]);
+
+  React.useEffect(() => {
+    setIsLoading(true);
+    setHasError(false);
+    setBlobUrl(currentBlobUrl => {
+      if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+      return null;
+    });
+  }, [src]);
 
   const loadBlob = async () => {
     if (blobUrl || !src) return;
@@ -121,7 +132,8 @@ export function MarkdownImage({
         <div
           className={cn(
             'relative cursor-zoom-in overflow-hidden rounded-lg border bg-background',
-            isLoading ? 'min-h-[200px]' : ''
+            isLoading ? 'min-h-[200px]' : '',
+            frameClassName
           )}
           onClick={() => handleOpenChange(true)}
         >

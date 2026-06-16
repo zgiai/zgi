@@ -34,6 +34,7 @@ type OrganizationService interface {
 	GetOrganizationByWorkspaceID(ctx context.Context, workspaceID string) (*model.Organization, error)
 
 	AddMember(ctx context.Context, req *dto.AddOrganizationMemberRequest) error
+	DirectAddOrganizationMember(ctx context.Context, req *dto.DirectAddOrganizationMemberRequest) (*dto.DirectAddOrganizationMemberResponse, error)
 	InviteCurrentOrganizationMember(ctx context.Context, req *dto.InviteCurrentOrganizationMemberRequest) (*dto.InviteCurrentOrganizationMemberResponse, error)
 	ResetCurrentOrganizationMemberPassword(ctx context.Context, req *dto.ResetCurrentOrganizationMemberPasswordRequest) (*dto.ResetCurrentOrganizationMemberPasswordResponse, error)
 	RemoveMember(ctx context.Context, organizationID, accountID string) error

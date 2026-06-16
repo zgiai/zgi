@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronsUpDown, User, Users } from 'lucide-react';
+import { Check, ChevronsUpDown, Users } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import {
@@ -42,21 +42,16 @@ export function PersonalSpaceEmptyState({
   const tNavigation = useT('navigation');
   const workspaces = useWorkspaceStore.use.workspaces();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
   const { mutate: updateWorkspace, isPending: isUpdatingWorkspace } = useUpdateCurrentWorkspace();
 
   useJoinedWorkspaces({ syncToStore: true });
 
   const hasWorkspaces = workspaces.length > 0;
   const emptyMessage = tCommon(`personalSpaceEmpty.${moduleType}`);
-  const personalSpaceLabel = tNavigation('personalSpace');
-  const currentWorkspaceLabel = isOrganizationMode
-    ? personalSpaceLabel
-    : currentWorkspace?.name || tNavigation('switchWorkspace');
-  const CurrentWorkspaceIcon = isOrganizationMode ? User : Users;
+  const currentWorkspaceLabel = currentWorkspace?.name || tNavigation('switchWorkspace');
 
   const handleSelectWorkspace = React.useCallback(
-    (workspace: Workspace | null) => {
+    (workspace: Workspace) => {
       updateWorkspace(workspace);
     },
     [updateWorkspace]
@@ -92,7 +87,7 @@ export function PersonalSpaceEmptyState({
               >
                 <div className="flex min-w-0 items-center gap-2">
                   <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                    <CurrentWorkspaceIcon className="h-4 w-4" />
+                    <Users className="h-4 w-4" />
                   </div>
                   <span className="truncate text-sm font-medium">{currentWorkspaceLabel}</span>
                 </div>
@@ -102,18 +97,6 @@ export function PersonalSpaceEmptyState({
             <DropdownMenuContent align="center" className="w-[320px]">
               <DropdownMenuLabel>{tNavigation('switchWorkspace')}</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => handleSelectWorkspace(null)}
-                className="flex cursor-pointer items-center justify-between"
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted">
-                    <User className="h-3.5 w-3.5 text-muted-foreground" />
-                  </div>
-                  <span className="truncate text-xs">{personalSpaceLabel}</span>
-                </div>
-                {isOrganizationMode ? <Check className="h-4 w-4 text-primary" /> : null}
-              </DropdownMenuItem>
               {workspaces.map(workspace => (
                 <DropdownMenuItem
                   key={workspace.id}
@@ -127,7 +110,7 @@ export function PersonalSpaceEmptyState({
                     </div>
                     <span className="truncate text-xs">{workspace.name}</span>
                   </div>
-                  {!isOrganizationMode && currentWorkspace?.id === workspace.id ? (
+                  {currentWorkspace?.id === workspace.id ? (
                     <Check className="h-4 w-4 text-primary" />
                   ) : null}
                 </DropdownMenuItem>

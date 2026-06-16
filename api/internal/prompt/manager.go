@@ -76,6 +76,21 @@ func init() {
 	}
 
 	err = RegisterTemplate(
+		DatasourceExcelFieldRecognition,
+		TemplateMetadata{
+			Module:      "datasource",
+			Purpose:     "Recognize table and field names for Excel import",
+			Description: "Used for suggesting table name, table description, and database field names in the Excel import review step",
+			CreatedAt:   time.Date(2026, time.June, 9, 0, 0, 0, 0, time.UTC),
+			UpdatedAt:   time.Now(),
+		},
+		"templates/datasource/excel_field_recognition.tpl",
+	)
+	if err != nil {
+		panic(fmt.Sprintf("failed to register excel field recognition template: %v", err))
+	}
+
+	err = RegisterTemplate(
 		DatasetQuestionGeneration,
 		TemplateMetadata{
 			Module:      "dataset",

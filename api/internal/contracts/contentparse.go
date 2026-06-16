@@ -174,3 +174,11 @@ type ContentParseService interface {
 	Parse(ctx context.Context, req ParseRequest) (*ParseArtifact, error)
 	Health(ctx context.Context) (*ParseHealth, error)
 }
+
+// RoutedContentParseService uses the platform parser route planner before
+// executing an adapter. Business modules that need consistency with the
+// content-parse playground should prefer this interface when available.
+type RoutedContentParseService interface {
+	ContentParseService
+	ParseWithRouting(ctx context.Context, req ParseRequest) (*ParseArtifact, error)
+}

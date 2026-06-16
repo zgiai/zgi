@@ -1836,6 +1836,57 @@ func TestServerLoadsVerifiedDependencyProfileArtifacts(t *testing.T) {
 	}
 }
 
+func TestServerSkipsDependencyProfileArtifactRejectedByPackagePolicy(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DependencyRootFSDir = t.TempDir()
+	writeServerDependencyProfileArtifact(t, cfg.DependencyRootFSDir, "skill-office")
+	writeServerDependencyProfileArtifactWithPackages(t, cfg.DependencyRootFSDir, "auto-unsafe", []map[string]string{
+		{"ecosystem": "python3", "name": "openpyxl", "version": "3.1.5"},
+	})
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server to skip invalid dependency artifact, got %v", err)
+	}
+
+	catalogReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies?language=python3", nil)
+	catalogRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(catalogRes, catalogReq)
+	if catalogRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency catalog, got %d body=%s", catalogRes.Code, catalogRes.Body.String())
+	}
+	body := catalogRes.Body.String()
+	if !strings.Contains(body, `"name":"skill-office"`) {
+		t.Fatalf("expected valid artifact to remain available, got %s", body)
+	}
+	if strings.Contains(body, `"name":"auto-unsafe"`) {
+		t.Fatalf("expected invalid artifact to be skipped, got %s", body)
+	}
+}
+
+func TestServerLoadsPinnedAutoDependencyProfileArtifacts(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DependencyRootFSDir = t.TempDir()
+	writeServerAutoDependencyProfileArtifact(t, cfg.DependencyRootFSDir, "auto-openpyxl")
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("expected server, got %v", err)
+	}
+
+	catalogReq := httptest.NewRequest(http.MethodGet, "/v1/sandbox/dependencies?language=python3", nil)
+	catalogRes := httptest.NewRecorder()
+	server.Handler().ServeHTTP(catalogRes, catalogReq)
+	if catalogRes.Code != http.StatusOK {
+		t.Fatalf("expected dependency catalog, got %d body=%s", catalogRes.Code, catalogRes.Body.String())
+	}
+	if !strings.Contains(catalogRes.Body.String(), `"name":"auto-openpyxl"`) ||
+		!strings.Contains(catalogRes.Body.String(), `"status":"ready"`) ||
+		!strings.Contains(catalogRes.Body.String(), `"enabled":true`) {
+		t.Fatalf("expected pinned auto artifact to load, got %s", catalogRes.Body.String())
+	}
+}
+
 func TestDependencyUpdatePersistsBuiltProfileAcrossRestart(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.APIKey = "admin-test-key"
@@ -2379,6 +2430,14 @@ func testConfig(t *testing.T) config.Config {
 
 func writeServerDependencyProfileArtifact(t *testing.T, dependencyRoot string, profile string) {
 	t.Helper()
+	writeServerDependencyProfileArtifactWithPackages(t, dependencyRoot, profile, []map[string]string{
+		{"ecosystem": "python3", "name": "office-tools", "version": "managed"},
+		{"ecosystem": "nodejs", "name": "office-tools", "version": "managed"},
+	})
+}
+
+func writeServerDependencyProfileArtifactWithPackages(t *testing.T, dependencyRoot string, profile string, packages []map[string]string) {
+	t.Helper()
 	profileDir := filepath.Join(dependencyRoot, profile, "opt", "zgi", "profiles", profile)
 	files := map[string]string{
 		"venv/bin/python":       "python",
@@ -2403,9 +2462,52 @@ func writeServerDependencyProfileArtifact(t *testing.T, dependencyRoot string, p
 		"languages":    []string{"python3", "nodejs"},
 		"base_runtime": "linux-secure",
 		"description":  "Managed document automation profile.",
+		"packages":     packages,
+		"build": map[string]any{
+			"checksum":            checksum,
+			"size_bytes":          size,
+			"verification_passed": true,
+		},
+	}
+	raw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("encode artifact manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(profileDir, "manifest.json"), append(raw, '\n'), 0o644); err != nil {
+		t.Fatalf("write artifact manifest: %v", err)
+	}
+}
+
+func writeServerAutoDependencyProfileArtifact(t *testing.T, dependencyRoot string, profile string) {
+	t.Helper()
+	profileDir := filepath.Join(dependencyRoot, profile, "opt", "zgi", "profiles", profile)
+	files := map[string]string{
+		"venv/bin/python": "python",
+	}
+	for name, content := range files {
+		path := filepath.Join(profileDir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create artifact parent: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write artifact file: %v", err)
+		}
+	}
+	checksum, size := checksumServerDependencyProfileArtifact(t, profileDir)
+	manifest := map[string]any{
+		"name":            profile,
+		"version":         "auto-openpyxl",
+		"status":          "ready",
+		"enabled":         true,
+		"owner_scope":     "global",
+		"languages":       []string{"python3"},
+		"base_runtime":    "linux-secure",
+		"checksum":        "sha256:openpyxl",
+		"description":     "Automatically built dependency profile.",
+		"public_reusable": true,
+		"pinned":          true,
 		"packages": []map[string]string{
-			{"ecosystem": "python3", "name": "office-tools", "version": "managed"},
-			{"ecosystem": "nodejs", "name": "office-tools", "version": "managed"},
+			{"ecosystem": "python3", "name": "openpyxl", "version": "3.1.5"},
 		},
 		"build": map[string]any{
 			"checksum":            checksum,

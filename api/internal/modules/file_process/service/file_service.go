@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ledongthuc/pdf"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 
 	"github.com/zgiai/zgi/api/config"
@@ -39,6 +40,7 @@ type fileService struct {
 	db                *gorm.DB
 	quotaService      interfaces.QuotaService
 	enterpriseService interfaces.OrganizationService
+	extractGroup      singleflight.Group
 }
 
 // NewFileService creates file service instance
@@ -447,8 +449,35 @@ func (s *fileService) ExtractFileWithSetting(ctx context.Context, fileID string,
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			logger.WarnContext(ctx, "failed to read file extraction cache", "file_id", fileID, "cache_key", cacheKey, err)
 		}
+
+		groupKey := fileID + ":" + cacheKey
+		value, err, shared := s.extractGroup.Do(groupKey, func() (interface{}, error) {
+			cache, err := s.fileRepo.GetExtractionCache(ctx, fileID, cacheKey)
+			if err == nil && strings.TrimSpace(cache.Content) != "" {
+				logger.InfoContext(ctx, "file extraction cache hit after wait", "file_id", fileID, "cache_key", cacheKey, "source", cache.Source)
+				return cache.Content, nil
+			}
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				logger.WarnContext(ctx, "failed to read file extraction cache", "file_id", fileID, "cache_key", cacheKey, err)
+			}
+			logger.InfoContext(ctx, "file extraction cache miss", "file_id", fileID, "cache_key", cacheKey, "source", setting.CacheNamespace, "strategy", setting.ExtractionStrategy)
+			return s.extractAndCacheFileWithSetting(ctx, uploadFile, cacheKey, setting)
+		})
+		if err != nil {
+			return "", err
+		}
+		content, _ := value.(string)
+		if shared {
+			logger.InfoContext(ctx, "file extraction shared in-flight result", "file_id", fileID, "cache_key", cacheKey, "source", setting.CacheNamespace)
+		}
+		return content, nil
 	}
 
+	return s.extractAndCacheFileWithSetting(ctx, uploadFile, "", setting)
+}
+
+func (s *fileService) extractAndCacheFileWithSetting(ctx context.Context, uploadFile *model.UploadFile, cacheKey string, setting interfaces.FileExtractionSetting) (string, error) {
+	start := time.Now()
 	var processRule *dataset_model.DatasetProcessRule
 	if setting.EnableOCR != nil {
 		processRule = &dataset_model.DatasetProcessRule{
@@ -485,14 +514,14 @@ func (s *fileService) ExtractFileWithSetting(ctx context.Context, fileID string,
 	}
 	if cacheKey != "" && strings.TrimSpace(content) != "" {
 		if err := s.fileRepo.UpsertExtractionCache(ctx, &model.FileExtractionCache{
-			FileID:   fileID,
+			FileID:   uploadFile.ID,
 			CacheKey: cacheKey,
 			Content:  content,
 			Source:   setting.CacheNamespace,
 		}); err != nil {
-			logger.WarnContext(ctx, "failed to write file extraction cache", "file_id", fileID, "cache_key", cacheKey, err)
+			logger.WarnContext(ctx, "failed to write file extraction cache", "file_id", uploadFile.ID, "cache_key", cacheKey, err)
 		} else {
-			logger.InfoContext(ctx, "file extraction cache stored", "file_id", fileID, "cache_key", cacheKey, "source", setting.CacheNamespace)
+			logger.InfoContext(ctx, "file extraction cache stored", "file_id", uploadFile.ID, "cache_key", cacheKey, "source", setting.CacheNamespace, "content_len", len(content), "duration_ms", time.Since(start).Milliseconds())
 		}
 	}
 	return content, nil

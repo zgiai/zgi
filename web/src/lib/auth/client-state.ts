@@ -18,6 +18,7 @@ export function resetTenantContextState(): void {
   workspaceStore.enterOrganizationMode();
 
   const organizationStore = useOrganizationStore.getState();
+  organizationStore.setSwitchingOrganization(false);
   organizationStore.setOrganizations([]);
   organizationStore.setCurrentOrganization(null);
 }

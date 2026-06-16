@@ -1284,7 +1284,7 @@ function ChannelForm({
             preferredProvider={effectiveProviderFilter || mappedProvider}
             autoCollapseOthers={(effectiveProviderFilter || mappedProvider) !== 'all'}
             providerFilter={effectiveProviderFilter}
-            selectionPolicy={mode === 'create' ? 'catalog' : 'available'}
+            selectionPolicy="catalog"
             selectableModelKeys={
               mode !== 'create'
                 ? undefined

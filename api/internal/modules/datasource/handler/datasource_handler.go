@@ -1510,6 +1510,64 @@ func (h *DataSourceHandler) IngestFileToTable(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// ParseFileForTableIngest parses file content for table ingestion review.
+func (h *DataSourceHandler) ParseFileForTableIngest(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req dto.ParseFileForTableIngestRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	result, err := h.service.ParseFileForTableIngest(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// ExtractTextToTableRecords recognizes table records from parsed text content.
+func (h *DataSourceHandler) ExtractTextToTableRecords(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req dto.ExtractTextToTableRecordsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	result, err := h.service.ExtractTextToTableRecords(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
 // BatchIngestFileToTable handles the batch ingestion of multiple files into a table
 func (h *DataSourceHandler) BatchIngestFileToTable(c *gin.Context) {
 	organizationID := util.GetOrganizationIDCompat(c)
@@ -1637,6 +1695,10 @@ func (h *DataSourceHandler) GetTablePrompt(c *gin.Context) {
 	// Get prompt for table
 	prompt, err := h.service.GetTablePrompt(c.Request.Context(), tableID, lang)
 	if err != nil {
+		if service.IsDataSourceTableNotFound(err) {
+			response.Fail(c, response.ErrNotFound)
+			return
+		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
@@ -2121,6 +2183,7 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.POST("/data-dbs/analyze-file-for-table", h.AnalyzeFileForTable)
 	authWithTenant.POST("/data-dbs/:id/excel-import/analyze", h.AnalyzeExcelImport)
 	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id", h.GetExcelImportJob)
+	authWithTenant.POST("/data-dbs/:id/excel-import/jobs/:job_id/recognize", h.RecognizeExcelImportFields)
 	authWithTenant.POST("/data-dbs/:id/excel-import/jobs/:job_id/import", h.ConfirmExcelImport)
 	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id/errors", h.ListExcelImportErrors)
 
@@ -2133,6 +2196,8 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.POST("/data-dbs/:id/tables/:table_id/records/import", h.ImportTableRecords)
 
 	// File ingestion operations
+	authWithTenant.POST("/data-dbs/parse-file-for-table-ingest", h.ParseFileForTableIngest)
+	authWithTenant.POST("/data-dbs/extract-text-to-table-records", h.ExtractTextToTableRecords)
 	authWithTenant.POST("/data-dbs/ingest-file-to-table", h.IngestFileToTable)
 	authWithTenant.POST("/data-dbs/batch-ingest-file-to-table", h.BatchIngestFileToTable)
 }

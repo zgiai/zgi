@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -20,6 +20,15 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -34,7 +43,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import FileSelectorDialog from '@/components/files/file-selector-dialog';
+import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
 import type { FileItem } from '@/services/types/file';
 import {
   Type,
@@ -42,15 +53,29 @@ import {
   type ConfirmExcelImportData,
   type ConfirmExcelImportRequest,
   type InferredExcelColumn,
+  type RecognizeExcelImportData,
 } from '@/services/types/db';
 import {
   useAnalyzeExcelImport,
   useConfirmExcelImport,
   useExcelImportErrors,
+  useRecognizeExcelImport,
 } from '@/hooks/db/use-excel-import';
+import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { useDbTables } from '@/hooks/db/use-db-tables';
+import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { useCurrentUser } from '@/store/auth-store';
+import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
+import {
+  getDuplicateDbColumnNames,
+  getTableNameValidationErrors,
+  isInvalidDbColumnName,
+  isReservedDbColumnName,
+  type TableNameErrorCode,
+} from '@/utils/validation';
 
 type Step = 'file' | 'preview' | 'schema' | 'result';
 
@@ -59,230 +84,27 @@ interface ExcelImportShellProps {
 }
 
 const typeOptions = [Type.Text, Type.Integer, Type.Numeric, Type.Boolean, Type.Timestamp] as const;
-const fieldNamePattern = /^[a-z_][a-z0-9_]*$/;
-const tableNamePattern = /^[a-z][a-z0-9_]*$/;
-const reservedFieldNames = new Set(['id', 'uuid', 'created_time', 'updated_time']);
-const genericFieldNamePattern = /^(column|field)_\d+$/;
 
 function getExcelColumnKey(col: InferredExcelColumn, index: number) {
-  return [col.source_column_index, col.source_column || 'source', col.name || 'field', index].join(
-    ':'
-  );
+  return [col.source_column_index, col.source_column || 'source', index].join(':');
 }
 
 function getSampleValueKey(value: unknown, index: number) {
   return `${index}:${String(value)}`;
 }
 
-const sourcePhraseTranslations: Readonly<Record<string, string>> = {
-  序号: 'number',
-  员工关系: 'employee relation',
-  用工形式: 'employment type',
-  姓名: 'name',
-  隶属部门: 'department',
-  岗位: 'position',
-  身份: 'identity',
-  岗位类别: 'position category',
-  职级: 'job level',
-  入司日期: 'hire date',
-  待转正日期: 'probation conversion date',
-  联系方式: 'contact information',
-  住院号: 'inpatient number',
-  入院时间: 'admission time',
-  上级医师查房记录: 'senior physician ward round record',
-  标识: 'identifier',
-  操作时间: 'operation time',
-};
-
-const sourceTokenTranslations: ReadonlyArray<readonly [string, string]> = [
-  ['待转正', 'probation conversion'],
-  ['员工关系', 'employee relation'],
-  ['用工形式', 'employment type'],
-  ['隶属部门', 'department'],
-  ['岗位类别', 'position category'],
-  ['上级医师', 'senior physician'],
-  ['查房记录', 'ward round record'],
-  ['联系方式', 'contact information'],
-  ['入司', 'hire'],
-  ['转正', 'conversion'],
-  ['员工', 'employee'],
-  ['用工', 'employment'],
-  ['形式', 'type'],
-  ['隶属', 'affiliated'],
-  ['部门', 'department'],
-  ['岗位', 'position'],
-  ['身份', 'identity'],
-  ['职级', 'job level'],
-  ['类别', 'category'],
-  ['序号', 'number'],
-  ['联系', 'contact'],
-  ['住院', 'inpatient'],
-  ['入院', 'admission'],
-  ['出院', 'discharge'],
-  ['医师', 'physician'],
-  ['医生', 'doctor'],
-  ['护士', 'nurse'],
-  ['患者', 'patient'],
-  ['病人', 'patient'],
-  ['查房', 'ward round'],
-  ['记录', 'record'],
-  ['时间', 'time'],
-  ['日期', 'date'],
-  ['编号', 'number'],
-  ['号码', 'number'],
-  ['标识', 'identifier'],
-  ['操作', 'operation'],
-  ['状态', 'status'],
-  ['名称', 'name'],
-  ['姓名', 'name'],
-  ['类型', 'type'],
-  ['备注', 'note'],
-  ['描述', 'description'],
-  ['科室', 'department'],
-  ['医院', 'hospital'],
-  ['病情', 'condition'],
-  ['体重', 'weight'],
-  ['血压', 'blood pressure'],
-  ['脉搏', 'pulse'],
-  ['呼吸', 'respiration'],
-  ['主诉', 'chief complaint'],
-  ['诊断', 'diagnosis'],
-  ['治疗', 'treatment'],
-  ['护理', 'nursing'],
-  ['号', 'number'],
-];
-
-const sampleValueSemanticRules: ReadonlyArray<{
-  test: (samples: readonly string[]) => boolean;
-  phrase: string;
-  type?: Type;
-}> = [
-  {
-    test: samples => samples.some(value => /^1[3-9]\d{9}$/.test(value.replace(/\s+/g, ''))),
-    phrase: 'phone number',
-    type: Type.Text,
-  },
-  {
-    test: samples => samples.some(value => /^\d{4}[-/.年]\d{1,2}/.test(value)),
-    phrase: 'date',
-    type: Type.Timestamp,
-  },
-  {
-    test: samples => samples.some(value => value.includes('@')),
-    phrase: 'email',
-    type: Type.Text,
-  },
-];
-
-function slugifyEnglish(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .replace(/_+/g, '_');
-}
-
-function translateSourceColumn(source: string): string {
-  const trimmed = source.trim();
-  if (!trimmed) return '';
-
-  const exact = sourcePhraseTranslations[trimmed];
-  if (exact) return exact;
-
-  if (/^[\w\s-]+$/.test(trimmed)) return trimmed;
-
-  const words: string[] = [];
-  let index = 0;
-  while (index < trimmed.length) {
-    const match = sourceTokenTranslations.find(([token]) => trimmed.startsWith(token, index));
-    if (match) {
-      words.push(match[1]);
-      index += match[0].length;
-      continue;
-    }
-    index += 1;
-  }
-
-  return words.join(' ');
-}
-
-function inferFieldPhrase(col: InferredExcelColumn): string {
-  const translatedSource = translateSourceColumn(col.source_column || col.display_name || '');
-  if (translatedSource) return translatedSource;
-
-  const sampleRule = sampleValueSemanticRules.find(rule =>
-    rule.test((col.sample_values || []).map(value => String(value).trim()))
-  );
-  if (sampleRule) return sampleRule.phrase;
-
-  return col.display_name || col.name;
-}
-
-function inferFieldType(col: InferredExcelColumn): Type {
-  const sampleRule = sampleValueSemanticRules.find(rule =>
-    rule.test((col.sample_values || []).map(value => String(value).trim()))
-  );
-  return sampleRule?.type || col.type;
-}
-
-function makeUniqueFieldName(base: string, used: Set<string>, fallbackIndex: number): string {
-  const fallback = `field_${fallbackIndex + 1}`;
-  const normalized = slugifyEnglish(base) || fallback;
-  const safeBase = /^[a-z]/.test(normalized) ? normalized : `field_${normalized}`;
-  let candidate = reservedFieldNames.has(safeBase) ? `${safeBase}_value` : safeBase;
-  let suffix = 2;
-
-  while (used.has(candidate) || reservedFieldNames.has(candidate)) {
-    candidate = `${safeBase}_${suffix}`;
-    suffix += 1;
-  }
-
-  used.add(candidate);
-  return candidate;
-}
-
-function normalizeInferredColumns(incoming: InferredExcelColumn[]): InferredExcelColumn[] {
-  const used = new Set<string>();
-
-  return incoming.map((col, index) => {
-    const originalName = col.name.trim();
-    const translatedSource = inferFieldPhrase(col);
-    const needsSemanticName =
-      !fieldNamePattern.test(originalName) ||
-      reservedFieldNames.has(originalName) ||
-      genericFieldNamePattern.test(originalName);
-    const semanticName = makeUniqueFieldName(
-      needsSemanticName ? translatedSource : originalName,
-      used,
-      index
-    );
-    const englishDisplayName = translatedSource || semanticName;
-
+function applyRecognizedColumns(
+  current: InferredExcelColumn[],
+  recognized: InferredExcelColumn[]
+): InferredExcelColumn[] {
+  return current.map((col, index) => {
+    const suggestion = recognized[index];
+    if (!suggestion) return col;
     return {
       ...col,
-      name: semanticName,
-      display_name: englishDisplayName,
-      description: `Imported from ${englishDisplayName}`,
-      type: inferFieldType(col),
-      enabled: col.enabled ?? true,
-    };
-  });
-}
-
-function smartRecognizeFieldNames(incoming: InferredExcelColumn[]): InferredExcelColumn[] {
-  const used = new Set<string>();
-
-  return incoming.map((col, index) => {
-    if (col.enabled === false) return col;
-    const phrase = inferFieldPhrase(col);
-    const nextName = makeUniqueFieldName(phrase, used, index);
-    const nextType = inferFieldType(col);
-    return {
-      ...col,
-      name: nextName,
-      display_name: phrase || nextName,
-      description: `Imported from ${phrase || nextName}`,
-      type: nextType,
+      name: suggestion.name || col.name,
+      display_name: suggestion.display_name || col.display_name,
+      description: suggestion.description || col.description,
     };
   });
 }
@@ -290,8 +112,12 @@ function smartRecognizeFieldNames(incoming: InferredExcelColumn[]): InferredExce
 export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   const t = useT('dbs');
   const router = useRouter();
+  const user = useCurrentUser();
+  const { locale } = useLocale();
   const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canManage = hasPermission('database.manage');
+  const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
+  const { tables } = useDbTables(dbId, { enabled: canManage });
   const [step, setStep] = useState<Step>('file');
   const [fileDialogOpen, setFileDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
@@ -299,73 +125,125 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   const [columns, setColumns] = useState<InferredExcelColumn[]>([]);
   const [tableName, setTableName] = useState('');
   const [tableDescription, setTableDescription] = useState('');
+  const [selectedSheetName, setSelectedSheetName] = useState<string | null>(null);
+  const [analyzingSheetName, setAnalyzingSheetName] = useState<string | null>(null);
+  const [selectedModel, setSelectedModel] = useState<ModelSelectorValue | null>(() => {
+    if (!user?.id) return null;
+    const saved = getLastSelectedAiModel(user.id, 'excelImport');
+    return saved ? { provider: saved.provider, model: saved.model } : null;
+  });
+  const [recognitionDraft, setRecognitionDraft] = useState<RecognizeExcelImportData | null>(null);
+  const [recognitionDialogOpen, setRecognitionDialogOpen] = useState(false);
   const [createdTableId, setCreatedTableId] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ConfirmExcelImportData | null>(null);
 
   const analyzeMutation = useAnalyzeExcelImport(dbId);
   const confirmMutation = useConfirmExcelImport(dbId, analysis?.job_id);
+  const recognizeMutation = useRecognizeExcelImport(dbId, analysis?.job_id);
   const importErrorsQuery = useExcelImportErrors(
     dbId,
     importResult?.job_id,
     { limit: 20, offset: 0 },
     step === 'result' && Boolean(importResult && importResult.failed_rows > 0)
   );
+  const analyzeRequestSeq = useRef(0);
+
+  useEffect(() => {
+    if (!user?.id || selectedModel) return;
+    const saved = getLastSelectedAiModel(user.id, 'excelImport');
+    if (saved) {
+      setSelectedModel({ provider: saved.provider, model: saved.model });
+      return;
+    }
+    if (defaultModel) {
+      setSelectedModel({ provider: defaultModel.provider, model: defaultModel.model });
+    }
+  }, [defaultModel, selectedModel, user?.id]);
 
   const enabledColumns = useMemo(() => columns.filter(col => col.enabled !== false), [columns]);
-  const duplicateNames = useMemo(() => {
-    const seen = new Set<string>();
-    const dup = new Set<string>();
-    enabledColumns.forEach(col => {
-      const name = col.name.trim();
-      if (seen.has(name)) dup.add(name);
-      seen.add(name);
-    });
-    return dup;
-  }, [enabledColumns]);
+  const duplicateNames = useMemo(() => getDuplicateDbColumnNames(enabledColumns), [enabledColumns]);
 
   const invalidFieldNames = useMemo(
     () =>
       enabledColumns.filter(col => {
         const name = col.name.trim();
-        return !fieldNamePattern.test(name) || reservedFieldNames.has(name);
+        return isInvalidDbColumnName(name) || isReservedDbColumnName(name);
       }),
     [enabledColumns]
   );
   const tableNameValue = tableName.trim();
-  const tableNameInvalid = Boolean(tableNameValue) && !tableNamePattern.test(tableNameValue);
+  const isDuplicateTableName = useMemo(() => {
+    const candidate = tableNameValue.toLowerCase();
+    if (!candidate) return false;
+    return tables.some(table => (table.name || table.table_name || '').toLowerCase() === candidate);
+  }, [tableNameValue, tables]);
+  const tableNameErrors: TableNameErrorCode[] = useMemo(() => {
+    const errors = getTableNameValidationErrors(tableName);
+    if (isDuplicateTableName) errors.push('duplicate');
+    return errors;
+  }, [isDuplicateTableName, tableName]);
+  const tableNameErrorMessages = useMemo(
+    () => tableNameErrors.map(code => t(`validation.tableName.${code}`)),
+    [tableNameErrors, t]
+  );
   const schemaValidationMessages = useMemo(() => {
-    const messages: string[] = [];
-    if (tableNameInvalid) messages.push(t('excelImport.schema.validation.invalidTableName'));
+    const messages: string[] = [...tableNameErrorMessages];
     if (duplicateNames.size > 0) messages.push(t('excelImport.schema.validation.duplicateFields'));
     if (invalidFieldNames.length > 0) {
       messages.push(t('excelImport.schema.validation.invalidFieldNames'));
     }
     return messages;
-  }, [duplicateNames.size, invalidFieldNames.length, t, tableNameInvalid]);
+  }, [duplicateNames.size, invalidFieldNames.length, t, tableNameErrorMessages]);
 
   const canImport =
     Boolean(tableNameValue) &&
-    !tableNameInvalid &&
+    tableNameErrors.length === 0 &&
     enabledColumns.length > 0 &&
     duplicateNames.size === 0 &&
     invalidFieldNames.length === 0;
+  const canRecognize =
+    Boolean(analysis) && Boolean(selectedModel?.model) && !recognizeMutation.isPending;
+  const isAnalyzingWorkbook = analyzeMutation.isPending;
+  const activeSheetName = selectedSheetName || analysis?.selection.sheet_name || null;
+  const isPreviewSheetReady = Boolean(
+    analysis && activeSheetName && activeSheetName === analysis.selection.sheet_name
+  );
 
   const handleAnalyze = async (overrides?: { sheet_name?: string; header_row?: number }) => {
     if (!selectedFile || !canManage) return;
-    const res = await analyzeMutation.mutateAsync({
-      upload_file_id: selectedFile.id,
-      sample_size: 500,
-      ...overrides,
-    });
-    setAnalysis(res.data);
-    setColumns(normalizeInferredColumns(res.data.columns));
-    if (!tableName) {
-      const baseName = res.data.source.file_name.replace(/\.[^.]+$/, '').toLowerCase();
-      const normalizedName =
-        baseName.replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'imported_table';
-      setTableName(/^[a-z]/.test(normalizedName) ? normalizedName : `table_${normalizedName}`);
+    const requestedSheetName = overrides?.sheet_name?.trim();
+    if (requestedSheetName) {
+      setSelectedSheetName(requestedSheetName);
     }
-    setStep('preview');
+    if (requestedSheetName && requestedSheetName === analysis?.selection.sheet_name) return;
+
+    const requestSeq = analyzeRequestSeq.current + 1;
+    analyzeRequestSeq.current = requestSeq;
+    setAnalyzingSheetName(requestedSheetName || null);
+    try {
+      const res = await analyzeMutation.mutateAsync({
+        upload_file_id: selectedFile.id,
+        sample_size: 500,
+        ...overrides,
+      });
+      if (requestSeq !== analyzeRequestSeq.current) return;
+      setAnalysis(res.data);
+      setSelectedSheetName(res.data.selection.sheet_name);
+      setColumns(res.data.columns.map(col => ({ ...col, enabled: col.enabled ?? true })));
+      setRecognitionDraft(null);
+      setRecognitionDialogOpen(false);
+      if (!tableName) {
+        const baseName = res.data.source.file_name.replace(/\.[^.]+$/, '').toLowerCase();
+        const normalizedName =
+          baseName.replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'imported_table';
+        setTableName(/^[a-z]/.test(normalizedName) ? normalizedName : `table_${normalizedName}`);
+      }
+      setStep('preview');
+    } finally {
+      if (requestSeq === analyzeRequestSeq.current) {
+        setAnalyzingSheetName(null);
+      }
+    }
   };
 
   const handleConfirm = async () => {
@@ -389,8 +267,32 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
     setStep('result');
   };
 
-  const handleSmartRecognizeFieldNames = () => {
-    setColumns(prev => smartRecognizeFieldNames(prev));
+  const handleSmartRecognize = async () => {
+    if (!analysis || !selectedModel || recognizeMutation.isPending) return;
+    const res = await recognizeMutation.mutateAsync({
+      table: {
+        name: tableName.trim(),
+        description: tableDescription.trim(),
+      },
+      source: {
+        file_name: analysis.source.file_name,
+        sheet_name: analysis.selection.sheet_name,
+      },
+      columns,
+      model: { provider: selectedModel.provider, name: selectedModel.model },
+      operator_language: locale,
+    });
+    setRecognitionDraft(res.data);
+    setRecognitionDialogOpen(true);
+  };
+
+  const handleApplyRecognition = () => {
+    if (!recognitionDraft) return;
+    setTableName(recognitionDraft.table.name);
+    setTableDescription(recognitionDraft.table.description);
+    setColumns(prev => applyRecognizedColumns(prev, recognitionDraft.columns));
+    setRecognitionDraft(null);
+    setRecognitionDialogOpen(false);
   };
 
   const displayedFailedItems =
@@ -492,31 +394,55 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
               {t('excelImport.preview.sheets')}
             </div>
             <div className="p-2 space-y-2">
-              {analysis.source.sheets.map(sheet => (
-                <button
-                  key={sheet.name}
-                  className={cn(
-                    'w-full rounded-md border px-3 py-2 text-left text-sm hover:bg-muted',
-                    analysis.selection.sheet_name === sheet.name &&
-                      'border-highlight bg-highlight/10'
-                  )}
-                  onClick={() => handleAnalyze({ sheet_name: sheet.name })}
-                >
-                  <div className="font-medium truncate">{sheet.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {sheet.row_count} x {sheet.column_count}
-                  </div>
-                </button>
-              ))}
+              {analysis.source.sheets.map(sheet => {
+                const isSelected = activeSheetName === sheet.name;
+                const isPending = isAnalyzingWorkbook && analyzingSheetName === sheet.name;
+                return (
+                  <button
+                    key={sheet.name}
+                    disabled={isAnalyzingWorkbook}
+                    className={cn(
+                      'w-full rounded-md border px-3 py-2 text-left text-sm hover:bg-muted disabled:cursor-wait disabled:opacity-70',
+                      isSelected && 'border-highlight bg-highlight/10',
+                      isPending && 'border-highlight bg-highlight/10'
+                    )}
+                    onClick={() => handleAnalyze({ sheet_name: sheet.name })}
+                  >
+                    <div className="flex items-center gap-2">
+                      {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      <div className="font-medium truncate">{sheet.name}</div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {sheet.row_count} x {sheet.column_count}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
           <div className="rounded-md border overflow-hidden flex flex-col">
             <div className="px-3 py-2 border-b flex items-center justify-between">
-              <div className="text-sm font-medium">{t('excelImport.preview.rows')}</div>
-              <Button onClick={() => setStep('schema')}>{t('excelImport.actions.next')}</Button>
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <span>{t('excelImport.preview.rows')}</span>
+              </div>
+              <Button
+                onClick={() => {
+                  if (isPreviewSheetReady) setStep('schema');
+                }}
+                disabled={!isPreviewSheetReady || isAnalyzingWorkbook}
+              >
+                {isAnalyzingWorkbook && <Loader2 className="h-4 w-4 animate-spin" />}
+                {t('excelImport.actions.next')}
+              </Button>
             </div>
             <div className="overflow-auto">
+              {!isPreviewSheetReady && (
+                <div className="flex items-center gap-2 border-b px-3 py-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t('excelImport.preview.loadingSheet')}
+                </div>
+              )}
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -546,30 +472,84 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
 
       {step === 'schema' && analysis && (
         <div className="h-0 grow flex flex-col overflow-hidden gap-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              value={tableName}
-              onChange={event => setTableName(event.target.value)}
-              placeholder={t('excelImport.schema.tableName')}
-              className={tableNameInvalid ? 'border-destructive' : undefined}
-            />
-            <Input
-              value={tableDescription}
-              onChange={event => setTableDescription(event.target.value)}
-              placeholder={t('excelImport.schema.description')}
-            />
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2">
+          <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border bg-muted/30 px-3 py-3 sm:items-end">
             <div>
-              <div className="text-sm font-medium">{t('excelImport.schema.smartNamesTitle')}</div>
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Sparkles className="h-4 w-4 text-highlight" />
+                <span>{t('excelImport.schema.smartRecognizeTitle')}</span>
+              </div>
               <div className="text-xs text-muted-foreground">
-                {t('excelImport.schema.smartNamesDesc')}
+                {t('excelImport.schema.smartRecognizeDesc')}
               </div>
             </div>
-            <Button variant="outline" onClick={handleSmartRecognizeFieldNames} className="gap-2">
-              <Sparkles className="h-4 w-4" />
-              {t('excelImport.schema.smartNamesAction')}
-            </Button>
+            <div className="flex w-full flex-col gap-2 sm:min-w-[360px] sm:flex-row sm:items-center lg:w-auto">
+              <ModelSelector
+                modelType="text-chat"
+                value={selectedModel ?? undefined}
+                onChange={value => {
+                  setSelectedModel(value);
+                  if (user?.id) {
+                    saveLastSelectedAiModel(user.id, 'excelImport', {
+                      provider: value.provider,
+                      model: value.model,
+                    });
+                  }
+                }}
+                placeholder={t('modelSelector.placeholder')}
+                className="w-full min-w-[220px] flex-1"
+              />
+              <Button
+                variant="outline"
+                onClick={handleSmartRecognize}
+                disabled={!canRecognize}
+                className="w-full gap-2 whitespace-nowrap sm:w-auto"
+              >
+                {recognizeMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                {t('excelImport.schema.smartRecognizeAction')}
+              </Button>
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-sm font-medium">{t('excelImport.schema.tableInfoTitle')}</div>
+            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <div className="space-y-1.5">
+                <div className="text-xs text-muted-foreground">
+                  {t('excelImport.schema.tableName')}
+                </div>
+                <Input
+                  value={tableName}
+                  onChange={event => setTableName(event.target.value)}
+                  placeholder={t('excelImport.schema.tableName')}
+                  className={
+                    tableNameErrors.length > 0
+                      ? 'border-destructive focus-visible:ring-destructive'
+                      : undefined
+                  }
+                  aria-invalid={tableNameErrors.length > 0}
+                />
+                {tableNameErrorMessages.length > 0 && (
+                  <div className="space-y-1 text-[13px] text-destructive">
+                    {tableNameErrorMessages.map((message, index) => (
+                      <div key={index}>{message}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <div className="text-xs text-muted-foreground">
+                  {t('excelImport.schema.description')}
+                </div>
+                <Input
+                  value={tableDescription}
+                  onChange={event => setTableDescription(event.target.value)}
+                  placeholder={t('excelImport.schema.description')}
+                />
+              </div>
+            </div>
           </div>
           {schemaValidationMessages.length > 0 && (
             <Alert variant="destructive">
@@ -596,87 +576,111 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {columns.map((col, index) => (
-                  <TableRow key={getExcelColumnKey(col, index)}>
-                    <TableCell>
-                      <Switch
-                        checked={col.enabled !== false}
-                        onCheckedChange={checked =>
-                          setColumns(prev =>
-                            prev.map((item, i) =>
-                              i === index ? { ...item, enabled: checked } : item
+                {columns.map((col, index) => {
+                  const lowerName = col.name.trim().toLowerCase();
+                  const isDuplicateName =
+                    col.enabled !== false && lowerName.length > 0 && duplicateNames.has(lowerName);
+                  const isInvalidName = col.enabled !== false && isInvalidDbColumnName(col.name);
+                  const isReservedName = col.enabled !== false && isReservedDbColumnName(col.name);
+                  const hasNameError = isDuplicateName || isInvalidName || isReservedName;
+                  const nameErrorMessage = isDuplicateName
+                    ? t('columns.duplicateNameTip')
+                    : isReservedName
+                      ? t('columns.reservedNameTip')
+                      : t('columns.invalidNameTip');
+
+                  return (
+                    <TableRow key={getExcelColumnKey(col, index)}>
+                      <TableCell>
+                        <Switch
+                          checked={col.enabled !== false}
+                          onCheckedChange={checked =>
+                            setColumns(prev =>
+                              prev.map((item, i) =>
+                                i === index ? { ...item, enabled: checked } : item
+                              )
                             )
-                          )
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>{col.source_column}</TableCell>
-                    <TableCell>
-                      <Input
-                        value={col.name}
-                        className={cn(
-                          (duplicateNames.has(col.name.trim()) ||
-                            !fieldNamePattern.test(col.name.trim()) ||
-                            reservedFieldNames.has(col.name.trim())) &&
-                            col.enabled !== false
-                            ? 'border-destructive'
-                            : undefined
-                        )}
-                        onChange={event =>
-                          setColumns(prev =>
-                            prev.map((item, i) =>
-                              i === index ? { ...item, name: event.target.value } : item
+                          }
+                        />
+                      </TableCell>
+                      <TableCell>{col.source_column}</TableCell>
+                      <TableCell>
+                        <div className="relative">
+                          <Input
+                            value={col.name}
+                            className={cn(
+                              hasNameError
+                                ? 'border-destructive focus-visible:ring-destructive pr-8'
+                                : undefined
+                            )}
+                            aria-invalid={hasNameError}
+                            onChange={event =>
+                              setColumns(prev =>
+                                prev.map((item, i) =>
+                                  i === index ? { ...item, name: event.target.value } : item
+                                )
+                              )
+                            }
+                          />
+                          {hasNameError && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <AlertCircle className="absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-destructive" />
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-[320px]">
+                                <div className="text-xs">{nameErrorMessage}</div>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={col.type}
+                          onValueChange={value =>
+                            setColumns(prev =>
+                              prev.map((item, i) =>
+                                i === index ? { ...item, type: value as Type } : item
+                              )
                             )
-                          )
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={col.type}
-                        onValueChange={value =>
-                          setColumns(prev =>
-                            prev.map((item, i) =>
-                              i === index ? { ...item, type: value as Type } : item
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {typeOptions.map(option => (
+                              <SelectItem key={option} value={option}>
+                                {t(`biSearch.columnTypes.${option}`)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={col.is_required}
+                          onCheckedChange={checked =>
+                            setColumns(prev =>
+                              prev.map((item, i) =>
+                                i === index ? { ...item, is_required: checked } : item
+                              )
                             )
-                          )
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {typeOptions.map(option => (
-                            <SelectItem key={option} value={option}>
-                              {t(`biSearch.columnTypes.${option}`)}
-                            </SelectItem>
+                          }
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {col.sample_values.map((value, sampleIndex) => (
+                            <Badge key={getSampleValueKey(value, sampleIndex)} variant="secondary">
+                              {value}
+                            </Badge>
                           ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell>
-                      <Switch
-                        checked={col.is_required}
-                        onCheckedChange={checked =>
-                          setColumns(prev =>
-                            prev.map((item, i) =>
-                              i === index ? { ...item, is_required: checked } : item
-                            )
-                          )
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {col.sample_values.map((value, sampleIndex) => (
-                          <Badge key={getSampleValueKey(value, sampleIndex)} variant="secondary">
-                            {value}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -765,6 +769,109 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
         </div>
       )}
 
+      <Dialog
+        open={recognitionDialogOpen}
+        onOpenChange={open => {
+          setRecognitionDialogOpen(open);
+          if (!open) setRecognitionDraft(null);
+        }}
+      >
+        <DialogContent size="xl">
+          <DialogHeader>
+            <DialogTitle>{t('excelImport.schema.recognitionDialogTitle')}</DialogTitle>
+            <DialogDescription>{t('excelImport.schema.recognitionDialogDesc')}</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            {recognitionDraft && (
+              <>
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-48">
+                          {t('excelImport.schema.recognitionItem')}
+                        </TableHead>
+                        <TableHead>{t('excelImport.schema.recognitionCurrent')}</TableHead>
+                        <TableHead>{t('excelImport.schema.recognitionSuggested')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell className="font-medium">
+                          {t('excelImport.schema.recognitionTableName')}
+                        </TableCell>
+                        <TableCell className="break-words">
+                          {tableName || t('excelImport.schema.recognitionEmpty')}
+                        </TableCell>
+                        <TableCell className="break-words">
+                          {recognitionDraft.table.name || t('excelImport.schema.recognitionEmpty')}
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell className="font-medium">
+                          {t('excelImport.schema.recognitionTableDescription')}
+                        </TableCell>
+                        <TableCell className="break-words">
+                          {tableDescription || t('excelImport.schema.recognitionEmpty')}
+                        </TableCell>
+                        <TableCell className="break-words">
+                          {recognitionDraft.table.description ||
+                            t('excelImport.schema.recognitionEmpty')}
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-56">
+                          {t('excelImport.schema.recognitionSourceColumn')}
+                        </TableHead>
+                        <TableHead>{t('excelImport.schema.recognitionCurrent')}</TableHead>
+                        <TableHead>{t('excelImport.schema.recognitionSuggested')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {columns.map((col, index) => {
+                        const suggestion = recognitionDraft.columns[index];
+                        return (
+                          <TableRow key={getExcelColumnKey(col, index)}>
+                            <TableCell className="break-words font-medium">
+                              {col.source_column || col.display_name}
+                            </TableCell>
+                            <TableCell className="break-words">{col.name}</TableCell>
+                            <TableCell className="break-words">
+                              {suggestion?.name || t('excelImport.schema.recognitionEmpty')}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRecognitionDraft(null);
+                setRecognitionDialogOpen(false);
+              }}
+            >
+              {t('excelImport.schema.cancelRecognition')}
+            </Button>
+            <Button onClick={handleApplyRecognition} disabled={!recognitionDraft}>
+              {t('excelImport.schema.applyRecognition')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <FileSelectorDialog
         open={fileDialogOpen}
         onOpenChange={setFileDialogOpen}
@@ -773,6 +880,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
         acceptExt={['xlsx', 'xls', 'csv']}
         onConfirm={files => {
           setSelectedFile(files[0] ?? null);
+          setSelectedSheetName(null);
           setFileDialogOpen(false);
         }}
       />

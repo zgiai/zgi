@@ -19,7 +19,6 @@ import {
   Check,
   ChevronsUpDown,
   Building2,
-  User,
   Users,
   Info,
   Upload,
@@ -429,7 +428,6 @@ async function getFolderDepth(folderId: string) {
 
 interface FileSelectorWorkspaceSwitcherProps {
   currentWorkspace: Workspace | null;
-  isOrganizationMode: boolean;
   compact?: boolean;
   hideTitle?: boolean;
   onWorkspaceSelected?: () => void;
@@ -532,7 +530,6 @@ function FileSelectorOrganizationSwitcher({
 
 function FileSelectorWorkspaceSwitcher({
   currentWorkspace,
-  isOrganizationMode,
   compact = false,
   hideTitle = false,
   onWorkspaceSelected,
@@ -545,14 +542,10 @@ function FileSelectorWorkspaceSwitcher({
 
   useJoinedWorkspaces({ syncToStore: true });
 
-  const personalSpaceLabel = tNavigation('personalSpace');
-  const currentWorkspaceLabel = isOrganizationMode
-    ? personalSpaceLabel
-    : currentWorkspace?.name || tNavigation('switchWorkspace');
-  const CurrentWorkspaceIcon = isOrganizationMode ? User : Users;
+  const currentWorkspaceLabel = currentWorkspace?.name || tNavigation('switchWorkspace');
 
   const handleSelectWorkspace = useCallback(
-    async (workspace: Workspace | null) => {
+    async (workspace: Workspace) => {
       await updateWorkspace(workspace);
       onWorkspaceSelected?.();
     },
@@ -575,7 +568,7 @@ function FileSelectorWorkspaceSwitcher({
             compact ? 'h-5 w-5' : 'h-7 w-7'
           )}
         >
-          <CurrentWorkspaceIcon className={cn(compact ? 'h-3 w-3' : 'h-4 w-4')} />
+          <Users className={cn(compact ? 'h-3 w-3' : 'h-4 w-4')} />
         </div>
         <span className={cn('truncate font-medium', compact ? 'text-[12px]' : 'text-sm')}>
           {currentWorkspaceLabel}
@@ -620,18 +613,6 @@ function FileSelectorWorkspaceSwitcher({
         <DropdownMenuContent align="start" className="w-[280px]">
           <DropdownMenuLabel>{tNavigation('switchWorkspace')}</DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={() => void handleSelectWorkspace(null)}
-            className="flex cursor-pointer items-center justify-between "
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-muted">
-                <User className="h-3.5 w-3.5 text-muted-foreground" />
-              </div>
-              <span className="truncate text-xs">{personalSpaceLabel}</span>
-            </div>
-            {isOrganizationMode ? <Check className="h-4 w-4 text-primary" /> : null}
-          </DropdownMenuItem>
           {workspaces.map(workspace => (
             <DropdownMenuItem
               key={workspace.id}
@@ -645,7 +626,7 @@ function FileSelectorWorkspaceSwitcher({
                 </div>
                 <span className="truncate text-xs">{workspace.name}</span>
               </div>
-              {!isOrganizationMode && currentWorkspace?.id === workspace.id ? (
+              {currentWorkspace?.id === workspace.id ? (
                 <Check className="h-4 w-4 text-primary" />
               ) : null}
             </DropdownMenuItem>
@@ -660,7 +641,6 @@ interface FileSelectorSpaceSwitcherDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentWorkspace: Workspace | null;
-  isOrganizationMode: boolean;
   showOrganizationSwitcher: boolean;
 }
 
@@ -668,7 +648,6 @@ function FileSelectorSpaceSwitcherDialog({
   open,
   onOpenChange,
   currentWorkspace,
-  isOrganizationMode,
   showOrganizationSwitcher,
 }: FileSelectorSpaceSwitcherDialogProps) {
   const t = useT('files');
@@ -709,7 +688,6 @@ function FileSelectorSpaceSwitcherDialog({
             </p>
             <FileSelectorWorkspaceSwitcher
               currentWorkspace={currentWorkspace}
-              isOrganizationMode={isOrganizationMode}
               hideTitle
               onWorkspaceSelected={() => onOpenChange(false)}
             />
@@ -753,8 +731,10 @@ const FileManagementContent = ({
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
   const isAuthenticated = useAuthStore.use.isAuthenticated();
-  const { currentWorkspace, isOrganizationMode } = useWorkspaceStore();
-  const workspaceId = isOrganizationMode ? undefined : currentWorkspace?.id;
+  const { currentWorkspace, contextStatus, isOrganizationMode } = useWorkspaceStore();
+  const hasReadyWorkspace = contextStatus === 'ready' && !!currentWorkspace;
+  const isWorkspaceRequired = contextStatus === 'workspace_required';
+  const workspaceId = hasReadyWorkspace ? currentWorkspace.id : undefined;
   const isMobileSelectionMode = isMobile && selectionMode;
   const isDesktopSelectionMode = !isMobile && selectionMode;
 
@@ -771,13 +751,11 @@ const FileManagementContent = ({
     canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < 2;
   const { organizations } = useOrganizations(isAuthenticated);
   const showOrganizationSwitcher = isAuthenticated && organizations.length > 1;
-  const currentSpaceLabel = isOrganizationMode
-    ? tNavigation('personalSpace')
-    : currentWorkspace?.name || tNavigation('switchWorkspace');
+  const currentSpaceLabel = currentWorkspace?.name || tNavigation('switchWorkspace');
   const mobilePrimaryActionLabel =
     !selectionMode || !isMobileSelectionMode
       ? undefined
-      : isOrganizationMode && allowWorkspaceSwitch
+      : isWorkspaceRequired && allowWorkspaceSwitch
         ? t('files.mobileSelector.switchSpace')
         : canUpload
           ? t('files.mobileSelector.browseAndUpload')
@@ -787,7 +765,7 @@ const FileManagementContent = ({
   const mobileEmptyDescription =
     !selectionMode || !isMobileSelectionMode
       ? undefined
-      : isOrganizationMode
+      : isWorkspaceRequired
         ? t('files.selectorEmptyState.description')
         : canUpload
           ? t('files.mobileSelector.emptyDescriptionWithUpload')
@@ -1069,10 +1047,10 @@ const FileManagementContent = ({
         )}
         onClick={() => setSpaceSwitcherOpen(true)}
       >
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-            {isOrganizationMode ? <User className="h-3 w-3" /> : <Users className="h-3 w-3" />}
-          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <Users className="h-3 w-3" />
+            </div>
           <span
             className={cn(
               'truncate font-medium',
@@ -1088,7 +1066,7 @@ const FileManagementContent = ({
 
   const selectorEmptyState =
     selectionMode &&
-    isOrganizationMode &&
+    isWorkspaceRequired &&
     activeCategory === 'all' &&
     !searchValue.trim() &&
     files.length === 0 ? (
@@ -1179,11 +1157,7 @@ const FileManagementContent = ({
               >
                 <div className="flex min-w-0 items-center gap-2">
                   <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                    {isOrganizationMode ? (
-                      <User className="h-4 w-4" />
-                    ) : (
-                      <Users className="h-4 w-4" />
-                    )}
+                    <Users className="h-4 w-4" />
                   </div>
                   <span className="truncate text-sm font-medium">
                     {t('files.selectorContext.action')}
@@ -1223,7 +1197,7 @@ const FileManagementContent = ({
         mobileEmptyActionLabel={mobilePrimaryActionLabel}
         mobileEmptyDescription={mobileEmptyDescription}
         onMobileEmptyAction={() => {
-          if (isOrganizationMode && allowWorkspaceSwitch) {
+          if (isWorkspaceRequired && allowWorkspaceSwitch) {
             setSpaceSwitcherOpen(true);
             return;
           }
@@ -1490,7 +1464,6 @@ const FileManagementContent = ({
         open={spaceSwitcherOpen}
         onOpenChange={setSpaceSwitcherOpen}
         currentWorkspace={currentWorkspace}
-        isOrganizationMode={isOrganizationMode}
         showOrganizationSwitcher={showOrganizationSwitcher}
       />
     </>

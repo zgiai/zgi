@@ -4,6 +4,7 @@ import * as React from 'react';
 import { usePathname } from 'next/navigation';
 import { ConsoleHeader, ConsoleSidebar } from '@/components/console/console-shell-entry';
 import { ConsoleMobileSidebar } from '@/components/console/console-sidebar';
+import { WorkspaceRequiredState } from '@/components/common/workspace-required-state';
 import { DashboardMobileSidebar, DashboardSidebar } from '@/components/dashboard/sidebar';
 import {
   ContextualAIChatDock,
@@ -11,8 +12,9 @@ import {
   useAIChatContextRegistration,
   type AIChatContextItem,
 } from '@/components/aichat/contextual';
+import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import { useAvailableModels } from '@/hooks/model/use-model';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
+import { useCurrentWorkspace, useIsOrganizationMode, useWorkspaceStore } from '@/store/workspace-store';
 import type {
   CustomerAdapter,
   CustomerConsoleShellProps,
@@ -53,6 +55,9 @@ function ConsolePageContextRegistration() {
 
 function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
   const pathname = usePathname();
+  const currentWorkspace = useCurrentWorkspace();
+  const workspaces = useWorkspaceStore.use.workspaces();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
   const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false);
   const hiddenHeaderPaths: string[] = [];
   const hiddenSidebarPaths = [] as string[];
@@ -61,6 +66,12 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
     pathname.startsWith('/console/work/app/') ||
     pathname === '/console/work/task' ||
     pathname.startsWith('/console/work/task/');
+  const hasActiveWorkspace = currentWorkspace
+    ? workspaces.some(workspace => workspace.id === currentWorkspace.id)
+    : false;
+  const canUseWorkspaceContext = contextStatus === 'ready' && hasActiveWorkspace;
+
+  useJoinedWorkspaces({ syncToStore: true });
 
   return (
     <ContextualAIChatProvider>
@@ -78,7 +89,7 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
                 : 'h-full min-h-0 min-w-0 w-0 grow overflow-auto bg-bg-canvas'
             }
           >
-            {children}
+            {canUseWorkspaceContext ? children : <WorkspaceRequiredState />}
           </main>
         </div>
         <ConsoleMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />

@@ -24,11 +24,7 @@ import {
 import { useFileFolders } from '@/hooks/use-files';
 import { fileManageService } from '@/services/file-manage.service';
 import type { FileFolder } from '@/services/types/file';
-import {
-  WorkspaceSelector,
-  type WorkspaceSelectorValue,
-} from '@/components/common/workspace-selector';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store';
+import { useCurrentWorkspace } from '@/store';
 
 type FolderOption = FileFolder & { depth: number };
 
@@ -79,11 +75,9 @@ export function CreateFolderDialog({
 }: CreateFolderDialogProps) {
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
-  const effectiveWorkspaceId = isOrganizationMode ? selectedWorkspace?.id : currentWorkspace?.id;
+  const effectiveWorkspaceId = currentWorkspace?.id;
   const { folders, isLoading } = useFileFolders(effectiveWorkspaceId, {
-    enabled: !isOrganizationMode || !!effectiveWorkspaceId,
+    enabled: !!effectiveWorkspaceId,
   });
 
   // Form state
@@ -155,7 +149,6 @@ export function CreateFolderDialog({
       setFolderName('');
       setParentId('root');
       setFolderOptions([]);
-      setSelectedWorkspace(undefined);
     }
     onOpenChange(newOpen);
   };
@@ -174,12 +167,6 @@ export function CreateFolderDialog({
 
     onConfirm(data);
     handleOpenChange(false);
-  };
-
-  const handleWorkspaceChange = (workspace: WorkspaceSelectorValue) => {
-    setSelectedWorkspace(workspace);
-    setParentId('root');
-    setFolderOptions([]);
   };
 
   // Check if can create
@@ -218,23 +205,6 @@ export function CreateFolderDialog({
                 autoFocus
               />
             </div>
-
-            {isOrganizationMode ? (
-              <div className="space-y-2.5">
-                <Label className="text-sm font-semibold">{t('files.folder.workspaceLabel')}</Label>
-                <WorkspaceSelector
-                  value={selectedWorkspace}
-                  placeholder={t('files.folder.workspacePlaceholder')}
-                  autoSelectFirst
-                  onChange={handleWorkspaceChange}
-                />
-                {!effectiveWorkspaceId ? (
-                  <p className="text-xs text-muted-foreground">
-                    {t('files.folder.workspaceRequired')}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
 
             {/* Parent Folder */}
             <div className="space-y-2.5">

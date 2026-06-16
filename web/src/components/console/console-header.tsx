@@ -8,7 +8,7 @@ import { useT } from '@/i18n';
 import { UserMenu } from './user-menu';
 import { Logo } from '../logo';
 import { Button } from '@/components/ui/button';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useOrganizationStore } from '@/store/organization-store';
 import { cn } from '@/lib/utils';
 import { ContextualAIChatLauncher } from '@/components/aichat/contextual';
@@ -23,7 +23,6 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
   const tNav = useT('navigation');
   const tDash = useT('dashboard');
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
   const currentOrganization = useOrganizationStore.use.currentOrganization();
   const isDashboardRoute = pathname.startsWith('/dashboard');
 
@@ -101,9 +100,7 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
     );
   }, [isDashboardRoute, pathname, tDash, tNav]);
 
-  const workspaceLabel = isOrganizationMode
-    ? tNav('personalSpace')
-    : currentWorkspace?.name || tNav('switchWorkspace');
+  const workspaceLabel = currentWorkspace?.name || tNav('switchWorkspace');
   const sectionLabel = isDashboardRoute ? tNav('dashboard') : tNav('console');
   const contextLabel = isDashboardRoute ? currentOrganization?.name || null : workspaceLabel;
   const contextPrefix = isDashboardRoute

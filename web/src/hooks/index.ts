@@ -126,12 +126,16 @@ export {
   useUpdateDbTableRecords,
   useDeleteDbTableRecord,
 } from './db/use-db-table-records';
-export { useBatchIngestFileToTable } from './db/use-batch-ingest-file-to-table';
+export {
+  useBatchIngestFileToTable,
+  useIngestFileToTable,
+} from './db/use-batch-ingest-file-to-table';
 export {
   useAnalyzeExcelImport,
   useConfirmExcelImport,
   useExcelImportJob,
   useExcelImportErrors,
+  useRecognizeExcelImport,
 } from './db/use-excel-import';
 export { useDbTablePrompt, useUpdateDbTablePrompt } from './db/use-db-table-prompt';
 // Setup hooks

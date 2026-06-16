@@ -109,6 +109,7 @@ func (r *workspaceRepository) CreateWorkspaceMember(ctx context.Context, workspa
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
+	model.ApplyWorkspaceMemberDefaults(join)
 
 	return r.db.WithContext(ctx).Create(join).Error
 }

@@ -1839,6 +1839,7 @@ func (s *AccountService) GetAccountContext(ctx context.Context, accountID string
 		return nil, err
 	}
 
+	isNew := false
 	if ctxModel == nil {
 		now := time.Now()
 		ctxModel = &auth_model.AccountContext{
@@ -1846,21 +1847,126 @@ func (s *AccountService) GetAccountContext(ctx context.Context, accountID string
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
+		isNew = true
+	}
 
-		s.populateDefaultOrganization(ctx, ctxModel)
+	changed, err := s.repairAccountContextWorkspace(ctx, ctxModel)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		ctxModel.UpdatedAt = time.Now()
+	}
 
+	if isNew {
 		if err := s.accountRepo.CreateAccountContext(ctx, ctxModel); err != nil {
 			return nil, err
 		}
-	} else if ctxModel.CurrentOrganizationID == nil {
-		if s.populateDefaultOrganization(ctx, ctxModel) {
-			if err := s.accountRepo.UpdateAccountContext(ctx, ctxModel); err != nil {
-				logger.Warn("Failed to update account context with default organization: %v", err)
-			}
+	} else if changed {
+		if err := s.accountRepo.UpdateAccountContext(ctx, ctxModel); err != nil {
+			logger.Warn("Failed to update account context with resolved workspace: %v", err)
 		}
 	}
 
 	return ctxModel, nil
+}
+
+func (s *AccountService) EnsureAccountContextForWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error) {
+	accountID = strings.TrimSpace(accountID)
+	organizationID = strings.TrimSpace(organizationID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	if accountID == "" || organizationID == "" || workspaceID == "" {
+		return nil, false, fmt.Errorf("account id, organization id and workspace id are required")
+	}
+	if s.workspaceManagementService == nil {
+		return nil, false, fmt.Errorf("workspace management service is not initialized")
+	}
+
+	targetWorkspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, workspaceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, fmt.Errorf("workspace %s not found", workspaceID)
+		}
+		return nil, false, err
+	}
+	if targetWorkspace == nil {
+		return nil, false, fmt.Errorf("workspace %s not found", workspaceID)
+	}
+	if targetWorkspace.Status != workspace_model.WorkspaceStatusNormal {
+		return nil, false, fmt.Errorf("workspace %s is not active", workspaceID)
+	}
+	if targetWorkspace.OrganizationID == nil || strings.TrimSpace(*targetWorkspace.OrganizationID) != organizationID {
+		return nil, false, fmt.Errorf("workspace %s does not belong to organization %s", workspaceID, organizationID)
+	}
+
+	isMember, err := s.isAccountOrganizationMember(ctx, accountID, organizationID)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to check organization membership: %w", err)
+	}
+	if !isMember {
+		return nil, false, fmt.Errorf("account %s is not a member of organization %s", accountID, organizationID)
+	}
+
+	canAccessTarget, err := s.canAccountAccessWorkspace(ctx, accountID, organizationID, workspaceID)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to check workspace access: %w", err)
+	}
+	if !canAccessTarget {
+		return nil, false, fmt.Errorf("account %s cannot access workspace %s", accountID, workspaceID)
+	}
+
+	ctxModel, err := s.accountRepo.GetAccountContextByAccountID(ctx, accountID)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if ctxModel != nil {
+		if ctxModel.AccountID == "" {
+			ctxModel.AccountID = accountID
+		}
+		currentWorkspaceID := ptrStringValue(ctxModel.CurrentWorkspaceID)
+		if currentWorkspaceID != "" {
+			currentWorkspace, err := s.resolveWorkspaceOrganizationContext(ctx, accountID, currentWorkspaceID)
+			if err != nil {
+				return nil, false, err
+			}
+			if currentWorkspace != nil && currentWorkspace.OrganizationID != nil {
+				resolvedOrganizationID := strings.TrimSpace(*currentWorkspace.OrganizationID)
+				currentOrganizationID := ptrStringValue(ctxModel.CurrentOrganizationID)
+				if resolvedOrganizationID != "" && currentOrganizationID == "" {
+					updatedCtx, err := s.UpdateAccountContext(ctx, accountID, &resolvedOrganizationID, &currentWorkspace.ID)
+					if err != nil {
+						return nil, false, err
+					}
+					if currentWorkspace.ID == workspaceID {
+						if err := s.syncCurrentWorkspaceMember(ctx, accountID, workspaceID); err != nil {
+							return nil, true, err
+						}
+						return updatedCtx, true, nil
+					}
+					return updatedCtx, false, nil
+				}
+				if resolvedOrganizationID != "" && currentOrganizationID == resolvedOrganizationID {
+					if currentWorkspace.ID == workspaceID {
+						if err := s.syncCurrentWorkspaceMember(ctx, accountID, workspaceID); err != nil {
+							return nil, true, err
+						}
+						return ctxModel, true, nil
+					}
+					return ctxModel, false, nil
+				}
+			}
+		}
+	}
+
+	updatedCtx, err := s.UpdateAccountContext(ctx, accountID, &organizationID, &workspaceID)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := s.syncCurrentWorkspaceMember(ctx, accountID, workspaceID); err != nil {
+		return nil, true, err
+	}
+	return updatedCtx, true, nil
 }
 
 func (s *AccountService) populateDefaultOrganization(ctx context.Context, ctxModel *auth_model.AccountContext) bool {
@@ -1879,6 +1985,81 @@ func (s *AccountService) populateDefaultOrganization(ctx context.Context, ctxMod
 	}
 
 	return false
+}
+
+func (s *AccountService) repairAccountContextWorkspace(ctx context.Context, ctxModel *auth_model.AccountContext) (bool, error) {
+	if ctxModel == nil {
+		return false, nil
+	}
+	if ctxModel.AccountID == "" {
+		return false, fmt.Errorf("account context account id is required")
+	}
+
+	changed := false
+	accountID := ctxModel.AccountID
+	currentOrganizationID := ptrStringValue(ctxModel.CurrentOrganizationID)
+	currentWorkspaceID := ptrStringValue(ctxModel.CurrentWorkspaceID)
+
+	if currentOrganizationID != "" {
+		isMember, err := s.isAccountOrganizationMember(ctx, accountID, currentOrganizationID)
+		if err != nil {
+			return false, fmt.Errorf("failed to check organization membership: %w", err)
+		}
+		if !isMember {
+			changed = clearStringPtrIfChanged(&ctxModel.CurrentOrganizationID) || changed
+			currentOrganizationID = ""
+		}
+	}
+
+	if currentOrganizationID == "" && currentWorkspaceID != "" {
+		workspace, err := s.resolveWorkspaceOrganizationContext(ctx, accountID, currentWorkspaceID)
+		if err != nil {
+			return false, err
+		}
+		if workspace != nil && workspace.OrganizationID != nil && *workspace.OrganizationID != "" {
+			changed = setStringPtrIfChanged(&ctxModel.CurrentOrganizationID, *workspace.OrganizationID) || changed
+			changed = setStringPtrIfChanged(&ctxModel.CurrentWorkspaceID, workspace.ID) || changed
+			currentOrganizationID = *workspace.OrganizationID
+			currentWorkspaceID = workspace.ID
+		} else {
+			changed = clearStringPtrIfChanged(&ctxModel.CurrentWorkspaceID) || changed
+			currentWorkspaceID = ""
+		}
+	}
+
+	if currentOrganizationID == "" {
+		if s.populateDefaultOrganization(ctx, ctxModel) {
+			changed = true
+			currentOrganizationID = ptrStringValue(ctxModel.CurrentOrganizationID)
+		}
+	}
+
+	if currentOrganizationID != "" {
+		workspace, err := s.resolveWorkspaceForOrganizationContext(ctx, accountID, ctxModel, currentOrganizationID)
+		if err != nil {
+			return false, err
+		}
+		if workspace != nil {
+			changed = setStringPtrIfChanged(&ctxModel.CurrentWorkspaceID, workspace.ID) || changed
+			currentWorkspaceID = workspace.ID
+		} else {
+			changed = clearStringPtrIfChanged(&ctxModel.CurrentWorkspaceID) || changed
+			currentWorkspaceID = ""
+		}
+	}
+
+	if currentWorkspaceID == "" {
+		workspace, err := s.resolveAnyAccessibleWorkspace(ctx, accountID)
+		if err != nil {
+			return false, err
+		}
+		if workspace != nil && workspace.OrganizationID != nil && *workspace.OrganizationID != "" {
+			changed = setStringPtrIfChanged(&ctxModel.CurrentOrganizationID, *workspace.OrganizationID) || changed
+			changed = setStringPtrIfChanged(&ctxModel.CurrentWorkspaceID, workspace.ID) || changed
+		}
+	}
+
+	return changed, nil
 }
 
 func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID string, organizationID, workspaceID *string) (*auth_model.AccountContext, error) {
@@ -1906,6 +2087,7 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 		}
 	}
 
+	var resolvedWorkspaceID *string
 	if workspaceID != nil && *workspaceID != "" {
 		workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, *workspaceID)
 		if err != nil {
@@ -1914,12 +2096,22 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 			}
 			return nil, err
 		}
+		if workspace == nil {
+			return nil, fmt.Errorf("workspace %s not found", *workspaceID)
+		}
+		if workspace.Status != workspace_model.WorkspaceStatusNormal {
+			return nil, fmt.Errorf("workspace %s is not active", *workspaceID)
+		}
 
 		var targetOrganizationID *string
 		if organizationID != nil {
 			if *organizationID != "" {
 				targetOrganizationID = organizationID
 			}
+		} else if workspace.OrganizationID != nil && *workspace.OrganizationID != "" {
+			resolvedOrganizationID := *workspace.OrganizationID
+			organizationID = &resolvedOrganizationID
+			targetOrganizationID = &resolvedOrganizationID
 		} else if ctxModel.CurrentOrganizationID != nil && *ctxModel.CurrentOrganizationID != "" {
 			targetOrganizationID = ctxModel.CurrentOrganizationID
 		}
@@ -1929,50 +2121,70 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 				return nil, fmt.Errorf("workspace %s does not belong to organization %s", *workspaceID, *targetOrganizationID)
 			}
 		} else if workspace.OrganizationID != nil && *workspace.OrganizationID != "" {
-			// TODO: When organizationID is "", consider auto-setting it to workspace.OrganizationID if required later.
-			isMember, err := s.isAccountOrganizationMember(ctx, accountID, *workspace.OrganizationID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check organization membership: %w", err)
-			}
-			if !isMember {
-				return nil, fmt.Errorf("account %s is not a member of organization %s", accountID, *workspace.OrganizationID)
-			}
+			targetOrganizationID = workspace.OrganizationID
+		} else {
+			return nil, fmt.Errorf("workspace %s does not belong to an organization", *workspaceID)
+		}
+
+		isMember, err := s.isAccountOrganizationMember(ctx, accountID, *targetOrganizationID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check organization membership: %w", err)
+		}
+		if !isMember {
+			return nil, fmt.Errorf("account %s is not a member of organization %s", accountID, *targetOrganizationID)
+		}
+
+		canAccess, err := s.canAccountAccessWorkspace(ctx, accountID, *targetOrganizationID, workspace.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check workspace access: %w", err)
+		}
+		if !canAccess {
+			return nil, fmt.Errorf("account %s cannot access workspace %s", accountID, workspace.ID)
+		}
+		resolvedWorkspaceID = workspaceID
+	}
+
+	if organizationID != nil && *organizationID != "" && (workspaceID == nil || *workspaceID == "") {
+		workspace, err := s.resolveWorkspaceForOrganizationContext(ctx, accountID, ctxModel, *organizationID)
+		if err != nil {
+			return nil, err
+		}
+		if workspace != nil {
+			workspaceIDValue := workspace.ID
+			resolvedWorkspaceID = &workspaceIDValue
 		}
 	}
 
-	shouldClearWorkspace := false
-	if organizationID != nil && workspaceID == nil {
-		if *organizationID == "" {
-			shouldClearWorkspace = true
-		} else if ctxModel.CurrentWorkspaceID != nil {
-			if ctxModel.CurrentOrganizationID == nil || *ctxModel.CurrentOrganizationID != *organizationID {
-				isValid, err := s.isWorkspaceInOrganization(ctx, *ctxModel.CurrentWorkspaceID, *organizationID)
-				if err != nil {
-					return nil, fmt.Errorf("failed to check workspace organization: %w", err)
-				}
-				if !isValid {
-					shouldClearWorkspace = true
-				}
-			}
+	if organizationID == nil && workspaceID != nil && *workspaceID == "" && ctxModel.CurrentOrganizationID != nil && *ctxModel.CurrentOrganizationID != "" {
+		workspace, err := s.resolveDefaultWorkspaceForOrganization(ctx, accountID, *ctxModel.CurrentOrganizationID)
+		if err != nil {
+			return nil, err
+		}
+		if workspace != nil {
+			workspaceIDValue := workspace.ID
+			resolvedWorkspaceID = &workspaceIDValue
 		}
 	}
 
 	if organizationID != nil {
 		if *organizationID == "" {
 			ctxModel.CurrentOrganizationID = nil
+			ctxModel.CurrentWorkspaceID = nil
 		} else {
 			ctxModel.CurrentOrganizationID = organizationID
 		}
 	}
 	if workspaceID != nil {
-		if *workspaceID == "" {
+		if resolvedWorkspaceID != nil {
+			ctxModel.CurrentWorkspaceID = resolvedWorkspaceID
+		} else if *workspaceID == "" {
 			ctxModel.CurrentWorkspaceID = nil
 		} else {
 			ctxModel.CurrentWorkspaceID = workspaceID
 		}
 	}
-	if shouldClearWorkspace {
-		ctxModel.CurrentWorkspaceID = nil
+	if workspaceID == nil && organizationID != nil && *organizationID != "" {
+		ctxModel.CurrentWorkspaceID = resolvedWorkspaceID
 	}
 
 	if ctxModel.CreatedAt.IsZero() {
@@ -1996,6 +2208,206 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 	}
 
 	return ctxModel, nil
+}
+
+func (s *AccountService) syncCurrentWorkspaceMember(ctx context.Context, accountID, workspaceID string) error {
+	accountID = strings.TrimSpace(accountID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	if s.db == nil || accountID == "" || workspaceID == "" {
+		return nil
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&workspace_model.WorkspaceMember{}).
+			Where("account_id = ?", accountID).
+			Update("current", false).Error; err != nil {
+			return fmt.Errorf("failed to clear current workspace: %w", err)
+		}
+		if err := tx.Model(&workspace_model.WorkspaceMember{}).
+			Where("account_id = ? AND workspace_id = ?", accountID, workspaceID).
+			Update("current", true).Error; err != nil {
+			return fmt.Errorf("failed to set current workspace: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *AccountService) resolveWorkspaceOrganizationContext(ctx context.Context, accountID, workspaceID string) (*workspace_model.Workspace, error) {
+	workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, workspaceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if workspace == nil || workspace.OrganizationID == nil || *workspace.OrganizationID == "" || workspace.Status != workspace_model.WorkspaceStatusNormal {
+		return nil, nil
+	}
+
+	isMember, err := s.isAccountOrganizationMember(ctx, accountID, *workspace.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check organization membership: %w", err)
+	}
+	if !isMember {
+		return nil, nil
+	}
+
+	canAccess, err := s.canAccountAccessWorkspace(ctx, accountID, *workspace.OrganizationID, workspace.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check workspace access: %w", err)
+	}
+	if !canAccess {
+		return nil, nil
+	}
+
+	return workspace, nil
+}
+
+func (s *AccountService) resolveWorkspaceForOrganizationContext(ctx context.Context, accountID string, ctxModel *auth_model.AccountContext, organizationID string) (*workspace_model.Workspace, error) {
+	if ctxModel.CurrentWorkspaceID != nil && *ctxModel.CurrentWorkspaceID != "" {
+		isValid, err := s.isWorkspaceAccessibleInOrganization(ctx, accountID, *ctxModel.CurrentWorkspaceID, organizationID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check workspace organization: %w", err)
+		}
+		if isValid {
+			workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, *ctxModel.CurrentWorkspaceID)
+			if err != nil {
+				return nil, err
+			}
+			return workspace, nil
+		}
+	}
+
+	return s.resolveDefaultWorkspaceForOrganization(ctx, accountID, organizationID)
+}
+
+func (s *AccountService) resolveDefaultWorkspaceForOrganization(ctx context.Context, accountID, organizationID string) (*workspace_model.Workspace, error) {
+	if s.db == nil {
+		return nil, nil
+	}
+
+	isAdmin, err := s.isOrganizationAdminOrOwner(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check organization role: %w", err)
+	}
+
+	query := s.db.WithContext(ctx).
+		Table("workspaces").
+		Select("workspaces.*").
+		Where("workspaces.organization_id = ? AND workspaces.status = ?", organizationID, workspace_model.WorkspaceStatusNormal).
+		Order("workspaces.created_at DESC")
+
+	if !isAdmin {
+		query = query.Joins("JOIN workspace_members ON workspaces.id = workspace_members.workspace_id").
+			Where("workspace_members.account_id = ?", accountID)
+	}
+
+	var workspace workspace_model.Workspace
+	if err := query.Limit(1).Scan(&workspace).Error; err != nil {
+		return nil, fmt.Errorf("failed to resolve current workspace: %w", err)
+	}
+	if workspace.ID == "" {
+		return nil, nil
+	}
+
+	return &workspace, nil
+}
+
+func (s *AccountService) resolveAnyAccessibleWorkspace(ctx context.Context, accountID string) (*workspace_model.Workspace, error) {
+	if s.db == nil {
+		return nil, nil
+	}
+
+	var workspace workspace_model.Workspace
+	err := s.db.WithContext(ctx).
+		Table("workspaces").
+		Select("workspaces.*").
+		Joins("JOIN members AS organization_members ON organization_members.organization_id = workspaces.organization_id").
+		Joins("LEFT JOIN workspace_members ON workspaces.id = workspace_members.workspace_id AND workspace_members.account_id = organization_members.account_id").
+		Where("organization_members.account_id = ?", accountID).
+		Where("workspaces.status = ?", workspace_model.WorkspaceStatusNormal).
+		Where("workspaces.organization_id IS NOT NULL").
+		Where("(organization_members.role IN ? OR workspace_members.account_id IS NOT NULL)", []workspace_model.OrganizationRole{workspace_model.OrganizationRoleOwner, workspace_model.OrganizationRoleAdmin}).
+		Order("COALESCE(workspace_members.current, false) DESC, workspaces.created_at DESC").
+		Limit(1).
+		Scan(&workspace).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve accessible workspace: %w", err)
+	}
+	if workspace.ID == "" {
+		return nil, nil
+	}
+
+	return &workspace, nil
+}
+
+func (s *AccountService) isWorkspaceAccessibleInOrganization(ctx context.Context, accountID, workspaceID, organizationID string) (bool, error) {
+	workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, workspaceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if workspace == nil || workspace.OrganizationID == nil || *workspace.OrganizationID != organizationID || workspace.Status != workspace_model.WorkspaceStatusNormal {
+		return false, nil
+	}
+
+	return s.canAccountAccessWorkspace(ctx, accountID, organizationID, workspaceID)
+}
+
+func (s *AccountService) canAccountAccessWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (bool, error) {
+	isAdmin, err := s.isOrganizationAdminOrOwner(ctx, organizationID, accountID)
+	if err != nil {
+		return false, err
+	}
+	if isAdmin {
+		return true, nil
+	}
+
+	join, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return join != nil, nil
+}
+
+func (s *AccountService) isOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
+	if s.organizationService == nil {
+		return false, nil
+	}
+	return s.organizationService.IsOrganizationAdminOrOwner(ctx, organizationID, accountID)
+}
+
+func ptrStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func setStringPtrIfChanged(target **string, value string) bool {
+	if target == nil {
+		return false
+	}
+	trimmedValue := strings.TrimSpace(value)
+	if *target != nil && **target == trimmedValue {
+		return false
+	}
+	*target = &trimmedValue
+	return true
+}
+
+func clearStringPtrIfChanged(target **string) bool {
+	if target == nil || *target == nil {
+		return false
+	}
+	*target = nil
+	return true
 }
 
 // isAccountOrganizationMember checks if an account is a member of the specified organization

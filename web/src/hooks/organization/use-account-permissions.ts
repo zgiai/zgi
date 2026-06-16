@@ -8,6 +8,7 @@ import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import type { PermissionState } from '@/store/workspace-store';
+import { useOrganizationStore } from '@/store/organization-store';
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
 import { ALL_PERMISSION_CODES, type PermissionCode } from '@/constants/permissions';
 import { useAuthStore } from '@/store';
@@ -41,8 +42,10 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   const t = useT('navigation');
   const setPermissions = useWorkspaceStore.use.setPermissions();
   const clearPermissions = useWorkspaceStore.use.clearPermissions();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
+  const isSwitchingOrganization =
+    useOrganizationStore.use.isSwitchingOrganization();
   const user = useAuthStore.use.user();
 
   // Determining role based on profile (user object) instead of currentOrganization
@@ -61,8 +64,14 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   const effectiveWorkspaceId =
     workspaceId === 'current' && currentWorkspace ? currentWorkspace.id : workspaceId;
 
-  // Skip query when in org mode (no workspace context)
-  const shouldSkip = skipInOrgMode && isOrganizationMode;
+  const isWorkspaceRequired = contextStatus === 'workspace_required';
+  const isWorkspaceLoading = contextStatus === 'loading';
+  const isMissingCurrentWorkspace = workspaceId === 'current' && !currentWorkspace;
+  // Skip query when no workspace context is usable.
+  const shouldSkip =
+    isSwitchingOrganization ||
+    (skipInOrgMode &&
+      (isWorkspaceRequired || isWorkspaceLoading || isMissingCurrentWorkspace));
 
   const {
     data: permissionsData,
@@ -86,13 +95,16 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
     retry: false,
   });
 
+  const hasUsableWorkspaceContext =
+    !shouldSkip && contextStatus === 'ready' && effectiveWorkspaceId !== 'current';
+
   // Sync permissions to store
   useEffect(() => {
     if (!syncToStore) return;
 
     if (shouldSkip) {
-      if (isOrganizationMode) {
-        // Sync organization role and derived permissions in organization view.
+      if (isWorkspaceRequired) {
+        // Sync organization role and derived permissions for the restricted no-workspace state.
         setPermissions({
           organizationRole: organizationRoleFromProfile as PermissionState['organizationRole'],
           workspaceRole: null,
@@ -120,7 +132,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
     shouldSkip,
     setPermissions,
     clearPermissions,
-    isOrganizationMode,
+    isWorkspaceRequired,
     organizationRoleFromProfile,
     organizationViewPermissions,
   ]);
@@ -128,54 +140,72 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   // Show error toast if query fails
   useEffect(() => {
     if (!error) return;
+    if (isSwitchingOrganization || !hasUsableWorkspaceContext) return;
     toast.error(getErrorMessage(error) || t('switchWorkspace'));
-  }, [error, t]);
+  }, [error, t, isSwitchingOrganization, hasUsableWorkspaceContext]);
 
   return {
-    permissions: isOrganizationMode
+    permissions: isWorkspaceRequired
       ? organizationViewPermissions
-      : (permissionsData?.permissions ?? []),
-    organizationRole: isOrganizationMode
+      : hasUsableWorkspaceContext
+        ? (permissionsData?.permissions ?? [])
+        : [],
+    organizationRole: isWorkspaceRequired
       ? organizationRoleFromProfile
-      : (permissionsData?.organization_role ?? null),
-    workspaceRole: permissionsData?.workspace_role ?? null,
-    workspaceRoleName: permissionsData?.workspace_role_name ?? null,
+      : hasUsableWorkspaceContext
+        ? (permissionsData?.organization_role ?? null)
+        : null,
+    workspaceRole: hasUsableWorkspaceContext ? (permissionsData?.workspace_role ?? null) : null,
+    workspaceRoleName: hasUsableWorkspaceContext
+      ? (permissionsData?.workspace_role_name ?? null)
+      : null,
     isLoading,
     isFetching,
     error: error ? getErrorMessage(error) : null,
     refetch,
     // Helper functions with type-safe permission codes
     hasPermission: (permission: PermissionCode) => {
-      if (isOrganizationMode) {
+      if (isWorkspaceRequired) {
         if (isOrgAdmin) {
           return true;
         }
         return permission.endsWith('.view');
       }
+      if (!hasUsableWorkspaceContext) {
+        return false;
+      }
       return permissionsData?.permissions.includes(permission) ?? false;
     },
     hasAnyPermission: (permissions: PermissionCode[]) => {
-      if (isOrganizationMode) {
+      if (isWorkspaceRequired) {
         if (isOrgAdmin) {
           return permissions.length > 0;
         }
         return permissions.some(p => p.endsWith('.view'));
       }
+      if (!hasUsableWorkspaceContext) {
+        return false;
+      }
       return permissions.some(p => permissionsData?.permissions.includes(p) ?? false);
     },
     hasAllPermissions: (permissions: PermissionCode[]) => {
-      if (isOrganizationMode) {
+      if (isWorkspaceRequired) {
         if (isOrgAdmin) {
           return permissions.every(p => ALL_PERMISSION_CODES.includes(p));
         }
         return permissions.every(p => p.endsWith('.view'));
       }
+      if (!hasUsableWorkspaceContext) {
+        return false;
+      }
       return permissions.every(p => permissionsData?.permissions.includes(p) ?? false);
     },
     isAdmin: () => {
-      const gRole = isOrganizationMode
+      const gRole = isWorkspaceRequired
         ? organizationRoleFromProfile
-        : (permissionsData?.organization_role ?? null);
+        : hasUsableWorkspaceContext
+          ? (permissionsData?.organization_role ?? null)
+          : null;
       return gRole === 'owner' || gRole === 'admin';
     },
   };

@@ -29,11 +29,7 @@ import { useT } from '@/i18n';
 import type { Dataset } from '@/services/types/dataset';
 import { buildIconValueFromDataset, iconValueToDatasetPayload } from '@/utils/icon-helpers';
 import { isValidNameInput, getNameValidationErrors } from '@/utils/validation';
-import {
-  WorkspaceSelector,
-  type WorkspaceSelectorValue,
-} from '@/components/common/workspace-selector';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import {
   EmbeddingSettings,
@@ -65,8 +61,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
   const isEditMode = false;
   const dataset = undefined as Dataset | undefined;
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
-  const requiresWorkspaceSelection = isOrganizationMode && !isEditMode;
 
   // Hooks for create/edit operations
   const createDatasetMutation = useCreateDataset(currentFolderId);
@@ -119,7 +113,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     };
   });
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfig>(
     DEFAULT_CREATE_RETRIEVAL_CONFIG
   );
@@ -169,7 +162,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
       });
       setRetrievalConfig(DEFAULT_CREATE_RETRIEVAL_CONFIG);
       setIconValue(createTextIconValue('', ICON_BG));
-      setSelectedWorkspace(undefined);
     }
   }, [dataset, open, isEditMode, initialIconValue]);
 
@@ -260,9 +252,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
 
   // Validate form and show toast for errors
   const validateForm = useCallback((): boolean => {
-    const workspaceId = requiresWorkspaceSelection
-      ? selectedWorkspace?.id || ''
-      : currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
+    const workspaceId = currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
 
     // Check name validation
     if (!isNameValid) {
@@ -297,8 +287,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     currentWorkspace?.id,
     dataset?.workspace_id,
     dataset?.workspace?.id,
-    requiresWorkspaceSelection,
-    selectedWorkspace?.id,
     t,
   ]);
 
@@ -313,9 +301,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
       return;
     }
 
-    const workspaceId = requiresWorkspaceSelection
-      ? selectedWorkspace?.id || ''
-      : currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
+    const workspaceId = currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
 
     const iconPayload = iconValueToDatasetPayload(iconValue, {
       existing: isEditMode ? dataset : undefined,
@@ -387,7 +373,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
         }));
         setRetrievalConfig(DEFAULT_CREATE_RETRIEVAL_CONFIG);
         setIconValue(createTextIconValue('', ICON_BG));
-        setSelectedWorkspace(undefined);
       }
     } catch (error) {
       console.error('CreateDatasetDialog submit error:', error);
@@ -452,26 +437,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   className="resize-none min-h-[100px]"
                 />
               </div>
-
-              {requiresWorkspaceSelection ? (
-                <div className="space-y-2.5">
-                  <Label className="flex items-center gap-1 text-sm font-semibold">
-                    {t('datasets.createModal.workspaceLabel')}{' '}
-                    <span className="text-destructive">*</span>
-                  </Label>
-                  <WorkspaceSelector
-                    value={selectedWorkspace}
-                    placeholder={t('datasets.createModal.workspacePlaceholder')}
-                    autoSelectFirst
-                    onChange={workspace => setSelectedWorkspace(workspace)}
-                  />
-                  {hasSubmitted && !selectedWorkspace?.id ? (
-                    <p className="text-xs text-destructive font-medium animate-in fade-in slide-in-from-top-1">
-                      {t('datasets.validation.workspace.required')}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
 
               {!isEditMode ? (
                 <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/20 p-4 transition-colors hover:bg-muted/30">

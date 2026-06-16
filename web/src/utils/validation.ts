@@ -262,6 +262,125 @@ export function ensureUniqueIdentifier(base: string, existing: string[], exclude
 }
 
 /* -------------------------------------------------------------------------- */
+/* DB column validation                                                        */
+/* -------------------------------------------------------------------------- */
+
+export const RESERVED_DB_COLUMN_NAMES: ReadonlySet<string> = new Set([
+  'id',
+  'uuid',
+  'created_time',
+  'updated_time',
+  'add',
+  'all',
+  'alter',
+  'and',
+  'as',
+  'asc',
+  'auto_increment',
+  'autocommit',
+  'between',
+  'bit',
+  'blob',
+  'boolean',
+  'by',
+  'case',
+  'char',
+  'check',
+  'column',
+  'commit',
+  'create',
+  'cross',
+  'date',
+  'datetime',
+  'decimal',
+  'default',
+  'delete',
+  'desc',
+  'distinct',
+  'double',
+  'drop',
+  'else',
+  'enum',
+  'exists',
+  'float',
+  'foreign',
+  'from',
+  'full',
+  'group',
+  'having',
+  'in',
+  'index',
+  'inner',
+  'insert',
+  'int',
+  'integer',
+  'intersect',
+  'into',
+  'is',
+  'join',
+  'left',
+  'like',
+  'lock',
+  'not',
+  'null',
+  'numeric',
+  'on',
+  'or',
+  'order',
+  'outer',
+  'primary',
+  'references',
+  'right',
+  'rollback',
+  'savepoint',
+  'select',
+  'set',
+  'table',
+  'text',
+  'then',
+  'time',
+  'timestamp',
+  'transaction',
+  'union',
+  'unique',
+  'unlock',
+  'update',
+  'values',
+  'varchar',
+  'when',
+  'where',
+]);
+
+export function isInvalidDbColumnName(name: string): boolean {
+  const n = (name || '').trim();
+  if (!n) return true;
+  return !/^[a-z][a-z0-9_]*$/.test(n);
+}
+
+export function isReservedDbColumnName(name: string): boolean {
+  const n = (name || '').trim().toLowerCase();
+  if (!n) return false;
+  return RESERVED_DB_COLUMN_NAMES.has(n);
+}
+
+export function getDuplicateDbColumnNames<T extends { name?: string | null }>(
+  columns: readonly T[]
+): ReadonlySet<string> {
+  const counter = new Map<string, number>();
+  columns.forEach(col => {
+    const name = (col.name || '').trim().toLowerCase();
+    if (!name) return;
+    counter.set(name, (counter.get(name) || 0) + 1);
+  });
+
+  const duplicates = new Set<string>();
+  counter.forEach((count, name) => {
+    if (count > 1) duplicates.add(name);
+  });
+  return duplicates;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Table name validation (DB table identifiers)                               */
 /* -------------------------------------------------------------------------- */
 

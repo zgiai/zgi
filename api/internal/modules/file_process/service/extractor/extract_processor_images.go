@@ -17,6 +17,7 @@ import (
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 const fallbackFigureSummary = "Image summary is unavailable."
@@ -45,7 +46,21 @@ func (p *ExtractProcessor) processFigureElements(ctx context.Context, output *dt
 		if imagePath == "" {
 			imagePath = extractMarkdownImagePath(metadataString(element.Metadata, "markdown"))
 		}
+		imageKey := metadataString(element.Metadata, "image_key")
+		if imageKey == "" {
+			imageKey = metadataNestedString(element.Metadata, "payload", "image_key")
+		}
+		originalImagePath := metadataString(element.Metadata, "original_img_path")
+		if originalImagePath == "" {
+			originalImagePath = metadataNestedString(element.Metadata, "payload", "original_img_path")
+		}
+		if originalImagePath == "" {
+			originalImagePath = metadataNestedString(element.Metadata, "payload", "img_path")
+		}
 		if imagePath == "" {
+			imagePath = originalImagePath
+		}
+		if imagePath == "" && imageKey == "" {
 			continue
 		}
 
@@ -56,21 +71,25 @@ func (p *ExtractProcessor) processFigureElements(ctx context.Context, output *dt
 		if imageURL == "" {
 			imageURL = displayImageURL(imagePath)
 		}
-		summary, err := p.summarizeExtractedImage(ctx, imagePath, uploadFile)
+		summary, err := p.summarizeExtractedImage(ctx, imagePath, imageKey, uploadFile)
+		if element.Metadata == nil {
+			element.Metadata = map[string]any{}
+		}
 		if err != nil {
-			if isLocalFilePath(imagePath) {
-				logger.WarnContext(ctx, "failed to summarize extracted figure image", "image_path", imagePath, err)
+			if imageKey != "" || isLocalFilePath(imagePath) {
+				logger.WarnContext(ctx, "failed to summarize extracted figure image", "image_key", imageKey, "image_path", imagePath, err)
 			}
+			element.Metadata["image_summary_error"] = err.Error()
 			summary = fallbackFigureSummary
 		}
 
 		element.Content = buildFigureContent(imageURL, summary)
-		if element.Metadata == nil {
-			element.Metadata = map[string]any{}
-		}
 		element.Metadata["image_url"] = imageURL
 		element.Metadata["image_summary"] = summary
 		element.Metadata["original_image_path"] = imagePath
+		if imageKey != "" {
+			element.Metadata["image_key"] = imageKey
+		}
 		changed = true
 	}
 
@@ -80,7 +99,7 @@ func (p *ExtractProcessor) processFigureElements(ctx context.Context, output *dt
 	return output
 }
 
-func (p *ExtractProcessor) summarizeExtractedImage(ctx context.Context, imagePath string, uploadFile *model.UploadFile) (string, error) {
+func (p *ExtractProcessor) summarizeExtractedImage(ctx context.Context, imagePath, imageKey string, uploadFile *model.UploadFile) (string, error) {
 	if p.imageSummaryClient == nil {
 		return "", fmt.Errorf("image summary client is not initialized")
 	}
@@ -88,9 +107,26 @@ func (p *ExtractProcessor) summarizeExtractedImage(ctx context.Context, imagePat
 		return "", fmt.Errorf("organization id is required for image summary")
 	}
 
-	dataURL, err := imageFileDataURL(imagePath)
-	if err != nil {
-		return "", err
+	dataURL := ""
+	var storageErr error
+	if strings.TrimSpace(imageKey) != "" {
+		dataURL, storageErr = imageDataURLFromStorageKey(p.storage, imageKey)
+	}
+	if dataURL == "" {
+		if !isLocalFilePath(imagePath) {
+			if storageErr != nil {
+				return "", fmt.Errorf("failed to load image from storage key %q: %w", imageKey, storageErr)
+			}
+			return "", fmt.Errorf("image summary requires an image_key or a local image path")
+		}
+		localDataURL, err := imageFileDataURL(imagePath)
+		if err != nil {
+			if storageErr != nil {
+				return "", fmt.Errorf("failed to load image from storage key %q: %v; failed to read local image: %w", imageKey, storageErr, err)
+			}
+			return "", err
+		}
+		dataURL = localDataURL
 	}
 
 	if p.defaultVisionModelResolver == nil {
@@ -194,6 +230,9 @@ func extractMarkdownImagePath(content string) string {
 }
 
 func imageFileDataURL(imagePath string) (string, error) {
+	if !isLocalFilePath(imagePath) {
+		return "", fmt.Errorf("image path is not a local file path: %s", imagePath)
+	}
 	data, err := os.ReadFile(imagePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read image for summary: %w", err)
@@ -207,6 +246,28 @@ func imageFileDataURL(imagePath string) (string, error) {
 		return "", fmt.Errorf("unsupported image content type: %s", contentType)
 	}
 
+	return fmt.Sprintf("data:%s;base64,%s", contentType, base64.StdEncoding.EncodeToString(data)), nil
+}
+
+func imageDataURLFromStorageKey(store storage.Storage, key string) (string, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", fmt.Errorf("image storage key is empty")
+	}
+	if store == nil {
+		return "", fmt.Errorf("image storage is not initialized")
+	}
+	data, err := store.Load(key)
+	if err != nil {
+		return "", fmt.Errorf("failed to load image from storage: %w", err)
+	}
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(key)))
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		return "", fmt.Errorf("unsupported image content type: %s", contentType)
+	}
 	return fmt.Sprintf("data:%s;base64,%s", contentType, base64.StdEncoding.EncodeToString(data)), nil
 }
 

@@ -35,8 +35,7 @@ import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useIsInitialized } from '@/store/auth-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-import { useCurrentWorkspace, useWorkspaceStore } from '@/store/workspace-store';
-import { PersonalSpaceEmptyState } from '@/components/common/personal-space-empty-state';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { cn } from '@/lib/utils';
 
 function DatasetModelsPreloader() {
@@ -48,7 +47,6 @@ function DatasetModelsPreloader() {
 
 function DatasetsPageContent() {
   const t = useT();
-  const { isOrganizationMode } = useWorkspaceStore();
   const currentWorkspace = useCurrentWorkspace();
   const PAGE_SIZE = 20;
   const queryClient = useQueryClient();
@@ -353,7 +351,7 @@ function DatasetsPageContent() {
                 ) : // Dataset section empty state (only when folders exist but no datasets)
                 // Don't show if page-level empty state will be shown (both folders and datasets are empty)
                 // Don't show in organization mode (PersonalSpaceEmptyState handles it)
-                isRootView && rootFolders.length > 0 && (!isOrganizationMode || canManage) ? (
+                isRootView && rootFolders.length > 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-center">
                     <BookOpen className="h-12 w-12 text-muted-foreground mb-4" />
                     <h3 className="text-lg font-medium mb-2">{t('datasets.empty.noDatasets')}</h3>
@@ -398,11 +396,6 @@ function DatasetsPageContent() {
                       {t('datasets.messages.clearFilters')}
                     </Button>
                   </>
-                ) : isOrganizationMode && !canManage && !canManageFolders ? (
-                  <PersonalSpaceEmptyState
-                    moduleType="datasets"
-                    icon={<BookOpen className="w-8 h-8 text-muted-foreground" />}
-                  />
                 ) : (
                   <>
                     <Search className="h-12 w-12 text-muted-foreground mb-4" />

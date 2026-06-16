@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronsUpDown, Check, Loader2, Settings, Users } from 'lucide-react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -18,6 +19,7 @@ import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-
 import { useCurrentUser } from '@/store/auth-store';
 import { useWorkspaceStore } from '@/store';
 import { canManageOrganizationWorkspaces } from '@/utils/workspace-access';
+import { getWorkspaceSwitchRedirect } from '@/utils/workspace-route-reset';
 import type { Workspace } from '@/store';
 
 interface WorkspaceSwitcherProps {
@@ -31,10 +33,13 @@ interface WorkspaceSwitcherProps {
 export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
   const t = useT('navigation');
   const tCommon = useT('common');
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const user = useCurrentUser();
   const workspaces = useWorkspaceStore.use.workspaces();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
   const { mutate: updateWorkspace } = useUpdateCurrentWorkspace();
 
   // Fetch joined workspaces from API and sync to store
@@ -42,16 +47,25 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
   const canManageWorkspaces = canManageOrganizationWorkspaces(user);
   const isLoadingWorkspaces = (isLoading || isFetching) && workspaces.length === 0;
 
-  const handleSelectWorkspace = (workspace: Workspace) => {
-    updateWorkspace(workspace);
-  };
-
   const getWorkspaceDisplayName = (workspace?: Pick<Workspace, 'name'> | null) => {
     if (!workspace?.name) return '';
     return workspace.name === 'Default Workspace' ? t('defaultWorkspace') : workspace.name;
   };
 
   const displayName = getWorkspaceDisplayName(currentWorkspace) || t('switchWorkspace');
+  const hasReadyWorkspace = contextStatus === 'ready' && !!currentWorkspace;
+
+  const handleSelectWorkspace = (workspace: Workspace) => {
+    if (hasReadyWorkspace && currentWorkspace?.id === workspace.id) {
+      return;
+    }
+
+    const redirectTo = getWorkspaceSwitchRedirect(pathname, searchParams);
+    updateWorkspace(workspace);
+    if (redirectTo) {
+      router.replace(redirectTo);
+    }
+  };
 
   return (
     <DropdownMenu>
@@ -71,7 +85,7 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
               isCollapsed ? 'justify-center' : 'min-w-0 flex-1 gap-1'
             )}
           >
-            {isCollapsed && !isOrganizationMode ? (
+            {isCollapsed && hasReadyWorkspace ? (
               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background text-muted-foreground shrink-0">
                 <span className="text-xs leading-none">{displayName?.slice(0, 2)}</span>
               </div>
@@ -130,7 +144,7 @@ export function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProps) {
                     {getWorkspaceDisplayName(workspace)}
                   </span>
                 </div>
-                {!isOrganizationMode && currentWorkspace?.id === workspace.id && (
+                {hasReadyWorkspace && currentWorkspace?.id === workspace.id && (
                   <Check size={14} className="text-primary" />
                 )}
               </DropdownMenuItem>
