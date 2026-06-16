@@ -2,6 +2,7 @@ import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from './types/common';
 import type {
   ContentParsePlaygroundCompareResponse,
+  ContentParseFileRouteProvidersResponse,
   ContentParsePlaygroundPDFRenderResponse,
   ContentParsePlaygroundParseRequest,
   ContentParsePlaygroundParseResponse,
@@ -16,6 +17,13 @@ class ContentParseService extends BaseService {
     ApiResponseData<ContentParsePlaygroundProvidersResponse>
   > {
     return this.request('get', '/console/api/content-parse/playground/providers');
+  }
+
+  async listFileRouteProviders(fileName: string): Promise<
+    ApiResponseData<ContentParseFileRouteProvidersResponse>
+  > {
+    const query = new URLSearchParams({ file_name: fileName }).toString();
+    return this.request('get', `/console/api/content-parse/file-route/providers?${query}`);
   }
 
   async parsePlayground(

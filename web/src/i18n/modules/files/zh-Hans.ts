@@ -210,6 +210,16 @@ const messages: FilesMessages = {
     pendingConfirmationCount: '待优化项',
     chunkCount: '切片数',
     embeddingCount: '向量数',
+    parseMethod: {
+      title: '当前解析方式',
+      autoDescription:
+        '系统已按文件类型和可用服务自动选择最佳解析方式；如果结果不满意，可以手动选择解析器后重新解析。',
+      manualDescription:
+        '该文件使用了用户指定的解析方式；如果结果不满意，可以切换解析器后重新解析。',
+      actualProvider: '实际：{provider}',
+      engine: '引擎：{engine}',
+      adapter: '适配器：{adapter}',
+    },
     createdDate: '上传日期',
     indexInfo: '索引信息',
     embeddingProvider: 'Embedding Provider',
@@ -434,6 +444,12 @@ const messages: FilesMessages = {
       confirmTitle: '重新解析这个文件？',
       confirmDescription:
         '重新解析期间，当前可检索资产会不可用，文件会重新经历解析、切片和索引流程。',
+      providerLabel: '解析器',
+      providerDescription:
+        '列表越靠上通常解析能力越强；灰色项表示当前未配置或健康检查不可用。如果解析效果不理想，可以配置 MinerU 或 Reducto 后选择更好的解析器。',
+      providerReady: '当前可用',
+      providerUnavailable: '当前不可用',
+      noAvailableProvider: '暂无可用解析器',
       confirm: '重新解析',
       toasts: {
         started: '已提交重新解析请求',

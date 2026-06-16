@@ -139,3 +139,63 @@ func TestValidateFileProcessingRequestState(t *testing.T) {
 		})
 	}
 }
+
+func TestEffectiveFileProcessingRequestMode(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		mode   string
+		want   string
+	}{
+		{
+			name:   "reparse stored only becomes parse now",
+			status: datalibrarymodel.DocumentAssetProductStatusStoredOnly,
+			mode:   FileProcessingRequestModeReparse,
+			want:   FileProcessingRequestModeParseNow,
+		},
+		{
+			name:   "reparse ready stays reparse",
+			status: datalibrarymodel.DocumentAssetProductStatusReady,
+			mode:   FileProcessingRequestModeReparse,
+			want:   FileProcessingRequestModeReparse,
+		},
+		{
+			name:   "parse now stored only stays parse now",
+			status: datalibrarymodel.DocumentAssetProductStatusStoredOnly,
+			mode:   FileProcessingRequestModeParseNow,
+			want:   FileProcessingRequestModeParseNow,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := effectiveFileProcessingRequestMode(&datalibrarymodel.DocumentAsset{ProductStatus: tt.status}, tt.mode)
+			if got != tt.want {
+				t.Fatalf("mode=%q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsFileAssetProcessableExtension(t *testing.T) {
+	tests := []struct {
+		ext  string
+		want bool
+	}{
+		{ext: "pdf", want: true},
+		{ext: ".docx", want: true},
+		{ext: "png", want: true},
+		{ext: ".jpg", want: true},
+		{ext: "webp", want: true},
+		{ext: "mp4", want: false},
+		{ext: "mp3", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.ext, func(t *testing.T) {
+			if got := isFileAssetProcessableExtension(tt.ext); got != tt.want {
+				t.Fatalf("processable=%v want %v", got, tt.want)
+			}
+		})
+	}
+}

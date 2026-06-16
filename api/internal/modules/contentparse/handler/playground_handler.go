@@ -42,6 +42,7 @@ func (h *PlaygroundHandler) SetProviderCatalogResolver(resolver service.Provider
 
 func (h *PlaygroundHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/playground/providers", h.ListProviders)
+	rg.GET("/file-route/providers", h.ListFileRouteProviders)
 	rg.POST("/playground/parse", h.Parse)
 	rg.POST("/playground/save", h.SaveRun)
 	rg.GET("/playground/admin/provider-summary", h.GetProviderSummary)
@@ -76,6 +77,34 @@ func (h *PlaygroundHandler) ListProviders(c *gin.Context) {
 		Source:    source,
 		Providers: buildPlaygroundProviderStatuses(catalog, health),
 		OCR:       buildPlaygroundOCRStatuses(),
+	})
+}
+
+func (h *PlaygroundHandler) ListFileRouteProviders(c *gin.Context) {
+	if h == nil || h.orchestrator == nil {
+		response.FailWithMessage(c, response.ErrSystemError, "content parse is not initialized")
+		return
+	}
+	fileName := strings.TrimSpace(c.Query("file_name"))
+	if fileName == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "file_name is required")
+		return
+	}
+	health, err := h.orchestrator.Health(c.Request.Context())
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	catalog, source, err := h.catalogForRequest(c)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	providers, ext := buildFileRouteProviderStatuses(fileName, catalog, health)
+	response.Success(c, fileRouteProvidersResponse{
+		Source:    source,
+		FileExt:   ext,
+		Providers: providers,
 	})
 }
 

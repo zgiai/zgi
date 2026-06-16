@@ -219,6 +219,16 @@ const messages = {
     pendingConfirmationCount: 'Optimization Issues',
     chunkCount: 'Chunks',
     embeddingCount: 'Vectors',
+    parseMethod: {
+      title: 'Current Parser',
+      autoDescription:
+        'The system selected the best parser automatically based on file type and available services. You can choose another parser and reparse if the result is not satisfactory.',
+      manualDescription:
+        'This file used a parser selected by the user. You can switch parsers and reparse if the result is not satisfactory.',
+      actualProvider: 'Actual: {provider}',
+      engine: 'Engine: {engine}',
+      adapter: 'Adapter: {adapter}',
+    },
     createdDate: 'Upload Date',
     indexInfo: 'Index Information',
     embeddingProvider: 'Embedding Provider',
@@ -455,6 +465,12 @@ const messages = {
       confirmTitle: 'Reparse this file?',
       confirmDescription:
         'The current searchable asset will be unavailable while the file is parsing, chunking, and indexing again.',
+      providerLabel: 'Parser',
+      providerDescription:
+        'Parsers nearer the top are usually stronger. Disabled items are not configured or failed health checks. If the result is poor, configure MinerU or Reducto and try a stronger parser.',
+      providerReady: 'Available now',
+      providerUnavailable: 'Unavailable now',
+      noAvailableProvider: 'No available parser',
       confirm: 'Reparse',
       toasts: {
         started: 'Reparse request submitted',

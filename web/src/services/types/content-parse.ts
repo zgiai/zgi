@@ -218,9 +218,12 @@ export interface ContentParsePlaygroundProviderStatus {
   selectable: boolean;
   fallback_only: boolean;
   priority?: number;
+  route_rank?: number;
   status: ContentParseProviderStatusValue;
   reason?: string;
 }
+
+export type ContentParseFileRouteProviderStatus = ContentParsePlaygroundProviderStatus;
 
 export interface ContentParsePlaygroundOCREngineStatus {
   key: ParseOCREngine;
@@ -235,6 +238,12 @@ export interface ContentParsePlaygroundProvidersResponse {
   source: string;
   providers: ContentParsePlaygroundProviderStatus[];
   ocr_engines?: ContentParsePlaygroundOCREngineStatus[];
+}
+
+export interface ContentParseFileRouteProvidersResponse {
+  source: string;
+  file_ext: string;
+  providers: ContentParseFileRouteProviderStatus[];
 }
 
 export interface ContentParsePlaygroundParseRequest {

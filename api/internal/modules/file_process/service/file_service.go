@@ -49,6 +49,11 @@ type UploadFileOptions struct {
 	StartLegacyContentExtraction bool
 }
 
+func isAssetProcessableExtension(ext string) bool {
+	normalized := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+	return model.IsDocumentExtension(normalized) || model.IsImageExtension(normalized)
+}
+
 // NewFileService creates file service instance
 func NewFileService(
 	fileRepo repository.FileRepository,
@@ -135,7 +140,7 @@ func (s *fileService) ReplaceFileContent(ctx context.Context, fileID string, fil
 		}
 		filename = nameWithoutExt + "." + extension
 	}
-	if !model.IsDocumentExtension(extension) {
+	if !isAssetProcessableExtension(extension) {
 		return nil, model.ErrUnsupportedFileType
 	}
 
@@ -283,7 +288,7 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 
 	// Check file type (if from datasets source)
 	if source != nil && *source == interfaces.FileSourceDatasets {
-		if !model.IsDocumentExtension(extension) {
+		if !isAssetProcessableExtension(extension) {
 			return nil, model.ErrUnsupportedFileType
 		}
 	}

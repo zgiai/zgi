@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import {
   AlertCircle,
   ArrowLeft,
@@ -14,13 +15,30 @@ import {
   MessageSquareText,
   PanelLeftClose,
   RefreshCw,
+  RotateCcw,
   TriangleAlert,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   FileOriginalPreviewPanel,
   type FilePreviewLocator,
@@ -29,7 +47,9 @@ import { FileChunksPanel } from '@/components/files/detail/file-chunks-panel';
 import { FileQAPanel } from '@/components/files/detail/file-qa-panel';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { FileAssetProductStatus, FileItem } from '@/services/types/file';
+import { contentParseService } from '@/services/content-parse.service';
+import type { ContentParseFileRouteProviderStatus } from '@/services/types/content-parse';
+import type { FileAssetProductStatus, FileItem, FileParseProviderKey } from '@/services/types/file';
 import { useDownloadFile } from '@/hooks/use-files';
 import { useFileDetail } from '@/hooks/file/use-file-detail';
 import { useCreateFileProcessingRequest } from '@/hooks/file/use-file-processing-request';
@@ -58,6 +78,44 @@ function getProcessingBadgeVariant(status: string) {
     default:
       return 'subtle' as const;
   }
+}
+
+function metadataString(metadata: Record<string, unknown> | undefined, key: string): string {
+  const value = metadata?.[key];
+  if (typeof value === 'string') return value.trim();
+  if (value === undefined || value === null) return '';
+  return String(value).trim();
+}
+
+function parseProviderTranslationKey(provider: string) {
+  return provider === 'hyperparse_api' ? 'hyperparseApi' : provider;
+}
+
+function getCurrentParseProvider(latestRequest?: {
+  request_metadata?: Record<string, unknown>;
+  execution_metadata?: Record<string, unknown>;
+}) {
+  const execution = latestRequest?.execution_metadata;
+  const requested = metadataString(latestRequest?.request_metadata, 'parse_provider');
+  const finalProvider =
+    metadataString(execution, 'final_parse_provider') ||
+    metadataString(execution, 'executed_provider_key') ||
+    metadataString(execution, 'parse_provider');
+
+  return {
+    finalProvider,
+    requestedProvider: requested || 'auto',
+    adapter:
+      metadataString(execution, 'final_parse_adapter') ||
+      metadataString(execution, 'executed_adapter_name'),
+    engine:
+      metadataString(execution, 'final_parse_engine') ||
+      metadataString(execution, 'executed_engine_name'),
+  };
+}
+
+function parseProviderTranslationPath(provider: string) {
+  return `upload.parseProviders.${parseProviderTranslationKey(provider)}` as never;
 }
 
 type WorkbenchStepState = 'done' | 'active' | 'attention' | 'failed' | 'blocked' | 'pending';
@@ -277,6 +335,180 @@ function ProcessingWorkbenchOverview({
   );
 }
 
+function ReparseButtonWithTooltip({
+  latestRequest,
+  onReparse,
+  canReparse,
+  loading,
+}: {
+  latestRequest?: {
+    request_metadata?: Record<string, unknown>;
+    execution_metadata?: Record<string, unknown>;
+  };
+  onReparse: () => void;
+  canReparse: boolean;
+  loading: boolean;
+}) {
+  const t = useT('files');
+  const { finalProvider, requestedProvider, adapter, engine } =
+    getCurrentParseProvider(latestRequest);
+  const requestedLabel = t(parseProviderTranslationPath(requestedProvider || 'auto'));
+  const finalLabel = finalProvider ? t(parseProviderTranslationPath(finalProvider)) : '';
+  const shouldShowFinalProvider =
+    Boolean(finalProvider) && finalProvider !== requestedProvider;
+  const isAuto = requestedProvider === 'auto';
+
+  if (!canReparse) return null;
+
+  return (
+    <Tooltip delayDuration={150}>
+      <TooltipTrigger asChild>
+        <Button
+          variant="outline"
+          className="h-9 gap-2 rounded-md px-3 text-sm"
+          onClick={onReparse}
+          disabled={loading}
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+          {t('detail.reparse.action')}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" className="max-w-md text-left">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-foreground">
+              {t('detail.parseMethod.title')}
+            </span>
+            <Badge variant="subtle" className="max-w-full truncate">
+              {requestedLabel}
+            </Badge>
+            {shouldShowFinalProvider ? (
+              <Badge variant="outline" className="max-w-full truncate">
+                {t('detail.parseMethod.actualProvider', { provider: finalLabel })}
+              </Badge>
+            ) : null}
+            {engine ? (
+              <span className="text-xs text-muted-foreground">
+                {t('detail.parseMethod.engine', { engine })}
+              </span>
+            ) : null}
+          </div>
+          <p className="leading-5 text-muted-foreground">
+            {isAuto
+              ? t('detail.parseMethod.autoDescription')
+              : t('detail.parseMethod.manualDescription')}
+            {adapter ? ` ${t('detail.parseMethod.adapter', { adapter })}` : ''}
+          </p>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ReparseDialog({
+  open,
+  onOpenChange,
+  provider,
+  onProviderChange,
+  onConfirm,
+  loading,
+  providers,
+  providersLoading,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  provider: FileParseProviderKey;
+  onProviderChange: (provider: FileParseProviderKey) => void;
+  onConfirm: () => void;
+  loading: boolean;
+  providers: ContentParseFileRouteProviderStatus[];
+  providersLoading: boolean;
+}) {
+  const { files: t, common } = useT();
+  const hasProviders = providers.length > 0;
+  const selectedProvider = providers.find(item => item.key === provider);
+  const canConfirm = Boolean(selectedProvider?.selectable);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="sm" className="overflow-hidden p-0">
+        <DialogHeader>
+          <DialogTitle className="text-xl font-bold tracking-tight">
+            {t('detail.reparse.confirmTitle')}
+          </DialogTitle>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          <p className="text-sm leading-5 text-muted-foreground">
+            {t('detail.reparse.confirmDescription')}
+          </p>
+          <div className="space-y-2">
+            <Label className="text-sm font-semibold">{t('detail.reparse.providerLabel')}</Label>
+            <Select
+              value={provider}
+              onValueChange={value => onProviderChange(value as FileParseProviderKey)}
+              disabled={providersLoading || !hasProviders}
+            >
+              <SelectTrigger className="bg-background">
+                <SelectValue
+                  placeholder={
+                    providersLoading
+                      ? t('upload.parseProviderLoading')
+                      : t('detail.reparse.noAvailableProvider')
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {providers.map(item => (
+                  <SelectItem
+                    key={item.key}
+                    value={item.key}
+                    disabled={!item.selectable}
+                    className="py-2"
+                  >
+                    <div className="flex min-w-0 flex-col gap-0.5">
+                      <span className="truncate">
+                        {t(parseProviderTranslationPath(item.key))}
+                      </span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {item.selectable
+                          ? t('detail.reparse.providerReady')
+                          : item.reason || t('detail.reparse.providerUnavailable')}
+                      </span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs leading-5 text-muted-foreground">
+              {t('detail.reparse.providerDescription')}
+            </p>
+          </div>
+        </DialogBody>
+        <DialogFooter className="gap-3 border-t bg-muted/30 px-6 py-4">
+          <Button
+            variant="ghost"
+            size="xl"
+            className="px-6 font-semibold"
+            onClick={() => onOpenChange(false)}
+          >
+            {common('cancel')}
+          </Button>
+          <Button
+            variant="destructive"
+            size="xl"
+            className="px-6 font-semibold"
+            onClick={onConfirm}
+            disabled={loading || providersLoading || !canConfirm}
+          >
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {t('detail.reparse.confirm')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function FileDetailLoading() {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-bg-canvas">
@@ -370,6 +602,8 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const { downloadFile, isDownloading } = useDownloadFile();
   const [activeView, setActiveView] = useState<'preview' | 'qa'>('preview');
   const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
+  const [selectedReparseProvider, setSelectedReparseProvider] =
+    useState<FileParseProviderKey>('auto');
   const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
     pollProcessingStatus: true,
   });
@@ -396,7 +630,16 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const canRequestProcessing =
     hasPermission('file.manage') || hasPermission('file.upload_create') || canDownload;
   const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
-  const showHeaderReparse = canReparse && !isFullyReady;
+  const providerStatusQuery = useQuery({
+    queryKey: ['content-parse', 'file-route-providers', file?.name],
+    queryFn: () => contentParseService.listFileRouteProviders(file?.name ?? ''),
+    enabled: canReparse && Boolean(file?.name),
+    staleTime: 30_000,
+  });
+  const reparseProviders = useMemo(
+    () => providerStatusQuery.data?.data.providers ?? [],
+    [providerStatusQuery.data?.data.providers]
+  );
 
   const statusLabel = useMemo(() => {
     switch (status as FileAssetProductStatus | string) {
@@ -425,6 +668,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       mode: 'reparse',
       target_level: 'vectorize',
       force: false,
+      parse_provider: selectedReparseProvider,
     });
   };
 
@@ -440,6 +684,15 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       setActiveView('preview');
     }
   }, [activeView, qaEnabled]);
+
+  useEffect(() => {
+    if (!reparseProviders.length) return;
+    if (reparseProviders.some(provider => provider.key === selectedReparseProvider)) {
+      return;
+    }
+    const firstSelectableProvider = reparseProviders.find(provider => provider.selectable);
+    setSelectedReparseProvider(firstSelectableProvider?.key ?? reparseProviders[0].key);
+  }, [selectedReparseProvider, reparseProviders]);
 
   if (isLoading) return <FileDetailLoading />;
 
@@ -493,6 +746,12 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <ReparseButtonWithTooltip
+              latestRequest={processing?.latest_request}
+              canReparse={canReparse}
+              loading={createProcessingRequest.isPending}
+              onReparse={() => setReparseConfirmOpen(true)}
+            />
             <div className="flex h-9 items-center rounded-md border border-border bg-muted/30 p-0.5">
               <Button
                 type="button"
@@ -553,21 +812,6 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
                   <Download className="h-4 w-4" />
                 )}
                 {t('detail.downloadOriginal')}
-              </Button>
-            ) : null}
-            {showHeaderReparse ? (
-              <Button
-                variant="outline"
-                className="h-9 gap-2 rounded-md px-3 text-sm"
-                onClick={() => setReparseConfirmOpen(true)}
-                disabled={createProcessingRequest.isPending}
-              >
-                {createProcessingRequest.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-                {t('detail.reparse.action')}
               </Button>
             ) : null}
           </div>
@@ -639,16 +883,18 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         )}
       </main>
 
-      <ConfirmDialog
+      <ReparseDialog
         open={reparseConfirmOpen}
         onOpenChange={setReparseConfirmOpen}
-        title={t('detail.reparse.confirmTitle')}
-        description={t('detail.reparse.confirmDescription')}
-        confirmText={t('detail.reparse.confirm')}
-        cancelText={common('cancel')}
-        onConfirm={handleReparse}
+        provider={selectedReparseProvider}
+        onProviderChange={setSelectedReparseProvider}
+        providers={reparseProviders}
+        providersLoading={providerStatusQuery.isLoading || providerStatusQuery.isFetching}
+        onConfirm={() => {
+          handleReparse();
+          setReparseConfirmOpen(false);
+        }}
         loading={createProcessingRequest.isPending}
-        variant="warning"
       />
     </div>
   );

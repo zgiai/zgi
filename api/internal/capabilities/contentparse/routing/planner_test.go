@@ -127,11 +127,11 @@ func TestPlannerRoutesPDFByFileExtension(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
-	if plan.Primary == nil || plan.Primary.ProviderKey != "mineru" {
+	if plan.Primary == nil || plan.Primary.ProviderKey != "reducto" {
 		t.Fatalf("primary=%+v", plan.Primary)
 	}
 	got := providerKeys(plan.FallbackCandidates)
-	want := []string{"reducto", "hyperparse_api", "local", "vlm"}
+	want := []string{"mineru", "vlm", "local"}
 	if !sameStringSlice(got, want) {
 		t.Fatalf("fallbacks=%v, want %v", got, want)
 	}
@@ -158,13 +158,64 @@ func TestPlannerRoutesWordByFileExtension(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
-	if plan.Primary == nil || plan.Primary.ProviderKey != "mineru" {
+	if plan.Primary == nil || plan.Primary.ProviderKey != "reducto" {
 		t.Fatalf("primary=%+v", plan.Primary)
 	}
 	got := providerKeys(plan.FallbackCandidates)
-	want := []string{"hyperparse_api", "local", "reducto"}
+	want := []string{"mineru", "local"}
 	if !sameStringSlice(got, want) {
 		t.Fatalf("fallbacks=%v, want %v", got, want)
+	}
+}
+
+func TestFileExtensionProviderOrder(t *testing.T) {
+	cases := []struct {
+		fileName string
+		wantExt  string
+		want     []string
+	}{
+		{"report.pdf", ".pdf", []string{"reducto", "mineru", "vlm", "local"}},
+		{"lesson.docx", ".docx", []string{"reducto", "mineru", "local"}},
+		{"deck.ppt", ".ppt", []string{"reducto", "mineru"}},
+		{"sheet.csv", ".csv", []string{"local"}},
+		{"scan.png", ".png", []string{"vlm", "mineru"}},
+		{"notes.md", ".md", []string{"local"}},
+		{"archive.bin", ".bin", []string{"local"}},
+	}
+
+	for _, tc := range cases {
+		got, gotExt := FileExtensionProviderOrder(tc.fileName)
+		if gotExt != tc.wantExt {
+			t.Fatalf("%s ext=%q want %q", tc.fileName, gotExt, tc.wantExt)
+		}
+		if !sameStringSlice(got, tc.want) {
+			t.Fatalf("%s providers=%v want %v", tc.fileName, got, tc.want)
+		}
+	}
+}
+
+func TestPlannerRoutesUnknownExtensionToLocalOnly(t *testing.T) {
+	planner := NewDefaultPlanner()
+	catalog := &contracts.ParseProviderCatalog{
+		Providers: []contracts.ParseProviderConfig{
+			{Name: "local", Enabled: true, Priority: 1000, FallbackOnly: true, Adapter: "hyperparse_sdk", Engine: contracts.ParseEngineLocal},
+			{Name: "mineru", Enabled: true, Priority: 200, Adapter: "hyperparse_sdk", Engine: contracts.ParseEngineMineru},
+			{Name: "reducto", Enabled: true, Priority: 100, Adapter: "hyperparse_sdk", Engine: contracts.ParseEngineReducto},
+		},
+	}
+
+	plan, err := planner.Plan(contracts.ParseRequest{
+		FileName: "blob.unknown",
+		Profile:  contracts.ParseProfileDatasetIndex,
+	}, catalog, nil)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if plan.Primary == nil || plan.Primary.ProviderKey != "local" {
+		t.Fatalf("primary=%+v", plan.Primary)
+	}
+	if len(plan.FallbackCandidates) != 0 {
+		t.Fatalf("fallbacks=%+v, want none", plan.FallbackCandidates)
 	}
 }
 
@@ -192,11 +243,11 @@ func TestPlannerFileExtensionRouteSkipsUnavailableProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
-	if plan.Primary == nil || plan.Primary.ProviderKey != "hyperparse_api" {
+	if plan.Primary == nil || plan.Primary.ProviderKey != "local" {
 		t.Fatalf("primary=%+v", plan.Primary)
 	}
 	got := providerKeys(plan.FallbackCandidates)
-	want := []string{"local"}
+	want := []string{}
 	if !sameStringSlice(got, want) {
 		t.Fatalf("fallbacks=%v, want %v", got, want)
 	}

@@ -87,6 +87,38 @@ func TestSystemVLMAdapterUsesDefaultVisionModel(t *testing.T) {
 	}
 }
 
+func TestSystemVLMAdapterParsesUploadFileWithLoadedBytes(t *testing.T) {
+	orgID := uuid.NewString()
+	chatClient := &fakeVisionChatClient{}
+	adapter := NewAdapter(chatClient, &fakeVisionResolver{
+		resolved: &llmdefaultservice.ResolvedModel{
+			Provider: "openai",
+			Model:    "gpt-vision",
+			Source:   llmdefaultservice.SourceExplicit,
+		},
+	})
+
+	artifact, err := adapter.Parse(context.Background(), contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeUploadFile,
+		SourceRef:  "file-1",
+		FileName:   "scan.png",
+		Data:       []byte("loaded-upload-bytes"),
+		Intent:     contracts.ParseIntentDatasetIndex,
+		Metadata: map[string]any{
+			"organization_id": orgID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if artifact.SourceType != contracts.ParseSourceTypeUploadFile {
+		t.Fatalf("SourceType = %q, want upload_file", artifact.SourceType)
+	}
+	if artifact.EngineUsed != contracts.ParseEngineVLM {
+		t.Fatalf("EngineUsed = %q, want vlm", artifact.EngineUsed)
+	}
+}
+
 func TestSystemVLMAdapterRequiresOrganizationID(t *testing.T) {
 	adapter := NewAdapter(&fakeVisionChatClient{}, &fakeVisionResolver{
 		resolved: &llmdefaultservice.ResolvedModel{Provider: "openai", Model: "gpt-vision"},

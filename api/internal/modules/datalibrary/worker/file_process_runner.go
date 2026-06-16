@@ -198,6 +198,12 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 		"next_product_status":        model.DocumentAssetProductStatusGenerating,
 		"generation_no":              generationNo,
 		"parse_provider":             parseProviderFromRequest(request),
+		"requested_parse_provider":   parseProviderFromRequest(request),
+		"final_parse_provider":       contentparseservice.FinalProviderKey(routePlan, artifact),
+		"final_parse_adapter":        contentparseservice.FinalAdapterName(routePlan, artifact),
+		"final_parse_engine":         string(contentparseservice.FinalEngineName(routePlan, artifact)),
+		"parse_route_fallback_used":  artifact.FallbackUsed,
+		"attempted_parse_providers":  contentparseservice.AttemptedProviderOrder(routePlan, artifact),
 	})
 	return err
 }
@@ -291,6 +297,9 @@ func (r *FileProcessRunner) planParseRequest(req contracts.ParseRequest, provide
 		}
 		return plan, req, nil
 	}
+	if !routing.FileExtensionAllowsProvider(req.FileName, provider) {
+		return nil, req, fmt.Errorf("content parse provider %q is not supported for file %q", provider, req.FileName)
+	}
 
 	for _, item := range safeProviderCatalog(catalog).Providers {
 		if strings.ToLower(strings.TrimSpace(item.Name)) != provider {
@@ -325,7 +334,8 @@ func (r *FileProcessRunner) executeRoutePlan(ctx context.Context, req contracts.
 		if adapterName == "" {
 			continue
 		}
-		if providerKey := strings.TrimSpace(candidate.ProviderKey); providerKey != "" {
+		providerKey := strings.TrimSpace(candidate.ProviderKey)
+		if providerKey != "" {
 			attemptedProviders = append(attemptedProviders, providerKey)
 		}
 		attemptedAdapters = append(attemptedAdapters, adapterName)

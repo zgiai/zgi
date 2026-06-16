@@ -8,10 +8,7 @@ import (
 )
 
 func fileExtensionRouteProviders(fileName string, catalog *contracts.ParseProviderCatalog, health *contracts.ParseHealth) ([]contracts.ParseProviderConfig, string) {
-	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(fileName)))
-	if ext == "" {
-		return nil, ""
-	}
+	names, ext := FileExtensionProviderOrder(fileName)
 
 	var providers []contracts.ParseProviderConfig
 	addProvider := func(name string) {
@@ -19,43 +16,49 @@ func fileExtensionRouteProviders(fileName string, catalog *contracts.ParseProvid
 			providers = append(providers, provider)
 		}
 	}
-
-	switch ext {
-	case ".pdf":
-		addProvider("mineru")
-		addProvider("reducto")
-		addProvider("hyperparse_api")
-		addProvider("local")
-		addProvider("vlm")
-	case ".docx", ".doc":
-		addProvider("mineru")
-		addProvider("hyperparse_api")
-		addProvider("local")
-		addProvider("reducto")
-	case ".xlsx", ".xls", ".csv", ".tsv":
-		addProvider("local")
-		addProvider("hyperparse_api")
-		addProvider("mineru")
-		addProvider("reducto")
-	case ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff":
-		addProvider("vlm")
-		addProvider("local")
-		addProvider("mineru")
-	case ".md", ".markdown", ".txt":
-		addProvider("local")
-		addProvider("hyperparse_api")
-	case ".pptx", ".ppt":
-		addProvider("mineru")
-		addProvider("hyperparse_api")
-		addProvider("local")
-	default:
-		addProvider("local")
-		addProvider("mineru")
-		addProvider("hyperparse_api")
-		addProvider("reducto")
+	for _, name := range names {
+		addProvider(name)
 	}
 
 	return providers, ext
+}
+
+func FileExtensionProviderOrder(fileName string) ([]string, string) {
+	trimmed := strings.TrimSpace(fileName)
+	if trimmed == "" {
+		return nil, ""
+	}
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(trimmed)))
+	switch ext {
+	case ".pdf":
+		return []string{"reducto", "mineru", "vlm", "local"}, ext
+	case ".docx", ".doc":
+		return []string{"reducto", "mineru", "local"}, ext
+	case ".xlsx", ".xls", ".csv", ".tsv":
+		return []string{"local"}, ext
+	case ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff":
+		return []string{"vlm", "mineru"}, ext
+	case ".md", ".markdown", ".txt":
+		return []string{"local"}, ext
+	case ".pptx", ".ppt":
+		return []string{"reducto", "mineru"}, ext
+	default:
+		return []string{"local"}, ext
+	}
+}
+
+func FileExtensionAllowsProvider(fileName string, providerName string) bool {
+	names, _ := FileExtensionProviderOrder(fileName)
+	if len(names) == 0 {
+		return true
+	}
+	providerName = strings.ToLower(strings.TrimSpace(providerName))
+	for _, name := range names {
+		if name == providerName {
+			return true
+		}
+	}
+	return false
 }
 
 func healthyProviderByName(catalog *contracts.ParseProviderCatalog, health *contracts.ParseHealth, name string) (contracts.ParseProviderConfig, bool) {

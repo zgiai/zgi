@@ -140,6 +140,7 @@ type queuedFileProcessingRequest struct {
 	ProcessingRequest *datalibraryservice.ProcessingRequestView
 	ProcessingRunID   *uuid.UUID
 	GenerationNo      int64
+	Mode              string
 }
 
 type fileDetailResponse struct {
@@ -319,6 +320,21 @@ func validateFileProcessingRequestState(asset *datalibrarymodel.DocumentAsset, m
 	return errFileProcessingRequestStateInvalid
 }
 
+func effectiveFileProcessingRequestMode(asset *datalibrarymodel.DocumentAsset, mode string) string {
+	if asset == nil {
+		return mode
+	}
+	if mode == FileProcessingRequestModeReparse && asset.ProductStatus == datalibrarymodel.DocumentAssetProductStatusStoredOnly {
+		return FileProcessingRequestModeParseNow
+	}
+	return mode
+}
+
+func isFileAssetProcessableExtension(ext string) bool {
+	normalized := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+	return model.IsDocumentExtension(normalized) || model.IsImageExtension(normalized)
+}
+
 func validateFileReplacementState(asset *datalibrarymodel.DocumentAsset) error {
 	if asset == nil {
 		return datalibraryservice.ErrDocumentAssetNotFound
@@ -459,7 +475,7 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 		return
 	}
 	fileExtension := strings.TrimPrefix(strings.ToLower(filepath.Ext(header.Filename)), ".")
-	shouldUseAssetProcessing := !isTemporary && !isIcon && model.IsDocumentExtension(fileExtension) && h.assetStateService != nil
+	shouldUseAssetProcessing := !isTemporary && !isIcon && isFileAssetProcessableExtension(fileExtension) && h.assetStateService != nil
 
 	// Get folder_id parameter
 	folderID := c.PostForm("folder_id")
@@ -626,7 +642,7 @@ func (h *FileHandler) ReplaceDocument(c *gin.Context) {
 		return
 	}
 	fileExtension := strings.TrimPrefix(strings.ToLower(filepath.Ext(header.Filename)), ".")
-	if !model.IsDocumentExtension(fileExtension) {
+	if !isFileAssetProcessableExtension(fileExtension) {
 		h.businessError(c, response.ErrUnsupportedFileType)
 		return
 	}
@@ -766,7 +782,7 @@ func (h *FileHandler) CreateProcessingRequest(c *gin.Context) {
 		"generation_no":        result.GenerationNo,
 		"file_id":              uploadFile.ID,
 		"target_level":         targetLevel,
-		"mode":                 mode,
+		"mode":                 result.Mode,
 		"request_queue_status": result.ProcessingRequest.Status,
 	})
 }
@@ -1134,7 +1150,7 @@ func (h *FileHandler) GetFileParsePreview(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if uploadFile.IsTemporary || !model.IsDocumentExtension(strings.TrimPrefix(strings.ToLower(uploadFile.Extension), ".")) {
+	if uploadFile.IsTemporary || !isFileAssetProcessableExtension(uploadFile.Extension) {
 		h.businessError(c, response.ErrUnsupportedFileType)
 		return
 	}
@@ -1372,7 +1388,7 @@ func (h *FileHandler) authorizeDocumentFileWith(c *gin.Context, authorize func(*
 	if !ok {
 		return "", nil, false
 	}
-	if uploadFile.IsTemporary || !model.IsDocumentExtension(strings.TrimPrefix(strings.ToLower(uploadFile.Extension), ".")) {
+	if uploadFile.IsTemporary || !isFileAssetProcessableExtension(uploadFile.Extension) {
 		h.businessError(c, response.ErrUnsupportedFileType)
 		return "", nil, false
 	}
@@ -1500,6 +1516,7 @@ func (h *FileHandler) createQueuedFileProcessingRequest(ctx context.Context, upl
 	if err != nil {
 		return nil, err
 	}
+	mode = effectiveFileProcessingRequestMode(asset, mode)
 	if err := validateFileProcessingRequestState(asset, mode, force); err != nil {
 		return nil, err
 	}
@@ -1547,6 +1564,7 @@ func (h *FileHandler) beginAndQueueRunProcessingRequest(ctx context.Context, ass
 		ProcessingRequest: queued,
 		ProcessingRunID:   &result.ProcessingRunID,
 		GenerationNo:      result.GenerationNo,
+		Mode:              mode,
 	}, nil
 }
 
@@ -1586,6 +1604,7 @@ func (h *FileHandler) queueGenerateAfterConfirmRequest(ctx context.Context, asse
 		ProcessingRequest: queued,
 		ProcessingRunID:   asset.ProcessingRunID,
 		GenerationNo:      asset.GenerationNo,
+		Mode:              FileProcessingRequestModeGenerateAfterConfirm,
 	}, nil
 }
 
