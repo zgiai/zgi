@@ -636,6 +636,7 @@ export function AIChatMessageBubble({
               defaultOpen={shouldOpenTimelineByDefault}
               showMemoryKey={showMemoryKey}
               showSkillEventDetails={showSkillEventDetails}
+              messageStatus={message.status}
               onToolGovernanceDecision={onToolGovernanceDecision}
             />
           ) : null}

@@ -15,7 +15,11 @@ import { useT } from '@/i18n/translations';
 import type { ScopedTranslations } from '@/i18n/translations';
 import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
-import type { AIChatSkillInvocation, AIChatToolGovernanceAssetRef } from '@/services/types/aichat';
+import type {
+  AIChatMessage,
+  AIChatSkillInvocation,
+  AIChatToolGovernanceAssetRef,
+} from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import { isPendingToolGovernanceInvocation } from '@/components/chat/controllers/aichat/governance';
 import {
@@ -92,6 +96,7 @@ interface AIChatAgenticTimelineProps {
   defaultOpen?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  messageStatus?: AIChatMessage['status'];
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
@@ -428,6 +433,14 @@ function isToolGovernanceNeedsApproval(item: GovernanceTimelineItem): boolean {
     governanceDecisionStatus(item) === 'needs_approval' ||
     item.event.requires_approval === true ||
     item.event.governance?.requires_approval === true
+  );
+}
+
+function canPublishPendingGovernanceApproval(messageStatus?: AIChatMessage['status']) {
+  return (
+    messageStatus === 'pending' ||
+    messageStatus === 'streaming' ||
+    messageStatus === 'waiting_approval'
   );
 }
 
@@ -1381,6 +1394,7 @@ export function AIChatAgenticTimeline({
   defaultOpen = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
+  messageStatus,
   onToolGovernanceDecision,
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
@@ -1389,8 +1403,9 @@ export function AIChatAgenticTimeline({
   const pendingApprovalScopeId = useToolGovernancePendingApprovalScope();
 
   const pendingGovernanceApprovals = useMemo(
-    () =>
-      timeline.flatMap(item => {
+    () => {
+      if (!canPublishPendingGovernanceApproval(messageStatus)) return [];
+      return timeline.flatMap(item => {
         if (item.type !== 'tool_governance_decision' || !isToolGovernanceNeedsApproval(item)) {
           return [];
         }
@@ -1402,8 +1417,9 @@ export function AIChatAgenticTimeline({
           onToolGovernanceDecision
         );
         return [toPendingToolGovernanceApproval(view, item)];
-      }),
-    [locale, onToolGovernanceDecision, skillDisplayById, t, timeline]
+      });
+    },
+    [locale, messageStatus, onToolGovernanceDecision, skillDisplayById, t, timeline]
   );
 
   useEffect(() => {

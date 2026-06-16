@@ -219,45 +219,52 @@ export function ToolGovernanceDecisionCard({
   };
 
   if (compactAudit && !needsApproval) {
-    const auditText =
-      approvalStatus === 'approved'
-        ? t('consoleChat.governance.approvalPanel.approvedAudit', {
-            action: actionSentence || title,
-          })
-        : approvalStatus === 'rejected'
-          ? t('consoleChat.governance.approvalPanel.rejectedAudit', {
-              action: actionSentence || title,
-            })
-          : title;
+    const auditText = actionSentence || title;
+    const isApproved = approvalStatus === 'approved' || isAllowed;
+    const isRejected = approvalStatus === 'rejected';
 
     return (
       <div
         className={cn(
-          'flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs text-foreground',
-          isHighImpact
+          'flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
+          isRejected
             ? 'border-destructive/25 bg-destructive/5'
-            : isAllowed
+            : isApproved
               ? 'border-emerald-500/25 bg-emerald-500/5'
-              : 'border-warning/30 bg-warning/5'
+              : isHighImpact
+                ? 'border-destructive/25 bg-destructive/5'
+                : 'border-warning/30 bg-warning/5'
         )}
       >
         <span
           className={cn(
             'flex size-5 shrink-0 items-center justify-center rounded-full border bg-background',
-            approvalStatus === 'rejected' || isHighImpact
+            isRejected || (!isApproved && isHighImpact)
               ? 'border-destructive/35 text-destructive'
-              : isAllowed || approvalStatus === 'approved'
+              : isApproved
                 ? 'border-emerald-500/30 text-emerald-600'
                 : 'border-warning/40 text-warning'
           )}
         >
-          {approvalStatus === 'rejected' || (!isAllowed && !approvalStatus) ? (
+          {isRejected || (!isApproved && !approvalStatus) ? (
             <ShieldAlert className="size-3.5" />
           ) : (
             <CheckCircle2 className="size-3.5" />
           )}
         </span>
         <span className="min-w-0 flex-1 truncate font-medium">{auditText}</span>
+        {approvalStatusLabel ? (
+          <span
+            className={cn(
+              'shrink-0 rounded border bg-background/80 px-1.5 py-0.5 text-[11px]',
+              isRejected
+                ? 'border-destructive/20 text-destructive'
+                : 'border-emerald-500/20 text-emerald-700'
+            )}
+          >
+            {approvalStatusLabel}
+          </span>
+        ) : null}
         {toolLabel ? (
           <span className="max-w-44 shrink-0 truncate text-muted-foreground">{toolLabel}</span>
         ) : null}

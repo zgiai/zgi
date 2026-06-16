@@ -1,6 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { Sparkles, X } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import Chat, { useAIChatController, type AIChatModelValue } from '@/components/chat';
@@ -18,6 +28,11 @@ import { useContextualAIChat } from './contextual-ai-chat-context';
 
 const LOCAL_STORAGE_KEY = 'consoleChat';
 const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1024px)';
+const DESKTOP_PANEL_WIDTH_STORAGE_KEY = 'consoleChat.aiChatDockWidth';
+const DEFAULT_DESKTOP_PANEL_WIDTH_RATIO = 0.3;
+const MIN_DESKTOP_PANEL_WIDTH = 640;
+const MAX_DESKTOP_PANEL_WIDTH_RATIO = 0.72;
+const MIN_DESKTOP_CONTENT_WIDTH = 360;
 
 function getIsDesktopPanelViewport() {
   return (
@@ -39,6 +54,42 @@ function useIsDesktopPanelViewport() {
   }, []);
 
   return isDesktopPanelViewport;
+}
+
+function clampDesktopPanelWidth(width: number) {
+  if (typeof window === 'undefined') return Math.max(MIN_DESKTOP_PANEL_WIDTH, width);
+  const viewportWidth = window.innerWidth;
+  const viewportMax = Math.max(
+    MIN_DESKTOP_PANEL_WIDTH,
+    viewportWidth - MIN_DESKTOP_CONTENT_WIDTH
+  );
+  const ratioMax = Math.max(
+    MIN_DESKTOP_PANEL_WIDTH,
+    Math.round(viewportWidth * MAX_DESKTOP_PANEL_WIDTH_RATIO)
+  );
+  const maxWidth = Math.min(viewportMax, ratioMax);
+  return Math.min(Math.max(Math.round(width), MIN_DESKTOP_PANEL_WIDTH), maxWidth);
+}
+
+function getDefaultDesktopPanelWidth() {
+  if (typeof window === 'undefined') return MIN_DESKTOP_PANEL_WIDTH;
+  return clampDesktopPanelWidth(window.innerWidth * DEFAULT_DESKTOP_PANEL_WIDTH_RATIO);
+}
+
+function getStoredDesktopPanelWidth() {
+  if (typeof window === 'undefined') return null;
+  const stored = window.localStorage.getItem(DESKTOP_PANEL_WIDTH_STORAGE_KEY);
+  if (!stored) return null;
+  const width = Number.parseInt(stored, 10);
+  return Number.isFinite(width) ? clampDesktopPanelWidth(width) : null;
+}
+
+function storeDesktopPanelWidth(width: number) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(
+    DESKTOP_PANEL_WIDTH_STORAGE_KEY,
+    String(clampDesktopPanelWidth(width))
+  );
 }
 
 function buildSuggestions(contextItems: ReturnType<typeof useContextualAIChat>['items']) {
@@ -142,6 +193,7 @@ export function ContextualAIChatDock() {
   const queryClient = useQueryClient();
   const { isOpen, setOpen, items } = useContextualAIChat();
   const isDesktopPanelViewport = useIsDesktopPanelViewport();
+  const [desktopPanelWidth, setDesktopPanelWidth] = useState<number | null>(null);
   const itemsRef = useRef(items);
 
   useEffect(() => {
@@ -247,6 +299,81 @@ export function ContextualAIChatDock() {
   );
 
   const suggestions = useMemo(() => buildSuggestions(items), [items]);
+  useEffect(() => {
+    if (!isDesktopPanelViewport) return;
+    const resolveWidth = () => {
+      setDesktopPanelWidth(previous =>
+        clampDesktopPanelWidth(previous ?? getStoredDesktopPanelWidth() ?? getDefaultDesktopPanelWidth())
+      );
+    };
+
+    resolveWidth();
+    window.addEventListener('resize', resolveWidth);
+    return () => window.removeEventListener('resize', resolveWidth);
+  }, [isDesktopPanelViewport]);
+
+  const handleResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!isDesktopPanelViewport) return;
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = desktopPanelWidth ?? getDefaultDesktopPanelWidth();
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const nextWidth = clampDesktopPanelWidth(startWidth + startX - moveEvent.clientX);
+        setDesktopPanelWidth(nextWidth);
+        storeDesktopPanelWidth(nextWidth);
+      };
+
+      const handlePointerUp = () => {
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerUp);
+        window.removeEventListener('pointercancel', handlePointerUp);
+      };
+
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+      window.addEventListener('pointercancel', handlePointerUp);
+    },
+    [desktopPanelWidth, isDesktopPanelViewport]
+  );
+
+  const handleResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (!isDesktopPanelViewport) return;
+      const currentWidth = desktopPanelWidth ?? getDefaultDesktopPanelWidth();
+      let nextWidth: number | null = null;
+      if (event.key === 'ArrowLeft') {
+        nextWidth = currentWidth + 32;
+      } else if (event.key === 'ArrowRight') {
+        nextWidth = currentWidth - 32;
+      } else if (event.key === 'Home') {
+        nextWidth = MIN_DESKTOP_PANEL_WIDTH;
+      } else if (event.key === 'End') {
+        nextWidth = Number.MAX_SAFE_INTEGER;
+      }
+      if (nextWidth === null) return;
+      event.preventDefault();
+      const clampedWidth = clampDesktopPanelWidth(nextWidth);
+      setDesktopPanelWidth(clampedWidth);
+      storeDesktopPanelWidth(clampedWidth);
+    },
+    [desktopPanelWidth, isDesktopPanelViewport]
+  );
+
+  const desktopPanelStyle = useMemo<CSSProperties>(
+    () => ({
+      width: desktopPanelWidth ?? `max(${DEFAULT_DESKTOP_PANEL_WIDTH_RATIO * 100}vw, ${MIN_DESKTOP_PANEL_WIDTH}px)`,
+    }),
+    [desktopPanelWidth]
+  );
+
   const panel = (
     <ContextualAIChatPanel
       controller={controller}
@@ -267,8 +394,21 @@ export function ContextualAIChatDock() {
     return isOpen ? (
       <aside
         aria-label="AIChat assistant"
-        className="hidden h-full min-h-0 w-[440px] shrink-0 border-l border-border/70 bg-background shadow-sm lg:flex"
+        className="relative hidden h-full min-h-0 min-w-[640px] shrink-0 border-l border-border/70 bg-background shadow-sm lg:flex"
+        style={desktopPanelStyle}
       >
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize AIChat assistant"
+          tabIndex={0}
+          title="Drag to resize AIChat assistant"
+          className="group absolute inset-y-0 left-0 z-50 flex w-3 -translate-x-1/2 cursor-col-resize items-center justify-center outline-none"
+          onPointerDown={handleResizePointerDown}
+          onKeyDown={handleResizeKeyDown}
+        >
+          <span className="h-12 w-1 rounded-full bg-border opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+        </div>
         {panel}
       </aside>
     ) : null;
