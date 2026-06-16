@@ -7,7 +7,9 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/filediag"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"go.uber.org/zap"
 )
 
 func (h *WorkflowHandler) processAllFileInputs(ctx context.Context, inputs map[string]interface{}, workspaceID string, appID string) map[string]interface{} {
@@ -31,8 +33,9 @@ func (h *WorkflowHandler) processAllFileInputs(ctx context.Context, inputs map[s
 			if uploadFileID, exists := fileMap["upload_file_id"]; exists {
 				if fileIDStr, ok := uploadFileID.(string); ok && fileIDStr != "" {
 					logger.Info(fmt.Sprintf("[WorkflowHandler] Processing file input: %s, file_id: %s", key, fileIDStr))
+					logWorkflowFileInputReceived(ctx, key, fileMap, fileIDStr, workspaceID, appID)
 					// Extract file content and replace the input
-					processedInputs[key] = h.extractFileContent(ctx, fileMap, fileIDStr, workspaceID)
+					processedInputs[key] = h.extractFileContent(ctx, key, fileMap, fileIDStr, workspaceID)
 					continue
 				}
 			}
@@ -49,7 +52,8 @@ func (h *WorkflowHandler) processAllFileInputs(ctx context.Context, inputs map[s
 						if fileIDStr, ok := uploadFileID.(string); ok && fileIDStr != "" {
 							hasFileObjects = true
 							logger.Info(fmt.Sprintf("[WorkflowHandler] Processing file in array: %s, file_id: %s", key, fileIDStr))
-							processedFiles = append(processedFiles, h.extractFileContent(ctx, fileMap, fileIDStr, workspaceID))
+							logWorkflowFileInputReceived(ctx, key, fileMap, fileIDStr, workspaceID, appID)
+							processedFiles = append(processedFiles, h.extractFileContent(ctx, key, fileMap, fileIDStr, workspaceID))
 							continue
 						}
 					}
@@ -85,13 +89,39 @@ func applyProcessedInputs(req *dto.DraftWorkflowRunRequest, processedInputs map[
 	req.Inputs = processedInputs
 }
 
-func (h *WorkflowHandler) extractFileContent(ctx context.Context, fileMap map[string]interface{}, fileID string, workspaceID string) interface{} {
+func (h *WorkflowHandler) extractFileContent(ctx context.Context, variableName string, fileMap map[string]interface{}, fileID string, workspaceID string) interface{} {
 	// Get file metadata from database
 	uploadFile, err := h.fileService.GetFileByID(ctx, fileID)
 	if err != nil {
-		logger.ErrorContext(ctx, "failed to get workflow file", "file_id", fileID, err)
+		logger.ErrorContext(logger.WithFields(ctx,
+			zap.String("event", "workflow_file_lookup_failed"),
+			zap.String("variable_name", variableName),
+			zap.String("upload_file_id", fileID),
+			zap.String("workspace_id", workspaceID),
+		), "failed to get workflow file", err)
+		filediag.AppendError(ctx, "workflow_file_lookup_failed", "failed to get workflow file", map[string]string{
+			"variable_name":  variableName,
+			"upload_file_id": fileID,
+			"workspace_id":   workspaceID,
+			"error":          err.Error(),
+		})
 		return fmt.Sprintf("[File ID: %s - Error: Unable to access file]", fileID)
 	}
+	if uploadFile == nil {
+		logger.WarnContext(logger.WithFields(ctx,
+			zap.String("event", "workflow_file_lookup_missing"),
+			zap.String("variable_name", variableName),
+			zap.String("upload_file_id", fileID),
+			zap.String("workspace_id", workspaceID),
+		), "workflow file lookup returned nil")
+		filediag.AppendError(ctx, "workflow_file_lookup_missing", "workflow file lookup returned nil", map[string]string{
+			"variable_name":  variableName,
+			"upload_file_id": fileID,
+			"workspace_id":   workspaceID,
+		})
+		return fmt.Sprintf("[File ID: %s - Error: File not found]", fileID)
+	}
+	logWorkflowFileLookupResult(ctx, variableName, uploadFile, workspaceID)
 
 	fileType := ""
 	if t, ok := fileMap["type"].(string); ok {
@@ -168,6 +198,42 @@ func (h *WorkflowHandler) extractFileContent(ctx context.Context, fileMap map[st
 		return result
 	}
 	return workflowFile.ToDict()
+}
+
+func logWorkflowFileInputReceived(ctx context.Context, variableName string, fileMap map[string]interface{}, uploadFileID string, workspaceID string, appID string) {
+	logger.InfoContext(logger.WithFields(ctx,
+		zap.String("event", "workflow_file_input_received"),
+		zap.String("variable_name", variableName),
+		zap.String("upload_file_id", uploadFileID),
+		zap.String("workspace_id", workspaceID),
+		zap.String("app_id", appID),
+		zap.String("declared_type", stringFromInterface(fileMap["type"])),
+		zap.String("transfer_method", stringFromInterface(fileMap["transfer_method"])),
+		zap.Bool("has_url", stringFromInterface(fileMap["url"]) != ""),
+	), "workflow file input received")
+}
+
+func logWorkflowFileLookupResult(ctx context.Context, variableName string, uploadFile *dto.UploadFile, workspaceID string) {
+	logger.InfoContext(logger.WithFields(ctx,
+		zap.String("event", "workflow_file_lookup_succeeded"),
+		zap.String("variable_name", variableName),
+		zap.String("upload_file_id", uploadFile.ID),
+		zap.String("workspace_id", workspaceID),
+		zap.String("filename", uploadFile.Name),
+		zap.String("extension", uploadFile.Extension),
+		zap.String("mime_type", uploadFile.MimeType),
+		zap.String("storage_type", uploadFile.StorageType),
+		zap.Int64("size", uploadFile.Size),
+		zap.Bool("is_temporary", uploadFile.IsTemporary),
+		zap.Bool("has_source_url", uploadFile.SourceURL != ""),
+	), "workflow file lookup succeeded")
+}
+
+func stringFromInterface(value interface{}) string {
+	if raw, ok := value.(string); ok {
+		return raw
+	}
+	return ""
 }
 
 func resolveEffectiveWorkflowFileType(declaredType, extension, mimeType string) string {
