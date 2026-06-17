@@ -209,6 +209,36 @@ func TestChartGeneratorSystemSkillMetadata(t *testing.T) {
 	}
 }
 
+func TestIntentRouterSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillIntentRouter})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillIntentRouter)
+	if !ok {
+		t.Fatalf("intent router skill was not resolved")
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypeHybrid {
+		t.Fatalf("runtime type = %q, want hybrid", doc.Metadata.RuntimeType)
+	}
+	tool, ok := findSkillTool(*doc, "route_intent")
+	if !ok {
+		t.Fatalf("expected route_intent tool")
+	}
+	if tool.ProviderType != "builtin" || tool.ProviderID != "intent_router" {
+		t.Fatalf("tool provider = %s/%s, want builtin/intent_router", tool.ProviderType, tool.ProviderID)
+	}
+	if len(doc.Metadata.References) != 4 {
+		t.Fatalf("references = %#v, want 4 intent router references", doc.Metadata.References)
+	}
+	for _, path := range []string{"taxonomy.md", "routing-rules.md", "clarification-rules.md", "payload-examples.md"} {
+		if !hasReference(doc.Metadata.References, path) {
+			t.Fatalf("references = %#v, missing %s", doc.Metadata.References, path)
+		}
+	}
+}
+
 func TestAgentMemorySystemSkillIsNotLoadable(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	_, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillAgentMemory})
@@ -358,6 +388,7 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 		SkillCalculator,
 		SkillFileGenerator,
 		SkillChartGenerator,
+		SkillIntentRouter,
 		SkillWorkReport,
 		SkillInternalDatabase,
 		SkillInternalKnowledge,
@@ -387,6 +418,7 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		{SkillFileGenerator, "generate_pdf", []string{"html"}},
 		{SkillFileGenerator, "generate_pptx", []string{"presentation"}},
 		{SkillChartGenerator, "generate_chart", []string{"chart_type", "data"}},
+		{SkillIntentRouter, "route_intent", []string{"user_input", "intent_id", "task_type", "confidence", "recommended_action", "evidence", "normalized_request"}},
 		{SkillWorkReport, "generate_file", []string{"content", "format"}},
 		{SkillInternalKnowledge, "retrieve_knowledge", []string{"query", "dataset_ids"}},
 		{SkillAgentKnowledge, "retrieve_agent_knowledge", []string{"query"}},
@@ -468,6 +500,7 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		SkillCalculator,
 		SkillFileGenerator,
 		SkillChartGenerator,
+		SkillIntentRouter,
 		SkillWorkReport,
 		SkillInternalDatabase,
 		SkillInternalKnowledge,

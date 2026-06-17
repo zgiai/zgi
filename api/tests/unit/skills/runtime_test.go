@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	calculatorpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
 	filegeneratorpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
+	intentrouterpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/intentrouter"
 	timepkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
 
@@ -437,6 +438,16 @@ func TestRuntime_ValidateCatalog_AcceptsFileGeneratorSkill(t *testing.T) {
 	}
 }
 
+func TestRuntime_ValidateCatalog_AcceptsIntentRouterSkill(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeIntentRouterSkill(t, catalogDir)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	if err := runtime.ValidateCatalog(context.Background()); err != nil {
+		t.Fatalf("ValidateCatalog() error = %v", err)
+	}
+}
+
 func TestRuntime_ValidateCatalog_RejectsMissingTool(t *testing.T) {
 	catalogDir := t.TempDir()
 	timeDir := filepath.Join(catalogDir, "time")
@@ -523,6 +534,9 @@ func newSkillRuntimeFromCatalog(t *testing.T, catalogDir string) *skills.Runtime
 	if err := manager.RegisterProvider(filegeneratorpkg.NewProvider()); err != nil {
 		t.Fatalf("RegisterProvider() error = %v", err)
 	}
+	if err := manager.RegisterProvider(intentrouterpkg.NewProvider()); err != nil {
+		t.Fatalf("RegisterProvider() error = %v", err)
+	}
 	return skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
 }
 
@@ -551,6 +565,11 @@ func writeFileGeneratorSkill(t *testing.T, catalogDir string) {
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(testFileGeneratorSkillMarkdown()), 0o644); err != nil {
 		t.Fatalf("write file generator skill: %v", err)
 	}
+}
+
+func writeIntentRouterSkill(t *testing.T, catalogDir string) {
+	t.Helper()
+	writeSkillMarkdown(t, catalogDir, "intent-router", testIntentRouterSkillMarkdown())
 }
 
 func writeSkillMarkdown(t *testing.T, catalogDir string, skillID string, markdown string) {
@@ -693,6 +712,26 @@ timeout_seconds: 5
 # File Generator Skill
 
 Always load this skill before generating files.
+`
+}
+
+func testIntentRouterSkillMarkdown() string {
+	return `---
+name: intent-router
+description: Classify user intent and route tasks.
+when_to_use: Use for intent recognition and task routing before selecting downstream tools.
+provider_type: builtin
+provider_id: intent_router
+runtime_type: hybrid
+tools:
+  - route_intent
+max_calls_per_turn: 3
+timeout_seconds: 5
+---
+
+# Intent Router Skill
+
+Always load this skill before routing ambiguous user requests.
 `
 }
 

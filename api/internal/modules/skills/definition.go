@@ -13,6 +13,7 @@ const (
 	SkillWorkReport        = "work-report-generator"
 	SkillSchedulePlanner   = "schedule-planner"
 	SkillChartGenerator    = "chart-generator"
+	SkillIntentRouter      = "intent-router"
 	SkillInternalKnowledge = "internal-knowledge"
 	SkillAgentKnowledge    = "agent-knowledge"
 	SkillInternalDatabase  = "internal-database"

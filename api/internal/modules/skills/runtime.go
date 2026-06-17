@@ -846,7 +846,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 					"content":   stringValueSchema("Text content to write into the generated file. Use valid CSV content for xlsx and runnable HTML content for html."),
 					"format":    enumStringSchema("Output format.", []string{"txt", "md", "html", "json", "csv", "docx", "xlsx", "pdf"}),
 					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
-					"title":     stringValueSchema("Optional document title used by generated HTML and PDF files."),
+					"title":     stringValueSchema("Optional document title used by generated HTML, XLSX, and PDF files. For XLSX, this becomes a merged title row above the table."),
 					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
 				},
 				[]string{"content", "format"},
@@ -947,6 +947,50 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 						{"name": "Student", "values": []int{88, 92, 84, 81, 77, 86}},
 					},
 				},
+			},
+		},
+		SkillIntentRouter + "/route_intent": {
+			SkillID:     SkillIntentRouter,
+			ToolName:    "route_intent",
+			Description: "Validate and normalize a structured intent routing result. The model must classify the user's real intent first, then pass a stable task type, confidence, recommended action, evidence, missing information, routing hints, and normalized request.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"user_input":              stringValueSchema("The current user message being classified."),
+					"context_summary":         stringValueSchema("Optional concise summary of relevant conversation context."),
+					"uploaded_files":          intentUploadedFilesSchema(),
+					"intent_id":               stringValueSchema("Stable dotted lowercase identifier such as file_generation.docx or database_query.filter_records."),
+					"task_type":               enumStringSchema("Standard task type.", intentTaskTypes()),
+					"subtype":                 stringValueSchema("Optional normalized subtype such as docx, bar, filter_records, or unknown."),
+					"confidence":              boundedNumberSchema("Confidence from 0 to 1.", 0, 1),
+					"recommended_action":      enumStringSchema("Recommended next action.", intentRecommendedActions()),
+					"recommended_skill_id":    enumStringSchema("Optional target skill ID when recommended_action is call_skill.", []string{"file-generator", "chart-generator", "work-report-generator", "schedule-planner", "calculator", "internal-knowledge", "agent-knowledge", "internal-database", "agent-database", "agent-workflow"}),
+					"recommended_tool_name":   stringValueSchema("Optional target tool name when recommended_action is call_tool."),
+					"recommended_workflow_id": stringValueSchema("Optional workflow or workflow binding identifier when known."),
+					"recommended_database_id": stringValueSchema("Optional database identifier when known."),
+					"recommended_dataset_ids": intentStringArraySchema("Optional knowledge base or dataset IDs when known."),
+					"routing_hints":           intentRoutingHintsSchema(),
+					"missing_info":            intentMissingInfoSchema(),
+					"evidence":                intentStringArraySchema("Evidence strings grounded in the user input or supplied context."),
+					"normalized_request":      stringValueSchema("Concise restatement of what the user is actually asking."),
+					"alternate_intents":       intentAlternateIntentsSchema(),
+				},
+				[]string{"user_input", "intent_id", "task_type", "confidence", "recommended_action", "evidence", "normalized_request"},
+			),
+			Example: map[string]interface{}{
+				"user_input":            "Export the current report as a Word document.",
+				"intent_id":             "file_generation.docx",
+				"task_type":             "file_generation",
+				"subtype":               "docx",
+				"confidence":            0.94,
+				"recommended_action":    "call_skill",
+				"recommended_skill_id":  "file-generator",
+				"recommended_tool_name": "generate_docx",
+				"routing_hints": map[string]interface{}{
+					"requires_file_generation": true,
+				},
+				"missing_info":       []map[string]interface{}{},
+				"evidence":           []string{"User explicitly asked to export as a Word document."},
+				"normalized_request": "Generate a DOCX file from the current report.",
 			},
 		},
 		SkillWorkReport + "/generate_file": {
@@ -1387,6 +1431,136 @@ func stringArrayOrCSVSchema(description string) map[string]interface{} {
 			},
 		},
 	}
+}
+
+func intentStringArraySchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"description": description,
+		"oneOf": []interface{}{
+			map[string]interface{}{
+				"type":  "array",
+				"items": map[string]interface{}{"type": "string"},
+			},
+			map[string]interface{}{
+				"type":        "string",
+				"description": "JSON array string of strings.",
+			},
+		},
+	}
+}
+
+func boundedNumberSchema(description string, minimum float64, maximum float64) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "number",
+		"description": description,
+		"minimum":     minimum,
+		"maximum":     maximum,
+	}
+}
+
+func intentTaskTypes() []string {
+	return []string{
+		"general_qa",
+		"knowledge_retrieval",
+		"database_query",
+		"database_mutation",
+		"workflow_execution",
+		"file_generation",
+		"chart_generation",
+		"report_generation",
+		"schedule_planning",
+		"calculation",
+		"code_or_debugging",
+		"data_analysis",
+		"clarification_required",
+		"unsupported",
+	}
+}
+
+func intentRecommendedActions() []string {
+	return []string{
+		"answer_directly",
+		"call_skill",
+		"call_tool",
+		"run_workflow",
+		"query_database",
+		"mutate_database",
+		"retrieve_knowledge",
+		"request_user_input",
+		"reject_or_escalate",
+	}
+}
+
+func intentRoutingHintsSchema() map[string]interface{} {
+	return objectSchema(
+		map[string]interface{}{
+			"needs_context":             booleanSchema("Whether more conversation or domain context is needed."),
+			"uses_uploaded_files":       booleanSchema("Whether uploaded files are required for execution."),
+			"requires_database":         booleanSchema("Whether database access is required."),
+			"requires_knowledge_base":   booleanSchema("Whether knowledge retrieval is required."),
+			"requires_workflow":         booleanSchema("Whether workflow execution or inspection is required."),
+			"requires_file_generation":  booleanSchema("Whether file generation is required."),
+			"requires_chart_generation": booleanSchema("Whether chart generation is required."),
+			"requires_confirmation":     booleanSchema("Whether explicit user confirmation is required."),
+			"is_high_impact":            booleanSchema("Whether the next action is high impact."),
+			"is_multi_intent":           booleanSchema("Whether the request contains multiple task intents."),
+		},
+		nil,
+	)
+}
+
+func intentMissingInfoSchema() map[string]interface{} {
+	return arraySchema(
+		"Missing information that blocks reliable execution.",
+		objectSchema(
+			map[string]interface{}{
+				"field":    stringValueSchema("Stable missing field name such as chart_type, file_format, database_table, workflow_binding_id, or confirmation."),
+				"reason":   stringValueSchema("Why this field is required."),
+				"question": stringValueSchema("Concise user-facing question that resolves this blocker."),
+				"options":  intentStringArraySchema("Optional concrete quick-reply options, maximum five."),
+			},
+			[]string{"field", "reason", "question"},
+		),
+	)
+}
+
+func intentUploadedFilesSchema() map[string]interface{} {
+	return arraySchema(
+		"Uploaded file metadata relevant to routing. Do not include raw file contents.",
+		map[string]interface{}{
+			"anyOf": []interface{}{
+				objectSchema(intentUploadedFileProperties(), []string{"file_id"}),
+				objectSchema(intentUploadedFileProperties(), []string{"filename"}),
+			},
+		},
+	)
+}
+
+func intentUploadedFileProperties() map[string]interface{} {
+	return map[string]interface{}{
+		"file_id":   stringValueSchema("Optional file identifier."),
+		"filename":  stringValueSchema("Optional filename."),
+		"mime_type": stringValueSchema("Optional MIME type."),
+		"format":    stringValueSchema("Optional file format or extension."),
+		"role":      stringValueSchema("Optional role such as source, reference, attachment, or output_template."),
+		"summary":   stringValueSchema("Optional short file summary."),
+	}
+}
+
+func intentAlternateIntentsSchema() map[string]interface{} {
+	return arraySchema(
+		"Optional secondary plausible intents.",
+		objectSchema(
+			map[string]interface{}{
+				"intent_id":            stringValueSchema("Stable dotted lowercase identifier for the alternate intent."),
+				"task_type":            enumStringSchema("Alternate task type.", intentTaskTypes()),
+				"confidence":           boundedNumberSchema("Alternate confidence from 0 to 1.", 0, 1),
+				"recommended_action":   enumStringSchema("Optional recommended action for the alternate intent.", intentRecommendedActions()),
+				"recommended_skill_id": stringValueSchema("Optional target skill for the alternate intent."),
+			},
+			[]string{"intent_id", "task_type", "confidence"},
+		),
+	)
 }
 
 func precisionSchema() map[string]interface{} {
