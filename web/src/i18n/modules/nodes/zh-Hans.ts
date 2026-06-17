@@ -909,30 +909,39 @@ const messages: NodesMessages = {
       singleUserMessage: '用户消息',
       positionLabel: '位置 {index}',
       orderDialogTitle: '上下文编排',
-      orderDialogDescription: '拖动示例对话，控制额外上下文在历史对话和本轮用户输入之间的顺序。示例对话只能在这里编辑。',
-      helpEntryDescription: '一般使用不需要额外编排，默认配置就能得到不错效果。需要更多信息或示例时，再看这里。',
+      orderDialogDescription:
+        '拖动示例对话，控制额外上下文在历史对话和本轮用户输入之间的顺序。示例对话只能在这里编辑。',
+      helpEntryDescription:
+        '一般使用不需要额外编排，默认配置就能得到不错效果。需要更多信息或示例时，再看这里。',
       helpEntryButton: '查看编排示例',
       helpTitle: '上下文编排怎么用？',
-      helpDescription: '一般使用不需要额外上下文编排，保持默认配置就可以。这里适合需要补充更多资料或示例回答的场景。',
+      helpDescription:
+        '一般使用不需要额外上下文编排，保持默认配置就可以。这里适合需要补充更多资料或示例回答的场景。',
       helpBeginnerTab: '零基础看这里',
       helpPracticalTab: '直接抄作业',
       helpConceptContextTitle: '什么是上下文',
       helpConceptContextText: '上下文就是模型回答前能看到的资料。你不放进去，模型就不会自动知道。',
       helpConceptModelTitle: '模型怎么获取信息',
-      helpConceptModelText: '模型不会真的翻你的系统，它只读取本次发送给它的消息列表，并按顺序理解重点。',
+      helpConceptModelText:
+        '模型不会真的翻你的系统，它只读取本次发送给它的消息列表，并按顺序理解重点。',
       helpConceptWhyTitle: '为什么要补齐',
-      helpConceptWhyText: '补齐角色、旧对话、示例和本轮问题，等于给模型递一份清楚的任务单，回答会稳很多。',
+      helpConceptWhyText:
+        '补齐角色、旧对话、示例和本轮问题，等于给模型递一份清楚的任务单，回答会稳很多。',
       helpBeginnerStoryTitle: '可以这样理解',
-      helpBeginnerStoryText: '模型像一个刚进会议室的同事。你要先告诉它“你是谁、之前聊到哪、参考什么说法、现在要解决哪句话”，它才不会乱猜。',
+      helpBeginnerStoryText:
+        '模型像一个刚进会议室的同事。你要先告诉它“你是谁、之前聊到哪、参考什么说法、现在要解决哪句话”，它才不会乱猜。',
       helpBeginnerTipTitle: '先记住一句话：',
-      helpBeginnerTipText: '上下文编排不是越多越好，而是把模型必须知道的信息，按你希望它阅读的顺序摆好。',
+      helpBeginnerTipText:
+        '上下文编排不是越多越好，而是把模型必须知道的信息，按你希望它阅读的顺序摆好。',
       helpExampleTitle: '示例问题',
-      helpExampleQuestion: '“客户说上次推荐的套餐太贵了，帮我换成适合 30 人团队、预算更稳一点的回复。”',
+      helpExampleQuestion:
+        '“客户说上次推荐的套餐太贵了，帮我换成适合 30 人团队、预算更稳一点的回复。”',
       helpFlowTitle: '编排后，模型会按这个顺序阅读',
       helpFlowSystemLabel: '系统提示词',
       helpFlowSystemText: '先定角色和边界：你是企业助手，回答要清晰、可执行、符合业务表达习惯。',
       helpFlowHistoryLabel: '历史对话',
-      helpFlowHistoryText: '再补旧线索：模型知道“上次推荐了什么”“客户为什么不满意”，不会像刚进会议室一样两眼一抹黑。',
+      helpFlowHistoryText:
+        '再补旧线索：模型知道“上次推荐了什么”“客户为什么不满意”，不会像刚进会议室一样两眼一抹黑。',
       helpFlowExampleLabel: '示例对话',
       helpFlowExampleText: '然后给示范：你希望它怎么问、怎么答、用什么口吻，这里就是样板间。',
       helpFlowCurrentLabel: '本轮用户输入',
@@ -942,23 +951,30 @@ const messages: NodesMessages = {
       helpBenefitExampleTitle: '风格更稳定',
       helpBenefitExampleText: '示例对话像一段“打样”，模型更容易学到你要的语气、结构和细节密度。',
       helpBenefitDebugTitle: '排查更轻松',
-      helpBenefitDebugText: '回答不对时，可以一眼看到是不是示例太强、资料不够，还是本轮输入不清楚。',
+      helpBenefitDebugText:
+        '回答不对时，可以一眼看到是不是示例太强、资料不够，还是本轮输入不清楚。',
       helpCopyTitle: '可以照抄这套配置',
       helpCopyPurposePrefix: '目的：',
       helpCopySystemLabel: '系统提示词',
-      helpCopySystemValue: '你是一名企业客户成功助手。回答要先复述客户诉求，再给出可执行建议，语气专业、简洁，不夸大承诺。',
+      helpCopySystemValue:
+        '你是一名企业客户成功助手。回答要先复述客户诉求，再给出可执行建议，语气专业、简洁，不夸大承诺。',
       helpCopySystemPurpose: '固定模型的身份、语气和回答结构，相当于先给它定规矩。',
       helpCopyHistoryLabel: '历史对话',
       helpCopyHistoryValue: '开启；历史轮数：3；固定在系统提示词之后。',
-      helpCopyHistoryPurpose: '让模型知道前面聊过什么，避免重复问问题，也能接住“上次那个方案”这类指代。',
+      helpCopyHistoryPurpose:
+        '让模型知道前面聊过什么，避免重复问问题，也能接住“上次那个方案”这类指代。',
       helpCopyExampleLabel: '示例对话',
-      helpCopyExampleValue: '用户消息：客户觉得价格高，应该怎么回复？\n助手消息：先认可预算压力，再给出替代方案和下一步确认问题。',
-      helpCopyExamplePurpose: '给模型一个可模仿的回答样板，尤其适合固定客服、销售、审核等业务口径。',
+      helpCopyExampleValue:
+        '用户消息：客户觉得价格高，应该怎么回复？\n助手消息：先认可预算压力，再给出替代方案和下一步确认问题。',
+      helpCopyExamplePurpose:
+        '给模型一个可模仿的回答样板，尤其适合固定客服、销售、审核等业务口径。',
       helpCopyCurrentLabel: '本轮用户输入',
       helpCopyCurrentValue: '系统变量（query）',
-      helpCopyCurrentPurpose: '把真实用户这一次输入放在最后，模型会带着前面的规则、历史和示例来回答它。',
+      helpCopyCurrentPurpose:
+        '把真实用户这一次输入放在最后，模型会带着前面的规则、历史和示例来回答它。',
       helpTipTitle: '小建议：',
-      helpTipText: '大多数场景保持默认顺序就很好；如果你想让模型模仿一段标准问答，可以在历史对话和本轮输入之间加入示例对话。',
+      helpTipText:
+        '大多数场景保持默认顺序就很好；如果你想让模型模仿一段标准问答，可以在历史对话和本轮输入之间加入示例对话。',
       systemFixedDescription: '系统提示词固定在最前方，在主面板中编辑。',
       contextPlaceholder: '额外上下文',
       contextPlaceholderDescription: '为模型提供更多的信息或回答示例。',
@@ -1253,6 +1269,7 @@ const messages: NodesMessages = {
       select: '单选 (string)',
       number: '数字 (number)',
       checkbox: '勾选框 (boolean)',
+      datetime: '日期时间 (string)',
       file: '文件 (file)',
       'file-list': '文件列表 (array[file])',
     },
@@ -1264,6 +1281,7 @@ const messages: NodesMessages = {
       variableNameRequired: '变量名为必填项。',
       selectNeedsOptions: '选择类型需要至少一个选项',
       defaultMustBeNumber: '数字类型的默认值必须为有效数字',
+      defaultMustBeDateTime: '默认值必须是有效的日期时间',
       maxLengthGtZero: '最大长度必须大于 0',
       fileTypeRequired: '至少需要选择一种文件类型。',
       customExtensionsRequired: '自定义文件类型至少需要填写一个扩展名。',
@@ -1273,6 +1291,10 @@ const messages: NodesMessages = {
         optionsTitle: '选项列表',
         addOption: '添加选项',
         optionN: '选项 {index}',
+      },
+      dateTimeDefault: {
+        fixed: '固定日期时间',
+        now: '当前日期时间',
       },
       title: {
         edit: '编辑变量',

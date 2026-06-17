@@ -203,6 +203,7 @@ function inferStartVarType(v: InputVar): PrimitiveType {
     case InputVarType.TEXT_INPUT:
     case InputVarType.PARAGRAPH:
     case InputVarType.SELECT:
+    case InputVarType.DATETIME:
       return 'string';
     case InputVarType.NUMBER:
       return 'number';

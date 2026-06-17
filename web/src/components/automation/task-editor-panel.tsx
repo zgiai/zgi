@@ -136,6 +136,7 @@ function toWorkflowInputVars(variables: WebAppVariable[] | undefined): InputVar[
     required: Boolean(variable.required),
     max_length: variable.max_length,
     default: variable.default,
+    default_datetime_mode: variable.default_datetime_mode,
     options: variable.options,
     allowed_file_upload_methods: variable.allowed_file_upload_methods,
     allowed_file_types: variable.allowed_file_types,
