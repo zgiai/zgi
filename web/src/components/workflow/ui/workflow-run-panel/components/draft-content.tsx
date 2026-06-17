@@ -10,6 +10,7 @@ import type {
   FormInputs,
   WorkflowInputFormHandle,
 } from '@/components/workflow/common/workflow-input-form';
+import { getInputVarSchemaDefaultValue } from '@/components/workflow/common/workflow-input-form';
 import type { WorkflowFinishedData, HistoryResult } from '../types';
 import Results from './results';
 import { useT } from '@/i18n';
@@ -122,7 +123,7 @@ const DraftContent: React.FC<DraftContentProps> = ({
 
     startVariables.forEach(input => {
       if (input.type === 'file' || input.type === 'file-list') return;
-      const defaultValue = (input as { default?: unknown }).default;
+      const defaultValue = getInputVarSchemaDefaultValue(input);
       if (defaultValue === undefined || defaultValue === null) return;
       if (typeof defaultValue === 'string' && defaultValue.trim().length === 0) return;
       if (typeof defaultValue === 'number' && !Number.isFinite(defaultValue)) return;

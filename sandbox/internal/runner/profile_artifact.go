@@ -35,6 +35,8 @@ type builtProfileManifest struct {
 	Checksum           string                `json:"checksum"`
 	EstimatedSizeBytes int64                 `json:"estimated_size_bytes"`
 	Description        string                `json:"description"`
+	PublicReusable     bool                  `json:"public_reusable"`
+	Pinned             bool                  `json:"pinned"`
 	Packages           []builtProfilePackage `json:"packages"`
 	Build              profileBuildMetadata  `json:"build"`
 }
@@ -52,15 +54,17 @@ type profileBuildMetadata struct {
 }
 
 type DependencyProfileArtifact struct {
-	Name        string
-	Version     string
-	OwnerScope  string
-	Languages   []string
-	Packages    []DependencyProfileArtifactPackage
-	BaseRuntime string
-	Checksum    string
-	SizeBytes   int64
-	Description string
+	Name           string
+	Version        string
+	OwnerScope     string
+	Languages      []string
+	Packages       []DependencyProfileArtifactPackage
+	BaseRuntime    string
+	Checksum       string
+	SizeBytes      int64
+	Description    string
+	PublicReusable bool
+	Pinned         bool
 }
 
 type DependencyProfileArtifactPackage struct {
@@ -110,15 +114,17 @@ func dependencyProfileArtifactFromManifest(manifest builtProfileManifest) Depend
 		})
 	}
 	return DependencyProfileArtifact{
-		Name:        manifest.Name,
-		Version:     manifest.Version,
-		OwnerScope:  defaultString(manifest.OwnerScope, "global"),
-		Languages:   append([]string(nil), manifest.Languages...),
-		Packages:    packages,
-		BaseRuntime: defaultString(manifest.BaseRuntime, "linux-secure"),
-		Checksum:    manifest.Build.Checksum,
-		SizeBytes:   manifest.Build.SizeBytes,
-		Description: strings.TrimSpace(manifest.Description),
+		Name:           manifest.Name,
+		Version:        manifest.Version,
+		OwnerScope:     defaultString(manifest.OwnerScope, "global"),
+		Languages:      append([]string(nil), manifest.Languages...),
+		Packages:       packages,
+		BaseRuntime:    defaultString(manifest.BaseRuntime, "linux-secure"),
+		Checksum:       manifest.Build.Checksum,
+		SizeBytes:      manifest.Build.SizeBytes,
+		Description:    strings.TrimSpace(manifest.Description),
+		PublicReusable: manifest.PublicReusable || strings.HasPrefix(manifest.Name, "auto-"),
+		Pinned:         manifest.Pinned || strings.HasPrefix(manifest.Name, "auto-"),
 	}
 }
 

@@ -295,6 +295,8 @@ func agentWorkflowStartInputExists(inputs []AgentWorkflowStartInput, key string)
 
 func agentWorkflowJSONSchemaType(inputType string) string {
 	switch strings.ToLower(strings.TrimSpace(inputType)) {
+	case "datetime", "date-time":
+		return "string"
 	case "number", "integer":
 		return "number"
 	case "boolean", "bool":
@@ -447,10 +449,12 @@ func copyAgentWorkflowStartInputs(input []AgentWorkflowStartInput) []AgentWorkfl
 			continue
 		}
 		out = append(out, AgentWorkflowStartInput{
-			Variable: variable,
-			Label:    strings.TrimSpace(item.Label),
-			Type:     strings.TrimSpace(item.Type),
-			Required: item.Required,
+			Variable:            variable,
+			Label:               strings.TrimSpace(item.Label),
+			Type:                strings.TrimSpace(item.Type),
+			Required:            item.Required,
+			Default:             item.Default,
+			DefaultDateTimeMode: strings.TrimSpace(item.DefaultDateTimeMode),
 		})
 	}
 	return out

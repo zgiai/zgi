@@ -168,19 +168,25 @@ func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs
 		Where("agents.web_app_status = ?", AgentWebAppStatusActive).
 		Where("agents.tenant_id IN ?", workspaceIDs).
 		Where(`
-			EXISTS (
-				SELECT 1
-				FROM workflows
-				WHERE workflows.agent_id = agents.id
-				  AND workflows.version != ?
+			(
+				agents.agent_type = ?
+				AND EXISTS (
+					SELECT 1
+					FROM agent_published_versions
+					WHERE agent_published_versions.agent_id = agents.id
+					  AND agent_published_versions.deleted_at IS NULL
+				)
 			)
-			OR EXISTS (
-				SELECT 1
-				FROM agent_published_versions
-				WHERE agent_published_versions.agent_id = agents.id
-				  AND agent_published_versions.deleted_at IS NULL
+			OR (
+				agents.agent_type != ?
+				AND EXISTS (
+					SELECT 1
+					FROM workflows
+					WHERE workflows.agent_id = agents.id
+					  AND workflows.version != ?
+				)
 			)
-		`, "draft")
+		`, "AGENT", "AGENT", "draft")
 
 	if workspaceID != "" {
 		query = query.Where("agents.tenant_id = ?", workspaceID)

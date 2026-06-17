@@ -435,6 +435,7 @@ func (s *RegisterServiceImpl) InviteMemberEx(ctx context.Context, tenantID, invi
 			Current:     false, // Set to false initially for pending invitations
 			Extensions:  extMap,
 		}
+		workspace_model.ApplyWorkspaceMemberDefaults(tenantMember)
 
 		if err := tx.Create(tenantMember).Error; err != nil {
 			return "", fmt.Errorf("failed to create tenant member: %w", err)

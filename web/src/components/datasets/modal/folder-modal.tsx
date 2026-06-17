@@ -22,11 +22,7 @@ import { useT } from '@/i18n';
 import type { DatasetFolder } from '@/services/types/dataset-folder';
 import { getNameValidationErrors } from '@/utils/validation';
 import { cn } from '@/lib/utils';
-import {
-  WorkspaceSelector,
-  type WorkspaceSelectorValue,
-} from '@/components/common/workspace-selector';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 
 // Event payload for opening folder modal via event bus
 export interface OpenFolderModalPayload {
@@ -52,8 +48,6 @@ export default function FolderModal({
 }: FolderModalProps) {
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
-  const requiresWorkspaceSelection = mode === 'create' && isOrganizationMode;
 
   const createFolderMutation = useCreateDatasetFolder();
   const updateFolderMutation = useUpdateDatasetFolder();
@@ -70,7 +64,6 @@ export default function FolderModal({
     }
     return { name: '', description: '' };
   });
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
 
   // Reset base fields when modal opens.
   useEffect(() => {
@@ -85,7 +78,6 @@ export default function FolderModal({
         name: '',
         description: '',
       });
-      setSelectedWorkspace(undefined);
     }
   }, [folder, open, mode]);
 
@@ -117,9 +109,7 @@ export default function FolderModal({
     if (!isNameValid) return;
 
     if (mode === 'create') {
-      const workspaceId = requiresWorkspaceSelection
-        ? selectedWorkspace?.id || ''
-        : currentWorkspace?.id || '';
+      const workspaceId = currentWorkspace?.id || '';
       if (!workspaceId) return;
 
       try {
@@ -132,7 +122,6 @@ export default function FolderModal({
         onOpenChange(false);
         // Reset form state
         setFormData({ name: '', description: '' });
-        setSelectedWorkspace(undefined);
       } catch (error) {
         console.error('Failed to create folder:', error);
       }
@@ -211,25 +200,6 @@ export default function FolderModal({
                 />
               </div>
 
-              {requiresWorkspaceSelection ? (
-                <div className="space-y-2.5">
-                  <Label className="flex items-center gap-1 text-sm font-semibold">
-                    {t('datasets.createFolderModal.workspaceLabel')}{' '}
-                    <span className="text-destructive">*</span>
-                  </Label>
-                  <WorkspaceSelector
-                    value={selectedWorkspace}
-                    placeholder={t('datasets.createFolderModal.workspacePlaceholder')}
-                    autoSelectFirst
-                    onChange={workspace => setSelectedWorkspace(workspace)}
-                  />
-                  {hasSubmitted && !selectedWorkspace?.id ? (
-                    <p className="text-xs text-destructive font-medium animate-in fade-in slide-in-from-top-1">
-                      {t('datasets.validation.workspace.required')}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
           </DialogBody>
 

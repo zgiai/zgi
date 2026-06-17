@@ -13,6 +13,8 @@ type DataSourceConfig struct {
 type TableRef struct {
 	Schema  string   `json:"schema,omitempty"`
 	Name    string   `json:"name,omitempty"`
+	Label   string   `json:"label,omitempty"`
+	ID      string   `json:"id,omitempty"`
 	TableID int      `json:"table_id,omitempty"`
 	Columns []string `json:"columns,omitempty"`
 }

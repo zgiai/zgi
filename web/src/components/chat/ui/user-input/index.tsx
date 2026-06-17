@@ -25,7 +25,10 @@ import type {
   WorkflowFileUploadAccessMode,
   WorkflowInputFormHandle,
 } from '@/components/workflow/common/workflow-input-form';
-import { transformFilesToPayload } from '@/components/workflow/common/workflow-input-form';
+import {
+  buildWorkflowInputSchemaDefaults,
+  transformFilesToPayload,
+} from '@/components/workflow/common/workflow-input-form';
 import type { InputVar } from '@/components/workflow/types/input-var';
 import AttachmentsPanel from './attachments-panel';
 import ToolbarFormPanel from './toolbar-form-panel';
@@ -156,27 +159,7 @@ const UserInput: React.FC<UserInputProps> = ({
   // Compute initial form values from variable defaults (mirrors WorkflowInputForm logic)
   const computedInitialValues = useMemo<Record<string, unknown>>(() => {
     if (!toolbarForm?.variables) return {};
-    const result: Record<string, unknown> = {};
-    for (const v of toolbarForm.variables) {
-      switch (v.type) {
-        case 'checkbox':
-          result[v.variable] = typeof v.default === 'boolean' ? v.default : false;
-          break;
-        case 'number': {
-          const num = typeof v.default === 'string' ? Number(v.default) : undefined;
-          result[v.variable] = Number.isFinite(num) ? num : undefined;
-          break;
-        }
-        case 'file':
-          result[v.variable] = undefined;
-          break;
-        case 'file-list':
-          result[v.variable] = [];
-          break;
-        default:
-          result[v.variable] = typeof v.default === 'string' ? v.default : '';
-      }
-    }
+    const result = buildWorkflowInputSchemaDefaults(toolbarForm.variables);
     return { ...result, ...(toolbarForm.initialValues ?? {}) };
   }, [toolbarForm?.variables, toolbarForm?.initialValues]);
 
@@ -368,12 +351,15 @@ const UserInput: React.FC<UserInputProps> = ({
         const inputs = formValues ?? {};
         for (const v of toolbarForm.variables) {
           if (!v.required) continue;
+          if (v.type === 'datetime' && v.default_datetime_mode === 'now') continue;
+
           const val = (inputs as Record<string, unknown>)[v.variable];
           let invalid = false;
           switch (v.type) {
             case 'text-input':
             case 'paragraph':
             case 'select':
+            case 'datetime':
               if (typeof val !== 'string' || val.trim().length === 0) invalid = true;
               break;
             case 'number':

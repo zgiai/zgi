@@ -22,8 +22,9 @@ export async function resolveShortLinkTargetPath(token: string): Promise<string 
     return null;
   }
 
+  const path = `/console/api/short-link-resolutions/${encodeURIComponent(shortToken)}`;
   const response = await fetch(
-    buildApiUrl(`/console/api/short-link-resolutions/${encodeURIComponent(shortToken)}`, 'main'),
+    buildShortLinkResolutionUrl(path),
     {
       method: 'GET',
       headers: {
@@ -42,6 +43,17 @@ export async function resolveShortLinkTargetPath(token: string): Promise<string 
     return null;
   }
   return payload.data.target_path;
+}
+
+function buildShortLinkResolutionUrl(path: string): string {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  if (typeof window === 'undefined') {
+    const serverApiUrl = process.env.API_URL?.trim();
+    if (serverApiUrl) {
+      return `${serverApiUrl.replace(/\/+$/, '')}${cleanPath}`;
+    }
+  }
+  return buildApiUrl(cleanPath, 'main');
 }
 
 function isSafeTargetPath(path: unknown): path is string {

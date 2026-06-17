@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -67,7 +68,7 @@ func NewServer(cfg config.Config) (*Server, error) {
 	}
 
 	policyService := policy.NewService(cfg)
-	artifactProfiles, err := loadDependencyProfileArtifacts(cfg.DependencyRootFSDir)
+	artifactProfiles, err := loadDependencyProfileArtifacts(cfg.DependencyRootFSDir, policyService)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
@@ -118,39 +119,51 @@ func (s *Server) Handler() http.Handler {
 	return s.withRequestID(s.mux)
 }
 
-func loadDependencyProfileArtifacts(root string) ([]policy.DependencyProfile, error) {
+func loadDependencyProfileArtifacts(root string, policyService *policy.Service) ([]policy.DependencyProfile, error) {
 	artifacts, err := runner.ListDependencyProfileArtifacts(root)
 	if err != nil {
 		return nil, fmt.Errorf("load dependency profile artifacts: %w", err)
 	}
 	profiles := make([]policy.DependencyProfile, 0, len(artifacts))
 	for _, artifact := range artifacts {
-		packages := make([]policy.DependencyPackage, 0, len(artifact.Packages))
-		for _, item := range artifact.Packages {
-			packages = append(packages, policy.DependencyPackage{
-				Name:      item.Name,
-				Version:   item.Version,
-				Ecosystem: item.Ecosystem,
-			})
+		profile := dependencyProfileFromArtifact(artifact)
+		if policyService != nil {
+			if err := policyService.ValidateDependencyProfilePackages(profile); err != nil {
+				log.Printf("zgi-sandbox: skipping dependency profile artifact %s: %v", profile.Name, err)
+				continue
+			}
 		}
-		profiles = append(profiles, policy.DependencyProfile{
-			Name:             artifact.Name,
-			Version:          artifact.Version,
-			Status:           "ready",
-			Enabled:          true,
-			OwnerScope:       artifact.OwnerScope,
-			Scope:            "global",
-			Languages:        artifact.Languages,
-			Packages:         packages,
-			BaseRuntime:      artifact.BaseRuntime,
-			Checksum:         artifact.Checksum,
-			ArtifactChecksum: artifact.Checksum,
-			SizeBytes:        artifact.SizeBytes,
-			Description:      artifact.Description,
-			PublicReusable:   true,
-		})
+		profiles = append(profiles, profile)
 	}
 	return profiles, nil
+}
+
+func dependencyProfileFromArtifact(artifact runner.DependencyProfileArtifact) policy.DependencyProfile {
+	packages := make([]policy.DependencyPackage, 0, len(artifact.Packages))
+	for _, item := range artifact.Packages {
+		packages = append(packages, policy.DependencyPackage{
+			Name:      item.Name,
+			Version:   item.Version,
+			Ecosystem: item.Ecosystem,
+		})
+	}
+	return policy.DependencyProfile{
+		Name:             artifact.Name,
+		Version:          artifact.Version,
+		Status:           "ready",
+		Enabled:          true,
+		OwnerScope:       artifact.OwnerScope,
+		Scope:            "global",
+		Languages:        artifact.Languages,
+		Packages:         packages,
+		BaseRuntime:      artifact.BaseRuntime,
+		Checksum:         artifact.Checksum,
+		ArtifactChecksum: artifact.Checksum,
+		SizeBytes:        artifact.SizeBytes,
+		Description:      artifact.Description,
+		PublicReusable:   artifact.PublicReusable,
+		Pinned:           artifact.Pinned,
+	}
 }
 
 func filterCachedDependencyProfilesWithLocalArtifacts(cachedProfiles []policy.DependencyProfile, artifactProfiles []policy.DependencyProfile, dependencyRootFSDir string) []policy.DependencyProfile {

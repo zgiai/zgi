@@ -15,6 +15,7 @@ import (
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/sql_base"
 )
 
 // Dependencies are application-scoped services used by concrete workflow nodes.
@@ -27,6 +28,7 @@ type Dependencies struct {
 	PromptResolver              promptservice.PromptService
 	AutomationDefinitionService automationdefinition.Service
 	NotificationSMSService      notificationsms.Service
+	SQLBase                     sql_base.SQLBase
 }
 
 // NodeRunner creates and executes concrete workflow nodes outside graph_engine.
@@ -125,6 +127,10 @@ func (r *NodeRunner) optionalDependencies(nodeID string, nodeType shared.NodeTyp
 		} else {
 			logger.Warn("No ToolEngine available for Tools node: %s", nodeID)
 		}
+	}
+
+	if nodeType == shared.CallDatabase && r.deps.SQLBase != nil {
+		optionalDeps = append(optionalDeps, r.deps.SQLBase)
 	}
 
 	if nodeType == shared.HTTPRequest || nodeType == shared.LLM {

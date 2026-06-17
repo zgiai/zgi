@@ -98,6 +98,7 @@ type AccountService interface {
 
 	GetAccountContext(ctx context.Context, accountID string) (*auth_model.AccountContext, error)
 	UpdateAccountContext(ctx context.Context, accountID string, organizationID, workspaceID *string) (*auth_model.AccountContext, error)
+	EnsureAccountContextForWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error)
 
 	IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error)
 	IsOrganizationMember(ctx context.Context, organizationID, accountID string) (bool, error)

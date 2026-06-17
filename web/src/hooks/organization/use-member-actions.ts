@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
-import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
+import { ORGANIZATION_KEYS, WORKSPACE_KEYS } from '@/hooks/query-keys';
 import type {
   AdminRegisterMemberRequest,
   DirectAddMemberRequest,
@@ -152,6 +152,9 @@ export function useMemberActions() {
       queryClient.invalidateQueries({
         queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id || ''),
       });
+      queryClient.invalidateQueries({
+        queryKey: WORKSPACE_KEYS.all,
+      });
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('organization.contacts.addMember.addError'));
@@ -179,6 +182,17 @@ export function useMemberActions() {
       });
       queryClient.invalidateQueries({
         queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id || ''),
+      });
+      if (data.workspace?.id) {
+        queryClient.invalidateQueries({
+          queryKey: WORKSPACE_KEYS.members(currentOrganization?.id || null, data.workspace.id),
+        });
+        queryClient.invalidateQueries({
+          queryKey: WORKSPACE_KEYS.availableMembers(currentOrganization?.id || null, data.workspace.id),
+        });
+      }
+      queryClient.invalidateQueries({
+        queryKey: WORKSPACE_KEYS.forSwitcher(currentOrganization?.id || null),
       });
     },
     onError: error => {

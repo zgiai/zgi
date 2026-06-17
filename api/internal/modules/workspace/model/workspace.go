@@ -2,7 +2,10 @@ package model
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // WorkspaceStatus Workspace status enumeration
@@ -131,6 +134,46 @@ type WorkspaceMember struct {
 // TableName specifies table name
 func (WorkspaceMember) TableName() string {
 	return "workspace_members"
+}
+
+func DefaultWorkspaceRoleID(role WorkspaceMemberRole) string {
+	switch role {
+	case WorkspaceRoleOwner:
+		return WorkspaceBuiltinRoleOwnerID
+	case WorkspaceRoleAdmin:
+		return WorkspaceBuiltinRoleAdminID
+	case WorkspaceRoleViewer:
+		return WorkspaceBuiltinRoleViewerID
+	case WorkspaceRoleEditor, WorkspaceRoleMember, WorkspaceRoleNormal:
+		return WorkspaceBuiltinRoleMemberID
+	default:
+		return ""
+	}
+}
+
+func ApplyWorkspaceMemberDefaults(join *WorkspaceMember) {
+	if join == nil {
+		return
+	}
+
+	if strings.TrimSpace(join.ID) == "" {
+		join.ID = uuid.New().String()
+	}
+
+	if join.RoleID != nil {
+		roleID := strings.TrimSpace(*join.RoleID)
+		if roleID == "" {
+			join.RoleID = nil
+		} else if roleID != *join.RoleID {
+			join.RoleID = &roleID
+		}
+	}
+
+	if join.RoleID == nil {
+		if roleID := DefaultWorkspaceRoleID(join.Role); roleID != "" {
+			join.RoleID = &roleID
+		}
+	}
 }
 
 // WorkspaceInfo represents a single Workspace info

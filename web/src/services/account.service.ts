@@ -27,7 +27,7 @@ export const accountService = {
       ApiResponseData<{
         account_id: string;
         current_organization_id: string;
-        current_workspace_id: string;
+        current_workspace_id: string | null;
         created_at: string;
         updated_at: string;
       }>

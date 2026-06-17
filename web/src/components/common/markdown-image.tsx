@@ -1,23 +1,48 @@
 import React, { useState } from 'react';
-import { Download, ZoomIn, Loader2, X } from 'lucide-react';
+import { Download, ImageOff, Loader2, X, ZoomIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n/translations';
 
 interface MarkdownImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   className?: string;
+  frameClassName?: string;
   imageClassName?: string;
+}
+
+const loadedMarkdownImageSrcs = new Set<string>();
+const LOADED_MARKDOWN_IMAGE_SRC_LIMIT = 300;
+
+function isMarkdownImageLoaded(src: unknown): boolean {
+  return typeof src === 'string' && loadedMarkdownImageSrcs.has(src);
+}
+
+function markMarkdownImageLoaded(src: unknown): void {
+  if (typeof src !== 'string' || !src) return;
+
+  loadedMarkdownImageSrcs.add(src);
+  if (loadedMarkdownImageSrcs.size <= LOADED_MARKDOWN_IMAGE_SRC_LIMIT) return;
+
+  const oldestSrc = loadedMarkdownImageSrcs.values().next().value;
+  if (oldestSrc) {
+    loadedMarkdownImageSrcs.delete(oldestSrc);
+  }
 }
 
 export function MarkdownImage({
   src,
   alt,
   className,
+  frameClassName,
   imageClassName,
+  onLoad,
+  onError,
   ...props
 }: MarkdownImageProps) {
-  const [isLoading, setIsLoading] = useState(true);
+  const t = useT('webapp');
+  const [isLoading, setIsLoading] = useState(() => Boolean(src) && !isMarkdownImageLoaded(src));
   const [hasError, setHasError] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const lastOpenTimeRef = React.useRef<number>(0);
@@ -29,6 +54,15 @@ export function MarkdownImage({
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
   }, [blobUrl]);
+
+  React.useEffect(() => {
+    setIsLoading(Boolean(src) && !isMarkdownImageLoaded(src));
+    setHasError(false);
+    setBlobUrl(currentBlobUrl => {
+      if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+      return null;
+    });
+  }, [src]);
 
   const loadBlob = async () => {
     if (blobUrl || !src) return;
@@ -88,16 +122,26 @@ export function MarkdownImage({
   if (hasError) {
     return (
       <div
+        role="img"
+        aria-label={alt ? `${t('chat.markdownImage.loadFailedTitle')}: ${alt}` : t('chat.markdownImage.loadFailedTitle')}
         className={cn(
-          'relative inline-flex items-center justify-center bg-muted rounded-lg border border-border p-4',
+          'relative inline-flex min-h-36 w-full max-w-[320px] min-w-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border bg-muted/25 align-top text-muted-foreground',
           className
         )}
       >
-        <div className="flex flex-col items-center gap-2 text-muted-foreground">
-          <div className="h-8 w-8 rounded-full bg-background flex items-center justify-center">
-            <X className="h-4 w-4" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,hsl(var(--muted-foreground)/0.16)_1px,transparent_0)] [background-size:16px_16px]" />
+        <div className="relative flex w-full flex-col items-center justify-center gap-3 px-5 py-5 text-center">
+          <div className="flex size-10 items-center justify-center rounded-full border border-border bg-background/85 text-muted-foreground shadow-sm">
+            <ImageOff className="size-5" />
           </div>
-          <span className="text-xs">Failed to load image</span>
+          <div className="space-y-1">
+            <div className="text-sm font-medium text-foreground">
+              {t('chat.markdownImage.loadFailedTitle')}
+            </div>
+            <div className="mx-auto max-w-56 text-xs leading-5 text-muted-foreground">
+              {t('chat.markdownImage.loadFailedDescription')}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -121,7 +165,8 @@ export function MarkdownImage({
         <div
           className={cn(
             'relative cursor-zoom-in overflow-hidden rounded-lg border bg-background',
-            isLoading ? 'min-h-[200px]' : ''
+            isLoading ? 'min-h-[200px]' : '',
+            frameClassName
           )}
           onClick={() => handleOpenChange(true)}
         >
@@ -133,10 +178,18 @@ export function MarkdownImage({
               imageClassName,
               isLoading ? 'opacity-0' : 'opacity-100'
             )}
-            onLoad={() => setIsLoading(false)}
-            onError={() => {
+            onLoad={event => {
+              markMarkdownImageLoaded(src);
+              setIsLoading(false);
+              onLoad?.(event);
+            }}
+            onError={event => {
+              if (typeof src === 'string') {
+                loadedMarkdownImageSrcs.delete(src);
+              }
               setIsLoading(false);
               setHasError(true);
+              onError?.(event);
             }}
             {...props}
           />
@@ -155,7 +208,7 @@ export function MarkdownImage({
                 e.stopPropagation();
                 handleOpenChange(true);
               }}
-              title="Zoom In"
+              title={t('chat.markdownImage.zoomIn')}
             >
               <ZoomIn className="h-4 w-4" />
             </Button>
@@ -164,7 +217,7 @@ export function MarkdownImage({
               isIcon
               className="h-8 w-8 rounded-full bg-background/80 backdrop-blur-sm shadow-sm hover:bg-background"
               onClick={handleDownload}
-              title="Download"
+              title={t('chat.markdownImage.download')}
             >
               <Download className="h-4 w-4" />
             </Button>
@@ -175,7 +228,7 @@ export function MarkdownImage({
           showCloseButton={false}
           className="max-w-screen-lg w-auto h-auto p-0 border-none bg-transparent shadow-none"
         >
-          <DialogTitle className="sr-only">Image Preview</DialogTitle>
+          <DialogTitle className="sr-only">{t('chat.markdownImage.previewTitle')}</DialogTitle>
           <div className="relative flex items-center justify-center">
             <img
               src={blobUrl || src}

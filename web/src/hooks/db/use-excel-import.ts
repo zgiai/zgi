@@ -10,6 +10,7 @@ import type {
   ConfirmExcelImportRequest,
   ExcelImportErrorList,
   ExcelImportJob,
+  RecognizeExcelImportRequest,
 } from '@/services/types/db';
 import type { ApiResponseData } from '@/services/types/common';
 import { useT } from '@/i18n';
@@ -48,6 +49,20 @@ export function useConfirmExcelImport(dbId: string | undefined, jobId: string | 
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('excelImport.errors.importFailed'));
+    },
+  });
+}
+
+export function useRecognizeExcelImport(dbId: string | undefined, jobId: string | undefined) {
+  const t = useT('dbs');
+  return useMutation({
+    mutationFn: (payload: RecognizeExcelImportRequest) => {
+      if (!dbId) return Promise.reject(new Error('dbId is required'));
+      if (!jobId) return Promise.reject(new Error('jobId is required'));
+      return dbService.recognizeExcelImport(dbId, jobId, payload);
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('excelImport.errors.recognizeFailed'));
     },
   });
 }

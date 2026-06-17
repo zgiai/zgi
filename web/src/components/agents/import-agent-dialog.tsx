@@ -13,14 +13,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import {
-  WorkspaceSelector,
-  type WorkspaceSelectorValue,
-} from '@/components/common/workspace-selector';
 import { FileUpload, type FileUploadRef } from '@/components/common/file-upload';
 import { useImportWorkflow } from '@/hooks/workflow/use-workflow-import-export';
-import { useIsOrganizationMode } from '@/store/workspace-store';
 
 interface ImportAgentDialogProps {
   open: boolean;
@@ -38,15 +32,12 @@ export default function ImportAgentDialog({
   const t = useT();
   const fileUploadRef = useRef<FileUploadRef>(null);
   const [selectedCount, setSelectedCount] = useState(0);
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
-  const isOrganizationMode = useIsOrganizationMode();
-  const effectiveWorkspaceId = isOrganizationMode ? selectedWorkspace?.id : workspaceId;
+  const effectiveWorkspaceId = workspaceId;
   const { importWorkflow, isImporting } = useImportWorkflow();
 
   const handleCancel = useCallback(() => {
     fileUploadRef.current?.clearAll();
     setSelectedCount(0);
-    setSelectedWorkspace(undefined);
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -64,7 +55,6 @@ export default function ImportAgentDialog({
     await importWorkflow({ file, workspaceId: effectiveWorkspaceId });
     fileUploadRef.current?.clearAll();
     setSelectedCount(0);
-    setSelectedWorkspace(undefined);
     onOpenChange(false);
     await onImportComplete?.();
   }, [effectiveWorkspaceId, importWorkflow, onImportComplete, onOpenChange, t]);
@@ -76,17 +66,6 @@ export default function ImportAgentDialog({
           <DialogTitle>{t('agents.importAgent')}</DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-4 py-4">
-          {isOrganizationMode ? (
-            <div className="space-y-2.5">
-              <Label className="text-sm font-semibold">{t('agents.form.workspace')}</Label>
-              <WorkspaceSelector
-                value={selectedWorkspace}
-                placeholder={t('agents.form.workspacePlaceholder')}
-                autoSelectFirst
-                onChange={setSelectedWorkspace}
-              />
-            </div>
-          ) : null}
           <FileUpload
             ref={fileUploadRef}
             autoUpload={false}
@@ -102,9 +81,7 @@ export default function ImportAgentDialog({
           </Button>
           <Button
             onClick={handleImport}
-            disabled={
-              selectedCount === 0 || isImporting || (isOrganizationMode && !effectiveWorkspaceId)
-            }
+            disabled={selectedCount === 0 || isImporting || !effectiveWorkspaceId}
           >
             {isImporting ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}
             {isImporting ? t('agents.importingAgent') : t('agents.importAgent')}

@@ -390,6 +390,7 @@ const messages = {
       requiredField: 'This field is required',
       fillFormToStart: 'Please fill out the chat parameters before chatting',
       invalidInputs: 'There are unfilled required items in the input.',
+      currentDateTimeAutoFilled: 'Automatically uses the current date and time when run',
     },
     features: {
       title: 'Features',

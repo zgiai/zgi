@@ -23,12 +23,15 @@ services:
     environment:
       BASE_PATH: ${BASE_PATH:-${NEXT_PUBLIC_BASE_PATH:-}}
       NEXT_PUBLIC_BASE_PATH: ${BASE_PATH:-${NEXT_PUBLIC_BASE_PATH:-}}
+      API_URL: ${API_URL:-http://host.docker.internal:2670}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:2670}
       TZ: ${TZ:-Asia/Shanghai}
       PORT: ${PORT:-2680}
       PM2_INSTANCES: ${PM2_INSTANCES:-2}
       NEXT_TELEMETRY_DISABLED: ${NEXT_TELEMETRY_DISABLED:-1}
       NEXT_PUBLIC_IS_CLOUD: ${NEXT_PUBLIC_IS_CLOUD:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test:
         - CMD-SHELL

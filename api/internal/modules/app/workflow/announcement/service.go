@@ -26,20 +26,12 @@ func NewServiceWithShortLinkService(db *gorm.DB, shortLinkService shortlinkcap.S
 	return &Service{db: db, shortLinkService: shortLinkService}
 }
 
-func (s *Service) CreateOrGetRuntimeAnnouncement(ctx context.Context, params CreateRuntimeAnnouncementParams) (*RuntimeAnnouncement, error) {
+func (s *Service) CreateRuntimeAnnouncement(ctx context.Context, params CreateRuntimeAnnouncementParams) (*RuntimeAnnouncement, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("announcement service is not initialized")
 	}
 	if err := validateRuntimeParams(params); err != nil {
 		return nil, err
-	}
-
-	existing, err := s.loadRuntimeAnnouncement(ctx, params.TenantID, params.WorkflowRunID, params.NodeID)
-	if err == nil {
-		return s.runtimeAnnouncementPayload(ctx, existing)
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("load announcement: %w", err)
 	}
 
 	announcement, err := buildRuntimeAnnouncement(params)
@@ -98,29 +90,11 @@ func (s *Service) createRuntimeAnnouncementWithTokenRetry(ctx context.Context, a
 		if createErr == nil {
 			return announcement, nil
 		}
-		if isAnnouncementRunNodeConflict(createErr) {
-			existing, err := s.loadRuntimeAnnouncement(ctx, announcement.TenantID, announcement.WorkflowRunID, announcement.NodeID)
-			if err != nil {
-				return nil, fmt.Errorf("load announcement after run/node conflict: %w", err)
-			}
-			return existing, nil
-		}
 		if !isAnnouncementTokenConflict(createErr) {
 			return nil, fmt.Errorf("create announcement: %w", createErr)
 		}
 	}
 	return nil, fmt.Errorf("create announcement after token retries: %w", createErr)
-}
-
-func (s *Service) loadRuntimeAnnouncement(ctx context.Context, tenantID, workflowRunID, nodeID string) (*Announcement, error) {
-	var existing Announcement
-	err := s.db.WithContext(ctx).
-		Where("tenant_id = ? AND workflow_run_id = ? AND node_id = ?", tenantID, workflowRunID, nodeID).
-		First(&existing).Error
-	if err != nil {
-		return nil, err
-	}
-	return &existing, nil
 }
 
 func (s *Service) CleanupExpiredAnnouncements(ctx context.Context, before time.Time) (int64, error) {
