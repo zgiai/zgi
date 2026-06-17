@@ -79,8 +79,12 @@ func (s *service) PlanAction(ctx context.Context, scope Scope, req actiondto.Act
 	if !ok {
 		return nil, fmt.Errorf("%w: capability %q is not registered", ErrInvalidInput, capabilityID)
 	}
-	if key := strings.TrimSpace(req.IdempotencyKey); key != "" {
-		if existing, steps, err := s.repo.GetRunByIdempotencyKey(ctx, scope.OrganizationID, scope.AccountID, key); err == nil {
+	idempotencyKeyValue := strings.TrimSpace(req.IdempotencyKey)
+	if capability.IdempotencyRequired && idempotencyKeyValue == "" {
+		return nil, fmt.Errorf("%w: idempotency_key is required for capability %q", ErrInvalidInput, capabilityID)
+	}
+	if idempotencyKeyValue != "" {
+		if existing, steps, err := s.repo.GetRunByIdempotencyKey(ctx, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, capabilityID, idempotencyKeyValue); err == nil {
 			existingCapability, _ := s.registry.Get(existing.CapabilityID)
 			return &ActionRunView{Run: existing, Steps: steps, Capability: &existingCapability}, nil
 		} else if !isRepoNotFound(err) {
@@ -102,7 +106,7 @@ func (s *service) PlanAction(ctx context.Context, scope Scope, req actiondto.Act
 	if policy.RequiresConfirmation {
 		status = actionmodel.ActionRunStatusNeedsConfirmation
 	}
-	idempotencyKey := optionalString(req.IdempotencyKey)
+	idempotencyKey := optionalString(idempotencyKeyValue)
 	title := firstNonEmpty(req.Title, capability.Name)
 	summary := strings.TrimSpace(req.Summary)
 	resources := resourcesPayload(req.Resources)
@@ -166,7 +170,7 @@ func (s *service) GetActionRun(ctx context.Context, scope Scope, id uuid.UUID) (
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	run, steps, err := s.repo.GetRunScoped(ctx, id, scope.OrganizationID, scope.AccountID)
+	run, steps, err := s.repo.GetRunScoped(ctx, id, scope.OrganizationID, scope.WorkspaceID, scope.AccountID)
 	if err != nil {
 		if isRepoNotFound(err) {
 			return nil, ErrNotFound
@@ -192,7 +196,7 @@ func (s *service) ConfirmAction(ctx context.Context, scope Scope, id uuid.UUID, 
 
 	if !req.Confirmed {
 		ledger["status"] = actionmodel.ActionRunStatusCanceled
-		if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.AccountID, map[string]interface{}{
+		if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, map[string]interface{}{
 			"status":      actionmodel.ActionRunStatusCanceled,
 			"canceled_at": now,
 			"ledger":      ledger,
@@ -204,7 +208,7 @@ func (s *service) ConfirmAction(ctx context.Context, scope Scope, id uuid.UUID, 
 	}
 
 	ledger["status"] = actionmodel.ActionRunStatusConfirmed
-	if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.AccountID, map[string]interface{}{
+	if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, map[string]interface{}{
 		"status":       actionmodel.ActionRunStatusConfirmed,
 		"confirmed_by": scope.AccountID,
 		"confirmed_at": now,
@@ -257,7 +261,7 @@ func (s *service) ExecuteAction(ctx context.Context, scope Scope, id uuid.UUID, 
 		}
 	}
 	ledger["status"] = actionmodel.ActionRunStatusRunning
-	if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.AccountID, map[string]interface{}{
+	if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, map[string]interface{}{
 		"status":   actionmodel.ActionRunStatusRunning,
 		"error":    nil,
 		"ledger":   ledger,
@@ -297,7 +301,7 @@ func (s *service) ExecuteAction(ctx context.Context, scope Scope, id uuid.UUID, 
 			return nil, err
 		}
 	}
-	if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.AccountID, map[string]interface{}{
+	if err := s.repo.UpdateRunFieldsScoped(ctx, id, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, map[string]interface{}{
 		"status":   actionmodel.ActionRunStatusCompleted,
 		"error":    nil,
 		"ledger":   finalLedger,
@@ -326,7 +330,7 @@ func (s *service) blockActionRun(ctx context.Context, scope Scope, view *ActionR
 			return nil, err
 		}
 	}
-	if err := s.repo.UpdateRunFieldsScoped(ctx, view.Run.ID, scope.OrganizationID, scope.AccountID, map[string]interface{}{
+	if err := s.repo.UpdateRunFieldsScoped(ctx, view.Run.ID, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, map[string]interface{}{
 		"status":   actionmodel.ActionRunStatusBlocked,
 		"error":    errText,
 		"ledger":   ledger,
@@ -359,7 +363,7 @@ func (s *service) failActionRun(ctx context.Context, scope Scope, view *ActionRu
 			return nil, err
 		}
 	}
-	if err := s.repo.UpdateRunFieldsScoped(ctx, view.Run.ID, scope.OrganizationID, scope.AccountID, map[string]interface{}{
+	if err := s.repo.UpdateRunFieldsScoped(ctx, view.Run.ID, scope.OrganizationID, scope.WorkspaceID, scope.AccountID, map[string]interface{}{
 		"status":   actionmodel.ActionRunStatusFailed,
 		"error":    errText,
 		"ledger":   ledger,

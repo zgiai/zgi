@@ -46,9 +46,16 @@ func upCreateActionRuntimeRuns(schema *mschema.Builder) error {
 		table.Index("idx_action_runtime_runs_message", "message_id")
 		table.Index("idx_action_runtime_runs_capability", "capability_id")
 		table.Index("idx_action_runtime_runs_status", "status")
-		table.Index("idx_action_runtime_runs_idempotency", "organization_id", "account_id", "idempotency_key")
 	}); err != nil {
 		return err
+	}
+	for _, statement := range []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_action_runtime_runs_idempotency_workspace ON action_runtime_runs (organization_id, workspace_id, account_id, capability_id, idempotency_key) WHERE deleted_at IS NULL AND idempotency_key IS NOT NULL AND workspace_id IS NOT NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_action_runtime_runs_idempotency_global ON action_runtime_runs (organization_id, account_id, capability_id, idempotency_key) WHERE deleted_at IS NULL AND idempotency_key IS NOT NULL AND workspace_id IS NULL`,
+	} {
+		if err := schema.Raw(statement); err != nil {
+			return err
+		}
 	}
 
 	return schema.Create("action_runtime_steps", func(table *mschema.Blueprint) {

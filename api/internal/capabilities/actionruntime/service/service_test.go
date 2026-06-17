@@ -52,7 +52,10 @@ func TestExecuteActionRequiresConfirmation(t *testing.T) {
 	repo := newFakeRepository()
 	svc := NewService(repo, NewDefaultRegistry())
 	scope := fakeScope()
-	view, err := svc.PlanAction(context.Background(), scope, actiondto.ActionPlanRequest{CapabilityID: "agent.publish"})
+	view, err := svc.PlanAction(context.Background(), scope, actiondto.ActionPlanRequest{
+		CapabilityID:   "agent.publish",
+		IdempotencyKey: "publish-1",
+	})
 	if err != nil {
 		t.Fatalf("PlanAction: %v", err)
 	}
@@ -67,7 +70,10 @@ func TestConfirmThenExecuteBlocksUntilAdapterConnected(t *testing.T) {
 	repo := newFakeRepository()
 	svc := NewService(repo, NewDefaultRegistry())
 	scope := fakeScope()
-	view, err := svc.PlanAction(context.Background(), scope, actiondto.ActionPlanRequest{CapabilityID: "agent.publish"})
+	view, err := svc.PlanAction(context.Background(), scope, actiondto.ActionPlanRequest{
+		CapabilityID:   "agent.publish",
+		IdempotencyKey: "publish-1",
+	})
 	if err != nil {
 		t.Fatalf("PlanAction: %v", err)
 	}
@@ -205,6 +211,116 @@ func TestExecuteFileReadFailureIsRecordedOnRun(t *testing.T) {
 	}
 }
 
+func TestPlanActionRequiresIdempotencyKeyForRequiredCapability(t *testing.T) {
+	repo := newFakeRepository()
+	svc := NewService(repo, NewDefaultRegistry())
+
+	_, err := svc.PlanAction(context.Background(), fakeScope(), actiondto.ActionPlanRequest{CapabilityID: "agent.publish"})
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "idempotency_key") {
+		t.Fatalf("PlanAction error = %v, want idempotency key invalid input", err)
+	}
+}
+
+func TestPlanActionIdempotencyIsScopedByWorkspaceAndCapability(t *testing.T) {
+	repo := newFakeRepository()
+	svc := NewService(repo, NewRegistry([]CapabilityManifest{
+		{
+			ID:                  "test.create",
+			Name:                "Create test asset",
+			Runtime:             RuntimeInternal,
+			AuthMode:            AuthModeActorContext,
+			RiskLevel:           actionmodel.RiskLevelLow,
+			IdempotencyRequired: true,
+		},
+		{
+			ID:                  "test.publish",
+			Name:                "Publish test asset",
+			Runtime:             RuntimeInternal,
+			AuthMode:            AuthModeActorContext,
+			RiskLevel:           actionmodel.RiskLevelLow,
+			IdempotencyRequired: true,
+		},
+	}))
+	workspaceA := uuid.New()
+	workspaceB := uuid.New()
+	scopeA := fakeScope()
+	scopeA.WorkspaceID = &workspaceA
+	scopeB := scopeA
+	scopeB.WorkspaceID = &workspaceB
+	globalScope := scopeA
+	globalScope.WorkspaceID = nil
+
+	first, err := svc.PlanAction(context.Background(), scopeA, actiondto.ActionPlanRequest{
+		CapabilityID:   "test.create",
+		IdempotencyKey: "same-key",
+	})
+	if err != nil {
+		t.Fatalf("PlanAction first: %v", err)
+	}
+	again, err := svc.PlanAction(context.Background(), scopeA, actiondto.ActionPlanRequest{
+		CapabilityID:   "test.create",
+		IdempotencyKey: "same-key",
+	})
+	if err != nil {
+		t.Fatalf("PlanAction duplicate: %v", err)
+	}
+	if again.Run.ID != first.Run.ID {
+		t.Fatalf("duplicate run id = %s, want existing %s", again.Run.ID, first.Run.ID)
+	}
+	otherWorkspace, err := svc.PlanAction(context.Background(), scopeB, actiondto.ActionPlanRequest{
+		CapabilityID:   "test.create",
+		IdempotencyKey: "same-key",
+	})
+	if err != nil {
+		t.Fatalf("PlanAction other workspace: %v", err)
+	}
+	if otherWorkspace.Run.ID == first.Run.ID {
+		t.Fatal("idempotency reused run across workspaces")
+	}
+	otherCapability, err := svc.PlanAction(context.Background(), scopeA, actiondto.ActionPlanRequest{
+		CapabilityID:   "test.publish",
+		IdempotencyKey: "same-key",
+	})
+	if err != nil {
+		t.Fatalf("PlanAction other capability: %v", err)
+	}
+	if otherCapability.Run.ID == first.Run.ID {
+		t.Fatal("idempotency reused run across capabilities")
+	}
+	globalRun, err := svc.PlanAction(context.Background(), globalScope, actiondto.ActionPlanRequest{
+		CapabilityID:   "test.create",
+		IdempotencyKey: "same-key",
+	})
+	if err != nil {
+		t.Fatalf("PlanAction global scope: %v", err)
+	}
+	if globalRun.Run.ID == first.Run.ID {
+		t.Fatal("idempotency reused workspace run for nil workspace scope")
+	}
+}
+
+func TestActionRunAccessRequiresMatchingWorkspace(t *testing.T) {
+	repo := newFakeRepository()
+	svc := NewService(repo, NewDefaultRegistry())
+	workspaceA := uuid.New()
+	workspaceB := uuid.New()
+	scopeA := fakeScope()
+	scopeA.WorkspaceID = &workspaceA
+	scopeB := scopeA
+	scopeB.WorkspaceID = &workspaceB
+
+	view, err := svc.PlanAction(context.Background(), scopeA, actiondto.ActionPlanRequest{CapabilityID: "file.read"})
+	if err != nil {
+		t.Fatalf("PlanAction: %v", err)
+	}
+	if _, err := svc.GetActionRun(context.Background(), scopeB, view.Run.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetActionRun from other workspace error = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.ConfirmAction(context.Background(), scopeB, view.Run.ID, actiondto.ConfirmActionRequest{Confirmed: true}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ConfirmAction from other workspace error = %v, want ErrNotFound", err)
+	}
+}
+
 type fakeRepository struct {
 	member bool
 	runs   map[uuid.UUID]*actionmodel.ActionRun
@@ -244,26 +360,26 @@ func (r *fakeRepository) CreateRunWithSteps(_ context.Context, run *actionmodel.
 	return nil
 }
 
-func (r *fakeRepository) GetRunScoped(_ context.Context, id, organizationID, accountID uuid.UUID) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error) {
+func (r *fakeRepository) GetRunScoped(_ context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error) {
 	run := r.runs[id]
-	if run == nil || run.OrganizationID != organizationID || run.AccountID != accountID {
+	if run == nil || run.OrganizationID != organizationID || !fakeWorkspaceMatches(run.WorkspaceID, workspaceID) || run.AccountID != accountID {
 		return nil, nil, gorm.ErrRecordNotFound
 	}
 	return run, r.steps[id], nil
 }
 
-func (r *fakeRepository) GetRunByIdempotencyKey(_ context.Context, organizationID, accountID uuid.UUID, key string) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error) {
+func (r *fakeRepository) GetRunByIdempotencyKey(_ context.Context, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, capabilityID string, key string) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error) {
 	for _, run := range r.runs {
-		if run.OrganizationID == organizationID && run.AccountID == accountID && run.IdempotencyKey != nil && *run.IdempotencyKey == key {
+		if run.OrganizationID == organizationID && fakeWorkspaceMatches(run.WorkspaceID, workspaceID) && run.AccountID == accountID && run.CapabilityID == capabilityID && run.IdempotencyKey != nil && *run.IdempotencyKey == key {
 			return run, r.steps[run.ID], nil
 		}
 	}
 	return nil, nil, gorm.ErrRecordNotFound
 }
 
-func (r *fakeRepository) UpdateRunFieldsScoped(_ context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error {
+func (r *fakeRepository) UpdateRunFieldsScoped(_ context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, updates map[string]interface{}) error {
 	run := r.runs[id]
-	if run == nil || run.OrganizationID != organizationID || run.AccountID != accountID {
+	if run == nil || run.OrganizationID != organizationID || !fakeWorkspaceMatches(run.WorkspaceID, workspaceID) || run.AccountID != accountID {
 		return gorm.ErrRecordNotFound
 	}
 	for key, value := range updates {
@@ -326,6 +442,13 @@ func (r *fakeRepository) UpdateStepFields(_ context.Context, runID, stepID uuid.
 		return nil
 	}
 	return gorm.ErrRecordNotFound
+}
+
+func fakeWorkspaceMatches(runWorkspaceID *uuid.UUID, scopeWorkspaceID *uuid.UUID) bool {
+	if scopeWorkspaceID == nil || *scopeWorkspaceID == uuid.Nil {
+		return runWorkspaceID == nil || *runWorkspaceID == uuid.Nil
+	}
+	return runWorkspaceID != nil && *runWorkspaceID == *scopeWorkspaceID
 }
 
 func (r *fakeRepository) IsOrganizationMember(context.Context, uuid.UUID, uuid.UUID) (bool, error) {

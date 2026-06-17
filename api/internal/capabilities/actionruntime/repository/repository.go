@@ -15,9 +15,9 @@ import (
 
 type Repository interface {
 	CreateRunWithSteps(ctx context.Context, run *actionmodel.ActionRun, steps []*actionmodel.ActionStep) error
-	GetRunScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error)
-	GetRunByIdempotencyKey(ctx context.Context, organizationID, accountID uuid.UUID, key string) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error)
-	UpdateRunFieldsScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error
+	GetRunScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error)
+	GetRunByIdempotencyKey(ctx context.Context, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, capabilityID string, key string) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error)
+	UpdateRunFieldsScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, updates map[string]interface{}) error
 	UpdateStepFields(ctx context.Context, runID, stepID uuid.UUID, updates map[string]interface{}) error
 	IsOrganizationMember(ctx context.Context, organizationID, accountID uuid.UUID) (bool, error)
 }
@@ -52,9 +52,9 @@ func (r *repository) CreateRunWithSteps(ctx context.Context, run *actionmodel.Ac
 	})
 }
 
-func (r *repository) GetRunScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error) {
+func (r *repository) GetRunScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error) {
 	var run actionmodel.ActionRun
-	err := r.db.WithContext(ctx).
+	err := applyWorkspaceScope(r.db.WithContext(ctx), workspaceID).
 		Where("id = ? AND organization_id = ? AND account_id = ? AND deleted_at IS NULL", id, organizationID, accountID).
 		Take(&run).Error
 	if err != nil {
@@ -67,10 +67,10 @@ func (r *repository) GetRunScoped(ctx context.Context, id, organizationID, accou
 	return &run, steps, nil
 }
 
-func (r *repository) GetRunByIdempotencyKey(ctx context.Context, organizationID, accountID uuid.UUID, key string) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error) {
+func (r *repository) GetRunByIdempotencyKey(ctx context.Context, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, capabilityID string, key string) (*actionmodel.ActionRun, []*actionmodel.ActionStep, error) {
 	var run actionmodel.ActionRun
-	err := r.db.WithContext(ctx).
-		Where("organization_id = ? AND account_id = ? AND idempotency_key = ? AND deleted_at IS NULL", organizationID, accountID, key).
+	err := applyWorkspaceScope(r.db.WithContext(ctx), workspaceID).
+		Where("organization_id = ? AND account_id = ? AND capability_id = ? AND idempotency_key = ? AND deleted_at IS NULL", organizationID, accountID, capabilityID, key).
 		Order("created_at DESC, id DESC").
 		Take(&run).Error
 	if err != nil {
@@ -83,7 +83,7 @@ func (r *repository) GetRunByIdempotencyKey(ctx context.Context, organizationID,
 	return &run, steps, nil
 }
 
-func (r *repository) UpdateRunFieldsScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error {
+func (r *repository) UpdateRunFieldsScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, updates map[string]interface{}) error {
 	if len(updates) == 0 {
 		return nil
 	}
@@ -92,7 +92,7 @@ func (r *repository) UpdateRunFieldsScoped(ctx context.Context, id, organization
 		return err
 	}
 	normalized["updated_at"] = time.Now()
-	result := r.db.WithContext(ctx).Model(&actionmodel.ActionRun{}).
+	result := applyWorkspaceScope(r.db.WithContext(ctx).Model(&actionmodel.ActionRun{}), workspaceID).
 		Where("id = ? AND organization_id = ? AND account_id = ? AND deleted_at IS NULL", id, organizationID, accountID).
 		Updates(normalized)
 	if result.Error != nil {
@@ -102,6 +102,13 @@ func (r *repository) UpdateRunFieldsScoped(ctx context.Context, id, organization
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+func applyWorkspaceScope(db *gorm.DB, workspaceID *uuid.UUID) *gorm.DB {
+	if workspaceID == nil || *workspaceID == uuid.Nil {
+		return db.Where("workspace_id IS NULL")
+	}
+	return db.Where("workspace_id = ?", *workspaceID)
 }
 
 func (r *repository) UpdateStepFields(ctx context.Context, runID, stepID uuid.UUID, updates map[string]interface{}) error {
