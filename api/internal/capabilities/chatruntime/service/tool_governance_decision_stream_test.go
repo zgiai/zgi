@@ -370,6 +370,57 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	assertToolGovernanceApprovedStreamEvents(t, events)
 }
 
+func TestBeginToolGovernanceContinuationRejectsAlreadyStreamingMessage(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	conversation := &runtimemodel.Conversation{
+		ID:                   conversationID,
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		CallerType:           runtimemodel.ConversationCallerAIChat,
+		Status:               runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusStreaming,
+		CurrentLeafMessageID: &messageID,
+		ActiveMessageID:      &messageID,
+		Metadata:             map[string]interface{}{},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	message := &runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "Delete report.pdf",
+		Status:         runtimemodel.MessageStatusStreaming,
+		Metadata:       pendingToolGovernanceDecisionMetadata("corr-approve"),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	svc := NewService(&repository.Repositories{
+		Access:       toolGovernanceStreamAccessRepo{},
+		Conversation: &toolGovernanceStreamConversationRepo{conversation: conversation},
+		Message:      &toolGovernanceStreamMessageRepo{message: message},
+	}, &toolGovernanceStreamLLM{}).(*service)
+
+	continuation, err := svc.beginToolGovernanceContinuation(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		"corr-approve",
+	)
+	if err == nil {
+		t.Fatalf("beginToolGovernanceContinuation() continuation = %#v, want already running error", continuation)
+	}
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("beginToolGovernanceContinuation() error = %v, want already running ErrInvalidInput", err)
+	}
+}
+
 func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()

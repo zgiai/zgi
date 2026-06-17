@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -22,6 +23,9 @@ const (
 
 	defaultReadFileMaxChars = 4000
 	maxReadFileMaxChars     = 12000
+
+	governedFileDeleteSkillID = "file-reader"
+	governedFileDeleteToolID  = "file.delete"
 )
 
 type FileService interface {
@@ -323,6 +327,9 @@ func (t *deleteFileTool) Invoke(ctx context.Context, userID string, params map[s
 	if err := t.ensureFileManageable(ctx, scope, file); err != nil {
 		return nil, err
 	}
+	if err := t.ensureGovernedDeleteApproved(scope, file, conversationID); err != nil {
+		return nil, err
+	}
 	filePayload := uploadFilePayload(file)
 	if err := t.fileService.DeleteFiles(ctx, []string{fileID}); err != nil {
 		return nil, fmt.Errorf("failed to delete file: %w", err)
@@ -346,6 +353,123 @@ func (t *deleteFileTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool 
 
 func (t *deleteFileTool) ensureFileManageable(ctx context.Context, scope fileScope, file *dto.UploadFile) error {
 	return ensureScopedFilePermission(ctx, scope, file, t.workspacePerms, workspacemodel.WorkspacePermissionFileManage)
+}
+
+func (t *deleteFileTool) ensureGovernedDeleteApproved(scope fileScope, file *dto.UploadFile, conversationID *string) error {
+	conversation := ""
+	if conversationID != nil {
+		conversation = strings.TrimSpace(*conversationID)
+	}
+	if conversation == "" {
+		return fmt.Errorf("file delete requires tool governance approval")
+	}
+	decision := toolgovernance.Decide(toolgovernance.Request{
+		Manifest:       governedFileDeleteManifest(),
+		PermissionTier: toolgovernance.PermissionTierBasic,
+		ConversationID: conversation,
+		OrganizationID: scope.OrganizationID,
+		UserID:         scope.AccountID,
+		SkillID:        governedFileDeleteSkillID,
+		ProviderType:   string(tools.ToolProviderTypeBuiltin),
+		ProviderID:     ProviderID,
+		Assets:         []toolgovernance.AssetRef{governedFileAsset(file)},
+		SessionGrants:  toolGovernanceSessionGrantsFromRuntime(t.Runtime()),
+	}, toolgovernance.DefaultPolicy())
+	if decision.Status == toolgovernance.DecisionStatusAllowed && decision.MatchedGrant != nil {
+		return nil
+	}
+	return fmt.Errorf("file delete requires tool governance approval")
+}
+
+func governedFileDeleteManifest() toolgovernance.Manifest {
+	return toolgovernance.Manifest{
+		ToolID:                 governedFileDeleteToolID,
+		SkillID:                governedFileDeleteSkillID,
+		Domain:                 "files",
+		Effect:                 toolgovernance.EffectDelete,
+		AssetType:              "file",
+		RiskLevel:              toolgovernance.RiskLevelHigh,
+		PermissionScopes:       []string{"file:manage"},
+		DefaultApprovalPolicy:  toolgovernance.ApprovalPolicyAlwaysAsk,
+		AllowedPermissionTiers: []toolgovernance.PermissionTier{toolgovernance.PermissionTierBasic, toolgovernance.PermissionTierAdvanced, toolgovernance.PermissionTierFull},
+		AuditRequired:          true,
+	}
+}
+
+func governedFileAsset(file *dto.UploadFile) toolgovernance.AssetRef {
+	if file == nil {
+		return toolgovernance.AssetRef{Type: "file"}
+	}
+	return toolgovernance.AssetRef{
+		ID:          strings.TrimSpace(file.ID),
+		Type:        "file",
+		Name:        strings.TrimSpace(file.Name),
+		WorkspaceID: uploadFileWorkspaceID(file),
+	}
+}
+
+func toolGovernanceSessionGrantsFromRuntime(runtime *tools.ToolRuntime) []toolgovernance.SessionGrant {
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return nil
+	}
+	params := runtime.RuntimeParameters
+	grants := toolGovernanceSessionGrantsFromAny(params["tool_governance_session_grants"])
+	grants = append(grants, toolGovernanceSessionGrantsFromAny(params["tool_governance_one_shot_grants"])...)
+	if governance := mapFromAny(params["tool_governance"]); len(governance) > 0 {
+		grants = append(grants, toolGovernanceSessionGrantsFromAny(governance["session_grants"])...)
+		grants = append(grants, toolGovernanceSessionGrantsFromAny(governance["one_shot_grants"])...)
+	}
+	return grants
+}
+
+func toolGovernanceSessionGrantsFromAny(value interface{}) []toolgovernance.SessionGrant {
+	switch typed := value.(type) {
+	case []toolgovernance.SessionGrant:
+		return typed
+	case []map[string]interface{}:
+		out := make([]toolgovernance.SessionGrant, 0, len(typed))
+		for _, item := range typed {
+			if grant, ok := toolGovernanceSessionGrantFromAny(item); ok {
+				out = append(out, grant)
+			}
+		}
+		return out
+	case []interface{}:
+		out := make([]toolgovernance.SessionGrant, 0, len(typed))
+		for _, item := range typed {
+			if grant, ok := toolGovernanceSessionGrantFromAny(item); ok {
+				out = append(out, grant)
+			}
+		}
+		return out
+	default:
+		if grant, ok := toolGovernanceSessionGrantFromAny(value); ok {
+			return []toolgovernance.SessionGrant{grant}
+		}
+		return nil
+	}
+}
+
+func toolGovernanceSessionGrantFromAny(value interface{}) (toolgovernance.SessionGrant, bool) {
+	switch typed := value.(type) {
+	case toolgovernance.SessionGrant:
+		return typed, true
+	case map[string]interface{}, map[string]string:
+		data, err := json.Marshal(typed)
+		if err != nil {
+			return toolgovernance.SessionGrant{}, false
+		}
+		var grant toolgovernance.SessionGrant
+		if err := json.Unmarshal(data, &grant); err != nil {
+			return toolgovernance.SessionGrant{}, false
+		}
+		if strings.TrimSpace(grant.ConversationID) == "" || strings.TrimSpace(grant.ToolID) == "" {
+			return toolgovernance.SessionGrant{}, false
+		}
+		return grant, true
+	default:
+		return toolgovernance.SessionGrant{}, false
+	}
 }
 
 func fileScopeFromRuntime(runtime *tools.ToolRuntime, tenantID string, userID string) (fileScope, error) {

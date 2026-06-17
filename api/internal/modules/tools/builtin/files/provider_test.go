@@ -440,9 +440,10 @@ func TestDeleteFileToolDeletesManageableWorkspaceFile(t *testing.T) {
 	}
 	perms := &fakeWorkspacePermissionService{allowed: true}
 	provider := NewProvider(fileService, nil, perms)
-	tool := deleteFileRuntimeTool(t, provider, organizationID)
+	conversationID := uuid.NewString()
+	tool := deleteFileRuntimeToolWithGrant(t, provider, organizationID, accountID, conversationID, "file-1", workspaceID)
 
-	messages, err := tool.Invoke(ctx, accountID, map[string]interface{}{"file_id": "file-1"}, nil, nil, nil)
+	messages, err := tool.Invoke(ctx, accountID, map[string]interface{}{"file_id": "file-1"}, &conversationID, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
@@ -465,6 +466,37 @@ func TestDeleteFileToolDeletesManageableWorkspaceFile(t *testing.T) {
 	file, ok := payload["file"].(map[string]interface{})
 	if !ok || file["id"] != "file-1" || file["name"] != "obsolete.pdf" {
 		t.Fatalf("file payload = %#v, want deleted file metadata", payload["file"])
+	}
+}
+
+func TestDeleteFileToolRejectsWithoutGovernanceGrant(t *testing.T) {
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	conversationID := uuid.NewString()
+	fileService := &fakeFileService{
+		files: map[string]*dto.UploadFile{
+			"file-1": {
+				ID:             "file-1",
+				OrganizationID: organizationID,
+				WorkspaceID:    &workspaceID,
+				Name:           "obsolete.pdf",
+				CreatedBy:      accountID,
+			},
+		},
+	}
+	provider := NewProvider(fileService, nil, &fakeWorkspacePermissionService{allowed: true})
+	tool := deleteFileRuntimeToolFrom(t, provider, organizationID, tools.ToolInvokeFromWorkflow, map[string]interface{}{
+		"organization_id": organizationID,
+		"workspace_id":    workspaceID,
+	})
+
+	_, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{"file_id": "file-1"}, &conversationID, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "tool governance approval") {
+		t.Fatalf("Invoke() error = %v, want governance approval requirement", err)
+	}
+	if len(fileService.deleted) != 0 {
+		t.Fatalf("deleted = %#v, want no deletion", fileService.deleted)
 	}
 }
 
@@ -568,16 +600,54 @@ func listVisibleFilesRuntimeTool(t *testing.T, provider *Provider, organizationI
 
 func deleteFileRuntimeTool(t *testing.T, provider *Provider, organizationID string) tools.Tool {
 	t.Helper()
+	return deleteFileRuntimeToolFrom(t, provider, organizationID, tools.ToolInvokeFromAIChat, map[string]interface{}{
+		"organization_id": organizationID,
+	})
+}
+
+func deleteFileRuntimeToolWithGrant(t *testing.T, provider *Provider, organizationID string, accountID string, conversationID string, fileID string, workspaceID string) tools.Tool {
+	t.Helper()
+	return deleteFileRuntimeToolFrom(t, provider, organizationID, tools.ToolInvokeFromAIChat, map[string]interface{}{
+		"organization_id": organizationID,
+		"workspace_id":    workspaceID,
+		"tool_governance": map[string]interface{}{
+			"session_grants": []map[string]interface{}{
+				{
+					"conversation_id":         conversationID,
+					"organization_id":         organizationID,
+					"user_id":                 accountID,
+					"skill_id":                governedFileDeleteSkillID,
+					"provider_type":           string(tools.ToolProviderTypeBuiltin),
+					"provider_id":             ProviderID,
+					"tool_id":                 governedFileDeleteToolID,
+					"effect":                  "delete",
+					"asset_type":              "file",
+					"risk_level":              "high",
+					"approval_correlation_id": "corr-delete",
+					"expires_at":              time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+					"assets": []map[string]interface{}{
+						{
+							"id":           fileID,
+							"type":         "file",
+							"workspace_id": workspaceID,
+						},
+					},
+				},
+			},
+		},
+	})
+}
+
+func deleteFileRuntimeToolFrom(t *testing.T, provider *Provider, organizationID string, invokeFrom tools.ToolInvokeFrom, runtimeParameters map[string]interface{}) tools.Tool {
+	t.Helper()
 	tool, err := provider.GetTool(ToolDeleteFile)
 	if err != nil {
 		t.Fatalf("GetTool() error = %v", err)
 	}
 	return tool.ForkToolRuntime(&tools.ToolRuntime{
-		TenantID:   organizationID,
-		InvokeFrom: tools.ToolInvokeFromAIChat,
-		RuntimeParameters: map[string]interface{}{
-			"organization_id": organizationID,
-		},
+		TenantID:          organizationID,
+		InvokeFrom:        invokeFrom,
+		RuntimeParameters: runtimeParameters,
 	})
 }
 

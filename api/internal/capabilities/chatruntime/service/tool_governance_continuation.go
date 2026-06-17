@@ -103,22 +103,38 @@ func (s *service) beginToolGovernanceContinuation(ctx context.Context, scope Sco
 	if !ok {
 		return nil, fmt.Errorf("%w: tool governance approval event not found", ErrNotFound)
 	}
-	if message.Status != runtimemodel.MessageStatusWaitingApproval && message.Status != runtimemodel.MessageStatusStreaming {
+	if message.Status == runtimemodel.MessageStatusStreaming {
+		return nil, fmt.Errorf("%w: tool governance continuation is already running; reconnect to the active stream instead of retrying the action", ErrInvalidInput)
+	}
+	if message.Status != runtimemodel.MessageStatusWaitingApproval {
 		return nil, fmt.Errorf("%w: message is not waiting for tool governance approval", ErrInvalidInput)
 	}
 	if s.repos.DB == nil {
+		conversation.RuntimeStatus = runtimemodel.ConversationRuntimeStatusStreaming
+		conversation.ActiveMessageID = &message.ID
+		message.Status = runtimemodel.MessageStatusStreaming
 		return &ToolGovernanceContinuation{Conversation: conversation, Message: message, Event: event}, nil
 	}
 	err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&runtimemodel.Message{}).
+			Where("id = ? AND deleted_at IS NULL AND status = ?", message.ID, runtimemodel.MessageStatusWaitingApproval).
+			Updates(map[string]interface{}{"status": runtimemodel.MessageStatusStreaming, "error": nil})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("%w: tool governance continuation is already running; reconnect to the active stream instead of retrying the action", ErrInvalidInput)
+		}
 		txRepos := repository.NewRepositories(tx)
 		if err := txRepos.Conversation.StartStreaming(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, message.ID); err != nil {
 			return err
 		}
-		return tx.Model(&runtimemodel.Message{}).
-			Where("id = ? AND deleted_at IS NULL AND status = ?", message.ID, runtimemodel.MessageStatusWaitingApproval).
-			Updates(map[string]interface{}{"status": runtimemodel.MessageStatusStreaming, "error": nil}).Error
+		return nil
 	})
 	if err != nil {
+		if errors.Is(err, ErrInvalidInput) {
+			return nil, err
+		}
 		return nil, mapRepoError(err)
 	}
 	conversation.RuntimeStatus = runtimemodel.ConversationRuntimeStatusStreaming
