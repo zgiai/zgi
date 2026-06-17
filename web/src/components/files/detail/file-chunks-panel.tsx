@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
@@ -88,10 +89,7 @@ export function FileChunksPanel({
   const { data, isLoading, error } = useFileChunks(fileId, { limit: 500 }, { enabled, queryVersion });
   const updateChunk = useUpdateFileChunk(fileId);
   const response = data?.data;
-  const primaryChunks = useMemo(
-    () => (response?.tree && response.tree.length > 0 ? response.tree : response?.items ?? []),
-    [response?.items, response?.tree]
-  );
+  const primaryChunks = useMemo(() => response?.items ?? [], [response?.items]);
   const total = response?.primary_chunk_count ?? response?.total ?? primaryChunks.length;
 
   const visibleChunks = useMemo(() => {
@@ -327,6 +325,8 @@ export function FileChunksPanel({
               <PrimaryChunkCard
                 key={chunk.id}
                 chunk={chunk}
+                fileId={fileId}
+                queryVersion={queryVersion}
                 expanded={expandedIds[chunk.id] ?? false}
                 selected={selectedVisibleIds.includes(chunk.id)}
                 editing={editingPrimaryChunkId === chunk.id}
@@ -351,6 +351,8 @@ export function FileChunksPanel({
 
 function PrimaryChunkCard({
   chunk,
+  fileId,
+  queryVersion,
   expanded,
   selected,
   editing,
@@ -366,6 +368,8 @@ function PrimaryChunkCard({
   onLocateIssue,
 }: {
   chunk: FileDocumentChunk;
+  fileId: string;
+  queryVersion?: number | string | null;
   expanded: boolean;
   selected: boolean;
   editing: boolean;
@@ -381,7 +385,6 @@ function PrimaryChunkCard({
   onLocateIssue?: (locator: FilePreviewLocator) => void;
 }) {
   const t = useT('files');
-  const children = chunk.children ?? [];
   const qualityIssues = SHOW_CHUNK_QUALITY_ISSUES ? chunkQualityIssues(chunk) : [];
 
   return (
@@ -493,23 +496,26 @@ function PrimaryChunkCard({
             </div>
           </div>
         </div>
+      ) : qualityIssues.length > 0 ? (
+        <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-foreground">
+          <HighlightedChunkContent content={chunk.content} issues={qualityIssues} onLocateIssue={onLocateIssue} />
+        </div>
       ) : (
-        <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-foreground">
-          <HighlightedChunkContent
-            content={chunk.content}
-            issues={qualityIssues}
-            onLocateIssue={onLocateIssue}
-          />
-        </p>
+        <MarkdownViewer
+          content={chunk.content}
+          className="mt-4 text-sm leading-7 text-foreground [&_img]:max-h-[520px] [&_img]:rounded-md"
+        />
       )}
 
       <div className="mt-5 flex flex-wrap items-center gap-3 text-sm">
-        <Badge variant="subtle" className="rounded-full">
-          {t('detail.chunks.secondaryCount', { count: children.length })}
-        </Badge>
-        <Button variant="link" className="h-auto p-0 text-primary" onClick={() => onToggleExpanded(chunk.id)}>
-          {expanded ? t('detail.chunks.collapseSecondary') : t('detail.chunks.viewSecondary')}
-        </Button>
+        <SecondaryChunkControls
+          fileId={fileId}
+          chunk={chunk}
+          characterCount={chunk.content.length}
+          expanded={expanded}
+          queryVersion={queryVersion}
+          onToggleExpanded={onToggleExpanded}
+        />
         {/* Re-enable after source-locator preview is implemented for chunks. */}
         {/*
         <Button variant="link" className="h-auto gap-1 p-0 text-primary">
@@ -517,24 +523,83 @@ function PrimaryChunkCard({
           {t('detail.chunks.viewOriginal')}
         </Button>
         */}
-        <span className="text-muted-foreground">
-          {t('detail.chunks.characters', { count: chunk.content.length })}
-        </span>
       </div>
-
-      {expanded ? (
-        <div className="mt-4 space-y-3">
-          {children.map((child, index) => (
-            <SecondaryChunkRow
-              key={child.id}
-              chunk={child}
-              index={index}
-            />
-          ))}
-        </div>
-      ) : null}
     </article>
   );
+}
+
+function SecondaryChunkControls({
+  fileId,
+  chunk,
+  characterCount,
+  expanded,
+  queryVersion,
+  onToggleExpanded,
+}: {
+  fileId: string;
+  chunk: FileDocumentChunk;
+  characterCount: number;
+  expanded: boolean;
+  queryVersion?: number | string | null;
+  onToggleExpanded: (chunkId: string) => void;
+}) {
+  const t = useT('files');
+  const fallbackChildren = chunk.children ?? [];
+  const { data, isLoading, error } = useFileChunks(
+    fileId,
+    { limit: 500, parent_chunk_id: chunk.id },
+    { enabled: expanded, queryVersion }
+  );
+  const response = data?.data;
+  const children = response ? response.items : fallbackChildren;
+  const count = response?.total ?? (fallbackChildren.length > 0 ? fallbackChildren.length : undefined);
+
+  return (
+    <>
+      <Badge variant="subtle" className="rounded-full">
+        {typeof count === 'number'
+          ? t('detail.chunks.secondaryCount', { count })
+          : t('detail.chunks.secondary')}
+      </Badge>
+      <Button variant="link" className="h-auto p-0 text-primary" onClick={() => onToggleExpanded(chunk.id)}>
+        {expanded ? t('detail.chunks.collapseSecondary') : t('detail.chunks.viewSecondary')}
+      </Button>
+      <span className="text-muted-foreground">
+        {t('detail.chunks.characters', { count: characterCount })}
+      </span>
+      {expanded ? (
+        <div className="basis-full pt-1">
+          {isLoading ? (
+            <div className="rounded-lg border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
+              {optionalFileText(t as FilesTranslator, 'detail.chunks.secondaryLoading', 'detail.preview.loading')}
+            </div>
+          ) : error ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+              {optionalFileText(t as FilesTranslator, 'detail.chunks.secondaryLoadError', 'detail.chunks.loadErrorDescription')}
+            </div>
+          ) : children.length === 0 ? (
+            <div className="rounded-lg border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
+              {optionalFileText(t as FilesTranslator, 'detail.chunks.secondaryEmpty', 'detail.chunks.emptyDescription')}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {children.map((child, index) => (
+                <SecondaryChunkRow
+                  key={child.id}
+                  chunk={child}
+                  index={index}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function optionalFileText(t: FilesTranslator, key: string, fallbackKey: string) {
+  return t.has?.(key) ? t(key) : t(fallbackKey);
 }
 
 function hasChunkQualityIssues(chunk: FileDocumentChunk) {
@@ -811,9 +876,10 @@ function SecondaryChunkRow({
         </div>
       </div>
       <div className="mt-3 rounded-lg border border-border bg-background p-3 shadow-sm">
-        <p className="max-h-24 min-w-0 flex-1 overflow-hidden whitespace-pre-wrap text-sm leading-6 text-foreground">
-          {chunk.content}
-        </p>
+        <MarkdownViewer
+          content={chunk.content}
+          className="max-h-32 min-w-0 flex-1 overflow-hidden text-sm leading-6 text-foreground [&_img]:max-h-24 [&_img]:rounded-md"
+        />
       </div>
     </div>
   );

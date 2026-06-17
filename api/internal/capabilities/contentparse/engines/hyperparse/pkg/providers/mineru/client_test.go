@@ -3,6 +3,7 @@ package mineru
 import (
 	"archive/zip"
 	"bytes"
+	"strings"
 	"testing"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
@@ -94,8 +95,8 @@ func TestMineruToDocumentResult_ImageAssetsAndChartFigure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if doc.ImageAssets["chart.jpg"] == "" {
-		t.Fatalf("expected mineru image asset, got %#v", doc.ImageAssets)
+	if len(doc.ImageAssets) != 0 {
+		t.Fatalf("sidecar mineru image assets should be bound to chunks, got %#v", doc.ImageAssets)
 	}
 	if len(doc.Chunks) != 1 {
 		t.Fatalf("expected 1 chunk, got %d", len(doc.Chunks))
@@ -104,15 +105,56 @@ func TestMineruToDocumentResult_ImageAssetsAndChartFigure(t *testing.T) {
 	if chunk.Type != "figure" {
 		t.Fatalf("expected chart image to map to figure, got %q", chunk.Type)
 	}
-	if chunk.Markdown != "![Trend chart](images/chart.jpg)" {
+	if chunk.Markdown != "![Trend chart](data:image/jpeg;base64,aGVsbG8=)" {
 		t.Fatalf("unexpected figure markdown: %q", chunk.Markdown)
+	}
+	if chunk.Payload["original_img_path"] != "images/chart.jpg" {
+		t.Fatalf("expected original image path in payload, got %#v", chunk.Payload)
+	}
+	if chunk.Payload["img_path"] != "data:image/jpeg;base64,aGVsbG8=" || chunk.Payload["image_data_uri"] != "data:image/jpeg;base64,aGVsbG8=" {
+		t.Fatalf("expected bound data URI in payload, got %#v", chunk.Payload)
 	}
 	if chunk.Payload["chart_caption"] == nil {
 		t.Fatalf("expected chart caption payload, got %#v", chunk.Payload)
 	}
 }
 
-func TestMineruToDocumentResult_TableWithImagePathUsesFigureContent(t *testing.T) {
+func TestMineruToDocumentResult_OfficialBindsImageAssetsToChunks(t *testing.T) {
+	resp := &parseResponse{
+		TaskID:  "task-images",
+		Backend: "official:vlm",
+		Results: map[string]fileResults{
+			"sample": {
+				MdContent:   "![](images/chart.jpg)",
+				ContentList: `[{"type":"chart","img_path":"images/chart.jpg","chart_caption":["Trend chart"],"bbox":[10,20,500,600],"page_idx":0}]`,
+				Images:      map[string]string{"sample/images/chart.jpg": "data:image/jpeg;base64,aGVsbG8=", "images/chart.jpg": "data:image/jpeg;base64,aGVsbG8=", "chart.jpg": "data:image/jpeg;base64,aGVsbG8="},
+			},
+		},
+	}
+
+	doc, err := mineruToDocumentResult("sample.pdf", resp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(doc.ImageAssets) != 0 {
+		t.Fatalf("official mineru image assets should be bound to chunks, got %#v", doc.ImageAssets)
+	}
+	if len(doc.Chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(doc.Chunks))
+	}
+	chunk := doc.Chunks[0]
+	if chunk.Markdown != "![Trend chart](data:image/jpeg;base64,aGVsbG8=)" {
+		t.Fatalf("unexpected figure markdown: %q", chunk.Markdown)
+	}
+	if chunk.Payload["original_img_path"] != "images/chart.jpg" {
+		t.Fatalf("expected original image path in payload, got %#v", chunk.Payload)
+	}
+	if chunk.Payload["img_path"] != "data:image/jpeg;base64,aGVsbG8=" || chunk.Payload["image_data_uri"] != "data:image/jpeg;base64,aGVsbG8=" {
+		t.Fatalf("expected bound data URI in official payload, got %#v", chunk.Payload)
+	}
+}
+
+func TestMineruToDocumentResult_TableWithImagePathUsesTableContent(t *testing.T) {
 	resp := &parseResponse{
 		TaskID:  "task-table-image",
 		Backend: "pipeline",
@@ -132,14 +174,14 @@ func TestMineruToDocumentResult_TableWithImagePathUsesFigureContent(t *testing.T
 		t.Fatalf("expected 1 chunk, got %d", len(doc.Chunks))
 	}
 	chunk := doc.Chunks[0]
-	if chunk.Type != "figure" {
-		t.Fatalf("expected table image to map to figure, got %q", chunk.Type)
+	if chunk.Type != "table" {
+		t.Fatalf("expected table image to map to table, got %q", chunk.Type)
 	}
-	if chunk.Text != "[figure]" {
-		t.Fatalf("expected figure text placeholder, got %q", chunk.Text)
+	if chunk.Text != "| A |\n|---|\n| 1 |" {
+		t.Fatalf("expected table text, got %q", chunk.Text)
 	}
-	if chunk.Markdown != "![figure](images/table.png)" {
-		t.Fatalf("unexpected figure markdown: %q", chunk.Markdown)
+	if chunk.Markdown != "| A |\n|---|\n| 1 |" {
+		t.Fatalf("unexpected table markdown: %q", chunk.Markdown)
 	}
 	if chunk.Payload["table_body"] == "" {
 		t.Fatalf("expected original table body in payload for diagnostics, got %#v", chunk.Payload)
@@ -149,11 +191,48 @@ func TestMineruToDocumentResult_TableWithImagePathUsesFigureContent(t *testing.T
 		t.Fatalf("expected structured figure output, got %#v", doc.ExtractOutput)
 	}
 	element := doc.ExtractOutput.Elements[0]
-	if element.Type != "figure" || element.Content != "[figure]" {
-		t.Fatalf("expected figure element without table text, got %+v", element)
+	if element.Type != "table" || element.Content != "| A |\n|---|\n| 1 |" {
+		t.Fatalf("expected table element with table text, got %+v", element)
 	}
-	if element.Metadata["markdown"] != "![figure](images/table.png)" {
-		t.Fatalf("expected figure markdown metadata, got %#v", element.Metadata)
+	if element.Metadata["markdown"] != "| A |\n|---|\n| 1 |" {
+		t.Fatalf("expected table markdown metadata, got %#v", element.Metadata)
+	}
+}
+
+func TestMineruToDocumentResult_TableHTMLImageSourcesBindToDataURI(t *testing.T) {
+	resp := &parseResponse{
+		TaskID:  "task-table-html-images",
+		Backend: "pipeline",
+		Results: map[string]fileResults{
+			"sample": {
+				ContentList: `[{"type":"table","table_body":"<table><tr><td><p><img src=\"images/a.png\"/></p></td><td><p><img src='images/b.png'/></p></td></tr></table>","bbox":[10,20,500,600],"page_idx":0}]`,
+				Images: map[string]string{
+					"a.png": "data:image/png;base64,YQ==",
+					"b.png": "data:image/png;base64,Yg==",
+				},
+			},
+		},
+	}
+
+	doc, err := mineruToDocumentResult("sample.pdf", resp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(doc.Chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(doc.Chunks))
+	}
+	chunk := doc.Chunks[0]
+	if chunk.Type != "table" {
+		t.Fatalf("expected table element, got %q", chunk.Type)
+	}
+	if strings.Contains(chunk.Markdown, "images/a.png") || strings.Contains(chunk.Markdown, "images/b.png") {
+		t.Fatalf("table markdown still contains mineru image paths: %q", chunk.Markdown)
+	}
+	if !strings.Contains(chunk.Markdown, `src="data:image/png;base64,YQ=="`) || !strings.Contains(chunk.Markdown, `src='data:image/png;base64,Yg=='`) {
+		t.Fatalf("table markdown did not bind image data URIs: %q", chunk.Markdown)
+	}
+	if chunk.Payload["table_body"] != chunk.Markdown {
+		t.Fatalf("payload table_body was not rewritten: %#v", chunk.Payload)
 	}
 }
 

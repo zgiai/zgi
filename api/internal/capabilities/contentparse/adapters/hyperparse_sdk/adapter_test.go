@@ -128,6 +128,41 @@ func TestMapDocumentResultMarksEmptyOutputDegraded(t *testing.T) {
 	}
 }
 
+func TestMapDocumentResultCarriesImageAssetsForNormalization(t *testing.T) {
+	result := &extractcommon.DocumentResult{
+		DocID:       "doc-images",
+		Markdown:    "![figure](images/chart.jpg)",
+		ImageAssets: map[string]string{"chart.jpg": "data:image/jpeg;base64,aGVsbG8="},
+		ExtractOutput: &extractcommon.ExtractOutput{
+			Metadata: map[string]any{},
+			Elements: []extractcommon.ExtractElement{
+				{
+					ID:      "figure-1",
+					Type:    "figure",
+					Content: "[figure]",
+					Metadata: map[string]any{
+						"payload": map[string]any{
+							"mineru_type":       "chart",
+							"structure_version": "mineru_content_list_v1",
+							"img_path":          "images/chart.jpg",
+						},
+					},
+				},
+			},
+		},
+	}
+	artifact := mapDocumentResult(contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeBytes,
+		FileName:   "sample.pdf",
+		Intent:     contracts.ParseIntentPreview,
+		Profile:    contracts.ParseProfileFastPreview,
+	}, extractcommon.EngineMineru, result)
+	assets, ok := artifact.Metadata["image_assets"].(map[string]any)
+	if !ok || assets["chart.jpg"] != "data:image/jpeg;base64,aGVsbG8=" {
+		t.Fatalf("image assets not carried for normalization: %#v", artifact.Metadata["image_assets"])
+	}
+}
+
 func TestReadConfidence(t *testing.T) {
 	if got := readConfidence(map[string]any{"confidence": 0.73}); got == nil || *got != 0.73 {
 		t.Fatalf("readConfidence() = %v", got)

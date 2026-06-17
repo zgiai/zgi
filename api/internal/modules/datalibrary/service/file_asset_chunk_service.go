@@ -127,23 +127,44 @@ func (s *fileAssetChunkService) ListCurrentFileChunks(ctx context.Context, input
 	}
 	view.Total = total
 	view.Items = documentChunksToViews(items)
-	if input.IncludeTree || input.ParentChunkID == nil {
-		treeItems, _, err := s.chunks.List(ctx, repository.DocumentChunkListFilter{
+	if input.IncludeTree {
+		tree, err := s.buildChunkTreeForItems(ctx, input, asset, generationNo, items)
+		if err != nil {
+			return nil, err
+		}
+		view.Tree = tree
+	}
+	return view, nil
+}
+
+func (s *fileAssetChunkService) buildChunkTreeForItems(ctx context.Context, input FileAssetChunkListInput, asset *model.DocumentAsset, generationNo int64, items []*model.DocumentChunk) ([]*FileAssetChunkView, error) {
+	roots := documentChunksToViews(items)
+	if input.ParentChunkID != nil || len(roots) == 0 {
+		return roots, nil
+	}
+	status := strings.TrimSpace(input.Status)
+	for _, root := range roots {
+		if root == nil || root.ChunkType != model.DocumentChunkTypeParent {
+			continue
+		}
+		parentID := root.ID
+		children, _, err := s.chunks.List(ctx, repository.DocumentChunkListFilter{
 			OrganizationID: input.OrganizationID,
 			AssetID:        asset.ID,
 			GenerationNo:   &generationNo,
-			ChunkTypes:     []string{model.DocumentChunkTypeParent, model.DocumentChunkTypeChild},
+			ParentChunkID:  &parentID,
+			ChunkTypes:     []string{model.DocumentChunkTypeChild},
 			Enabled:        input.Enabled,
-			Status:         strings.TrimSpace(input.Status),
+			Status:         status,
 			Limit:          500,
 			Offset:         0,
 		})
 		if err != nil {
 			return nil, err
 		}
-		view.Tree = buildChunkTree(documentChunksToViews(treeItems))
+		root.Children = documentChunksToViews(children)
 	}
-	return view, nil
+	return roots, nil
 }
 
 func (s *fileAssetChunkService) applyCounts(ctx context.Context, view *FileAssetChunkListView, asset *model.DocumentAsset, generationNo int64) error {
@@ -208,31 +229,6 @@ func documentChunksToViews(items []*model.DocumentChunk) []*FileAssetChunkView {
 		})
 	}
 	return views
-}
-
-func buildChunkTree(items []*FileAssetChunkView) []*FileAssetChunkView {
-	byID := make(map[uuid.UUID]*FileAssetChunkView, len(items))
-	roots := make([]*FileAssetChunkView, 0)
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		item.Children = nil
-		byID[item.ID] = item
-	}
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		if item.ParentChunkID != nil {
-			if parent := byID[*item.ParentChunkID]; parent != nil {
-				parent.Children = append(parent.Children, item)
-				continue
-			}
-		}
-		roots = append(roots, item)
-	}
-	return roots
 }
 
 const timeFormatRFC3339Nano = "2006-01-02T15:04:05.999999999Z07:00"

@@ -13,6 +13,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,11 @@ const (
 	defaultTimeout         = 800 * time.Second
 	defaultPollInterval    = 3 * time.Second
 	bboxScale              = 1000.0
+)
+
+var (
+	mineruMarkdownImagePattern = regexp.MustCompile(`!\[([^\]\r\n]*)\]\(([^)\r\n]+)\)`)
+	mineruHTMLImageSrcPattern  = regexp.MustCompile(`(?i)(<img\b[^>]*\bsrc\s*=\s*)(["']?)([^"'\s>]+)(["']?)`)
 )
 
 type Client struct{}
@@ -808,7 +814,7 @@ func mineruToDocumentResult(filename string, resp *parseResponse) (*extractcommo
 	}
 
 	pages := buildPages(middle, items)
-	chunks := buildChunks(items, middle)
+	chunks := buildChunks(items, middle, fr.Images)
 
 	return &extractcommon.DocumentResult{
 		DocID:     coalesce(resp.TaskID, newID()),
@@ -821,7 +827,6 @@ func mineruToDocumentResult(filename string, resp *parseResponse) (*extractcommo
 		Diagnostics: map[string]any{
 			"mineru_structure": buildStructureDiagnostics(items, chunks),
 		},
-		ImageAssets: fr.Images,
 	}, nil
 }
 
@@ -980,7 +985,7 @@ func buildPages(middle middleJSON, items []contentItem) []extractcommon.Page {
 	return out
 }
 
-func buildChunks(items []contentItem, middle middleJSON) []extractcommon.Chunk {
+func buildChunks(items []contentItem, middle middleJSON, imageAssets map[string]string) []extractcommon.Chunk {
 	scores := buildMineruBlockScoreLookup(middle)
 	out := make([]extractcommon.Chunk, 0, len(items))
 	pageOrder := map[int]int{}
@@ -1005,17 +1010,44 @@ func buildChunks(items []contentItem, middle middleJSON) []extractcommon.Chunk {
 			payload["mineru_block_score"] = score
 		}
 		if it.TableBody != "" {
-			ch.Markdown = it.TableBody
+			tableBody := rewriteMineruContentImageReferences(it.TableBody, imageAssets)
+			ch.Text = tableBody
+			ch.Markdown = tableBody
+			payload["table_body"] = tableBody
 		}
-		if strings.TrimSpace(it.ImgPath) != "" {
-			ch.Markdown = mineruImageMarkdown(it)
+		if shouldUseMineruImageAsset(it) {
+			if dataURI, ok := lookupMineruContentImageDataURI(imageAssets, it.ImgPath); ok {
+				payload["original_img_path"] = it.ImgPath
+				payload["image_data_uri"] = dataURI
+				payload["image_ref_type"] = "data_uri"
+				payload["img_path"] = dataURI
+				ch.Markdown = mineruImageMarkdownWithPath(it, dataURI)
+			} else {
+				ch.Markdown = mineruImageMarkdown(it)
+			}
 		}
 		out = append(out, ch)
 	}
 	return out
 }
 
+func shouldUseMineruImageAsset(it contentItem) bool {
+	if strings.TrimSpace(it.ImgPath) == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(it.Type)) {
+	case "image", "chart", "figure":
+		return true
+	default:
+		return false
+	}
+}
+
 func mineruImageMarkdown(it contentItem) string {
+	return mineruImageMarkdownWithPath(it, strings.TrimSpace(it.ImgPath))
+}
+
+func mineruImageMarkdownWithPath(it contentItem, path string) string {
 	alt := strings.TrimSpace(firstString(it.ImageCaption))
 	if alt == "" {
 		alt = strings.TrimSpace(firstString(it.ChartCaption))
@@ -1023,7 +1055,78 @@ func mineruImageMarkdown(it contentItem) string {
 	if alt == "" {
 		alt = "figure"
 	}
-	return fmt.Sprintf("![%s](%s)", alt, strings.TrimSpace(it.ImgPath))
+	return fmt.Sprintf("![%s](%s)", alt, strings.TrimSpace(path))
+}
+
+func rewriteMineruContentImageReferences(content string, imageAssets map[string]string) string {
+	if strings.TrimSpace(content) == "" || len(imageAssets) == 0 {
+		return content
+	}
+
+	rewritten := mineruMarkdownImagePattern.ReplaceAllStringFunc(content, func(match string) string {
+		parts := mineruMarkdownImagePattern.FindStringSubmatch(match)
+		if len(parts) != 3 {
+			return match
+		}
+		if dataURI, ok := lookupMineruContentImageDataURI(imageAssets, parts[2]); ok {
+			return fmt.Sprintf("![%s](%s)", parts[1], dataURI)
+		}
+		return match
+	})
+
+	return mineruHTMLImageSrcPattern.ReplaceAllStringFunc(rewritten, func(match string) string {
+		parts := mineruHTMLImageSrcPattern.FindStringSubmatch(match)
+		if len(parts) != 5 {
+			return match
+		}
+		if dataURI, ok := lookupMineruContentImageDataURI(imageAssets, parts[3]); ok {
+			quote := parts[2]
+			if quote == "" {
+				quote = `"`
+			}
+			return parts[1] + quote + dataURI + quote
+		}
+		return match
+	})
+}
+
+func lookupMineruContentImageDataURI(images map[string]string, imagePath string) (string, bool) {
+	if len(images) == 0 {
+		return "", false
+	}
+	for _, candidate := range mineruImageAssetNameCandidates(imagePath) {
+		if value, ok := images[candidate]; ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value), true
+		}
+	}
+	return "", false
+}
+
+func mineruImageAssetNameCandidates(imagePath string) []string {
+	normalized := strings.Trim(strings.ReplaceAll(imagePath, "\\", "/"), "/")
+	if normalized == "" {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 3)
+	add := func(value string) {
+		value = strings.Trim(strings.ReplaceAll(value, "\\", "/"), "/")
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	add(normalized)
+	if idx := strings.Index(strings.ToLower(normalized), "images/"); idx >= 0 {
+		add(normalized[idx+len("images/"):])
+		add(normalized[idx:])
+	}
+	add(filepath.Base(normalized))
+	return out
 }
 
 type mineruBlockScoreLookup struct {
@@ -1210,7 +1313,7 @@ func hasAny(value any) bool {
 }
 
 func mapType(it contentItem) (string, string) {
-	if strings.TrimSpace(it.ImgPath) != "" {
+	if shouldUseMineruImageAsset(it) {
 		return "figure", ""
 	}
 
@@ -1234,14 +1337,14 @@ func mapType(it contentItem) (string, string) {
 }
 
 func extractText(it contentItem) string {
-	if strings.TrimSpace(it.ImgPath) != "" {
-		return "[figure]"
-	}
 	if s := strings.TrimSpace(it.Text); s != "" {
 		return s
 	}
 	if it.Type == "table" && strings.TrimSpace(it.TableBody) != "" {
 		return strings.TrimSpace(it.TableBody)
+	}
+	if shouldUseMineruImageAsset(it) {
+		return "[figure]"
 	}
 	if it.Type == "image" || it.Type == "chart" {
 		if caption := firstString(it.ImageCaption); caption != "" {

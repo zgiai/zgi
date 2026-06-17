@@ -193,6 +193,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	filePreview := v1.Group("/files")
 	{
 		filePreview.GET("/mineru-images", imagePreviewHandler.GetMinerUImage)
+		filePreview.GET("/document-images", imagePreviewHandler.GetDocumentImage)
 		filePreview.GET("/:file_id/file-preview",
 			jwtMiddleware.FilePreviewAuthMiddleware(deps.AccountService),
 			imagePreviewHandler.GetFilePreview,

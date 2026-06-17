@@ -31,6 +31,7 @@ type FileProcessRunner struct {
 	providerCatalogs         contentparseservice.ProviderCatalogResolver
 	contentParseCatalog      *contracts.ParseProviderCatalog
 	state                    datalibraryservice.FileAssetProcessingStateService
+	imageAssets              datalibraryservice.ParseArtifactImageAssetService
 	artifactPersistence      datalibraryservice.ParseArtifactPersistenceService
 	quality                  datalibraryservice.ParseArtifactQualityService
 	processingService        datalibraryservice.ProcessingRequestService
@@ -50,6 +51,7 @@ type FileProcessRunnerDeps struct {
 	ProviderCatalogs         contentparseservice.ProviderCatalogResolver
 	ContentParseCatalog      *contracts.ParseProviderCatalog
 	State                    datalibraryservice.FileAssetProcessingStateService
+	ImageAssets              datalibraryservice.ParseArtifactImageAssetService
 	ArtifactPersistence      datalibraryservice.ParseArtifactPersistenceService
 	Quality                  datalibraryservice.ParseArtifactQualityService
 	ProcessingService        datalibraryservice.ProcessingRequestService
@@ -70,6 +72,7 @@ func NewFileProcessRunner(deps FileProcessRunnerDeps) *FileProcessRunner {
 		providerCatalogs:         deps.ProviderCatalogs,
 		contentParseCatalog:      deps.ContentParseCatalog,
 		state:                    deps.State,
+		imageAssets:              deps.ImageAssets,
 		artifactPersistence:      deps.ArtifactPersistence,
 		quality:                  deps.Quality,
 		processingService:        deps.ProcessingService,
@@ -136,6 +139,15 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 	artifact, routePlan, err := r.parseFile(ctx, parseRequest, request)
 	if err != nil {
 		return r.failRequest(ctx, request, asset, "parse_failed", err)
+	}
+	if r.imageAssets != nil {
+		if _, err := r.imageAssets.Normalize(ctx, datalibraryservice.ParseArtifactImageAssetNormalizeInput{
+			OrganizationID: request.OrganizationID,
+			SourceFileID:   asset.SourceFileID,
+			Artifact:       artifact,
+		}); err != nil {
+			return r.failRequest(ctx, request, asset, "image_asset_normalize_failed", err)
+		}
 	}
 
 	summary := map[string]interface{}{

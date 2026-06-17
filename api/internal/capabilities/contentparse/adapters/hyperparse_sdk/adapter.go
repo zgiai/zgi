@@ -197,6 +197,9 @@ func mapDocumentResult(req contracts.ParseRequest, engine extractcommon.Engine, 
 	for key, value := range result.ExtractOutput.Metadata {
 		artifact.Metadata[key] = value
 	}
+	if len(result.ImageAssets) > 0 {
+		artifact.Metadata["image_assets"] = cloneStringMap(result.ImageAssets)
+	}
 	if strings.TrimSpace(result.Source) != "" {
 		artifact.Metadata["recognition_source"] = strings.TrimSpace(result.Source)
 	}
@@ -250,6 +253,17 @@ func mapBoundingBox(box *extractcommon.BBox) *contracts.ParseBoundingBox {
 }
 
 func cloneMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func cloneStringMap(src map[string]string) map[string]any {
 	if len(src) == 0 {
 		return nil
 	}

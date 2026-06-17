@@ -367,6 +367,9 @@ const messages: FilesMessages = {
       primary: '一级切片',
       secondary: '二级切片',
       secondaryCount: '二级切片 ({count})',
+      secondaryLoading: '正在加载二级切片...',
+      secondaryLoadError: '二级切片加载失败',
+      secondaryEmpty: '暂无二级切片',
       searchPlaceholder: '搜索切片内容...',
       filters: {
         all: '全部',

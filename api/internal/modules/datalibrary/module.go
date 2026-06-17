@@ -36,6 +36,7 @@ type Module struct {
 	ProcessingRequestService           service.ProcessingRequestService
 	FileAssetProcessingStateService    service.FileAssetProcessingStateService
 	ParseArtifactPersistenceService    service.ParseArtifactPersistenceService
+	ParseArtifactImageAssetService     service.ParseArtifactImageAssetService
 	ParseArtifactQualityService        service.ParseArtifactQualityService
 	ParsePreviewService                service.ParsePreviewService
 	ParseConfirmationService           service.ParseConfirmationService
@@ -142,6 +143,7 @@ func NewModuleWithContentParseRuntime(
 	processingRequestService := service.NewProcessingRequestService(processingRequestRepo)
 	fileAssetProcessingStateService := service.NewFileAssetProcessingStateServiceWithDatasetRefs(documentAssetRepo, processingRequestRepo, knowledgeBaseAssetRefRepo, datasetDocumentRepo)
 	parseArtifactPersistenceService := service.NewParseArtifactPersistenceService(documentAssetRepo, contentParseArtifactRepo, artifactStorage)
+	parseArtifactImageAssetService := service.NewParseArtifactImageAssetService(artifactStorage)
 	parseArtifactQualityService := service.NewParseArtifactQualityService(parseConfirmationItemRepo)
 	parsePreviewService := service.NewParsePreviewService(documentAssetRepo, contentParseArtifactRepo, parseArtifactPersistenceService, parseConfirmationItemRepo)
 	parseConfirmationService := service.NewParseConfirmationService(documentAssetRepo, parseConfirmationItemRepo)
@@ -198,6 +200,7 @@ func NewModuleWithContentParseRuntime(
 		ProviderCatalogs:         contentParseRuntime.CatalogResolver,
 		ContentParseCatalog:      contentParseRuntime.Catalog,
 		State:                    fileAssetProcessingStateService,
+		ImageAssets:              parseArtifactImageAssetService,
 		ArtifactPersistence:      parseArtifactPersistenceService,
 		Quality:                  parseArtifactQualityService,
 		ProcessingService:        processingRequestService,
@@ -233,6 +236,7 @@ func NewModuleWithContentParseRuntime(
 		ProcessingRequestService:           processingRequestService,
 		FileAssetProcessingStateService:    fileAssetProcessingStateService,
 		ParseArtifactPersistenceService:    parseArtifactPersistenceService,
+		ParseArtifactImageAssetService:     parseArtifactImageAssetService,
 		ParseArtifactQualityService:        parseArtifactQualityService,
 		ParsePreviewService:                parsePreviewService,
 		ParseConfirmationService:           parseConfirmationService,

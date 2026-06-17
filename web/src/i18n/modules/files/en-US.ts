@@ -381,6 +381,9 @@ const messages = {
       primary: 'Primary Chunk',
       secondary: 'Secondary Chunk',
       secondaryCount: 'Secondary chunks ({count})',
+      secondaryLoading: 'Loading secondary chunks...',
+      secondaryLoadError: 'Failed to load secondary chunks',
+      secondaryEmpty: 'No secondary chunks',
       searchPlaceholder: 'Search chunk content...',
       filters: {
         all: 'All',
