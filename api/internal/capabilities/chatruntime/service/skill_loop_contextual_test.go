@@ -368,7 +368,7 @@ func TestSkillLoopUserInputGuardBlocksConsoleFilesClarificationWhenTargetResolve
 	}
 }
 
-func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesListWithoutToolCall(t *testing.T) {
+func TestSkillLoopFinalAnswerGuardAllowsConsoleFilesListWithoutToolCall(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesSemanticTestParts("\u6211\u73b0\u5728\u6709\u54ea\u4e9b\u6587\u4ef6", []consoleFilesTestFile{
 			{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
@@ -378,34 +378,8 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesListWithoutToolCall(t *testi
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
 	prepared.parts.SkillMode = skillModeAuto
 
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for file listing request")
-	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "You have notes.txt and budget-q1.xlsx.",
-	})
-	if !blocked {
-		t.Fatal("guard did not block direct file listing answer without list_visible_files")
-	}
-	for _, want := range []string{
-		"file-reader",
-		"list_visible_files",
-		"visible files",
-	} {
-		if !strings.Contains(result.Message, want) {
-			t.Fatalf("guard message missing %q in:\n%s", want, result.Message)
-		}
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "Here are the visible files from the tool result.",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "list_visible_files"},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after list_visible_files succeeded")
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		t.Fatal("skillLoopFinalAnswerGuard() returned guard for file listing request, want nil")
 	}
 }
 

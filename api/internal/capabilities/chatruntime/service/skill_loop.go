@@ -240,7 +240,7 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 	content := strings.Join([]string{
 		"Contextual files-page tool guidance:",
 		"The user is operating on the Console Files page. Treat visible file resources in operation_context as concrete user assets.",
-		"For requests that only ask what files are visible, available, selected, or present on the Files page, use file-reader/list_visible_files and answer from the tool result.",
+		"For requests that only ask what files are visible, available, selected, or present on the Files page, answer directly from visible_files in the Files-page context JSON when it is present and sufficient. Use file-reader/list_visible_files only when that context is missing, ambiguous, or needs an authoritative refresh.",
 		"For requests about reading, previewing, summarizing, analyzing, or translating visible file contents, use file-reader/read_file with the resolved file_id.",
 		"When resolved_targets_from_user_request is present, the target is already resolved from the current page. Use the listed file_id exactly for read_file/delete_file; it overrides any other ordinal or file-type interpretation.",
 		"Do not ask the user to select a file, repeat the file name, or choose another visible file with the same type when a resolved target is present.",
@@ -262,10 +262,6 @@ func skillLoopFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuar
 	parts := prepared.parts
 	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		return nil
-	}
-	if hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
-		isFileListIntent(parts.Query) {
-		return consoleFilesListRequiredToolFinalAnswerGuard()
 	}
 	targets := consoleFilesPromptResolvedTargets(parts)
 	if len(targets) == 0 {
@@ -316,25 +312,6 @@ func skillLoopUserInputGuard(prepared *PreparedChat) skillloop.UserInputGuard {
 			result.Message,
 		}, " ")
 		return result, true
-	}
-}
-
-func consoleFilesListRequiredToolFinalAnswerGuard() skillloop.FinalAnswerGuard {
-	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		if finalAnswerGuardHasSuccessfulTool(req, skills.SkillFileReader, "list_visible_files") ||
-			finalAnswerGuardHasAttemptedTool(req, skills.SkillFileReader, "list_visible_files") {
-			return skillloop.FinalAnswerGuardResult{}, false
-		}
-		return skillloop.FinalAnswerGuardResult{
-			SkillID:  skills.SkillFileReader,
-			ToolName: "list_visible_files",
-			Message: strings.Join([]string{
-				"The user's current files-page request asks which files are visible or available.",
-				"Do not finish from visible page metadata or prior conversation context.",
-				"Load the file-reader skill if needed, then call call_skill_tool with skill_id \"file-reader\" and tool_name \"list_visible_files\".",
-				"Only after list_visible_files succeeds in this turn may you list the current visible files.",
-			}, " "),
-		}, true
 	}
 }
 
@@ -485,41 +462,6 @@ func consoleFilesGuardTargetSummary(targets []map[string]interface{}) string {
 		return "the resolved visible file"
 	}
 	return strings.Join(parts, ", ")
-}
-
-func isFileListIntent(query string) bool {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" || isFileReadIntent(query) || isFileDeleteIntent(query) {
-		return false
-	}
-	for _, phrase := range []string{
-		"what files",
-		"which files",
-		"list files",
-		"list the files",
-		"visible files",
-		"current files",
-		"available files",
-		"files do i have",
-		"files are there",
-		"files on this page",
-		"有哪些文件",
-		"哪些文件",
-		"有什么文件",
-		"有几个文件",
-		"当前文件",
-		"可见文件",
-		"文件列表",
-		"列出文件",
-		"列一下文件",
-		"看到哪些文件",
-		"现在有文件",
-	} {
-		if strings.Contains(query, phrase) {
-			return true
-		}
-	}
-	return false
 }
 
 func skillIDEnabled(skillIDs []string, target string) bool {

@@ -97,7 +97,7 @@ Use this skill to list visible file context, read content from a file that has a
 
 1. Use this skill only when the user is asking about a specific file, uploaded attachment, or current console file context.
 2. Do not invent file IDs. Use a file ID supplied by resolved page context, attachment context, or governed asset resolution.
-3. For listing requests such as "what files do I have", "which files are visible", "current files", or "selected files", call `list_visible_files` first and answer from its `files` result. Do not use `read_file` for a list-only request unless the user asks for file contents.
+3. For listing requests such as "what files do I have", "which files are visible", "current files", or "selected files", answer directly from the provided visible file context when it is present and sufficient. Call `list_visible_files` when that context is missing, ambiguous, stale, or needs an authoritative refresh. Do not use `read_file` for a list-only request unless the user asks for file contents.
 4. For read, summary, translation, extraction, comparison, or question answering, call `read_file` with `file_id`. Set `max_chars` only when you need more or less returned content.
 5. Inspect `content_status` before answering:
    - If `content_status` is `extracted`, answer from `content`.
