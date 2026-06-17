@@ -672,6 +672,75 @@ func TestSubmitToolGovernanceDecisionRejectsUnresolvedEventWhenMessageNotWaiting
 	}
 }
 
+func TestSubmitToolGovernanceDecisionRejectCannotOverwriteApprovedDecision(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	conversation := &runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		CallerType:     runtimemodel.ConversationCallerAIChat,
+		Title:          "Files",
+		Status:         runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:  runtimemodel.ConversationRuntimeStatusIdle,
+		Metadata:       map[string]interface{}{},
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	message := &runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "Delete report.pdf",
+		Status:         runtimemodel.MessageStatusWaitingApproval,
+		ModelName:      "deepseek-chat",
+		Metadata:       pendingToolGovernanceDecisionMetadata("corr-1"),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	messageRepo := &toolGovernanceDecisionMessageRepo{message: message}
+	svc := &service{
+		repos: &repository.Repositories{
+			Access:       toolGovernanceDecisionAccessRepo{},
+			Conversation: toolGovernanceDecisionConversationRepo{conversation: conversation},
+			Message:      messageRepo,
+		},
+	}
+
+	if _, err := svc.SubmitToolGovernanceDecision(ctx, Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}, conversationID, messageID, "corr-1", runtimedto.ToolGovernanceDecisionRequest{Action: "approve"}); err != nil {
+		t.Fatalf("approve decision: %v", err)
+	}
+	_, err := svc.SubmitToolGovernanceDecision(ctx, Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}, conversationID, messageID, "corr-1", runtimedto.ToolGovernanceDecisionRequest{Action: "reject", Reason: "deny it"})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("reject after approve error = %v, want ErrInvalidInput", err)
+	}
+
+	event, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, "corr-1")
+	if !ok {
+		t.Fatalf("stored governance event missing in %#v", message.Metadata)
+	}
+	if event["approval_status"] != toolGovernanceApprovalStatusApproved {
+		t.Fatalf("approval_status = %#v, want approved after rejected request lost the claim", event["approval_status"])
+	}
+	if grants := mapSliceFromAny(message.Metadata["tool_governance_one_shot_grants"]); len(grants) != 1 {
+		t.Fatalf("one-shot grants = %#v, want one approved grant", grants)
+	}
+	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
+	if continuation["approval_status"] != toolGovernanceApprovalStatusApproved {
+		t.Fatalf("continuation = %#v, want approved status preserved", continuation)
+	}
+}
+
 func TestSubmitToolGovernanceDecisionRejectsNonApprovalGovernanceEvent(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -989,8 +1058,11 @@ func (r *toolGovernanceDecisionMessageRepo) GetScoped(context.Context, uuid.UUID
 	return r.message, nil
 }
 
-func (r *toolGovernanceDecisionMessageRepo) UpdateMetadataAnyStatus(context.Context, uuid.UUID, map[string]interface{}) error {
+func (r *toolGovernanceDecisionMessageRepo) UpdateMetadataAnyStatus(_ context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
 	r.updateMetadataAnyStatusCalled = true
+	if r.message != nil {
+		r.message.Metadata = copyStringAnyMap(metadata)
+	}
 	return nil
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
@@ -88,32 +89,86 @@ func (s *service) SubmitToolGovernanceDecision(
 	if err != nil {
 		return nil, err
 	}
-	message, err := s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
+
+	var response *runtimedto.ToolGovernanceDecisionResponse
+	var emitEvent map[string]interface{}
+	if s.repos.DB != nil {
+		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			message, err := toolGovernanceDecisionMessageForUpdate(ctx, tx, messageID, scope)
+			if err != nil {
+				return err
+			}
+			txRepos := repository.NewRepositories(tx)
+			response, emitEvent, err = s.resolveToolGovernanceDecision(ctx, txRepos, scope, conversation, message, correlationID, req, action, approvalStatus)
+			return err
+		})
+	} else {
+		var message *runtimemodel.Message
+		message, err = s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
+		if err != nil {
+			return nil, mapRepoError(err)
+		}
+		response, emitEvent, err = s.resolveToolGovernanceDecision(ctx, s.repos, scope, conversation, message, correlationID, req, action, approvalStatus)
+	}
 	if err != nil {
 		return nil, mapRepoError(err)
 	}
-	if message.ConversationID != conversation.ID {
-		return nil, fmt.Errorf("%w: message belongs to another conversation", ErrInvalidInput)
+	if response != nil && len(emitEvent) > 0 {
+		s.appendStreamEventBestEffort(ctx, messageID, conversation.ID, streamEventToolGovernanceDecision, emitEvent)
+	}
+	return response, nil
+}
+
+func toolGovernanceDecisionMessageForUpdate(ctx context.Context, tx *gorm.DB, messageID uuid.UUID, scope Scope) (*runtimemodel.Message, error) {
+	var message runtimemodel.Message
+	if err := tx.WithContext(ctx).
+		Table("chat_runtime_messages AS m").
+		Select("m.*").
+		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
+		Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "m"}}).
+		Where("m.id = ? AND c.organization_id = ? AND c.account_id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL", messageID, scope.OrganizationID, scope.AccountID).
+		Take(&message).Error; err != nil {
+		return nil, err
+	}
+	return &message, nil
+}
+
+func (s *service) resolveToolGovernanceDecision(
+	ctx context.Context,
+	repos *repository.Repositories,
+	scope Scope,
+	conversation *runtimemodel.Conversation,
+	message *runtimemodel.Message,
+	correlationID string,
+	req runtimedto.ToolGovernanceDecisionRequest,
+	action string,
+	approvalStatus string,
+) (*runtimedto.ToolGovernanceDecisionResponse, map[string]interface{}, error) {
+	if repos == nil || repos.Message == nil || repos.Conversation == nil {
+		return nil, nil, fmt.Errorf("aichat repository is not configured")
+	}
+	if conversation == nil || message == nil || message.ConversationID != conversation.ID {
+		return nil, nil, fmt.Errorf("%w: message belongs to another conversation", ErrInvalidInput)
 	}
 
-	now := time.Now().UTC()
 	event, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, correlationID)
 	if !ok {
-		return nil, fmt.Errorf("%w: tool governance approval event not found", ErrNotFound)
+		return nil, nil, fmt.Errorf("%w: tool governance approval event not found", ErrNotFound)
 	}
 	if previous := strings.TrimSpace(stringFromAny(event["approval_status"])); previous != "" {
 		if previous == approvalStatus {
-			return toolGovernanceDecisionResponse(conversation.ID, message.ID, correlationID, action, approvalStatus, req.RememberForSession, nil, event), nil
+			return toolGovernanceDecisionResponse(conversation.ID, message.ID, correlationID, action, approvalStatus, req.RememberForSession, nil, event), nil, nil
 		}
-		return nil, fmt.Errorf("%w: tool governance approval already resolved", ErrInvalidInput)
+		return nil, nil, fmt.Errorf("%w: tool governance approval already resolved", ErrInvalidInput)
 	}
 	if err := ensureApprovableToolGovernanceDecisionEvent(event, correlationID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := ensurePendingToolGovernanceDecisionMessage(message); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	now := time.Now().UTC()
 	resolution := map[string]interface{}{
 		"action":               action,
 		"approval_status":      approvalStatus,
@@ -151,44 +206,19 @@ func (s *service) SubmitToolGovernanceDecision(
 		conversationMetadata = appendToolGovernanceSessionGrant(conversationMetadata, sessionGrant)
 	}
 
-	updateErr := s.updateToolGovernanceDecisionMetadata(ctx, message.ID, conversation.ID, messageMetadata, conversationMetadata, sessionGrant != nil)
-	if updateErr != nil {
-		return nil, mapRepoError(updateErr)
+	if err := repos.Message.UpdateMetadataAnyStatus(ctx, message.ID, messageMetadata); err != nil {
+		return nil, nil, err
+	}
+	message.Metadata = messageMetadata
+	if sessionGrant != nil {
+		if err := repos.Conversation.UpdateMetadata(ctx, conversation.ID, conversationMetadata); err != nil {
+			return nil, nil, err
+		}
+		conversation.Metadata = conversationMetadata
 	}
 
-	s.appendStreamEventBestEffort(ctx, message.ID, conversation.ID, streamEventToolGovernanceDecision, updatedEvent)
-	return toolGovernanceDecisionResponse(conversation.ID, message.ID, correlationID, action, approvalStatus, req.RememberForSession, sessionGrant, updatedEvent), nil
-}
-
-func (s *service) updateToolGovernanceDecisionMetadata(
-	ctx context.Context,
-	messageID uuid.UUID,
-	conversationID uuid.UUID,
-	messageMetadata map[string]interface{},
-	conversationMetadata map[string]interface{},
-	updateConversation bool,
-) error {
-	if s.repos.DB == nil {
-		if err := s.repos.Message.UpdateMetadataAnyStatus(ctx, messageID, messageMetadata); err != nil {
-			return err
-		}
-		if updateConversation {
-			return s.repos.Conversation.UpdateMetadata(ctx, conversationID, conversationMetadata)
-		}
-		return nil
-	}
-	return s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		txRepos := repository.NewRepositories(tx)
-		if err := txRepos.Message.UpdateMetadataAnyStatus(ctx, messageID, messageMetadata); err != nil {
-			return err
-		}
-		if updateConversation {
-			if err := txRepos.Conversation.UpdateMetadata(ctx, conversationID, conversationMetadata); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	response := toolGovernanceDecisionResponse(conversation.ID, message.ID, correlationID, action, approvalStatus, req.RememberForSession, sessionGrant, updatedEvent)
+	return response, updatedEvent, nil
 }
 
 func normalizeToolGovernanceApprovalAction(action string) (string, string, error) {
