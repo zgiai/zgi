@@ -741,6 +741,100 @@ func TestSubmitToolGovernanceDecisionRejectCannotOverwriteApprovedDecision(t *te
 	}
 }
 
+func TestSubmitToolGovernanceDecisionRememberForSessionPreservesExistingConversationGrants(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	existingGrant := map[string]interface{}{
+		"conversation_id":         conversationID.String(),
+		"organization_id":         organizationID.String(),
+		"user_id":                 accountID.String(),
+		"skill_id":                skills.SkillFileReader,
+		"provider_type":           "builtin",
+		"provider_id":             "files",
+		"tool_id":                 "file.delete",
+		"effect":                  "delete",
+		"asset_type":              "file",
+		"risk_level":              "high",
+		"approval_correlation_id": "corr-existing",
+		"expires_at":              now.Add(time.Hour).Format(time.RFC3339),
+		"assets": []interface{}{
+			map[string]interface{}{"id": "file-existing", "type": "file", "workspace_id": "workspace-1"},
+		},
+	}
+	conversation := &runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		CallerType:     runtimemodel.ConversationCallerAIChat,
+		Title:          "Files",
+		Status:         runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:  runtimemodel.ConversationRuntimeStatusIdle,
+		Metadata:       appendToolGovernanceSessionGrant(nil, existingGrant),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	metadata := pendingToolGovernanceDecisionMetadata("corr-1")
+	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})
+	governance := invocation["governance"].(map[string]interface{})
+	approvalEvent := governance["approval_event"].(map[string]interface{})
+	approvalEvent["assets"] = []interface{}{
+		map[string]interface{}{"id": "file-new", "type": "file", "workspace_id": "workspace-1"},
+	}
+	approvalGrant := approvalEvent["grant"].(map[string]interface{})
+	approvalGrant["conversation_id"] = conversationID.String()
+	approvalGrant["organization_id"] = organizationID.String()
+	approvalGrant["user_id"] = accountID.String()
+	approvalGrant["skill_id"] = skills.SkillFileReader
+	approvalGrant["provider_type"] = "builtin"
+	approvalGrant["provider_id"] = "files"
+	approvalGrant["assets"] = []interface{}{
+		map[string]interface{}{"id": "file-new", "type": "file", "workspace_id": "workspace-1"},
+	}
+	message := &runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "Delete file-new",
+		Status:         runtimemodel.MessageStatusWaitingApproval,
+		ModelName:      "deepseek-chat",
+		Metadata:       metadata,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Access:       toolGovernanceDecisionAccessRepo{},
+			Conversation: toolGovernanceDecisionConversationRepo{conversation: conversation},
+			Message:      &toolGovernanceDecisionMessageRepo{message: message},
+		},
+	}
+
+	response, err := svc.SubmitToolGovernanceDecision(ctx, Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}, conversationID, messageID, "corr-1", runtimedto.ToolGovernanceDecisionRequest{Action: "approve", RememberForSession: true})
+	if err != nil {
+		t.Fatalf("SubmitToolGovernanceDecision() error = %v", err)
+	}
+	if response.SessionGrant == nil || response.SessionGrant["approval_correlation_id"] != "corr-1" {
+		t.Fatalf("response session grant = %#v, want corr-1", response.SessionGrant)
+	}
+	grants := mapSliceFromAny(conversation.Metadata["tool_governance_session_grants"])
+	if len(grants) != 2 {
+		t.Fatalf("conversation session grants = %#v, want existing and new grants", grants)
+	}
+	seen := map[string]bool{}
+	for _, grant := range grants {
+		seen[stringFromAny(grant["approval_correlation_id"])] = true
+	}
+	if !seen["corr-existing"] || !seen["corr-1"] {
+		t.Fatalf("conversation session grants = %#v, want both corr-existing and corr-1", grants)
+	}
+}
+
 func TestSubmitToolGovernanceDecisionRejectsNonApprovalGovernanceEvent(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -1046,6 +1140,13 @@ type toolGovernanceDecisionConversationRepo struct {
 
 func (r toolGovernanceDecisionConversationRepo) GetScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*runtimemodel.Conversation, error) {
 	return r.conversation, nil
+}
+
+func (r toolGovernanceDecisionConversationRepo) UpdateMetadata(_ context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
+	if r.conversation != nil {
+		r.conversation.Metadata = copyStringAnyMap(metadata)
+	}
+	return nil
 }
 
 type toolGovernanceDecisionMessageRepo struct {

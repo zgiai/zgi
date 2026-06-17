@@ -85,16 +85,16 @@ func (s *service) SubmitToolGovernanceDecision(
 		return nil, fmt.Errorf("%w: governance correlation_id is required", ErrInvalidInput)
 	}
 
-	conversation, err := s.getConversation(ctx, scope, conversationID)
-	if err != nil {
-		return nil, err
-	}
-
 	var response *runtimedto.ToolGovernanceDecisionResponse
 	var emitEvent map[string]interface{}
+	var conversation *runtimemodel.Conversation
 	if s.repos.DB != nil {
 		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			message, err := toolGovernanceDecisionMessageForUpdate(ctx, tx, messageID, scope)
+			if err != nil {
+				return err
+			}
+			conversation, err := toolGovernanceDecisionConversationForUpdate(ctx, tx, conversationID, scope)
 			if err != nil {
 				return err
 			}
@@ -103,6 +103,10 @@ func (s *service) SubmitToolGovernanceDecision(
 			return err
 		})
 	} else {
+		conversation, err = s.getConversation(ctx, scope, conversationID)
+		if err != nil {
+			return nil, err
+		}
 		var message *runtimemodel.Message
 		message, err = s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
 		if err != nil {
@@ -114,7 +118,7 @@ func (s *service) SubmitToolGovernanceDecision(
 		return nil, mapRepoError(err)
 	}
 	if response != nil && len(emitEvent) > 0 {
-		s.appendStreamEventBestEffort(ctx, messageID, conversation.ID, streamEventToolGovernanceDecision, emitEvent)
+		s.appendStreamEventBestEffort(ctx, messageID, conversationID, streamEventToolGovernanceDecision, emitEvent)
 	}
 	return response, nil
 }
@@ -131,6 +135,17 @@ func toolGovernanceDecisionMessageForUpdate(ctx context.Context, tx *gorm.DB, me
 		return nil, err
 	}
 	return &message, nil
+}
+
+func toolGovernanceDecisionConversationForUpdate(ctx context.Context, tx *gorm.DB, conversationID uuid.UUID, scope Scope) (*runtimemodel.Conversation, error) {
+	var conversation runtimemodel.Conversation
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND organization_id = ? AND account_id = ? AND deleted_at IS NULL", conversationID, scope.OrganizationID, scope.AccountID).
+		Take(&conversation).Error; err != nil {
+		return nil, err
+	}
+	return &conversation, nil
 }
 
 func (s *service) resolveToolGovernanceDecision(
