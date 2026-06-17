@@ -308,6 +308,9 @@ func TestSupportsInputRef(t *testing.T) {
 	if !supportsInputRef("reducto", contracts.ParseSourceTypeUploadFile, "reducto://abc.pdf") {
 		t.Fatal("expected reducto upload-file passthrough support")
 	}
+	if supportsInputRef("reducto", contracts.ParseSourceTypeUploadFile, "file-1") {
+		t.Fatal("did not expect platform upload file ID passthrough support")
+	}
 	if supportsInputRef("local", contracts.ParseSourceTypeURL, "https://example.com/doc.pdf") {
 		t.Fatal("did not expect local URL passthrough support")
 	}

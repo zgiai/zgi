@@ -116,17 +116,24 @@ func (a *Adapter) parseInputRef(ctx context.Context, engine extractcommon.Engine
 }
 
 func supportsInputRef(engine extractcommon.Engine, sourceType contracts.ParseSourceType, sourceRef string) bool {
-	if strings.TrimSpace(sourceRef) == "" {
+	sourceRef = strings.TrimSpace(sourceRef)
+	if sourceRef == "" {
 		return false
 	}
 	if engine != extractcommon.EngineReducto {
 		return false
 	}
+	isRemoteRef := strings.HasPrefix(sourceRef, "reducto://") ||
+		strings.HasPrefix(sourceRef, "jobid://") ||
+		strings.HasPrefix(sourceRef, "http://") ||
+		strings.HasPrefix(sourceRef, "https://")
 	switch sourceType {
-	case contracts.ParseSourceTypeURL, contracts.ParseSourceTypeUploadFile:
-		return true
+	case contracts.ParseSourceTypeURL:
+		return isRemoteRef
+	case contracts.ParseSourceTypeUploadFile:
+		return strings.HasPrefix(sourceRef, "reducto://") || strings.HasPrefix(sourceRef, "jobid://")
 	default:
-		return strings.HasPrefix(sourceRef, "reducto://") || strings.HasPrefix(sourceRef, "jobid://") || strings.HasPrefix(sourceRef, "http://") || strings.HasPrefix(sourceRef, "https://")
+		return isRemoteRef
 	}
 }
 
