@@ -39,6 +39,7 @@ import { FILES_QUERY_KEY, FILE_FOLDERS_KEY, STORAGE_USAGE_KEY } from '@/hooks/us
 import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
+import { embeddedControlButtonClassName } from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import {
   createContextualAIChatTransport,
   type ContextualAIChatAssetOperation,
@@ -360,20 +361,21 @@ function ContextualAIChatPanel({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-14 shrink-0 items-center gap-2 border-b border-border/70 bg-background/95 px-3 py-2">
-        <div id={controlsPortalId} className="flex shrink-0 items-center" />
         <ContextSummaryMenu items={items} t={t} />
-        <Button
-          type="button"
-          variant="ghost"
-          size="default"
-          isIcon
-          className="size-8 text-muted-foreground hover:bg-muted hover:text-foreground"
-          onClick={onClose}
-          title={t('consoleChat.contextual.close')}
-        >
-          <X className="size-4" />
-          <span className="sr-only">{t('consoleChat.contextual.close')}</span>
-        </Button>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <div id={controlsPortalId} className="flex shrink-0 items-center" />
+          <Button
+            type="button"
+            variant="ghost"
+            isIcon
+            className={embeddedControlButtonClassName}
+            onClick={onClose}
+            title={t('consoleChat.contextual.close')}
+          >
+            <X className="size-3.5" />
+            <span className="sr-only">{t('consoleChat.contextual.close')}</span>
+          </Button>
+        </div>
       </div>
       <div className="min-h-0 flex-1">
         <Chat
