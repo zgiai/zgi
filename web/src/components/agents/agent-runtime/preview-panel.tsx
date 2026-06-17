@@ -1,9 +1,10 @@
 'use client';
 
 import { useId, type ReactNode } from 'react';
-import { Eye, MessageSquarePlus, PanelLeft, X } from 'lucide-react';
+import { Eye, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Chat, { type AIChatController } from '@/components/chat';
+import { AIChatEmbeddedConversationControls } from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import type {
   ModelSelectorModelProps,
   ModelSelectorParameterValue,
@@ -106,28 +107,12 @@ export function AgentRuntimePreviewPanel({
           embeddedConversationControlsMode="external"
           embeddedConversationControlsPortalId={controlsPortalId}
           renderEmbeddedConversationControls={controls => (
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                isIcon
-                className="size-7 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground"
-                onClick={controls.openConversations}
-                title={t('preview.conversations')}
-                aria-label={t('preview.conversations')}
-              >
-                <PanelLeft className="size-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                isIcon
-                className="size-7 rounded-full text-muted-foreground hover:bg-muted/70 hover:text-foreground"
-                onClick={controls.startNewConversation}
-                title={t('preview.newConversation')}
-                aria-label={t('preview.newConversation')}
-              >
-                <MessageSquarePlus className="size-3.5" />
-              </Button>
-            </div>
+            <AIChatEmbeddedConversationControls
+              openConversations={controls.openConversations}
+              startNewConversation={controls.startNewConversation}
+              conversationsLabel={t('preview.conversations')}
+              newConversationLabel={t('preview.newConversation')}
+            />
           )}
           showAssistantModelMeta={false}
           surface="agent-draft"

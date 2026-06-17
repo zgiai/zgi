@@ -14,12 +14,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
-import {
-  ArrowDown,
-  MessageSquarePlus,
-  PanelLeft,
-  Settings2,
-} from 'lucide-react';
+import { ArrowDown, Settings2 } from 'lucide-react';
 import type {
   ModelSelectorModelProps,
   ModelSelectorValue,
@@ -65,6 +60,10 @@ import {
 import { AIChatHeader } from '@/components/chat/variants/aichat/chat-header';
 import { AIChatHomeView } from '@/components/chat/variants/aichat/home-view';
 import { AIChatAssetAuditButton } from '@/components/chat/variants/aichat/asset-audit-button';
+import {
+  AIChatEmbeddedConversationControls,
+  embeddedControlButtonClassName,
+} from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import {
   AIChatInputArea,
   type AIChatUploadScope,
@@ -469,6 +468,7 @@ export function AIChatShell({
         <AIChatAssetAuditButton
           conversationId={activeConversationId}
           refreshKey={assetAuditRefreshKey}
+          className={embeddedControlButtonClassName}
         />
       ) : null,
     [activeConversationId, assetAuditRefreshKey, showAssetAuditControl]
@@ -915,27 +915,13 @@ export function AIChatShell({
       return renderEmbeddedConversationControls(controls);
     }
     return (
-      <div className="flex items-center gap-1 rounded-full border bg-background/90 p-1 shadow-sm backdrop-blur">
-        <Button
-          variant="ghost"
-          isIcon
-          className="size-8 text-muted-foreground"
-          onClick={controls.openConversations}
-          title={t('consoleChat.toggleSidebar')}
-        >
-          <PanelLeft className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          isIcon
-          className="size-8 text-muted-foreground"
-          onClick={controls.startNewConversation}
-          title={t('chat.newConversation')}
-        >
-          <MessageSquarePlus className="size-4" />
-        </Button>
-        {assetAuditButton}
-      </div>
+      <AIChatEmbeddedConversationControls
+        openConversations={controls.openConversations}
+        startNewConversation={controls.startNewConversation}
+        conversationsLabel={t('consoleChat.toggleSidebar')}
+        newConversationLabel={t('chat.newConversation')}
+        trailingAction={assetAuditButton}
+      />
     );
   }, [
     assetAuditButton,

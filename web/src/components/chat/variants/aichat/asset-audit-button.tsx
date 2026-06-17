@@ -34,6 +34,7 @@ interface AIChatAssetAuditButtonProps {
   conversationId?: string | null;
   enabled?: boolean;
   refreshKey?: string;
+  className?: string;
 }
 
 type BadgeVariant = ComponentProps<typeof Badge>['variant'];
@@ -44,6 +45,7 @@ export function AIChatAssetAuditButton({
   conversationId,
   enabled = true,
   refreshKey,
+  className,
 }: AIChatAssetAuditButtonProps) {
   const t = useT('webapp');
   const [open, setOpen] = useState(false);
@@ -74,7 +76,7 @@ export function AIChatAssetAuditButton({
         type="button"
         variant="ghost"
         isIcon
-        className="relative size-8 text-muted-foreground"
+        className={cn('relative size-8 text-muted-foreground', className)}
         disabled={!canLoad}
         onClick={() => setOpen(true)}
         aria-label={
