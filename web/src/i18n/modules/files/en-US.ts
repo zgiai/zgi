@@ -15,7 +15,7 @@ const messages = {
     needsActionFiles: 'Needs Action',
     uploadedFiles: 'Recently Uploaded',
     favorites: 'Favorites',
-    defaultFolders: 'My Files',
+    defaultFolders: 'Default Folder',
     noFolders: 'No folders yet',
   },
 
@@ -35,7 +35,7 @@ const messages = {
     relatedCount: 'Related {count} items',
     notRelated: 'Not Related',
     folderNotice:
-      'You are currently in the "{name}" folder. To view all files, return to My Files.',
+      'You are currently in the "{name}" folder. To view all files, return to Default Folder.',
     pendingCount: '{count} issue(s)',
     chunkCount: '{count} chunks',
     embeddingCount: '{count} vectors',
@@ -622,8 +622,8 @@ const messages = {
     workspaceRequired: 'Please select an owning workspace',
     storageLocation: 'Storage Location',
     selectFolder: 'Select Folder',
-    defaultFolder: 'My Files',
-    uploadFolderRootHelp: 'Files are stored in My Files when no specific folder is selected.',
+    defaultFolder: 'Default Folder',
+    uploadFolderRootHelp: 'Files are stored in Default Folder when no specific folder is selected.',
     sourceType: 'Source Type',
     processingMode: 'Processing Mode',
     processingModes: {

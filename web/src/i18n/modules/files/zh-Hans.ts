@@ -16,7 +16,7 @@ const messages: FilesMessages = {
     needsActionFiles: '需处理',
     uploadedFiles: '最近上传',
     favorites: '收藏夹',
-    defaultFolders: '我的文件',
+    defaultFolders: '默认文件夹',
     noFolders: '暂无文件夹',
   },
 
@@ -35,7 +35,7 @@ const messages: FilesMessages = {
     totalItems: '共{total}项',
     relatedCount: '已关联{count}条',
     notRelated: '未关联',
-    folderNotice: '当前位于「{name}」文件夹，如果需要查看所有文件，请返回我的文件。',
+    folderNotice: '当前位于「{name}」文件夹，如果需要查看所有文件，请返回默认文件夹。',
     pendingCount: '{count} 项待优化',
     chunkCount: '{count} 个切片',
     embeddingCount: '{count} 个向量',
@@ -589,8 +589,8 @@ const messages: FilesMessages = {
     workspaceRequired: '请选择所属工作空间',
     storageLocation: '存储位置',
     selectFolder: '选择文件夹',
-    defaultFolder: '我的文件',
-    uploadFolderRootHelp: '未选择具体文件夹时，文件会存放在我的文件下。',
+    defaultFolder: '默认文件夹',
+    uploadFolderRootHelp: '未选择具体文件夹时，文件会存放在默认文件夹下。',
     sourceType: '来源类型',
     processingMode: '处理方式',
     processingModes: {

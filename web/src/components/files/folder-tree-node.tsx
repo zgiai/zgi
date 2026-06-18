@@ -40,7 +40,7 @@ export interface FolderTreeNodeProps {
   onItemClick?: (itemId: string) => void;
   expandedFolders: Set<string>;
   onToggleExpand: (folderId: string) => void;
-  maxLevel?: number; // 0-based maximum rendered folder level under My Files.
+  maxLevel?: number; // 0-based maximum rendered folder level under Default Folder.
   variant?: 'sidebar' | 'dialog'; // UI variant
   onCreateChild?: (folder: FileFolder) => void;
   onRename?: (folder: FileFolder) => void;
