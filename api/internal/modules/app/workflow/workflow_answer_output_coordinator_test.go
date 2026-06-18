@@ -465,60 +465,6 @@ func TestAnswerOutputCoordinatorPausedQuestionAnswerDoesNotFailDirectReply(t *te
 	}
 }
 
-func TestAnswerOutputCoordinatorRestoresDirtyPausedQuestionAnswerFailure(t *testing.T) {
-	restoreAnswerCoordinatorConfig(t, 20, nil)
-	original, originalChan := newQuestionAnswerDirectReplyCoordinator(t)
-
-	original.MarkNodeFinished("qa1", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test1"}, nil)
-	assertAnswerMessages(t, originalChan, []string{"test1"})
-
-	variable := firstTestAnswerVariableBySource(t, original, "qa2")
-	variable.sourceFailed = true
-	emitter := original.emitters[answerEmitterKey(answerTopScope(), "answer")]
-	if emitter == nil {
-		t.Fatal("answer emitter not found")
-	}
-	emitter.lifecycle = answerEmitterFailed
-
-	snapshot, _ := original.PreparePauseSnapshot()
-	restored, restoredChan := newQuestionAnswerDirectReplyCoordinator(t)
-	if err := restored.RestorePauseSnapshot(snapshot); err != nil {
-		t.Fatalf("RestorePauseSnapshot() error = %v, want nil", err)
-	}
-
-	restored.MarkNodeFinished("qa2", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test2"}, nil)
-	restored.MarkNodeFinished("qa3", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "222"}, nil)
-	restored.MarkAnswerActive("answer")
-	restored.MarkNodeFinished("answer", "answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test1test2222"}, nil)
-
-	assertAnswerMessages(t, restoredChan, []string{"test2", "222"})
-	if got := restored.FullAnswer(); got != "test1test2222" {
-		t.Fatalf("FullAnswer() = %q, want %q", got, "test1test2222")
-	}
-}
-
-func TestAnswerOutputCoordinatorDoesNotRecoverSkippedVariableAsPausedFailure(t *testing.T) {
-	restoreAnswerCoordinatorConfig(t, 20, nil)
-	coordinator, resultChan := newQuestionAnswerDirectReplyCoordinator(t)
-
-	coordinator.MarkNodeFinished("qa1", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test1"}, nil)
-	assertAnswerMessages(t, resultChan, []string{"test1"})
-
-	variable := firstTestAnswerVariableBySource(t, coordinator, "qa2")
-	variable.sourceSkipped = true
-	emitter := coordinator.emitters[answerEmitterKey(answerTopScope(), "answer")]
-	if emitter == nil {
-		t.Fatal("answer emitter not found")
-	}
-	emitter.lifecycle = answerEmitterFailed
-
-	coordinator.MarkNodeFinished("qa2", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test2"}, nil)
-	assertNoAnswerMessages(t, resultChan)
-	if got := coordinator.FullAnswer(); got != "test1" {
-		t.Fatalf("FullAnswer() = %q, want %q", got, "test1")
-	}
-}
-
 func TestFinalizeWorkflowStreamExecutionKeepsFinalAnswerWhenCoordinatorIncomplete(t *testing.T) {
 	restoreAnswerCoordinatorConfig(t, 20, nil)
 	coordinator, resultChan := newQuestionAnswerDirectReplyCoordinator(t)

@@ -648,38 +648,8 @@ func (c *answerOutputCoordinator) markSourceNodeFinishedLocked(scope answerOutpu
 			variable.chunks = nil
 			continue
 		}
-		if variable.sourceSkipped {
-			continue
-		}
-		wasFailed := variable.sourceFailed
-		variable.sourceFailed = false
-		if wasFailed {
-			variable.finalizedSegment = false
-			c.recoverFailedEmitterForVariableLocked(variable)
-		}
 		variable.hasFinal = true
 		variable.finalValue = renderAnswerVariableOutput(variable.selector, outputs)
-	}
-}
-
-func (c *answerOutputCoordinator) recoverFailedEmitterForVariableLocked(variable *answerVariableState) {
-	if c == nil || variable == nil {
-		return
-	}
-	for _, emitter := range c.emitters {
-		if emitter == nil || emitter.lifecycle != answerEmitterFailed {
-			continue
-		}
-		if emitter.currentIndex >= len(emitter.segments) {
-			continue
-		}
-		segment := emitter.segments[emitter.currentIndex]
-		if segment.kind != answerSegmentVariable || segment.stateKey != variable.stateKey {
-			continue
-		}
-		emitter.lifecycle = answerEmitterEligible
-		emitter.drained = false
-		emitter.batchBarrierPassed = false
 	}
 }
 
