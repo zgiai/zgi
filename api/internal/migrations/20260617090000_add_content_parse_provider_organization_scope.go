@@ -28,7 +28,6 @@ func upAddContentParseProviderOrganizationScope(schema *mschema.Builder) error {
 }
 
 func downAddContentParseProviderOrganizationScope(schema *mschema.Builder) error {
-	schema.AllowDestructive()
 	if err := schema.Raw(`DROP INDEX IF EXISTS public.uq_content_parse_provider_configs_org_provider`); err != nil {
 		return err
 	}
