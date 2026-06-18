@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	chunkexecutor "github.com/zgiai/zgi/api/internal/capabilities/chunking/executor"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
@@ -188,7 +189,7 @@ func (h *PlaygroundHandler) executePlaygroundParse(c *gin.Context, fileHeader *m
 		return nil, &playgroundRequestError{code: response.ErrInvalidParam, err: err}
 	}
 
-	artifact, executedReq, executedCandidate, duration, err := h.executeRoutePlan(c, plan, effectiveReq)
+	artifact, executedReq, executedCandidate, duration, err := h.executeRoutePlan(c, catalog, plan, effectiveReq)
 	if err != nil {
 		return nil, &playgroundRequestError{code: response.ErrSystemError, err: err}
 	}
@@ -248,7 +249,7 @@ func (h *PlaygroundHandler) executePlaygroundParse(c *gin.Context, fileHeader *m
 	}, nil
 }
 
-func (h *PlaygroundHandler) executeRoutePlan(c *gin.Context, plan *routing.RoutePlan, req contracts.ParseRequest) (*contracts.ParseArtifact, contracts.ParseRequest, routing.RouteCandidate, time.Duration, error) {
+func (h *PlaygroundHandler) executeRoutePlan(c *gin.Context, catalog *contracts.ParseProviderCatalog, plan *routing.RoutePlan, req contracts.ParseRequest) (*contracts.ParseArtifact, contracts.ParseRequest, routing.RouteCandidate, time.Duration, error) {
 	candidates := routePlanExecutionCandidates(plan)
 	if len(candidates) == 0 {
 		return nil, req, routing.RouteCandidate{}, 0, fmt.Errorf("content parse route plan has no executable provider")
@@ -268,7 +269,13 @@ func (h *PlaygroundHandler) executeRoutePlan(c *gin.Context, plan *routing.Route
 		}
 
 		attemptStartedAt := time.Now()
-		artifact, err := h.orchestrator.ParseWithAdapter(c.Request.Context(), adapterName, attemptReq)
+		envOverrides := service.RuntimeEnvOverridesForCandidate(catalog, candidate)
+		var artifact *contracts.ParseArtifact
+		err := envconfig.WithOverridesResult(envOverrides, func() error {
+			var parseErr error
+			artifact, parseErr = h.orchestrator.ParseWithAdapter(c.Request.Context(), adapterName, attemptReq)
+			return parseErr
+		})
 		attempt := map[string]any{
 			"provider_key": candidate.ProviderKey,
 			"adapter_name": adapterName,

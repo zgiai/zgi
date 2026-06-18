@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	contentparseservice "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
@@ -273,7 +274,7 @@ func (r *FileProcessRunner) parseFile(ctx context.Context, req contracts.ParseRe
 	if err != nil {
 		return nil, nil, err
 	}
-	artifact, err := r.executeRoutePlan(ctx, effectiveReq, plan)
+	artifact, err := r.executeRoutePlan(ctx, effectiveReq, plan, catalog)
 	return artifact, plan, err
 }
 
@@ -290,7 +291,13 @@ func (r *FileProcessRunner) resolveProviderCatalog(ctx context.Context, request 
 			workspaceID = &parsed
 		}
 	}
-	catalog, _, err := r.providerCatalogs.Resolve(ctx, workspaceID)
+	var organizationID *uuid.UUID
+	if request != nil {
+		if parsed, err := uuid.Parse(strings.TrimSpace(request.OrganizationID)); err == nil {
+			organizationID = &parsed
+		}
+	}
+	catalog, _, err := r.providerCatalogs.Resolve(ctx, organizationID, workspaceID)
 	return catalog, err
 }
 
@@ -331,7 +338,7 @@ func (r *FileProcessRunner) planParseRequest(req contracts.ParseRequest, provide
 	return nil, req, fmt.Errorf("unknown content parse provider %q", provider)
 }
 
-func (r *FileProcessRunner) executeRoutePlan(ctx context.Context, req contracts.ParseRequest, plan *routing.RoutePlan) (*contracts.ParseArtifact, error) {
+func (r *FileProcessRunner) executeRoutePlan(ctx context.Context, req contracts.ParseRequest, plan *routing.RoutePlan, catalog *contracts.ParseProviderCatalog) (*contracts.ParseArtifact, error) {
 	if plan == nil || plan.Primary == nil {
 		return r.contentParse.Parse(ctx, req)
 	}
@@ -355,7 +362,13 @@ func (r *FileProcessRunner) executeRoutePlan(ctx context.Context, req contracts.
 		if candidate.EngineName != "" {
 			attemptReq.EngineHint = candidate.EngineName
 		}
-		artifact, err := r.contentParseOrchestrator.ParseWithAdapter(ctx, adapterName, attemptReq)
+		envOverrides := contentparseservice.RuntimeEnvOverridesForCandidate(catalog, candidate)
+		var artifact *contracts.ParseArtifact
+		err := envconfig.WithOverridesResult(envOverrides, func() error {
+			var parseErr error
+			artifact, parseErr = r.contentParseOrchestrator.ParseWithAdapter(ctx, adapterName, attemptReq)
+			return parseErr
+		})
 		if err != nil {
 			lastErr = err
 			continue

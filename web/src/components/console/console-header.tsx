@@ -88,6 +88,10 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
         title: tDash('items.modelSettings'),
       },
       {
+        match: path => path.startsWith('/dashboard/settings/parsers'),
+        title: tDash('items.parserSettings'),
+      },
+      {
         match: path => path.startsWith('/dashboard/market'),
         title: tDash('items.marketplace'),
       },

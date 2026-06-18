@@ -8,8 +8,11 @@ import type {
   ContentParsePlaygroundParseResponse,
   ContentParsePlaygroundProviderSummaryResponse,
   ContentParsePlaygroundProvidersResponse,
+  ParserSettingsListResponse,
   ContentParsePlaygroundRunsResponse,
   ContentParsePlaygroundSaveResponse,
+  ParserSettingsProviderKey,
+  UpsertParserSettingsRequest,
 } from './types/content-parse';
 
 class ContentParseService extends BaseService {
@@ -24,6 +27,17 @@ class ContentParseService extends BaseService {
   > {
     const query = new URLSearchParams({ file_name: fileName }).toString();
     return this.request('get', `/console/api/content-parse/file-route/providers?${query}`);
+  }
+
+  async listParserSettings(): Promise<ApiResponseData<ParserSettingsListResponse>> {
+    return this.request('get', '/console/api/content-parse/provider-settings');
+  }
+
+  async upsertParserSettings(
+    provider: ParserSettingsProviderKey,
+    payload: UpsertParserSettingsRequest
+  ): Promise<ApiResponseData<ParserSettingsListResponse['items'][number]>> {
+    return this.request('put', `/console/api/content-parse/provider-settings/${provider}`, payload);
   }
 
   async parsePlayground(

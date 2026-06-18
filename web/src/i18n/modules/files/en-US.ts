@@ -441,8 +441,7 @@ const messages = {
     },
     qa: {
       title: 'Document Q&A',
-      description:
-        'Retrieves secondary chunks, expands to primary chunks, and answers only from this document.',
+      description: 'Answers questions based on the current document.',
       notReadyTitle: 'Document Q&A is not ready',
       notReadyDescription:
         'Ask questions after parsing finishes and secondary chunk vectors are available.',
@@ -473,6 +472,7 @@ const messages = {
         'Parsers nearer the top are usually stronger. Disabled items are not configured or failed health checks. If the result is poor, configure MinerU or Reducto and try a stronger parser.',
       providerReady: 'Available now',
       providerUnavailable: 'Unavailable now',
+      configureProvider: 'Click here to configure and enable',
       noAvailableProvider: 'No available parser',
       confirm: 'Reparse',
       toasts: {

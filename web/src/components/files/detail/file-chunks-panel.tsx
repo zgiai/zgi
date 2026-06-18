@@ -876,10 +876,9 @@ function SecondaryChunkRow({
         </div>
       </div>
       <div className="mt-3 rounded-lg border border-border bg-background p-3 shadow-sm">
-        <MarkdownViewer
-          content={chunk.content}
-          className="max-h-32 min-w-0 flex-1 overflow-hidden text-sm leading-6 text-foreground [&_img]:max-h-24 [&_img]:rounded-md"
-        />
+        <div className="max-h-32 min-w-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
+          {chunk.content}
+        </div>
       </div>
     </div>
   );

@@ -11,8 +11,9 @@ import (
 type ProviderConfigRepository interface {
 	Create(ctx context.Context, item *model.ProviderConfig) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.ProviderConfig, error)
-	GetByScopeAndKey(ctx context.Context, scope string, workspaceID *uuid.UUID, providerKey string) (*model.ProviderConfig, error)
-	ListByScope(ctx context.Context, scope string, workspaceID *uuid.UUID) ([]*model.ProviderConfig, error)
+	GetByScopeAndKey(ctx context.Context, scope string, organizationID, workspaceID *uuid.UUID, providerKey string) (*model.ProviderConfig, error)
+	ListByScope(ctx context.Context, scope string, organizationID, workspaceID *uuid.UUID) ([]*model.ProviderConfig, error)
+	UpsertByScopeAndKey(ctx context.Context, item *model.ProviderConfig) error
 	Update(ctx context.Context, item *model.ProviderConfig) error
 	Delete(ctx context.Context, id uuid.UUID) error
 }
@@ -41,9 +42,14 @@ func (r *providerConfigRepository) GetByID(ctx context.Context, id uuid.UUID) (*
 	return &item, nil
 }
 
-func (r *providerConfigRepository) GetByScopeAndKey(ctx context.Context, scope string, workspaceID *uuid.UUID, providerKey string) (*model.ProviderConfig, error) {
+func (r *providerConfigRepository) GetByScopeAndKey(ctx context.Context, scope string, organizationID, workspaceID *uuid.UUID, providerKey string) (*model.ProviderConfig, error) {
 	var item model.ProviderConfig
 	query := r.db.WithContext(ctx).Where("scope = ? AND provider_key = ?", scope, providerKey)
+	if organizationID == nil {
+		query = query.Where("organization_id IS NULL")
+	} else {
+		query = query.Where("organization_id = ?", *organizationID)
+	}
 	if workspaceID == nil {
 		query = query.Where("workspace_id IS NULL")
 	} else {
@@ -59,9 +65,14 @@ func (r *providerConfigRepository) GetByScopeAndKey(ctx context.Context, scope s
 	return &item, nil
 }
 
-func (r *providerConfigRepository) ListByScope(ctx context.Context, scope string, workspaceID *uuid.UUID) ([]*model.ProviderConfig, error) {
+func (r *providerConfigRepository) ListByScope(ctx context.Context, scope string, organizationID, workspaceID *uuid.UUID) ([]*model.ProviderConfig, error) {
 	var items []*model.ProviderConfig
 	query := r.db.WithContext(ctx).Where("scope = ?", scope)
+	if organizationID == nil {
+		query = query.Where("organization_id IS NULL")
+	} else {
+		query = query.Where("organization_id = ?", *organizationID)
+	}
 	if workspaceID == nil {
 		query = query.Where("workspace_id IS NULL")
 	} else {
@@ -69,6 +80,22 @@ func (r *providerConfigRepository) ListByScope(ctx context.Context, scope string
 	}
 	err := query.Order("priority ASC, created_at DESC").Find(&items).Error
 	return items, err
+}
+
+func (r *providerConfigRepository) UpsertByScopeAndKey(ctx context.Context, item *model.ProviderConfig) error {
+	if item == nil {
+		return nil
+	}
+	existing, err := r.GetByScopeAndKey(ctx, item.Scope, item.OrganizationID, item.WorkspaceID, item.ProviderKey)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return r.Create(ctx, item)
+	}
+	item.ID = existing.ID
+	item.CreatedAt = existing.CreatedAt
+	return r.Update(ctx, item)
 }
 
 func (r *providerConfigRepository) Update(ctx context.Context, item *model.ProviderConfig) error {

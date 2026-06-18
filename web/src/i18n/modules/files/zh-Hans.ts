@@ -423,7 +423,7 @@ const messages: FilesMessages = {
     },
     qa: {
       title: '文档问答',
-      description: '基于当前文档的二级切片召回一级切片，并只依据召回内容回答。',
+      description: '根据当前文档回答问题。',
       notReadyTitle: '文档问答尚未就绪',
       notReadyDescription: '需要文件解析完成，并生成可用的二级切片向量后才能提问。',
       chunkSummary: '{count} 个切片',
@@ -452,6 +452,7 @@ const messages: FilesMessages = {
         '列表越靠上通常解析能力越强；灰色项表示当前未配置或健康检查不可用。如果解析效果不理想，可以配置 MinerU 或 Reducto 后选择更好的解析器。',
       providerReady: '当前可用',
       providerUnavailable: '当前不可用',
+      configureProvider: '点击此处，配置后可用',
       noAvailableProvider: '暂无可用解析器',
       confirm: '重新解析',
       toasts: {

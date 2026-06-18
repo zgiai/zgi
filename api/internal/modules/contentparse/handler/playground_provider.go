@@ -17,7 +17,11 @@ func (h *PlaygroundHandler) catalogForRequest(c *gin.Context) (*contracts.ParseP
 		return nil, "", errors.New("content parse playground is not initialized")
 	}
 	if h.catalogs != nil {
-		return h.catalogs.Resolve(c.Request.Context(), parseContextUUID(c, "workspace_id", "tenant_id"))
+		return h.catalogs.Resolve(
+			c.Request.Context(),
+			parseContextUUID(c, "organization_id", "tenant_id"),
+			parseContextUUID(c, "workspace_id", "tenant_id"),
+		)
 	}
 	if h.catalog == nil {
 		return nil, "", errors.New("content parse provider catalog is empty")

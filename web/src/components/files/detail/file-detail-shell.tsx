@@ -118,6 +118,10 @@ function parseProviderTranslationPath(provider: string) {
   return `upload.parseProviders.${parseProviderTranslationKey(provider)}` as never;
 }
 
+function isConfigurableParserProvider(provider: FileParseProviderKey): provider is 'mineru' | 'reducto' {
+  return provider === 'mineru' || provider === 'reducto';
+}
+
 type WorkbenchStepState = 'done' | 'active' | 'attention' | 'failed' | 'blocked' | 'pending';
 
 function getWorkbenchStepStates(
@@ -410,6 +414,7 @@ function ReparseDialog({
   onOpenChange,
   provider,
   onProviderChange,
+  onConfigureProvider,
   onConfirm,
   loading,
   providers,
@@ -419,6 +424,7 @@ function ReparseDialog({
   onOpenChange: (open: boolean) => void;
   provider: FileParseProviderKey;
   onProviderChange: (provider: FileParseProviderKey) => void;
+  onConfigureProvider: (provider: 'mineru' | 'reducto') => void;
   onConfirm: () => void;
   loading: boolean;
   providers: ContentParseFileRouteProviderStatus[];
@@ -428,6 +434,15 @@ function ReparseDialog({
   const hasProviders = providers.length > 0;
   const selectedProvider = providers.find(item => item.key === provider);
   const canConfirm = Boolean(selectedProvider?.selectable);
+  const handleProviderChange = (value: string) => {
+    const nextProvider = value as FileParseProviderKey;
+    const nextItem = providers.find(item => item.key === nextProvider);
+    if (!nextItem?.selectable && isConfigurableParserProvider(nextProvider)) {
+      onConfigureProvider(nextProvider);
+      return;
+    }
+    onProviderChange(nextProvider);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -445,7 +460,7 @@ function ReparseDialog({
             <Label className="text-sm font-semibold">{t('detail.reparse.providerLabel')}</Label>
             <Select
               value={provider}
-              onValueChange={value => onProviderChange(value as FileParseProviderKey)}
+              onValueChange={handleProviderChange}
               disabled={providersLoading || !hasProviders}
             >
               <SelectTrigger className="bg-background">
@@ -458,25 +473,35 @@ function ReparseDialog({
                 />
               </SelectTrigger>
               <SelectContent>
-                {providers.map(item => (
-                  <SelectItem
-                    key={item.key}
-                    value={item.key}
-                    disabled={!item.selectable}
-                    className="py-2"
-                  >
-                    <div className="flex min-w-0 flex-col gap-0.5">
-                      <span className="truncate">
-                        {t(parseProviderTranslationPath(item.key))}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {item.selectable
-                          ? t('detail.reparse.providerReady')
-                          : item.reason || t('detail.reparse.providerUnavailable')}
-                      </span>
-                    </div>
-                  </SelectItem>
-                ))}
+                {providers.map(item => {
+                  const configurable = isConfigurableParserProvider(item.key);
+                  return (
+                    <SelectItem
+                      key={item.key}
+                      value={item.key}
+                      disabled={!item.selectable && !configurable}
+                      className="py-2"
+                    >
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        <span className="truncate">
+                          {t(parseProviderTranslationPath(item.key))}
+                        </span>
+                        {item.selectable || !configurable ? (
+                          <span className="truncate text-xs text-muted-foreground">
+                            {item.selectable
+                              ? t('detail.reparse.providerReady')
+                              : item.reason || t('detail.reparse.providerUnavailable')}
+                          </span>
+                        ) : null}
+                        {!item.selectable && configurable ? (
+                          <span className="text-xs font-medium text-primary">
+                            {t('detail.reparse.configureProvider')}
+                          </span>
+                        ) : null}
+                      </div>
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             <p className="text-xs leading-5 text-muted-foreground">
@@ -674,6 +699,12 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       force: false,
       parse_provider: selectedReparseProvider,
     });
+  };
+  const handleConfigureParser = (provider: 'mineru' | 'reducto') => {
+    const returnTo = `${window.location.pathname}${window.location.search}`;
+    router.push(
+      `/dashboard/settings/parsers?provider=${provider}&returnTo=${encodeURIComponent(returnTo)}`
+    );
   };
 
   useEffect(() => {
@@ -896,6 +927,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         onOpenChange={setReparseConfirmOpen}
         provider={selectedReparseProvider}
         onProviderChange={setSelectedReparseProvider}
+        onConfigureProvider={handleConfigureParser}
         providers={reparseProviders}
         providersLoading={providerStatusQuery.isLoading || providerStatusQuery.isFetching}
         onConfirm={() => {

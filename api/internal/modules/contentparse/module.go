@@ -11,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmcrypto "github.com/zgiai/zgi/api/internal/modules/llm/shared/crypto"
 	"gorm.io/gorm"
 )
 
@@ -32,6 +33,7 @@ type Module struct {
 	RunQueryService      service.RunQueryService
 	PlaygroundRunService service.PlaygroundRunService
 	ProviderCatalogs     service.ProviderCatalogResolver
+	ProviderSettings     service.ProviderSettingsService
 
 	ContentParseService contracts.ContentParseService
 	Orchestrator        *contentparsecap.Orchestrator
@@ -44,6 +46,7 @@ type Module struct {
 	ArtifactHandler   *handler.ArtifactHandler
 	RunHandler        *handler.RunHandler
 	PlaygroundHandler *handler.PlaygroundHandler
+	SettingsHandler   *handler.ProviderSettingsHandler
 }
 
 type ModuleOption func(*moduleOptions)
@@ -96,7 +99,9 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 		capabilityOptions = append(capabilityOptions, contentparsecap.WithProviderOverrides(contentparsecap.SystemVLMProviderConfig(opts.systemVLMAvailable)))
 	}
 	capabilityModule := contentparsecap.NewModule(capabilityOptions...)
-	providerCatalogs := service.NewProviderCatalogResolver(providerConfigRepo, capabilityModule.Catalog)
+	cryptoService, _ := llmcrypto.DefaultCryptoService()
+	providerCatalogs := service.NewProviderCatalogResolver(providerConfigRepo, capabilityModule.Catalog, cryptoService)
+	providerSettings := service.NewProviderSettingsService(providerConfigRepo, cryptoService)
 	playgroundHandler := handler.NewPlaygroundHandler(capabilityModule, playgroundRunService)
 	if playgroundHandler != nil {
 		playgroundHandler.SetProviderCatalogResolver(providerCatalogs)
@@ -120,6 +125,7 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 		RunQueryService:      runQueryService,
 		PlaygroundRunService: playgroundRunService,
 		ProviderCatalogs:     providerCatalogs,
+		ProviderSettings:     providerSettings,
 
 		ContentParseService: capabilityModule.Service,
 		Orchestrator:        capabilityModule.Orchestrator,
@@ -132,6 +138,7 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 		ArtifactHandler:   handler.NewArtifactHandler(artifactService),
 		RunHandler:        handler.NewRunHandler(runQueryService, artifactService),
 		PlaygroundHandler: playgroundHandler,
+		SettingsHandler:   handler.NewProviderSettingsHandler(providerSettings),
 	}
 }
 
@@ -151,9 +158,14 @@ func (m *Module) RegisterInternalRoutes(rg *gin.RouterGroup) {
 }
 
 func (m *Module) RegisterPlaygroundRoutes(rg *gin.RouterGroup) {
-	if m == nil || m.PlaygroundHandler == nil {
+	if m == nil {
 		return
 	}
 	group := rg.Group("/content-parse")
-	m.PlaygroundHandler.RegisterRoutes(group)
+	if m.PlaygroundHandler != nil {
+		m.PlaygroundHandler.RegisterRoutes(group)
+	}
+	if m.SettingsHandler != nil {
+		m.SettingsHandler.RegisterRoutes(group)
+	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/model"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
+	llmcrypto "github.com/zgiai/zgi/api/internal/modules/llm/shared/crypto"
 )
 
 const (
@@ -19,22 +20,28 @@ const (
 )
 
 type ProviderCatalogResolver interface {
-	Resolve(ctx context.Context, workspaceID *uuid.UUID) (*contracts.ParseProviderCatalog, string, error)
+	Resolve(ctx context.Context, organizationID, workspaceID *uuid.UUID) (*contracts.ParseProviderCatalog, string, error)
 }
 
 type providerCatalogResolver struct {
 	repo     repository.ProviderConfigRepository
 	fallback *contracts.ParseProviderCatalog
+	crypto   llmcrypto.CryptoService
 }
 
-func NewProviderCatalogResolver(repo repository.ProviderConfigRepository, fallback *contracts.ParseProviderCatalog) ProviderCatalogResolver {
+func NewProviderCatalogResolver(repo repository.ProviderConfigRepository, fallback *contracts.ParseProviderCatalog, crypto ...llmcrypto.CryptoService) ProviderCatalogResolver {
+	var cryptoService llmcrypto.CryptoService
+	if len(crypto) > 0 {
+		cryptoService = crypto[0]
+	}
 	return &providerCatalogResolver{
 		repo:     repo,
 		fallback: cloneParseProviderCatalog(fallback),
+		crypto:   cryptoService,
 	}
 }
 
-func (s *providerCatalogResolver) Resolve(ctx context.Context, workspaceID *uuid.UUID) (*contracts.ParseProviderCatalog, string, error) {
+func (s *providerCatalogResolver) Resolve(ctx context.Context, organizationID, workspaceID *uuid.UUID) (*contracts.ParseProviderCatalog, string, error) {
 	if s == nil {
 		return &contracts.ParseProviderCatalog{}, ProviderCatalogSourceDefault, nil
 	}
@@ -43,18 +50,25 @@ func (s *providerCatalogResolver) Resolve(ctx context.Context, workspaceID *uuid
 		return base, ProviderCatalogSourceDefault, nil
 	}
 
-	systemItems, err := s.repo.ListByScope(ctx, "system", nil)
+	systemItems, err := s.repo.ListByScope(ctx, "system", nil, nil)
 	if err != nil {
 		return localOnlyProviderCatalog(base), ProviderCatalogSourceDatabaseFallback, nil
 	}
-	workspaceItems := []*model.ProviderConfig{}
-	if workspaceID != nil {
-		workspaceItems, err = s.repo.ListByScope(ctx, "workspace", workspaceID)
+	organizationItems := []*model.ProviderConfig{}
+	if organizationID != nil {
+		organizationItems, err = s.repo.ListByScope(ctx, "organization", organizationID, nil)
 		if err != nil {
 			return localOnlyProviderCatalog(base), ProviderCatalogSourceDatabaseFallback, nil
 		}
 	}
-	if len(systemItems) == 0 && len(workspaceItems) == 0 {
+	workspaceItems := []*model.ProviderConfig{}
+	if workspaceID != nil {
+		workspaceItems, err = s.repo.ListByScope(ctx, "workspace", nil, workspaceID)
+		if err != nil {
+			return localOnlyProviderCatalog(base), ProviderCatalogSourceDatabaseFallback, nil
+		}
+	}
+	if len(systemItems) == 0 && len(organizationItems) == 0 && len(workspaceItems) == 0 {
 		return base, ProviderCatalogSourceDefault, nil
 	}
 
@@ -62,8 +76,9 @@ func (s *providerCatalogResolver) Resolve(ctx context.Context, workspaceID *uuid
 	for _, provider := range base.Providers {
 		index[provider.Name] = provider
 	}
-	applyProviderConfigItems(index, systemItems, base)
-	applyProviderConfigItems(index, workspaceItems, base)
+	applyProviderConfigItems(index, systemItems, base, s.crypto)
+	applyProviderConfigItems(index, organizationItems, base, s.crypto)
+	applyProviderConfigItems(index, workspaceItems, base, s.crypto)
 
 	out := &contracts.ParseProviderCatalog{Providers: make([]contracts.ParseProviderConfig, 0, len(index))}
 	for _, provider := range index {
@@ -93,7 +108,7 @@ func localOnlyProviderCatalog(catalog *contracts.ParseProviderCatalog) *contract
 	return out
 }
 
-func applyProviderConfigItems(index map[string]contracts.ParseProviderConfig, items []*model.ProviderConfig, fallback *contracts.ParseProviderCatalog) {
+func applyProviderConfigItems(index map[string]contracts.ParseProviderConfig, items []*model.ProviderConfig, fallback *contracts.ParseProviderCatalog, crypto llmcrypto.CryptoService) {
 	for _, item := range items {
 		if item == nil {
 			continue
@@ -103,11 +118,11 @@ func applyProviderConfigItems(index map[string]contracts.ParseProviderConfig, it
 			continue
 		}
 		base := index[key]
-		index[key] = providerConfigToCatalogItem(item, base, fallback)
+		index[key] = providerConfigToCatalogItem(item, base, fallback, crypto)
 	}
 }
 
-func providerConfigToCatalogItem(item *model.ProviderConfig, base contracts.ParseProviderConfig, fallback *contracts.ParseProviderCatalog) contracts.ParseProviderConfig {
+func providerConfigToCatalogItem(item *model.ProviderConfig, base contracts.ParseProviderConfig, fallback *contracts.ParseProviderCatalog, crypto llmcrypto.CryptoService) contracts.ParseProviderConfig {
 	out := base
 	if out.Name == "" {
 		out.Name = strings.TrimSpace(item.ProviderKey)
@@ -140,6 +155,9 @@ func providerConfigToCatalogItem(item *model.ProviderConfig, base contracts.Pars
 	if item.WorkspaceID != nil {
 		out.Metadata["workspace_id"] = item.WorkspaceID.String()
 	}
+	if item.OrganizationID != nil {
+		out.Metadata["organization_id"] = item.OrganizationID.String()
+	}
 	if apiKeyEnv := metadataString(out.Metadata, "api_key_env"); apiKeyEnv != "" {
 		out.APIKeyEnv = apiKeyEnv
 	}
@@ -147,15 +165,29 @@ func providerConfigToCatalogItem(item *model.ProviderConfig, base contracts.Pars
 		out.FallbackOnly = fallbackOnly
 	}
 
-	runtimeReady := providerRuntimeReady(out, fallback)
+	envOverrides := providerRuntimeEnvOverrides(item, out, crypto)
+	if len(envOverrides) > 0 {
+		out.Metadata["env_overrides"] = envOverrides
+	}
+	runtimeReady := providerRuntimeReady(item, out, fallback, envOverrides)
 	out.Metadata["runtime_configured"] = runtimeReady
 	out.Enabled = item.Enabled && runtimeReady
 	return out
 }
 
-func providerRuntimeReady(provider contracts.ParseProviderConfig, fallback *contracts.ParseProviderCatalog) bool {
+func providerRuntimeReady(item *model.ProviderConfig, provider contracts.ParseProviderConfig, fallback *contracts.ParseProviderCatalog, envOverrides map[string]string) bool {
 	if provider.Engine == contracts.ParseEngineLocal || provider.Name == "local" {
 		return true
+	}
+	if provider.Name == "reducto" || provider.Engine == contracts.ParseEngineReducto {
+		return strings.TrimSpace(envOverrides["REDUCTO_API_KEY"]) != ""
+	}
+	if provider.Name == "mineru" || provider.Engine == contracts.ParseEngineMineru {
+		mode := strings.ToLower(strings.TrimSpace(metadataString(item.Metadata, "mode")))
+		if mode == "official" {
+			return strings.TrimSpace(envOverrides["MINERU_OFFICIAL_TOKEN"]) != ""
+		}
+		return strings.TrimSpace(envOverrides["MINERU_API_URL"]) != ""
 	}
 	for _, item := range safeProviderCatalog(fallback).Providers {
 		if item.Name == provider.Name {
@@ -163,6 +195,83 @@ func providerRuntimeReady(provider contracts.ParseProviderConfig, fallback *cont
 		}
 	}
 	return provider.Adapter != "" && provider.Engine == contracts.ParseEngineLocal
+}
+
+func providerRuntimeEnvOverrides(item *model.ProviderConfig, provider contracts.ParseProviderConfig, crypto llmcrypto.CryptoService) map[string]string {
+	overrides := map[string]string{}
+	if item == nil {
+		return overrides
+	}
+	switch strings.ToLower(strings.TrimSpace(item.ProviderKey)) {
+	case "reducto":
+		overrides["REDUCTO_ENABLED"] = boolString(item.Enabled)
+		if item.BaseURL != "" {
+			overrides["REDUCTO_BASE_URL"] = strings.TrimRight(strings.TrimSpace(item.BaseURL), "/")
+		}
+		if item.TimeoutSec > 0 {
+			overrides["REDUCTO_TIMEOUT_SECONDS"] = fmt.Sprint(item.TimeoutSec)
+		}
+		if value := decryptCredential(item.CredentialsCiphertext, "api_key", crypto); value != "" {
+			overrides["REDUCTO_API_KEY"] = value
+		}
+	case "mineru":
+		mode := strings.ToLower(strings.TrimSpace(metadataString(item.Metadata, "mode")))
+		if mode == "" {
+			mode = "sidecar"
+		}
+		overrides["MINERU_MODE"] = mode
+		if item.BaseURL != "" {
+			if mode == "official" {
+				overrides["MINERU_OFFICIAL_BASE_URL"] = strings.TrimRight(strings.TrimSpace(item.BaseURL), "/")
+			} else {
+				overrides["MINERU_API_URL"] = strings.TrimRight(strings.TrimSpace(item.BaseURL), "/")
+			}
+		}
+		if item.TimeoutSec > 0 {
+			if mode == "official" {
+				overrides["MINERU_OFFICIAL_TIMEOUT_SECONDS"] = fmt.Sprint(item.TimeoutSec)
+			} else {
+				overrides["MINERU_TIMEOUT_SECONDS"] = fmt.Sprint(item.TimeoutSec)
+			}
+		}
+		if mode == "official" {
+			if value := decryptCredential(item.CredentialsCiphertext, "official_token", crypto); value != "" {
+				overrides["MINERU_OFFICIAL_TOKEN"] = value
+			}
+			if value := metadataString(item.Metadata, "official_model_version"); value != "" {
+				overrides["MINERU_OFFICIAL_MODEL_VERSION"] = value
+			}
+			if value := metadataString(item.Metadata, "official_poll_interval_seconds"); value != "" {
+				overrides["MINERU_OFFICIAL_POLL_INTERVAL_SECONDS"] = value
+			}
+		}
+	}
+	return overrides
+}
+
+func decryptCredential(credentials map[string]any, key string, crypto llmcrypto.CryptoService) string {
+	if len(credentials) == 0 {
+		return ""
+	}
+	raw := metadataString(credentials, key)
+	if raw == "" {
+		return ""
+	}
+	if crypto == nil {
+		return ""
+	}
+	plaintext, err := crypto.Decrypt(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(plaintext)
+}
+
+func boolString(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
 
 func cloneParseProviderCatalog(catalog *contracts.ParseProviderCatalog) *contracts.ParseProviderCatalog {

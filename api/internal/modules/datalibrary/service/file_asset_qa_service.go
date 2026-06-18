@@ -453,7 +453,7 @@ func (s *fileAssetQAService) buildAnswerRequest(ctx context.Context, asset *mode
 		Messages: []llmadapter.Message{
 			{
 				Role:    "system",
-				Content: "你是文档问答助手。只能依据提供的文档片段回答问题；如果片段中没有依据，回答“未在文档中找到相关信息”。回答应简洁，并在必要时说明依据来自哪些切片编号。",
+				Content: "你是文档问答助手。只能依据提供的文档片段回答问题；如果片段中没有依据，回答“未在文档中找到相关信息”。回答应简洁，只输出答案正文，不要在回答末尾附加“依据来源”、切片编号或引用列表。",
 			},
 			{
 				Role:    "user",
