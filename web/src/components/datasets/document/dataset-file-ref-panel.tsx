@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { CheckCircle2, ExternalLink, FileText, RefreshCcw, Trash2 } from 'lucide-react';
+import { CheckCircle2, ExternalLink, FileText, HelpCircle, RefreshCcw, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Table,
   TableBody,
@@ -119,7 +120,25 @@ export function DatasetFileRefPanel({
           <TableRow className="hover:bg-muted/40">
             <TableHead className="text-sm">{t('documents.fileRefs.fileName')}</TableHead>
             <TableHead className="text-sm">{t('documents.fileRefs.fileStatus')}</TableHead>
-            <TableHead className="text-sm">{t('documents.fileRefs.enabled')}</TableHead>
+            <TableHead className="text-sm">
+              <div className="flex items-center gap-1.5">
+                <span>{t('documents.fileRefs.enabled')}</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                      aria-label={t('documents.fileRefs.enabledTooltip')}
+                    >
+                      <HelpCircle className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="start" className="max-w-72 text-sm leading-6">
+                    {t('documents.fileRefs.enabledTooltip')}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </TableHead>
             <TableHead className="text-sm">{t('documents.fileRefs.chunks')}</TableHead>
             <TableHead className="text-sm">{t('documents.fileRefs.lastSyncedAt')}</TableHead>
             <TableHead className="text-right text-sm">{t('documents.fileRefs.actions')}</TableHead>

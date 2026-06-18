@@ -928,6 +928,7 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 		req.Keyword,
 		req.Sort,
 		req.Extension,
+		req.ProcessingStatus,
 		&req.StartTime,
 		&req.EndTime,
 		organizationID,
@@ -1124,6 +1125,7 @@ func (h *FileResourceHandler) ListRecentFiles(c *gin.Context) {
 		req.Keyword,
 		req.Sort,
 		req.Extension,
+		req.ProcessingStatus,
 		&req.StartTime,
 		&req.EndTime,
 		organizationID,
@@ -1170,6 +1172,24 @@ func (h *FileResourceHandler) ListRecentFiles(c *gin.Context) {
 		}
 	}
 
+	assetSummaries := map[string]datalibraryservice.FileAssetSummaryView{}
+	if h.assetSummaryService != nil {
+		assetSummaries, err = h.assetSummaryService.ListCurrentFileAssetSummaries(c.Request.Context(), datalibraryservice.FileAssetSummaryListInput{
+			OrganizationID: organizationID,
+			SourceFileIDs:  fileIDs,
+		})
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "failed to batch get recent file asset processing summaries",
+				err,
+				zap.String("account_id", accountID),
+				zap.String("tenant_id", organizationID),
+				zap.Int("file_count", len(fileIDs)),
+			)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+	}
+
 	fileResponses := make([]dto.UploadFile, len(files))
 	for i, file := range files {
 		// Convert model to DTO
@@ -1199,6 +1219,10 @@ func (h *FileResourceHandler) ListRecentFiles(c *gin.Context) {
 			fileResponse.RelatedDatasetCount = relatedDatasetCount
 			// Set the generic related count field, currently equal to dataset count
 			fileResponse.RelatedCount = relatedDatasetCount
+		}
+
+		if summary, exists := assetSummaries[file.ID]; exists {
+			applyFileAssetSummaryToUploadFile(&fileResponse, summary)
 		}
 
 		fileResponses[i] = fileResponse
@@ -1298,6 +1322,24 @@ func (h *FileResourceHandler) ListFavoriteFiles(c *gin.Context) {
 		return
 	}
 
+	assetSummaries := map[string]datalibraryservice.FileAssetSummaryView{}
+	if h.assetSummaryService != nil {
+		assetSummaries, err = h.assetSummaryService.ListCurrentFileAssetSummaries(c.Request.Context(), datalibraryservice.FileAssetSummaryListInput{
+			OrganizationID: organizationID,
+			SourceFileIDs:  fileIDs,
+		})
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "failed to batch get favorite file asset processing summaries",
+				err,
+				zap.String("account_id", accountID),
+				zap.String("tenant_id", organizationID),
+				zap.Int("file_count", len(fileIDs)),
+			)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+	}
+
 	fileResponses := make([]dto.UploadFile, len(files))
 	for i, file := range files {
 		// Convert model to DTO
@@ -1328,6 +1370,10 @@ func (h *FileResourceHandler) ListFavoriteFiles(c *gin.Context) {
 			fileResponse.RelatedDatasetCount = relatedDatasetCount
 			// Set the generic related count field, currently equal to dataset count
 			fileResponse.RelatedCount = relatedDatasetCount
+		}
+
+		if summary, exists := assetSummaries[file.ID]; exists {
+			applyFileAssetSummaryToUploadFile(&fileResponse, summary)
 		}
 
 		fileResponses[i] = fileResponse

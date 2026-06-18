@@ -35,6 +35,7 @@ const messages: FilesMessages = {
     totalItems: '共{total}项',
     relatedCount: '已关联{count}条',
     notRelated: '未关联',
+    folderNotice: '当前位于「{name}」文件夹，如果需要查看所有文件，请返回我的文件。',
     pendingCount: '{count} 项待优化',
     chunkCount: '{count} 个切片',
     embeddingCount: '{count} 个向量',

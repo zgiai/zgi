@@ -182,7 +182,7 @@ export default function DatasetDocumentsPage() {
           name: refToRemove?.file_name || '',
         })}
         description={t('datasets.documents.fileRefs.confirmRemoveDescription')}
-        confirmText={t('datasets.actions.delete')}
+        confirmText={t('datasets.documents.fileRefs.removeConfirm')}
         cancelText={t('datasets.actions.cancel')}
         onConfirm={confirmRemoveFileRef}
         loading={deleteFileRefMutation.isPending}

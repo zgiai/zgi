@@ -70,15 +70,18 @@ type FileFolderListRequest struct {
 
 // FileListInFolderRequest represents request for listing files in a folder
 type FileListInFolderRequest struct {
-	Page        int       `form:"page" binding:"omitempty,min=1"`
-	Limit       int       `form:"limit" binding:"omitempty,min=1,max=100"`
-	Keyword     string    `form:"keyword"`
-	Sort        string    `form:"sort"`
-	StartTime   time.Time `form:"start_time"`
-	EndTime     time.Time `form:"end_time"`
-	Extension   string    `form:"extension"` // File extension filter
-	FolderID    string    `form:"folder_id"` // Folder ID, empty or not provided means root folder
-	WorkspaceID string    `form:"workspace_id"`
+	Page      int       `form:"page" binding:"omitempty,min=1"`
+	Limit     int       `form:"limit" binding:"omitempty,min=1,max=100"`
+	Keyword   string    `form:"keyword"`
+	Sort      string    `form:"sort"`
+	StartTime time.Time `form:"start_time"`
+	EndTime   time.Time `form:"end_time"`
+	Extension string    `form:"extension"` // File extension filter
+	// ProcessingStatus filters by the current file asset product status. Multiple
+	// values can be comma-separated, for example "parse_failed,ready".
+	ProcessingStatus string `form:"processing_status"`
+	FolderID         string `form:"folder_id"` // Folder ID, empty or not provided means root folder
+	WorkspaceID      string `form:"workspace_id"`
 }
 
 // FileFolderResponse represents response for file folder

@@ -31,7 +31,7 @@ func FileExtensionProviderOrder(fileName string) ([]string, string) {
 	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(trimmed)))
 	switch ext {
 	case ".pdf":
-		return []string{"reducto", "mineru", "vlm", "local"}, ext
+		return []string{"reducto", "mineru", "local"}, ext
 	case ".docx", ".doc":
 		return []string{"reducto", "mineru", "local"}, ext
 	case ".xlsx", ".xls", ".csv", ".tsv":

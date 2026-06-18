@@ -207,6 +207,8 @@ export interface FileListProps {
   selectionMode?: boolean;
   /** Current active category (e.g., 'favorites') */
   activeCategory?: string;
+  /** Folder name to show when browsing inside a specific folder. */
+  folderNoticeName?: string;
   mobileEmptyActionLabel?: string;
   onMobileEmptyAction?: () => void;
   mobileEmptyDescription?: string;
@@ -277,6 +279,7 @@ function FileListBase({
   onSelectionChange,
   isLoading = false,
   selectionMode = false,
+  folderNoticeName,
   mobileEmptyActionLabel,
   onMobileEmptyAction,
   mobileEmptyDescription,
@@ -551,36 +554,43 @@ function FileListBase({
   if (isMobile && selectionMode) {
     return (
       <div className="flex h-full flex-col overflow-hidden bg-background">
-        <div className="flex items-center justify-between border-b px-3 py-2.5">
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">
-              {t('fileList.totalItems', { total })}
+        <div className="border-b px-3 py-2.5">
+          {folderNoticeName ? (
+            <div className="mb-2 rounded-xl border border-primary/15 bg-primary/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              {t('fileList.folderNotice', { name: folderNoticeName })}
             </div>
-            {selectedFiles.length > 0 ? (
-              <div className="mt-0.5 text-xs text-muted-foreground">
-                {maxCount !== undefined
-                  ? t('selectedCountWithMax', { count: selectedFiles.length, max: maxCount })
-                  : t('selectedCount', { count: selectedFiles.length })}
+          ) : null}
+          <div className="flex items-center justify-between">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">
+                {t('fileList.totalItems', { total })}
               </div>
+              {selectedFiles.length > 0 ? (
+                <div className="mt-0.5 text-xs text-muted-foreground">
+                  {maxCount !== undefined
+                    ? t('selectedCountWithMax', { count: selectedFiles.length, max: maxCount })
+                    : t('selectedCount', { count: selectedFiles.length })}
+                </div>
+              ) : null}
+            </div>
+
+            {files.length > 0 ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-lg px-3"
+                onClick={() => handleSelectAll(!allSelected)}
+                disabled={
+                  maxCount !== undefined &&
+                  !allSelected &&
+                  selectedFiles.length >= maxCount &&
+                  files.some(file => !selectedFiles.includes(file.id))
+                }
+              >
+                {allSelected ? common('clear') : t('fileList.selectAll')}
+              </Button>
             ) : null}
           </div>
-
-          {files.length > 0 ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-lg px-3"
-              onClick={() => handleSelectAll(!allSelected)}
-              disabled={
-                maxCount !== undefined &&
-                !allSelected &&
-                selectedFiles.length >= maxCount &&
-                files.some(file => !selectedFiles.includes(file.id))
-              }
-            >
-              {allSelected ? common('clear') : t('fileList.selectAll')}
-            </Button>
-          ) : null}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
@@ -896,6 +906,11 @@ function FileListBase({
           </div>
         ) : null}
       </div>
+      {folderNoticeName ? (
+        <div className="shrink-0 border-b bg-primary/5 px-4 py-2 text-sm leading-6 text-muted-foreground">
+          {t('fileList.folderNotice', { name: folderNoticeName })}
+        </div>
+      ) : null}
       <Table className="min-w-[1024px] table-fixed" containerClassName="overflow-auto flex-1">
         <colgroup>
           <col style={{ width: 44 }} />

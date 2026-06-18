@@ -34,6 +34,8 @@ const messages = {
     totalItems: 'Total {total} items',
     relatedCount: 'Related {count} items',
     notRelated: 'Not Related',
+    folderNotice:
+      'You are currently in the "{name}" folder. To view all files, return to My Files.',
     pendingCount: '{count} issue(s)',
     chunkCount: '{count} chunks',
     embeddingCount: '{count} vectors',

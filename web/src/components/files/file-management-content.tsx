@@ -136,7 +136,7 @@ function fileMatchesProcessingStatusFilter(
 
   switch (filter) {
     case 'needs_action':
-      return status === 'parse_failed' || (file.pending_confirmation_count ?? 0) > 0;
+      return status === 'parse_failed';
     case 'ready':
       return status === 'ready';
     case 'stored_only':
@@ -152,19 +152,28 @@ const waitForMinimumRefreshDuration = () =>
     setTimeout(resolve, 1000);
   });
 
-async function getFolderDepth(folderId: string) {
+async function getFolderInfo(folderId: string) {
   let depth = 0;
+  let name = '';
   let currentId = folderId;
 
   while (currentId) {
     const response = await fileManageService.getFileFolder(currentId);
     const folder = response.data;
     depth += 1;
+    if (depth === 1) {
+      name = folder.name;
+    }
 
     if (!folder.parent_id) break;
     currentId = folder.parent_id;
   }
 
+  return { depth, name };
+}
+
+async function getFolderDepth(folderId: string) {
+  const { depth } = await getFolderInfo(folderId);
   return depth;
 }
 
@@ -660,6 +669,7 @@ const FileManagementContent = ({
     useState<FileProcessingStatusFilter>('all');
   const [activeCategory, setActiveCategory] = useState('all');
   const [activeFolderDepth, setActiveFolderDepth] = useState(0);
+  const [activeFolderName, setActiveFolderName] = useState('');
   const [createFolderInitialParentId, setCreateFolderInitialParentId] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<string[]>(selectedFileIds);
@@ -684,6 +694,9 @@ const FileManagementContent = ({
   const { moveFolder, isMoving: isMovingFolder } = useMoveFolder();
   const { deleteFolder, isDeleting: isDeletingFolder } = useDeleteFolder();
   const { folders } = useFileFolders(workspaceId);
+  const knownActiveFolderName = SYSTEM_FILE_CATEGORIES.has(activeCategory)
+    ? ''
+    : folders.find(folder => folder.id === activeCategory)?.name ?? '';
 
   const { hasPermission } = useAccountPermissions();
   const canManage = hasPermission('file.manage');
@@ -721,27 +734,21 @@ const FileManagementContent = ({
 
   const { files, currentPage, totalPages, total, isLoading, isFetching, error, goToPage, reload } =
     useFiles('20', {
-      category: activeCategory === 'needs_action' ? 'all' : activeCategory,
+      category: activeCategory,
       keyword: debouncedSearchValue,
       sort: 'created_at',
       extension: extensionParam,
       workspaceId: workspaceId,
     });
 
-  const scopeFilteredFiles =
-    activeCategory === 'needs_action'
-      ? files.filter(file => fileMatchesProcessingStatusFilter(file, 'needs_action'))
-      : files;
+  const scopeFilteredFiles = files;
   const displayedFiles =
     processingStatusFilter === 'all'
       ? scopeFilteredFiles
       : scopeFilteredFiles.filter(file =>
           fileMatchesProcessingStatusFilter(file, processingStatusFilter)
         );
-  const displayedTotal =
-    activeCategory === 'needs_action' || processingStatusFilter !== 'all'
-      ? displayedFiles.length
-      : total;
+  const displayedTotal = processingStatusFilter !== 'all' ? displayedFiles.length : total;
   const loadedNeedsActionCount = scopeFilteredFiles.filter(file =>
     fileMatchesProcessingStatusFilter(file, 'needs_action')
   ).length;
@@ -759,10 +766,7 @@ const FileManagementContent = ({
   const derivedStoredOnlyCount =
     activeCategory === 'needs_action'
       ? 0
-      : Math.max(
-          total - loadedNeedsActionCount - loadedReadyCount - loadedActiveProcessingCount,
-          0
-        );
+      : Math.max(total - loadedNeedsActionCount - loadedReadyCount - loadedActiveProcessingCount, 0);
   const processingStatusFilterCounts = FILE_PROCESSING_STATUS_FILTERS.reduce(
     (acc, filter) => {
       acc[filter.id] =
@@ -867,17 +871,20 @@ const FileManagementContent = ({
   useEffect(() => {
     if (SYSTEM_FILE_CATEGORIES.has(activeCategory)) {
       setActiveFolderDepth(0);
+      setActiveFolderName('');
       return;
     }
 
     let ignore = false;
     setActiveFolderDepth(-1);
+    setActiveFolderName(knownActiveFolderName);
 
     const loadActiveFolderDepth = async () => {
       try {
-        const depth = await getFolderDepth(activeCategory);
+        const { depth, name } = await getFolderInfo(activeCategory);
         if (!ignore) {
           setActiveFolderDepth(depth);
+          setActiveFolderName(name);
         }
       } catch {
         if (!ignore) {
@@ -891,7 +898,7 @@ const FileManagementContent = ({
     return () => {
       ignore = true;
     };
-  }, [activeCategory]);
+  }, [activeCategory, knownActiveFolderName]);
 
   const [createFolderDialogOpen, setCreateFolderDialogOpen] = useState(false);
 
@@ -971,7 +978,6 @@ const FileManagementContent = ({
   }, [goToPage, reload]);
 
   const initialUploadFolderId = SYSTEM_FILE_CATEGORIES.has(activeCategory) ? '' : activeCategory;
-
   const selectedFolder = folders.find(f => f.id === selectedFolderId);
   const selectedFolderName = selectedFolder?.name || t('files.upload.defaultFolder');
 
@@ -1210,6 +1216,7 @@ const FileManagementContent = ({
         isLoading={isLoading}
         selectionMode={selectionMode}
         activeCategory={activeCategory}
+        folderNoticeName={activeFolderName}
         mobileEmptyActionLabel={mobilePrimaryActionLabel}
         mobileEmptyDescription={mobileEmptyDescription}
         onMobileEmptyAction={() => {

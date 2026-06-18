@@ -199,6 +199,8 @@ const messages = {
       fileName: 'File name',
       fileStatus: 'File status',
       enabled: 'Enabled',
+      enabledTooltip:
+        'This only controls whether the document is used in this dataset. It will not delete the original document.',
       chunks: 'Chunks',
       actions: 'Actions',
       syncStatus: 'Sync status',
@@ -211,6 +213,7 @@ const messages = {
       openFile: 'View file',
       retry: 'Retry',
       removeFile: 'Remove {name} from dataset',
+      removeConfirm: 'Remove',
       toggleEnabled: 'Enable {name} for recall',
       redirectTitle: 'View this file in file management',
       redirectDescription:
@@ -220,7 +223,7 @@ const messages = {
         'Edit parsing results and chunks in file management, then this dataset will sync a fresh copy.',
       confirmRemoveTitle: 'Remove "{name}" from this dataset?',
       confirmRemoveDescription:
-        'This removes the file asset reference and deletes its copied dataset document.',
+        'This removes the file asset reference and deletes its copied dataset document. It will not delete the source file in file management.',
       status: {
         pending: 'Pending',
         syncing: 'Syncing',

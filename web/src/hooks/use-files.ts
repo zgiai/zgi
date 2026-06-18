@@ -229,6 +229,8 @@ const getServiceMethod = (category: FileCategory) => {
   switch (category) {
     case 'all':
       return fileManageService.getAllFiles.bind(fileManageService);
+    case 'needs_action':
+      return fileManageService.getAllFiles.bind(fileManageService);
     case 'uploaded':
       return fileManageService.getRecentFiles.bind(fileManageService);
     // case 'favorites': // TODO: Temporarily disabled, may restore later
@@ -300,6 +302,7 @@ export function useFiles(
         keyword,
         sort,
         extension,
+        processing_status: category === 'needs_action' ? 'parse_failed' : undefined,
         workspace_id: workspaceId,
       });
     },

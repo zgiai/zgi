@@ -131,7 +131,7 @@ func TestPlannerRoutesPDFByFileExtension(t *testing.T) {
 		t.Fatalf("primary=%+v", plan.Primary)
 	}
 	got := providerKeys(plan.FallbackCandidates)
-	want := []string{"mineru", "vlm", "local"}
+	want := []string{"mineru", "local"}
 	if !sameStringSlice(got, want) {
 		t.Fatalf("fallbacks=%v, want %v", got, want)
 	}
@@ -174,7 +174,7 @@ func TestFileExtensionProviderOrder(t *testing.T) {
 		wantExt  string
 		want     []string
 	}{
-		{"report.pdf", ".pdf", []string{"reducto", "mineru", "vlm", "local"}},
+		{"report.pdf", ".pdf", []string{"reducto", "mineru", "local"}},
 		{"lesson.docx", ".docx", []string{"reducto", "mineru", "local"}},
 		{"deck.ppt", ".ppt", []string{"reducto", "mineru"}},
 		{"sheet.csv", ".csv", []string{"local"}},
@@ -191,6 +191,15 @@ func TestFileExtensionProviderOrder(t *testing.T) {
 		if !sameStringSlice(got, tc.want) {
 			t.Fatalf("%s providers=%v want %v", tc.fileName, got, tc.want)
 		}
+	}
+}
+
+func TestFileExtensionAllowsVLMOnlyForImages(t *testing.T) {
+	if FileExtensionAllowsProvider("report.pdf", "vlm") {
+		t.Fatal("vlm should not be allowed for pdf files")
+	}
+	if !FileExtensionAllowsProvider("scan.png", "vlm") {
+		t.Fatal("vlm should be allowed for image files")
 	}
 }
 

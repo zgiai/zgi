@@ -102,6 +102,7 @@ export interface GetAllFilesRequest {
   sort?: string;
   folder_id?: string;
   extension?: string;
+  processing_status?: string;
   workspace_id?: string;
 }
 
