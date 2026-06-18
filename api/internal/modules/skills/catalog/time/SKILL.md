@@ -8,6 +8,10 @@ runtime_type: tool
 tools:
   - current_time
   - date_calculate
+supported_callers:
+  - aichat
+  - agent
+  - workflow
 max_calls_per_turn: 20
 timeout_seconds: 5
 display:

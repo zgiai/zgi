@@ -10,6 +10,10 @@ tools:
   - generate_docx
   - generate_pdf
   - generate_pptx
+supported_callers:
+  - aichat
+  - agent
+  - workflow
 max_calls_per_turn: 5
 timeout_seconds: 60
 display:

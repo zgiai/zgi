@@ -68,6 +68,33 @@ type failIfCalledMemberSubscriptionService struct {
 	t *testing.T
 }
 
+type testToolProvider struct {
+	entity tools.ToolProviderEntity
+}
+
+func (p testToolProvider) GetEntity() tools.ToolProviderEntity {
+	return p.entity
+}
+
+func (p testToolProvider) GetProviderType() tools.ToolProviderType {
+	if p.entity.ProviderType == "" {
+		return tools.ToolProviderTypeBuiltin
+	}
+	return p.entity.ProviderType
+}
+
+func (p testToolProvider) GetTool(string) (tools.Tool, error) {
+	return nil, tools.ErrToolNotFound
+}
+
+func (p testToolProvider) GetTools() []tools.Tool {
+	return nil
+}
+
+func (p testToolProvider) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
 func (s failIfCalledMemberSubscriptionService) Subscribe(context.Context, string, string, string, string, string, string) (*pluginmodel.OrgPluginSubscription, error) {
 	s.t.Fatal("member subscription service should not be used by builtin tools handler")
 	return nil, nil
@@ -142,6 +169,86 @@ func TestListBuiltinProvidersIncludesOrganizationPluginsForNormalMember(t *testi
 	}
 }
 
+func TestListBuiltinProvidersFiltersBuiltinToolsForWorkflowCaller(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	manager := tools.NewToolManager(nil)
+	_ = manager.RegisterProvider(testBuiltinProviderEntity("calculator", "calculate", "percentage"))
+	_ = manager.RegisterProvider(testBuiltinProviderEntity("chart_generator", "generate_chart"))
+	_ = manager.RegisterProvider(testBuiltinProviderEntity("workflow", "run_agent_workflow"))
+	_ = manager.RegisterProvider(testBuiltinProviderEntity("knowledge", "retrieve_knowledge"))
+	_ = manager.RegisterProvider(testBuiltinProviderEntity("database", "query_table_records"))
+
+	handler := NewBuiltinToolsHandler(
+		manager,
+		&stubAccountInstallationService{declarations: []pluginmodel.PluginDeclaration{emailDeclaration()}},
+		failIfCalledMemberSubscriptionService{t: t},
+	)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/console/api/tools/builtin?caller=workflow", nil)
+	ctx.Set("organization_id", "org-1")
+	ctx.Set("account_id", "normal-member")
+
+	handler.ListBuiltinProviders(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var resp struct {
+		Code string                    `json:"code"`
+		Data []BuiltinProviderResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Code != "0" {
+		t.Fatalf("code = %s", resp.Code)
+	}
+
+	if provider := findBuiltinProviderResponse(resp.Data, "calculator"); provider == nil {
+		t.Fatalf("calculator provider missing from workflow-visible response: %+v", resp.Data)
+	} else if got := responseToolNames(provider.Tools); !sameStrings(got, []string{"calculate", "percentage"}) {
+		t.Fatalf("calculator tools = %v, want calculate and percentage", got)
+	}
+	if provider := findBuiltinProviderResponse(resp.Data, "email"); provider == nil || provider.Type != "plugin_runner" {
+		t.Fatalf("plugin runner provider missing or changed: %+v", resp.Data)
+	}
+	for _, name := range []string{"chart_generator", "workflow", "knowledge", "database"} {
+		if provider := findBuiltinProviderResponse(resp.Data, name); provider != nil {
+			t.Fatalf("provider %s should be hidden for workflow caller: %+v", name, provider)
+		}
+	}
+}
+
+func TestGetBuiltinProviderReturnsNotFoundWhenFilteredForWorkflowCaller(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	manager := tools.NewToolManager(nil)
+	_ = manager.RegisterProvider(testBuiltinProviderEntity("workflow", "run_agent_workflow"))
+
+	handler := NewBuiltinToolsHandler(
+		manager,
+		&stubAccountInstallationService{},
+		failIfCalledMemberSubscriptionService{t: t},
+	)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/console/api/tools/builtin/workflow?caller=workflow", nil)
+	ctx.Params = gin.Params{{Key: "provider", Value: "workflow"}}
+	ctx.Set("organization_id", "org-1")
+	ctx.Set("account_id", "normal-member")
+
+	handler.GetBuiltinProvider(ctx)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestGetBuiltinProviderReturnsOrganizationPluginForNormalMember(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -200,6 +307,65 @@ func TestGetBuiltinProviderReturnsNotFoundForUninstalledPlugin(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
+}
+
+func testBuiltinProviderEntity(providerName string, toolNames ...string) testToolProvider {
+	toolEntities := make([]tools.ToolEntity, 0, len(toolNames))
+	for _, toolName := range toolNames {
+		toolEntities = append(toolEntities, tools.ToolEntity{
+			Identity: tools.ToolIdentity{
+				Name:     toolName,
+				Provider: providerName,
+				Label:    tools.I18nText{"en_US": toolName},
+			},
+			Description: tools.ToolDescription{Human: tools.I18nText{"en_US": toolName}},
+		})
+	}
+	return testToolProvider{
+		entity: tools.ToolProviderEntity{
+			ProviderType: tools.ToolProviderTypeBuiltin,
+			Identity: tools.ToolProviderIdentity{
+				Name:        providerName,
+				Label:       tools.I18nText{"en_US": providerName},
+				Description: tools.I18nText{"en_US": providerName},
+			},
+			Tools: toolEntities,
+		},
+	}
+}
+
+func findBuiltinProviderResponse(providers []BuiltinProviderResponse, name string) *BuiltinProviderResponse {
+	for idx := range providers {
+		if providers[idx].Name == name {
+			return &providers[idx]
+		}
+	}
+	return nil
+}
+
+func responseToolNames(tools []BuiltinToolResponse) []string {
+	out := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, tool.Name)
+	}
+	return out
+}
+
+func sameStrings(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[string]int, len(left))
+	for _, value := range left {
+		seen[value]++
+	}
+	for _, value := range right {
+		if seen[value] == 0 {
+			return false
+		}
+		seen[value]--
+	}
+	return true
 }
 
 func emailDeclaration() pluginmodel.PluginDeclaration {

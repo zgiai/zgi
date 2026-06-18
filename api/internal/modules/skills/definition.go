@@ -33,8 +33,9 @@ const (
 
 	SkillScriptToolRun = "run_script"
 
-	SkillCallerAIChat = "aichat"
-	SkillCallerAgent  = "agent"
+	SkillCallerAIChat   = "aichat"
+	SkillCallerAgent    = "agent"
+	SkillCallerWorkflow = "workflow"
 
 	SkillRequiredConfigAgentKnowledge = "agent_knowledge"
 	SkillRequiredConfigAgentDatabase  = "agent_database"
@@ -48,6 +49,19 @@ func IsHiddenSystemSkill(skillID string) bool {
 	default:
 		return false
 	}
+}
+
+func SkillSupportsCaller(supportedCallers []string, caller string) bool {
+	caller = strings.ToLower(strings.TrimSpace(caller))
+	if caller == "" || len(supportedCallers) == 0 {
+		return true
+	}
+	for _, raw := range supportedCallers {
+		if strings.EqualFold(strings.TrimSpace(raw), caller) {
+			return true
+		}
+	}
+	return false
 }
 
 type SkillToolDefinition struct {
