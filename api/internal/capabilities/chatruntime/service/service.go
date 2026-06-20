@@ -45,6 +45,7 @@ const (
 	streamEventSkillCallStart       = "skill_call_start"
 	streamEventSkillCallEnd         = "skill_call_end"
 	streamEventSkillCallError       = "skill_call_error"
+	streamEventClientActionRequired = "client_action_required"
 	streamEventSkillLoadStart       = "skill_load_start"
 	streamEventSkillLoadEnd         = "skill_load_end"
 	streamEventSkillReferenceRead   = "skill_reference_read"
@@ -61,9 +62,17 @@ const (
 var defaultSystemSkillIDs = []string{
 	skills.SkillTime,
 	skills.SkillCalculator,
+	skills.SkillConsoleNavigator,
 	skills.SkillFileGenerator,
+	skills.SkillFileManager,
 	skills.SkillFileReader,
 }
+
+const (
+	aiChatSurfaceWorkChat          = "work_chat"
+	aiChatSurfaceContextualSidebar = "contextual_sidebar"
+	aiChatSurfaceExternalPageChat  = "external_page_chat"
+)
 
 type Scope struct {
 	OrganizationID  uuid.UUID
@@ -164,6 +173,7 @@ type Service interface {
 	StreamConversationEvents(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, afterID string, onEvent func(StreamEvent) error) error
 	SubmitToolGovernanceDecision(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest) (*runtimedto.ToolGovernanceDecisionResponse, error)
 	RunToolGovernanceDecisionStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	RunClientActionContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
 	RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)
 	AppendWorkflowApprovalContinuationStreamEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)
@@ -353,6 +363,7 @@ type ExistingSkill struct {
 
 type chatRequestParts struct {
 	Query                        string
+	Surface                      string
 	RuntimeContext               string
 	RawOperationContext          map[string]interface{}
 	OperationContext             map[string]interface{}

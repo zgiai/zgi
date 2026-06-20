@@ -28,7 +28,7 @@ func TestSummarizeSkillToolArgumentsOmitsDatabaseInternalKeys(t *testing.T) {
 }
 
 func TestSummarizeSkillToolArgumentsKeepsFileReaderAssetIDs(t *testing.T) {
-	result := summarizeSkillToolArguments(skills.SkillFileReader, "delete_file", map[string]interface{}{
+	result := summarizeSkillToolArguments(skills.SkillFileManager, "delete_file", map[string]interface{}{
 		"file_id":       "file-1",
 		"file_ids":      []interface{}{"file-1", "file-2"},
 		"file_name":     "invoice.xlsx",

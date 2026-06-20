@@ -131,13 +131,21 @@ func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	requestText := toolGovernanceStreamRequestText(streamReq)
 	for _, want := range []string{
 		"Do not execute or claim the rejected action",
+		"Answer in the user's language",
 		"Delete the selected report file",
 		"keep it for audit",
-		"corr-1",
-		"file.delete",
+		"not_executed",
 	} {
 		if !strings.Contains(requestText, want) {
 			t.Fatalf("reject continuation request missing %q in %q", want, requestText)
+		}
+	}
+	for _, hidden := range []string{
+		"corr-1",
+		"Rejected governance event JSON",
+	} {
+		if strings.Contains(requestText, hidden) {
+			t.Fatalf("reject continuation request exposed %q in %q", hidden, requestText)
 		}
 	}
 
@@ -184,7 +192,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 
 	metadata := pendingToolGovernanceDecisionMetadata("corr-approve")
-	metadata["configured_skill_ids"] = []interface{}{skills.SkillFileReader}
+	metadata["configured_skill_ids"] = []interface{}{skills.SkillFileManager}
 	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})
 	governance := invocation["governance"].(map[string]interface{})
 	approvalEvent := governance["approval_event"].(map[string]interface{})
@@ -200,7 +208,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 		"conversation_id": conversationID.String(),
 		"organization_id": organizationID.String(),
 		"user_id":         accountID.String(),
-		"skill_id":        skills.SkillFileReader,
+		"skill_id":        skills.SkillFileManager,
 		"provider_type":   "builtin",
 		"provider_id":     "files",
 		"tool_id":         "file.delete",
@@ -215,12 +223,12 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 		CorrelationID: "corr-approve",
 		Manifest: toolgovernance.Manifest{
 			ToolID:    "file.delete",
-			SkillID:   skills.SkillFileReader,
+			SkillID:   skills.SkillFileManager,
 			Effect:    toolgovernance.EffectDelete,
 			AssetType: "file",
 			RiskLevel: toolgovernance.RiskLevelHigh,
 		},
-		SkillID:      skills.SkillFileReader,
+		SkillID:      skills.SkillFileManager,
 		ToolName:     "delete_file",
 		ProviderType: "builtin",
 		ProviderID:   "files",
@@ -287,7 +295,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 			Access:       toolGovernanceStreamAccessRepo{},
 			Conversation: conversationRepo,
 			Message:      messageRepo,
-			SkillConfig:  toolGovernanceStreamSkillConfigRepo{skillID: skills.SkillFileReader},
+			SkillConfig:  toolGovernanceStreamSkillConfigRepo{skillID: skills.SkillFileManager},
 		},
 		llm,
 		nil,
@@ -340,6 +348,18 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if !toolGovernanceStreamRequestContains(llm.streamRequests[0], "runtime has already executed the frozen invocation exactly once") {
 		t.Fatalf("execution-summary request missing direct execution context")
 	}
+	for _, hidden := range []string{
+		`"file_id"`,
+		`"deleted_count"`,
+		`"workspace_id"`,
+		"file-1",
+		"workspace-1",
+		"corr-approve",
+	} {
+		if toolGovernanceStreamRequestContains(llm.streamRequests[0], hidden) {
+			t.Fatalf("execution-summary request exposed %q in %q", hidden, toolGovernanceStreamRequestText(llm.streamRequests[0]))
+		}
+	}
 
 	metadataEvent, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, "corr-approve")
 	if !ok {
@@ -360,8 +380,8 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if toolCalls := intValueFromAny(message.Metadata["tool_call_count"]); toolCalls != 1 {
 		t.Fatalf("tool_call_count = %d in %#v, want 1 from delete tool execution", toolCalls, message.Metadata)
 	}
-	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileReader, "delete_file", "success") {
-		t.Fatalf("metadata skill_invocations = %#v, want successful file-reader/delete_file tool call", message.Metadata["skill_invocations"])
+	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileManager, "delete_file", "success") {
+		t.Fatalf("metadata skill_invocations = %#v, want successful file-manager/delete_file tool call", message.Metadata["skill_invocations"])
 	}
 	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
 	if continuation["status"] != "approved" || continuation["approval_status"] != "approved" {
@@ -431,7 +451,7 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 
 	metadata := pendingToolGovernanceDecisionMetadata("corr-approve")
-	metadata["configured_skill_ids"] = []interface{}{skills.SkillFileReader}
+	metadata["configured_skill_ids"] = []interface{}{skills.SkillFileManager}
 	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})
 	governance := invocation["governance"].(map[string]interface{})
 	approvalEvent := governance["approval_event"].(map[string]interface{})
@@ -447,7 +467,7 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 		"conversation_id": conversationID.String(),
 		"organization_id": organizationID.String(),
 		"user_id":         accountID.String(),
-		"skill_id":        skills.SkillFileReader,
+		"skill_id":        skills.SkillFileManager,
 		"provider_type":   "builtin",
 		"provider_id":     "files",
 		"tool_id":         "file.delete",
@@ -462,12 +482,12 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 		CorrelationID: "corr-approve",
 		Manifest: toolgovernance.Manifest{
 			ToolID:    "file.delete",
-			SkillID:   skills.SkillFileReader,
+			SkillID:   skills.SkillFileManager,
 			Effect:    toolgovernance.EffectDelete,
 			AssetType: "file",
 			RiskLevel: toolgovernance.RiskLevelHigh,
 		},
-		SkillID:      skills.SkillFileReader,
+		SkillID:      skills.SkillFileManager,
 		ToolName:     "delete_file",
 		ProviderType: "builtin",
 		ProviderID:   "files",
@@ -520,7 +540,7 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 			Access:       toolGovernanceStreamAccessRepo{},
 			Conversation: conversationRepo,
 			Message:      messageRepo,
-			SkillConfig:  toolGovernanceStreamSkillConfigRepo{skillID: skills.SkillFileReader},
+			SkillConfig:  toolGovernanceStreamSkillConfigRepo{skillID: skills.SkillFileManager},
 		},
 		llm,
 		nil,
@@ -576,15 +596,28 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 	}
 	for _, want := range []string{
 		"runtime attempted to execute the frozen invocation exactly once, but it failed",
-		"Execution error:\nfile file-1 not found",
-		"\"execution_error\":\"file file-1 not found\"",
+		"recoverable model feedback",
+		"Runtime failure feedback:\nfile report.pdf not found",
+		"\"error\":\"file report.pdf not found\"",
 	} {
 		if !toolGovernanceStreamRequestContains(streamReq, want) {
 			t.Fatalf("execution-failure request missing %q in %q", want, toolGovernanceStreamRequestText(streamReq))
 		}
 	}
-	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileReader, "delete_file", "error") {
-		t.Fatalf("metadata skill_invocations = %#v, want failed file-reader/delete_file tool call", message.Metadata["skill_invocations"])
+	for _, hidden := range []string{
+		`"execution_error"`,
+		`"file_id"`,
+		`"workspace_id"`,
+		"file-1",
+		"workspace-1",
+		"corr-approve",
+	} {
+		if toolGovernanceStreamRequestContains(streamReq, hidden) {
+			t.Fatalf("execution-failure request exposed %q in %q", hidden, toolGovernanceStreamRequestText(streamReq))
+		}
+	}
+	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileManager, "delete_file", "error") {
+		t.Fatalf("metadata skill_invocations = %#v, want failed file-manager/delete_file tool call", message.Metadata["skill_invocations"])
 	}
 
 	assertToolGovernanceApprovedFailureStreamEvents(t, events)
@@ -613,7 +646,7 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 	}
 	approvalEvent["grant"] = map[string]interface{}{
 		"conversation_id": conversationID.String(),
-		"skill_id":        skills.SkillFileReader,
+		"skill_id":        skills.SkillFileManager,
 		"provider_type":   "builtin",
 		"provider_id":     "files",
 		"tool_id":         "file.delete",
@@ -676,7 +709,7 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 	if response.SessionGrant["conversation_id"] != conversationID.String() ||
 		response.SessionGrant["organization_id"] != organizationID.String() ||
 		response.SessionGrant["user_id"] != accountID.String() ||
-		response.SessionGrant["skill_id"] != skills.SkillFileReader ||
+		response.SessionGrant["skill_id"] != skills.SkillFileManager ||
 		response.SessionGrant["provider_type"] != "builtin" ||
 		response.SessionGrant["provider_id"] != "files" ||
 		response.SessionGrant["tool_id"] != "file.delete" ||
@@ -703,7 +736,7 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 		t.Fatalf("one-shot grants = %#v, want one approved grant on current message", grants)
 	} else if grants[0]["organization_id"] != organizationID.String() ||
 		grants[0]["user_id"] != accountID.String() ||
-		grants[0]["skill_id"] != skills.SkillFileReader ||
+		grants[0]["skill_id"] != skills.SkillFileManager ||
 		grants[0]["provider_type"] != "builtin" ||
 		grants[0]["provider_id"] != "files" ||
 		grants[0]["expires_at"] == "" {
@@ -716,7 +749,7 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 	if conversationGrants[0]["conversation_id"] != conversationID.String() ||
 		conversationGrants[0]["organization_id"] != organizationID.String() ||
 		conversationGrants[0]["user_id"] != accountID.String() ||
-		conversationGrants[0]["skill_id"] != skills.SkillFileReader ||
+		conversationGrants[0]["skill_id"] != skills.SkillFileManager ||
 		conversationGrants[0]["provider_type"] != "builtin" ||
 		conversationGrants[0]["provider_id"] != "files" ||
 		conversationGrants[0]["approval_correlation_id"] != "corr-session" ||
@@ -736,7 +769,7 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 	if len(runtimeGrants) != 1 ||
 		runtimeGrants[0]["organization_id"] != organizationID.String() ||
 		runtimeGrants[0]["user_id"] != accountID.String() ||
-		runtimeGrants[0]["skill_id"] != skills.SkillFileReader ||
+		runtimeGrants[0]["skill_id"] != skills.SkillFileManager ||
 		runtimeGrants[0]["provider_type"] != "builtin" ||
 		runtimeGrants[0]["provider_id"] != "files" ||
 		runtimeGrants[0]["tool_id"] != "file.delete" ||
@@ -934,13 +967,13 @@ func toolGovernanceStreamSkillToolCall(callID string, skillID string, toolName s
 func newToolGovernanceStreamSkillRuntime(t *testing.T, fileService *toolGovernanceStreamFileService, workspacePerms *toolGovernanceStreamWorkspacePermissionService) *skills.Runtime {
 	t.Helper()
 	catalogDir := t.TempDir()
-	root := filepath.Join(catalogDir, skills.SkillFileReader)
+	root := filepath.Join(catalogDir, skills.SkillFileManager)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("mkdir skill root: %v", err)
 	}
 	skill := `---
-name: file-reader
-description: Governed files service test skill.
+name: file-manager
+description: Governed file manager service test skill.
 when_to_use: Use when testing AIChat approval continuation.
 provider_type: builtin
 provider_id: files
@@ -950,7 +983,7 @@ tools:
 tool_governance:
   delete_file:
     tool_id: file.delete
-    skill_id: file-reader
+    skill_id: file-manager
     domain: files
     effect: delete
     asset_type: file

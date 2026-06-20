@@ -500,6 +500,34 @@ func TestDeleteFileToolRejectsWithoutGovernanceGrant(t *testing.T) {
 	}
 }
 
+func TestDeleteFileToolRejectsAssetlessGovernanceGrant(t *testing.T) {
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	conversationID := uuid.NewString()
+	fileService := &fakeFileService{
+		files: map[string]*dto.UploadFile{
+			"file-1": {
+				ID:             "file-1",
+				OrganizationID: organizationID,
+				WorkspaceID:    &workspaceID,
+				Name:           "obsolete.pdf",
+				CreatedBy:      accountID,
+			},
+		},
+	}
+	provider := NewProvider(fileService, nil, &fakeWorkspacePermissionService{allowed: true})
+	tool := deleteFileRuntimeToolWithAssetlessGrant(t, provider, organizationID, accountID, conversationID, workspaceID)
+
+	_, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{"file_id": "file-1"}, &conversationID, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "tool governance approval") {
+		t.Fatalf("Invoke() error = %v, want governance approval requirement", err)
+	}
+	if len(fileService.deleted) != 0 {
+		t.Fatalf("deleted = %#v, want no deletion", fileService.deleted)
+	}
+}
+
 func TestDeleteFileToolRejectsWorkspacePermissionDenied(t *testing.T) {
 	organizationID := uuid.NewString()
 	accountID := uuid.NewString()
@@ -632,6 +660,32 @@ func deleteFileRuntimeToolWithGrant(t *testing.T, provider *Provider, organizati
 							"workspace_id": workspaceID,
 						},
 					},
+				},
+			},
+		},
+	})
+}
+
+func deleteFileRuntimeToolWithAssetlessGrant(t *testing.T, provider *Provider, organizationID string, accountID string, conversationID string, workspaceID string) tools.Tool {
+	t.Helper()
+	return deleteFileRuntimeToolFrom(t, provider, organizationID, tools.ToolInvokeFromAIChat, map[string]interface{}{
+		"organization_id": organizationID,
+		"workspace_id":    workspaceID,
+		"tool_governance": map[string]interface{}{
+			"session_grants": []map[string]interface{}{
+				{
+					"conversation_id":         conversationID,
+					"organization_id":         organizationID,
+					"user_id":                 accountID,
+					"skill_id":                governedFileDeleteSkillID,
+					"provider_type":           string(tools.ToolProviderTypeBuiltin),
+					"provider_id":             ProviderID,
+					"tool_id":                 governedFileDeleteToolID,
+					"effect":                  "delete",
+					"asset_type":              "file",
+					"risk_level":              "high",
+					"approval_correlation_id": "corr-delete-assetless",
+					"expires_at":              time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
 				},
 			},
 		},

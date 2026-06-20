@@ -225,6 +225,25 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 			invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
 		}
 		return invocation
+	case streamEventClientActionRequired:
+		invocation := newSkillInvocation("client_action", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "waiting_client_action"), map[string]interface{}{
+			"action_id":             payloadString(payload, "action_id"),
+			"action_type":           payloadString(payload, "action_type"),
+			"href":                  payloadString(payload, "href"),
+			"label":                 payloadString(payload, "label"),
+			"reason":                payloadString(payload, "reason"),
+			"effect":                payloadString(payload, "effect"),
+			"asset_type":            payloadString(payload, "asset_type"),
+			"assets":                payload["assets"],
+			"correlation_id":        payloadString(payload, "correlation_id"),
+			"result":                payloadMap(payload, "result"),
+			"asset_operation_audit": governanceMapFromAny(payload["asset_operation_audit"]),
+			"conversation_id":       payload["conversation_id"],
+			"message_id":            payload["message_id"],
+			"created_at":            payload["created_at"],
+		})
+		invocation["runtime_id"] = "client_action:" + payloadString(payload, "action_id")
+		return invocation
 	case streamEventSkillCallError:
 		kind := payloadString(payload, "kind")
 		if kind == "" {
@@ -420,7 +439,7 @@ func governedToolCallPendingStatus(status string) string {
 
 func streamBackedTrace(trace skills.SkillTrace) bool {
 	switch strings.TrimSpace(trace.Kind) {
-	case "skill_load", "reference_read", "tool_call", "tool_governance", "intermediate_answer":
+	case "skill_load", "reference_read", "tool_call", "tool_governance", "client_action", "intermediate_answer":
 		return true
 	default:
 		return false

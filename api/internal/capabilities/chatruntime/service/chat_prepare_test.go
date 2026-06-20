@@ -112,6 +112,10 @@ func (f fakeWaitingApprovalMessageRepo) UpdateWaitingQuestion(context.Context, u
 	panic("not implemented")
 }
 
+func (f fakeWaitingApprovalMessageRepo) UpdateWaitingClientAction(context.Context, uuid.UUID, map[string]interface{}) error {
+	panic("not implemented")
+}
+
 func (f fakeWaitingApprovalMessageRepo) UpdateError(context.Context, uuid.UUID, string) error {
 	panic("not implemented")
 }

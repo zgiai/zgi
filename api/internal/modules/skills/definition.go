@@ -11,7 +11,9 @@ import (
 const (
 	SkillTime              = "time"
 	SkillCalculator        = "calculator"
+	SkillConsoleNavigator  = "console-navigator"
 	SkillFileGenerator     = "file-generator"
+	SkillFileManager       = "file-manager"
 	SkillFileReader        = "file-reader"
 	SkillWorkReport        = "work-report-generator"
 	SkillSchedulePlanner   = "schedule-planner"
@@ -45,13 +47,116 @@ const (
 	SkillRequiredConfigAgentWorkflow  = "agent_workflow"
 )
 
+const (
+	SkillExposureGeneral         = "general"
+	SkillExposureSidebarManaged  = "sidebar_managed"
+	SkillExposureSystemAsset     = "system_asset"
+	SkillExposureAgentBound      = "agent_bound"
+	SkillExposureWorkflowRuntime = "workflow_runtime"
+	SkillExposureHiddenRuntime   = "hidden_runtime"
+	SkillGovernanceRiskNone      = "none"
+	SkillGovernanceRiskLow       = "low"
+	SkillGovernanceRiskMedium    = "medium"
+	SkillGovernanceRiskHigh      = "high"
+	SkillGovernanceRiskMixed     = "mixed"
+)
+
+type SkillExposureProfile struct {
+	Category            string
+	UserSelectable      bool
+	RuntimeManaged      bool
+	SystemAsset         bool
+	PageContextRequired bool
+	GovernanceRisk      string
+}
+
 func IsHiddenSystemSkill(skillID string) bool {
 	switch normalizeSkillID(skillID) {
-	case SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory:
+	case SkillFileManager, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory:
 		return true
 	default:
 		return false
 	}
+}
+
+func SystemSkillExposureProfile(skillID string) SkillExposureProfile {
+	switch normalizeSkillID(skillID) {
+	case SkillConsoleNavigator:
+		return SkillExposureProfile{
+			Category:            SkillExposureSidebarManaged,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         false,
+			PageContextRequired: true,
+			GovernanceRisk:      SkillGovernanceRiskLow,
+		}
+	case SkillFileManager:
+		return SkillExposureProfile{
+			Category:            SkillExposureSidebarManaged,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         true,
+			PageContextRequired: true,
+			GovernanceRisk:      SkillGovernanceRiskHigh,
+		}
+	case SkillInternalKnowledge:
+		return SkillExposureProfile{
+			Category:            SkillExposureSystemAsset,
+			UserSelectable:      false,
+			RuntimeManaged:      false,
+			SystemAsset:         true,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskLow,
+		}
+	case SkillInternalDatabase:
+		return SkillExposureProfile{
+			Category:            SkillExposureSystemAsset,
+			UserSelectable:      false,
+			RuntimeManaged:      false,
+			SystemAsset:         true,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskMixed,
+		}
+	case SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow:
+		return SkillExposureProfile{
+			Category:            SkillExposureAgentBound,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         true,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskMixed,
+		}
+	case SkillAgentMemory, SkillUserMemory:
+		return SkillExposureProfile{
+			Category:            SkillExposureHiddenRuntime,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         false,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskLow,
+		}
+	default:
+		return SkillExposureProfile{
+			Category:            SkillExposureGeneral,
+			UserSelectable:      true,
+			RuntimeManaged:      false,
+			SystemAsset:         false,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskMixed,
+		}
+	}
+}
+
+func IsUserSelectableSystemSkill(skillID string) bool {
+	return SystemSkillExposureProfile(skillID).UserSelectable
+}
+
+func IsSystemAssetSkill(skillID string) bool {
+	return SystemSkillExposureProfile(skillID).SystemAsset
+}
+
+func IsRuntimeManagedSystemSkill(skillID string) bool {
+	return SystemSkillExposureProfile(skillID).RuntimeManaged
 }
 
 func SkillSupportsCaller(supportedCallers []string, caller string) bool {

@@ -24,8 +24,8 @@ func TestFileReaderSystemSkillGovernanceManifest(t *testing.T) {
 	if got := docTimeoutSeconds(*doc); got != 120 {
 		t.Fatalf("timeout_seconds = %d, want 120", got)
 	}
-	if got := toolNames(doc.Tools); !sameStrings(got, []string{"list_visible_files", "read_file", "delete_file"}) {
-		t.Fatalf("file-reader tools = %v, want list_visible_files/read_file/delete_file", got)
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"list_visible_files", "read_file"}) {
+		t.Fatalf("file-reader tools = %v, want list_visible_files/read_file", got)
 	}
 	listTool, ok := findSkillTool(*doc, "list_visible_files")
 	if !ok {
@@ -94,6 +94,30 @@ func TestFileReaderSystemSkillGovernanceManifest(t *testing.T) {
 	}
 	if !readTool.Governance.AuditRequired {
 		t.Fatalf("audit_required = false, want true")
+	}
+}
+
+func TestFileManagerSystemSkillGovernanceManifest(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillFileManager})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillFileManager)
+	if !ok {
+		t.Fatalf("file-manager skill was not resolved")
+	}
+	if !sameStrings(doc.Metadata.SupportedCallers, []string{SkillCallerAIChat}) {
+		t.Fatalf("supported callers = %#v, want aichat", doc.Metadata.SupportedCallers)
+	}
+	if !IsHiddenSystemSkill(SkillFileManager) {
+		t.Fatal("file-manager should be hidden from manual skill management")
+	}
+	if got := docTimeoutSeconds(*doc); got != 120 {
+		t.Fatalf("timeout_seconds = %d, want 120", got)
+	}
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"delete_file"}) {
+		t.Fatalf("file-manager tools = %v, want delete_file", got)
 	}
 	deleteTool, ok := findSkillTool(*doc, "delete_file")
 	if !ok {
@@ -197,13 +221,32 @@ func TestFileReaderReadGovernanceAutoAllowsReadTools(t *testing.T) {
 		})
 	}
 
+}
+
+func TestFileManagerDeleteGovernanceNeedsApproval(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillFileManager})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillFileManager)
+	if !ok {
+		t.Fatalf("file-manager skill was not resolved")
+	}
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	execCtx := ExecutionContext{
+		ConversationID: "conversation-1",
+		RuntimeParameters: map[string]interface{}{
+			"tool_governance_permission_tier": string(toolgovernance.PermissionTierBasic),
+		},
+	}
 	deleteTool, ok := findSkillTool(*doc, "delete_file")
 	if !ok {
 		t.Fatalf("delete_file tool not found")
 	}
 	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
 		Manifest: *deleteTool.Governance,
-		SkillID:  SkillFileReader,
+		SkillID:  SkillFileManager,
 		ToolName: "delete_file",
 		Arguments: map[string]interface{}{
 			"file_id":   "file-1",

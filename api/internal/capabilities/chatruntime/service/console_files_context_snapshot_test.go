@@ -43,6 +43,29 @@ func TestConsoleFilesContextSnapshotStoredOutsideOperationContextMetadata(t *tes
 	}
 }
 
+func TestConsoleFilesContextSnapshotPreservesCreateCapability(t *testing.T) {
+	parts := consoleFilesSnapshotTestParts("create a managed text file", []consoleFilesTestFile{
+		{ID: "file-1", Name: "report.txt", Extension: "txt", MimeType: "text/plain"},
+	})
+	parts.RuntimeContext = parts.RuntimeContext + ",file.create"
+	for _, context := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		capabilities := append(mapSliceFromAny(context["capabilities"]), map[string]interface{}{"id": "file.create"})
+		capabilityItems := make([]interface{}, 0, len(capabilities))
+		for _, capability := range capabilities {
+			capabilityItems = append(capabilityItems, capability)
+		}
+		context["capabilities"] = capabilityItems
+	}
+
+	snapshot := consoleFilesContextSnapshot(parts)
+	if len(snapshot) == 0 {
+		t.Fatal("consoleFilesContextSnapshot() returned empty snapshot")
+	}
+	if !snapshotHasCapability(snapshot, "file.create") {
+		t.Fatalf("snapshot capabilities = %#v, want file.create", snapshot["capabilities"])
+	}
+}
+
 func TestRestoreConsoleFilesContextFromSnapshotMetadata(t *testing.T) {
 	original := consoleFilesSnapshotTestParts("delete the first file", []consoleFilesTestFile{
 		{

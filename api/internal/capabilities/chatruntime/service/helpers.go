@@ -71,7 +71,8 @@ func isActiveMessageStatus(status string) bool {
 func isStoppableMessageStatus(status string) bool {
 	return isActiveMessageStatus(status) ||
 		status == runtimemodel.MessageStatusWaitingApproval ||
-		status == runtimemodel.MessageStatusWaitingQuestion
+		status == runtimemodel.MessageStatusWaitingQuestion ||
+		status == runtimemodel.MessageStatusWaitingClientAction
 }
 
 func floatValue(value interface{}) (float64, bool) {

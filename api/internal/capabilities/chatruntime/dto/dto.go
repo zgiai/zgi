@@ -14,6 +14,7 @@ type ChatRequest struct {
 	ConversationID   string                 `json:"conversation_id,omitempty"`
 	ParentID         string                 `json:"parent_id,omitempty"`
 	Query            string                 `json:"query" binding:"required"`
+	Surface          string                 `json:"surface,omitempty"`
 	RuntimeContext   string                 `json:"runtime_context,omitempty"`
 	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
 	FileIDs          []string               `json:"file_ids,omitempty"`
@@ -26,6 +27,7 @@ type ChatRequest struct {
 
 type RegenerateMessageRequest struct {
 	Query            *string                `json:"query,omitempty"`
+	Surface          string                 `json:"surface,omitempty"`
 	RuntimeContext   string                 `json:"runtime_context,omitempty"`
 	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
 	Model            *string                `json:"model,omitempty"`
@@ -49,6 +51,14 @@ type ToolGovernanceDecisionResponse struct {
 	RememberForSession bool                   `json:"remember_for_session,omitempty"`
 	SessionGrant       map[string]interface{} `json:"session_grant,omitempty"`
 	Event              map[string]interface{} `json:"event"`
+}
+
+type ClientActionResultRequest struct {
+	Status           string                 `json:"status" binding:"required"`
+	RuntimeContext   string                 `json:"runtime_context,omitempty"`
+	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
+	Result           map[string]interface{} `json:"result,omitempty"`
+	Error            string                 `json:"error,omitempty"`
 }
 
 type StopConversationResponse struct {

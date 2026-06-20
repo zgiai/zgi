@@ -14,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func TestMergeSkillInvocationMetadataKeepsToolGovernanceTrace(t *testing.T) {
@@ -246,7 +247,7 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 		"skill_invocations": []interface{}{
 			map[string]interface{}{
 				"kind":       "tool_governance",
-				"skill_id":   "file-reader",
+				"skill_id":   "file-manager",
 				"tool_name":  "delete_file",
 				"status":     "needs_approval",
 				"runtime_id": "governance:corr-1",
@@ -353,6 +354,50 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 	}
 	if assets := mapSliceFromAny(grants[0]["assets"]); len(assets) != 1 || assets[0]["id"] != "file-1" {
 		t.Fatalf("one-shot grant assets = %#v, want approved file", assets)
+	}
+}
+
+func TestApplySkillToolGovernanceRuntimeParametersMirrorsLegacyFileReaderDeleteGrant(t *testing.T) {
+	conversationID := uuid.New().String()
+	legacyGrant := map[string]interface{}{
+		"conversation_id":         conversationID,
+		"organization_id":         uuid.New().String(),
+		"user_id":                 uuid.New().String(),
+		"skill_id":                skills.SkillFileReader,
+		"provider_type":           "builtin",
+		"provider_id":             "files",
+		"tool_id":                 "file.delete",
+		"effect":                  "delete",
+		"asset_type":              "file",
+		"risk_level":              "high",
+		"approval_correlation_id": "corr-legacy",
+		"expires_at":              time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		"assets": []interface{}{
+			map[string]interface{}{"id": "file-1", "type": "file", "name": "report.pdf", "workspace_id": "workspace-1"},
+		},
+	}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{
+			ID:       uuid.MustParse(conversationID),
+			Metadata: appendToolGovernanceSessionGrant(nil, legacyGrant),
+		},
+	}
+
+	params := applySkillToolGovernanceRuntimeParameters(nil, prepared)
+	nested := governanceMapFromAny(params[skillToolGovernanceRuntimeKey])
+	grants := mapSliceFromAny(nested["session_grants"])
+	if len(grants) != 2 {
+		t.Fatalf("runtime session grants = %#v, want legacy reader and mirrored manager grants", grants)
+	}
+	seen := map[string]bool{}
+	for _, grant := range grants {
+		seen[stringFromAny(grant["skill_id"])] = true
+		if grant["tool_id"] != "file.delete" || grant["approval_correlation_id"] != "corr-legacy" {
+			t.Fatalf("runtime grant = %#v, want same file.delete approval scope", grant)
+		}
+	}
+	if !seen[skills.SkillFileReader] || !seen[skills.SkillFileManager] {
+		t.Fatalf("runtime session grants = %#v, want reader legacy plus manager mirror", grants)
 	}
 }
 
@@ -788,7 +833,7 @@ func TestSubmitToolGovernanceDecisionRememberForSessionPreservesExistingConversa
 	approvalGrant["conversation_id"] = conversationID.String()
 	approvalGrant["organization_id"] = organizationID.String()
 	approvalGrant["user_id"] = accountID.String()
-	approvalGrant["skill_id"] = skills.SkillFileReader
+	approvalGrant["skill_id"] = skills.SkillFileManager
 	approvalGrant["provider_type"] = "builtin"
 	approvalGrant["provider_id"] = "files"
 	approvalGrant["assets"] = []interface{}{
@@ -914,7 +959,10 @@ func TestToolGovernanceRejectionLLMRequestCannotCallTools(t *testing.T) {
 	user := messageContentText(req.Messages[1].Content)
 	for _, want := range []string{
 		"Do not execute or claim the rejected action",
+		"Answer in the user's language",
+		"\u672a\u6267\u884c",
 		"offer safe alternatives",
+		"Do not expose internal IDs",
 	} {
 		if !strings.Contains(system, want) {
 			t.Fatalf("system prompt missing %q in %q", want, system)
@@ -923,12 +971,166 @@ func TestToolGovernanceRejectionLLMRequestCannotCallTools(t *testing.T) {
 	for _, want := range []string{
 		"delete the first file",
 		"keep the file",
-		"corr-1",
-		"file.delete",
+		`"action":"delete"`,
+		"not_executed",
 	} {
 		if !strings.Contains(user, want) {
 			t.Fatalf("user payload missing %q in %q", want, user)
 		}
+	}
+	for _, hidden := range []string{
+		"corr-1",
+		"Rejected governance event JSON",
+	} {
+		if strings.Contains(user, hidden) {
+			t.Fatalf("user payload exposed %q in %q", hidden, user)
+		}
+	}
+}
+
+func TestToolGovernanceExecutionResultLLMRequestUsesModelVisibleSummary(t *testing.T) {
+	provider := "deepseek"
+	message := &runtimemodel.Message{
+		Query:         "\u5220\u9664 report.pdf",
+		ModelName:     "deepseek-chat",
+		ModelProvider: &provider,
+	}
+	event := map[string]interface{}{
+		"correlation_id": "corr-1",
+		"governance": map[string]interface{}{
+			"approval_event": map[string]interface{}{
+				"tool_id":    "file.delete",
+				"skill_id":   skills.SkillFileManager,
+				"effect":     "delete",
+				"asset_type": "file",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":           "file-1",
+						"type":         "file",
+						"name":         "report.pdf",
+						"workspace_id": "workspace-1",
+					},
+				},
+			},
+		},
+	}
+	invocation := &skills.ToolInvocationResult{
+		Trace: skills.SkillTrace{
+			Kind:     "tool_call",
+			SkillID:  skills.SkillFileManager,
+			ToolName: "delete_file",
+			Status:   "success",
+			Arguments: map[string]interface{}{
+				"file_id": "file-1",
+			},
+		},
+		Messages: []tools.ToolInvokeMessage{
+			{
+				Type: tools.ToolInvokeMessageTypeJSON,
+				Data: map[string]interface{}{
+					"status":        "completed",
+					"deleted_count": 1,
+					"reversible":    false,
+					"file": map[string]interface{}{
+						"id":           "file-1",
+						"name":         "report.pdf",
+						"workspace_id": "workspace-1",
+					},
+				},
+			},
+		},
+	}
+
+	req := toolGovernanceExecutionResultLLMRequest(message, event, invocation, nil)
+	text := toolGovernanceStreamRequestText(req)
+	for _, want := range []string{
+		"Answer in the user's language",
+		"For successful file actions, mention only the file name and action result",
+		`"action":"delete"`,
+		`"action_result":"deleted"`,
+		`"name":"report.pdf"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("execution summary request missing %q in %q", want, text)
+		}
+	}
+	for _, hidden := range []string{
+		`"file_id"`,
+		`"deleted_count"`,
+		`"workspace_id"`,
+		`"correlation_id"`,
+		"file-1",
+		"workspace-1",
+		"corr-1",
+	} {
+		if strings.Contains(text, hidden) {
+			t.Fatalf("execution summary request exposed %q in %q", hidden, text)
+		}
+	}
+}
+
+func TestToolGovernanceExecutionResultLLMRequestTurnsToolFailureIntoRecoverableFeedback(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query:     "\u5220\u9664 report.pdf",
+		ModelName: "deepseek-chat",
+	}
+	event := map[string]interface{}{
+		"governance": map[string]interface{}{
+			"approval_event": map[string]interface{}{
+				"effect":     "delete",
+				"asset_type": "file",
+				"assets": []interface{}{
+					map[string]interface{}{"id": "file-1", "type": "file", "name": "report.pdf"},
+				},
+			},
+		},
+	}
+	invocation := &skills.ToolInvocationResult{
+		Trace: skills.SkillTrace{
+			Kind:     "tool_call",
+			SkillID:  skills.SkillFileManager,
+			ToolName: "delete_file",
+			Status:   "error",
+			Error:    "file file-1 not found",
+			Arguments: map[string]interface{}{
+				"file_id": "file-1",
+			},
+		},
+	}
+
+	req := toolGovernanceExecutionResultLLMRequest(message, event, invocation, errors.New("file file-1 not found"))
+	text := toolGovernanceStreamRequestText(req)
+	for _, want := range []string{
+		"recoverable model feedback",
+		`"recoverable_feedback":true`,
+		"Runtime failure feedback:\nfile report.pdf not found",
+		`"error":"file report.pdf not found"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("failure summary request missing %q in %q", want, text)
+		}
+	}
+	if strings.Contains(text, "file-1") {
+		t.Fatalf("failure summary request exposed internal file id in %q", text)
+	}
+}
+
+func TestToolGovernanceSafeErrorTextScrubsUnmappedInternalTokens(t *testing.T) {
+	got := toolGovernanceSafeErrorText(
+		nil,
+		nil,
+		errors.New("asset 2f3f7b2e-99f8-4c2d-8f10-0e0f4d1c8a12 failed in 0123456789abcdef01234567"),
+	)
+	for _, hidden := range []string{
+		"2f3f7b2e-99f8-4c2d-8f10-0e0f4d1c8a12",
+		"0123456789abcdef01234567",
+	} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("toolGovernanceSafeErrorText() exposed %q in %q", hidden, got)
+		}
+	}
+	if !strings.Contains(got, "the asset") {
+		t.Fatalf("toolGovernanceSafeErrorText() = %q, want scrubbed placeholder", got)
 	}
 }
 
@@ -969,14 +1171,26 @@ func TestToolGovernanceApprovalContinuationMessageScopesRetryToGrant(t *testing.
 		"The approval is scoped to the governance grant",
 		"authoritative asset resolution",
 		"do not ask the user to identify the approved assets again",
-		"Approved assets: smoke.txt type=file id=file-1",
-		"call file-reader/delete_file with file_id equal to the approved file asset id",
+		"Answer in the user's language",
+		"do not mention internal IDs",
+		"Approved asset names: smoke.txt type=file",
+		"call file-manager/delete_file with file_id equal to the approved file asset id",
+		"Approved tool target JSON for tool arguments only",
+		`"file_id":"file-1"`,
 		"Do not claim that the action succeeded",
-		"corr-1",
-		"file.delete",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("approval continuation prompt missing %q in %q", want, content)
+		}
+	}
+	for _, hidden := range []string{
+		"corr-1",
+		"workspace_id",
+		"approved_grant",
+		"frozen_invocation",
+	} {
+		if strings.Contains(content, hidden) {
+			t.Fatalf("approval continuation prompt exposed %q in %q", hidden, content)
 		}
 	}
 }
@@ -1016,17 +1230,20 @@ func TestToolGovernanceApprovedFinalAnswerGuardBlocksUntilDeleteToolAttempted(t 
 	for _, want := range []string{
 		"approval is not the operation itself",
 		"delete_file",
-		"smoke.txt (file-1)",
+		"smoke.txt",
 	} {
 		if !strings.Contains(result.Message, want) {
 			t.Fatalf("guard message missing %q in %q", want, result.Message)
 		}
 	}
+	if strings.Contains(result.Message, "file-1") {
+		t.Fatalf("guard message exposed internal file id in %q", result.Message)
+	}
 
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "The delete_file tool failed because the file was already missing.",
 		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "delete_file"},
+			{SkillID: skills.SkillFileManager, ToolName: "delete_file"},
 		},
 	})
 	if blocked {
@@ -1066,11 +1283,14 @@ func TestToolGovernanceApprovedFinalAnswerGuardBlocksGenericApprovedTool(t *test
 		"approval is not the operation itself",
 		"agent-manager",
 		"publish_agent",
-		"Support Agent (agent-1)",
+		"Support Agent",
 	} {
 		if !strings.Contains(result.Message, want) {
 			t.Fatalf("guard message missing %q in %q", want, result.Message)
 		}
+	}
+	if strings.Contains(result.Message, "agent-1") {
+		t.Fatalf("guard message exposed internal agent id in %q", result.Message)
 	}
 
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
@@ -1089,7 +1309,7 @@ func pendingToolGovernanceDecisionMetadata(correlationID string) map[string]inte
 		"skill_invocations": []interface{}{
 			map[string]interface{}{
 				"kind":      "tool_governance",
-				"skill_id":  "file-reader",
+				"skill_id":  "file-manager",
 				"tool_name": "delete_file",
 				"status":    "needs_approval",
 				"governance": map[string]interface{}{
@@ -1099,7 +1319,7 @@ func pendingToolGovernanceDecisionMetadata(correlationID string) map[string]inte
 					"approval_event": map[string]interface{}{
 						"correlation_id": correlationID,
 						"tool_id":        "file.delete",
-						"skill_id":       "file-reader",
+						"skill_id":       "file-manager",
 						"effect":         "delete",
 						"asset_type":     "file",
 						"risk_level":     "high",
@@ -1117,7 +1337,7 @@ func pendingToolGovernanceDecisionMetadata(correlationID string) map[string]inte
 		"tool_governance_continuation": map[string]interface{}{
 			"status":         "waiting_approval",
 			"correlation_id": correlationID,
-			"skill_id":       "file-reader",
+			"skill_id":       "file-manager",
 			"tool_name":      "delete_file",
 			"original_query": "delete file",
 			"resume_policy":  "same_message",

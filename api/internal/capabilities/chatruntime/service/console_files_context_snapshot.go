@@ -59,6 +59,9 @@ func consoleFilesContextSnapshotCapabilities(parts *chatRequestParts) []interfac
 	if hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext) {
 		add("file.delete")
 	}
+	if hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		add("file.create")
+	}
 	return out
 }
 
@@ -120,7 +123,7 @@ func consoleFilesOperationContextFromSnapshot(snapshot map[string]interface{}) m
 			"file_id":       fileID,
 			"name":          name,
 		}
-		for _, key := range []string{"visible_index", "extension", "mime_type", "file_type", "workspace_id", "selected"} {
+		for _, key := range []string{"visible_index", "file_type_rank", "extension_rank", "extension", "mime_type", "file_type", "workspace_id", "selected"} {
 			if value, ok := file[key]; ok && value != nil {
 				metadata[key] = value
 			}

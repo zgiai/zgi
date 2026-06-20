@@ -52,6 +52,24 @@ func TestSummarizeSkillToolArgumentsKeepsFileReaderAssetIDs(t *testing.T) {
 	}
 }
 
+func TestSummarizeSkillToolArgumentsKeepsConsoleNavigationHref(t *testing.T) {
+	result := summarizeSkillToolArguments(skills.SkillConsoleNavigator, "navigate", map[string]interface{}{
+		"href":   "/console/work/task",
+		"reason": "User asked to open scheduled tasks.",
+		"extra":  "not needed",
+	})
+
+	if result["href"] != "/console/work/task" {
+		t.Fatalf("href = %#v, want route href", result["href"])
+	}
+	if result["reason"] != "User asked to open scheduled tasks." {
+		t.Fatalf("reason = %#v, want user-facing reason", result["reason"])
+	}
+	if _, ok := result["extra"]; ok {
+		t.Fatalf("extra should not be included in console navigation argument summary: %#v", result)
+	}
+}
+
 func TestApplyGovernedAssetArgumentsUsesAllowedGovernanceAsset(t *testing.T) {
 	trace := skills.SkillTrace{
 		Arguments: map[string]interface{}{

@@ -10,24 +10,11 @@ import (
 
 func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesToolGuidance(t *testing.T) {
 	prepared := &PreparedChat{
-		parts: &chatRequestParts{
-			Query:          "delete the first file",
-			RuntimeContext: "route=/console/files capabilities=file.delete",
-			SkillIDs:       []string{skills.SkillCalculator, skills.SkillFileReader},
-			RawOperationContext: map[string]interface{}{
-				"resources": []interface{}{
-					map[string]interface{}{
-						"resource_type": "file",
-						"resource_id":   "file-1",
-						"title":         "invoice.xlsx",
-						"capabilities": []interface{}{
-							map[string]interface{}{"id": "file.delete"},
-						},
-					},
-				},
-			},
-		},
+		parts: consoleFilesSnapshotTestParts("delete the first file", []consoleFilesTestFile{
+			{ID: "file-1", Name: "invoice.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		}),
 	}
+	prepared.parts.SkillIDs = []string{skills.SkillCalculator, skills.SkillFileManager, skills.SkillFileReader}
 
 	messages := skillLoopAdditionalSystemMessages(prepared)
 	if len(messages) != 1 {
@@ -35,10 +22,14 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesToolGuidance(t *testin
 	}
 	content := messageContentText(messages[0].Content)
 	for _, want := range []string{
-		"file-reader/delete_file",
+		"Answer in the user's language",
+		"do not mention internal IDs",
+		"mention only the file name and the user-visible action result",
+		"When a file tool fails, explain the failure plainly",
+		"file-manager/delete_file",
 		"Tool governance handles the approval card",
 		"session grant exists, it only skips the approval prompt",
-		"must still call file-reader/delete_file",
+		"must still call file-manager/delete_file",
 		"do not ask for a separate natural-language confirmation",
 		"Do not call unrelated discovery",
 		`"file_id":"file-1"`,
@@ -74,6 +65,8 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesReadTarget(t *testing.
 		"resolved_targets_from_user_request",
 		`"file_id":"file-4"`,
 		`"visible_index":4`,
+		"Resolved internal target JSON for tool arguments only",
+		"tool_argument_visibility_restriction",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("contextual read guidance missing %q in:\n%s", want, content)
@@ -82,22 +75,22 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesReadTarget(t *testing.
 }
 
 func TestSkillLoopAdditionalSystemMessagesResolvesRecentFileTarget(t *testing.T) {
+	query := "\u8bf7\u57fa\u4e8e\u521a\u624d\u90a3\u4e2a\u6587\u4ef6\u63d0\u53d6\u7f34\u8d39\u8d26\u6237"
 	prepared := &PreparedChat{
-		parts: &chatRequestParts{
-			Query:          "\u8bf7\u57fa\u4e8e\u521a\u624d\u90a3\u4e2a\u6587\u4ef6\u63d0\u53d6\u7f34\u8d39\u8d26\u6237",
-			RuntimeContext: "route=/console/files capabilities=file.read",
-			SkillIDs:       []string{skills.SkillFileReader},
-			SkillMode:      skillModeAuto,
-			RecentAssetCandidates: []ResourceCandidate{{
-				Type:      resourceTypeFile,
-				ID:        "file-1",
-				Name:      "invoice.xlsx",
-				Source:    "recent_execution.read_file",
-				Extension: "xlsx",
-				Recent:    true,
-			}},
-		},
+		parts: consoleFilesSnapshotTestParts(query, []consoleFilesTestFile{
+			{ID: "file-1", Name: "invoice.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		}),
 	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.RecentAssetCandidates = []ResourceCandidate{{
+		Type:      resourceTypeFile,
+		ID:        "file-1",
+		Name:      "invoice.xlsx",
+		Source:    "recent_execution.read_file",
+		Extension: "xlsx",
+		Recent:    true,
+	}}
 
 	messages := skillLoopAdditionalSystemMessages(prepared)
 	if len(messages) != 1 {
@@ -146,6 +139,214 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesListToolGuidance(t *te
 	}
 }
 
+func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesCreateGuidance(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("please create a txt file in File Management"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator}
+	prepared.parts.SkillMode = skillModeAuto
+
+	messages := skillLoopAdditionalSystemMessages(prepared)
+	if len(messages) != 1 {
+		t.Fatalf("additional messages = %d, want 1", len(messages))
+	}
+	content := messageContentText(messages[0].Content)
+	for _, want := range []string{
+		"file-generator",
+		"generate_file",
+		`"capability_id":"file.create"`,
+		`target "managed_file"`,
+		"temporary_artifact",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("contextual create guidance missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksManagedFileCreateWithoutToolCall(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("\u8bf7\u5728\u6587\u4ef6\u7ba1\u7406\u4e2d\u521b\u5efa\u4e00\u4e2a txt \u6587\u4ef6"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for managed file creation")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "This is unsupported.",
+	})
+	if !blocked {
+		t.Fatal("guard blocked = false, want true")
+	}
+	for _, want := range []string{skills.SkillFileGenerator, "managed_file", "Do not finish"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("guard result missing %q: %#v", want, result)
+		}
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileGenerator,
+			ToolName: "generate_file",
+			Arguments: map[string]interface{}{
+				"filename": "smoke.txt",
+				"target":   "managed_file",
+			},
+		}},
+	})
+	if blocked {
+		t.Fatal("guard blocked = true after managed file-generator tool call, want false")
+	}
+}
+
+func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "\u5e26\u6211\u53bb\u5b9a\u65f6\u4efb\u52a1\u9875\u9762",
+			SkillIDs:  []string{skills.SkillConsoleNavigator},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	messages := skillLoopAdditionalSystemMessages(prepared)
+	if len(messages) != 1 {
+		t.Fatalf("additional messages = %d, want 1", len(messages))
+	}
+	content := messageContentText(messages[0].Content)
+	for _, want := range []string{
+		"ZGI console navigation guidance",
+		"console-navigator/navigate",
+		"Do not use request_user_input",
+		"Do not say a page has been opened unless",
+		`"href":"/console/work/task"`,
+		`"label":"定时任务"`,
+		"resolved_target_from_user_request",
+		`"/console/files"`,
+		`"/console/agents"`,
+		`"/console/dataset"`,
+		`"/console/db"`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("console navigation guidance missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksConsoleNavigationWithoutToolCall(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "\u5e26\u6211\u53bb\u5b9a\u65f6\u4efb\u52a1\u9875\u9762",
+			SkillIDs:  []string{skills.SkillConsoleNavigator},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for known console route request")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "\u5df2\u6253\u5f00\u5b9a\u65f6\u4efb\u52a1\u7ba1\u7406\u9875\u9762\u3002",
+	})
+	if !blocked {
+		t.Fatal("guard did not block navigation success claim without navigate tool")
+	}
+	for _, want := range []string{
+		"console-navigator",
+		"navigate",
+		"/console/work/task",
+		"Only after navigate succeeds",
+	} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("guard message missing %q in:\n%s", want, result.Message)
+		}
+	}
+	if !strings.Contains(result.SystemMessage, `"href":"/console/work/task"`) {
+		t.Fatalf("guard system message missing resolved href: %s", result.SystemMessage)
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "\u5df2\u6253\u5f00\u5b9a\u65f6\u4efb\u52a1\u9875\u9762\u3002",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillConsoleNavigator, ToolName: "navigate", Arguments: map[string]interface{}{"href": "/console/files"}},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard allowed navigate call for the wrong route")
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "\u5df2\u6253\u5f00\u5b9a\u65f6\u4efb\u52a1\u9875\u9762\u3002",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillConsoleNavigator, ToolName: "navigate", Arguments: map[string]interface{}{"href": "/console/work/task"}},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after navigate succeeded for the resolved route")
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "\u5df2\u5c1d\u8bd5\u6253\u5f00\uff0c\u4f46\u5bfc\u822a\u5de5\u5177\u5931\u8d25\u3002",
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillConsoleNavigator, ToolName: "navigate", Arguments: map[string]interface{}{"href": "/console/work/task?source=aichat"}},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after navigate was attempted for the resolved route")
+	}
+}
+
+func TestSkillLoopUserInputGuardBlocksConsoleNavigationClarification(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "\u5e26\u6211\u53bb\u5b9a\u65f6\u4efb\u52a1\u9875\u9762",
+			SkillIDs:  []string{skills.SkillConsoleNavigator},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	guard := skillLoopUserInputGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopUserInputGuard() = nil, want guard for known console route request")
+	}
+	result, blocked := guard(skillloop.UserInputGuardRequest{
+		Message: "\u8bf7\u95ee\u60a8\u8981\u6253\u5f00\u54ea\u4e2a\u5b9a\u65f6\u4efb\u52a1\u9875\u9762\uff1f",
+		Questions: []map[string]interface{}{
+			{"id": "which_page", "question": "\u8bf7\u9009\u62e9\u76ee\u6807\u9875\u9762"},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard did not block redundant route clarification")
+	}
+	for _, want := range []string{
+		"known ZGI console route",
+		"already resolved from the site map",
+		"console-navigator",
+		"/console/work/task",
+	} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("user input guard message missing %q in:\n%s", want, result.Message)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardSkipsConsoleNavigationWhenIntentIsInformational(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "\u5b9a\u65f6\u4efb\u52a1\u662f\u4ec0\u4e48",
+			SkillIDs:  []string{skills.SkillConsoleNavigator},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		t.Fatal("skillLoopFinalAnswerGuard() returned guard for informational task question, want nil")
+	}
+}
+
 func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *testing.T) {
 	files := []consoleFilesTestFile{
 		{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
@@ -183,6 +384,9 @@ func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *tes
 				"file-reader/read_file",
 				"resolved_targets_from_user_request",
 				"target is already resolved",
+				"typed ordinal requests",
+				"file_type_rank",
+				"extension_rank",
 				"Do not ask the user to select a file",
 				`content_status "extracted"`,
 				`"file_id":"` + tt.want + `"`,
@@ -191,6 +395,18 @@ func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *tes
 			} {
 				if !strings.Contains(content, want) {
 					t.Fatalf("contextual read guidance missing %q in:\n%s", want, content)
+				}
+			}
+			if tt.name == "second excel" {
+				for _, want := range []string{
+					`"file_id":"file-5"`,
+					`"file_type":"excel"`,
+					`"file_type_rank":2`,
+					`"extension_rank":2`,
+				} {
+					if !strings.Contains(content, want) {
+						t.Fatalf("contextual second-excel guidance missing %q in:\n%s", want, content)
+					}
 				}
 			}
 		})
@@ -272,25 +488,28 @@ func TestSkillLoopFinalAnswerGuardBlocksChineseReadOrdinalWithoutToolCall(t *tes
 	if !strings.Contains(result.Message, "budget-q2.xlsx") || !strings.Contains(result.Message, "read_file") {
 		t.Fatalf("guard message = %q, want target and read_file", result.Message)
 	}
+	if strings.Contains(result.Message, "file-4") {
+		t.Fatalf("guard message exposed internal file id in %q", result.Message)
+	}
 }
 
 func TestSkillLoopFinalAnswerGuardBlocksRecentFileAnswerWithoutToolCall(t *testing.T) {
+	query := "\u8bf7\u57fa\u4e8e\u521a\u624d\u90a3\u4e2a\u6587\u4ef6\u63d0\u53d6\u7f34\u8d39\u8d26\u6237"
 	prepared := &PreparedChat{
-		parts: &chatRequestParts{
-			Query:          "\u8bf7\u57fa\u4e8e\u521a\u624d\u90a3\u4e2a\u6587\u4ef6\u63d0\u53d6\u7f34\u8d39\u8d26\u6237",
-			RuntimeContext: "route=/console/files capabilities=file.read",
-			SkillIDs:       []string{skills.SkillFileReader},
-			SkillMode:      skillModeAuto,
-			RecentAssetCandidates: []ResourceCandidate{{
-				Type:      resourceTypeFile,
-				ID:        "file-1",
-				Name:      "invoice.xlsx",
-				Source:    "recent_execution.read_file",
-				Extension: "xlsx",
-				Recent:    true,
-			}},
-		},
+		parts: consoleFilesSnapshotTestParts(query, []consoleFilesTestFile{
+			{ID: "file-1", Name: "invoice.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		}),
 	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.RecentAssetCandidates = []ResourceCandidate{{
+		Type:      resourceTypeFile,
+		ID:        "file-1",
+		Name:      "invoice.xlsx",
+		Source:    "recent_execution.read_file",
+		Extension: "xlsx",
+		Recent:    true,
+	}}
 
 	guard := skillLoopFinalAnswerGuard(prepared)
 	if guard == nil {
@@ -384,7 +603,7 @@ func TestSkillLoopFinalAnswerGuardAllowsConsoleFilesListWithoutToolCall(t *testi
 }
 
 func TestConsoleFilesRequiredToolFinalAnswerGuardRequiresAllTargetFileIDs(t *testing.T) {
-	guard := consoleFilesRequiredToolFinalAnswerGuard([]map[string]interface{}{
+	guard := consoleFilesRequiredToolFinalAnswerGuard(skills.SkillFileReader, []map[string]interface{}{
 		{"file_id": "file-1", "name": "one.pdf"},
 		{"file_id": "file-2", "name": "two.pdf"},
 	}, "read_file", []string{"read {target}"})
@@ -428,24 +647,11 @@ func preparedConsoleFilesGuardReadTest(query string) *PreparedChat {
 
 func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *testing.T) {
 	prepared := &PreparedChat{
-		parts: &chatRequestParts{
-			Query:          "delete the first file",
-			RuntimeContext: "route=/console/files capabilities=file.delete",
-			SkillIDs:       []string{skills.SkillFileReader},
-			RawOperationContext: map[string]interface{}{
-				"resources": []interface{}{
-					map[string]interface{}{
-						"resource_type": "file",
-						"resource_id":   "file-1",
-						"title":         "invoice.xlsx",
-						"capabilities": []interface{}{
-							map[string]interface{}{"id": "file.delete"},
-						},
-					},
-				},
-			},
-		},
+		parts: consoleFilesSnapshotTestParts("delete the first file", []consoleFilesTestFile{
+			{ID: "file-1", Name: "invoice.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		}),
 	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager}
 
 	guard := skillLoopFinalAnswerGuard(prepared)
 	if guard == nil {
@@ -459,7 +665,7 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *tes
 	}
 	for _, want := range []string{
 		"invoice.xlsx",
-		"file-reader",
+		"file-manager",
 		"delete_file",
 		"session approval grant may skip the approval card",
 	} {
@@ -467,11 +673,21 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *tes
 			t.Fatalf("guard message missing %q in:\n%s", want, result.Message)
 		}
 	}
+	if strings.Contains(result.Message, "file-1") {
+		t.Fatalf("guard message exposed internal file id in %q", result.Message)
+	}
+	if !strings.Contains(result.SystemMessage, "file-1") {
+		t.Fatalf("guard system message missing internal file id for tool arguments in %q", result.SystemMessage)
+	}
+	if !strings.Contains(result.SystemMessage, "tool arguments only") ||
+		!strings.Contains(result.SystemMessage, "do not reveal internal IDs") {
+		t.Fatalf("guard system message missing internal-only visibility instruction in %q", result.SystemMessage)
+	}
 
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "The file has been deleted.",
 		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
+			{SkillID: skills.SkillFileManager, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
 		},
 	})
 	if blocked {
@@ -481,7 +697,7 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *tes
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "The file has been deleted.",
 		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
+			{SkillID: skills.SkillFileManager, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
 		},
 	})
 	if !blocked {
@@ -491,11 +707,30 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *tes
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "I tried to delete the file, but the tool reported it was not found.",
 		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
+			{SkillID: skills.SkillFileManager, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
 		},
 	})
 	if blocked {
 		t.Fatal("guard blocked after delete_file was attempted and failed")
+	}
+}
+
+func TestConsoleFilesGuardTargetSummaryUsesUserVisibleNames(t *testing.T) {
+	got := consoleFilesGuardTargetSummary([]map[string]interface{}{
+		{"file_id": "file-1", "name": "invoice.xlsx"},
+		{"file_id": "file-2", "name": "report.pdf"},
+	})
+	if got != "invoice.xlsx, report.pdf" {
+		t.Fatalf("consoleFilesGuardTargetSummary() = %q, want visible names only", got)
+	}
+	for _, hidden := range []string{"file-1", "file-2"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("target summary exposed %q in %q", hidden, got)
+		}
+	}
+
+	if got := consoleFilesGuardTargetSummary([]map[string]interface{}{{"file_id": "file-1"}}); got != "the resolved visible file" {
+		t.Fatalf("consoleFilesGuardTargetSummary() = %q, want generic fallback without file id", got)
 	}
 }
 

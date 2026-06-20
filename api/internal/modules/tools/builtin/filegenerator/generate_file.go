@@ -486,24 +486,7 @@ func runtimeDefaultsGeneratedFileTargetToManaged(runtime *tools.ToolRuntime) boo
 	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
 		return false
 	}
-	if isManagedFileTargetAlias(runtimeStringParam(runtime, "file_generation_default_target")) {
-		return true
-	}
-	if runtimeBoolParam(runtime, "console_files_page") {
-		return true
-	}
-	if runtimeBoolParam(runtime, "consoleFilesPage") {
-		return true
-	}
-	if raw, ok := runtime.RuntimeParameters["console_files_visible_files"]; ok {
-		switch typed := raw.(type) {
-		case []interface{}:
-			return len(typed) > 0
-		case []map[string]interface{}:
-			return len(typed) > 0
-		}
-	}
-	return false
+	return isManagedFileTargetAlias(runtimeStringParam(runtime, "file_generation_default_target"))
 }
 
 func runtimeManagedFileWorkspaceID(runtime *tools.ToolRuntime) string {

@@ -51,7 +51,8 @@ func recentAssetCandidatesFromInvocation(invocation map[string]interface{}, mess
 	if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" {
 		return nil
 	}
-	if strings.TrimSpace(stringFromAny(invocation["skill_id"])) != skills.SkillFileReader {
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	if skillID != skills.SkillFileReader && skillID != skills.SkillFileManager {
 		return nil
 	}
 	status := strings.TrimSpace(stringFromAny(invocation["status"]))
@@ -65,7 +66,20 @@ func recentAssetCandidatesFromInvocation(invocation map[string]interface{}, mess
 	}
 	source := "recent_execution." + toolName
 	switch toolName {
-	case "read_file", "delete_file":
+	case "read_file":
+		if skillID != skills.SkillFileReader {
+			return nil
+		}
+		if file := resourceCandidateFromRecentFileMap(mapFromOperationContext(result["file"]), source, messageID, toolName); file.ID != "" {
+			return []ResourceCandidate{file}
+		}
+		if file := resourceCandidateFromRecentFileMap(result, source, messageID, toolName); file.ID != "" {
+			return []ResourceCandidate{file}
+		}
+	case "delete_file":
+		if skillID != skills.SkillFileManager && skillID != skills.SkillFileReader {
+			return nil
+		}
 		if file := resourceCandidateFromRecentFileMap(mapFromOperationContext(result["file"]), source, messageID, toolName); file.ID != "" {
 			return []ResourceCandidate{file}
 		}

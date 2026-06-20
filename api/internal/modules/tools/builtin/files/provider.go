@@ -24,8 +24,9 @@ const (
 	defaultReadFileMaxChars = 4000
 	maxReadFileMaxChars     = 12000
 
-	governedFileDeleteSkillID = "file-reader"
-	governedFileDeleteToolID  = "file.delete"
+	governedFileDeleteSkillID       = "file-manager"
+	legacyGovernedFileDeleteSkillID = "file-reader"
+	governedFileDeleteToolID        = "file.delete"
 )
 
 type FileService interface {
@@ -363,28 +364,67 @@ func (t *deleteFileTool) ensureGovernedDeleteApproved(scope fileScope, file *dto
 	if conversation == "" {
 		return fmt.Errorf("file delete requires tool governance approval")
 	}
-	decision := toolgovernance.Decide(toolgovernance.Request{
-		Manifest:       governedFileDeleteManifest(),
-		PermissionTier: toolgovernance.PermissionTierBasic,
-		ConversationID: conversation,
-		OrganizationID: scope.OrganizationID,
-		UserID:         scope.AccountID,
-		SkillID:        governedFileDeleteSkillID,
-		ProviderType:   string(tools.ToolProviderTypeBuiltin),
-		ProviderID:     ProviderID,
-		Assets:         []toolgovernance.AssetRef{governedFileAsset(file)},
-		SessionGrants:  toolGovernanceSessionGrantsFromRuntime(t.Runtime()),
-	}, toolgovernance.DefaultPolicy())
-	if decision.Status == toolgovernance.DecisionStatusAllowed && decision.MatchedGrant != nil {
+	if t.governedDeleteApprovedWithSkill(scope, file, conversation, governedFileDeleteSkillID) {
+		return nil
+	}
+	if t.governedDeleteApprovedWithSkill(scope, file, conversation, legacyGovernedFileDeleteSkillID) {
 		return nil
 	}
 	return fmt.Errorf("file delete requires tool governance approval")
 }
 
-func governedFileDeleteManifest() toolgovernance.Manifest {
+func (t *deleteFileTool) governedDeleteApprovedWithSkill(scope fileScope, file *dto.UploadFile, conversation string, skillID string) bool {
+	decision := toolgovernance.Decide(toolgovernance.Request{
+		Manifest:       governedFileDeleteManifest(skillID),
+		PermissionTier: toolgovernance.PermissionTierBasic,
+		ConversationID: conversation,
+		OrganizationID: scope.OrganizationID,
+		UserID:         scope.AccountID,
+		SkillID:        skillID,
+		ProviderType:   string(tools.ToolProviderTypeBuiltin),
+		ProviderID:     ProviderID,
+		Assets:         []toolgovernance.AssetRef{governedFileAsset(file)},
+		SessionGrants:  toolGovernanceSessionGrantsFromRuntime(t.Runtime()),
+	}, toolgovernance.DefaultPolicy())
+	if decision.Status == toolgovernance.DecisionStatusAllowed &&
+		decision.MatchedGrant != nil &&
+		toolGovernanceGrantMatchesFile(*decision.MatchedGrant, file) {
+		return true
+	}
+	return false
+}
+
+func toolGovernanceGrantMatchesFile(grant toolgovernance.SessionGrant, file *dto.UploadFile) bool {
+	if file == nil || strings.TrimSpace(file.ID) == "" || len(grant.Assets) == 0 {
+		return false
+	}
+	expected := governedFileAsset(file)
+	for _, asset := range grant.Assets {
+		if strings.TrimSpace(asset.ID) != "" && strings.TrimSpace(asset.ID) != expected.ID {
+			continue
+		}
+		if strings.TrimSpace(asset.ID) == "" {
+			continue
+		}
+		if strings.TrimSpace(asset.Type) != "" && strings.TrimSpace(asset.Type) != expected.Type {
+			continue
+		}
+		if strings.TrimSpace(asset.WorkspaceID) != "" && expected.WorkspaceID != "" && strings.TrimSpace(asset.WorkspaceID) != expected.WorkspaceID {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func governedFileDeleteManifest(skillID string) toolgovernance.Manifest {
+	skillID = strings.TrimSpace(skillID)
+	if skillID == "" {
+		skillID = governedFileDeleteSkillID
+	}
 	return toolgovernance.Manifest{
 		ToolID:                 governedFileDeleteToolID,
-		SkillID:                governedFileDeleteSkillID,
+		SkillID:                skillID,
 		Domain:                 "files",
 		Effect:                 toolgovernance.EffectDelete,
 		AssetType:              "file",

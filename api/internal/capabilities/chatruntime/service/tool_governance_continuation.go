@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -243,11 +244,15 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if err := validateToolGovernanceFrozenInvocation(frozen, toolGovernanceCorrelationID(event)); err != nil {
 		return nil, true, err
 	}
+	frozen = remapLegacyFileDeleteFrozenInvocation(frozen)
 	if s.skillRuntime == nil {
 		return nil, true, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
 	}
 	if prepared.parts == nil {
 		return nil, true, fmt.Errorf("%w: prepared chat parts are required", ErrInvalidInput)
+	}
+	if frozen.SkillID == skills.SkillFileManager {
+		prepared.parts.SkillIDs = ensureSkillID(prepared.parts.SkillIDs, skills.SkillFileManager)
 	}
 
 	custom, err := s.customSkillCatalogEntries(ctx, prepared.Scope.OrganizationID)
@@ -322,6 +327,27 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	}
 	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, true, nil
+}
+
+func remapLegacyFileDeleteFrozenInvocation(frozen toolgovernance.FrozenInvocation) toolgovernance.FrozenInvocation {
+	if strings.TrimSpace(frozen.SkillID) == skills.SkillFileReader && strings.TrimSpace(frozen.ToolName) == "delete_file" {
+		frozen.SkillID = skills.SkillFileManager
+	}
+	return frozen
+}
+
+func ensureSkillID(skillIDs []string, skillID string) []string {
+	id := strings.TrimSpace(skillID)
+	if id == "" {
+		return skillIDs
+	}
+	for _, raw := range skillIDs {
+		if strings.EqualFold(strings.TrimSpace(raw), id) {
+			return skillIDs
+		}
+	}
+	out := append(append([]string(nil), skillIDs...), id)
+	return out
 }
 
 func recoverableFrozenInvocationFailure(
@@ -418,27 +444,38 @@ func toolGovernanceExecutionResultLLMRequest(
 		model = strings.TrimSpace(message.ModelName)
 		userQuery = strings.TrimSpace(message.Query)
 	}
-	toolResult := map[string]interface{}{}
-	if invocation != nil {
-		toolResult["trace"] = invocation.Trace
-		toolResult["messages"] = invocation.Messages
-		toolResult["tool_message"] = invocation.ToolMessage.Content
-	}
+	operationSummary := toolGovernanceModelVisibleOperationSummary(event, invocation)
+	toolResult := toolGovernanceModelVisibleToolResult(event, invocation, executionErr)
 	outcome := "The user approved the pending governed tool call, and the runtime has already executed the frozen invocation exactly once."
-	systemPrompt := "You are continuing an AIChat turn after a governed tool call was approved and executed by runtime. Do not call tools. Answer in the user's language. State the actual outcome based only on the executed tool result, and mention any error or limitation plainly."
+	systemPrompt := strings.Join([]string{
+		"You are continuing an AIChat turn after a governed tool call was approved and executed by runtime.",
+		"Do not call tools.",
+		"Answer in the user's language.",
+		"State the actual outcome based only on the model-visible runtime result.",
+		"For successful file actions, mention only the file name and action result.",
+		"Do not expose internal IDs, UUIDs, workspace identifiers, correlation values, raw JSON field names, or tool count fields.",
+		"Mention any error or limitation plainly.",
+	}, " ")
 	if executionErr != nil {
-		outcome = "The user approved the pending governed tool call, and the runtime attempted to execute the frozen invocation exactly once, but it failed."
-		systemPrompt = "You are continuing an AIChat turn after a governed tool call was approved and attempted by runtime. Do not call tools. Answer in the user's language. Treat the tool result and execution error as authoritative runtime feedback, explain the failure plainly, and decide the next safe step. Do not claim the operation succeeded."
-		toolResult["execution_error"] = executionErr.Error()
+		outcome = "The user approved the pending governed tool call, and the runtime attempted to execute the frozen invocation exactly once, but it failed. The failure is recoverable model feedback, not a top-level stream failure."
+		systemPrompt = strings.Join([]string{
+			"You are continuing an AIChat turn after a governed tool call was approved and attempted by runtime.",
+			"Do not call tools.",
+			"Answer in the user's language.",
+			"Treat the model-visible runtime result and failure feedback as authoritative.",
+			"Explain the failure plainly and decide the next safe step.",
+			"Do not claim the operation succeeded.",
+			"Do not expose internal IDs, UUIDs, workspace identifiers, correlation values, raw JSON field names, or tool count fields.",
+		}, " ")
 	}
 	contentParts := []string{
 		"Original user request:\n" + userQuery,
 		outcome,
-		"Approved governance event JSON:\n" + compactJSON(event),
-		"Executed tool result JSON:\n" + compactJSON(toolResult),
+		"Approved operation summary JSON:\n" + compactJSON(operationSummary),
+		"Model-visible runtime result JSON:\n" + compactJSON(toolResult),
 	}
 	if executionErr != nil {
-		contentParts = append(contentParts, "Execution error:\n"+executionErr.Error())
+		contentParts = append(contentParts, "Runtime failure feedback:\n"+toolGovernanceSafeErrorText(event, invocation, executionErr))
 	}
 	content := strings.Join(contentParts, "\n\n")
 	chatReq := &adapter.ChatRequest{
@@ -457,6 +494,345 @@ func toolGovernanceExecutionResultLLMRequest(
 		applyModelParameters(chatReq, message.ModelParameters)
 	}
 	return chatReq
+}
+
+func toolGovernanceModelVisibleOperationSummary(event map[string]interface{}, invocation *skills.ToolInvocationResult) map[string]interface{} {
+	summary := map[string]interface{}{}
+	if action := toolGovernanceUserVisibleAction(event, invocation); action != "" {
+		summary["action"] = action
+	}
+	if assetType := toolGovernanceUserVisibleAssetType(event); assetType != "" {
+		summary["asset_type"] = assetType
+	}
+	if files := toolGovernanceUserVisibleFiles(event, invocation); len(files) > 0 {
+		summary["files"] = files
+	}
+	if len(summary) == 0 {
+		summary["action"] = "approved operation"
+	}
+	return summary
+}
+
+func toolGovernanceModelVisibleToolResult(event map[string]interface{}, invocation *skills.ToolInvocationResult, executionErr error) map[string]interface{} {
+	result := map[string]interface{}{
+		"status": "completed",
+	}
+	if executionErr != nil {
+		result["status"] = "failed"
+		result["recoverable_feedback"] = true
+		result["error"] = toolGovernanceSafeErrorText(event, invocation, executionErr)
+		result["next_step"] = "explain the failure and ask for a safe next step only when needed"
+	}
+	if action := toolGovernanceUserVisibleAction(event, invocation); action != "" {
+		result["action"] = action
+		if executionErr == nil {
+			result["action_result"] = toolGovernanceUserVisibleActionResult(action)
+		}
+	}
+	if files := toolGovernanceUserVisibleFiles(event, invocation); len(files) > 0 {
+		result["files"] = files
+	}
+
+	payload := toolGovernanceFirstJSONToolPayload(invocation)
+	if status := strings.TrimSpace(stringFromAny(payload["status"])); status != "" && executionErr == nil {
+		result["status"] = status
+	}
+	for _, key := range []string{"content_status", "content", "content_truncated", "content_error"} {
+		if value, ok := payload[key]; ok {
+			result[key] = toolGovernanceSanitizedModelVisibleValue(value)
+		}
+	}
+	if instruction := strings.TrimSpace(stringFromAny(payload["instruction"])); instruction != "" {
+		result["tool_guidance"] = instruction
+	}
+	if len(result) == 1 && len(payload) > 0 {
+		result["details"] = toolGovernanceSanitizedModelVisibleValue(payload)
+	}
+	return result
+}
+
+func toolGovernanceUserVisibleAction(event map[string]interface{}, invocation *skills.ToolInvocationResult) string {
+	approvalEvent := toolGovernanceApprovalEventFromEvent(event)
+	governance := governanceMapFromAny(event["governance"])
+	action := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+		approvalEvent["effect"],
+		event["effect"],
+		governance["effect"],
+	)))
+	if action != "" {
+		return action
+	}
+	toolID := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+		approvalEvent["tool_id"],
+		event["tool_id"],
+		governance["tool_id"],
+	)))
+	switch {
+	case strings.HasSuffix(toolID, ".delete") || strings.Contains(toolID, ".delete_"):
+		return "delete"
+	case strings.HasSuffix(toolID, ".read") || strings.Contains(toolID, ".read_"):
+		return "read"
+	}
+	toolName := ""
+	if invocation != nil {
+		toolName = strings.ToLower(strings.TrimSpace(invocation.Trace.ToolName))
+	}
+	if toolName == "" {
+		toolName = strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+			event["tool_name"],
+			approvalEvent["tool_name"],
+			governance["tool_name"],
+		)))
+	}
+	switch toolName {
+	case "delete_file":
+		return "delete"
+	case "read_file":
+		return "read"
+	default:
+		return strings.ReplaceAll(toolName, "_", " ")
+	}
+}
+
+func toolGovernanceUserVisibleActionResult(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "delete":
+		return "deleted"
+	case "read":
+		return "read"
+	default:
+		return "completed"
+	}
+}
+
+func toolGovernanceUserVisibleAssetType(event map[string]interface{}) string {
+	approvalEvent := toolGovernanceApprovalEventFromEvent(event)
+	governance := governanceMapFromAny(event["governance"])
+	return strings.TrimSpace(firstNonEmptyString(
+		approvalEvent["asset_type"],
+		event["asset_type"],
+		governance["asset_type"],
+	))
+}
+
+func toolGovernanceUserVisibleFiles(event map[string]interface{}, invocation *skills.ToolInvocationResult) []map[string]interface{} {
+	seen := map[string]struct{}{}
+	files := []map[string]interface{}{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		files = append(files, map[string]interface{}{"name": name})
+	}
+
+	for _, asset := range toolGovernanceAssetMapsFromEvent(event) {
+		assetType := strings.ToLower(strings.TrimSpace(firstNonEmptyString(asset["type"], asset["asset_type"])))
+		if assetType != "" && assetType != "file" {
+			continue
+		}
+		add(firstNonEmptyString(asset["name"], asset["title"], asset["file_name"]))
+	}
+
+	payload := toolGovernanceFirstJSONToolPayload(invocation)
+	if file := governanceMapFromAny(payload["file"]); len(file) > 0 {
+		add(firstNonEmptyString(file["name"], file["title"], file["file_name"]))
+	}
+	for _, file := range mapSliceFromAny(payload["files"]) {
+		add(firstNonEmptyString(file["name"], file["title"], file["file_name"]))
+	}
+	return files
+}
+
+func toolGovernanceAssetMapsFromEvent(event map[string]interface{}) []map[string]interface{} {
+	if len(event) == 0 {
+		return nil
+	}
+	out := []map[string]interface{}{}
+	appendAssets := func(value interface{}) {
+		for _, asset := range mapSliceFromAny(value) {
+			out = append(out, asset)
+		}
+	}
+	appendAssets(event["assets"])
+	approvalEvent := toolGovernanceApprovalEventFromEvent(event)
+	appendAssets(approvalEvent["assets"])
+	governance := governanceMapFromAny(event["governance"])
+	appendAssets(governance["assets"])
+	if grant := governanceMapFromAny(approvalEvent["grant"]); len(grant) > 0 {
+		appendAssets(grant["assets"])
+	}
+	if result := governanceMapFromAny(governance["approval_result"]); len(result) > 0 {
+		if grant := governanceMapFromAny(result["approved_grant"]); len(grant) > 0 {
+			appendAssets(grant["assets"])
+		}
+		if grant := governanceMapFromAny(result["session_grant"]); len(grant) > 0 {
+			appendAssets(grant["assets"])
+		}
+	}
+	return out
+}
+
+func toolGovernanceFirstJSONToolPayload(invocation *skills.ToolInvocationResult) map[string]interface{} {
+	if invocation == nil {
+		return nil
+	}
+	for _, message := range invocation.Messages {
+		if string(message.Type) == "json" && len(message.Data) > 0 {
+			return message.Data
+		}
+	}
+	content := strings.TrimSpace(messageContentText(invocation.ToolMessage.Content))
+	if content == "" {
+		return nil
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &payload); err == nil && payload != nil {
+		return payload
+	}
+	return nil
+}
+
+func toolGovernanceSafeErrorText(event map[string]interface{}, invocation *skills.ToolInvocationResult, err error) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		return "the approved operation failed"
+	}
+	replacements := toolGovernanceInternalIDReplacements(event, invocation)
+	for id, replacement := range replacements {
+		if id == "" {
+			continue
+		}
+		if replacement == "" {
+			replacement = "the file"
+		}
+		message = strings.ReplaceAll(message, id, replacement)
+	}
+	return toolGovernanceScrubModelVisibleInternalTokens(message)
+}
+
+var toolGovernanceModelVisibleInternalTokenPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`),
+	regexp.MustCompile(`(?i)\b[0-9a-f]{24,}\b`),
+}
+
+func toolGovernanceScrubModelVisibleInternalTokens(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	for _, pattern := range toolGovernanceModelVisibleInternalTokenPatterns {
+		text = pattern.ReplaceAllString(text, "the asset")
+	}
+	return text
+}
+
+func toolGovernanceInternalIDReplacements(event map[string]interface{}, invocation *skills.ToolInvocationResult) map[string]string {
+	replacements := map[string]string{}
+	add := func(id string, replacement string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		replacement = strings.TrimSpace(replacement)
+		if existing, ok := replacements[id]; ok && existing != "" && replacement == "" {
+			return
+		}
+		replacements[id] = replacement
+	}
+	for _, asset := range toolGovernanceAssetMapsFromEvent(event) {
+		name := strings.TrimSpace(firstNonEmptyString(asset["name"], asset["title"], asset["file_name"]))
+		add(stringFromAny(asset["id"]), name)
+	}
+	if invocation != nil {
+		if args := invocation.Trace.Arguments; len(args) > 0 {
+			add(stringFromAny(args["file_id"]), "")
+			for _, id := range toolGovernanceStringSliceFromAny(args["file_ids"]) {
+				add(id, "")
+			}
+		}
+	}
+	return replacements
+}
+
+func toolGovernanceStringSliceFromAny(value interface{}) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text := strings.TrimSpace(stringFromAny(item))
+			if text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		text := strings.TrimSpace(stringFromAny(value))
+		if text == "" {
+			return nil
+		}
+		return []string{text}
+	}
+}
+
+func toolGovernanceSanitizedModelVisibleValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		out := map[string]interface{}{}
+		for key, item := range typed {
+			if toolGovernanceDropModelVisibleKey(key) {
+				continue
+			}
+			out[key] = toolGovernanceSanitizedModelVisibleValue(item)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, toolGovernanceSanitizedModelVisibleValue(item))
+		}
+		return out
+	case []map[string]interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, toolGovernanceSanitizedModelVisibleValue(item))
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func toolGovernanceDropModelVisibleKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "" {
+		return false
+	}
+	if key == "id" || strings.HasSuffix(key, "_id") || strings.HasSuffix(key, "_ids") || strings.Contains(key, "uuid") {
+		return true
+	}
+	if strings.Contains(key, "correlation") || strings.Contains(key, "grant") || strings.Contains(key, "frozen_invocation") {
+		return true
+	}
+	if key == "deleted_count" || strings.HasSuffix(key, "_count") {
+		return true
+	}
+	switch key {
+	case "workspace_id", "upload_file_id", "conversation_id", "message_id", "organization_id", "account_id", "user_id":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, prepared *PreparedChat, req runtimedto.ToolGovernanceDecisionRequest, event map[string]interface{}, onEvent func(StreamEvent) error) (*ChatResult, error) {
@@ -487,10 +863,65 @@ func toolGovernanceApprovalContinuationMessage(event map[string]interface{}) ada
 		"The approved governance event is an authoritative asset resolution for the previously blocked tool call.",
 		"If the approved governance event contains asset ids, use those asset ids directly and do not ask the user to identify the approved assets again unless the tool reports that an approved asset is missing or inaccessible.",
 		"Do not claim that the action succeeded until the corresponding skill/tool call actually succeeds.",
+		"Answer in the user's language. Use internal identifiers only as tool arguments; do not mention internal IDs, UUIDs, workspace identifiers, correlation values, raw JSON field names, or tool count fields in the final user-visible answer.",
+		"After a successful file action, mention only the file name and action result. If the tool fails, explain the failure as recoverable feedback and do not claim success.",
 	}
 	lines = append(lines, toolGovernanceApprovedAssetInstructions(event)...)
-	lines = append(lines, "Approved governance event JSON: "+compactJSON(event))
+	lines = append(lines, "Approved tool target JSON for tool arguments only: "+compactJSON(toolGovernanceApprovedToolTargetPayload(event)))
 	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}
+}
+
+func toolGovernanceApprovedToolTargetPayload(event map[string]interface{}) map[string]interface{} {
+	approvalEvent := toolGovernanceApprovalEventFromEvent(event)
+	skillID, toolName, _ := toolGovernanceApprovedToolRef(event, approvalEvent)
+	payload := map[string]interface{}{}
+	if skillID != "" {
+		payload["skill_id"] = skillID
+	}
+	if toolName != "" {
+		payload["tool_name"] = toolName
+	}
+	assets := mapSliceFromAny(approvalEvent["assets"])
+	if len(assets) == 0 {
+		if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
+			assets = mapSliceFromAny(governance["assets"])
+		}
+	}
+	targets := make([]map[string]interface{}, 0, min(len(assets), 10))
+	for index, asset := range assets {
+		if index >= 10 {
+			break
+		}
+		id := strings.TrimSpace(stringFromAny(asset["id"]))
+		name := strings.TrimSpace(firstNonEmptyString(asset["name"], asset["title"], asset["file_name"]))
+		assetType := strings.TrimSpace(firstNonEmptyString(asset["type"], asset["asset_type"]))
+		target := map[string]interface{}{}
+		if name != "" {
+			target["name"] = name
+		}
+		if assetType != "" {
+			target["type"] = assetType
+		}
+		if id != "" {
+			if isFileDeleteToolRef(skillID, toolName) {
+				target["file_id"] = id
+			} else {
+				target["id"] = id
+			}
+		}
+		if len(target) > 0 {
+			targets = append(targets, target)
+		}
+	}
+	if len(targets) > 0 {
+		payload["targets"] = targets
+	}
+	if len(targets) == 1 {
+		if fileID := strings.TrimSpace(stringFromAny(targets[0]["file_id"])); fileID != "" {
+			payload["arguments"] = map[string]interface{}{"file_id": fileID}
+		}
+	}
+	return payload
 }
 
 func toolGovernanceApprovedAssetInstructions(event map[string]interface{}) []string {
@@ -515,22 +946,18 @@ func toolGovernanceApprovedAssetInstructions(event map[string]interface{}) []str
 		if index >= 5 {
 			break
 		}
-		id := strings.TrimSpace(stringFromAny(asset["id"]))
 		name := strings.TrimSpace(firstNonEmptyString(
 			stringFromAny(asset["name"]),
 			stringFromAny(asset["title"]),
 			stringFromAny(asset["file_name"]),
 		))
 		assetType := strings.TrimSpace(stringFromAny(asset["type"]))
-		parts := make([]string, 0, 3)
+		parts := make([]string, 0, 2)
 		if name != "" {
 			parts = append(parts, name)
 		}
 		if assetType != "" {
 			parts = append(parts, "type="+assetType)
-		}
-		if id != "" {
-			parts = append(parts, "id="+id)
 		}
 		if len(parts) > 0 {
 			assetSummaries = append(assetSummaries, strings.Join(parts, " "))
@@ -538,7 +965,7 @@ func toolGovernanceApprovedAssetInstructions(event map[string]interface{}) []str
 	}
 	lines := []string{}
 	if len(assetSummaries) > 0 {
-		lines = append(lines, "Approved assets: "+strings.Join(assetSummaries, "; "))
+		lines = append(lines, "Approved asset names: "+strings.Join(assetSummaries, "; "))
 	}
 	skillID, toolName, toolID := toolGovernanceApprovedToolRef(event, approvalEvent)
 	if skillID != "" && toolName != "" {
@@ -546,7 +973,7 @@ func toolGovernanceApprovedAssetInstructions(event map[string]interface{}) []str
 		if len(assets) == 1 {
 			targetIDInstruction = "the approved asset id as the target identifier required by the tool"
 		}
-		if toolID == "file.delete" && skillID == "file-reader" && len(assets) == 1 {
+		if toolID == "file.delete" && isFileDeleteToolRef(skillID, toolName) && len(assets) == 1 {
 			targetIDInstruction = "file_id equal to the approved file asset id"
 		}
 		lines = append(lines, "For this approved governed operation, call "+skillID+"/"+toolName+" with "+targetIDInstruction+" before answering.")
@@ -604,10 +1031,19 @@ func toolGovernanceApprovedToolRef(event map[string]interface{}, approvalEvent m
 	))
 	// Compatibility for older file deletion approval events that carried only
 	// file.delete as the governed tool id.
-	if toolName == "" && toolID == "file.delete" && skillID == "file-reader" {
+	if toolName == "" && toolID == "file.delete" && (skillID == skills.SkillFileReader || skillID == skills.SkillFileManager) {
 		toolName = "delete_file"
 	}
+	if toolID == "file.delete" && skillID == skills.SkillFileReader && toolName == "delete_file" {
+		skillID = skills.SkillFileManager
+	}
 	return skillID, toolName, toolID
+}
+
+func isFileDeleteToolRef(skillID string, toolName string) bool {
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	return toolName == "delete_file" && (skillID == skills.SkillFileManager || skillID == skills.SkillFileReader)
 }
 
 func toolGovernanceApprovalEventFromEvent(event map[string]interface{}) map[string]interface{} {
@@ -633,14 +1069,9 @@ func approvedGovernanceAssetSummary(approvalEvent map[string]interface{}, event 
 	}
 	asset := assets[0]
 	name := strings.TrimSpace(firstNonEmptyString(asset["name"], asset["title"], asset["file_name"]))
-	id := strings.TrimSpace(stringFromAny(asset["id"]))
 	switch {
-	case name != "" && id != "":
-		return name + " (" + id + ")"
 	case name != "":
 		return name
-	case id != "":
-		return id
 	default:
 		return "the approved asset"
 	}
@@ -662,8 +1093,9 @@ func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtim
 	content := strings.Join([]string{
 		"Original user request:\n" + userQuery,
 		"User rejected the pending tool governance request.",
+		"The rejected action was not executed.",
 		"User rejection reason:\n" + strings.TrimSpace(req.Reason),
-		"Rejected governance event JSON:\n" + compactJSON(event),
+		"Rejected operation summary JSON:\n" + compactJSON(toolGovernanceRejectedOperationSummary(event)),
 	}, "\n\n")
 	chatReq := &adapter.ChatRequest{
 		Provider: provider,
@@ -672,7 +1104,7 @@ func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtim
 		Messages: []adapter.Message{
 			{
 				Role:    "system",
-				Content: "You are continuing an AIChat turn after the user rejected a governed tool call. Do not execute or claim the rejected action. Briefly explain that the action was not performed, then offer safe alternatives or ask for a safer next step when useful.",
+				Content: "You are continuing an AIChat turn after the user rejected a governed tool call. Do not execute or claim the rejected action. Answer in the user's language. Briefly explain that the action was not performed; for Chinese, explicitly say it was \u672a\u6267\u884c. Then offer safe alternatives or ask for a safer next step when useful. Do not expose internal IDs, UUIDs, workspace identifiers, correlation values, raw JSON field names, or tool count fields.",
 			},
 			{Role: "user", Content: content},
 		},
@@ -681,6 +1113,14 @@ func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtim
 		applyModelParameters(chatReq, message.ModelParameters)
 	}
 	return chatReq
+}
+
+func toolGovernanceRejectedOperationSummary(event map[string]interface{}) map[string]interface{} {
+	summary := toolGovernanceModelVisibleOperationSummary(event, nil)
+	summary["status"] = "rejected"
+	summary["executed"] = false
+	summary["user_visible_result"] = "not_executed"
+	return summary
 }
 
 func compactJSON(value interface{}) string {

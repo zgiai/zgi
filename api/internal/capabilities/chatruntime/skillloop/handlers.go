@@ -362,6 +362,12 @@ func (r *Runner) handleCallSkillTool(
 		r.recordArtifact(artifact)
 		r.emitEvent(EventSkillArtifactCreated, artifact)
 	}
+	if payload := clientActionRequiredPayload(prepared, invocation.Trace, callID); len(payload) > 0 {
+		r.emitEvent(EventClientActionRequired, payload)
+		result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+		result.pendingClientAction = payload
+		return result
+	}
 	if isAgentWorkflowRunTool(invocation.Trace.SkillID, invocation.Trace.ToolName) {
 		if payload := agentWorkflowResultPayload(invocation.Messages); len(payload) > 0 {
 			if strings.EqualFold(stringFromInterface(payload["status"]), "pending_approval") {

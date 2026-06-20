@@ -16,7 +16,7 @@ func summarizeSkillToolArguments(skillID string, toolName string, args map[strin
 		return summarizeCalculatorArguments(toolName, args)
 	case skills.SkillAgentDatabase, skills.SkillInternalDatabase:
 		return summarizeDatabaseArguments(args)
-	case skills.SkillFileReader:
+	case skills.SkillFileReader, skills.SkillFileManager:
 		return summarizeFileReaderArguments(args)
 	default:
 		return summarizeGenericArguments(args)

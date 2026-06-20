@@ -1073,6 +1073,19 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"operation": "percent_of", "value": 200, "percent": 15},
 		},
+		SkillConsoleNavigator + "/navigate": {
+			SkillID:     SkillConsoleNavigator,
+			ToolName:    "navigate",
+			Description: "Request navigation to a whitelisted internal ZGI console page. This only changes the visible page and does not mutate assets.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"href":   stringValueSchema("Required whitelisted internal /console route, such as /console/files, /console/agents, /console/dataset, /console/db, /console/work/task, /console/prompts, /console/work/chat, /console/work/image, /console/work/app, /console/workspace, or /console/settings. Do not use external URLs."),
+					"reason": stringValueSchema("Optional short user-facing reason for why the route is relevant."),
+				},
+				[]string{"href"},
+			),
+			Example: map[string]interface{}{"href": "/console/files", "reason": "The user asked to open file management."},
+		},
 		SkillFileGenerator + "/generate_file": {
 			SkillID:     SkillFileGenerator,
 			ToolName:    "generate_file",
@@ -1115,13 +1128,13 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{},
 		},
-		SkillFileReader + "/delete_file": {
-			SkillID:     SkillFileReader,
+		SkillFileManager + "/delete_file": {
+			SkillID:     SkillFileManager,
 			ToolName:    "delete_file",
-			Description: "Delete one resolved file available in the current AIChat context after tool governance approval.",
+			Description: "Delete one resolved File Management file after tool governance approval.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"file_id": stringValueSchema("Required file ID from the current page context, attachment context, or governed asset resolution. Do not invent IDs."),
+					"file_id": stringValueSchema("Required file ID from the current Files page context or governed asset resolution. Do not invent IDs."),
 				},
 				[]string{"file_id"},
 			),

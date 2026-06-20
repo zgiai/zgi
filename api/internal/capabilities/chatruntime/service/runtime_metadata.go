@@ -712,7 +712,8 @@ func sanitizeSkillInvocationForMetadata(invocation map[string]interface{}) map[s
 	if len(invocation) == 0 {
 		return invocation
 	}
-	if strings.TrimSpace(stringFromAny(invocation["skill_id"])) != skills.SkillFileReader {
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	if skillID != skills.SkillFileReader && skillID != skills.SkillFileManager {
 		return invocation
 	}
 	result, ok := invocation["result"].(map[string]interface{})

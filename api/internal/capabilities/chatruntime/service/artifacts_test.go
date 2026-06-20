@@ -52,6 +52,53 @@ func TestMergeGeneratedArtifactMetadataPersistsHydratableFile(t *testing.T) {
 	}
 }
 
+func TestMergeGeneratedArtifactMetadataPersistsManagedFileSignals(t *testing.T) {
+	metadata := mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
+		"file_id":         "upload-1",
+		"upload_file_id":  "upload-1",
+		"filename":        "managed-summary.pdf",
+		"extension":       ".pdf",
+		"mime_type":       "application/pdf",
+		"size":            int64(2048),
+		"target":          "managed_file",
+		"transfer_method": "local_file",
+		"workspace_id":    "workspace-1",
+		"folder_id":       "folder-1",
+		"url":             "http://files.example/console/api/files/upload-1",
+		"download_url":    "/console/api/files/upload-1/download",
+		"skill_id":        "file-generator",
+		"tool_name":       "generate_pdf",
+		"asset_operation_audit": map[string]interface{}{
+			"tool_id":    "file.generate_pdf",
+			"effect":     "create",
+			"asset_type": "file",
+		},
+	})
+
+	files := generatedFilesFromMetadata(metadata["generated_files"])
+	if len(files) != 1 {
+		t.Fatalf("generated_files = %#v, want one managed file", metadata["generated_files"])
+	}
+	file := files[0]
+	for key, want := range map[string]interface{}{
+		"file_id":         "upload-1",
+		"upload_file_id":  "upload-1",
+		"target":          "managed_file",
+		"transfer_method": "local_file",
+		"workspace_id":    "workspace-1",
+		"folder_id":       "folder-1",
+		"download_url":    "/console/api/files/upload-1/download",
+	} {
+		if file[key] != want {
+			t.Fatalf("managed generated file %s = %#v, want %#v in %#v", key, file[key], want, file)
+		}
+	}
+	audit := governanceMapFromAny(file["asset_operation_audit"])
+	if audit["effect"] != "create" || audit["asset_type"] != "file" {
+		t.Fatalf("managed generated file audit = %#v, want file create audit", file["asset_operation_audit"])
+	}
+}
+
 func TestHydrateMessageGeneratedFileURLsRefreshesSignedURLs(t *testing.T) {
 	restoreToolFileSignature(t)
 	message := &runtimemodel.Message{Metadata: map[string]interface{}{

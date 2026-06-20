@@ -621,17 +621,18 @@ Use governed file tools.
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+	var pendingObservation *ClientActionPendingError
+	if !errors.As(err, &pendingObservation) {
+		t.Fatalf("Run() error = %v, want ClientActionPendingError for asset observation", err)
 	}
-	if answer != "Deleted report.pdf." {
-		t.Fatalf("answer = %q, want approved continuation final answer", answer)
+	if answer != "" {
+		t.Fatalf("answer = %q, want no final answer before asset observation", answer)
 	}
 	if len(deleteTool.calls) != 1 || deleteTool.calls[0] != "file-1" {
 		t.Fatalf("delete calls = %#v, want one call for approved file-1", deleteTool.calls)
 	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want load, delete, final answer", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want load and delete before observation", fakeLLM.appChatCalls)
 	}
 	event := findRunnerTestEvent(events, EventToolGovernanceDecision)
 	if event == nil {
@@ -643,6 +644,18 @@ Use governed file tools.
 	decision, ok := event.Payload["governance"].(*toolgovernance.Decision)
 	if !ok || decision.ApprovedByCorrelationID != "approval-corr-1" {
 		t.Fatalf("governance payload = %#v, want approval correlation", event.Payload)
+	}
+	clientActionEvent := findRunnerTestEvent(events, EventClientActionRequired)
+	if clientActionEvent == nil {
+		t.Fatalf("events = %#v, want client action observation request", events)
+	}
+	if clientActionEvent.Payload["action_type"] != "asset_observation" ||
+		clientActionEvent.Payload["effect"] != "delete" ||
+		clientActionEvent.Payload["asset_type"] != "file" {
+		t.Fatalf("client action payload = %#v, want file delete observation", clientActionEvent.Payload)
+	}
+	if pendingObservation.Payload["action_id"] != clientActionEvent.Payload["action_id"] {
+		t.Fatalf("pending action = %#v, event = %#v, want same action id", pendingObservation.Payload, clientActionEvent.Payload)
 	}
 }
 
@@ -775,6 +788,35 @@ Use the calculator tool.
 	}
 	if !foundGuardrail {
 		t.Fatalf("traces = %#v, want final answer guardrail trace", traces)
+	}
+}
+
+func TestFinalAnswerGuardSystemMessageUsesPrivateModelFeedbackWithoutLeakingTrace(t *testing.T) {
+	result := FinalAnswerGuardResult{
+		SkillID:       "file-reader",
+		ToolName:      "delete_file",
+		Message:       "Call delete_file for report.pdf before claiming completion.",
+		SystemMessage: `Call delete_file with {"file_id":"file-internal-1"} before claiming completion.`,
+	}
+
+	trace := finalAnswerGuardrailTrace(result)
+	if strings.Contains(trace.Error, "file-internal-1") {
+		t.Fatalf("trace error exposed private model feedback: %q", trace.Error)
+	}
+	if !strings.Contains(trace.Error, "report.pdf") {
+		t.Fatalf("trace error = %q, want display-safe message", trace.Error)
+	}
+
+	message := finalAnswerGuardSystemMessage(result, "Done.")
+	content, ok := message.Content.(string)
+	if !ok {
+		t.Fatalf("system message content type = %T, want string", message.Content)
+	}
+	if !strings.Contains(content, "file-internal-1") {
+		t.Fatalf("system message missing private model feedback: %q", content)
+	}
+	if !strings.Contains(content, "Blocked candidate answer") {
+		t.Fatalf("system message missing blocked candidate answer: %q", content)
 	}
 }
 

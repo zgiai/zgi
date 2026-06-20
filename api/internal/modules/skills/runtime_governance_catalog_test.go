@@ -19,7 +19,7 @@ func TestSystemAssetToolsDeclareGovernance(t *testing.T) {
 	}{
 		{SkillFileReader, "list_visible_files", toolgovernance.EffectRead, "file", toolgovernance.RiskLevelLow, false},
 		{SkillFileReader, "read_file", toolgovernance.EffectRead, "file", toolgovernance.RiskLevelLow, true},
-		{SkillFileReader, "delete_file", toolgovernance.EffectDelete, "file", toolgovernance.RiskLevelHigh, true},
+		{SkillFileManager, "delete_file", toolgovernance.EffectDelete, "file", toolgovernance.RiskLevelHigh, true},
 		{SkillFileGenerator, "generate_file", toolgovernance.EffectCreate, "file", toolgovernance.RiskLevelMedium, false},
 		{SkillFileGenerator, "generate_docx", toolgovernance.EffectCreate, "file", toolgovernance.RiskLevelMedium, false},
 		{SkillFileGenerator, "generate_pdf", toolgovernance.EffectCreate, "file", toolgovernance.RiskLevelMedium, false},

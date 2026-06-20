@@ -3,8 +3,54 @@ package skillloop
 import (
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
+
+func TestClientActionRequiredPayloadEmitsObservationForPublishEffect(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  "agent-manager",
+		ToolName: "publish_agent",
+		Status:   "success",
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "agent.publish",
+				Effect:    toolgovernance.EffectPublish,
+				AssetType: "agent",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "agent.publish",
+				"effect":     "publish",
+				"asset_type": "agent",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":   "agent-1",
+						"type": "agent",
+						"name": "Support Agent",
+					},
+				},
+			},
+		},
+	}
+
+	payload := clientActionRequiredPayload(prepared, trace, "call-publish")
+	if payload == nil {
+		t.Fatal("clientActionRequiredPayload() = nil, want asset observation payload")
+	}
+	if payload["action_type"] != "asset_observation" ||
+		payload["effect"] != "publish" ||
+		payload["asset_type"] != "agent" {
+		t.Fatalf("payload = %#v, want publish agent asset observation", payload)
+	}
+	if payload["refresh_before_resume"] != true || payload["observation_requested"] != true {
+		t.Fatalf("payload = %#v, want refresh and observation flags", payload)
+	}
+	if payload["tool_id"] != "agent.publish" {
+		t.Fatalf("tool_id = %#v, want agent.publish", payload["tool_id"])
+	}
+}
 
 func TestSummarizeSkillToolResultCompactsAgentKnowledgePayload(t *testing.T) {
 	result := summarizeSkillToolResult("agent-knowledge", "retrieve_agent_knowledge", []tools.ToolInvokeMessage{{

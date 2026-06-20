@@ -89,3 +89,47 @@ func (h *Handler) ContinueToolGovernanceDecision(c *gin.Context) {
 		})
 	}
 }
+
+func (h *Handler) ContinueClientAction(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	conversationID, err := uuid.Parse(strings.TrimSpace(c.Param("id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	messageID, err := uuid.Parse(strings.TrimSpace(c.Param("message_id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	actionID := strings.TrimSpace(c.Param("action_id"))
+	if actionID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	var req runtimedto.ClientActionResultRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+
+	setupSSE(c)
+	_, err = h.service.RunClientActionContinuationStream(c.Request.Context(), scope, conversationID, messageID, actionID, req, func(event runtimeservice.StreamEvent) error {
+		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+	})
+	if err != nil {
+		if errors.Is(err, runtimeservice.ErrMessageStopped) || runtimeservice.IsFinalizedStreamError(err) {
+			return
+		}
+		logger.WarnContext(c.Request.Context(), "aichat client action continuation failed", "conversation_id", conversationID.String(), "message_id", messageID.String(), "action_id", actionID, err)
+		_ = writeSSEEvent(c, "", "error", gin.H{
+			"conversation_id": conversationID.String(),
+			"message_id":      messageID.String(),
+			"message":         err.Error(),
+		})
+	}
+}

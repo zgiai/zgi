@@ -18,6 +18,8 @@ func summarizeSkillToolArguments(skillID string, toolName string, args map[strin
 		return summarizeDatabaseArguments(args)
 	case skills.SkillFileReader:
 		return summarizeFileReaderArguments(args)
+	case skills.SkillConsoleNavigator:
+		return summarizeConsoleNavigatorArguments(args)
 	default:
 		return summarizeGenericArguments(args)
 	}
@@ -52,6 +54,10 @@ func summarizeFileReaderArguments(args map[string]interface{}) map[string]interf
 		summary["file_ids"] = fileIDs
 	}
 	return summary
+}
+
+func summarizeConsoleNavigatorArguments(args map[string]interface{}) map[string]interface{} {
+	return summarizeAllowedArguments(args, []string{"href", "reason"})
 }
 
 func summarizeAllowedArguments(args map[string]interface{}, keys []string) map[string]interface{} {

@@ -373,6 +373,7 @@ func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope,
 	if err != nil {
 		return err
 	}
+	catalog = visibleSkillMetadata(catalog)
 	enabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, catalog)
 	if err != nil {
 		return err
@@ -398,7 +399,9 @@ func renderAIChatSystemPrompt() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return tmpl.Render(nil)
+	return tmpl.Render(map[string]interface{}{
+		"Surface": "work_chat",
+	})
 }
 
 func isUsableAssistantHistoryStatus(status string) bool {

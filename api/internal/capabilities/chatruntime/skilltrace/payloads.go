@@ -176,11 +176,13 @@ type resultSummaryBuilder func(toolName string, payload map[string]interface{}) 
 
 var resultSummaryBuilders = map[string]resultSummaryBuilder{
 	skills.SkillUserMemory:        summarizeMemoryResult,
+	skills.SkillConsoleNavigator:  summarizeConsoleNavigatorResult,
 	skills.SkillAgentKnowledge:    summarizeAgentKnowledgeResult,
 	skills.SkillInternalKnowledge: summarizeInternalKnowledgeResult,
 	skills.SkillInternalDatabase:  summarizeDatabaseResult,
 	skills.SkillAgentDatabase:     summarizeDatabaseResult,
 	skills.SkillAgentWorkflow:     summarizeWorkflowResult,
+	skills.SkillFileManager:       summarizeFileReaderResult,
 	skills.SkillFileReader:        summarizeFileReaderResult,
 }
 
@@ -234,6 +236,13 @@ func summarizeWorkflowResult(toolName string, payload map[string]interface{}) ma
 	default:
 		return nil
 	}
+}
+
+func summarizeConsoleNavigatorResult(toolName string, payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 || strings.TrimSpace(toolName) != "navigate" {
+		return nil
+	}
+	return compactFields(payload, "status", "event_type", "href", "label", "reason")
 }
 
 func summarizeFileReaderResult(toolName string, payload map[string]interface{}) map[string]interface{} {

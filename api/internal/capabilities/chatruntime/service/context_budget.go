@@ -589,11 +589,19 @@ func compactToolHistoryResultForPrompt(invocation map[string]interface{}) string
 	if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" {
 		return ""
 	}
-	if strings.TrimSpace(stringFromAny(invocation["skill_id"])) != skills.SkillFileReader {
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	if skillID != skills.SkillFileReader && skillID != skills.SkillFileManager {
 		return ""
 	}
 	switch strings.TrimSpace(stringFromAny(invocation["tool_name"])) {
-	case "list_visible_files", "read_file", "delete_file":
+	case "list_visible_files", "read_file":
+		if skillID != skills.SkillFileReader {
+			return ""
+		}
+	case "delete_file":
+		if skillID != skills.SkillFileManager && skillID != skills.SkillFileReader {
+			return ""
+		}
 	default:
 		return ""
 	}

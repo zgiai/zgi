@@ -134,6 +134,7 @@ func isUsableAssistantHistoryStatus(status string) bool {
 
 func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error) {
 	query := strings.TrimSpace(req.Query)
+	surface := normalizeAIChatSurface(req.Surface)
 	runtimeContext := normalizeRuntimeContext(req.RuntimeContext)
 	operationContext, operationLedger := normalizeOperationContext(req.OperationContext)
 	modelName := strings.TrimSpace(req.Model)
@@ -151,6 +152,7 @@ func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error)
 	}
 	return &chatRequestParts{
 		Query:               query,
+		Surface:             surface,
 		RuntimeContext:      runtimeContext,
 		RawOperationContext: copyStringAnyMap(req.OperationContext),
 		OperationContext:    operationContext,
@@ -217,10 +219,12 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 		useMemory = *req.UseMemory
 	}
 	runtimeContext := normalizeRuntimeContext(req.RuntimeContext)
+	surface := normalizeAIChatSurface(req.Surface)
 	operationContext, operationLedger := normalizeOperationContext(req.OperationContext)
 
 	return &chatRequestParts{
 		Query:               query,
+		Surface:             surface,
 		RuntimeContext:      runtimeContext,
 		RawOperationContext: copyStringAnyMap(req.OperationContext),
 		OperationContext:    operationContext,
@@ -282,6 +286,7 @@ func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
 	}
 	metadata := map[string]interface{}{
 		"system_prompt_version": version,
+		"surface":               normalizeAIChatSurface(parts.Surface),
 	}
 	if parts.SkillMode != "" && parts.SkillMode != skillModeDisabled {
 		metadata["has_trace"] = false
@@ -316,4 +321,21 @@ func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
 		metadata["file_count"] = len(parts.Attachments.Files)
 	}
 	return metadata
+}
+
+func normalizeAIChatSurface(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case aiChatSurfaceContextualSidebar, "contextual-sidebar", "sidebar", "contextual":
+		return aiChatSurfaceContextualSidebar
+	case aiChatSurfaceExternalPageChat, "external-page-chat", "external", "page-chat", "webapp", "agent-webapp":
+		return aiChatSurfaceExternalPageChat
+	case aiChatSurfaceWorkChat, "work-chat", "work", "aichat", "":
+		return aiChatSurfaceWorkChat
+	default:
+		return aiChatSurfaceWorkChat
+	}
+}
+
+func isContextualAIChatSurface(value string) bool {
+	return normalizeAIChatSurface(value) == aiChatSurfaceContextualSidebar
 }

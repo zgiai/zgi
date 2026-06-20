@@ -20,6 +20,7 @@ const (
 	EventSkillCallStart         = "skill_call_start"
 	EventSkillCallEnd           = "skill_call_end"
 	EventSkillCallError         = "skill_call_error"
+	EventClientActionRequired   = "client_action_required"
 	EventToolGovernanceDecision = "tool_governance_decision"
 	EventSkillLoadStart         = "skill_load_start"
 	EventSkillLoadEnd           = "skill_load_end"
@@ -81,6 +82,21 @@ func (e *ToolGovernancePendingError) Error() string {
 	return fmt.Sprintf("tool governance approval is pending for %s", correlationID)
 }
 
+type ClientActionPendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *ClientActionPendingError) Error() string {
+	if e == nil {
+		return "client action is pending"
+	}
+	actionID := stringFromInterface(e.Payload["action_id"])
+	if actionID == "" {
+		return "client action is pending"
+	}
+	return fmt.Sprintf("client action is pending for %s", actionID)
+}
+
 type Event struct {
 	Type    string
 	Payload map[string]interface{}
@@ -121,9 +137,10 @@ type FinalAnswerGuardRequest struct {
 }
 
 type FinalAnswerGuardResult struct {
-	SkillID  string
-	ToolName string
-	Message  string
+	SkillID       string
+	ToolName      string
+	Message       string
+	SystemMessage string
 }
 
 type UserInputGuardRequest struct {

@@ -114,6 +114,30 @@ func TestAgentWorkflowSystemSkillExposeExpectedTools(t *testing.T) {
 	}
 }
 
+func TestConsoleNavigatorSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillConsoleNavigator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillConsoleNavigator)
+	if !ok {
+		t.Fatalf("console navigator skill was not resolved")
+	}
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"navigate"}) {
+		t.Fatalf("console navigator tools = %v, want navigate", got)
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypeTool {
+		t.Fatalf("runtime type = %q, want tool", doc.Metadata.RuntimeType)
+	}
+	if !sameStrings(doc.Metadata.SupportedCallers, []string{SkillCallerAIChat}) {
+		t.Fatalf("supported callers = %#v, want aichat", doc.Metadata.SupportedCallers)
+	}
+	if got := ExpectedSkillToolArguments(SkillConsoleNavigator, "navigate"); got == nil {
+		t.Fatal("console navigator navigate contract missing")
+	}
+}
+
 func TestWorkReportSystemSkillMetadata(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillWorkReport})
@@ -357,7 +381,9 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 		SkillAgentKnowledge,
 		SkillAgentDatabase,
 		SkillCalculator,
+		SkillConsoleNavigator,
 		SkillFileGenerator,
+		SkillFileManager,
 		SkillFileReader,
 		SkillChartGenerator,
 		SkillWorkReport,
@@ -385,8 +411,8 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		required []string
 	}{
 		{SkillFileGenerator, "generate_file", []string{"content", "format"}},
+		{SkillFileManager, "delete_file", []string{"file_id"}},
 		{SkillFileReader, "read_file", []string{"file_id"}},
-		{SkillFileReader, "delete_file", []string{"file_id"}},
 		{SkillFileGenerator, "generate_docx", []string{"document"}},
 		{SkillFileGenerator, "generate_pdf", []string{"html"}},
 		{SkillFileGenerator, "generate_pptx", []string{"presentation"}},
@@ -396,6 +422,7 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		{SkillAgentKnowledge, "retrieve_agent_knowledge", []string{"query"}},
 		{SkillInternalDatabase, "query_table_records", []string{"data_source_id", "table_id"}},
 		{SkillAgentDatabase, "insert_table_records", []string{"data_source_id", "table_id", "records"}},
+		{SkillConsoleNavigator, "navigate", []string{"href"}},
 		{SkillTime, "date_calculate", []string{"operation"}},
 	}
 	for _, tt := range tests {
@@ -489,7 +516,9 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		SkillAgentKnowledge,
 		SkillAgentDatabase,
 		SkillCalculator,
+		SkillConsoleNavigator,
 		SkillFileGenerator,
+		SkillFileManager,
 		SkillFileReader,
 		SkillChartGenerator,
 		SkillWorkReport,

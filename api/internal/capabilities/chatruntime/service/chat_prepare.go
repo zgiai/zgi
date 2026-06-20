@@ -332,7 +332,7 @@ func (s *service) resolveParentMessage(ctx context.Context, scope Scope, convers
 func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parentID *uuid.UUID, parts *chatRequestParts) (*contextBudgetResult, error) {
 	systemPrompt := strings.TrimSpace(parts.SystemPrompt)
 	if systemPrompt == "" {
-		rendered, err := renderAIChatSystemPrompt()
+		rendered, err := renderAIChatSystemPrompt(parts.Surface)
 		if err != nil {
 			return nil, err
 		}
@@ -470,7 +470,9 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 		} else {
 			enabled = effectiveSkillIDsForCaller(parts.ConfiguredSkillIDs, catalog, orgEnabled, callerType, config)
 		}
-		enabled = addContextualAIChatSkillIDs(enabled, orgEnabled, catalog, parts)
+		enabled = filterAIChatSkillIDsForSurface(enabled, parts)
+		trustedCapabilities := s.trustedContextualAIChatSkillCapabilities(ctx, scope, parts)
+		enabled = addContextualAIChatSkillIDsWithCapabilities(enabled, orgEnabled, catalog, parts, trustedCapabilities)
 	}
 	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
 	if len(parts.SkillIDs) == 0 {
@@ -488,12 +490,14 @@ func (s *service) loadContextBranch(ctx context.Context, parentID *uuid.UUID, ma
 	return s.repos.Message.ListBranch(ctx, *parentID, maxDepth)
 }
 
-func renderAIChatSystemPrompt() (string, error) {
+func renderAIChatSystemPrompt(surface string) (string, error) {
 	tmpl, err := prompt.GetTemplate(prompt.AIChatSystem)
 	if err != nil {
 		return "", err
 	}
-	return tmpl.Render(nil)
+	return tmpl.Render(map[string]interface{}{
+		"Surface": normalizeAIChatSurface(surface),
+	})
 }
 
 func (s *service) appendUserMemoryContext(ctx context.Context, scope Scope, parts *chatRequestParts, systemPrompt string) (string, map[string]interface{}, error) {

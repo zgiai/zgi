@@ -273,6 +273,34 @@ func TestSummarizeToolResultCompactsAgentWorkflowPayload(t *testing.T) {
 	}
 }
 
+func TestSummarizeToolResultCompactsConsoleNavigationPayload(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillConsoleNavigator, "navigate", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":      "navigation_requested",
+			"event_type":  "page_navigation_requested",
+			"href":        "/console/files",
+			"label":       "Files",
+			"reason":      "The user asked to open files.",
+			"internal_id": "should-not-leak",
+		},
+	}})
+	for key, want := range map[string]interface{}{
+		"status":     "navigation_requested",
+		"event_type": "page_navigation_requested",
+		"href":       "/console/files",
+		"label":      "Files",
+		"reason":     "The user asked to open files.",
+	} {
+		if result[key] != want {
+			t.Fatalf("%s = %#v, want %#v in %#v", key, result[key], want, result)
+		}
+	}
+	if _, ok := result["internal_id"]; ok {
+		t.Fatalf("internal_id should not be included in compact trace result: %#v", result)
+	}
+}
+
 func TestSummarizeToolResultCompactsFileDeletePayload(t *testing.T) {
 	result := SummarizeToolResult(skills.SkillFileReader, "delete_file", []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,

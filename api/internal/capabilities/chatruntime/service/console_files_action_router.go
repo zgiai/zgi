@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -28,6 +27,7 @@ var (
 	consoleFilesDeleteIntentPattern     = regexp.MustCompile(`(?i)\b(delete|remove|trash|discard)\b`)
 	consoleFilesCapabilityPattern       = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])file\.read([^a-z0-9_.-]|$)`)
 	consoleFilesDeleteCapabilityPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])file\.delete([^a-z0-9_.-]|$)`)
+	consoleFilesCreateCapabilityPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9_.-])file\.create([^a-z0-9_.-]|$)`)
 )
 
 type consoleFilesActionDecision struct {
@@ -207,65 +207,60 @@ func consoleFilesActionPlanRequest(prepared *PreparedChat, fileIDs []string, dec
 	}
 }
 
-func isConsoleFilesContext(runtimeContext string, contexts ...map[string]interface{}) bool {
-	if containsConsoleFilesToken(runtimeContext) {
-		return true
-	}
+func isConsoleFilesContext(_ string, contexts ...map[string]interface{}) bool {
 	for _, ctx := range contexts {
-		if contextContainsConsoleFiles(ctx, 0) {
+		if contextContainsConsoleFilesPageResource(ctx) {
 			return true
 		}
 	}
-	if parsed := runtimeContextJSON(runtimeContext); parsed != nil {
-		return contextContainsConsoleFiles(parsed, 0)
-	}
 	return false
 }
 
-func contextContainsConsoleFiles(value interface{}, depth int) bool {
-	if depth > 4 || value == nil {
+func contextContainsConsoleFilesPageResource(context map[string]interface{}) bool {
+	if len(context) == 0 {
 		return false
 	}
-	switch typed := value.(type) {
-	case string:
-		return containsConsoleFilesToken(typed)
-	case map[string]interface{}:
-		for key, item := range typed {
-			if containsConsoleFilesToken(key) || contextContainsConsoleFiles(item, depth+1) {
-				return true
-			}
+	for _, item := range operationItemsFromValue(context["resources"]) {
+		resource, ok := item.(map[string]interface{})
+		if !ok || !isConsoleFilesPageResource(resource) {
+			continue
 		}
-	case []interface{}:
-		for _, item := range typed {
-			if contextContainsConsoleFiles(item, depth+1) {
-				return true
-			}
-		}
-	case []map[string]interface{}:
-		for _, item := range typed {
-			if contextContainsConsoleFiles(item, depth+1) {
-				return true
-			}
+		return true
+	}
+	return false
+}
+
+func isConsoleFilesPageResource(resource map[string]interface{}) bool {
+	if len(resource) == 0 {
+		return false
+	}
+	resourceType := strings.ToLower(strings.TrimSpace(firstNonEmptyString(resource["resource_type"], resource["type"], resource["kind"])))
+	if resourceType != "page" {
+		return false
+	}
+	metadata := mapFromOperationContext(resource["metadata"])
+	for _, value := range []interface{}{
+		resource["resource_id"],
+		resource["id"],
+		resource["title"],
+		resource["href"],
+		metadata["page"],
+		metadata["route"],
+	} {
+		if isConsoleFilesPageToken(stringMetadataValue(value)) {
+			return true
 		}
 	}
 	return false
 }
 
-func containsConsoleFilesToken(value string) bool {
-	text := strings.ToLower(strings.TrimSpace(value))
-	return strings.Contains(text, "/console/files") || strings.Contains(text, "console.files") || strings.Contains(text, "console_files")
-}
-
-func runtimeContextJSON(value string) map[string]interface{} {
-	text := strings.TrimSpace(value)
-	if text == "" || !strings.HasPrefix(text, "{") {
-		return nil
+func isConsoleFilesPageToken(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "console.files", "console_files", "/console/files":
+		return true
+	default:
+		return false
 	}
-	var parsed map[string]interface{}
-	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-		return nil
-	}
-	return parsed
 }
 
 func hasConsoleFilesReadCapability(runtimeContext string, contexts ...map[string]interface{}) bool {
@@ -279,60 +274,69 @@ func hasConsoleFilesAssetCapability(runtimeContext string, contexts ...map[strin
 	return hasConsoleFilesCapability(runtimeContext, consoleFilesDeleteCapabilityPattern, contexts...)
 }
 
+func hasConsoleFilesCreateCapability(runtimeContext string, contexts ...map[string]interface{}) bool {
+	return hasConsoleFilesCapability(runtimeContext, consoleFilesCreateCapabilityPattern, contexts...)
+}
+
 func hasConsoleFilesCapability(runtimeContext string, pattern *regexp.Regexp, contexts ...map[string]interface{}) bool {
-	if containsConsoleFilesCapabilityToken(runtimeContext, pattern) {
-		return true
-	}
 	for _, ctx := range contexts {
-		if contextContainsConsoleFilesCapability(ctx, pattern, 0) {
+		if contextContainsStructuredConsoleFilesCapability(ctx, pattern) {
 			return true
 		}
-	}
-	if parsed := runtimeContextJSON(runtimeContext); parsed != nil {
-		return contextContainsConsoleFilesCapability(parsed, pattern, 0)
 	}
 	return false
 }
 
-func contextContainsConsoleFilesCapability(value interface{}, pattern *regexp.Regexp, depth int) bool {
-	if depth > 5 || value == nil {
+func contextContainsStructuredConsoleFilesCapability(context map[string]interface{}, pattern *regexp.Regexp) bool {
+	if len(context) == 0 || pattern == nil {
+		return false
+	}
+	for _, item := range operationItemsFromValue(context["capabilities"]) {
+		if structuredCapabilityItemMatches(item, pattern) {
+			return true
+		}
+	}
+	for _, item := range operationItemsFromValue(context["resources"]) {
+		resource, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if structuredCapabilityItemMatches(firstMapValue(resource, "capability_id", "tool_id"), pattern) {
+			return true
+		}
+		for _, key := range []string{"capability_ids", "tool_ids", "capabilities", "tools"} {
+			for _, capability := range operationItemsFromValue(resource[key]) {
+				if structuredCapabilityItemMatches(capability, pattern) {
+					return true
+				}
+			}
+		}
+	}
+	for _, key := range []string{"capability_id", "capability_ids", "tool_id", "tool_ids"} {
+		for _, item := range operationItemsFromValue(context[key]) {
+			if structuredCapabilityItemMatches(item, pattern) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func structuredCapabilityItemMatches(value interface{}, pattern *regexp.Regexp) bool {
+	if pattern == nil {
 		return false
 	}
 	switch typed := value.(type) {
 	case string:
 		return containsConsoleFilesCapabilityToken(typed, pattern)
 	case map[string]interface{}:
-		for key, item := range typed {
-			normalizedKey := strings.ToLower(strings.TrimSpace(key))
-			switch normalizedKey {
-			case "id", "capability_id", "tool_id":
-				if containsConsoleFilesCapabilityToken(stringMetadataValue(item), pattern) {
-					return true
-				}
-			case "capability_ids", "capabilities", "tool_ids", "tools":
-				if contextContainsConsoleFilesCapability(item, pattern, depth+1) {
-					return true
-				}
-			default:
-				if contextContainsConsoleFilesCapability(item, pattern, depth+1) {
-					return true
-				}
-			}
-		}
-	case []interface{}:
-		for _, item := range typed {
-			if contextContainsConsoleFilesCapability(item, pattern, depth+1) {
-				return true
-			}
-		}
-	case []map[string]interface{}:
-		for _, item := range typed {
-			if contextContainsConsoleFilesCapability(item, pattern, depth+1) {
-				return true
-			}
-		}
+		return containsConsoleFilesCapabilityToken(
+			firstNonEmptyString(typed["id"], typed["capability_id"], typed["tool_id"]),
+			pattern,
+		)
+	default:
+		return false
 	}
-	return false
 }
 
 func containsConsoleFilesCapabilityToken(value string, pattern *regexp.Regexp) bool {
@@ -406,6 +410,22 @@ func isFileDeleteIntent(query string) bool {
 		}
 	}
 	return false
+}
+
+func isManagedFileCreateIntent(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	createTerms := []string{
+		"create", "generate", "save", "upload", "export", "write",
+		"\u521b\u5efa", "\u65b0\u5efa", "\u751f\u6210", "\u4fdd\u5b58", "\u4e0a\u4f20", "\u5bfc\u51fa", "\u5199\u5165",
+	}
+	targetTerms := []string{
+		"file management", "files page", "current files page", "managed file", "workspace file",
+		"\u6587\u4ef6\u7ba1\u7406", "\u6587\u4ef6\u9875", "\u5f53\u524d\u6587\u4ef6\u9875", "\u6587\u4ef6\u5217\u8868", "\u5de5\u4f5c\u533a\u6587\u4ef6",
+	}
+	return containsAnySubstring(text, createTerms) && containsAnySubstring(text, targetTerms)
 }
 
 func collectConsoleFilesFileIDs(parts *chatRequestParts) []string {
@@ -523,13 +543,16 @@ func collectSelectedFileIDs(value interface{}, depth int, add func(string)) {
 }
 
 type visibleConsoleFileResource struct {
-	ID          string
-	Title       string
-	Extension   string
-	MimeType    string
-	FileType    string
-	WorkspaceID string
-	Selected    bool
+	ID            string
+	Title         string
+	Extension     string
+	MimeType      string
+	FileType      string
+	WorkspaceID   string
+	VisibleIndex  int
+	FileTypeRank  int
+	ExtensionRank int
+	Selected      bool
 }
 
 func visibleFileResources(context map[string]interface{}) []visibleConsoleFileResource {
@@ -538,6 +561,8 @@ func visibleFileResources(context map[string]interface{}) []visibleConsoleFileRe
 	}
 	items := operationItemsFromValue(context["resources"])
 	out := make([]visibleConsoleFileResource, 0, len(items))
+	fileTypeRanks := map[string]int{}
+	extensionRanks := map[string]int{}
 	for _, item := range items {
 		resource, ok := item.(map[string]interface{})
 		if !ok || !isFileResourceMap(resource) {
@@ -574,17 +599,48 @@ func visibleFileResources(context map[string]interface{}) []visibleConsoleFileRe
 		)
 		selected := boolMetadataValue(firstMapValue(resource, "selected", "is_selected")) ||
 			boolMetadataValue(firstMapValue(metadata, "selected", "is_selected"))
+		visibleIndex := firstPositiveInt(
+			intValueFromAny(firstMapValue(resource, "visible_index", "visible_ordinal", "visible_rank")),
+			intValueFromAny(firstMapValue(metadata, "visible_index", "visible_ordinal", "visible_rank")),
+			len(out)+1,
+		)
+		rankFileType := firstNonEmptyString(strings.TrimSpace(fileType), extension, "file")
+		fileTypeRanks[rankFileType]++
+		fileTypeRank := firstPositiveInt(
+			intValueFromAny(firstMapValue(resource, "file_type_rank")),
+			intValueFromAny(firstMapValue(metadata, "file_type_rank")),
+			fileTypeRanks[rankFileType],
+		)
+		rankExtension := firstNonEmptyString(extension, strings.TrimSpace(fileType), "file")
+		extensionRanks[rankExtension]++
+		extensionRank := firstPositiveInt(
+			intValueFromAny(firstMapValue(resource, "extension_rank")),
+			intValueFromAny(firstMapValue(metadata, "extension_rank")),
+			extensionRanks[rankExtension],
+		)
 		out = append(out, visibleConsoleFileResource{
-			ID:          id,
-			Title:       title,
-			Extension:   extension,
-			MimeType:    strings.TrimSpace(mimeType),
-			FileType:    strings.TrimSpace(fileType),
-			WorkspaceID: strings.TrimSpace(workspaceID),
-			Selected:    selected,
+			ID:            id,
+			Title:         title,
+			Extension:     extension,
+			MimeType:      strings.TrimSpace(mimeType),
+			FileType:      strings.TrimSpace(fileType),
+			WorkspaceID:   strings.TrimSpace(workspaceID),
+			VisibleIndex:  visibleIndex,
+			FileTypeRank:  fileTypeRank,
+			ExtensionRank: extensionRank,
+			Selected:      selected,
 		})
 	}
 	return out
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func normalizedConsoleFileExtension(value string) string {

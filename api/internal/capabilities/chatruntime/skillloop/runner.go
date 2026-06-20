@@ -24,17 +24,18 @@ const (
 )
 
 type skillStepResult struct {
-	trace             skills.SkillTrace
-	toolMessage       adapter.Message
-	answer            string
-	usedSkill         bool
-	usedTool          bool
-	recoverable       bool
-	terminal          bool
-	pendingApproval   map[string]interface{}
-	pendingQuestion   map[string]interface{}
-	pendingGovernance map[string]interface{}
-	fatalErr          error
+	trace               skills.SkillTrace
+	toolMessage         adapter.Message
+	answer              string
+	usedSkill           bool
+	usedTool            bool
+	recoverable         bool
+	terminal            bool
+	pendingApproval     map[string]interface{}
+	pendingQuestion     map[string]interface{}
+	pendingGovernance   map[string]interface{}
+	pendingClientAction map[string]interface{}
+	fatalErr            error
 }
 
 type planningResult struct {
@@ -245,6 +246,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if result.pendingGovernance != nil {
 				return answerBuilder.String(), usage, &ToolGovernancePendingError{Payload: result.pendingGovernance}
 			}
+			if result.pendingClientAction != nil {
+				return answerBuilder.String(), usage, &ClientActionPendingError{Payload: result.pendingClientAction}
+			}
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)
 				r.emitAnswerChunk(ctx, prepared, result.answer, nil)
@@ -405,9 +409,13 @@ func userInputGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {
 }
 
 func finalAnswerGuardSystemMessage(result FinalAnswerGuardResult, candidateAnswer string) adapter.Message {
+	feedback := strings.TrimSpace(result.SystemMessage)
+	if feedback == "" {
+		feedback = strings.TrimSpace(result.Message)
+	}
 	lines := []string{
 		"Runtime guardrail feedback:",
-		strings.TrimSpace(result.Message),
+		feedback,
 	}
 	if text := strings.TrimSpace(candidateAnswer); text != "" {
 		lines = append(lines, "Blocked candidate answer:\n"+text)

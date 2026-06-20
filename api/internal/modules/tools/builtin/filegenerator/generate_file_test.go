@@ -141,7 +141,31 @@ func TestCreateManagedFileForRuntimeUploadsToFileManagement(t *testing.T) {
 	require.Equal(t, "upload-1", messages[1].Data["upload_file_id"])
 }
 
-func TestCreateGeneratedFileForRuntimeDefaultsToManagedFileOnConsoleFilesPage(t *testing.T) {
+func TestCreateGeneratedFileForRuntimeKeepsTemporaryDefaultOnConsoleFilesPage(t *testing.T) {
+	db, mock, cleanup := openFileGeneratorMockDB(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "tool_files"`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	oldManager := workflowtoolfile.GlobalToolFileManager
+	oldSignature := workflowtoolfile.GlobalFileSignature
+	t.Cleanup(func() {
+		workflowtoolfile.GlobalToolFileManager = oldManager
+		workflowtoolfile.GlobalFileSignature = oldSignature
+	})
+
+	fileStorage := newMemoryStorage()
+	workflowtoolfile.GlobalToolFileManager = workflowtoolfile.NewToolFileManager(db, fileStorage)
+	workflowtoolfile.GlobalFileSignature = workflowtoolfile.NewFileSignature(&config.Config{
+		App: config.AppConfig{
+			SecretKey:          "test-secret-key",
+			FilesURL:           "http://files.example.test",
+			FilesAccessTimeout: 3600,
+		},
+	})
+
 	workspaceID := "workspace-1"
 	managedFiles := &fakeManagedFileService{}
 	workspacePerms := &fakeWorkspacePermissionService{allowed: true}
@@ -170,13 +194,16 @@ func TestCreateGeneratedFileForRuntimeDefaultsToManagedFileOnConsoleFilesPage(t 
 	})
 	require.NoError(t, err)
 	require.Len(t, messages, 2)
-	require.Equal(t, "hello.txt", managedFiles.filename)
-	require.Equal(t, workspaceID, managedFiles.workspaceID)
-	require.Equal(t, string(generatedFileTargetManagedFile), messages[1].Data["target"])
-	require.Equal(t, "upload-1", messages[1].Data["upload_file_id"])
+	require.Empty(t, managedFiles.filename)
+	require.Empty(t, managedFiles.workspaceID)
+	require.Equal(t, string(generatedFileTargetTemporaryArtifact), messages[1].Data["target"])
+	require.Empty(t, messages[1].Data["upload_file_id"])
+	require.NotEmpty(t, messages[1].Data["file_id"])
+	require.NotEmpty(t, fileStorage.onlyFileData(t))
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestCreateGeneratedFileForRuntimeUsesVisibleFileWorkspaceForManagedDefault(t *testing.T) {
+func TestCreateGeneratedFileForRuntimeUsesVisibleFileWorkspaceForExplicitManagedTarget(t *testing.T) {
 	managedFiles := &fakeManagedFileService{}
 	workspacePerms := &fakeWorkspacePermissionService{allowed: true}
 
@@ -190,13 +217,14 @@ func TestCreateGeneratedFileForRuntimeUsesVisibleFileWorkspaceForManagedDefault(
 			},
 		},
 	}, generatedFileParams{
-		userID:    "account-1",
-		data:      []byte("hello"),
-		mimeType:  "text/plain",
-		extension: ".txt",
-		filename:  "hello.txt",
-		format:    "txt",
-		target:    generatedFileTargetTemporaryArtifact,
+		userID:         "account-1",
+		data:           []byte("hello"),
+		mimeType:       "text/plain",
+		extension:      ".txt",
+		filename:       "hello.txt",
+		format:         "txt",
+		target:         generatedFileTargetManagedFile,
+		targetExplicit: true,
 		services: fileGeneratorServices{
 			managedFiles:   managedFiles,
 			workspacePerms: workspacePerms,

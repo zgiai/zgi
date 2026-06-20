@@ -7,6 +7,10 @@ provider_id: file_generator
 runtime_type: hybrid
 tools:
   - generate_file
+supported_callers:
+  - aichat
+  - agent
+  - workflow
 max_calls_per_turn: 3
 timeout_seconds: 5
 tool_governance:

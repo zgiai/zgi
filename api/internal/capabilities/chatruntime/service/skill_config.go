@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -150,14 +151,11 @@ func validateSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMe
 		if !ok {
 			return nil, fmt.Errorf("%w: unknown skill id %s", ErrInvalidInput, id)
 		}
+		if !skillUserSelectableForCaller(item, callerType, runConfig) {
+			return nil, fmt.Errorf("%w: skill %s is not user selectable for %s", ErrInvalidInput, id, callerType)
+		}
 		if _, ok := orgEnabled[id]; !ok {
 			return nil, fmt.Errorf("%w: skill %s is not enabled by organization", ErrInvalidInput, id)
-		}
-		if !skillSupportsCaller(item, callerType) {
-			return nil, fmt.Errorf("%w: skill %s is not available for %s", ErrInvalidInput, id, callerType)
-		}
-		if err := validateSkillRequiredConfig(item, runConfig); err != nil {
-			return nil, err
 		}
 		if _, ok := seen[id]; ok {
 			continue
@@ -223,7 +221,7 @@ func filterSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMeta
 			continue
 		}
 		item, ok := catalogByID[id]
-		if !ok || !skillSupportsCaller(item, callerType) {
+		if !ok || !skillUserSelectableForCaller(item, callerType, nil) {
 			continue
 		}
 		out = append(out, id)
@@ -253,10 +251,7 @@ func effectiveSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryM
 		if _, ok := orgEnabled[id]; !ok {
 			continue
 		}
-		if !skillSupportsCaller(item, callerType) {
-			continue
-		}
-		if validateSkillRequiredConfig(item, runConfig) != nil {
+		if !skillUserSelectableForCaller(item, callerType, runConfig) {
 			continue
 		}
 		if _, ok := seen[id]; ok {
@@ -267,6 +262,17 @@ func effectiveSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryM
 	}
 	sort.Strings(out)
 	return out
+}
+
+func skillUserSelectableForCaller(item skills.SkillDiscoveryMetadata, callerType string, runConfig *RunConfig) bool {
+	id := strings.ToLower(strings.TrimSpace(item.ID))
+	if id == "" || skills.IsHiddenSystemSkill(id) || !skills.IsUserSelectableSystemSkill(id) {
+		return false
+	}
+	if !skillSupportsCaller(item, callerType) {
+		return false
+	}
+	return validateSkillRequiredConfig(item, runConfig) == nil
 }
 
 func skillSupportsCaller(item skills.SkillDiscoveryMetadata, callerType string) bool {
@@ -295,12 +301,129 @@ func validateSkillRequiredConfig(item skills.SkillDiscoveryMetadata, runConfig *
 	return nil
 }
 
+func filterAIChatSkillIDsForSurface(enabled []string, parts *chatRequestParts) []string {
+	out := make([]string, 0, len(enabled))
+	allowNavigator := parts != nil && isContextualAIChatSurface(parts.Surface)
+	allowFileManager := allowAIChatFileManagerSkill(parts)
+	externalPageChat := parts != nil && normalizeAIChatSurface(parts.Surface) == aiChatSurfaceExternalPageChat
+	for _, raw := range enabled {
+		id := strings.ToLower(strings.TrimSpace(raw))
+		if id == "" {
+			continue
+		}
+		if externalPageChat && skills.IsSystemAssetSkill(id) {
+			continue
+		}
+		if id == skills.SkillConsoleNavigator && !allowNavigator {
+			continue
+		}
+		if id == skills.SkillFileManager && !allowFileManager {
+			continue
+		}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func allowAIChatFileManagerSkill(parts *chatRequestParts) bool {
+	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
+		return false
+	}
+	return isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
+		hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext)
+}
+
 func addContextualAIChatSkillIDs(enabled []string, organizationEnabled []string, catalog []skills.SkillDiscoveryMetadata, parts *chatRequestParts) []string {
-	if parts == nil || !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
-		!hasConsoleFilesAssetCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+	return addContextualAIChatSkillIDsWithCapabilities(enabled, organizationEnabled, catalog, parts, contextualAIChatSkillCapabilitiesFromClientContext(parts))
+}
+
+type contextualAIChatSkillCapabilities struct {
+	Navigation bool
+	FileRead   bool
+	FileDelete bool
+	FileCreate bool
+}
+
+func addContextualAIChatSkillIDsWithCapabilities(enabled []string, organizationEnabled []string, catalog []skills.SkillDiscoveryMetadata, parts *chatRequestParts, capabilities contextualAIChatSkillCapabilities) []string {
+	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return enabled
 	}
-	return addSkillIDIfAvailable(enabled, organizationEnabled, catalog, skills.SkillFileReader, runtimemodel.ConversationCallerAIChat)
+	if capabilities.Navigation {
+		enabled = addSkillIDIfAvailable(enabled, organizationEnabled, catalog, skills.SkillConsoleNavigator, runtimemodel.ConversationCallerAIChat)
+	}
+	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
+		(!hasConsoleFilesAssetCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
+			!hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)) {
+		return enabled
+	}
+	if capabilities.FileRead && hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		enabled = addSkillIDIfAvailable(enabled, organizationEnabled, catalog, skills.SkillFileReader, runtimemodel.ConversationCallerAIChat)
+	}
+	if capabilities.FileDelete && hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext) {
+		enabled = addSkillIDIfAvailable(enabled, organizationEnabled, catalog, skills.SkillFileManager, runtimemodel.ConversationCallerAIChat)
+	}
+	if capabilities.FileCreate && hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		enabled = addSkillIDIfAvailable(enabled, organizationEnabled, catalog, skills.SkillFileGenerator, runtimemodel.ConversationCallerAIChat)
+	}
+	return enabled
+}
+
+func contextualAIChatSkillCapabilitiesFromClientContext(parts *chatRequestParts) contextualAIChatSkillCapabilities {
+	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
+		return contextualAIChatSkillCapabilities{}
+	}
+	return contextualAIChatSkillCapabilities{
+		Navigation: true,
+		FileRead:   hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
+		FileDelete: hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext),
+		FileCreate: hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
+	}
+}
+
+func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, scope Scope, parts *chatRequestParts) contextualAIChatSkillCapabilities {
+	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
+		return contextualAIChatSkillCapabilities{}
+	}
+	capabilities := contextualAIChatSkillCapabilities{Navigation: true}
+	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return capabilities
+	}
+	workspaceID := ""
+	if scope.WorkspaceID != nil {
+		workspaceID = strings.TrimSpace(scope.WorkspaceID.String())
+	}
+	if workspaceID == "" || s.workspacePerms == nil {
+		return capabilities
+	}
+	if hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		capabilities.FileRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFileDownload)
+	}
+	if hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext) {
+		capabilities.FileDelete = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFileManage)
+	}
+	if hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		capabilities.FileCreate = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFileUploadCreate)
+	}
+	return capabilities
+}
+
+func (s *service) workspacePermissionAllowed(ctx context.Context, scope Scope, workspaceID string, permissionCode workspacemodel.WorkspacePermissionCode) bool {
+	if s.workspacePerms == nil {
+		return false
+	}
+	allowed, err := s.workspacePerms.CheckWorkspacePermission(ctx, scope.OrganizationID.String(), workspaceID, scope.AccountID.String(), permissionCode)
+	if err != nil {
+		logger.WarnContext(ctx, "failed to check contextual aichat workspace permission",
+			"organization_id", scope.OrganizationID.String(),
+			"workspace_id", workspaceID,
+			"account_id", scope.AccountID.String(),
+			"permission", string(permissionCode),
+			"error", err,
+		)
+		return false
+	}
+	return allowed
 }
 
 func addSkillIDIfAvailable(enabled []string, organizationEnabled []string, catalog []skills.SkillDiscoveryMetadata, skillID string, callerType string) []string {

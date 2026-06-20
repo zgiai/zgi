@@ -2,7 +2,9 @@ package skillloop
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skilltrace"
@@ -22,6 +24,199 @@ func skillCallEndPayload(prepared *PreparedChat, trace skills.SkillTrace) map[st
 func toolGovernanceDecisionPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
 	payload := skilltrace.ToolGovernanceDecisionPayload(skillTracePayloadIDs(prepared), trace)
 	return payload
+}
+
+func clientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace, callID string) map[string]interface{} {
+	if payload := routeNavigationClientActionRequiredPayload(prepared, trace, callID); len(payload) > 0 {
+		return payload
+	}
+	if payload := assetObservationClientActionRequiredPayload(prepared, trace, callID); len(payload) > 0 {
+		return payload
+	}
+	return nil
+}
+
+func routeNavigationClientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace, callID string) map[string]interface{} {
+	if !strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillConsoleNavigator) ||
+		!strings.EqualFold(strings.TrimSpace(trace.ToolName), "navigate") {
+		return nil
+	}
+	result := trace.Result
+	if strings.TrimSpace(stringFromAny(result["event_type"])) != "page_navigation_requested" {
+		return nil
+	}
+	href := strings.TrimSpace(stringFromAny(result["href"]))
+	if href == "" {
+		return nil
+	}
+	actionID := strings.TrimSpace(callID)
+	if actionID == "" {
+		actionID = href
+	}
+	actionID = "route_navigation:" + actionID
+	payload := map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"action_id":       actionID,
+		"action_type":     "route_navigation",
+		"event_type":      "client_action_required",
+		"status":          "waiting_client_action",
+		"skill_id":        strings.TrimSpace(trace.SkillID),
+		"tool_name":       strings.TrimSpace(trace.ToolName),
+		"href":            href,
+		"result":          copyStringAnyMap(result),
+		"created_at":      time.Now().Unix(),
+	}
+	if label := strings.TrimSpace(stringFromAny(result["label"])); label != "" {
+		payload["label"] = label
+	}
+	if reason := strings.TrimSpace(stringFromAny(result["reason"])); reason != "" {
+		payload["reason"] = reason
+	}
+	return payload
+}
+
+func assetObservationClientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace, callID string) map[string]interface{} {
+	if !strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
+		return nil
+	}
+	audit := assetOperationAuditFromTrace(trace)
+	if len(audit) == 0 {
+		return nil
+	}
+	effect := normalizeClientActionToken(firstNonEmptyPayloadText(
+		audit["effect"],
+		governanceManifestEffect(trace),
+	))
+	if !requiresAssetObservation(effect) {
+		return nil
+	}
+	assetType := normalizeClientActionToken(firstNonEmptyPayloadText(
+		audit["asset_type"],
+		governanceManifestAssetType(trace),
+	))
+	if assetType == "" {
+		assetType = "asset"
+	}
+	actionID := firstNonEmptyPayloadText(audit["correlation_id"], callID, trace.SkillID+":"+trace.ToolName)
+	actionID = "asset_observation:" + actionID
+	payload := map[string]interface{}{
+		"conversation_id":       prepared.Conversation.ID.String(),
+		"message_id":            prepared.Message.ID.String(),
+		"action_id":             actionID,
+		"action_type":           "asset_observation",
+		"event_type":            "client_action_required",
+		"status":                "waiting_client_action",
+		"skill_id":              strings.TrimSpace(trace.SkillID),
+		"tool_name":             strings.TrimSpace(trace.ToolName),
+		"effect":                effect,
+		"asset_type":            assetType,
+		"asset_operation_audit": copyStringAnyMap(audit),
+		"observation_requested": true,
+		"refresh_before_resume": true,
+		"created_at":            time.Now().Unix(),
+	}
+	if correlationID := strings.TrimSpace(payloadText(audit["correlation_id"])); correlationID != "" {
+		payload["correlation_id"] = correlationID
+	}
+	if toolID := firstNonEmptyPayloadText(audit["tool_id"], governanceManifestToolID(trace)); toolID != "" {
+		payload["tool_id"] = toolID
+	}
+	if assets := firstNonEmptyAssetRefs(audit["assets"], audit["expected_assets"], governanceAssets(trace)); assets != nil {
+		payload["assets"] = assets
+	}
+	return payload
+}
+
+func assetOperationAuditFromTrace(trace skills.SkillTrace) map[string]interface{} {
+	if trace.Governance != nil && len(trace.Governance.AssetOperationAudit) > 0 {
+		return copyStringAnyMap(trace.Governance.AssetOperationAudit)
+	}
+	if audit, ok := trace.Result["asset_operation_audit"].(map[string]interface{}); ok && len(audit) > 0 {
+		return copyStringAnyMap(audit)
+	}
+	return nil
+}
+
+func requiresAssetObservation(effect string) bool {
+	switch normalizeClientActionToken(effect) {
+	case "create", "update", "delete", "publish":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeClientActionToken(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func firstNonEmptyPayloadText(values ...interface{}) string {
+	for _, value := range values {
+		if text := strings.TrimSpace(payloadText(value)); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func payloadText(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	default:
+		return fmt.Sprint(value)
+	}
+}
+
+func governanceManifestEffect(trace skills.SkillTrace) string {
+	if trace.Governance == nil {
+		return ""
+	}
+	return string(trace.Governance.Manifest.Effect)
+}
+
+func governanceManifestAssetType(trace skills.SkillTrace) string {
+	if trace.Governance == nil {
+		return ""
+	}
+	return strings.TrimSpace(trace.Governance.Manifest.AssetType)
+}
+
+func governanceManifestToolID(trace skills.SkillTrace) string {
+	if trace.Governance == nil {
+		return ""
+	}
+	return strings.TrimSpace(trace.Governance.Manifest.ToolID)
+}
+
+func governanceAssets(trace skills.SkillTrace) interface{} {
+	if trace.Governance == nil || len(trace.Governance.Assets) == 0 {
+		return nil
+	}
+	return trace.Governance.Assets
+}
+
+func firstNonEmptyAssetRefs(values ...interface{}) interface{} {
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case []interface{}:
+			if len(typed) > 0 {
+				return typed
+			}
+		default:
+			return value
+		}
+	}
+	return nil
 }
 
 func skillArtifactsFromToolMessages(prepared *PreparedChat, trace skills.SkillTrace, messages []tools.ToolInvokeMessage) []map[string]interface{} {

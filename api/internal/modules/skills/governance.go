@@ -111,7 +111,7 @@ func rewriteFileGeneratorTargetFromRuntimeContext(skillID, toolName string, argu
 	}
 	rewritten["target"] = "managed_file"
 	summary := map[string]interface{}{
-		"reason":    "console_files_page_default_target",
+		"reason":    "explicit_runtime_default_target",
 		"to_target": "managed_file",
 	}
 	if workspaceID := runtimeWorkspaceIDForFileGeneration(execCtx.RuntimeParameters); workspaceID != "" && stringMapValue(rewritten, "workspace_id", "workspaceId") == "" {
@@ -125,16 +125,7 @@ func runtimeDefaultsFileGenerationToManaged(params map[string]interface{}) bool 
 	if len(params) == 0 {
 		return false
 	}
-	if isManagedFileGenerationTarget(stringMapValue(params, "file_generation_default_target")) {
-		return true
-	}
-	if boolMapValue(params, "console_files_page", "consoleFilesPage") {
-		return true
-	}
-	if len(assetRefsFromAny(params["console_files_visible_files"])) > 0 {
-		return true
-	}
-	return false
+	return isManagedFileGenerationTarget(stringMapValue(params, "file_generation_default_target"))
 }
 
 func runtimeWorkspaceIDForFileGeneration(params map[string]interface{}) string {
