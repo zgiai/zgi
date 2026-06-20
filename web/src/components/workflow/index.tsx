@@ -27,6 +27,7 @@ import { getNodeAbsolutePosition } from './store/helpers/graph';
 import { useAuthStore } from '@/store/auth-store';
 import { useBuiltinTools } from '@/hooks/workflow/use-builtin-tools';
 import { useLocale } from '@/hooks/use-locale';
+import { WorkflowAIChatContextRegistration } from './aichat-context';
 
 // Throttled global mouse tracker to isolate re-renders from WorkflowEditor
 // Uses both requestAnimationFrame and time-based throttling (50ms) to minimize store updates
@@ -433,6 +434,20 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   return (
     <ReactFlowProvider>
       <WorkflowEditorProvider value={{ agentId, agentType, workspaceId }}>
+        <WorkflowAIChatContextRegistration
+          agentDetail={agentDetail}
+          workflowDraft={workflowData}
+          viewNodes={viewNodes}
+          viewEdges={viewEdges}
+          isDirty={isDirty}
+          isSaving={isSaving}
+          isPublishing={isPublishing}
+          isReadOnly={isReadOnly}
+          isHistoryMode={isHistoryMode}
+          isPermissionReadOnly={isPermissionReadOnly}
+          canPublish={isValid}
+          selectedRunId={selectedRunId}
+        />
         {/* Bind keyboard shortcuts within provider to ensure context availability */}
         <WorkflowKeyboardBindings onSave={onSave} disabled={isReadOnly} />
         {leaveGuardDialog}

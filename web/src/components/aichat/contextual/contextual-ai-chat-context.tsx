@@ -14,8 +14,16 @@ import type {
   AIChatCapabilityDescriptor,
   AIChatContextItem,
   AIChatContextRegistrationOptions,
+  AIChatContextRegistrationVisibility,
   AIChatContextRelation,
 } from './types';
+
+interface ContextualAIChatRegisteredGroup {
+  items: AIChatContextItem[];
+  priority: number;
+  visibility: AIChatContextRegistrationVisibility;
+  order: number;
+}
 
 interface ContextualAIChatState {
   isOpen: boolean;
@@ -30,6 +38,13 @@ interface ContextualAIChatState {
 }
 
 const ContextualAIChatContext = createContext<ContextualAIChatState | null>(null);
+
+const CONTEXT_VISIBILITY_RANK: Record<AIChatContextRegistrationVisibility, number> = {
+  current: 3,
+  selected: 3,
+  visible: 2,
+  background: 0,
+};
 
 function normalizeCapabilities(
   capabilities: AIChatContextItem['capabilities']
@@ -95,13 +110,38 @@ function normalizeContextItems(items: AIChatContextItem[]): AIChatContextItem[] 
   return normalized;
 }
 
+function normalizeRegistrationPriority(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return value;
+}
+
+function normalizeRegistrationVisibility(
+  value: AIChatContextRegistrationVisibility | undefined
+): AIChatContextRegistrationVisibility {
+  return value ?? 'visible';
+}
+
+function visibleGroups(groups: Record<string, ContextualAIChatRegisteredGroup>) {
+  return Object.values(groups)
+    .filter(group => group.visibility !== 'background')
+    .sort((left, right) => {
+      const visibilityDelta =
+        CONTEXT_VISIBILITY_RANK[right.visibility] - CONTEXT_VISIBILITY_RANK[left.visibility];
+      if (visibilityDelta !== 0) return visibilityDelta;
+      if (right.priority !== left.priority) return right.priority - left.priority;
+      return left.order - right.order;
+    });
+}
+
 export function ContextualAIChatProvider({ children }: { children: ReactNode }) {
   const [isOpen, setOpen] = useState(false);
-  const [groups, setGroups] = useState<Record<string, AIChatContextItem[]>>({});
+  const [groups, setGroups] = useState<Record<string, ContextualAIChatRegisteredGroup>>({});
 
   const registerItems = useCallback(
     (items: AIChatContextItem[], options?: AIChatContextRegistrationOptions) => {
-      const scopeId = options?.scopeId?.trim() || crypto.randomUUID();
+      const baseScopeId = options?.scopeId?.trim() || crypto.randomUUID();
+      const scopeId =
+        options?.replace === false ? `${baseScopeId}:${crypto.randomUUID()}` : baseScopeId;
       const normalized = normalizeContextItems(items);
       setGroups(current => {
         if (normalized.length === 0) {
@@ -110,7 +150,12 @@ export function ContextualAIChatProvider({ children }: { children: ReactNode }) 
         }
         return {
           ...current,
-          [scopeId]: normalized,
+          [scopeId]: {
+            items: normalized,
+            priority: normalizeRegistrationPriority(options?.priority),
+            visibility: normalizeRegistrationVisibility(options?.visibility),
+            order: current[scopeId]?.order ?? Object.keys(current).length,
+          },
         };
       });
 
@@ -124,7 +169,10 @@ export function ContextualAIChatProvider({ children }: { children: ReactNode }) 
     []
   );
 
-  const items = useMemo(() => normalizeContextItems(Object.values(groups).flat()), [groups]);
+  const items = useMemo(
+    () => normalizeContextItems(visibleGroups(groups).flatMap(group => group.items)),
+    [groups]
+  );
 
   const value = useMemo<ContextualAIChatState>(
     () => ({
@@ -159,8 +207,10 @@ export function useAIChatContextRegistration(
   const { registerItems } = useContextualAIChat();
   const scopeId = options?.scopeId ?? generatedScopeId;
   const replace = options?.replace;
+  const priority = options?.priority;
+  const visibility = options?.visibility;
 
   useEffect(() => {
-    return registerItems(items, { scopeId, replace });
-  }, [items, registerItems, replace, scopeId]);
+    return registerItems(items, { scopeId, replace, priority, visibility });
+  }, [items, priority, registerItems, replace, scopeId, visibility]);
 }

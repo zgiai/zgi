@@ -412,7 +412,8 @@ export function AIChatMessageBubble({
   const isStreaming = message.status === 'pending' || message.status === 'streaming';
   const isWaitingForUser =
     message.status === 'waiting_approval' || message.status === 'waiting_question';
-  const isActiveMessage = isStreaming || isWaitingForUser;
+  const isWaitingForClientAction = message.status === 'waiting_client_action';
+  const isActiveMessage = isStreaming || isWaitingForUser || isWaitingForClientAction;
   const isError = message.status === 'error';
   const isStopped = message.status === 'stopped';
   const isSensitiveBlocked =

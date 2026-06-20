@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import type {
+  AIChatClientActionResultRequest,
   AIChatConversation,
   AIChatMessage,
   AIChatToolGovernanceDecisionRequest,
@@ -62,10 +63,18 @@ export function useWorkflowContinuationActions({
       toolGovernanceDecision?: {
         correlationId: string;
         payload: AIChatToolGovernanceDecisionRequest;
+      },
+      clientActionResult?: {
+        actionId: string;
+        payload: AIChatClientActionResultRequest;
       }
     ) => {
       const transport = transportRef.current;
-      if (toolGovernanceDecision) {
+      if (clientActionResult) {
+        if (!transport.continueClientAction) {
+          throw new Error('Client action continuation is unavailable.');
+        }
+      } else if (toolGovernanceDecision) {
         if (!transport.continueToolGovernanceDecision) {
           throw new Error('Tool governance continuation is unavailable.');
         }
@@ -78,19 +87,20 @@ export function useWorkflowContinuationActions({
       const continueWorkflowApprovalStream = transport.continueWorkflowApproval?.bind(transport);
       const continueToolGovernanceDecisionStream =
         transport.continueToolGovernanceDecision?.bind(transport);
+      const continueClientActionStream = transport.continueClientAction?.bind(transport);
       const currentState = stateRef.current;
       const conversation =
         currentState.conversations.find(item => item.id === conversationId) ?? null;
       const messages = currentState.messagesByConversation[conversationId] ?? [];
       const persistedSourceMessage = messages.find(message => message.id === messageId);
       const previousStreaming = currentState.streamingByMessageId[messageId];
-      const fallbackSourceMessage: AIChatMessage | null = toolGovernanceDecision
+      const fallbackSourceMessage: AIChatMessage | null = toolGovernanceDecision || clientActionResult
         ? {
             id: messageId,
             conversation_id: conversationId,
             query: '',
             answer: previousStreaming?.answer ?? '',
-            status: 'waiting_approval',
+            status: clientActionResult ? 'waiting_client_action' : 'waiting_approval',
             model_name: '',
             created_at: Math.floor(Date.now() / 1000),
             updated_at: Math.floor(Date.now() / 1000),
@@ -103,13 +113,18 @@ export function useWorkflowContinuationActions({
       const streamingStatus = previousStreaming?.status;
       const waitingForContinuation =
         Boolean(toolGovernanceDecision) ||
+        Boolean(clientActionResult) ||
         sourceMessage?.status === 'waiting_approval' ||
+        sourceMessage?.status === 'waiting_client_action' ||
         sourceMessage?.status === 'waiting_question' ||
         streamingStatus === 'waiting_approval' ||
+        streamingStatus === 'waiting_client_action' ||
         streamingStatus === 'waiting_question';
       if (
         (currentState.isSending && !waitingForContinuation) ||
-        (currentState.recoveringByConversation[conversationId] && !toolGovernanceDecision)
+        (currentState.recoveringByConversation[conversationId] &&
+          !toolGovernanceDecision &&
+          !clientActionResult)
       ) {
         return;
       }
@@ -261,6 +276,14 @@ export function useWorkflowContinuationActions({
             streamStarted = true;
             applyToolGovernanceDecision(payload, eventId);
           },
+          onClientActionRequired: () => {
+            if (abortController.signal.aborted) return;
+            streamStarted = true;
+          },
+          onClientActionResult: () => {
+            if (abortController.signal.aborted) return;
+            streamStarted = true;
+          },
           onMemoryMutation: (payload, eventId) => {
             if (abortController.signal.aborted) return;
             applyMemoryMutation(payload, eventId);
@@ -342,7 +365,17 @@ export function useWorkflowContinuationActions({
             }
           },
         };
-        if (toolGovernanceDecision) {
+        if (clientActionResult) {
+          if (!continueClientActionStream) return;
+          await continueClientActionStream(
+            conversationId,
+            messageId,
+            clientActionResult.actionId,
+            clientActionResult.payload,
+            callbacks,
+            abortController.signal
+          );
+        } else if (toolGovernanceDecision) {
           if (!continueToolGovernanceDecisionStream) return;
           await continueToolGovernanceDecisionStream(
             conversationId,
@@ -446,5 +479,29 @@ export function useWorkflowContinuationActions({
     [continueWorkflowApproval]
   );
 
-  return { continueWorkflowApproval, continueWorkflowQuestion, continueToolGovernanceDecision };
+  const continueClientAction = useCallback(
+    async (
+      conversationId: string,
+      messageId: string,
+      actionId: string,
+      payload: AIChatClientActionResultRequest
+    ) => {
+      await continueWorkflowApproval(
+        conversationId,
+        messageId,
+        undefined,
+        undefined,
+        undefined,
+        { actionId, payload }
+      );
+    },
+    [continueWorkflowApproval]
+  );
+
+  return {
+    continueWorkflowApproval,
+    continueWorkflowQuestion,
+    continueToolGovernanceDecision,
+    continueClientAction,
+  };
 }

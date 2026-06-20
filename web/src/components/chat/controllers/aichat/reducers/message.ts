@@ -520,6 +520,7 @@ export function applyMessageEndState(
         terminalStatus === 'stopped' ||
         terminalStatus === 'error' ||
         terminalStatus === 'waiting_approval' ||
+        terminalStatus === 'waiting_client_action' ||
         terminalStatus === 'waiting_question'
           ? terminalStatus
           : 'completed',

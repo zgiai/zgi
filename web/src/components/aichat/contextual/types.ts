@@ -57,6 +57,31 @@ export interface AIChatCapabilityDescriptor {
   metadata?: AIChatContextMetadata;
 }
 
+export interface AIChatContextRefreshHint {
+  assetType: string;
+  effect?: 'create' | 'update' | 'delete' | 'publish' | 'invoke' | 'schedule' | 'external_send';
+  resourceId?: string;
+  queryKey?: readonly unknown[];
+}
+
+export interface AIChatContextPresentationHint {
+  homeTitle?: string;
+  homeDescription?: string;
+  inputPlaceholder?: string;
+  suggestions?: string[];
+}
+
+export interface AIChatContextToolGovernanceHint {
+  enabled?: boolean;
+}
+
+export interface AIChatContextAdapterHints {
+  handledAssetTypes?: string[];
+  refreshHints?: AIChatContextRefreshHint[];
+  presentation?: AIChatContextPresentationHint;
+  toolGovernance?: AIChatContextToolGovernanceHint;
+}
+
 export interface AIChatContextItem {
   id: string;
   type: AIChatContextItemType;
@@ -71,11 +96,20 @@ export interface AIChatContextItem {
   relations?: AIChatContextRelation[];
   capabilities?: AIChatCapabilityDescriptor[];
   metadata?: AIChatContextMetadata;
+  hints?: AIChatContextAdapterHints;
 }
+
+export type AIChatContextRegistrationVisibility =
+  | 'visible'
+  | 'selected'
+  | 'current'
+  | 'background';
 
 export interface AIChatContextRegistrationOptions {
   scopeId?: string;
   replace?: boolean;
+  priority?: number;
+  visibility?: AIChatContextRegistrationVisibility;
 }
 
 export interface AIChatOperationRelation {

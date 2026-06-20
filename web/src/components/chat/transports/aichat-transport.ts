@@ -6,6 +6,9 @@ import {
 import type {
   AIChatChatRequest,
   AIChatAgentProgressEventData,
+  AIChatClientActionRequiredEventData,
+  AIChatClientActionResultEventData,
+  AIChatClientActionResultRequest,
   AIChatConversation,
   AIChatErrorEventData,
   AIChatFileParseEndEventData,
@@ -105,6 +108,14 @@ export interface AIChatStreamCallbacks {
     payload: AIChatToolGovernanceDecisionEventData,
     eventId?: string | null
   ) => void;
+  onClientActionRequired?: (
+    payload: AIChatClientActionRequiredEventData,
+    eventId?: string | null
+  ) => void;
+  onClientActionResult?: (
+    payload: AIChatClientActionResultEventData,
+    eventId?: string | null
+  ) => void;
   onMemoryMutation: (payload: AIChatMemoryMutationEventData, eventId?: string | null) => void;
   onWorkflowStarted?: (payload: AIChatWorkflowEventData, eventId?: string | null) => void;
   onWorkflowNodeStarted?: (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => void;
@@ -187,6 +198,14 @@ export interface AIChatRuntimeTransport {
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;
+  continueClientAction?(
+    conversationId: string,
+    messageId: string,
+    actionId: string,
+    payload: AIChatClientActionResultRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
 }
 
 export function dispatchAIChatStreamEvent(
@@ -244,6 +263,18 @@ export function dispatchAIChatStreamEvent(
     case 'tool_governance_decision':
       callbacks.onToolGovernanceDecision?.(
         (data ?? {}) as AIChatToolGovernanceDecisionEventData,
+        eventId
+      );
+      break;
+    case 'client_action_required':
+      callbacks.onClientActionRequired?.(
+        (data ?? {}) as AIChatClientActionRequiredEventData,
+        eventId
+      );
+      break;
+    case 'client_action_result':
+      callbacks.onClientActionResult?.(
+        (data ?? {}) as AIChatClientActionResultEventData,
         eventId
       );
       break;
@@ -523,6 +554,30 @@ export class AIChatTransport implements AIChatRuntimeTransport {
       conversationId,
       messageId,
       correlationId,
+      payload,
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
+
+  continueClientAction(
+    conversationId: string,
+    messageId: string,
+    actionId: string,
+    payload: AIChatClientActionResultRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.continueClientAction(
+      conversationId,
+      messageId,
+      actionId,
       payload,
       {
         onEvent: (event, data, eventId) => {

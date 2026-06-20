@@ -223,7 +223,8 @@ const messages: WebappMessages = {
       },
       home: {
         filesTitle: '处理当前文件页',
-        filesDescription: 'AIChat 会基于当前可见或已选文件回答。删除操作需要确认。',
+        filesDescription:
+          'AIChat 会基于当前可见或已选文件回答，也可以按你的要求生成文件并保存到文件管理。文件变更可能需要确认。',
         contextTitle: '处理当前页面',
         contextDescription: 'AIChat 会带上当前可见的上下文信息回答。',
         emptyTitle: 'AIChat 助手',
@@ -231,7 +232,7 @@ const messages: WebappMessages = {
       },
       input: {
         placeholder: '询问当前页面，或告诉 AIChat 要做什么...',
-        filesPlaceholder: '询问当前可见或已选文件。删除操作需要确认。',
+        filesPlaceholder: '询问当前可见文件，或让 AIChat 生成文件并保存到这里。',
       },
       suggestions: {
         filesListVisible: '列出当前可见文件',
@@ -685,7 +686,10 @@ const messages: WebappMessages = {
       'agent-memory': '智能体记忆',
       'user-memory': '用户记忆',
       calculator: '计算器',
+      'console-navigator': '控制台导航',
       'file-generator': '文件生成器',
+      'file-manager': '文件管理器',
+      'file-reader': '文件读取器',
       'work-report-generator': '周报月报生成',
       'schedule-planner': '日程规划',
       'chart-generator': '图表生成器',
@@ -705,6 +709,10 @@ const messages: WebappMessages = {
       evaluate_expression: '计算表达式',
       calculate: '基础计算',
       percentage: '百分比计算',
+      navigate: '导航控制台',
+      list_visible_files: '列出可见文件',
+      read_file: '读取文件',
+      delete_file: '删除文件',
       generate_file: '生成文件',
       generate_docx: '生成 Word 文档',
       generate_pdf: '生成 PDF',

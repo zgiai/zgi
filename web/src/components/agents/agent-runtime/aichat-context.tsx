@@ -2,11 +2,12 @@
 
 import { useMemo } from 'react';
 import {
-  useAIChatContextRegistration,
+  sanitizeAIChatContextText,
+  usePageContextRegistration,
   type AIChatCapabilityDescriptor,
-  type AIChatContextItem,
   type AIChatContextRelation,
-} from '@/components/aichat/contextual';
+  type AIChatPageContextItem,
+} from '@/components/aichat/page-context';
 import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
 import type {
   AgentDatabaseBinding,
@@ -17,6 +18,7 @@ import type {
 } from '@/services/types/agent';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { Dataset } from '@/services/types/dataset';
+import { AGENT_KEYS } from '@/hooks/query-keys';
 import type { AgentRuntimeSaveState } from './types';
 
 const PROMPT_SUMMARY_MAX_LENGTH = 1200;
@@ -125,7 +127,7 @@ interface AgentRuntimeAIChatContextRegistrationProps {
 }
 
 function summarizePrompt(prompt: string, characterCount: number, isTooLong: boolean) {
-  const normalized = prompt.replace(/\s+/g, ' ').trim();
+  const normalized = sanitizeAIChatContextText(prompt).replace(/\s+/g, ' ').trim();
   const excerpt =
     normalized.length > PROMPT_SUMMARY_MAX_LENGTH
       ? normalized.slice(0, PROMPT_SUMMARY_MAX_LENGTH).trim()
@@ -140,7 +142,7 @@ function summarizePrompt(prompt: string, characterCount: number, isTooLong: bool
 }
 
 function compactContextField(value: string, maxLength = CONTEXT_FIELD_MAX_LENGTH): string {
-  const text = value.replace(/\s+/g, ' ').trim();
+  const text = sanitizeAIChatContextText(value).replace(/\s+/g, ' ').trim();
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength).trim()}...`;
 }
@@ -149,6 +151,17 @@ function summarizeNames(values: string[], emptyLabel = 'none'): string {
   const names = values.map(value => value.trim()).filter(Boolean);
   if (names.length === 0) return emptyLabel;
   return compactContextField(names.join(', '));
+}
+
+function workflowBindingLabel(binding: AgentWorkflowBinding, index: number): string {
+  return compactContextField(binding.label || `Workflow binding ${index + 1}`, 120);
+}
+
+function databaseBindingLabel(binding: AgentDatabaseBinding, index: number): string {
+  const tableSummary = `${binding.table_ids.length} tables${
+    (binding.writable_table_ids ?? []).length > 0 ? ', writable' : ''
+  }`;
+  return `Database binding ${index + 1} (${tableSummary})`;
 }
 
 function formatBooleanState(value: boolean): string {
@@ -164,11 +177,11 @@ function buildAgentWorkflowRelations(
 ): AIChatContextRelation[] | undefined {
   const relations = context.configuration.workflowBindings
     .filter(binding => binding.workflow_id)
-    .map(binding => ({
+    .map((binding, index) => ({
       type: 'binds_workflow',
       resourceType: 'workflow' as const,
       resourceId: binding.workflow_id,
-      title: binding.label || binding.binding_id,
+      title: workflowBindingLabel(binding, index),
       metadata: {
         binding_id: binding.binding_id,
         version_strategy: binding.version_strategy,
@@ -372,7 +385,7 @@ export function buildAgentRuntimeAIChatContext({
 
 function buildAgentRuntimeAIChatContextItems(
   context: AgentRuntimeAIChatContext | null
-): AIChatContextItem[] {
+): AIChatPageContextItem[] {
   if (!context) return [];
 
   const workspaceLabel = context.agent.workspace?.name ?? 'no workspace';
@@ -382,26 +395,30 @@ function buildAgentRuntimeAIChatContextItems(
   const skillNames = context.configuration.skills.map(skill => skill.name);
   const knowledgeNames = context.configuration.knowledge.map(dataset => dataset.name);
   const enabledMemorySlots = context.configuration.memory.slots.filter(slot => slot.enabled);
-  const workflowLabels = context.configuration.workflowBindings.map(
-    binding => binding.label || binding.binding_id
+  const workflowLabels = context.configuration.workflowBindings.map((binding, index) =>
+    workflowBindingLabel(binding, index)
   );
-  const databaseLabels = context.configuration.databaseBindings.map(
-    binding =>
-      `${binding.data_source_id} (${binding.table_ids.length} tables${
-        (binding.writable_table_ids ?? []).length > 0 ? ', writable' : ''
-      })`
+  const databaseLabels = context.configuration.databaseBindings.map((binding, index) =>
+    databaseBindingLabel(binding, index)
   );
   const agentCapabilities = buildAgentRuntimeCapabilities(context);
-  const workflowContextItems: AIChatContextItem[] = context.configuration.workflowBindings
+  const hasGovernedAgentOperations = agentCapabilities.some(
+    capability => capability.status === 'available' && capability.requiresConfirmation
+  );
+  const canAutoRefreshAgent =
+    !context.publish.isDirty &&
+    context.publish.saveState !== 'saving' &&
+    !context.publish.isVersionPreviewing;
+  const workflowContextItems: AIChatPageContextItem[] = context.configuration.workflowBindings
     .filter(binding => binding.workflow_id || binding.binding_id)
-    .map(binding => ({
+    .map((binding, index) => ({
       id: binding.workflow_id || binding.binding_id,
       type: 'workflow',
-      title: binding.label || binding.binding_id,
+      title: workflowBindingLabel(binding, index),
       subtitle: `Bound to ${context.agent.name}`,
       description: compactContextField(
         binding.description ||
-          `Workflow binding ${binding.binding_id} uses ${binding.version_strategy} version strategy.`
+          `This workflow binding uses ${binding.version_strategy} version strategy.`
       ),
       source: 'Agent Runtime',
       risk: 'medium',
@@ -444,6 +461,18 @@ function buildAgentRuntimeAIChatContextItems(
       relations: buildAgentWorkflowRelations(context),
       capabilities: agentCapabilities,
       permissions: context.permissions.codes,
+      hints: {
+        handledAssetTypes: ['agent'],
+        toolGovernance: hasGovernedAgentOperations ? { enabled: true } : undefined,
+        refreshHints: canAutoRefreshAgent
+          ? [
+              { assetType: 'agent', queryKey: AGENT_KEYS.lists() },
+              { assetType: 'agent', queryKey: AGENT_KEYS.detail(context.agent.id) },
+              { assetType: 'agent', queryKey: AGENT_KEYS.config(context.agent.id) },
+              { assetType: 'agent', queryKey: AGENT_KEYS.runnable(context.agent.workspace?.id) },
+            ]
+          : undefined,
+      },
       metadata: {
         agent_id: context.agent.id,
         agent_type: context.agent.type,
@@ -487,7 +516,7 @@ function buildAgentRuntimeAIChatContextItems(
     },
     {
       id: `${context.agent.id}:knowledge`,
-      type: 'dataset',
+      type: 'custom',
       title: 'Runtime knowledge',
       subtitle: `${context.configuration.knowledge.length} datasets`,
       description: summarizeNames(knowledgeNames),
@@ -568,7 +597,7 @@ export function AgentRuntimeAIChatContextRegistration({
 }: AgentRuntimeAIChatContextRegistrationProps) {
   const items = useMemo(() => buildAgentRuntimeAIChatContextItems(context), [context]);
 
-  useAIChatContextRegistration(items, { scopeId: context?.id ?? 'agent-runtime' });
+  usePageContextRegistration(items, { scopeId: context?.id ?? 'agent-runtime' });
 
   return null;
 }

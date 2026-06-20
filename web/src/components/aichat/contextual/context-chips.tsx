@@ -86,14 +86,18 @@ export function AIChatContextChips({
   }
 
   return (
-    <div className={cn('flex min-w-0 flex-wrap items-center gap-1.5', className)}>
+    <div className={cn('flex min-w-0 max-w-full flex-wrap items-center gap-1.5', className)}>
       {visibleItems.map(item => {
         const summary = capabilitySummary(item);
         const highestRisk = getHighestCapabilityRisk(item);
         return (
-          <Badge key={`${item.type}:${item.id}`} variant="outline" className="max-w-[280px] gap-1">
+          <Badge
+            key={`${item.type}:${item.id}`}
+            variant="outline"
+            className="min-w-0 max-w-full gap-1 overflow-hidden sm:max-w-[280px]"
+          >
             <span className="shrink-0 text-muted-foreground">{contextTypeLabel(item.type)}</span>
-            <span className="truncate">{item.title}</span>
+            <span className="min-w-0 truncate">{item.title}</span>
             {summary ? (
               <span className={cn('shrink-0 text-[11px]', capabilityRiskClass(highestRisk))}>
                 {summary}

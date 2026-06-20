@@ -12,6 +12,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { ChevronDown, Sparkles, X } from 'lucide-react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import Chat, { useAIChatController, type AIChatModelValue } from '@/components/chat';
@@ -23,38 +24,62 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import {
   AGENT_KEYS,
   AUTOMATION_KEYS,
   DATASET_KEYS,
   DB_KEYS,
-  FILE_KEYS,
   PROMPT_KEYS,
   WORKFLOW_KEYS,
   WORKSPACE_KEYS,
 } from '@/hooks/query-keys';
 import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
-import { FILES_QUERY_KEY, FILE_FOLDERS_KEY, STORAGE_USAGE_KEY } from '@/hooks/use-files';
 import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import { embeddedControlButtonClassName } from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import {
   createContextualAIChatTransport,
+  normalizeZGIConsoleNavigationHref,
   type ContextualAIChatAssetOperation,
+  type ContextualAIChatClientActionRequest,
+  type ContextualAIChatPageNavigationRequest,
 } from './context-envelope';
 import { useContextualAIChat } from './contextual-ai-chat-context';
-import type { AIChatContextItem } from './types';
+import type { AIChatClientActionResultRequest } from '@/services/types/aichat';
+import type {
+  AIChatContextItem,
+  AIChatContextPresentationHint,
+  AIChatContextRefreshHint,
+} from './types';
 
 const LOCAL_STORAGE_KEY = 'consoleChat';
-const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1440px)';
+const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1280px)';
 const DESKTOP_PANEL_WIDTH_STORAGE_KEY = 'consoleChat.aiChatDockWidth';
 const DEFAULT_DESKTOP_PANEL_WIDTH_RATIO = 0.3;
 const MIN_DESKTOP_PANEL_WIDTH = 640;
 const MAX_DESKTOP_PANEL_WIDTH_RATIO = 0.72;
 const MIN_DESKTOP_CONTENT_WIDTH = 360;
 const ASSET_OPERATION_REFRESH_DEDUPE_MS = 1800;
+const CLIENT_ACTION_ROUTE_TIMEOUT_MS = 10_000;
+const CLIENT_ACTION_ROUTE_CONTEXT_SETTLE_MS = 140;
+const CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS = 460;
+const CLIENT_ACTION_OBSERVATION_SETTLE_MS = 900;
+
+interface PendingClientActionContinuation {
+  conversationId: string;
+  messageId: string;
+  actionId: string;
+  actionType: string;
+  href?: string;
+  label?: string;
+  reason?: string;
+  effect?: string;
+  assetType?: string;
+  assets?: Array<Record<string, unknown>>;
+  requestedAt: number;
+  completed: boolean;
+}
 
 function useIsDesktopPanelViewport() {
   const [isDesktopPanelViewport, setIsDesktopPanelViewport] = useState<boolean | null>(null);
@@ -75,10 +100,7 @@ function useIsDesktopPanelViewport() {
 function clampDesktopPanelWidth(width: number) {
   if (typeof window === 'undefined') return Math.max(MIN_DESKTOP_PANEL_WIDTH, width);
   const viewportWidth = window.innerWidth;
-  const viewportMax = Math.max(
-    MIN_DESKTOP_PANEL_WIDTH,
-    viewportWidth - MIN_DESKTOP_CONTENT_WIDTH
-  );
+  const viewportMax = Math.max(MIN_DESKTOP_PANEL_WIDTH, viewportWidth - MIN_DESKTOP_CONTENT_WIDTH);
   const ratioMax = Math.max(
     MIN_DESKTOP_PANEL_WIDTH,
     Math.round(viewportWidth * MAX_DESKTOP_PANEL_WIDTH_RATIO)
@@ -127,26 +149,62 @@ function pruneAssetOperationRefreshDedupe(cache: Map<string, number>, now: numbe
 
 type ContextualDockTranslator = ReturnType<typeof useT<'webapp'>>;
 
-function isFilesPageContext(item: AIChatContextItem) {
+function normalizeHintToken(value: string | undefined) {
   return (
-    item.type === 'page' &&
-    (item.id === 'console.files' || item.metadata?.page === 'console.files')
+    value
+      ?.trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || ''
   );
 }
 
-function getNumberMetadata(item: AIChatContextItem | undefined, key: string) {
-  const value = item?.metadata?.[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+function getRefreshHintResolution(
+  items: AIChatContextItem[],
+  operation: ContextualAIChatAssetOperation
+): { handledByAdapter: boolean; refreshHints: AIChatContextRefreshHint[] } {
+  const assetType = normalizeHintToken(operation.assetType);
+  const effect = normalizeHintToken(operation.effect);
+  const assetId = operation.assetId?.trim();
+  const seen = new Set<string>();
+  const refreshHints: AIChatContextRefreshHint[] = [];
+  let handledByAdapter = false;
+
+  items.forEach(item => {
+    item.hints?.handledAssetTypes?.forEach(handledAssetType => {
+      if (normalizeHintToken(handledAssetType) === assetType) {
+        handledByAdapter = true;
+      }
+    });
+
+    item.hints?.refreshHints?.forEach(hint => {
+      if (normalizeHintToken(hint.assetType) !== assetType) return;
+      handledByAdapter = true;
+      if (hint.effect && normalizeHintToken(hint.effect) !== effect) return;
+      if (hint.resourceId && hint.resourceId !== assetId) return;
+      if (!hint.queryKey || hint.queryKey.length === 0) return;
+
+      const key = JSON.stringify(hint.queryKey);
+      if (seen.has(key)) return;
+      seen.add(key);
+      refreshHints.push(hint);
+    });
+  });
+
+  return { handledByAdapter, refreshHints };
 }
 
-function hasCapability(item: AIChatContextItem | undefined, capabilityId: string) {
-  return Boolean(item?.capabilities?.some(capability => capability.id === capabilityId));
+function pickPresentationHint(
+  items: AIChatContextItem[]
+): AIChatContextPresentationHint | undefined {
+  return items.find(item => item.hints?.presentation)?.hints?.presentation;
 }
 
-function getContextTypeLabel(
-  type: AIChatContextItem['type'],
-  t: ContextualDockTranslator
-) {
+function hasToolGovernanceHint(items: AIChatContextItem[]) {
+  return items.some(item => item.hints?.toolGovernance?.enabled === true);
+}
+
+function getContextTypeLabel(type: AIChatContextItem['type'], t: ContextualDockTranslator) {
   switch (type) {
     case 'agent':
       return t('consoleChat.contextual.contextTypes.agent');
@@ -171,14 +229,13 @@ function getContextTypeLabel(
   }
 }
 
+function isGenericRoutePageItem(item: AIChatContextItem) {
+  return item.type === 'page' && item.title.trim().startsWith('/');
+}
+
 function pickPrimaryContextItem(items: AIChatContextItem[]) {
-  return (
-    items.find(item => item.type === 'file') ??
-    items.find(item => item.type === 'agent') ??
-    items.find(item => item.type === 'workflow') ??
-    items.find(item => item.type === 'page') ??
-    items[0]
-  );
+  const selectedItem = items.find(item => item.metadata?.selected === true);
+  return selectedItem ?? items.find(item => !isGenericRoutePageItem(item)) ?? items[0];
 }
 
 function buildContextSummary(items: AIChatContextItem[], t: ContextualDockTranslator) {
@@ -194,27 +251,11 @@ function buildSuggestions(
   contextItems: ReturnType<typeof useContextualAIChat>['items'],
   t: ContextualDockTranslator
 ) {
-  const filesPage = contextItems.find(isFilesPageContext);
-  if (filesPage) {
-    const visibleFileCount = getNumberMetadata(filesPage, 'visible_file_count');
-    const selectedFileCount = getNumberMetadata(filesPage, 'selected_file_count');
-    const canDelete = hasCapability(filesPage, 'file.delete');
-
-    const suggestions = [
-      t('consoleChat.contextual.suggestions.filesListVisible'),
-      selectedFileCount > 0
-        ? t('consoleChat.contextual.suggestions.filesSummarizeSelected')
-        : visibleFileCount > 0
-          ? t('consoleChat.contextual.suggestions.filesSummarizeFirst')
-          : t('consoleChat.contextual.suggestions.filesExplainEmpty'),
-      t('consoleChat.contextual.suggestions.filesOrganizeVisible'),
-    ];
-
-    if (selectedFileCount === 1 && canDelete) {
-      suggestions.push(t('consoleChat.contextual.suggestions.filesDeleteSelected'));
-    }
-
-    return suggestions;
+  const presentationSuggestions = contextItems.flatMap(
+    item => item.hints?.presentation?.suggestions ?? []
+  );
+  if (presentationSuggestions.length > 0) {
+    return Array.from(new Set(presentationSuggestions));
   }
 
   const firstAgent = contextItems.find(item => item.type === 'agent');
@@ -241,6 +282,180 @@ function buildSuggestions(
   ];
 }
 
+function metadataText(item: AIChatContextItem, key: string) {
+  const value = item.metadata?.[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function routeHrefFromContextItem(item: AIChatContextItem) {
+  const candidates = [
+    item.href,
+    metadataText(item, 'href'),
+    metadataText(item, 'route'),
+    metadataText(item, 'pathname'),
+    metadataText(item, 'path'),
+    item.type === 'page' ? item.id : undefined,
+    item.type === 'page' ? item.title : undefined,
+  ];
+  for (const candidate of candidates) {
+    const href = normalizeZGIConsoleNavigationHref(candidate);
+    if (href) return href;
+  }
+  return '';
+}
+
+function routeContextObservation(items: AIChatContextItem[], href: string) {
+  const matchedItem = items.find(item => routeHrefFromContextItem(item) === href);
+  return {
+    page_context_ready: Boolean(matchedItem),
+    matched_context_item_id: matchedItem ? `${matchedItem.type}:${matchedItem.id}` : undefined,
+    matched_context_title: matchedItem?.title,
+    context_item_count: items.length,
+    context_items: items.slice(0, 6).map(item => ({
+      id: item.id,
+      type: item.type,
+      title: item.title,
+      href: item.href,
+    })),
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function recordListValue(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(item => {
+    const record = recordValue(item);
+    return record ? [record] : [];
+  });
+}
+
+function textFromRecord(record: Record<string, unknown> | null | undefined, keys: string[]) {
+  if (!record) return '';
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+function textFromContextMetadata(item: AIChatContextItem, keys: string[]) {
+  for (const key of keys) {
+    const value = item.metadata?.[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+function normalizeObservationToken(value: string | undefined) {
+  return (
+    value
+      ?.trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || ''
+  );
+}
+
+function assetIdentityCandidates(asset: Record<string, unknown>) {
+  return [
+    textFromRecord(asset, ['id', 'file_id', 'asset_id', 'resource_id']),
+    textFromRecord(asset, ['name', 'filename', 'file_name', 'title', 'label']),
+  ].filter(Boolean);
+}
+
+function contextItemIdentityCandidates(item: AIChatContextItem) {
+  return [
+    item.id,
+    item.title,
+    textFromContextMetadata(item, ['id', 'file_id', 'asset_id', 'resource_id']),
+    textFromContextMetadata(item, ['name', 'filename', 'file_name', 'title', 'label']),
+  ].filter(Boolean);
+}
+
+function contextItemMatchesAsset(
+  item: AIChatContextItem,
+  asset: Record<string, unknown>,
+  assetType: string
+) {
+  const normalizedAssetType = normalizeObservationToken(assetType);
+  if (
+    normalizedAssetType &&
+    normalizeObservationToken(item.type) !== normalizedAssetType &&
+    normalizeObservationToken(textFromContextMetadata(item, ['resource_kind', 'kind', 'type'])) !==
+      normalizedAssetType
+  ) {
+    return false;
+  }
+
+  const assetCandidates = assetIdentityCandidates(asset);
+  if (assetCandidates.length === 0) return false;
+  const itemCandidates = contextItemIdentityCandidates(item);
+  return assetCandidates.some(assetCandidate =>
+    itemCandidates.some(itemCandidate => itemCandidate === assetCandidate)
+  );
+}
+
+function assetObservationFromContextItems(
+  items: AIChatContextItem[],
+  pending: PendingClientActionContinuation
+) {
+  const assetType = pending.assetType || 'asset';
+  const assets = pending.assets ?? [];
+  const observed = assets.map(asset => {
+    const match = items.find(item => contextItemMatchesAsset(item, asset, assetType));
+    return {
+      id: textFromRecord(asset, ['id', 'file_id', 'asset_id', 'resource_id']),
+      name: textFromRecord(asset, ['name', 'filename', 'file_name', 'title', 'label']),
+      type: textFromRecord(asset, ['type', 'asset_type']) || assetType,
+      visible: Boolean(match),
+      matched_context_item_id: match ? `${match.type}:${match.id}` : undefined,
+      matched_context_title: match?.title,
+    };
+  });
+  return {
+    event_type: 'asset_observed',
+    action_type: pending.actionType,
+    effect: pending.effect,
+    asset_type: assetType,
+    asset_count: assets.length,
+    visible_count: observed.filter(item => item.visible).length,
+    context_item_count: items.length,
+    observation_available: assets.length > 0,
+    observed_assets: observed,
+  };
+}
+
+function assetOperationFromClientAction(
+  request: ContextualAIChatClientActionRequest
+): ContextualAIChatAssetOperation | null {
+  const payload = request.payload;
+  const assetType = normalizeObservationToken(payload.asset_type);
+  const effect = normalizeObservationToken(
+    typeof payload.effect === 'string' ? payload.effect : undefined
+  ) as ContextualAIChatAssetOperation['effect'];
+  if (!assetType || !effect) return null;
+  const assets = recordListValue(payload.assets);
+  const firstAsset = assets[0];
+  return {
+    assetType,
+    effect,
+    source: 'skill_call',
+    skillId: typeof payload.skill_id === 'string' ? payload.skill_id : '',
+    toolName: typeof payload.tool_name === 'string' ? payload.tool_name : '',
+    toolId: typeof payload.tool_id === 'string' ? payload.tool_id : undefined,
+    assetId: textFromRecord(firstAsset, ['id', 'file_id', 'asset_id', 'resource_id']) || undefined,
+    assetName:
+      textFromRecord(firstAsset, ['name', 'filename', 'file_name', 'title', 'label']) || undefined,
+    payload: payload as ContextualAIChatAssetOperation['payload'],
+  };
+}
+
 interface ContextSummaryMenuProps {
   items: AIChatContextItem[];
   t: ContextualDockTranslator;
@@ -257,7 +472,7 @@ function ContextSummaryMenu({ items, t }: ContextSummaryMenuProps) {
           type="button"
           variant="ghost"
           size="sm"
-          className="min-w-0 flex-1 !shrink justify-start rounded-full border border-border/70 bg-muted/30 px-3 text-left font-normal text-foreground hover:bg-muted/60"
+          className="min-w-0 max-w-full basis-0 flex-1 shrink overflow-hidden rounded-full border border-border/70 bg-muted/30 px-3 text-left font-normal text-foreground hover:bg-muted/60"
           title={summary}
         >
           <span className="min-w-0 flex-1 truncate">{summary}</span>
@@ -277,10 +492,7 @@ function ContextSummaryMenu({ items, t }: ContextSummaryMenuProps) {
         {hasContext ? (
           <div className="max-h-72 space-y-1 overflow-y-auto">
             {items.map(item => (
-              <div
-                key={`${item.type}:${item.id}`}
-                className="min-w-0 rounded-md px-2 py-2 text-sm"
-              >
+              <div key={`${item.type}:${item.id}`} className="min-w-0 rounded-md px-2 py-2 text-sm">
                 <div className="flex min-w-0 items-start gap-2">
                   <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium leading-none text-muted-foreground">
                     {getContextTypeLabel(item.type, t)}
@@ -342,25 +554,24 @@ function ContextualAIChatPanel({
   t,
 }: ContextualAIChatPanelProps) {
   const controlsPortalId = useId();
-  const filesPage = items.find(isFilesPageContext);
   const hasContext = items.length > 0;
-  const homeTitle = filesPage
-    ? t('consoleChat.contextual.home.filesTitle')
-    : hasContext
+  const presentation = pickPresentationHint(items);
+  const homeTitle =
+    presentation?.homeTitle ??
+    (hasContext
       ? t('consoleChat.contextual.home.contextTitle')
-      : t('consoleChat.contextual.home.emptyTitle');
-  const homeDescription = filesPage
-    ? t('consoleChat.contextual.home.filesDescription')
-    : hasContext
+      : t('consoleChat.contextual.home.emptyTitle'));
+  const homeDescription =
+    presentation?.homeDescription ??
+    (hasContext
       ? t('consoleChat.contextual.home.contextDescription')
-      : t('consoleChat.contextual.home.emptyDescription');
-  const inputPlaceholder = filesPage
-    ? t('consoleChat.contextual.input.filesPlaceholder')
-    : t('consoleChat.contextual.input.placeholder');
+      : t('consoleChat.contextual.home.emptyDescription'));
+  const inputPlaceholder =
+    presentation?.inputPlaceholder ?? t('consoleChat.contextual.input.placeholder');
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-14 shrink-0 items-center gap-2 border-b border-border/70 bg-background/95 px-3 py-2">
+    <div className="relative flex min-h-0 min-w-0 max-w-full flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-14 min-w-0 shrink-0 items-center gap-2 overflow-hidden border-b border-border/70 bg-background/95 px-3 py-2">
         <ContextSummaryMenu items={items} t={t} />
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <div id={controlsPortalId} className="flex shrink-0 items-center" />
@@ -385,6 +596,7 @@ function ContextualAIChatPanel({
           isModelInitializing={isModelInitializing}
           onModelChange={onModelChange}
           variant="embedded"
+          runtimeSurface="contextual_sidebar"
           embeddedConversationMode="drawer"
           embeddedConversationControlsMode="external"
           embeddedConversationControlsPortalId={controlsPortalId}
@@ -408,16 +620,59 @@ function ContextualAIChatPanel({
 export function ContextualAIChatDock() {
   const t = useT('webapp');
   const user = useCurrentUser();
+  const router = useRouter();
+  const pathname = usePathname();
   const queryClient = useQueryClient();
   const { isOpen, setOpen, items } = useContextualAIChat();
   const isDesktopPanelViewport = useIsDesktopPanelViewport();
   const [desktopPanelWidth, setDesktopPanelWidth] = useState<number | null>(null);
   const itemsRef = useRef(items);
   const assetOperationRefreshRef = useRef<Map<string, number>>(new Map());
+  const pendingClientActionRef = useRef<PendingClientActionContinuation | null>(null);
+  const clientActionRouteTimeoutRef = useRef<number | null>(null);
+  const clientActionContinuationRef = useRef<
+    ReturnType<typeof useAIChatController>['continueClientAction'] | null
+  >(null);
+  const [pendingClientActionVersion, setPendingClientActionVersion] = useState(0);
 
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+
+  const clearClientActionRouteTimeout = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (clientActionRouteTimeoutRef.current === null) return;
+    window.clearTimeout(clientActionRouteTimeoutRef.current);
+    clientActionRouteTimeoutRef.current = null;
+  }, []);
+
+  const completePendingClientAction = useCallback(
+    (
+      pending: PendingClientActionContinuation,
+      payload: AIChatClientActionResultRequest
+    ) => {
+      if (pendingClientActionRef.current?.actionId !== pending.actionId || pending.completed) {
+        return;
+      }
+
+      pending.completed = true;
+      pendingClientActionRef.current = null;
+      clearClientActionRouteTimeout();
+
+      const continueClientAction = clientActionContinuationRef.current;
+      if (!continueClientAction) return;
+
+      void continueClientAction(
+        pending.conversationId,
+        pending.messageId,
+        pending.actionId,
+        payload
+      ).catch(error => {
+        console.error('AIChat client action continuation failed', error);
+      });
+    },
+    [clearClientActionRouteTimeout]
+  );
 
   const invalidateQueries = useCallback(
     (queryKey: QueryKey) => {
@@ -437,13 +692,21 @@ export function ContextualAIChatDock() {
       pruneAssetOperationRefreshDedupe(assetOperationRefreshRef.current, now);
       assetOperationRefreshRef.current.set(dedupeKey, now);
 
+      const { handledByAdapter, refreshHints } = getRefreshHintResolution(
+        itemsRef.current,
+        operation
+      );
+      if (refreshHints.length > 0) {
+        refreshHints.forEach(hint => {
+          if (hint.queryKey) {
+            invalidateQueries(hint.queryKey);
+          }
+        });
+        return;
+      }
+      if (handledByAdapter) return;
+
       switch (operation.assetType) {
-        case 'file':
-          invalidateQueries([FILES_QUERY_KEY]);
-          invalidateQueries([FILE_FOLDERS_KEY]);
-          invalidateQueries([STORAGE_USAGE_KEY]);
-          invalidateQueries(FILE_KEYS.all);
-          break;
         case 'agent':
           invalidateQueries(AGENT_KEYS.all);
           break;
@@ -478,15 +741,184 @@ export function ContextualAIChatDock() {
     [invalidateQueries]
   );
 
+  const handlePageNavigationRequested = useCallback(
+    (request: ContextualAIChatPageNavigationRequest) => {
+      const href = normalizeZGIConsoleNavigationHref(request.href);
+      if (!href) return;
+
+      const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
+      if (currentHref === href) return;
+
+      router.push(href);
+    },
+    [pathname, router]
+  );
+
+  const handleClientActionRequired = useCallback(
+    (request: ContextualAIChatClientActionRequest) => {
+      const existing = pendingClientActionRef.current;
+      if (existing?.actionId === request.actionId) return;
+
+      if (request.actionType === 'asset_observation') {
+        clearClientActionRouteTimeout();
+        const operation = assetOperationFromClientAction(request);
+        if (operation) {
+          handleAssetOperationSuccess(operation);
+        }
+
+        const pending: PendingClientActionContinuation = {
+          conversationId: request.conversationId,
+          messageId: request.messageId,
+          actionId: request.actionId,
+          actionType: request.actionType,
+          effect: typeof request.payload.effect === 'string' ? request.payload.effect : undefined,
+          assetType:
+            typeof request.payload.asset_type === 'string'
+              ? request.payload.asset_type
+              : undefined,
+          assets: recordListValue(request.payload.assets),
+          requestedAt: Date.now(),
+          completed: false,
+        };
+        pendingClientActionRef.current = pending;
+        setPendingClientActionVersion(version => version + 1);
+
+        if (typeof window !== 'undefined') {
+          clientActionRouteTimeoutRef.current = window.setTimeout(() => {
+            completePendingClientAction(pending, {
+              status: 'succeeded',
+              result: {
+                refresh_requested: Boolean(operation),
+                elapsed_ms: Date.now() - pending.requestedAt,
+                ...assetObservationFromContextItems(itemsRef.current, pending),
+              },
+            });
+          }, CLIENT_ACTION_OBSERVATION_SETTLE_MS);
+        }
+        return;
+      }
+
+      if (request.actionType !== 'route_navigation') return;
+      const href = normalizeZGIConsoleNavigationHref(request.href);
+      if (!href) return;
+
+      clearClientActionRouteTimeout();
+      const pending: PendingClientActionContinuation = {
+        conversationId: request.conversationId,
+        messageId: request.messageId,
+        actionId: request.actionId,
+        actionType: request.actionType,
+        href,
+        label: request.label,
+        reason: request.reason,
+        requestedAt: Date.now(),
+        completed: false,
+      };
+      pendingClientActionRef.current = pending;
+      setPendingClientActionVersion(version => version + 1);
+
+      if (typeof window !== 'undefined') {
+        clientActionRouteTimeoutRef.current = window.setTimeout(() => {
+          completePendingClientAction(pending, {
+            status: 'failed',
+            error: `Route navigation to ${href} timed out.`,
+            result: {
+              event_type: 'route_load_timeout',
+              action_type: pending.actionType,
+              href,
+              observed_path: normalizeZGIConsoleNavigationHref(pathname ?? undefined),
+              elapsed_ms: Date.now() - pending.requestedAt,
+              ...routeContextObservation(itemsRef.current, href),
+            },
+          });
+        }, CLIENT_ACTION_ROUTE_TIMEOUT_MS);
+      }
+
+      const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
+      if (currentHref === href) return;
+
+      try {
+        router.push(href);
+      } catch (error) {
+        completePendingClientAction(pending, {
+          status: 'failed',
+          error: error instanceof Error ? error.message : `Route navigation to ${href} failed.`,
+          result: {
+            event_type: 'route_load_failed',
+            action_type: pending.actionType,
+            href,
+            observed_path: currentHref,
+          },
+        });
+      }
+    },
+    [
+      clearClientActionRouteTimeout,
+      completePendingClientAction,
+      handleAssetOperationSuccess,
+      pathname,
+      router,
+    ]
+  );
+
   const transport = useMemo(
     () =>
       createContextualAIChatTransport(() => itemsRef.current, {
         onAssetOperationSuccess: handleAssetOperationSuccess,
+        onPageNavigationRequested: handlePageNavigationRequested,
+        onClientActionRequired: handleClientActionRequired,
       }),
-    [handleAssetOperationSuccess]
+    [handleAssetOperationSuccess, handleClientActionRequired, handlePageNavigationRequested]
   );
   const controller = useAIChatController({ transport });
   const { init: initController } = controller;
+
+  useEffect(() => {
+    clientActionContinuationRef.current = controller.continueClientAction ?? null;
+  }, [controller.continueClientAction]);
+
+  useEffect(() => {
+    return () => clearClientActionRouteTimeout();
+  }, [clearClientActionRouteTimeout]);
+
+  useEffect(() => {
+    const pending = pendingClientActionRef.current;
+    if (!pending || pending.completed) return;
+    if (pending.actionType !== 'route_navigation' || !pending.href) return;
+    const href = pending.href;
+
+    const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
+    if (currentHref !== href) return;
+
+    const observation = routeContextObservation(itemsRef.current, href);
+    const delay = observation.page_context_ready
+      ? CLIENT_ACTION_ROUTE_CONTEXT_SETTLE_MS
+      : CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS;
+
+    const timer = window.setTimeout(() => {
+      const latestObservation = routeContextObservation(itemsRef.current, href);
+      completePendingClientAction(pending, {
+        status: 'succeeded',
+        result: {
+          event_type: 'route_loaded',
+          action_type: pending.actionType,
+          href,
+          label: pending.label,
+          reason: pending.reason,
+          observed_path: currentHref,
+          elapsed_ms: Date.now() - pending.requestedAt,
+          ...latestObservation,
+        },
+      });
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    completePendingClientAction,
+    items,
+    pathname,
+    pendingClientActionVersion,
+  ]);
 
   useEffect(() => {
     initController();
@@ -571,7 +1003,7 @@ export function ContextualAIChatDock() {
     [user?.id]
   );
 
-  const enableToolGovernance = useMemo(() => items.some(isFilesPageContext), [items]);
+  const enableToolGovernance = useMemo(() => hasToolGovernanceHint(items), [items]);
   const suggestions = useMemo(() => buildSuggestions(items, t), [items, t]);
   useEffect(() => {
     if (!isDesktopPanelViewport) return;
@@ -694,20 +1126,14 @@ export function ContextualAIChatDock() {
     ) : null;
   }
 
-  return (
-    <Sheet open={isOpen} onOpenChange={setOpen}>
-      <SheetContent
-        side="right"
-        showClose={false}
-        overlayClassName="bg-transparent backdrop-blur-none"
-        className="flex h-full min-h-0 w-[min(720px,100vw)] max-w-none flex-col overflow-hidden p-0 sm:max-w-none"
-      >
-        <SheetTitle className="sr-only">{t('consoleChat.contextual.assistantLabel')}</SheetTitle>
-        <SheetDescription className="sr-only">
-          {t('consoleChat.contextual.sheetDescription')}
-        </SheetDescription>
-        {panel}
-      </SheetContent>
-    </Sheet>
-  );
+  return isOpen ? (
+    <aside
+      role="dialog"
+      aria-modal="false"
+      aria-label={t('consoleChat.contextual.assistantLabel')}
+      className="fixed inset-y-0 right-0 z-50 flex h-full min-h-0 w-[min(720px,100vw)] max-w-full flex-col overflow-hidden border-l border-border/70 bg-background shadow-lg"
+    >
+      {panel}
+    </aside>
+  ) : null;
 }

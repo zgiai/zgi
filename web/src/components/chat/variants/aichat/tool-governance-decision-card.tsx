@@ -46,11 +46,11 @@ export interface ToolGovernancePendingApproval {
   ) => void | Promise<void>;
 }
 
-type PendingApprovalEntry = {
+interface PendingApprovalEntry {
   approval: ToolGovernancePendingApproval;
   sequence: number;
   scopeId: string;
-};
+}
 
 type PendingApprovalSubscriber = () => void;
 

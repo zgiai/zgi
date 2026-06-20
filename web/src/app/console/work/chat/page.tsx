@@ -201,6 +201,7 @@ function ChatPageContent() {
         <Chat
           mode="aichat"
           controller={controller}
+          runtimeSurface="work_chat"
           modelSelectorValue={modelSelectorValue}
           isModelInitializing={isModelInitializing}
           onModelChange={handleModelChange}

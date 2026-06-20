@@ -14,7 +14,9 @@ import type {
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatMemoryMutationEventData,
+  AIChatClientActionResultRequest,
   AIChatSkillInvocation,
+  AIChatRuntimeSurface,
   AIChatToolGovernanceDecisionEventData,
   AIChatToolGovernanceDecisionRequest,
   AIChatWorkflowPausedEventData,
@@ -40,7 +42,14 @@ export interface AIChatStreamingMessageState {
   conversation_id: string;
   message_id: string;
   answer: string;
-  status: 'streaming' | 'completed' | 'waiting_approval' | 'waiting_question' | 'stopped' | 'error';
+  status:
+    | 'streaming'
+    | 'completed'
+    | 'waiting_approval'
+    | 'waiting_client_action'
+    | 'waiting_question'
+    | 'stopped'
+    | 'error';
   timeline?: AIChatAgenticTimelineItem[];
   last_event_id?: string;
   replay_base_answer?: string;
@@ -204,18 +213,20 @@ export interface AIChatController {
     files?: AIChatMessageFile[];
     parentId?: string | null;
     useMemory?: boolean;
+    runtimeSurface?: AIChatRuntimeSurface;
     operationContext?: unknown;
   }) => Promise<void>;
   stop: () => Promise<void>;
   regenerate: (
     messageId: string,
     model: AIChatModelSelection,
-    options?: { operationContext?: unknown }
+    options?: { operationContext?: unknown; runtimeSurface?: AIChatRuntimeSurface }
   ) => Promise<void>;
   replaceRootMessage: (payload: {
     messageId: string;
     query?: string;
     model?: AIChatModelSelection;
+    runtimeSurface?: AIChatRuntimeSurface;
     operationContext?: unknown;
   }) => Promise<void>;
   continueWorkflowApproval?: (
@@ -233,6 +244,12 @@ export interface AIChatController {
     messageId: string,
     correlationId: string,
     payload: AIChatToolGovernanceDecisionRequest
+  ) => Promise<void>;
+  continueClientAction?: (
+    conversationId: string,
+    messageId: string,
+    actionId: string,
+    payload: AIChatClientActionResultRequest
   ) => Promise<void>;
   switchBranch: (messageId: string) => void;
 }

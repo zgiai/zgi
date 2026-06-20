@@ -6,6 +6,8 @@ import { aichatTransport } from '@/components/chat/transports/aichat-transport';
 import type {
   AIChatAssetOperationAudit,
   AIChatChatRequest,
+  AIChatClientActionRequiredEventData,
+  AIChatClientActionResultRequest,
   AIChatRegenerateMessageRequest,
   AIChatSkillArtifactCreatedEventData,
   AIChatSkillCallEndEventData,
@@ -41,6 +43,8 @@ const MAX_OPERATION_ID_LENGTH = 120;
 export interface ContextualAIChatTransportOptions {
   onAssetToolSuccess?: (payload: AIChatSkillCallEndEventData) => void;
   onAssetOperationSuccess?: (operation: ContextualAIChatAssetOperation) => void;
+  onPageNavigationRequested?: (request: ContextualAIChatPageNavigationRequest) => void;
+  onClientActionRequired?: (request: ContextualAIChatClientActionRequest) => void;
 }
 
 export type ContextualAIChatAssetOperationEffect =
@@ -66,6 +70,116 @@ export interface ContextualAIChatAssetOperation {
   assetName?: string;
   payload: AIChatSkillCallEndEventData | AIChatSkillArtifactCreatedEventData;
 }
+
+export interface ContextualAIChatPageNavigationRequest {
+  href: string;
+  label?: string;
+  reason?: string;
+  payload: AIChatSkillCallEndEventData;
+}
+
+export interface ContextualAIChatClientActionRequest {
+  actionId: string;
+  actionType: string;
+  conversationId: string;
+  messageId: string;
+  href?: string;
+  label?: string;
+  reason?: string;
+  payload: AIChatClientActionRequiredEventData;
+}
+
+export const ZGI_CONSOLE_SITE_MAP = [
+  { href: '/console', label: 'Home', purpose: 'workspace overview and entry point' },
+  { href: '/console/work/chat', label: 'Conversations', purpose: 'chat workbench' },
+  { href: '/console/work/image', label: 'Images', purpose: 'image/drawing workbench' },
+  { href: '/console/work/app', label: 'Apps', purpose: 'web app workbench' },
+  { href: '/console/work/task', label: 'Scheduled Tasks', purpose: 'scheduled task management' },
+  {
+    href: '/console/agents',
+    label: 'Agents',
+    purpose: 'create, configure, debug, and publish agents',
+  },
+  {
+    href: '/console/dataset',
+    label: 'Knowledge Bases',
+    purpose: 'knowledge base and document assets',
+  },
+  { href: '/console/db', label: 'Databases', purpose: 'database sources and table records' },
+  { href: '/console/files', label: 'Files', purpose: 'uploaded files and managed workspace files' },
+  { href: '/console/prompts', label: 'Prompts', purpose: 'prompt library' },
+  {
+    href: '/console/developer/content-parse',
+    label: 'File Recognition',
+    purpose: 'content parsing and recognition tools',
+  },
+  { href: '/console/workspace', label: 'Workspace', purpose: 'workspace administration' },
+  {
+    href: '/console/workspace/members',
+    label: 'Workspace Members',
+    purpose: 'workspace member management',
+  },
+  {
+    href: '/console/workspace/settings',
+    label: 'Workspace Settings',
+    purpose: 'workspace configuration',
+  },
+  { href: '/console/settings', label: 'System Settings', purpose: 'account and system settings' },
+] as const;
+
+const ZGI_CONSOLE_EXACT_ROUTES: ReadonlySet<string> = new Set(
+  ZGI_CONSOLE_SITE_MAP.map(route => route.href)
+);
+const ZGI_CONSOLE_DYNAMIC_ROUTES = [
+  /^\/console\/agents\/[A-Za-z0-9_-]+\/(agent|workflow|logs|api|batch-test)$/,
+  /^\/console\/dataset\/[A-Za-z0-9_-]+(\/(documents|graph|hit-testing|batch-testing|settings))?$/,
+  /^\/console\/db\/[A-Za-z0-9_-]+(\/(record|search|table|import-excel))?$/,
+  /^\/console\/db\/[A-Za-z0-9_-]+\/table\/[A-Za-z0-9_-]+$/,
+  /^\/console\/prompts\/[A-Za-z0-9_-]+$/,
+  /^\/console\/work\/app\/[A-Za-z0-9_-]+$/,
+];
+
+const ZGI_SYSTEM_CONTEXT_ITEM_ID = 'zgi.system_assistant';
+const ZGI_SITE_MAP_SUMMARY = ZGI_CONSOLE_SITE_MAP.map(
+  route => `${route.label}=${route.href}(${route.purpose})`
+).join('; ');
+
+const ZGI_SYSTEM_CONTEXT_ITEM: AIChatContextItem = {
+  id: ZGI_SYSTEM_CONTEXT_ITEM_ID,
+  type: 'custom',
+  title: 'ZGI AIChat system assistant',
+  description:
+    'AIChat is the ZGI sidebar operation assistant. It can explain the current page, answer from registered page context, navigate to whitelisted internal console routes, and use enabled low-risk skills. High-risk asset mutations require supported governed tools and user approval and must not be promised when unavailable.',
+  source: 'system',
+  status: 'available',
+  risk: 'low',
+  capabilities: [
+    {
+      id: 'page.navigate',
+      title: 'Navigate inside ZGI',
+      description:
+        'Switch the visible console page to a whitelisted internal route through console-navigator / navigate.',
+      risk: 'low',
+      status: 'available',
+      permissions: ['console:navigate'],
+    },
+    {
+      id: 'assistant.self_describe',
+      title: 'Explain AIChat role and limits',
+      description:
+        'Describe AIChat as a ZGI operation assistant, including current page help, site-wide navigation, enabled skills, and high-risk operation limits.',
+      risk: 'low',
+      status: 'available',
+    },
+  ],
+  metadata: {
+    site_map: ZGI_SITE_MAP_SUMMARY,
+    routing_tool: 'console-navigator / navigate',
+    memory_boundary: 'AIChat account memory and Agent memory are separate',
+    high_risk_limit:
+      'Do not claim asset creation, deletion, publishing, workflow execution, scheduling, or agent mutation unless a supported governed tool result proves it.',
+  },
+};
 
 const RISK_RANK: Record<AIChatCapabilityRisk, number> = {
   low: 1,
@@ -168,13 +282,22 @@ function buildVisibleFileAssetSummary(items: AIChatContextItem[]): string {
         metadataText(item, 'file_type') ??
         metadataText(item, 'file_type_normalized') ??
         metadataText(item, 'extension');
+      const fileTypeRank = metadataText(item, 'file_type_rank');
+      const extensionRank = metadataText(item, 'extension_rank');
       const fileTypeSuffix = fileType ? ` (${fileType})` : '';
-      return `${order}. ${compactText(item.title, 100)}${fileTypeSuffix}`;
+      const rankSummary = [
+        fileTypeRank ? `file_type_rank=${fileTypeRank}` : '',
+        extensionRank ? `extension_rank=${extensionRank}` : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
+      const rankSuffix = rankSummary ? ` [${rankSummary}]` : '';
+      return `${order}. ${compactText(item.title, 100)}${fileTypeSuffix}${rankSuffix}`;
     })
     .join(' | ');
 
   return compactText(
-    `Visible file assets: count=${fileItems.length}; count and list only type=file/resource_kind=file as files; page, selection, log, and custom context items are not files. ${entries}`,
+    `Visible file assets: count=${fileItems.length}; count and list only type=file/resource_kind=file as files; page, selection, log, and custom context items are not files. For typed ordinal requests such as second Excel, use file_type_rank/extension_rank among visible files of that type, not visible_index alone. ${entries}`,
     1400
   );
 }
@@ -242,6 +365,10 @@ export function buildAIChatContextEnvelope(items: AIChatContextItem[]): string {
   if (visibleItems.length === 0) return '';
 
   const lines = [
+    'AIChat role: ZGI sidebar system assistant for helping users operate the ZGI console, not a generic chat-only bot.',
+    `ZGI site map: ${ZGI_SITE_MAP_SUMMARY}.`,
+    'Navigation ability: for user-requested page switches, use console-navigator / navigate with a whitelisted internal /console route; do not navigate to external URLs.',
+    'Execution boundary: do not claim high-risk asset operations such as delete, publish, workflow run, scheduling, or agent mutation unless a supported governed tool result proves it in this turn.',
     'Current ZGI page context. Use it only to interpret this turn; do not save it as memory unless the user explicitly asks.',
     'Important: AIChat account memory and Agent memory are separate. Do not claim they are shared.',
     'Important: Workflow resources and Agent resources are distinct; a workflow binding does not make the workflow the Agent.',
@@ -388,15 +515,6 @@ function mergeAIChatOperationContext(
   };
 }
 
-function isConsoleFilesContextItem(item: AIChatContextItem): boolean {
-  return (
-    item.href === '/console/files' ||
-    item.metadata?.page === 'console.files' ||
-    item.metadata?.route === '/console/files' ||
-    item.id === 'console.files'
-  );
-}
-
 function isSuccessfulSkillCall(payload: AIChatSkillCallEndEventData): boolean {
   return !payload.status || payload.status === 'success';
 }
@@ -419,8 +537,33 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
+export function normalizeZGIConsoleNavigationHref(rawHref: string | undefined): string | null {
+  const text = rawHref?.trim();
+  if (!text || text.includes('..') || /^https?:\/\//i.test(text) || text.startsWith('//')) {
+    return null;
+  }
+
+  const [rawPath] = text.split(/[?#]/, 1);
+  const path = `/${rawPath.replace(/^\/+/, '')}`.replace(/\/+$/, '') || '/';
+  const normalizedPath = path === '' ? '/' : path;
+
+  if (ZGI_CONSOLE_EXACT_ROUTES.has(normalizedPath)) {
+    return normalizedPath;
+  }
+  if (ZGI_CONSOLE_DYNAMIC_ROUTES.some(pattern => pattern.test(normalizedPath))) {
+    return normalizedPath;
+  }
+  return null;
+}
+
+function withZGISystemContextItems(items: AIChatContextItem[]): AIChatContextItem[] {
+  return [ZGI_SYSTEM_CONTEXT_ITEM, ...items.filter(item => item.id !== ZGI_SYSTEM_CONTEXT_ITEM_ID)];
+}
+
 function normalizeToken(value: unknown): string | undefined {
-  const text = textValue(value)?.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  const text = textValue(value)
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_');
   return text?.replace(/^_+|_+$/g, '') || undefined;
 }
 
@@ -429,14 +572,7 @@ function normalizeAssetType(value: unknown): string | undefined {
   if (!token) return undefined;
 
   if (
-    [
-      'file',
-      'files',
-      'upload_file',
-      'managed_file',
-      'workspace_file',
-      'local_file',
-    ].includes(token)
+    ['file', 'files', 'upload_file', 'managed_file', 'workspace_file', 'local_file'].includes(token)
   ) {
     return 'file';
   }
@@ -457,6 +593,17 @@ function normalizeAssetType(value: unknown): string | undefined {
   if (['workspace', 'workspaces'].includes(token)) return 'workspace';
 
   return token;
+}
+
+function contextHandlesAssetType(items: AIChatContextItem[], assetType: string): boolean {
+  const normalizedAssetType = normalizeAssetType(assetType);
+  if (!normalizedAssetType) return false;
+
+  return items.some(item =>
+    item.hints?.handledAssetTypes?.some(
+      handledAssetType => normalizeAssetType(handledAssetType) === normalizedAssetType
+    )
+  );
 }
 
 function inferEffectFromText(value: unknown): ContextualAIChatAssetOperationEffect {
@@ -613,7 +760,9 @@ function shouldEmitFileOperation(
 ): boolean {
   if (operation.effect === 'delete') return true;
   if (operation.effect === 'create') return hasManagedFileResult;
-  if (operation.effect === 'update') return hasManagedFileResult || items.some(isConsoleFilesContextItem);
+  if (operation.effect === 'update') {
+    return hasManagedFileResult || contextHandlesAssetType(items, 'file');
+  }
   return true;
 }
 
@@ -748,12 +897,63 @@ function operationFromSkillArtifact(
   };
 }
 
+function pageNavigationRequestFromSkillCall(
+  payload: AIChatSkillCallEndEventData
+): ContextualAIChatPageNavigationRequest | null {
+  if (!isSuccessfulSkillCall(payload)) return null;
+  if (payload.skill_id !== 'console-navigator' || payload.tool_name !== 'navigate') return null;
+
+  const result = recordValue(payload.result);
+  if (textValue(result?.event_type) !== 'page_navigation_requested') return null;
+
+  const href = normalizeZGIConsoleNavigationHref(textValue(result?.href));
+  if (!href) return null;
+
+  return {
+    href,
+    label: textValue(result?.label),
+    reason: textValue(result?.reason),
+    payload,
+  };
+}
+
+function clientActionRequestFromPayload(
+  payload: AIChatClientActionRequiredEventData
+): ContextualAIChatClientActionRequest | null {
+  const actionId = textValue(payload.action_id);
+  const actionType = textValue(payload.action_type);
+  const conversationId = textValue(payload.conversation_id);
+  const messageId = textValue(payload.message_id);
+  if (!actionId || !actionType || !conversationId || !messageId) return null;
+
+  const href =
+    actionType === 'route_navigation'
+      ? normalizeZGIConsoleNavigationHref(textValue(payload.href))
+      : textValue(payload.href);
+
+  return {
+    actionId,
+    actionType,
+    conversationId,
+    messageId,
+    href: href || undefined,
+    label: textValue(payload.label),
+    reason: textValue(payload.reason),
+    payload,
+  };
+}
+
 function wrapContextualCallbacks(
   callbacks: AIChatStreamCallbacks,
   getContextItems: () => AIChatContextItem[],
   options?: ContextualAIChatTransportOptions
 ): AIChatStreamCallbacks {
-  if (!options?.onAssetToolSuccess && !options?.onAssetOperationSuccess) {
+  if (
+    !options?.onAssetToolSuccess &&
+    !options?.onAssetOperationSuccess &&
+    !options?.onPageNavigationRequested &&
+    !options?.onClientActionRequired
+  ) {
     return callbacks;
   }
 
@@ -761,11 +961,22 @@ function wrapContextualCallbacks(
     ...callbacks,
     onSkillCallEnd: (payload, eventId) => {
       callbacks.onSkillCallEnd(payload, eventId);
+      const navigationRequest = pageNavigationRequestFromSkillCall(payload);
+      if (navigationRequest) {
+        options?.onPageNavigationRequested?.(navigationRequest);
+      }
       const operation = operationFromSkillCall(payload, getContextItems());
       if (!operation) return;
       options?.onAssetOperationSuccess?.(operation);
       if (operation.assetType === 'file') {
         options.onAssetToolSuccess?.(payload);
+      }
+    },
+    onClientActionRequired: (payload, eventId) => {
+      callbacks.onClientActionRequired?.(payload, eventId);
+      const request = clientActionRequestFromPayload(payload);
+      if (request) {
+        options?.onClientActionRequired?.(request);
       }
     },
     onSkillArtifactCreated: (payload, eventId) => {
@@ -796,7 +1007,7 @@ export function createContextualAIChatTransport(
       callbacks: AIChatStreamCallbacks,
       abortSignal?: AbortSignal
     ) {
-      const contextItems = getContextItems();
+      const contextItems = withZGISystemContextItems(getContextItems());
       const envelope = buildAIChatContextEnvelope(contextItems);
       const operationContext = buildAIChatOperationContext(contextItems);
       const mergedOperationContext = mergeAIChatOperationContext(
@@ -807,6 +1018,7 @@ export function createContextualAIChatTransport(
       return aichatTransport.streamChat(
         {
           ...payload,
+          surface: 'contextual_sidebar',
           runtime_context: envelope || undefined,
           operation_context: mergedOperationContext,
         },
@@ -820,7 +1032,7 @@ export function createContextualAIChatTransport(
       callbacks: AIChatStreamCallbacks,
       abortSignal?: AbortSignal
     ) {
-      const contextItems = getContextItems();
+      const contextItems = withZGISystemContextItems(getContextItems());
       const envelope = buildAIChatContextEnvelope(contextItems);
       const operationContext = buildAIChatOperationContext(contextItems);
       const mergedOperationContext = mergeAIChatOperationContext(
@@ -831,6 +1043,7 @@ export function createContextualAIChatTransport(
         messageId,
         {
           ...payload,
+          surface: 'contextual_sidebar',
           runtime_context: envelope || payload.runtime_context,
           operation_context: mergedOperationContext,
         },
@@ -866,6 +1079,34 @@ export function createContextualAIChatTransport(
         correlationId,
         payload,
         wrappedCallbacks,
+        abortSignal
+      );
+    },
+    continueClientAction(
+      conversationId: string,
+      messageId: string,
+      actionId: string,
+      payload: AIChatClientActionResultRequest,
+      callbacks: AIChatStreamCallbacks,
+      abortSignal?: AbortSignal
+    ) {
+      const contextItems = withZGISystemContextItems(getContextItems());
+      const envelope = buildAIChatContextEnvelope(contextItems);
+      const operationContext = buildAIChatOperationContext(contextItems);
+      const mergedOperationContext = mergeAIChatOperationContext(
+        operationContext,
+        payload.operation_context
+      );
+      return aichatTransport.continueClientAction(
+        conversationId,
+        messageId,
+        actionId,
+        {
+          ...payload,
+          runtime_context: envelope || payload.runtime_context,
+          operation_context: mergedOperationContext,
+        },
+        wrapContextualCallbacks(callbacks, getContextItems, options),
         abortSignal
       );
     },

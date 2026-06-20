@@ -13,6 +13,7 @@ import type {
   AIChatAssetOperationAuditListResponse,
   AIChatChatRequest,
   AIChatCancelImportSkillPreviewResponse,
+  AIChatClientActionResultRequest,
   AIChatConversation,
   AIChatConversationListResponse,
   AIChatConfirmImportSkillRequest,
@@ -321,6 +322,34 @@ export const aichatService = {
         conversationId
       )}/messages/${encodeURIComponent(messageId)}/tool-governance/${encodeURIComponent(
         correlationId
+      )}/continue`,
+      {
+        method: 'POST',
+        body: payload,
+        abortSignal,
+        isTerminalMessage: isAIChatTerminalMessage,
+        onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
+        onError: error => callbacks.onError?.(error),
+        onClose: callbacks.onClose,
+      }
+    );
+  },
+
+  continueClientAction(
+    conversationId: string,
+    messageId: string,
+    actionId: string,
+    payload: AIChatClientActionResultRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    const outputFilter = createAIChatStreamOutputFilter(callbacks);
+
+    return http.sse<AIChatSseEnvelope, AIChatClientActionResultRequest>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/client-actions/${encodeURIComponent(
+        actionId
       )}/continue`,
       {
         method: 'POST',

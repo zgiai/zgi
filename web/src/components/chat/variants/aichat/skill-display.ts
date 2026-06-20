@@ -14,6 +14,11 @@ export interface AIChatSkillDisplayInfo {
 export type AIChatSkillDisplayMap = Record<string, AIChatSkillDisplayInfo>;
 
 const USER_MEMORY_SKILL_ID = 'user-memory';
+const CONSOLE_NAVIGATOR_SKILL_ID = 'console-navigator';
+const FILE_MANAGER_SKILL_ID = 'file-manager';
+const FILE_READER_SKILL_ID = 'file-reader';
+const INTERNAL_KNOWLEDGE_SKILL_ID = 'internal-knowledge';
+const INTERNAL_DATABASE_SKILL_ID = 'internal-database';
 const AGENT_MEMORY_SKILL_ID = 'agent-memory';
 const AGENT_KNOWLEDGE_SKILL_ID = 'agent-knowledge';
 const AGENT_DATABASE_SKILL_ID = 'agent-database';
@@ -27,6 +32,10 @@ export function isHiddenSystemSkill(skillId: string): boolean {
   const normalized = normalizeSkillId(skillId);
   return (
     normalized === USER_MEMORY_SKILL_ID ||
+    normalized === CONSOLE_NAVIGATOR_SKILL_ID ||
+    normalized === FILE_MANAGER_SKILL_ID ||
+    normalized === INTERNAL_KNOWLEDGE_SKILL_ID ||
+    normalized === INTERNAL_DATABASE_SKILL_ID ||
     normalized === AGENT_MEMORY_SKILL_ID ||
     normalized === AGENT_KNOWLEDGE_SKILL_ID ||
     normalized === AGENT_DATABASE_SKILL_ID ||
@@ -85,6 +94,49 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
     category: 'productivity',
     icon: 'calculator',
   },
+  [FILE_READER_SKILL_ID]: {
+    label: {
+      en_US: 'File Reader',
+      zh_Hans: '文件读取器',
+    },
+    description: {
+      en_US:
+        'Lists visible file context and reads accessible uploaded or console file text without changing file assets.',
+      zh_Hans: '列出当前可见文件，读取用户可访问的上传文件或控制台文件文本，不变更文件资产。',
+    },
+    whenToUse: {
+      en_US:
+        'Use when an answer needs content from a specific file available to the current user.',
+      zh_Hans: '当回答需要读取用户可访问的特定文件内容时使用。',
+    },
+    tags: {
+      en_US: ['File', 'Reading'],
+      zh_Hans: ['文件', '读取'],
+    },
+    category: 'productivity',
+    icon: 'file-text',
+  },
+  [FILE_MANAGER_SKILL_ID]: {
+    label: {
+      en_US: 'File Manager',
+      zh_Hans: '文件管理器',
+    },
+    description: {
+      en_US: 'Performs governed File Management asset operations such as deleting a visible file.',
+      zh_Hans: '执行受治理保护的文件管理操作，例如删除当前可见文件。',
+    },
+    whenToUse: {
+      en_US:
+        'Use when the user explicitly asks to change files in File Management and the target is resolved from page context.',
+      zh_Hans: '当用户明确要求变更文件管理中的文件，并且目标已从页面上下文解析时使用。',
+    },
+    tags: {
+      en_US: ['File', 'Management'],
+      zh_Hans: ['文件', '管理'],
+    },
+    category: 'productivity',
+    icon: 'folder-cog',
+  },
   'file-generator': {
     label: {
       en_US: 'File Generator',
@@ -104,6 +156,26 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
     },
     category: 'productivity',
     icon: 'file-plus',
+  },
+  [CONSOLE_NAVIGATOR_SKILL_ID]: {
+    label: {
+      en_US: 'Console Navigator',
+      zh_Hans: '控制台导航',
+    },
+    description: {
+      en_US: 'Routes AIChat to whitelisted internal ZGI console pages without mutating assets.',
+      zh_Hans: '将 AIChat 路由到白名单内的 ZGI 控制台页面，不会变更用户资产。',
+    },
+    whenToUse: {
+      en_US: 'Use when the user asks to open or switch to another ZGI module.',
+      zh_Hans: '当用户要求打开、进入或切换到另一个 ZGI 模块时使用。',
+    },
+    tags: {
+      en_US: ['Navigation', 'Console'],
+      zh_Hans: ['导航', '控制台'],
+    },
+    category: 'productivity',
+    icon: 'route',
   },
   'work-report-generator': {
     label: {
@@ -332,6 +404,26 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
       zh_Hans: '百分比计算',
     },
   },
+  [FILE_READER_SKILL_ID]: {
+    list_visible_files: {
+      en_US: 'List visible files',
+      zh_Hans: '列出可见文件',
+    },
+    read_file: {
+      en_US: 'Read file',
+      zh_Hans: '读取文件',
+    },
+    delete_file: {
+      en_US: 'Delete file',
+      zh_Hans: '删除文件',
+    },
+  },
+  [FILE_MANAGER_SKILL_ID]: {
+    delete_file: {
+      en_US: 'Delete file',
+      zh_Hans: '删除文件',
+    },
+  },
   'file-generator': {
     generate_file: {
       en_US: 'Generate file',
@@ -348,6 +440,12 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
     generate_pptx: {
       en_US: 'Generate PowerPoint',
       zh_Hans: '生成 PowerPoint',
+    },
+  },
+  [CONSOLE_NAVIGATOR_SKILL_ID]: {
+    navigate: {
+      en_US: 'Navigate console',
+      zh_Hans: '导航控制台',
     },
   },
   'work-report-generator': {

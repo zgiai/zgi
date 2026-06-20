@@ -2,11 +2,13 @@
 
 import { useMemo } from 'react';
 import {
-  useAIChatContextRegistration,
+  sanitizeAIChatContextText,
+  usePageContextRegistration,
   type AIChatCapabilityDescriptor,
-  type AIChatContextItem,
   type AIChatContextRelation,
-} from '@/components/aichat/contextual';
+  type AIChatPageContextItem,
+} from '@/components/aichat/page-context';
+import { AGENT_KEYS, WORKFLOW_KEYS } from '@/hooks/query-keys';
 import type { WorkflowFinishedData } from '@/components/workflow/ui/workflow-run-panel/types';
 import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-run-nodes-list';
 import type { AgentDetail } from '@/services/types/agent';
@@ -55,7 +57,7 @@ function compactText(value: unknown, maxLength = DESCRIPTION_MAX_LENGTH): string
             return String(value);
           }
         })();
-  const normalized = text.replace(/\s+/g, ' ').trim();
+  const normalized = sanitizeAIChatContextText(text).replace(/\s+/g, ' ').trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength).trim()}...`;
 }
@@ -63,12 +65,6 @@ function compactText(value: unknown, maxLength = DESCRIPTION_MAX_LENGTH): string
 function compactMetadataText(value: unknown): string | undefined {
   const text = compactText(value, METADATA_TEXT_MAX_LENGTH);
   return text || undefined;
-}
-
-function shortenId(value?: string | null): string {
-  if (!value) return 'none';
-  if (value.length <= 12) return value;
-  return `${value.slice(0, 8)}...${value.slice(-4)}`;
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -119,6 +115,40 @@ function summarizeSelectedRunDescription(parts: Array<string | null | undefined>
     .join(' | ');
 
   return compactText(text || 'Selected run context is available on the Agent logs page.');
+}
+
+function selectedRunMetric(label: string, value: unknown): string | null {
+  const text = stringValue(value);
+  return text ? `${label}: ${text}` : null;
+}
+
+function buildSelectedRunMetricSummary({
+  status,
+  elapsedTime,
+  totalTokens,
+  totalSteps,
+  loadedCount,
+  failedCount,
+  loadedLabel,
+  failedLabel,
+}: {
+  status: string;
+  elapsedTime?: string | number | null;
+  totalTokens?: string | number | null;
+  totalSteps?: string | number | null;
+  loadedCount: number;
+  failedCount: number;
+  loadedLabel: string;
+  failedLabel: string;
+}): string[] {
+  return [
+    selectedRunMetric('Status', status),
+    selectedRunMetric('Elapsed time', elapsedTime),
+    selectedRunMetric('Total tokens', totalTokens),
+    selectedRunMetric('Total steps', totalSteps),
+    selectedRunMetric(loadedLabel, loadedCount),
+    selectedRunMetric(failedLabel, failedCount),
+  ].filter((part): part is string => Boolean(part));
 }
 
 function buildPageCapabilities(hasSelectedRun: boolean): AIChatCapabilityDescriptor[] {
@@ -213,10 +243,52 @@ function buildWorkflowRelation(workflowId?: string | null): AIChatContextRelatio
     type: 'runs_workflow',
     resourceType: 'workflow',
     resourceId: workflowId,
-    title: `Published workflow ${shortenId(workflowId)}`,
+    title: 'Published workflow',
     metadata: {
       workflow_id: workflowId,
     },
+  };
+}
+
+function buildPageHints({
+  agentId,
+  isAgentRuntime,
+  effectiveRunId,
+}: {
+  agentId: string;
+  isAgentRuntime: boolean;
+  effectiveRunId: string | null;
+}): NonNullable<AIChatPageContextItem['hints']> {
+  if (isAgentRuntime) {
+    return {
+      handledAssetTypes: ['agent_runtime_run'],
+      refreshHints: [
+        { assetType: 'agent_runtime_run', queryKey: [...AGENT_KEYS.detail(agentId), 'runtime-runs'] },
+        ...(effectiveRunId
+          ? [
+              {
+                assetType: 'agent_runtime_run',
+                resourceId: effectiveRunId,
+                queryKey: AGENT_KEYS.runtimeRunDetail(agentId, effectiveRunId),
+              },
+              {
+                assetType: 'agent_runtime_run',
+                resourceId: effectiveRunId,
+                queryKey: AGENT_KEYS.runtimeRunSteps(agentId, effectiveRunId),
+              },
+            ]
+          : []),
+      ],
+    };
+  }
+
+  return {
+    handledAssetTypes: ['workflow_run'],
+    refreshHints: [
+      { assetType: 'workflow_run', queryKey: WORKFLOW_KEYS.runs(agentId) },
+      { assetType: 'workflow_run', queryKey: WORKFLOW_KEYS.runDetails() },
+      { assetType: 'workflow_run', queryKey: WORKFLOW_KEYS.executions() },
+    ],
   };
 }
 
@@ -232,7 +304,7 @@ function buildAgentRuntimeSelectedRunItem({
   selectedRun: AgentRuntimeRunItem | null;
   detail: AgentRuntimeRunDetail | null;
   steps: AgentRuntimeStep[];
-}): AIChatContextItem {
+}): AIChatPageContextItem {
   const status = detail?.status ?? selectedRun?.status ?? 'unknown';
   const failedSteps = steps.filter(step => isFailureStatus(step.status) || Boolean(step.error));
   const firstFailedStep = failedSteps[0] ?? null;
@@ -240,13 +312,26 @@ function buildAgentRuntimeSelectedRunItem({
   const hasFailureSignal = isFailureStatus(status) || Boolean(error) || failedSteps.length > 0;
   const query = detail?.query ?? selectedRun?.query;
   const answer = detail?.answer ?? selectedRun?.answer_preview;
+  const elapsedTime = detail?.elapsed_time ?? selectedRun?.elapsed_time;
+  const totalTokens = detail?.total_tokens ?? selectedRun?.total_tokens;
+  const totalSteps = detail?.total_steps ?? selectedRun?.total_steps ?? steps.length;
 
   return {
     id: effectiveRunId,
     type: 'log',
-    title: `Selected Agent runtime run ${shortenId(effectiveRunId)}`,
+    title: 'Selected Agent runtime run',
     subtitle: `${status} runtime run`,
     description: summarizeSelectedRunDescription([
+      ...buildSelectedRunMetricSummary({
+        status,
+        elapsedTime,
+        totalTokens,
+        totalSteps,
+        loadedCount: steps.length,
+        failedCount: failedSteps.length,
+        loadedLabel: 'Loaded steps',
+        failedLabel: 'Failed steps',
+      }),
       query ? `Query: ${query}` : null,
       error ? `Error: ${compactText(error, 320)}` : null,
       answer ? `Answer: ${answer}` : null,
@@ -267,9 +352,9 @@ function buildAgentRuntimeSelectedRunItem({
       source_web_app_id: detail?.source_web_app_id ?? selectedRun?.source_web_app_id,
       model_provider: detail?.model_provider ?? selectedRun?.model_provider,
       model_name: detail?.model_name ?? selectedRun?.model_name,
-      elapsed_time: detail?.elapsed_time ?? selectedRun?.elapsed_time,
-      total_tokens: detail?.total_tokens ?? selectedRun?.total_tokens,
-      total_steps: detail?.total_steps ?? selectedRun?.total_steps ?? steps.length,
+      elapsed_time: elapsedTime,
+      total_tokens: totalTokens,
+      total_steps: totalSteps,
       loaded_step_count: steps.length,
       failed_step_count: failedSteps.length,
       step_types: summarizeValues(steps.map(step => step.type)),
@@ -299,7 +384,7 @@ function buildWorkflowSelectedRunItem({
   executionItems: WorkflowRunNodeListItem[];
   publishedWorkflowId?: string | null;
   selectedMessageRunId: string | null;
-}): AIChatContextItem {
+}): AIChatPageContextItem {
   const status = summary?.status ?? detail?.status ?? selectedRun?.status ?? 'unknown';
   const failedNodes = executionItems.filter(
     item => isFailureStatus(item.status) || Boolean(item.error)
@@ -309,13 +394,26 @@ function buildWorkflowSelectedRunItem({
   const hasFailureSignal = isFailureStatus(status) || Boolean(error) || failedNodes.length > 0;
   const workflowRelation = buildWorkflowRelation(publishedWorkflowId);
   const relations = [buildAgentRelation(agent), ...(workflowRelation ? [workflowRelation] : [])];
+  const elapsedTime = summary?.elapsed_time ?? detail?.elapsed_time ?? selectedRun?.elapsed_time;
+  const totalTokens = summary?.total_tokens ?? detail?.total_tokens ?? selectedRun?.total_tokens;
+  const totalSteps = summary?.total_steps ?? detail?.total_steps ?? selectedRun?.total_steps;
 
   return {
     id: effectiveRunId,
     type: 'log',
-    title: `Selected workflow run ${shortenId(effectiveRunId)}`,
+    title: 'Selected workflow run',
     subtitle: `${status} workflow run`,
     description: summarizeSelectedRunDescription([
+      ...buildSelectedRunMetricSummary({
+        status,
+        elapsedTime,
+        totalTokens,
+        totalSteps,
+        loadedCount: executionItems.length,
+        failedCount: failedNodes.length,
+        loadedLabel: 'Loaded node executions',
+        failedLabel: 'Failed node executions',
+      }),
       error ? `Error: ${compactText(error, 320)}` : null,
       firstFailedNode
         ? `First failed node: ${firstFailedNode.title || firstFailedNode.nodeId}`
@@ -338,9 +436,9 @@ function buildWorkflowSelectedRunItem({
         summary?.conversation_id ?? detail?.conversation_id ?? selectedRun?.conversation_id,
       message_id: summary?.message_id ?? detail?.message_id ?? selectedRun?.message_id,
       selected_message_run_id: selectedMessageRunId,
-      elapsed_time: summary?.elapsed_time ?? detail?.elapsed_time ?? selectedRun?.elapsed_time,
-      total_tokens: summary?.total_tokens ?? detail?.total_tokens ?? selectedRun?.total_tokens,
-      total_steps: summary?.total_steps ?? detail?.total_steps ?? selectedRun?.total_steps,
+      elapsed_time: elapsedTime,
+      total_tokens: totalTokens,
+      total_steps: totalSteps,
       loaded_node_count: executionItems.length,
       failed_node_count: failedNodes.length,
       node_types: summarizeValues(executionItems.map(item => item.nodeType)),
@@ -369,12 +467,13 @@ function buildAgentLogsAIChatContextItems({
   agentRuntimeSteps,
   selectedMessageRunId,
   publishedWorkflowId,
-}: AgentLogsAIChatContextRegistrationProps): AIChatContextItem[] {
+}: AgentLogsAIChatContextRegistrationProps): AIChatPageContextItem[] {
   const pageHref = `/console/agents/${agent.id}/logs`;
   const statusSummary = summarizeStatuses(displayRunItems);
   const failedRunCount = displayRunItems.filter(item => isFailureStatus(item.status)).length;
   const mode = isAgentRuntime ? 'agent_runtime' : 'workflow';
   const hasSelectedRun = Boolean(effectiveRunId);
+  const pageHints = buildPageHints({ agentId: agent.id, isAgentRuntime, effectiveRunId });
   const selectedRunItem =
     effectiveRunId && isAgentRuntime
       ? buildAgentRuntimeSelectedRunItem({
@@ -410,6 +509,7 @@ function buildAgentLogsAIChatContextItems({
       risk: 'low',
       status: 'available',
       capabilities: buildPageCapabilities(hasSelectedRun),
+      hints: pageHints,
       metadata: {
         agent_id: agent.id,
         page: 'agent_logs',
@@ -434,6 +534,13 @@ function buildAgentLogsAIChatContextItems({
       risk: 'low',
       status: agent.is_published ? 'published' : 'draft',
       capabilities: buildPageCapabilities(hasSelectedRun),
+      hints: {
+        handledAssetTypes: ['agent'],
+        refreshHints: [
+          { assetType: 'agent', queryKey: AGENT_KEYS.detail(agent.id) },
+          { assetType: 'agent', queryKey: AGENT_KEYS.config(agent.id) },
+        ],
+      },
       metadata: {
         agent_id: agent.id,
         agent_type: agent.agent_type,
@@ -547,7 +654,7 @@ export function AgentLogsAIChatContextRegistration(props: AgentLogsAIChatContext
     ]
   );
 
-  useAIChatContextRegistration(items, { scopeId: `agent-logs:${agent.id}` });
+  usePageContextRegistration(items, { scopeId: `agent-logs:${agent.id}` });
 
   return null;
 }

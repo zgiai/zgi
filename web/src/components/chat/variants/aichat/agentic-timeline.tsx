@@ -58,7 +58,6 @@ const TIMELINE_DEBUG_LABEL_KEYS = {
 const GOVERNANCE_FIELD_LABEL_KEYS = {
   intent: 'consoleChat.governance.fields.intent',
   assetCount: 'consoleChat.governance.fields.assetCount',
-  workspace: 'consoleChat.governance.fields.workspace',
   reversible: 'consoleChat.governance.fields.reversible',
   bulkSensitive: 'consoleChat.governance.fields.bulkSensitive',
   externalSideEffect: 'consoleChat.governance.fields.externalSideEffect',
@@ -67,7 +66,6 @@ const GOVERNANCE_FIELD_LABEL_KEYS = {
   riskLevel: 'consoleChat.governance.fields.riskLevel',
   effect: 'consoleChat.governance.fields.effect',
   assetType: 'consoleChat.governance.fields.assetType',
-  correlationId: 'consoleChat.governance.fields.correlationId',
   executionStatus: 'consoleChat.governance.fields.executionStatus',
   executionError: 'consoleChat.governance.fields.executionError',
   executionDuration: 'consoleChat.governance.fields.executionDuration',
@@ -87,6 +85,34 @@ const TRANSIENT_PROGRESS_TEXT_KEYS = [
   'consoleChat.skills.agentic.preparing',
   'consoleChat.skills.agentic.checkingTools',
 ] as const;
+
+const INTERNAL_DISPLAY_FIELD_KEYS = new Set([
+  'id',
+  'file_id',
+  'file_ids',
+  'upload_file_id',
+  'upload_file_ids',
+  'workspace_id',
+  'workspace_ids',
+  'organization_id',
+  'organization_ids',
+  'conversation_id',
+  'message_id',
+  'correlation_id',
+  'approved_by_correlation_id',
+  'source_id',
+  'runtime_id',
+  'deleted_count',
+]);
+
+const INTERNAL_DISPLAY_FIELD_NAME_PATTERN =
+  /\b(?:file_ids?|fileIds?|upload_file_ids?|uploadFileIds?|workspace_ids?|workspaceIds?|organization_ids?|organizationIds?|conversation_id|conversationId|message_id|messageId|correlation_id|correlationId|approved_by_correlation_id|approvedByCorrelationId|source_id|sourceId|runtime_id|runtimeId|deleted_count|deletedCount)\b/i;
+
+const UUID_DISPLAY_PATTERN =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+
+const OPAQUE_INLINE_ID_PATTERN =
+  /\b(?:file|upload[-_]?file|asset|workspace|ws)[-_](?=[a-z0-9_-]*\d)[a-z0-9][a-z0-9_-]*\b/gi;
 
 interface AIChatAgenticTimelineProps {
   timeline: AIChatAgenticTimelineItem[];
@@ -167,15 +193,76 @@ function getDurationText(durationMs: number | undefined): string | null {
   return formatMs(durationMs);
 }
 
-function formatDebugValue(value: unknown): string | null {
+function normalizeDisplayFieldKey(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[-\s]+/g, '_')
+    .toLowerCase();
+}
+
+function isInternalDisplayFieldKey(key: string): boolean {
+  const normalized = normalizeDisplayFieldKey(key);
+  return (
+    INTERNAL_DISPLAY_FIELD_KEYS.has(normalized) ||
+    normalized.endsWith('_id') ||
+    normalized.endsWith('_ids') ||
+    normalized.endsWith('_uuid') ||
+    normalized.endsWith('_uuids')
+  );
+}
+
+function sanitizeDisplayString(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || INTERNAL_DISPLAY_FIELD_NAME_PATTERN.test(trimmed)) return null;
+  if (looksLikeOpaqueAssetID(trimmed)) return null;
+
+  const sanitized = trimmed
+    .replace(UUID_DISPLAY_PATTERN, '')
+    .replace(OPAQUE_INLINE_ID_PATTERN, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (!sanitized) return null;
+  return sanitized;
+}
+
+function sanitizeDisplayPayload(value: unknown): unknown {
   if (value === undefined || value === null || value === '') return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
+  if (typeof value === 'string') return sanitizeDisplayString(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) {
+    const items = value
+      .map(item => sanitizeDisplayPayload(item))
+      .filter(item => item !== null && item !== undefined);
+    return items.length > 0 ? items : null;
   }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).flatMap(([key, rawValue]) => {
+      if (isInternalDisplayFieldKey(key)) return [];
+      const sanitized = sanitizeDisplayPayload(rawValue);
+      return sanitized === null || sanitized === undefined ? [] : [[key, sanitized] as const];
+    });
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
+  }
+  return String(value);
+}
+
+function formatDebugValue(value: unknown): string | null {
+  const sanitized = sanitizeDisplayPayload(value);
+  if (sanitized === undefined || sanitized === null || sanitized === '') return null;
+  if (typeof sanitized === 'string') return sanitized;
+  if (typeof sanitized === 'number' || typeof sanitized === 'boolean') return String(sanitized);
+  try {
+    return JSON.stringify(sanitized);
+  } catch {
+    return String(sanitized);
+  }
+}
+
+function sanitizeTimelineResultForDisplay(
+  result?: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  const sanitized = sanitizeDisplayPayload(result);
+  return governanceRecord(sanitized);
 }
 
 function timelineDebugRows(invocation: AIChatSkillInvocation, locale: string) {
@@ -247,6 +334,8 @@ function SkillTimelineRow({
   const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
   const duration = getDurationText(event.item.invocation.duration_ms);
+  const detail = event.detail ? sanitizeDisplayString(event.detail) : null;
+  const displayResult = sanitizeTimelineResultForDisplay(event.item.invocation.result);
   const rowContent = (
     <>
       <span
@@ -298,12 +387,12 @@ function SkillTimelineRow({
       )}
       {showDetails && isOpen ? (
         <div className="border-t bg-muted/20 px-2.5 py-2">
-          {event.detail ? (
+          {detail ? (
             <div className="mb-2 whitespace-pre-wrap break-words text-muted-foreground">
-              {event.detail}
+              {detail}
             </div>
           ) : null}
-          <AIChatSkillResultSummary result={event.item.invocation.result} className="mb-2" />
+          <AIChatSkillResultSummary result={displayResult} className="mb-2" />
           <dl className="grid gap-1 rounded-md bg-background/80 p-2 text-[11px]">
             {timelineDebugRows(event.item.invocation, locale).map(([labelKey, value]) => {
               const formatted = formatDebugValue(value);
@@ -448,7 +537,8 @@ function governanceDisplayText(value: unknown): string | null {
 }
 
 function governanceReason(item: GovernanceTimelineItem): string {
-  return String(item.event.reason ?? item.event.governance?.reason ?? '').trim();
+  const reason = String(item.event.reason ?? item.event.governance?.reason ?? '').trim();
+  return reason ? (sanitizeDisplayString(reason) ?? '') : '';
 }
 
 function governanceApprovalEvent(item: GovernanceTimelineItem) {
@@ -614,30 +704,45 @@ function governanceAssetCount(
   return 0;
 }
 
-function governanceAssetDisplayName(asset: AIChatToolGovernanceAssetRef): string {
+function governanceAssetSpecificDisplayName(asset: AIChatToolGovernanceAssetRef): string | null {
   const id = governanceStringValue(asset.id);
-  const assetType = governanceStringValue(asset.type)?.toLowerCase();
   const fileName =
     governanceRecordString(asset, ['filename', 'file_name']) ??
     governanceRecordString(asset.metadata, ['filename', 'file_name']);
-  if (fileName) return fileName;
+  if (fileName && !looksLikeOpaqueAssetID(fileName)) return fileName;
   const displayName =
     governanceRecordString(asset, ['name', 'title', 'label']) ??
     governanceRecordString(asset.metadata, ['name', 'title', 'label']);
   if (displayName && displayName !== id && !looksLikeOpaqueAssetID(displayName)) {
     return displayName;
   }
+  return null;
+}
+
+function governanceAssetDisplayName(asset: AIChatToolGovernanceAssetRef): string {
+  const assetType = governanceStringValue(asset.type)?.toLowerCase();
+  const displayName = governanceAssetSpecificDisplayName(asset);
+  if (displayName) return displayName;
   if (assetType === 'file') return 'file';
-  return id ?? 'asset';
+  if (assetType && !looksLikeOpaqueAssetID(assetType)) return assetType;
+  return 'asset';
 }
 
 function looksLikeOpaqueAssetID(value: string): boolean {
   const normalized = value.trim();
   if (!normalized) return false;
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized)) {
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.[a-z0-9]+)?$/i.test(
+      normalized
+    )
+  ) {
     return true;
   }
-  if (/^(file|upload_file|asset)[_-][a-z0-9_-]{8,}$/i.test(normalized)) {
+  if (
+    /^(file|upload[-_]?file|asset|workspace|ws)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+$/i.test(
+      normalized
+    )
+  ) {
     return true;
   }
   return /^[0-9a-f]{24,}$/i.test(normalized);
@@ -654,17 +759,15 @@ function uniqueGovernanceAssetMetaParts(parts: Array<string | null>): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const part of parts) {
-    if (!part || seen.has(part)) continue;
-    seen.add(part);
-    out.push(part);
+    const visiblePart = part ? sanitizeDisplayString(part) : null;
+    if (!visiblePart || seen.has(visiblePart)) continue;
+    seen.add(visiblePart);
+    out.push(visiblePart);
   }
   return out;
 }
 
-function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef, t: WebappTranslator): string {
-  const workspaceID =
-    governanceStringValue(asset.workspace_id) ??
-    governanceRecordString(asset.metadata, ['workspace_id', 'workspaceId']);
+function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef): string {
   const fileType =
     governanceRecordString(asset, ['file_type', 'file_type_normalized']) ??
     governanceRecordString(asset.metadata, ['file_type', 'file_type_normalized']);
@@ -686,7 +789,6 @@ function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef, t: WebappTrans
     normalizedExtension ? `.${normalizedExtension}` : null,
     size,
     mimeType,
-    workspaceID ? `${t('consoleChat.governance.fields.workspace')} ${workspaceID}` : null,
   ]);
   return parts.join(' · ');
 }
@@ -733,47 +835,6 @@ function governanceBooleanLabel(value: unknown, t: WebappTranslator): string | n
   return normalized
     ? t('consoleChat.governance.values.yes')
     : t('consoleChat.governance.values.no');
-}
-
-function governanceAssetWorkspaceIDs(assets: AIChatToolGovernanceAssetRef[]): string[] {
-  const seen = new Set<string>();
-  const values: string[] = [];
-  for (const asset of assets) {
-    const workspaceID =
-      governanceStringValue(asset.workspace_id) ??
-      governanceRecordString(asset.metadata, ['workspace_id', 'workspaceId']);
-    if (!workspaceID || seen.has(workspaceID)) continue;
-    seen.add(workspaceID);
-    values.push(workspaceID);
-  }
-  return values;
-}
-
-function governanceWorkspaceIDs(
-  item: GovernanceTimelineItem,
-  assets: AIChatToolGovernanceAssetRef[]
-): string[] {
-  const seen = new Set<string>();
-  const values: string[] = [];
-  const append = (workspaceID: string | null) => {
-    if (!workspaceID || seen.has(workspaceID)) return;
-    seen.add(workspaceID);
-    values.push(workspaceID);
-  };
-
-  for (const workspaceID of governanceAssetWorkspaceIDs(assets)) {
-    append(workspaceID);
-  }
-  for (const source of [
-    governanceAssetOperationAudit(item),
-    item.event,
-    item.event.governance,
-    item.event.governance?.approval_event,
-    governanceApprovalEvent(item),
-  ]) {
-    append(governanceRecordString(source, ['workspace_id', 'workspaceId']));
-  }
-  return values;
 }
 
 function governanceEventString(
@@ -825,7 +886,10 @@ function governanceIntentText(
   t: WebappTranslator
 ): string | null {
   const explicitIntent = governanceEventString(item, ['intent', 'model_intent', 'action_intent']);
-  if (explicitIntent) return explicitIntent;
+  if (explicitIntent) {
+    const visibleIntent = sanitizeDisplayString(explicitIntent);
+    if (visibleIntent) return visibleIntent;
+  }
   const effect = governanceEventString(item, ['effect']);
   const assetType = governanceEventString(item, ['asset_type']);
   if (!effect && !assetType && assetCount === 0) return null;
@@ -892,7 +956,6 @@ function governanceSummaryRows(
   assets: AIChatToolGovernanceAssetRef[],
   t: WebappTranslator
 ) {
-  const workspaces = governanceWorkspaceIDs(item, assets);
   const effect = governanceEventString(item, ['effect']);
   const riskLevel = governanceEventString(item, ['risk_level']);
   const assetType = governanceEventString(item, ['asset_type']);
@@ -907,13 +970,10 @@ function governanceSummaryRows(
     normalizedRiskLevel === 'high' ||
     normalizedRiskLevel === 'critical';
   const shouldSurfaceUnknowns = isToolGovernanceNeedsApproval(item) || isHighImpact;
-  const workspaceValue =
-    workspaces.length > 0 ? workspaces.join(', ') : shouldSurfaceUnknowns ? unknown : null;
   const reversible = governanceBooleanLabel(governanceEventBoolean(item, ['reversible']), t);
   return [
     ['intent', governanceIntentText(item, assets, assetCount, t)],
     ['assetCount', assetCount > 0 ? String(assetCount) : null],
-    ['workspace', workspaceValue],
     ['effect', effect ? governanceEffectLabel(effect, t) : null],
     ['riskLevel', riskLevel ? governanceRiskLabel(riskLevel, t) : null],
     ['assetType', assetType ? governanceAssetTypeLabel(assetType, t) : null],
@@ -946,12 +1006,6 @@ function governanceFieldRows(item: GovernanceTimelineItem) {
       item.event.asset_type ??
         item.event.governance?.manifest?.asset_type ??
         approvalEvent?.asset_type,
-    ],
-    [
-      'correlationId',
-      item.event.correlation_id ??
-        item.event.governance?.correlation_id ??
-        approvalEvent?.correlation_id,
     ],
     ['executionStatus', item.event.execution_status],
     ['executionError', item.event.execution_error],
@@ -1009,12 +1063,20 @@ function governanceActionSentence(
   const effect = governanceEventString(item, ['effect'])?.toLowerCase();
   const assetType = governanceEventString(item, ['asset_type'])?.toLowerCase();
   const count = Math.max(assetCount, assets.length, 1);
-  const singleAssetName = assets.length === 1 ? governanceAssetDisplayName(assets[0]) : null;
+  const singleAssetName = assets.length === 1 ? governanceAssetSpecificDisplayName(assets[0]) : null;
 
   if (effect === 'delete' && assetType === 'file') {
-    return singleAssetName
-      ? t('consoleChat.governance.approvalPanel.fileDeleteOne', { name: singleAssetName })
-      : t('consoleChat.governance.approvalPanel.fileDeleteMany', { count });
+    if (singleAssetName) {
+      return t('consoleChat.governance.approvalPanel.fileDeleteOne', { name: singleAssetName });
+    }
+    if (count === 1) {
+      return t('consoleChat.governance.approvalPanel.genericMany', {
+        effect: governanceEffectLabel(effect, t),
+        count,
+        assetType: governanceAssetTypeLabel(assetType, t),
+      });
+    }
+    return t('consoleChat.governance.approvalPanel.fileDeleteMany', { count });
   }
 
   if (effect && assetType && singleAssetName) {
@@ -1087,7 +1149,7 @@ function buildToolGovernanceDecisionViewModel(
     return {
       key,
       name: governanceAssetDisplayName(asset),
-      meta: governanceAssetMeta(asset, t) || undefined,
+      meta: governanceAssetMeta(asset) || undefined,
     };
   });
   const effect = governanceEventString(item, ['effect'])?.toLowerCase();
@@ -1372,6 +1434,62 @@ function isGovernedSkillEvent(
   );
 }
 
+function normalizeGovernanceDedupePart(value: string | null): string {
+  return value?.trim().toLowerCase().replace(/\s+/g, ' ') ?? '';
+}
+
+function governanceOperationDedupeKey(item: GovernanceTimelineItem): string | null {
+  const assets = governanceApprovalAssets(item);
+  const assetKeys = assets
+    .map(
+      asset =>
+        governanceStringValue(asset.id) ??
+        governanceRecordString(asset, ['filename', 'file_name', 'name', 'title', 'label']) ??
+        governanceRecordString(asset.metadata, ['filename', 'file_name', 'name', 'title', 'label'])
+    )
+    .filter((value): value is string => Boolean(value))
+    .map(value => normalizeGovernanceDedupePart(value))
+    .sort();
+  const assetCount = governanceAssetCount(item, assets);
+  const assetPart = assetKeys.length > 0 ? assetKeys.join('|') : `count:${assetCount || 1}`;
+  const parts = [
+    governanceEventString(item, ['skill_id']),
+    governanceEventString(item, ['tool_id', 'tool_name']),
+    governanceEventString(item, ['effect']),
+    governanceEventString(item, ['asset_type']),
+    assetPart,
+  ].map(normalizeGovernanceDedupePart);
+
+  if (!parts.some(Boolean)) return null;
+  return parts.join('::');
+}
+
+function isFinalGovernanceOutcome(item: GovernanceTimelineItem): boolean {
+  if (governanceApprovalStatus(item) === 'rejected') return false;
+  const decisionStatus = governanceDecisionStatus(item);
+  const eventStatus = String(item.event.status ?? '').toLowerCase();
+  const executionStatus = String(item.event.execution_status ?? '').toLowerCase();
+  return (
+    decisionStatus === 'allowed' ||
+    decisionStatus === 'success' ||
+    eventStatus === 'success' ||
+    executionStatus === 'success'
+  );
+}
+
+function isResolvedApprovalGovernanceItem(item: GovernanceTimelineItem): boolean {
+  return governanceApprovalStatus(item) === 'approved' && !isFinalGovernanceOutcome(item);
+}
+
+function isSupersededResolvedApprovalGovernanceItem(
+  item: GovernanceTimelineItem,
+  finalOperationKeys: ReadonlySet<string>
+): boolean {
+  if (!isResolvedApprovalGovernanceItem(item)) return false;
+  const operationKey = governanceOperationDedupeKey(item);
+  return Boolean(operationKey && finalOperationKeys.has(operationKey));
+}
+
 function isTransientProgressItem(
   item: Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>
 ) {
@@ -1495,12 +1613,25 @@ export function AIChatAgenticTimeline({
     [timeline]
   );
 
-  const events = useMemo(
-    () =>
+  const events = useMemo(() => {
+    const finalGovernanceOperationKeys = new Set(
       timeline
+        .filter(
+          (item): item is GovernanceTimelineItem =>
+            item.type === 'tool_governance_decision' && isFinalGovernanceOutcome(item)
+        )
+        .map(governanceOperationDedupeKey)
+        .filter((key): key is string => Boolean(key))
+    );
+
+    return timeline
         .filter(
           item =>
             !isGovernedSkillEvent(item, governanceCorrelationIds) &&
+            !(
+              item.type === 'tool_governance_decision' &&
+              isSupersededResolvedApprovalGovernanceItem(item, finalGovernanceOperationKeys)
+            ) &&
             !(
               enableToolGovernanceApprovals &&
               item.type === 'tool_governance_decision' &&
@@ -1529,9 +1660,8 @@ export function AIChatAgenticTimeline({
               item.invocation.message ||
               item.invocation.error,
           };
-        }),
-    [enableToolGovernanceApprovals, governanceCorrelationIds, locale, skillDisplayById, t, timeline]
-  );
+        });
+  }, [enableToolGovernanceApprovals, governanceCorrelationIds, locale, skillDisplayById, t, timeline]);
 
   if (events.length === 0) return null;
 

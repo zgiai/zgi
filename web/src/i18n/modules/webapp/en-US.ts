@@ -234,7 +234,7 @@ const messages = {
       home: {
         filesTitle: 'Work with current files',
         filesDescription:
-          'AIChat will answer from visible or selected files. Deletions require confirmation.',
+          'AIChat will answer from visible or selected files, and can generate files into File Management when you ask. Managed file changes may require confirmation.',
         contextTitle: 'Work with the current page',
         contextDescription: 'AIChat will include the visible context in this turn.',
         emptyTitle: 'AIChat assistant',
@@ -242,7 +242,8 @@ const messages = {
       },
       input: {
         placeholder: 'Ask about this page or tell AIChat what to do...',
-        filesPlaceholder: 'Ask about visible or selected files. Deletions require confirmation.',
+        filesPlaceholder:
+          'Ask about visible files, or ask AIChat to generate and save a file here.',
       },
       suggestions: {
         filesListVisible: 'List the visible files',
@@ -702,7 +703,10 @@ const messages = {
       'agent-memory': 'Agent Memory',
       'user-memory': 'User Memory',
       calculator: 'Calculator',
+      'console-navigator': 'Console Navigator',
       'file-generator': 'File Generator',
+      'file-manager': 'File Manager',
+      'file-reader': 'File Reader',
       'work-report-generator': 'Work Report Generator',
       'schedule-planner': 'Schedule Planner',
       'chart-generator': 'Chart Generator',
@@ -722,6 +726,10 @@ const messages = {
       evaluate_expression: 'Evaluate expression',
       calculate: 'Calculate',
       percentage: 'Percentage calculation',
+      navigate: 'Navigate console',
+      list_visible_files: 'List visible files',
+      read_file: 'Read file',
+      delete_file: 'Delete file',
       generate_file: 'Generate file',
       generate_docx: 'Generate Word document',
       generate_pdf: 'Generate PDF',

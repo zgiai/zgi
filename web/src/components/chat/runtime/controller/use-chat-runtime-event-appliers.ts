@@ -92,6 +92,7 @@ function shouldRefreshConversationAfterMessageEnd(
   const status = String(payload.status ?? '').toLowerCase();
   if (
     status === 'waiting_approval' ||
+    status === 'waiting_client_action' ||
     status === 'waiting_question' ||
     status === 'stopped' ||
     status === 'error' ||

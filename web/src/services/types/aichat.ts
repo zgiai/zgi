@@ -7,6 +7,7 @@ export type AIChatMessageStatus =
   | 'pending'
   | 'streaming'
   | 'waiting_approval'
+  | 'waiting_client_action'
   | 'waiting_question'
   | 'completed'
   | 'error'
@@ -28,6 +29,7 @@ export type AIChatSkillActivityStatus =
   | 'running'
   | 'allowed'
   | 'needs_approval'
+  | 'waiting_client_action'
   | 'needs_resolution'
   | 'denied'
   | 'success'
@@ -39,6 +41,7 @@ export type AIChatSkillInvocationKind =
   | 'reference_read'
   | 'tool_call'
   | 'tool_governance'
+  | 'client_action'
   | 'intermediate_answer'
   | 'user_input_request'
   | 'memory_planner';
@@ -394,10 +397,13 @@ export interface AIChatModelParameters {
   [key: string]: number | string | boolean | string[] | undefined;
 }
 
+export type AIChatRuntimeSurface = 'work_chat' | 'contextual_sidebar' | 'external_page_chat';
+
 export interface AIChatChatRequest {
   conversation_id?: string;
   parent_id?: string;
   query: string;
+  surface?: AIChatRuntimeSurface;
   runtime_context?: string;
   operation_context?: unknown;
   model: string;
@@ -410,6 +416,7 @@ export interface AIChatChatRequest {
 
 export interface AIChatRegenerateMessageRequest {
   query?: string;
+  surface?: AIChatRuntimeSurface;
   runtime_context?: string;
   operation_context?: unknown;
   model?: string;
@@ -549,6 +556,41 @@ export interface AIChatSkillArtifactCreatedEventData extends Partial<AIChatGener
   skill_id: string;
   tool_name: string;
   file?: AIChatSkillArtifactFile;
+}
+
+export type AIChatClientActionResultStatus = 'succeeded' | 'failed';
+
+export interface AIChatClientActionRequiredEventData extends Record<string, unknown> {
+  conversation_id: string;
+  message_id: string;
+  action_id: string;
+  action_type: 'route_navigation' | 'asset_observation' | (string & {});
+  status?: 'waiting_client_action' | string;
+  skill_id?: string;
+  tool_name?: string;
+  href?: string;
+  label?: string;
+  reason?: string;
+  effect?: string;
+  asset_type?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  asset_operation_audit?: AIChatAssetOperationAudit;
+  result?: Record<string, unknown> | null;
+  created_at?: number;
+}
+
+export interface AIChatClientActionResultRequest {
+  status: AIChatClientActionResultStatus;
+  runtime_context?: string;
+  operation_context?: unknown;
+  result?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface AIChatClientActionResultEventData
+  extends AIChatClientActionRequiredEventData {
+  error?: string;
+  resolved_at?: string;
 }
 
 export type AIChatToolGovernanceDecisionStatus =
@@ -903,6 +945,8 @@ export type AIChatSseEventName =
   | 'skill_call_error'
   | 'skill_artifact_created'
   | 'tool_governance_decision'
+  | 'client_action_required'
+  | 'client_action_result'
   | 'memory_create'
   | 'memory_update'
   | 'memory_delete'

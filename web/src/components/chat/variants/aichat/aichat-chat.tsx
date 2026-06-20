@@ -49,6 +49,7 @@ import type {
   AIChatConversation,
   AIChatMessage,
   AIChatMessageFile,
+  AIChatRuntimeSurface,
   AIChatUserInputRequest,
   AIChatWorkflowRunMetadata,
 } from '@/services/types/aichat';
@@ -137,6 +138,7 @@ interface AIChatShellProps {
   onStartNewConversation?: () => void;
   showAssistantModelMeta?: boolean;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
 }
@@ -232,6 +234,7 @@ export function AIChatShell({
   onStartNewConversation,
   showAssistantModelMeta = true,
   surface = 'aichat',
+  runtimeSurface = 'work_chat',
   themeColor,
   enableToolGovernance = false,
 }: AIChatShellProps) {
@@ -279,7 +282,7 @@ export function AIChatShell({
   const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
   const isBillingAdmin = organizationRole === 'owner' || organizationRole === 'admin';
   const enableAIChatSkillPreference =
-    !isEmbedded && surface !== 'agent-draft' && surface !== 'agent-webapp';
+    surface === 'aichat' && (!isEmbedded || runtimeSurface === 'contextual_sidebar');
   const { data: availableSkills = [] } = useAIChatSkills({ enabled: enableAIChatSkillPreference });
   const { data: skillPreference, isLoading: isLoadingSkillPreference } = useAIChatSkillPreference({
     enabled: enableAIChatSkillPreference,
@@ -304,8 +307,10 @@ export function AIChatShell({
     if (!enableAIChatSkillPreference || !skillPreference) return;
     setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
   }, [enableAIChatSkillPreference, skillPreference]);
+  const enableToolGovernanceApprovals = Boolean(controller.continueToolGovernanceDecision);
+  const showToolGovernancePermissionControl = enableToolGovernance || surface !== 'agent-webapp';
   useEffect(() => {
-    if (!enableToolGovernance) {
+    if (!showToolGovernancePermissionControl) {
       setToolGovernancePermissionTierLoaded(false);
       return;
     }
@@ -313,10 +318,10 @@ export function AIChatShell({
     const savedTier = window.localStorage.getItem(TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY);
     setToolGovernancePermissionTier(normalizeToolGovernancePermissionTier(savedTier));
     setToolGovernancePermissionTierLoaded(true);
-  }, [enableToolGovernance]);
+  }, [showToolGovernancePermissionControl]);
   useEffect(() => {
     if (
-      !enableToolGovernance ||
+      !showToolGovernancePermissionControl ||
       typeof window === 'undefined' ||
       !toolGovernancePermissionTierLoaded
     ) {
@@ -326,7 +331,11 @@ export function AIChatShell({
       TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY,
       toolGovernancePermissionTier
     );
-  }, [enableToolGovernance, toolGovernancePermissionTier, toolGovernancePermissionTierLoaded]);
+  }, [
+    showToolGovernancePermissionControl,
+    toolGovernancePermissionTier,
+    toolGovernancePermissionTierLoaded,
+  ]);
   const savedSkillPreferenceIds = useMemo(
     () => skillPreference?.enabled_skill_ids ?? [],
     [skillPreference?.enabled_skill_ids]
@@ -335,13 +344,12 @@ export function AIChatShell({
     () => !areSkillIdsEqual(draftSkillPreferenceIds, savedSkillPreferenceIds),
     [draftSkillPreferenceIds, savedSkillPreferenceIds]
   );
-  const showToolGovernancePermissionControl = enableToolGovernance;
   const effectiveToolGovernancePermissionTier = showToolGovernancePermissionControl
     ? toolGovernancePermissionTier
     : 'basic';
   const toolGovernanceOperationContext = useMemo<AIChatOperationContext | undefined>(
     () =>
-      enableToolGovernance
+      showToolGovernancePermissionControl
         ? {
             schema: 'zgi.aichat.operation_context.v1',
             version: 1,
@@ -361,7 +369,7 @@ export function AIChatShell({
             },
           }
         : undefined,
-    [effectiveToolGovernancePermissionTier, enableToolGovernance]
+    [effectiveToolGovernancePermissionTier, showToolGovernancePermissionControl]
   );
   const messageTopologyKey = useMemo(
     () => buildChatMessageTopologyKey(activeMessages),
@@ -461,7 +469,7 @@ export function AIChatShell({
   const messageActionsLocked = Boolean(activeWorkflowApprovalRequest);
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
   const showAssetAuditControl =
-    enableToolGovernance && surface === 'aichat' && Boolean(activeConversationId);
+    showToolGovernancePermissionControl && surface === 'aichat' && Boolean(activeConversationId);
   const assetAuditButton = useMemo(
     () =>
       showAssetAuditControl ? (
@@ -610,6 +618,7 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: forcedUseMemory ?? useMemory,
+        runtimeSurface,
         operationContext: toolGovernanceOperationContext,
       });
       return true;
@@ -623,6 +632,7 @@ export function AIChatShell({
       isSending,
       modelSelectorValue,
       requireModel,
+      runtimeSurface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -658,6 +668,7 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: forcedUseMemory ?? useMemory,
+        runtimeSurface,
         operationContext: toolGovernanceOperationContext,
       });
     },
@@ -668,6 +679,7 @@ export function AIChatShell({
       isSending,
       modelSelectorValue,
       requireModel,
+      runtimeSurface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -693,6 +705,7 @@ export function AIChatShell({
         },
         {
           operationContext: toolGovernanceOperationContext,
+          runtimeSurface,
         }
       );
     },
@@ -703,6 +716,7 @@ export function AIChatShell({
       messageActionsLocked,
       modelSelectorValue,
       requireModel,
+      runtimeSurface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -754,6 +768,8 @@ export function AIChatShell({
             model: modelSelectorValue.model,
             parameters: modelSelectorValue.params,
           },
+          runtimeSurface,
+          operationContext: toolGovernanceOperationContext,
         });
         return;
       }
@@ -767,6 +783,7 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: Boolean(message.metadata?.use_memory),
+        runtimeSurface,
         operationContext: toolGovernanceOperationContext,
       });
     },
@@ -779,6 +796,7 @@ export function AIChatShell({
       messageActionsLocked,
       modelSelectorValue,
       requireModel,
+      runtimeSurface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -807,7 +825,7 @@ export function AIChatShell({
 
   const handleToolGovernanceDecision = useCallback(
     (payload: AIChatToolGovernanceDecisionSubmitPayload) => {
-      if (!enableToolGovernance || !controller.continueToolGovernanceDecision) return;
+      if (!controller.continueToolGovernanceDecision) return;
       return controller.continueToolGovernanceDecision(
         payload.conversationId,
         payload.messageId,
@@ -819,7 +837,7 @@ export function AIChatShell({
         }
       );
     },
-    [controller, enableToolGovernance]
+    [controller]
   );
 
   const handleNewChat = useCallback(() => {
@@ -904,6 +922,24 @@ export function AIChatShell({
     );
   }, [draftSkillPreferenceIds, t, updateSkillPreference]);
 
+  const skillPreferenceAction = useMemo(() => {
+    if (!enableAIChatSkillPreference) return null;
+    return (
+      <Button
+        variant="ghost"
+        isIcon
+        className={cn(
+          isEmbedded ? embeddedControlButtonClassName : 'size-8 text-muted-foreground'
+        )}
+        onClick={() => handleSkillPreferenceOpenChange(true)}
+        title={t('consoleChat.skillPreferences.action')}
+        aria-label={t('consoleChat.skillPreferences.action')}
+      >
+        <Settings2 className="size-4" />
+      </Button>
+    );
+  }, [enableAIChatSkillPreference, handleSkillPreferenceOpenChange, isEmbedded, t]);
+
   const embeddedConversationControls = useMemo(() => {
     if (!showEmbeddedConversationDrawer) return null;
     const controls = {
@@ -920,7 +956,14 @@ export function AIChatShell({
         startNewConversation={controls.startNewConversation}
         conversationsLabel={t('consoleChat.toggleSidebar')}
         newConversationLabel={t('chat.newConversation')}
-        trailingAction={assetAuditButton}
+        trailingAction={
+          assetAuditButton || skillPreferenceAction ? (
+            <>
+              {assetAuditButton}
+              {skillPreferenceAction}
+            </>
+          ) : null
+        }
       />
     );
   }, [
@@ -929,6 +972,7 @@ export function AIChatShell({
     isHome,
     renderEmbeddedConversationControls,
     showEmbeddedConversationDrawer,
+    skillPreferenceAction,
     t,
   ]);
 
@@ -972,20 +1016,10 @@ export function AIChatShell({
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
-                assetAuditButton || enableAIChatSkillPreference ? (
+                assetAuditButton || skillPreferenceAction ? (
                   <div className="flex items-center justify-end gap-1">
                     {assetAuditButton}
-                    {enableAIChatSkillPreference ? (
-                      <Button
-                        variant="ghost"
-                        isIcon
-                        className="size-8 text-muted-foreground"
-                        onClick={() => handleSkillPreferenceOpenChange(true)}
-                        title={t('consoleChat.skillPreferences.action')}
-                      >
-                        <Settings2 className="size-4" />
-                      </Button>
-                    ) : null}
+                    {skillPreferenceAction}
                   </div>
                 ) : undefined
               }
@@ -1025,9 +1059,9 @@ export function AIChatShell({
             onScroll={handleMessagesScroll}
             onRegenerate={handleRegenerate}
             onToolGovernanceDecision={
-              enableToolGovernance ? handleToolGovernanceDecision : undefined
+              enableToolGovernanceApprovals ? handleToolGovernanceDecision : undefined
             }
-            enableToolGovernanceApprovals={enableToolGovernance}
+            enableToolGovernanceApprovals={enableToolGovernanceApprovals}
             onSwitchBranch={handleSwitchBranch}
             onEditStart={handleEditStart}
             onEditChange={setEditingQuery}
@@ -1096,7 +1130,7 @@ export function AIChatShell({
             showToolGovernancePermissionControl={showToolGovernancePermissionControl}
             toolGovernancePermissionTier={toolGovernancePermissionTier}
             onToolGovernancePermissionTierChange={setToolGovernancePermissionTier}
-            enableToolGovernanceApprovals={enableToolGovernance}
+            enableToolGovernanceApprovals={enableToolGovernanceApprovals}
           />
         </main>
       </ToolGovernancePendingApprovalScopeProvider>

@@ -1,5 +1,9 @@
 import { useCallback } from 'react';
-import type { AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
+import type {
+  AIChatMessage,
+  AIChatMessageFile,
+  AIChatRuntimeSurface,
+} from '@/services/types/aichat';
 import type { AIChatModelSelection } from '@/components/chat/controllers/aichat';
 import {
   canReplaceRootMessage,
@@ -63,6 +67,7 @@ export function useChatRuntimeMessageActions({
       files = [],
       parentId: parentIdOverride,
       useMemory = false,
+      runtimeSurface,
       operationContext,
     }: {
       query: string;
@@ -70,6 +75,7 @@ export function useChatRuntimeMessageActions({
       files?: AIChatMessageFile[];
       parentId?: string | null;
       useMemory?: boolean;
+      runtimeSurface?: AIChatRuntimeSurface;
       operationContext?: unknown;
     }) => {
       const trimmedQuery = query.trim();
@@ -178,6 +184,7 @@ export function useChatRuntimeMessageActions({
             conversation_id: activeConversationId ?? undefined,
             parent_id: parentId,
             query: trimmedQuery,
+            surface: runtimeSurface,
             model: model.model,
             provider: model.provider,
             ...(files.length > 0 ? { file_ids: files.map(file => file.id) } : {}),
@@ -421,11 +428,13 @@ export function useChatRuntimeMessageActions({
       messageId,
       query,
       model,
+      runtimeSurface,
       operationContext,
     }: {
       messageId: string;
       query?: string;
       model?: AIChatModelSelection;
+      runtimeSurface?: AIChatRuntimeSurface;
       operationContext?: unknown;
     }) => {
       const trimmedQuery = query?.trim();
@@ -537,6 +546,7 @@ export function useChatRuntimeMessageActions({
           messageId,
           {
             query: trimmedQuery || undefined,
+            surface: runtimeSurface,
             operation_context: operationContext,
             model: model?.model,
             provider: model?.provider,
@@ -746,8 +756,12 @@ export function useChatRuntimeMessageActions({
     ]
   );
 
-  const { continueWorkflowApproval, continueWorkflowQuestion, continueToolGovernanceDecision } =
-    useWorkflowContinuationActions({
+  const {
+    continueWorkflowApproval,
+    continueWorkflowQuestion,
+    continueToolGovernanceDecision,
+    continueClientAction,
+  } = useWorkflowContinuationActions({
       stateRef,
       transportRef,
       requireModel,
@@ -763,7 +777,7 @@ export function useChatRuntimeMessageActions({
     async (
       messageId: string,
       model: AIChatModelSelection,
-      options?: { operationContext?: unknown }
+      options?: { operationContext?: unknown; runtimeSurface?: AIChatRuntimeSurface }
     ) => {
       const activeConversationId = stateRef.current.activeConversationId;
       if (!activeConversationId) return;
@@ -777,6 +791,7 @@ export function useChatRuntimeMessageActions({
         await replaceRootMessage({
           messageId,
           model,
+          runtimeSurface: options?.runtimeSurface,
           operationContext: options?.operationContext,
         });
         return;
@@ -788,6 +803,7 @@ export function useChatRuntimeMessageActions({
         model,
         parentId: source.parent_id,
         useMemory: Boolean(source.metadata?.use_memory),
+        runtimeSurface: options?.runtimeSurface,
         operationContext: options?.operationContext,
       });
     },
@@ -801,5 +817,6 @@ export function useChatRuntimeMessageActions({
     continueWorkflowApproval,
     continueWorkflowQuestion,
     continueToolGovernanceDecision,
+    continueClientAction,
   };
 }

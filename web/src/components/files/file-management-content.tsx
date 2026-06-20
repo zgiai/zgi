@@ -74,10 +74,9 @@ import { fileManageService } from '@/services/file-manage.service';
 import type { Organization } from '@/services/types/organization';
 import type { Workspace } from '@/store/workspace-store';
 import {
-  useAIChatContextRegistration,
-  type AIChatCapabilityDescriptor,
-  type AIChatContextItem,
-} from '@/components/aichat/contextual';
+  buildFilesAIChatContextItems,
+  FilesAIChatContextRegistration,
+} from '@/components/files/aichat';
 
 export interface FileManagementContentProps {
   /** Enable file selection mode */
@@ -102,313 +101,11 @@ const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
 const FILES_PAGE_SIZE = 20;
 const FILES_PAGE_LIMIT = String(FILES_PAGE_SIZE);
 const FILES_PAGE_SORT = 'created_at_desc';
-const FILES_PAGE_SORT_KEY = 'created_at';
-const FILES_PAGE_SORT_DIRECTION = 'desc';
-const FILES_CONTEXT_VISIBLE_LIMIT = 20;
-const AI_CHAT_EXCEL_EXTENSIONS = new Set(['xls', 'xlsx', 'xlsm', 'xlsb']);
-const AI_CHAT_WORD_EXTENSIONS = new Set(['doc', 'docx']);
-const AI_CHAT_PRESENTATION_EXTENSIONS = new Set(['ppt', 'pptx']);
-const AI_CHAT_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg']);
-const AI_CHAT_AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'wav', 'amr', 'mpga']);
-const AI_CHAT_VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'webm', 'mpeg']);
-const AI_CHAT_TEXT_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'mdx', 'json', 'xml']);
 
 const waitForMinimumRefreshDuration = () =>
   new Promise<void>(resolve => {
     setTimeout(resolve, 1000);
   });
-
-const fileReadCapability: AIChatCapabilityDescriptor = {
-  id: 'file.read',
-  title: 'Read file',
-  description: 'Read file metadata and contents for files visible on the current files page.',
-  risk: 'low',
-  status: 'available',
-  permissions: ['file.view'],
-};
-
-const fileListVisibleCapability: AIChatCapabilityDescriptor = {
-  id: 'file.list_visible',
-  title: 'List visible files',
-  description: 'List files visible on the current files page.',
-  risk: 'low',
-  status: 'available',
-  permissions: ['file.view'],
-};
-
-const fileDeleteCapability: AIChatCapabilityDescriptor = {
-  id: 'file.delete',
-  title: 'Delete file',
-  description: 'Delete a visible file after explicit approval.',
-  risk: 'high',
-  requiresConfirmation: true,
-  status: 'available',
-  permissions: ['file.manage'],
-};
-
-function filesAIChatCapabilities(canManage: boolean): AIChatCapabilityDescriptor[] {
-  return canManage
-    ? [fileListVisibleCapability, fileReadCapability, fileDeleteCapability]
-    : [fileListVisibleCapability, fileReadCapability];
-}
-
-function compactAIChatContextText(value: string, maxLength = 1200): string {
-  const text = value.replace(/\s+/g, ' ').trim();
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength).trim()}...`;
-}
-
-function normalizeAIChatFileExtension(file: FileItem): string {
-  const explicitExtension = file.extension?.toLowerCase().replace(/^\./, '').trim();
-  if (explicitExtension) return explicitExtension;
-
-  const inferredExtension = file.name.split('.').pop()?.toLowerCase().trim();
-  if (inferredExtension && inferredExtension !== file.name.toLowerCase()) {
-    return inferredExtension;
-  }
-
-  return 'unknown';
-}
-
-function getAIChatFileType(extension: string): string {
-  if (AI_CHAT_EXCEL_EXTENSIONS.has(extension)) return 'excel';
-  if (extension === 'pdf') return 'pdf';
-  if (AI_CHAT_WORD_EXTENSIONS.has(extension)) return 'word';
-  if (AI_CHAT_PRESENTATION_EXTENSIONS.has(extension)) return 'presentation';
-  if (extension === 'csv' || extension === 'tsv') return 'spreadsheet';
-  if (AI_CHAT_IMAGE_EXTENSIONS.has(extension)) return 'image';
-  if (AI_CHAT_AUDIO_EXTENSIONS.has(extension)) return 'audio';
-  if (AI_CHAT_VIDEO_EXTENSIONS.has(extension)) return 'video';
-  if (AI_CHAT_TEXT_EXTENSIONS.has(extension)) return 'text';
-
-  return extension || 'unknown';
-}
-
-function buildAIChatCountSummary(values: string[]): string | null {
-  const counts = new Map<string, number>();
-  values.forEach(value => {
-    counts.set(value, (counts.get(value) ?? 0) + 1);
-  });
-
-  const summary = Array.from(counts.entries())
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([value, count]) => `${value}=${count}`)
-    .join(',');
-
-  return summary || null;
-}
-
-function buildAIChatListMetadata(values: string[]): string | null {
-  const filteredValues = values.filter(Boolean);
-  return filteredValues.length > 0 ? filteredValues.join(',') : null;
-}
-
-function buildVisibleFileContextDescription(files: FileItem[]) {
-  if (files.length === 0) return 'No files are visible with the current filters.';
-
-  return compactAIChatContextText(
-    files
-      .map((file, index) => {
-        const extensionNormalized = normalizeAIChatFileExtension(file);
-        return [
-          `visible_index=${index + 1}`,
-          `id=${file.id}`,
-          `name=${file.name}`,
-          `extension=${extensionNormalized}`,
-          `file_type=${getAIChatFileType(extensionNormalized)}`,
-          `size=${file.size}`,
-          `workspace_id=${file.workspace_id || 'personal'}`,
-          `created_at=${file.created_at}`,
-        ].join(', ');
-      })
-      .join(' | ')
-  );
-}
-
-function buildFilesPageContextDescription(files: FileItem[], selectedFileIds: string[]) {
-  const selectedSummary =
-    selectedFileIds.length > 0
-      ? `Selected file ids: ${selectedFileIds.join(',')}. `
-      : 'No files are selected. ';
-  const ordinalScope =
-    'Ordinal references such as fourth file, second Excel, and last PDF refer to the current visible page order only. ';
-
-  return compactAIChatContextText(
-    `${selectedSummary}${ordinalScope}Visible files: ${buildVisibleFileContextDescription(files)}`,
-    1200
-  );
-}
-
-function buildFilesAIChatContextItems(params: {
-  files: FileItem[];
-  selectedFileIds: string[];
-  currentPage: number;
-  totalPages: number;
-  total: number;
-  activeCategory: string;
-  searchValue: string;
-  extensionParam?: string;
-  currentWorkspace: Workspace | null;
-  isOrganizationMode: boolean;
-  activeFolderName?: string;
-  canManage: boolean;
-}): AIChatContextItem[] {
-  const {
-    files,
-    selectedFileIds,
-    currentPage,
-    totalPages,
-    total,
-    activeCategory,
-    searchValue,
-    extensionParam,
-    currentWorkspace,
-    isOrganizationMode,
-    activeFolderName,
-    canManage,
-  } = params;
-  const capabilities = filesAIChatCapabilities(canManage);
-  const visibleFiles = files.slice(0, FILES_CONTEXT_VISIBLE_LIMIT);
-  const selectedFileIdSet = new Set(selectedFileIds);
-  const extensionRanks = new Map<string, number>();
-  const fileTypeRanks = new Map<string, number>();
-  const visibleFileContexts = visibleFiles.map((file, index) => {
-    const extensionNormalized = normalizeAIChatFileExtension(file);
-    const fileTypeNormalized = getAIChatFileType(extensionNormalized);
-    const extensionRank = (extensionRanks.get(extensionNormalized) ?? 0) + 1;
-    const fileTypeRank = (fileTypeRanks.get(fileTypeNormalized) ?? 0) + 1;
-
-    extensionRanks.set(extensionNormalized, extensionRank);
-    fileTypeRanks.set(fileTypeNormalized, fileTypeRank);
-
-    return {
-      file,
-      visibleIndex: index + 1,
-      extensionNormalized,
-      fileTypeNormalized,
-      extensionRank,
-      fileTypeRank,
-    };
-  });
-  const selectedVisibleCount = visibleFileContexts.filter(({ file }) =>
-    selectedFileIdSet.has(file.id)
-  ).length;
-  const orderedVisibleFileIds = buildAIChatListMetadata(
-    visibleFileContexts.map(({ file }) => file.id)
-  );
-  const selectedFileIdsMetadata = buildAIChatListMetadata(selectedFileIds);
-  const fileTypeCounts = buildAIChatCountSummary(
-    visibleFileContexts.map(({ fileTypeNormalized }) => fileTypeNormalized)
-  );
-  const extensionCounts = buildAIChatCountSummary(
-    visibleFileContexts.map(({ extensionNormalized }) => extensionNormalized)
-  );
-  const scopeLabel = isOrganizationMode
-    ? 'Personal space'
-    : currentWorkspace?.name || 'Current workspace';
-  const visibleRangeStart =
-    visibleFileContexts.length > 0 ? (currentPage - 1) * FILES_PAGE_SIZE + 1 : 0;
-  const visibleRangeEnd =
-    visibleFileContexts.length > 0 ? visibleRangeStart + visibleFileContexts.length - 1 : 0;
-
-  return [
-    {
-      id: 'console.files',
-      type: 'page',
-      title: 'console.files',
-      subtitle: `${scopeLabel} files page`,
-      description: buildFilesPageContextDescription(visibleFiles, selectedFileIds),
-      href: '/console/files',
-      source: 'Files page',
-      status: 'available',
-      capabilities,
-      metadata: {
-        page: 'console.files',
-        route: '/console/files',
-        resource_kind: 'page',
-        ordered_visible_file_ids: orderedVisibleFileIds,
-        selected_file_ids: selectedFileIdsMetadata,
-        visible_file_count: visibleFiles.length,
-        selected_file_count: selectedFileIds.length,
-        selected_visible_file_count: selectedVisibleCount,
-        file_type_counts: fileTypeCounts,
-        extension_counts: extensionCounts,
-        current_page: currentPage,
-        page_size: FILES_PAGE_SIZE,
-        visible_range_start: visibleRangeStart,
-        visible_range_end: visibleRangeEnd,
-        more_pages_available: currentPage < totalPages,
-        context_visible_limit: FILES_CONTEXT_VISIBLE_LIMIT,
-        omitted_context_file_count: Math.max(files.length - visibleFiles.length, 0),
-        ordinal_scope: 'current_visible_page',
-        visible_order_basis: 'current_visible_page_order',
-        sort: FILES_PAGE_SORT,
-        sort_key: FILES_PAGE_SORT_KEY,
-        sort_direction: FILES_PAGE_SORT_DIRECTION,
-        category: activeCategory,
-        total_file_count: total,
-        total_pages: totalPages,
-        folder_name: activeFolderName,
-        search: searchValue.trim(),
-        extension_filter: extensionParam,
-        workspace_id: isOrganizationMode ? undefined : currentWorkspace?.id,
-        workspace_name: isOrganizationMode ? undefined : currentWorkspace?.name,
-        organization_mode: isOrganizationMode,
-      },
-    },
-    ...visibleFileContexts.map(
-      ({
-        file,
-        visibleIndex,
-        extensionNormalized,
-        fileTypeNormalized,
-        extensionRank,
-        fileTypeRank,
-      }) => ({
-        id: file.id,
-        type: 'file' as const,
-        title: file.name,
-        subtitle: `${extensionNormalized} - ${file.size} bytes`,
-        description: `Visible file ${visibleIndex} on console.files page. Workspace: ${file.workspace_id || 'personal'}. Created: ${file.created_at}.`,
-        href: '/console/files',
-        source: 'Files page',
-        status: 'available' as const,
-        capabilities,
-        metadata: {
-          page: 'console.files',
-          resource_kind: 'file',
-          file_id: file.id,
-          visible_index: visibleIndex,
-          visible_ordinal: visibleIndex,
-          visible_rank: visibleIndex,
-          display_name: file.name,
-          name: file.name,
-          extension_normalized: extensionNormalized,
-          extension: extensionNormalized,
-          extension_original: file.extension,
-          file_type: fileTypeNormalized,
-          file_type_normalized: fileTypeNormalized,
-          file_type_rank: fileTypeRank,
-          extension_rank: extensionRank,
-          selected: selectedFileIdSet.has(file.id),
-          size: file.size,
-          mime_type: file.mime_type,
-          workspace_id: file.workspace_id,
-          created_at: file.created_at,
-          created_by: file.created_by,
-          storage_type: file.storage_type,
-          related_count: file.related_count,
-          related_dataset_count: file.related_dataset_count,
-        },
-      })
-    ),
-  ];
-}
-
-function FilesAIChatContextRegistration({ items }: { items: AIChatContextItem[] }) {
-  useAIChatContextRegistration(items, { scopeId: 'console-files' });
-  return null;
-}
 
 async function getFolderDepth(folderId: string) {
   let depth = 0;
@@ -727,6 +424,7 @@ const FileManagementContent = ({
   const [spaceSwitcherOpen, setSpaceSwitcherOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const t = useT();
+  const tWebapp = useT('webapp');
   const tNavigation = useT('navigation');
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
@@ -788,7 +486,29 @@ const FileManagementContent = ({
   const activeFolderName = SYSTEM_FILE_CATEGORIES.has(activeCategory)
     ? undefined
     : folders.find(folder => folder.id === activeCategory)?.name;
-  const aiChatContextItems = useMemo<AIChatContextItem[]>(
+  const filesAIChatPresentation = useMemo(() => {
+    const suggestions = [
+      tWebapp('consoleChat.contextual.suggestions.filesListVisible'),
+      selectedFiles.length > 0
+        ? tWebapp('consoleChat.contextual.suggestions.filesSummarizeSelected')
+        : files.length > 0
+          ? tWebapp('consoleChat.contextual.suggestions.filesSummarizeFirst')
+          : tWebapp('consoleChat.contextual.suggestions.filesExplainEmpty'),
+      tWebapp('consoleChat.contextual.suggestions.filesOrganizeVisible'),
+    ];
+
+    if (selectedFiles.length === 1 && canManage) {
+      suggestions.push(tWebapp('consoleChat.contextual.suggestions.filesDeleteSelected'));
+    }
+
+    return {
+      homeTitle: tWebapp('consoleChat.contextual.home.filesTitle'),
+      homeDescription: tWebapp('consoleChat.contextual.home.filesDescription'),
+      inputPlaceholder: tWebapp('consoleChat.contextual.input.filesPlaceholder'),
+      suggestions,
+    };
+  }, [canManage, files.length, selectedFiles.length, tWebapp]);
+  const aiChatContextItems = useMemo(
     () =>
       enableAIChatContext
         ? buildFilesAIChatContextItems({
@@ -797,6 +517,8 @@ const FileManagementContent = ({
             currentPage,
             totalPages,
             total,
+            pageSize: FILES_PAGE_SIZE,
+            sort: FILES_PAGE_SORT,
             activeCategory,
             searchValue: debouncedSearchValue,
             extensionParam,
@@ -804,6 +526,8 @@ const FileManagementContent = ({
             isOrganizationMode,
             activeFolderName,
             canManage,
+            canUpload,
+            presentation: filesAIChatPresentation,
           })
         : [],
     [
@@ -815,8 +539,10 @@ const FileManagementContent = ({
       enableAIChatContext,
       extensionParam,
       files,
+      filesAIChatPresentation,
       isOrganizationMode,
       canManage,
+      canUpload,
       selectedFiles,
       total,
       totalPages,
