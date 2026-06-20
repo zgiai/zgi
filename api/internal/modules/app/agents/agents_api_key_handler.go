@@ -10,9 +10,12 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
+
+const externalAgentMemoryUserRequiredMessage = "user is required when Agent Memory is enabled"
 
 type apiKeyAgentChatRequest struct {
 	ConversationID string                 `json:"conversation_id,omitempty"`
@@ -68,15 +71,20 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	if user := strings.TrimSpace(req.User); user != "" {
-		ctx = context.WithValue(ctx, "external_user", user)
-		c.Request = c.Request.WithContext(ctx)
-	}
+	externalUser := strings.TrimSpace(req.User)
 
 	published, err := h.appService.GetPublishedAgentRuntimeConfig(ctx, agentID.String())
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
+	}
+	if publishedAgentConfigRequiresExternalUser(published.Config) && externalUser == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, externalAgentMemoryUserRequiredMessage)
+		return
+	}
+	if externalUser != "" {
+		ctx = context.WithValue(ctx, "external_user", externalUser)
+		c.Request = c.Request.WithContext(ctx)
 	}
 
 	scope := runtimeservice.Scope{
@@ -84,6 +92,10 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		AccountID:       accountID,
 		WorkspaceID:     &workspaceID,
 		SkipAccessCheck: true,
+	}
+	if externalUser != "" {
+		agentMemoryUserID := externalAgentMemoryUserID(workspaceID, agentID, externalUser)
+		scope.AgentMemoryUserID = &agentMemoryUserID
 	}
 	runConfig, err := h.agentRunConfig(ctx, scope, published.AgentID, "agent.published."+published.Version, published.Config, "end_user")
 	if err != nil {
@@ -247,4 +259,27 @@ func (h *AgentsHandler) apiKeyAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		Source: runtimemodel.ConversationSourceExternalAPI,
 	}
 	return agentRuntimeContext{Scope: scope, Caller: caller}, true
+}
+
+func publishedAgentConfigRequiresExternalUser(cfg dto.AgentConfigResponse) bool {
+	if !cfg.AgentMemoryEnabled {
+		return false
+	}
+	for _, slot := range cfg.AgentMemorySlots {
+		if slot.Enabled && strings.TrimSpace(slot.Key) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func externalAgentMemoryUserID(workspaceID, agentID uuid.UUID, externalUser string) uuid.UUID {
+	seed := strings.Join([]string{
+		"zgi",
+		"external-agent-memory",
+		workspaceID.String(),
+		agentID.String(),
+		strings.TrimSpace(externalUser),
+	}, "\x00")
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(seed))
 }

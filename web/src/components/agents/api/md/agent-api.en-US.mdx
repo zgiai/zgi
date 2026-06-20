@@ -63,7 +63,7 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
         Optional. Defaults to `streaming`. Any other value returns `400`.
       </Property>
       <Property name='user' type='string' propKey='user'>
-        Optional. External caller id for traceability.
+        Required when Agent Memory is enabled with at least one enabled slot. Used to isolate long-term memory for the external end user. Optional otherwise, and still useful for traceability.
       </Property>
     </Properties>
 
@@ -81,7 +81,7 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
     ```
     </CodeGroup>
 
-    Dispatch by the native `event:` value or by the JSON `event` field. For response text, concatenate `message.data.answer` by `message_id`.
+    Dispatch by the native `event:` value or by the JSON `event` field. For response text, concatenate `message.data.answer` by `message_id`. Recoverable `message` and progress events include an SSE `id`; keep the latest id for reconnects.
 
     ### Core Events
 
@@ -111,7 +111,7 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
 
     ### Errors
 
-    - `400`: invalid request body, invalid ids, or non-streaming `response_mode`
+    - `400`: invalid request body, invalid ids, non-streaming `response_mode`, or missing `user` when Agent Memory is enabled
     - `401`: missing, invalid, inactive, expired, or revoked API Key
     - `404`: Agent has no published version or cannot be found
     - `500`: internal service error
@@ -180,9 +180,10 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
 
     ### Recovery Flow
 
-    - Save `conversation_id`, `message_id`, and the latest SSE `id` from every Agent event.
+    - Save `conversation_id`, `message_id`, and the latest SSE `id` from every Agent event that includes `id:`.
     - On reconnect, call this endpoint with the same API Key.
     - Resume from `after_id`. De-duplicate events by SSE `id` if your client may retry.
+    - If an event has no SSE `id`, treat it as a non-recoverable fallback event and do not use it as `after_id`.
     - Stop listening after `message_end` with `completed`, `stopped`, `error`, or `failed`, or after an `error` event.
 
   </Col>

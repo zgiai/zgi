@@ -63,7 +63,7 @@ X-API-Key: {API_KEY}
         可选。默认值为 `streaming`。传入其他值会返回 `400`。
       </Property>
       <Property name='user' type='string' propKey='user'>
-        可选。外部调用方标识，用于追踪。
+        当 Agent Memory 已启用且至少存在一个启用的记忆槽时必填，用于隔离外部终端用户的长期记忆。其他情况下可选，也可用于追踪。
       </Property>
     </Properties>
 
@@ -81,7 +81,7 @@ X-API-Key: {API_KEY}
     ```
     </CodeGroup>
 
-    客户端可以按原生 `event:` 分发，也可以解析 JSON 里的 `event` 字段。展示最终回答时，按 `message_id` 拼接 `message.data.answer`。
+    客户端可以按原生 `event:` 分发，也可以解析 JSON 里的 `event` 字段。展示最终回答时，按 `message_id` 拼接 `message.data.answer`。可恢复的 `message` 和进度事件会带 SSE `id`，请保存最新 id 用于重连。
 
     ### 核心事件
 
@@ -111,7 +111,7 @@ X-API-Key: {API_KEY}
 
     ### 错误
 
-    - `400`：请求体错误、id 非法，或 `response_mode` 不是 `streaming`
+    - `400`：请求体错误、id 非法、`response_mode` 不是 `streaming`，或启用 Agent Memory 时缺少 `user`
     - `401`：API Key 缺失、错误、已停用、已过期或已撤销
     - `404`：Agent 不存在，或没有发布版本
     - `500`：服务内部错误
@@ -180,9 +180,10 @@ X-API-Key: {API_KEY}
 
     ### 恢复流程
 
-    - 保存 `conversation_id`、`message_id`，以及每个 Agent 事件的最新 SSE `id`。
+    - 保存 `conversation_id`、`message_id`，以及每个带有 `id:` 的 Agent 事件的最新 SSE `id`。
     - 断线后使用同一个 API Key 调用该接口。
     - 使用 `after_id` 续拉；如果客户端可能重试，请按 SSE `id` 去重。
+    - 如果某个事件没有 SSE `id`，请把它视为不可恢复的降级事件，不要用作 `after_id`。
     - 收到 `message_end` 且状态为 `completed`、`stopped`、`error`、`failed`，或收到 `error` 后结束监听。
 
   </Col>

@@ -90,12 +90,7 @@ func APIKeyUsageLoggingMiddleware(db *gorm.DB) gin.HandlerFunc {
 		// Prepare request headers (filter sensitive data)
 		requestHeaders := make(map[string]interface{})
 		for key, values := range c.Request.Header {
-			// Skip sensitive headers
-			if strings.ToLower(key) == "authorization" {
-				requestHeaders[key] = "Bearer ***"
-			} else {
-				requestHeaders[key] = values
-			}
+			requestHeaders[key] = sanitizedAPIKeyUsageHeader(key, values)
 		}
 
 		// Get client IP
@@ -181,6 +176,17 @@ func APIKeyUsageLoggingMiddleware(db *gorm.DB) gin.HandlerFunc {
 				logger.Error("Failed to log API key usage", err)
 			}
 		}()
+	}
+}
+
+func sanitizedAPIKeyUsageHeader(key string, values []string) interface{} {
+	switch {
+	case strings.EqualFold(key, "Authorization"):
+		return "Bearer ***"
+	case strings.EqualFold(key, "X-API-Key"):
+		return "***"
+	default:
+		return values
 	}
 }
 
