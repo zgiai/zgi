@@ -7,6 +7,9 @@ provider_id: chart_generator
 runtime_type: tool
 tools:
   - generate_chart
+supported_callers:
+  - aichat
+  - agent
 max_calls_per_turn: 5
 timeout_seconds: 5
 tool_governance:

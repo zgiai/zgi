@@ -58,6 +58,7 @@ export type WebAppInputVarType =
   | 'select'
   | 'number'
   | 'checkbox'
+  | 'datetime'
   | 'file'
   | 'file-list';
 
@@ -69,6 +70,7 @@ export interface WebAppVariable {
   required: boolean;
   max_length?: number;
   default?: string | boolean;
+  default_datetime_mode?: 'fixed' | 'now';
   options?: string[];
   // For file related vars
   allowed_file_upload_methods?: string[];

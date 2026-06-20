@@ -30,6 +30,7 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { getEffectiveAllowedFileExtensions } from '@/utils/file-helpers';
 import { useUploadConfig } from '@/hooks/use-upload';
+import { currentOffsetDateTime, WorkflowDateTimeInput } from './workflow-date-time-input';
 
 // Allowed input value types for run payload
 export interface FileInputPayload {
@@ -70,6 +71,11 @@ export function transformFilesToPayload(
 ): FormInputs {
   const transformed: FormInputs = { ...values } as FormInputs;
   variables.forEach(v => {
+    if (isCurrentDateTimeInput(v)) {
+      transformed[v.variable] = currentOffsetDateTime();
+      return;
+    }
+
     if (v.type === 'file') {
       const id = getFileIdFromValue(values[v.variable]);
       if (id) {
@@ -290,6 +296,46 @@ function getInputPlaceholder(input: InputVar): string | undefined {
   return placeholder || undefined;
 }
 
+function isCurrentDateTimeInput(input: InputVar): boolean {
+  return input.type === 'datetime' && input.default_datetime_mode === 'now';
+}
+
+export function getInputVarSchemaDefaultValue(input: InputVar): FormInputs[string] {
+  switch (input.type) {
+    case 'checkbox':
+      return typeof input.default === 'boolean' ? input.default : false;
+    case 'number': {
+      const num =
+        typeof input.default === 'number'
+          ? input.default
+          : typeof input.default === 'string'
+            ? Number(input.default)
+            : undefined;
+      return Number.isFinite(num as number) ? (num as number) : undefined;
+    }
+    case 'datetime':
+      return input.default_datetime_mode === 'now'
+        ? undefined
+        : typeof input.default === 'string'
+          ? input.default
+          : '';
+    case 'file':
+      return undefined;
+    case 'file-list':
+      return [] as string[];
+    default:
+      return typeof input.default === 'string' ? input.default : '';
+  }
+}
+
+export function buildWorkflowInputSchemaDefaults(startVariables: InputVar[]): FormInputs {
+  const result: FormInputs = {};
+  startVariables.forEach(v => {
+    result[v.variable] = getInputVarSchemaDefaultValue(v);
+  });
+  return result;
+}
+
 const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInputFormProps>(
   (
     {
@@ -348,35 +394,10 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
 
     // Build schema defaults from start variables only. Runtime initial values are kept separate
     // so "restore defaults" does not accidentally restore the user's latest typed input.
-    const schemaDefaultValues = useMemo<FormInputs>(() => {
-      const result: FormInputs = {};
-      startVariables.forEach(v => {
-        switch (v.type) {
-          case 'checkbox':
-            result[v.variable] = typeof v.default === 'boolean' ? v.default : false;
-            break;
-          case 'number': {
-            const num =
-              typeof v.default === 'number'
-                ? v.default
-                : typeof v.default === 'string'
-                  ? Number(v.default)
-                  : undefined;
-            result[v.variable] = Number.isFinite(num as number) ? (num as number) : undefined;
-            break;
-          }
-          case 'file':
-            result[v.variable] = undefined; // single file id
-            break;
-          case 'file-list':
-            result[v.variable] = [] as string[]; // multiple file ids
-            break;
-          default:
-            result[v.variable] = typeof v.default === 'string' ? v.default : '';
-        }
-      });
-      return result;
-    }, [startVariables]);
+    const schemaDefaultValues = useMemo<FormInputs>(
+      () => buildWorkflowInputSchemaDefaults(startVariables),
+      [startVariables]
+    );
 
     const normalizedInitialValues = useMemo(
       () => normalizeInitialFileValues(initialValues, startVariables),
@@ -406,6 +427,8 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
             ),
             max_length: v.max_length ?? undefined,
             default: (v as { default?: unknown }).default ?? undefined,
+            default_datetime_mode:
+              (v as { default_datetime_mode?: unknown }).default_datetime_mode ?? undefined,
           }))
         ),
       [startVariables]
@@ -534,21 +557,22 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
     );
 
     const handleReset = useCallback(() => {
-      form.reset(schemaDefaultValues);
+      const nextDefaults = buildWorkflowInputSchemaDefaults(startVariables);
+      form.reset(nextDefaults);
       setFileStates({});
-      onChange?.(schemaDefaultValues);
-    }, [form, schemaDefaultValues, onChange]);
+      onChange?.(nextDefaults);
+    }, [form, startVariables, onChange]);
 
     const handleSetValues = useCallback(
       (values: FormInputs) => {
         const nextValues = {
-          ...schemaDefaultValues,
+          ...buildWorkflowInputSchemaDefaults(startVariables),
           ...(normalizeInitialFileValues(values, startVariables) ?? {}),
         };
         form.reset(nextValues);
         onChange?.(nextValues);
       },
-      [form, onChange, schemaDefaultValues, startVariables]
+      [form, onChange, startVariables]
     );
 
     const handleLoginConfirm = useCallback(() => {
@@ -609,6 +633,27 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
     // Render field by type
     const renderField = useCallback(
       (input: InputVar) => {
+        if (isCurrentDateTimeInput(input)) {
+          return (
+            <FormItem
+              key={input.variable}
+              className="animate-in fade-in-0 slide-in-from-bottom-2 duration-700"
+            >
+              <FormLabel className={FORM_LABEL_CLASS}>
+                {input.label}
+                {input.required && <span className="text-red-500 select-none">*</span>}
+              </FormLabel>
+              <FormControl>
+                <Input
+                  value={t('workflow.startForm.currentDateTimeAutoFilled')}
+                  disabled
+                  aria-readonly="true"
+                />
+              </FormControl>
+            </FormItem>
+          );
+        }
+
         // i18n required message
         const requiredMsg = t('workflow.startForm.requiredField');
         const commonRules = input.required ? { required: requiredMsg } : {};
@@ -765,6 +810,38 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
                       <Checkbox checked={Boolean(field.value)} onCheckedChange={field.onChange} />
                     </FormControl>
                     <FormMessage className="!mt-0" />
+                  </FormItem>
+                )}
+              />
+            );
+          case 'datetime':
+            return (
+              <FormField
+                key={input.variable}
+                control={form.control}
+                name={input.variable}
+                rules={commonRules}
+                render={({ field }) => (
+                  <FormItem className="animate-in fade-in-0 slide-in-from-bottom-2 duration-700">
+                    <FormLabel className={FORM_LABEL_CLASS}>
+                      {input.label}
+                      {input.required && <span className="text-red-500 select-none">*</span>}
+                    </FormLabel>
+                    <FormControl>
+                      <WorkflowDateTimeInput
+                        value={(field.value as string) ?? ''}
+                        onChange={value => {
+                          field.onChange(value);
+                          onChange?.({
+                            ...form.getValues(),
+                            [input.variable]: value,
+                          } as FormInputs);
+                        }}
+                        onBlur={field.onBlur}
+                        aria-invalid={!!form.formState.errors[input.variable]}
+                      />
+                    </FormControl>
+                    <FormMessage />
                   </FormItem>
                 )}
               />

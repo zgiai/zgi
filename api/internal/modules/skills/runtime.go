@@ -193,6 +193,31 @@ func (r *Runtime) ListSkillsWithCustom(ctx context.Context, custom []CustomSkill
 	return metadata, nil
 }
 
+func (r *Runtime) ListSystemSkillDocuments(ctx context.Context) ([]SkillDocument, error) {
+	_ = ctx
+	if r == nil {
+		return nil, fmt.Errorf("skill runtime is not configured")
+	}
+	locations, err := r.skillLocations(nil)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(locations))
+	for id := range locations {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	docs := make([]SkillDocument, 0, len(ids))
+	for _, id := range ids {
+		doc, err := r.loadSkillDocumentFromLocation(locations[id])
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, doc)
+	}
+	return docs, nil
+}
+
 func (r *Runtime) SystemSkillExists(skillID string) bool {
 	if r == nil {
 		return false
@@ -1842,6 +1867,11 @@ func normalizeSkillCallers(id string, source string, callers []string) []string 
 			if _, ok := seen[SkillCallerAgent]; !ok {
 				seen[SkillCallerAgent] = struct{}{}
 				out = append(out, SkillCallerAgent)
+			}
+		case SkillCallerWorkflow:
+			if _, ok := seen[SkillCallerWorkflow]; !ok {
+				seen[SkillCallerWorkflow] = struct{}{}
+				out = append(out, SkillCallerWorkflow)
 			}
 		}
 	}

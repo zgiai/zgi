@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="docs/assets/zgi-agent-runtime-readme.png" alt="ZGI Agent Runtime" width="100%" />
+  <img src="docs/assets/zgi-agent-runtime-hero.png" alt="ZGI Agent Runtime" width="100%" />
 </p>
 
 # ZGI
 
 <p align="center">
-  <em>Build, run, and operate AI agents, workflows, skills, knowledge, and model routes from one workspace.</em>
+  <em>An Agent Runtime workspace with source code available for building, running, and operating AI agents, workflows, skills, knowledge, and model routes.</em>
 </p>
 
 <p align="center">
@@ -21,34 +21,36 @@
     <a href="#why-zgi">Why ZGI</a> &middot;
     <a href="#platform">Platform</a> &middot;
     <a href="#quick-start">Quick Start</a> &middot;
-    <a href="#architecture">Architecture</a> &middot;
     <a href="#development">Development</a> &middot;
     <a href="#documentation">Docs</a> &middot;
+    <a href="#contributing">Contributing</a> &middot;
     <a href="#license">License</a>
   </sub>
 </p>
 
 ## Why ZGI
 
-ZGI is a source-available AI application platform for teams that need more than
-a chat box. It brings agent apps, visual workflow orchestration, model
-operations, knowledge retrieval, reusable skills, and runtime services into one
-self-hostable product surface.
+ZGI is an Agent Runtime platform with source code available for teams that need
+AI apps to do real work, not just answer in a chat box. It combines agent
+applications, visual workflow orchestration, model routing, workspace knowledge,
+database access, memory, reusable skills, and sandboxed tool execution in one
+self-hostable workspace.
 
-Use it to prototype internal AI tools, publish agent experiences, route model
-traffic through controlled providers, compose multi-step automations, and keep
-runtime infrastructure close to your own workspace.
+Use it to build internal AI tools, publish agent experiences, bind agents to
+approved knowledge, databases, and workflows, run skill-powered tasks such as
+file generation, charts, reports, scheduling, and calculations, and keep runtime
+control close to your own systems.
 
 ## Platform
 
 | Area | What you can build |
 | --- | --- |
-| **Agent applications** | Configure instructions, model settings, knowledge, memory, file upload, skills, and web app publishing from the console. |
-| **Visual workflows** | Compose API calls, JSON parsing, LLM steps, branching, loops, approvals, tools, code execution, database access, notifications, and retrieval on a canvas. |
-| **Model operations** | Manage providers, channels, credentials, defaults, policy controls, and pricing metadata without scattering model configuration across apps. |
-| **Knowledge and skills** | Connect datasets, content parsing, retrieval, and reusable tool skills so agents can work with real workspace context. |
-| **Runtime services** | Run the Go API, Next.js console, sandbox, plugin runner, PostgreSQL, and Redis behind a local gateway at `http://localhost:2679`. |
-| **Starter templates** | Explore 23 built-in agent and workflow templates in English and Simplified Chinese. |
+| **Agent apps** | Publish assistants with instructions, model settings, memory, knowledge, file upload, and skills. |
+| **Workflow automation** | Build multi-step processes with LLM calls, branches, loops, approvals, code execution, notifications, and retrieval. |
+| **Runtime skills** | Give agents reusable capabilities for files, charts, reports, scheduling, calculations, databases, and workflow calls. |
+| **Knowledge and data** | Bind agents to approved knowledge bases and database tables instead of exposing broad workspace access. |
+| **Model routing** | Manage providers, model defaults, credentials, policies, and pricing metadata in one place. |
+| **Self-hosted runtime** | Run the console, API, sandbox, runner, PostgreSQL, and Redis locally or in your own infrastructure. |
 
 ## Quick Start
 
@@ -73,15 +75,6 @@ http://localhost:2679
 On first launch, create the first administrator account. ZGI does not ship with
 a default admin account.
 
-### Docker Profiles
-
-| Command | Services |
-| --- | --- |
-| `./dev/start-docker --core` | Core product preview |
-| `./dev/start-docker --runtime` | Core stack plus Sandbox and Runner |
-| `./dev/start-docker --knowledge` | Core stack plus knowledge dependencies |
-| `./dev/start-docker --full` | Full stack, same as the default |
-
 Stop the stack:
 
 ```bash
@@ -94,76 +87,36 @@ View logs:
 make docker-logs
 ```
 
-## Architecture
-
-```text
-Browser
-  |
-  v
-Nginx gateway (:2679)
-  |
-  +-- Next.js console (web)
-  +-- Go API service
-        |
-        +-- PostgreSQL / Redis
-        +-- Sandbox service
-        +-- Plugin runner
-        +-- Optional knowledge services: Weaviate / Neo4j
-```
-
-## Repository Layout
-
-```text
-.
-+-- api/             Go backend service
-+-- web/             Next.js web console
-+-- sandbox/         Isolated execution service
-+-- runner/          Plugin execution service
-+-- docker/          Product-level Docker Compose assets
-+-- dev/             Local development scripts
-+-- scripts/         Maintenance scripts
-+-- docs/            Public documentation and assets
-+-- Makefile         Common local entry points
-+-- README.md
-```
-
 ## Development
 
-Install the local toolchain first:
+For source development, install:
 
 - Docker and Docker Compose
 - Make
-- Go, for backend source development
-- Node.js and pnpm, for frontend source development
+- Go
+- Node.js and pnpm
 
 The web app uses `pnpm@10.12.1`.
 
-Install and prepare dependencies:
+Prepare dependencies:
 
 ```bash
 make setup
 ```
 
-Start shared infrastructure:
+Run the API and web app from source in separate terminals:
 
 ```bash
 make dev-docker
-```
-
-Run backend and frontend from source in separate terminals:
-
-```bash
 make dev-api
 make dev-web
 ```
 
 ## Documentation
 
-- Product-level Docker notes: [`docker/README.md`](docker/README.md)
-- Release process: [`docs/release-process.md`](docs/release-process.md)
-- Script skill input files: [`docs/script-skill-input-files.md`](docs/script-skill-input-files.md)
-- Web app notes: [`web/README.md`](web/README.md)
-- Backend service docs: [`api/`](api/)
+Read the product documentation at [`docs.zgi.ai`](https://docs.zgi.ai).
+
+Repository-local README files are kept for development and contribution notes.
 
 ## Contributing
 
@@ -175,25 +128,14 @@ Community expectations are documented in
 
 For security-sensitive reports, follow [`SECURITY.md`](SECURITY.md).
 
-## Star History
-
-<p align="center">
-  <a href="https://www.star-history.com/#zgiai/zgi&Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=zgiai/zgi&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=zgiai/zgi&type=Date" />
-      <img alt="ZGI star history" src="https://api.star-history.com/svg?repos=zgiai/zgi&type=Date" />
-    </picture>
-  </a>
-</p>
-
 ## License
 
-ZGI is source-available under the ZGI Community License, based on Apache License
-2.0 with additional conditions. ZGI is free for personal, research,
+ZGI source code is available under the ZGI Community License, based on Apache
+License 2.0 with additional conditions. ZGI is free for personal, research,
 educational, and internal organizational use. Hosted multi-tenant services,
 white-label distribution, and removal of official ZGI branding require a
-commercial license. See [`LICENSE`](LICENSE) for details.
+commercial license. This license is not an OSI-approved open source license.
+See [`LICENSE`](LICENSE) for details.
 
 The Apache License 2.0 text referenced by the ZGI Community License is included
 in [`LICENSE-APACHE`](LICENSE-APACHE).

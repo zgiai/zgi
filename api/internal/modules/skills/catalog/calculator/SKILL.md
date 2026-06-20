@@ -9,6 +9,10 @@ tools:
   - evaluate_expression
   - calculate
   - percentage
+supported_callers:
+  - aichat
+  - agent
+  - workflow
 max_calls_per_turn: 50
 timeout_seconds: 5
 display:

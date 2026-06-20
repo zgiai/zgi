@@ -125,10 +125,12 @@ type AgentWorkflowBinding struct {
 	DefaultInputKey string                    `json:"default_input_key,omitempty"`
 }
 type AgentWorkflowStartInput struct {
-	Variable string `json:"variable"`
-	Label    string `json:"label,omitempty"`
-	Type     string `json:"type,omitempty"`
-	Required bool   `json:"required,omitempty"`
+	Variable            string      `json:"variable"`
+	Label               string      `json:"label,omitempty"`
+	Type                string      `json:"type,omitempty"`
+	Required            bool        `json:"required,omitempty"`
+	Default             interface{} `json:"default,omitempty"`
+	DefaultDateTimeMode string      `json:"default_datetime_mode,omitempty"`
 }
 type AgentMemoryRuntimeState = agentmemoryruntime.State
 type AgentMemoryPlannerDecision = agentmemoryruntime.Decision

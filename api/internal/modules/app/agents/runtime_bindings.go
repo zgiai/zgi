@@ -522,10 +522,12 @@ func workflowStartInputsFromGraph(graph string) []dto.AgentWorkflowStartInput {
 			}
 			seen[variable] = struct{}{}
 			inputs = append(inputs, dto.AgentWorkflowStartInput{
-				Variable: variable,
-				Label:    strings.TrimSpace(stringFromMap(varMap, "label")),
-				Type:     strings.TrimSpace(stringFromMap(varMap, "type")),
-				Required: boolFromMap(varMap, "required"),
+				Variable:            variable,
+				Label:               strings.TrimSpace(stringFromMap(varMap, "label")),
+				Type:                strings.TrimSpace(stringFromMap(varMap, "type")),
+				Required:            boolFromMap(varMap, "required"),
+				Default:             varMap["default"],
+				DefaultDateTimeMode: strings.TrimSpace(stringFromMap(varMap, "default_datetime_mode")),
 			})
 		}
 		return inputs
