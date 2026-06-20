@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { FileUpload } from '@/components/common/file-upload';
+import { FileUpload, type FileUploadRef } from '@/components/common/file-upload';
 import type { UploadedFile } from '@/services/types/dataset';
 import type { FileItem } from '@/services/types/file';
 import { fileManageService } from '@/services/file-manage.service';
@@ -139,6 +139,18 @@ export interface WorkflowInputFormHandle {
   reset: () => void;
   setValues: (values: FormInputs) => void;
   validate: () => Promise<boolean>;
+  getValues: () => FormInputs;
+  getValidationIssues: () => WorkflowInputValidationIssue[];
+}
+
+export interface WorkflowInputValidationIssue {
+  variable: string;
+  label?: string;
+  type: InputVarType;
+  reason: string;
+  value: FormInputs[string];
+  hasFieldError: boolean;
+  missingRequiredValue: boolean;
 }
 
 const FORM_LABEL_CLASS =
@@ -291,6 +303,42 @@ function areSameFileIds(files: UploadedFile[] | undefined, ids: string[]): boole
   );
 }
 
+function isSameFileFieldValue(
+  current: FormInputs[string],
+  next: FormInputs[string],
+  isList: boolean
+): boolean {
+  if (isList) {
+    const currentIds = Array.isArray(current) ? (current as string[]) : [];
+    const nextIds = Array.isArray(next) ? (next as string[]) : [];
+    if (currentIds.length !== nextIds.length) return false;
+    return currentIds.every((id, index) => id === nextIds[index]);
+  }
+  return (current as string | undefined) === (next as string | undefined);
+}
+
+function isRequiredInputMissing(input: InputVar, value: FormInputs[string]): boolean {
+  if (!input.required || isCurrentDateTimeInput(input)) return false;
+
+  switch (input.type) {
+    case 'text-input':
+    case 'paragraph':
+    case 'select':
+    case 'datetime':
+      return typeof value !== 'string' || value.trim().length === 0;
+    case 'number':
+      return typeof value !== 'number' || Number.isNaN(value);
+    case 'checkbox':
+      return typeof value !== 'boolean';
+    case 'file':
+      return !getFileIdFromValue(value);
+    case 'file-list':
+      return getFileIdsFromValue(value).length === 0;
+    default:
+      return false;
+  }
+}
+
 function getInputPlaceholder(input: InputVar): string | undefined {
   const placeholder = input.description?.trim();
   return placeholder || undefined;
@@ -298,6 +346,15 @@ function getInputPlaceholder(input: InputVar): string | undefined {
 
 function isCurrentDateTimeInput(input: InputVar): boolean {
   return input.type === 'datetime' && input.default_datetime_mode === 'now';
+}
+
+function waitForNextFrame(): Promise<void> {
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+    return Promise.resolve();
+  }
+  return new Promise(resolve => {
+    window.requestAnimationFrame(() => resolve());
+  });
 }
 
 export function getInputVarSchemaDefaultValue(input: InputVar): FormInputs[string] {
@@ -368,6 +425,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
     // Local controlled state for uploaded files per variable
     const [fileStates, setFileStates] = useState<Record<string, UploadedFile[]>>({});
     const fileStatesRef = useRef(fileStates);
+    const fileUploadRefs = useRef<Record<string, FileUploadRef | null>>({});
     const [loginDialogOpen, setLoginDialogOpen] = useState(false);
     const isFileUploadLoginRequired = fileUploadAccessMode === 'login-required';
     const { data: uploadConfig } = useUploadConfig({
@@ -575,6 +633,71 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
       [form, onChange, startVariables]
     );
 
+    const syncFileValuesFromUploadRefs = useCallback((): FormInputs => {
+      let changed = false;
+
+      startVariables.forEach(input => {
+        if (input.type !== 'file' && input.type !== 'file-list') return;
+
+        const isList = input.type === 'file-list';
+        const currentValue = form.getValues(input.variable);
+        const refUploadedFiles =
+          fileUploadRefs.current[input.variable]?.getUploadedFiles?.() ?? EMPTY_UPLOADED_FILES;
+        const stateUploadedFiles =
+          fileStatesRef.current[input.variable] ?? EMPTY_UPLOADED_FILES;
+        const uploadedFiles =
+          refUploadedFiles.length > 0 ? refUploadedFiles : stateUploadedFiles;
+        const ids = uploadedFiles.map(file => file.id).filter(Boolean);
+        const nextValue = (isList ? ids : (ids[0] ?? undefined)) as FormInputs[string];
+
+        if (ids.length === 0 && getFileIdsFromValue(currentValue).length > 0) {
+          return;
+        }
+
+        if (!isSameFileFieldValue(currentValue, nextValue, isList)) {
+          form.setValue(input.variable, nextValue, {
+            shouldDirty: true,
+            shouldValidate: false,
+          });
+          changed = true;
+        }
+      });
+
+      const values = form.getValues() as FormInputs;
+      if (changed) onChange?.(values);
+      return values;
+    }, [form, onChange, startVariables]);
+
+    const getValidationIssues = useCallback((): WorkflowInputValidationIssue[] => {
+      const values = syncFileValuesFromUploadRefs();
+
+      return startVariables
+        .map((input): WorkflowInputValidationIssue | null => {
+          const value = values[input.variable];
+          const fieldError = form.getFieldState(input.variable).error;
+          const missingRequiredValue = isRequiredInputMissing(input, value);
+
+          if (!fieldError && !missingRequiredValue) {
+            return null;
+          }
+
+          return {
+            variable: input.variable,
+            label: input.label,
+            type: input.type,
+            reason: fieldError?.message
+              ? String(fieldError.message)
+              : missingRequiredValue
+                ? 'required value is missing'
+                : 'validation failed',
+            value,
+            hasFieldError: Boolean(fieldError),
+            missingRequiredValue,
+          };
+        })
+        .filter((issue): issue is WorkflowInputValidationIssue => issue !== null);
+    }, [form, startVariables, syncFileValuesFromUploadRefs]);
+
     const handleLoginConfirm = useCallback(() => {
       setLoginDialogOpen(false);
       const currentSearch = typeof window !== 'undefined' ? window.location.search : '';
@@ -586,6 +709,7 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
       ref,
       () => ({
         submit: () => {
+          syncFileValuesFromUploadRefs();
           form.handleSubmit(
             vals => {
               handleSubmit(vals);
@@ -598,6 +722,9 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
         reset: handleReset,
         setValues: handleSetValues,
         validate: async () => {
+          syncFileValuesFromUploadRefs();
+          await waitForNextFrame();
+          syncFileValuesFromUploadRefs();
           // handleSubmit identifies the form as "attempted to submit",
           // which allows FormMessage to show errors even for untouched fields.
           await form.handleSubmit(
@@ -608,27 +735,24 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
           emitValuesChange();
           return valid;
         },
+        getValues: () => syncFileValuesFromUploadRefs(),
+        getValidationIssues,
       }),
-      [form, handleSubmit, handleReset, handleSetValues, emitValuesChange]
+      [
+        form,
+        handleSubmit,
+        handleReset,
+        handleSetValues,
+        emitValuesChange,
+        syncFileValuesFromUploadRefs,
+        getValidationIssues,
+      ]
     );
 
     const isSameUploadedFiles = useCallback((a: UploadedFile[], b: UploadedFile[]) => {
       if (a.length !== b.length) return false;
       return a.every((item, index) => item.id === b[index]?.id);
     }, []);
-
-    const isSameFileFieldValue = useCallback(
-      (current: FormInputs[string], next: FormInputs[string], isList: boolean) => {
-        if (isList) {
-          const currentIds = Array.isArray(current) ? (current as string[]) : [];
-          const nextIds = Array.isArray(next) ? (next as string[]) : [];
-          if (currentIds.length !== nextIds.length) return false;
-          return currentIds.every((id, index) => id === nextIds[index]);
-        }
-        return (current as string | undefined) === (next as string | undefined);
-      },
-      []
-    );
 
     // Render field by type
     const renderField = useCallback(
@@ -895,6 +1019,13 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
                           </div>
                         ) : (
                           <FileUpload
+                            ref={node => {
+                              if (node) {
+                                fileUploadRefs.current[input.variable] = node;
+                              } else {
+                                delete fileUploadRefs.current[input.variable];
+                              }
+                            }}
                             controlled
                             showSystemSelect
                             allowWorkspaceSwitch={allowWorkspaceSwitch}
@@ -907,7 +1038,9 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
                               setFileStates(prev => {
                                 const prevFiles = prev[input.variable] ?? [];
                                 if (isSameUploadedFiles(prevFiles, files)) return prev;
-                                return { ...prev, [input.variable]: files };
+                                const next = { ...prev, [input.variable]: files };
+                                fileStatesRef.current = next;
+                                return next;
                               });
                               const ids = files.map(f => f.id);
                               const nextValue = (
@@ -944,7 +1077,6 @@ const WorkflowInputForm = React.forwardRef<WorkflowInputFormHandle, WorkflowInpu
         form,
         getFileListMaxCount,
         isFileUploadLoginRequired,
-        isSameFileFieldValue,
         isSameUploadedFiles,
         allowWorkspaceSwitch,
         maxSizeMB,
