@@ -425,6 +425,72 @@ func TestAgentsService_UpdateAgentRuntimeSurfaces_RequiresBuiltinGrantWhenEnable
 	require.Contains(t, err.Error(), "builtin app surface requires at least one grant")
 }
 
+func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsNonPublicWebAppAndAPIGrantsBeforeSQL(t *testing.T) {
+	ctx := webAppStatusTestContext()
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	accountID := "99999999-9999-9999-9999-999999999998"
+	departmentID := "99999999-9999-9999-9999-999999999997"
+
+	tests := []struct {
+		name      string
+		surface   string
+		subject   string
+		subjectID *string
+		want      string
+	}{
+		{
+			name:      "webapp rejects account grant",
+			surface:   "webapp",
+			subject:   "account",
+			subjectID: &accountID,
+			want:      "webapp runtime grants must use public subject",
+		},
+		{
+			name:      "api rejects department grant",
+			surface:   "api",
+			subject:   "department",
+			subjectID: &departmentID,
+			want:      "api runtime grants must use public subject",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
+			defer cleanup()
+
+			repo := &stubWebAppStatusRepository{
+				agent: &Agent{
+					ID:       agentID,
+					TenantID: workspaceID,
+				},
+			}
+			service := &agentsService{
+				agentsRepo:        repo,
+				accountService:    &stubWebAppStatusAccountService{isEditor: true},
+				enterpriseService: &stubWebAppStatusOrganizationService{allowed: true, organizationID: "88888888-8888-8888-8888-888888888888"},
+				db:                db,
+			}
+
+			_, err := service.UpdateAgentRuntimeSurfaces(ctx, agentID.String(), "99999999-9999-9999-9999-999999999999", dto.UpdateAgentRuntimeSurfacesRequest{
+				Surfaces: []dto.UpdateAgentRuntimeSurfaceAuthorization{{
+					Surface: tt.surface,
+					Enabled: true,
+					Grants: []dto.UpdateAgentRuntimeSurfaceGrant{{
+						SubjectType: tt.subject,
+						SubjectID:   tt.subjectID,
+					}},
+				}},
+			})
+
+			require.ErrorIs(t, err, runtimeservice.ErrInvalidInput)
+			require.Contains(t, err.Error(), tt.want)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsAccountGrantOutsideOrganization(t *testing.T) {
 	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
 	defer cleanup()
