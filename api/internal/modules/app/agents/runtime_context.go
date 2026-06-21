@@ -211,6 +211,9 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		response.Fail(c, response.ErrSystemError)
 		return agentRuntimeContext{}, false
 	}
+	if !h.requireWebAppRuntimeAccess(c) {
+		return agentRuntimeContext{}, false
+	}
 	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
 	if err != nil {
 		h.failWebAppRuntime(c, err)

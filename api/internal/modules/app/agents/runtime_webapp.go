@@ -25,7 +25,7 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	if err != nil {
 		return nil, err
 	}
-	if !auth.Evaluate(runtimeauth.PublishedRuntimeSurfaceWebApp, runtimeauth.RuntimeAudience{OrganizationID: auth.OrganizationID}).Allowed {
+	if !webAppRuntimeSurfaceEnabled(auth) {
 		return nil, errAgentWebAppOffline
 	}
 	if ag.AgentsType != "AGENT" {
@@ -75,6 +75,11 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 		VersionUUID:    version.VersionUUID.String(),
 		Config:         *cfg,
 	}, nil
+}
+
+func webAppRuntimeSurfaceEnabled(auth *runtimeauth.ResourceAuthorization) bool {
+	surface, ok := auth.Surface(runtimeauth.PublishedRuntimeSurfaceWebApp)
+	return ok && surface.Enabled
 }
 
 func (s *agentsService) GetWebAppRuntimeCapability(ctx context.Context, webAppID, accountID string, authenticated bool) (*dto.AgentWebAppRuntimeCapabilityResponse, error) {

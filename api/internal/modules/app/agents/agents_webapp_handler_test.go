@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	file_model "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -572,7 +573,62 @@ func TestAgentsHandler_GetWebAppRuntimeCapability_MapsOfflineError(t *testing.T)
 	require.Equal(t, "204008", body["code"])
 }
 
-func TestAgentsHandler_WebAppFileEndpointsRejectOfflineBeforeAuthOrFileValidation(t *testing.T) {
+func TestAgentsHandler_RequireWebAppRuntimeAccessMapsDeniedStates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name       string
+		reason     string
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "login required",
+			reason:     agentWebAppCapabilityReasonLoginRequired,
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "401001",
+		},
+		{
+			name:       "no access",
+			reason:     agentWebAppCapabilityReasonNoAccess,
+			wantStatus: http.StatusForbidden,
+			wantCode:   "403001",
+		},
+		{
+			name:       "disabled",
+			reason:     string(runtimeauth.RuntimeAccessDeniedDisabledSurface),
+			wantStatus: http.StatusForbidden,
+			wantCode:   "204008",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &stubWebAppStatusHandlerService{
+				runtimeCapabilityResp: &dto.AgentWebAppRuntimeCapabilityResponse{
+					Allowed: false,
+					Reason:  tt.reason,
+				},
+			}
+			handler := NewAgentsHandler(service, nil, nil, nil, nil)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Params = gin.Params{{Key: "web_app_id", Value: "33333333-3333-3333-3333-333333333333"}}
+			c.Request = httptest.NewRequest(http.MethodPost, "/webapps/33333333-3333-3333-3333-333333333333/chat", nil)
+			c.Set("account_id", "99999999-9999-9999-9999-999999999999")
+
+			require.False(t, handler.requireWebAppRuntimeAccess(c))
+			require.True(t, service.runtimeCapabilityCalled)
+			require.Equal(t, tt.wantStatus, w.Code)
+
+			var body map[string]interface{}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			require.Equal(t, tt.wantCode, body["code"])
+		})
+	}
+}
+
+func TestAgentsHandler_WebAppFileEndpointsRejectOfflineCapabilityBeforeAuthOrFileValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -622,8 +678,9 @@ func TestAgentsHandler_WebAppFileEndpointsRejectOfflineBeforeAuthOrFileValidatio
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusForbidden, w.Code)
-			require.True(t, service.publishedConfigCalled)
-			require.Equal(t, "33333333-3333-3333-3333-333333333333", service.publishedConfigWebAppID)
+			require.True(t, service.runtimeCapabilityCalled)
+			require.Equal(t, "33333333-3333-3333-3333-333333333333", service.runtimeCapabilityWebAppID)
+			require.False(t, service.publishedConfigCalled)
 			if tt.fileConfigUsed != nil {
 				require.False(t, tt.fileConfigUsed(fileService))
 			}

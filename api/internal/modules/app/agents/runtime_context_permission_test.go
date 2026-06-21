@@ -15,6 +15,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -799,6 +800,21 @@ func (s *webAppRuntimePermissionAppService) GetPublishedAgentWebAppConfig(_ cont
 			AgentID:         s.ids.agentID.String(),
 			ModelParameters: map[string]interface{}{},
 		},
+	}, nil
+}
+
+func (s *webAppRuntimePermissionAppService) GetWebAppRuntimeCapability(_ context.Context, webAppID, accountID string, authenticated bool) (*dto.AgentWebAppRuntimeCapabilityResponse, error) {
+	if webAppID != s.ids.webAppID.String() || accountID != s.ids.accountID.String() {
+		return nil, runtimeservice.ErrNotFound
+	}
+	return &dto.AgentWebAppRuntimeCapabilityResponse{
+		AgentID:        s.ids.agentID.String(),
+		WebAppID:       s.ids.webAppID.String(),
+		WorkspaceID:    s.ids.workspaceID.String(),
+		OrganizationID: s.ids.organizationID.String(),
+		Allowed:        true,
+		Reason:         string(runtimeauth.RuntimeAccessAllowedAccountGrant),
+		VersionUUID:    uuid.NewString(),
 	}, nil
 }
 

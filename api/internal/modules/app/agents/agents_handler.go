@@ -17,6 +17,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -824,9 +825,37 @@ func (h *AgentsHandler) GetWebAppRuntimeCapability(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) requireWebAppRuntimeAccess(c *gin.Context) bool {
+	result, err := h.appService.GetWebAppRuntimeCapability(c.Request.Context(), c.Param("web_app_id"), c.GetString("account_id"), c.GetBool("is_authenticated"))
+	if err != nil {
+		h.failWebAppRuntime(c, err)
+		return false
+	}
+	if result.Allowed {
+		return true
+	}
+
+	switch result.Reason {
+	case agentWebAppCapabilityReasonLoginRequired:
+		response.Fail(c, response.ErrUnauthorized)
+	case agentWebAppCapabilityReasonNoAccess,
+		string(runtimeauth.RuntimeAccessDeniedNoMatchingGrant):
+		response.Fail(c, response.ErrPermissionDenied)
+	case string(runtimeauth.RuntimeAccessDeniedDisabledSurface),
+		string(runtimeauth.RuntimeAccessDeniedMissingSurface):
+		response.Fail(c, response.ErrWebAppOffline)
+	default:
+		response.Fail(c, response.ErrPermissionDenied)
+	}
+	return false
+}
+
 func (h *AgentsHandler) GetWebAppUploadConfig(c *gin.Context) {
 	if h.fileService == nil {
 		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if !h.requireWebAppRuntimeAccess(c) {
 		return
 	}
 	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
@@ -847,6 +876,9 @@ func (h *AgentsHandler) GetWebAppUploadConfig(c *gin.Context) {
 func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 	if h.fileService == nil {
 		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if !h.requireWebAppRuntimeAccess(c) {
 		return
 	}
 	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
@@ -994,6 +1026,9 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		return
 	}
 	webAppID := strings.TrimSpace(c.Param("web_app_id"))
+	if !h.requireWebAppRuntimeAccess(c) {
+		return
+	}
 	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), webAppID)
 	if err != nil {
 		h.failWebAppRuntime(c, err)

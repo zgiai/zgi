@@ -186,7 +186,7 @@ func TestAgentsService_GetPublishedAgentWebAppConfig_AllowsPersistedEnabledWebAp
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestAgentsService_GetPublishedAgentWebAppConfig_RejectsPersistedNonPublicWebAppGrant(t *testing.T) {
+func TestAgentsService_GetPublishedAgentWebAppConfig_AllowsPersistedPrivateWebAppGrant(t *testing.T) {
 	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
 	defer cleanup()
 
@@ -194,6 +194,7 @@ func TestAgentsService_GetPublishedAgentWebAppConfig_RejectsPersistedNonPublicWe
 	webAppID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	accountGrantID := uuid.MustParse("99999999-9999-9999-9999-999999999998")
+	versionID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
 	repo := &stubWebAppStatusRepository{
 		agent: &Agent{
 			ID:           agentID,
@@ -203,12 +204,23 @@ func TestAgentsService_GetPublishedAgentWebAppConfig_RejectsPersistedNonPublicWe
 			WebAppStatus: AgentWebAppStatusActive,
 			EnableAPI:    true,
 		},
+		latestVersion: &AgentPublishedVersion{
+			AgentID:     agentID,
+			WorkspaceID: workspaceID,
+			Version:     "v1",
+			VersionUUID: versionID,
+			ConfigSnapshot: map[string]interface{}{
+				"supports_vision": true,
+			},
+		},
 	}
 	expectAgentRuntimeSurfaceRowsWithGrant(mock, agentID, workspaceID, "webapp", true, "account", accountGrantID)
 	service := &agentsService{agentsRepo: repo, db: db}
 
-	_, err := service.GetPublishedAgentWebAppConfig(context.Background(), webAppID.String())
-	require.ErrorIs(t, err, errAgentWebAppOffline)
+	got, err := service.GetPublishedAgentWebAppConfig(context.Background(), webAppID.String())
+	require.NoError(t, err)
+	require.Equal(t, webAppID.String(), got.WebAppID)
+	require.Equal(t, versionID.String(), got.VersionUUID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
