@@ -641,6 +641,11 @@ assert.match(
 );
 assert.match(
   runtimeAccessTabSource,
+  /t\('policyNote'\)/,
+  'agent publication access should explain that account and department grants only apply to builtin_app until webapp/API private access is decided'
+);
+assert.match(
+  runtimeAccessTabSource,
   /surface:\s*'webapp',[\s\S]*?enabled:\s*webAppEnabled,[\s\S]*?grants:\s*\[\{\s*subject_type:\s*'public',\s*enabled:\s*webAppEnabled\s*\}\]/,
   'agent publication access should keep webapp grants public-only until webapp audience policy is decided'
 );

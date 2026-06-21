@@ -854,6 +854,7 @@ const messages: AgentsMessages = {
     navTitle: '发布访问',
     title: '发布访问',
     description: '控制该智能体发布后的运行入口。内部调用保持可用,用于智能体工具和定时任务。',
+    policyNote: '账号和部门开放对象当前仅用于内置应用展示。WebApp 和 API 服务在私有访问策略确定前仍保持公开开关语义。',
     loadError: '加载发布访问失败',
     saveSuccess: '发布访问已更新',
     saveError: '更新发布访问失败',

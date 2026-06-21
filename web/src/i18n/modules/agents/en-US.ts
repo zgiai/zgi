@@ -885,6 +885,8 @@ const messages = {
     title: 'Publication Access',
     description:
       'Control which published runtime surfaces are enabled for this agent. Internal invocation remains available for agent and scheduled-task calls.',
+    policyNote:
+      'User and department audience grants apply to built-in app visibility only. WebApp and API service access remain public enablement toggles until their private-access policy is approved.',
     loadError: 'Failed to load publication access',
     saveSuccess: 'Publication access updated',
     saveError: 'Failed to update publication access',

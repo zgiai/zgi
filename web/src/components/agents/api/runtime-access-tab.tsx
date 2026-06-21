@@ -229,6 +229,9 @@ export default function RuntimeAccessTab({ agentId, canManage }: RuntimeAccessTa
           <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
             {t('description')}
           </p>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
+            {t('policyNote')}
+          </p>
         </div>
         <Button
           className="h-9 rounded-md"

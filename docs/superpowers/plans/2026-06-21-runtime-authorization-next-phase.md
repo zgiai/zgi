@@ -94,6 +94,7 @@ These changes can be made without changing current public-compatible behavior:
 Progress note, 2026-06-21:
 
 - Store-level and agent-service-entry regressions now prove account/department-style grants for `webapp` and `api` are rejected before persistence. The management contract remains public-only for those surfaces until the private webapp/API decisions above are approved.
+- The agent publication-access UI now states that account and department audience grants apply only to built-in app visibility. `pnpm test:route-access` also asserts the note remains rendered and that `webapp`/`api` updates keep sending public grants only.
 
 Avoid these until decisions are made:
 
