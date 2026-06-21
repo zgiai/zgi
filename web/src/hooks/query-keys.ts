@@ -270,6 +270,7 @@ export const PROFILE_KEYS = {
 export const WEBAPP_KEYS = {
   all: ['webapp'] as const,
   config: (versionUuid: string) => [...WEBAPP_KEYS.all, 'config', versionUuid] as const,
+  capability: (webAppId: string) => [...WEBAPP_KEYS.all, 'capability', webAppId] as const,
   conversations: (versionUuid: string) =>
     [...WEBAPP_KEYS.all, 'conversations', versionUuid] as const,
   conversationList: (versionUuid: string, params: unknown) =>

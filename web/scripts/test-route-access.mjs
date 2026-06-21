@@ -18,6 +18,7 @@ const workLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'work', 'layo
 const workspaceLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'workspace', 'layout.tsx');
 const defaultCustomerPath = path.join(rootDir, 'src', 'customer', 'default.tsx');
 const accountServicePath = path.join(rootDir, 'src', 'services', 'account.service.ts');
+const webAppServicePath = path.join(rootDir, 'src', 'services', 'webapp.service.ts');
 const runnableWebAppsHookPath = path.join(
   rootDir,
   'src',
@@ -731,6 +732,11 @@ assert.doesNotMatch(
 );
 
 const webAppHookSource = fs.readFileSync(webAppHookPath, 'utf8');
+const webAppServiceSource = fs.readFileSync(webAppServicePath, 'utf8');
+const webAppConfigHookSource = webAppHookSource.slice(
+  webAppHookSource.indexOf('export function useWebAppConfig'),
+  webAppHookSource.indexOf('interface UseWebAppCapabilityOptions')
+);
 assert.match(
   webAppHookSource,
   /interface UseWebAppConfigOptions[\s\S]*enabled\?: boolean/,
@@ -740,6 +746,21 @@ assert.match(
   webAppHookSource,
   /enabled:\s*enabled\s*&&\s*Boolean\(versionUuid\)/,
   'webapp config hook should combine caller enabled state with the version id guard'
+);
+assert.match(
+  webAppServiceSource,
+  /getCapability[\s\S]*\/console\/api\/webapps\/\$\{webAppId\}\/capability/,
+  'webapp service should expose the protected capability skeleton endpoint for future gated config flows'
+);
+assert.match(
+  webAppHookSource,
+  /function useWebAppCapability[\s\S]*enabled = false[\s\S]*WebAppService\.getCapability/,
+  'webapp capability hook should exist as an opt-in query before private webapp policy is enabled'
+);
+assert.doesNotMatch(
+  webAppConfigHookSource,
+  /getCapability/,
+  'webapp config hook should not call the protected capability skeleton until private webapp behavior is wired deliberately'
 );
 
 assert.equal(

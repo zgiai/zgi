@@ -104,6 +104,23 @@ export interface WebAppWorkflowConfig {
   };
 }
 
+export type WebAppRuntimeAuthMode = 'authenticated' | 'virtual' | 'migration' | 'unknown';
+
+export interface WebAppRuntimeCapability {
+  agent_id: string;
+  web_app_id: string;
+  workspace_id: string;
+  organization_id: string;
+  surface: 'webapp';
+  allowed: boolean;
+  reason: string;
+  auth_mode: WebAppRuntimeAuthMode;
+  public_only: boolean;
+  private_audience_enabled: boolean;
+  supported_subject_types: string[];
+  version_uuid?: string;
+}
+
 export interface WebAppRunRequest {
   query: string;
   conversation_id?: string;

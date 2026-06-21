@@ -7,6 +7,7 @@ import type {
   WebAppConversationList,
   WebAppConversationDetail,
   WebAppPrecheckResult,
+  WebAppRuntimeCapability,
 } from './types/webapp';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
 import {
@@ -92,6 +93,14 @@ export class WebAppService {
       abortSignal: opts?.abortSignal,
       onClose: opts?.onClose,
     });
+  }
+
+  static async getCapability(
+    webAppId: string
+  ): Promise<WebAppApiResponseData<WebAppRuntimeCapability>> {
+    return webappHttp.get<WebAppApiResponseData<WebAppRuntimeCapability>>(
+      `/console/api/webapps/${webAppId}/capability`
+    );
   }
 
   static async precheck(
