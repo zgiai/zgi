@@ -100,6 +100,7 @@ Progress note, 2026-06-21:
 - The frontend service layer now has typed `WebAppService.getCapability` and an opt-in `useWebAppCapability` query. Existing `useWebAppConfig` still does not call the capability endpoint; `pnpm test:route-access` locks that separation until private webapp behavior is wired deliberately.
 - Route contract coverage now also proves the webapp capability endpoint stays off the public webapp route group and remains registered after `WebAppAuthMiddleware`. This keeps the future private-capability handshake from being accidentally exposed while `/config` remains public-compatible.
 - API key runtime validation now evaluates the `api` surface with the public-compatible bearer-key audience instead of reducing persisted authorization to a legacy boolean. If stale or manually inserted account/department API grants exist, the external API entry fails closed until API caller identity semantics are decided.
+- Public webapp config/runtime validation now applies the same public-compatible audience rule to the `webapp` surface. Explicitly enabled/open webapp surfaces remain compatible, but stale account/department webapp grants fail closed until the private webapp handshake is implemented.
 
 Avoid these until decisions are made:
 

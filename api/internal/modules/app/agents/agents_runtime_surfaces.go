@@ -121,15 +121,23 @@ func (s *agentsService) UpdateAgentRuntimeSurfaces(ctx context.Context, agentID,
 }
 
 func (s *agentsService) publishedRuntimePolicyForAgent(ctx context.Context, ag *Agent) (runtimeauth.PublishedRuntimePolicy, error) {
-	if ag == nil {
-		return runtimeauth.PublishedRuntimePolicy{}, fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
-	}
-	fallback := runtimeauth.PolicyFromAgentFields(string(ag.WebAppStatus), ag.EnableAPI)
-	auth, err := runtimeauth.NewStore(s.db).GetResourceAuthorization(ctx, runtimeauth.PublishedRuntimeResourceAgent, ag.ID, fallback)
+	fallback, auth, err := s.publishedRuntimeAuthorizationForAgent(ctx, ag)
 	if err != nil {
 		return runtimeauth.PublishedRuntimePolicy{}, err
 	}
 	return runtimeauth.PolicyFromAuthorization(fallback, auth), nil
+}
+
+func (s *agentsService) publishedRuntimeAuthorizationForAgent(ctx context.Context, ag *Agent) (runtimeauth.PublishedRuntimePolicy, *runtimeauth.ResourceAuthorization, error) {
+	if ag == nil {
+		return runtimeauth.PublishedRuntimePolicy{}, nil, fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
+	}
+	fallback := runtimeauth.PolicyFromAgentFields(string(ag.WebAppStatus), ag.EnableAPI)
+	auth, err := runtimeauth.NewStore(s.db).GetResourceAuthorization(ctx, runtimeauth.PublishedRuntimeResourceAgent, ag.ID, fallback)
+	if err != nil {
+		return runtimeauth.PublishedRuntimePolicy{}, nil, err
+	}
+	return fallback, auth, nil
 }
 
 func (s *agentsService) ensureCanViewAgent(ctx context.Context, ag *Agent, accountID string) error {

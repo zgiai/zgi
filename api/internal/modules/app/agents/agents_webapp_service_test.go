@@ -156,6 +156,60 @@ func TestAgentsService_GetPublishedAgentWebAppConfig_RejectsPersistedDisabledWeb
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestAgentsService_GetPublishedAgentWebAppConfig_AllowsPersistedEnabledWebAppSurface(t *testing.T) {
+	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
+	defer cleanup()
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	webAppID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:           agentID,
+			TenantID:     workspaceID,
+			WebAppID:     webAppID,
+			AgentsType:   "AGENT",
+			WebAppStatus: AgentWebAppStatusInactive,
+			EnableAPI:    true,
+		},
+	}
+	expectAgentRuntimeSurfaceRows(mock, agentID, workspaceID, []agentRuntimeSurfaceExpectation{{
+		surface: "webapp",
+		enabled: true,
+	}})
+	service := &agentsService{agentsRepo: repo, db: db}
+
+	_, err := service.GetPublishedAgentWebAppConfig(context.Background(), webAppID.String())
+	require.ErrorIs(t, err, errAgentWebAppNotPublished)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAgentsService_GetPublishedAgentWebAppConfig_RejectsPersistedNonPublicWebAppGrant(t *testing.T) {
+	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
+	defer cleanup()
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	webAppID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	accountGrantID := uuid.MustParse("99999999-9999-9999-9999-999999999998")
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:           agentID,
+			TenantID:     workspaceID,
+			WebAppID:     webAppID,
+			AgentsType:   "AGENT",
+			WebAppStatus: AgentWebAppStatusActive,
+			EnableAPI:    true,
+		},
+	}
+	expectAgentRuntimeSurfaceRowsWithGrant(mock, agentID, workspaceID, "webapp", true, "account", accountGrantID)
+	service := &agentsService{agentsRepo: repo, db: db}
+
+	_, err := service.GetPublishedAgentWebAppConfig(context.Background(), webAppID.String())
+	require.ErrorIs(t, err, errAgentWebAppOffline)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAgentsService_GetAgentConfig_DeniedDoesNotCreateDraftConfig(t *testing.T) {
 	ctx := webAppStatusTestContext()
 	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
@@ -725,6 +779,58 @@ func expectAgentRuntimeSurfaceRows(mock sqlmock.Sqlmock, agentID, workspaceID uu
 			"updated_at",
 			"deleted_at",
 		}))
+}
+
+func expectAgentRuntimeSurfaceRowsWithGrant(mock sqlmock.Sqlmock, agentID, workspaceID uuid.UUID, surfaceName string, enabled bool, subjectType string, subjectID uuid.UUID) {
+	surfaceID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Second)
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surfaces" WHERE resource_type = \$1 AND resource_id = \$2 AND deleted_at IS NULL ORDER BY surface ASC`).
+		WithArgs("agent", agentID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"resource_type",
+			"resource_id",
+			"organization_id",
+			"workspace_id",
+			"surface",
+			"enabled",
+			"compatibility_source",
+			"created_at",
+			"updated_at",
+			"deleted_at",
+		}).AddRow(
+			surfaceID.String(),
+			"agent",
+			agentID.String(),
+			uuid.New().String(),
+			workspaceID.String(),
+			surfaceName,
+			enabled,
+			"grant",
+			now,
+			now,
+			nil,
+		))
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surface_grants" WHERE surface_id IN \(.+\) AND deleted_at IS NULL ORDER BY subject_type ASC, subject_id ASC, created_at ASC`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"surface_id",
+			"subject_type",
+			"subject_id",
+			"enabled",
+			"created_at",
+			"updated_at",
+			"deleted_at",
+		}).AddRow(
+			uuid.NewString(),
+			surfaceID.String(),
+			subjectType,
+			subjectID.String(),
+			true,
+			now,
+			now,
+			nil,
+		))
 }
 
 func runtimeSurfaceTestMap(surfaces []dto.AgentRuntimeSurfaceAuthorization) map[string]dto.AgentRuntimeSurfaceAuthorization {

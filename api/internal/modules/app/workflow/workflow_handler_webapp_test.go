@@ -6,14 +6,21 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
+	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 type mockCurrentWorkspaceGetter struct {
@@ -110,6 +117,63 @@ func TestRejectInactiveWebAppReturnsOfflineError(t *testing.T) {
 	}
 }
 
+func TestRejectInactiveWebAppAllowsPersistedEnabledWebAppSurface(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, mock := setWorkflowWebAppRuntimeMockDB(t)
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	expectWorkflowWebAppRuntimeSurfaceRows(mock, agentID, workspaceID, "webapp", true, nil)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/workflows/web-app-id/run", nil)
+
+	rejected := rejectInactiveWebApp(ctx, &agents.Agent{
+		ID:           agentID,
+		TenantID:     workspaceID,
+		WebAppStatus: agents.AgentWebAppStatusInactive,
+	}, "web-app-id")
+	if rejected {
+		t.Fatalf("rejectInactiveWebApp returned true, want persisted enabled webapp surface to stay public-compatible")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
+func TestRejectInactiveWebAppRejectsPersistedNonPublicWebAppGrant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, mock := setWorkflowWebAppRuntimeMockDB(t)
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	accountGrantID := uuid.MustParse("99999999-9999-9999-9999-999999999998")
+	expectWorkflowWebAppRuntimeSurfaceRows(mock, agentID, workspaceID, "webapp", true, &workflowWebAppRuntimeGrantExpectation{
+		subjectType: "account",
+		subjectID:   accountGrantID,
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/workflows/web-app-id/run", nil)
+
+	rejected := rejectInactiveWebApp(ctx, &agents.Agent{
+		ID:           agentID,
+		TenantID:     workspaceID,
+		WebAppStatus: agents.AgentWebAppStatusActive,
+	}, "web-app-id")
+	if !rejected {
+		t.Fatalf("rejectInactiveWebApp returned false, want stale non-public webapp grant to fail closed")
+	}
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
 func TestResolveWebAppRunWorkspaceID_PrefersCurrentWorkspace(t *testing.T) {
 	workspaceID, err := resolveWebAppRunWorkspaceID(
 		context.Background(),
@@ -125,6 +189,93 @@ func TestResolveWebAppRunWorkspaceID_PrefersCurrentWorkspace(t *testing.T) {
 	if workspaceID != "ws-current" {
 		t.Fatalf("workspaceID = %q, want %q", workspaceID, "ws-current")
 	}
+}
+
+type workflowWebAppRuntimeGrantExpectation struct {
+	subjectType string
+	subjectID   uuid.UUID
+}
+
+func setWorkflowWebAppRuntimeMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
+	t.Helper()
+
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sqlmock: %v", err)
+	}
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		Conn:                 sqlDB,
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{SkipDefaultTransaction: true})
+	if err != nil {
+		_ = sqlDB.Close()
+		t.Fatalf("open gorm: %v", err)
+	}
+
+	oldDB := database.GetDB()
+	database.SetDB(db)
+	t.Cleanup(func() {
+		database.SetDB(oldDB)
+		_ = sqlDB.Close()
+	})
+	return db, mock
+}
+
+func expectWorkflowWebAppRuntimeSurfaceRows(mock sqlmock.Sqlmock, agentID, workspaceID uuid.UUID, surfaceName string, enabled bool, grant *workflowWebAppRuntimeGrantExpectation) {
+	surfaceID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Second)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surfaces" WHERE resource_type = $1 AND resource_id = $2 AND deleted_at IS NULL ORDER BY surface ASC`)).
+		WithArgs(string(runtimeauth.PublishedRuntimeResourceAgent), agentID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"resource_type",
+			"resource_id",
+			"organization_id",
+			"workspace_id",
+			"surface",
+			"enabled",
+			"compatibility_source",
+			"created_at",
+			"updated_at",
+			"deleted_at",
+		}).AddRow(
+			surfaceID.String(),
+			string(runtimeauth.PublishedRuntimeResourceAgent),
+			agentID.String(),
+			uuid.New().String(),
+			workspaceID.String(),
+			surfaceName,
+			enabled,
+			runtimeauth.PublishedRuntimeSourceGrant,
+			now,
+			now,
+			nil,
+		))
+
+	grantRows := sqlmock.NewRows([]string{
+		"id",
+		"surface_id",
+		"subject_type",
+		"subject_id",
+		"enabled",
+		"created_at",
+		"updated_at",
+		"deleted_at",
+	})
+	if grant != nil {
+		grantRows.AddRow(
+			uuid.NewString(),
+			surfaceID.String(),
+			grant.subjectType,
+			grant.subjectID.String(),
+			true,
+			now,
+			now,
+			nil,
+		)
+	}
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surface_grants" WHERE surface_id IN \(.+\) AND deleted_at IS NULL ORDER BY subject_type ASC, subject_id ASC, created_at ASC`).
+		WillReturnRows(grantRows)
 }
 
 func TestResolveWebAppRunWorkspaceID_FallsBackToAgentWorkspace(t *testing.T) {

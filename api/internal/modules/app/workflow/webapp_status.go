@@ -13,13 +13,13 @@ import (
 )
 
 func rejectInactiveWebApp(c *gin.Context, agent *agents.Agent, webAppID string) bool {
-	policy, err := webAppRuntimePolicyForAgent(c.Request.Context(), agent)
+	allowed, err := publicCompatibleWebAppRuntimeAllowed(c.Request.Context(), agent)
 	if err != nil {
 		logger.Error("Failed to resolve web app runtime policy", err)
 		response.Fail(c, response.ErrSystemError)
 		return true
 	}
-	if policy.Allows(runtimeauth.PublishedRuntimeSurfaceWebApp) {
+	if allowed {
 		return false
 	}
 
@@ -31,9 +31,9 @@ func rejectInactiveWebApp(c *gin.Context, agent *agents.Agent, webAppID string) 
 	return true
 }
 
-func webAppRuntimePolicyForAgent(ctx context.Context, agent *agents.Agent) (runtimeauth.PublishedRuntimePolicy, error) {
+func publicCompatibleWebAppRuntimeAllowed(ctx context.Context, agent *agents.Agent) (bool, error) {
 	if agent == nil {
-		return runtimeauth.PublishedRuntimePolicy{}, fmt.Errorf("agent is required")
+		return false, fmt.Errorf("agent is required")
 	}
 	fallback := runtimeauth.PolicyFromAgentFields(string(agent.WebAppStatus), agent.EnableAPI)
 	auth, err := runtimeauth.NewStore(database.GetDB()).GetResourceAuthorization(
@@ -43,7 +43,7 @@ func webAppRuntimePolicyForAgent(ctx context.Context, agent *agents.Agent) (runt
 		fallback,
 	)
 	if err != nil {
-		return runtimeauth.PublishedRuntimePolicy{}, err
+		return false, err
 	}
-	return runtimeauth.PolicyFromAuthorization(fallback, auth), nil
+	return auth.Evaluate(runtimeauth.PublishedRuntimeSurfaceWebApp, runtimeauth.RuntimeAudience{}).Allowed, nil
 }

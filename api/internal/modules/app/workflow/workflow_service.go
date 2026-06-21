@@ -18,7 +18,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
-	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -3394,11 +3393,11 @@ func (s *WorkflowService) RunWorkflowByWebAppID(ctx context.Context, webAppID st
 		logger.Error("Failed to get agent by web_app_id", err)
 		return nil, fmt.Errorf("agent not found")
 	}
-	policy, err := webAppRuntimePolicyForAgent(ctx, agent)
+	webAppAllowed, err := publicCompatibleWebAppRuntimeAllowed(ctx, agent)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve web app runtime policy: %w", err)
 	}
-	if !policy.Allows(runtimeauth.PublishedRuntimeSurfaceWebApp) {
+	if !webAppAllowed {
 		logger.Warn("Web app is offline", map[string]interface{}{
 			"web_app_id": webAppID,
 			"agent_id":   agent.ID.String(),

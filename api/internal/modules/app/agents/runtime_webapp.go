@@ -14,11 +14,11 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	if err != nil {
 		return nil, err
 	}
-	policy, err := s.publishedRuntimePolicyForAgent(ctx, ag)
+	_, auth, err := s.publishedRuntimeAuthorizationForAgent(ctx, ag)
 	if err != nil {
 		return nil, err
 	}
-	if !policy.Allows(runtimeauth.PublishedRuntimeSurfaceWebApp) {
+	if !auth.Evaluate(runtimeauth.PublishedRuntimeSurfaceWebApp, runtimeauth.RuntimeAudience{}).Allowed {
 		return nil, errAgentWebAppOffline
 	}
 	if ag.AgentsType != "AGENT" {
