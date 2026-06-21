@@ -91,6 +91,10 @@ These changes can be made without changing current public-compatible behavior:
 - Add frontend copy or disabled UI affordances that explain why webapp/API audience remains public-only.
 - Improve browser/manual regression scripts for the current MVP surface contract.
 
+Progress note, 2026-06-21:
+
+- Store-level and agent-service-entry regressions now prove account/department-style grants for `webapp` and `api` are rejected before persistence. The management contract remains public-only for those surfaces until the private webapp/API decisions above are approved.
+
 Avoid these until decisions are made:
 
 - Accepting account or department grants for `webapp` or `api` writes.
