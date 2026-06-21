@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AppWindow, Globe2, KeyRound, Plus, Save, Workflow } from 'lucide-react';
+import { AppWindow, Globe2, KeyRound, Plus, Save, Users, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,7 +26,7 @@ import {
   type RuntimeGrantSubjectLabels,
 } from '@/components/runtime-auth/runtime-grant-subject-row';
 
-const EDITABLE_BUILTIN_SUBJECTS = ['organization', 'department', 'account'] as const;
+const EDITABLE_AUDIENCE_SUBJECTS = ['organization', 'department', 'account'] as const;
 const SOURCE_LABEL_KEYS: Record<
   string,
   'sources.legacy_agent_fields' | 'sources.grant' | 'sources.system_default'
@@ -36,7 +36,8 @@ const SOURCE_LABEL_KEYS: Record<
   system_default: 'sources.system_default',
 };
 
-type EditableBuiltinSubject = (typeof EDITABLE_BUILTIN_SUBJECTS)[number];
+type EditableAudienceSubject = (typeof EDITABLE_AUDIENCE_SUBJECTS)[number];
+type WebAppAudienceMode = 'public' | 'scoped';
 
 interface RuntimeAccessTabProps {
   agentId: string;
@@ -44,14 +45,18 @@ interface RuntimeAccessTabProps {
 }
 
 interface EditableGrant {
-  subject_type: EditableBuiltinSubject;
+  subject_type: EditableAudienceSubject;
   subject_id: string;
 }
 
-function isEditableBuiltinSubject(
+function defaultOrganizationGrant(): EditableGrant {
+  return { subject_type: 'organization', subject_id: '' };
+}
+
+function isEditableAudienceSubject(
   subject: AgentRuntimeGrantSubject
-): subject is EditableBuiltinSubject {
-  return EDITABLE_BUILTIN_SUBJECTS.includes(subject as EditableBuiltinSubject);
+): subject is EditableAudienceSubject {
+  return EDITABLE_AUDIENCE_SUBJECTS.includes(subject as EditableAudienceSubject);
 }
 
 function normalizeSubjectId(grant: EditableGrant): string | null {
@@ -65,14 +70,33 @@ function findSurface(
   return surfaces?.find(surface => surface.surface === name) ?? null;
 }
 
+function editableAudienceGrants(surface: AgentRuntimeSurfaceAuthorization | null): EditableGrant[] {
+  const grants: EditableGrant[] = [];
+  for (const grant of surface?.grants ?? []) {
+    if (grant.enabled && isEditableAudienceSubject(grant.subject_type)) {
+      grants.push({
+        subject_type: grant.subject_type,
+        subject_id: grant.subject_type === 'organization' ? '' : (grant.subject_id ?? ''),
+      });
+    }
+  }
+  return grants;
+}
+
+function surfaceHasPublicGrant(surface: AgentRuntimeSurfaceAuthorization | null): boolean {
+  return Boolean(
+    surface?.grants.some(grant => grant.enabled && grant.subject_type === 'public')
+  );
+}
+
 export default function RuntimeAccessTab({ agentId, canManage }: RuntimeAccessTabProps) {
   const t = useT('agents.runtimeAccess');
   const [webAppEnabled, setWebAppEnabled] = useState(false);
+  const [webAppAudienceMode, setWebAppAudienceMode] = useState<WebAppAudienceMode>('public');
+  const [webAppGrants, setWebAppGrants] = useState<EditableGrant[]>([defaultOrganizationGrant()]);
   const [apiEnabled, setApiEnabled] = useState(false);
   const [builtinEnabled, setBuiltinEnabled] = useState(false);
-  const [builtinGrants, setBuiltinGrants] = useState<EditableGrant[]>([
-    { subject_type: 'organization', subject_id: '' },
-  ]);
+  const [builtinGrants, setBuiltinGrants] = useState<EditableGrant[]>([defaultOrganizationGrant()]);
 
   const { data, error, isLoading, isFetching } = useAgentRuntimeSurfaces(agentId);
   const updateMutation = useUpdateAgentRuntimeSurfaces();
@@ -91,38 +115,50 @@ export default function RuntimeAccessTab({ agentId, canManage }: RuntimeAccessTa
     setApiEnabled(apiSurface?.enabled ?? false);
     setBuiltinEnabled(builtinSurface?.enabled ?? false);
 
-    const editableGrants: EditableGrant[] = [];
-    for (const grant of builtinSurface?.grants ?? []) {
-      if (grant.enabled && isEditableBuiltinSubject(grant.subject_type)) {
-        editableGrants.push({
-          subject_type: grant.subject_type,
-          subject_id: grant.subject_type === 'organization' ? '' : (grant.subject_id ?? ''),
-        });
-      }
-    }
+    const webAppEditableGrants = editableAudienceGrants(webAppSurface);
+    const webAppHasEnabledGrants = Boolean(webAppSurface?.grants.some(grant => grant.enabled));
+    setWebAppAudienceMode(
+      surfaceHasPublicGrant(webAppSurface) || !webAppHasEnabledGrants ? 'public' : 'scoped'
+    );
+    setWebAppGrants(
+      webAppEditableGrants.length > 0 ? webAppEditableGrants : [defaultOrganizationGrant()]
+    );
+
+    const builtinEditableGrants = editableAudienceGrants(builtinSurface);
     setBuiltinGrants(
-      editableGrants.length > 0
-        ? editableGrants
-        : [{ subject_type: 'organization', subject_id: '' }]
+      builtinEditableGrants.length > 0 ? builtinEditableGrants : [defaultOrganizationGrant()]
     );
   }, [apiSurface, builtinSurface, runtimeData, webAppSurface]);
 
-  const updateGrant = (index: number, next: EditableGrant) => {
+  const updateWebAppGrant = (index: number, next: EditableGrant) => {
+    setWebAppGrants(current => current.map((grant, i) => (i === index ? next : grant)));
+  };
+
+  const addWebAppGrant = () => {
+    setWebAppGrants(current => [...current, { subject_type: 'department', subject_id: '' }]);
+  };
+
+  const removeWebAppGrant = (index: number) => {
+    setWebAppGrants(current => current.filter((_, i) => i !== index));
+  };
+
+  const updateBuiltinGrant = (index: number, next: EditableGrant) => {
     setBuiltinGrants(current => current.map((grant, i) => (i === index ? next : grant)));
   };
 
-  const addGrant = () => {
+  const addBuiltinGrant = () => {
     setBuiltinGrants(current => [...current, { subject_type: 'department', subject_id: '' }]);
   };
 
-  const removeGrant = (index: number) => {
+  const removeBuiltinGrant = (index: number) => {
     setBuiltinGrants(current => current.filter((_, i) => i !== index));
   };
 
-  const buildBuiltinGrants = (): UpdateAgentRuntimeSurfaceGrant[] | null => {
-    if (!builtinEnabled) return [];
-
-    const normalized = builtinGrants.map(grant => ({
+  const buildEditableAudienceGrants = (
+    grants: EditableGrant[],
+    grantRequiredMessage: string
+  ): UpdateAgentRuntimeSurfaceGrant[] | null => {
+    const normalized = grants.map(grant => ({
       subject_type: grant.subject_type,
       subject_id: normalizeSubjectId(grant),
       enabled: true,
@@ -144,10 +180,23 @@ export default function RuntimeAccessTab({ agentId, canManage }: RuntimeAccessTa
       dedupeKeys.add(key);
     }
     if (normalized.length === 0) {
-      toast.error(t('validation.grantRequired'));
+      toast.error(grantRequiredMessage);
       return null;
     }
     return normalized;
+  };
+
+  const buildWebAppGrants = (): UpdateAgentRuntimeSurfaceGrant[] | null => {
+    if (!webAppEnabled) return [];
+    if (webAppAudienceMode === 'public') {
+      return [{ subject_type: 'public', enabled: true }];
+    }
+    return buildEditableAudienceGrants(webAppGrants, t('validation.webappGrantRequired'));
+  };
+
+  const buildBuiltinGrants = (): UpdateAgentRuntimeSurfaceGrant[] | null => {
+    if (!builtinEnabled) return [];
+    return buildEditableAudienceGrants(builtinGrants, t('validation.grantRequired'));
   };
 
   const handleSave = async () => {
@@ -155,6 +204,8 @@ export default function RuntimeAccessTab({ agentId, canManage }: RuntimeAccessTa
       toast.error(t('validation.manageRequired'));
       return;
     }
+    const webApp = buildWebAppGrants();
+    if (webApp === null) return;
     const builtin = buildBuiltinGrants();
     if (builtin === null) return;
 
@@ -165,7 +216,7 @@ export default function RuntimeAccessTab({ agentId, canManage }: RuntimeAccessTa
           {
             surface: 'webapp',
             enabled: webAppEnabled,
-            grants: [{ subject_type: 'public', enabled: webAppEnabled }],
+            grants: webApp,
           },
           {
             surface: 'api',
@@ -301,6 +352,73 @@ export default function RuntimeAccessTab({ agentId, canManage }: RuntimeAccessTa
           <div
             className={cn(
               'rounded-lg border border-border/80 bg-background p-4 transition-opacity',
+              !webAppEnabled && 'opacity-60'
+            )}
+          >
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <Label className="text-sm font-semibold text-foreground">
+                  {t('grants.webappTitle')}
+                </Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t('grants.webappDescription')}
+                </p>
+              </div>
+              {webAppAudienceMode === 'scoped' ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-md"
+                  disabled={!canManage || !webAppEnabled}
+                  onClick={addWebAppGrant}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t('actions.addGrant')}
+                </Button>
+              ) : null}
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <AudienceModeButton
+                icon={<Globe2 className="h-4 w-4" />}
+                title={t('grants.webappPublic')}
+                description={t('grants.webappPublicDescription')}
+                selected={webAppAudienceMode === 'public'}
+                disabled={!canManage || !webAppEnabled}
+                onClick={() => setWebAppAudienceMode('public')}
+              />
+              <AudienceModeButton
+                icon={<Users className="h-4 w-4" />}
+                title={t('grants.webappScoped')}
+                description={t('grants.webappScopedDescription')}
+                selected={webAppAudienceMode === 'scoped'}
+                disabled={!canManage || !webAppEnabled}
+                onClick={() => setWebAppAudienceMode('scoped')}
+              />
+            </div>
+
+            {webAppAudienceMode === 'scoped' ? (
+              <div className="mt-3 space-y-2">
+                {webAppGrants.map((grant, index) => (
+                  <RuntimeGrantSubjectRow
+                    key={`webapp-${grant.subject_type}-${grant.subject_id}-${index}`}
+                    subjectType={grant.subject_type}
+                    subjectId={grant.subject_id}
+                    disabled={!canManage || !webAppEnabled}
+                    canRemove={webAppGrants.length > 1}
+                    labels={grantSubjectLabels}
+                    onChange={next => updateWebAppGrant(index, next)}
+                    onRemove={() => removeWebAppGrant(index)}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div
+            className={cn(
+              'rounded-lg border border-border/80 bg-background p-4 transition-opacity',
               !builtinEnabled && 'opacity-60'
             )}
           >
@@ -315,7 +433,7 @@ export default function RuntimeAccessTab({ agentId, canManage }: RuntimeAccessTa
                 size="sm"
                 className="h-8 rounded-md"
                 disabled={!canManage || !builtinEnabled}
-                onClick={addGrant}
+                onClick={addBuiltinGrant}
               >
                 <Plus className="h-3.5 w-3.5" />
                 {t('actions.addGrant')}
@@ -331,8 +449,8 @@ export default function RuntimeAccessTab({ agentId, canManage }: RuntimeAccessTa
                   disabled={!canManage || !builtinEnabled}
                   canRemove={builtinGrants.length > 1}
                   labels={grantSubjectLabels}
-                  onChange={next => updateGrant(index, next)}
-                  onRemove={() => removeGrant(index)}
+                  onChange={next => updateBuiltinGrant(index, next)}
+                  onRemove={() => removeBuiltinGrant(index)}
                 />
               ))}
             </div>
@@ -389,5 +507,50 @@ function SurfacePanel({
         {source}
       </div>
     </div>
+  );
+}
+
+function AudienceModeButton({
+  icon,
+  title,
+  description,
+  selected,
+  disabled,
+  onClick,
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  selected: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-pressed={selected}
+      onClick={onClick}
+      className={cn(
+        'flex min-h-20 items-start gap-3 rounded-md border p-3 text-left transition-colors',
+        selected
+          ? 'border-primary bg-primary/5 text-foreground'
+          : 'border-border/80 bg-muted/20 text-muted-foreground hover:border-primary/40 hover:bg-primary/5',
+        disabled && 'cursor-not-allowed opacity-60 hover:border-border/80 hover:bg-muted/20'
+      )}
+    >
+      <span
+        className={cn(
+          'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
+          selected ? 'border-primary/20 bg-primary/10 text-primary' : 'border-border bg-background'
+        )}
+      >
+        {icon}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold">{title}</span>
+        <span className="mt-1 block text-xs leading-5">{description}</span>
+      </span>
+    </button>
   );
 }

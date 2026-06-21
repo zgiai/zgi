@@ -886,7 +886,7 @@ const messages = {
     description:
       'Control which published runtime surfaces are enabled for this agent. Internal invocation remains available for agent and scheduled-task calls.',
     policyNote:
-      'User and department audience grants apply to built-in app visibility only. WebApp and API service access remain public enablement toggles until their private-access policy is approved.',
+      'WebApp and built-in app can be limited to the organization, departments, or accounts. API service is controlled only by its enablement switch in this phase.',
     loadError: 'Failed to load publication access',
     saveSuccess: 'Publication access updated',
     saveError: 'Failed to update publication access',
@@ -910,6 +910,12 @@ const messages = {
       system_default: 'Default',
     },
     grants: {
+      webappTitle: 'WebApp audience',
+      webappDescription: 'Choose whether the published WebApp is public or limited to internal audiences.',
+      webappPublic: 'Public access',
+      webappPublicDescription: 'Anyone with the WebApp link can open it.',
+      webappScoped: 'Specific audiences',
+      webappScopedDescription: 'Only selected organization members or departments can use it.',
       title: 'Built-in app audience',
       description: 'Grant app-center access to the organization, a department, or an account.',
       subjectIdPlaceholder: 'Account or department ID',
@@ -939,6 +945,7 @@ const messages = {
     validation: {
       subjectIdRequired: 'Account and department grants need an ID',
       duplicateGrant: 'Duplicate audience grant',
+      webappGrantRequired: 'Add at least one WebApp audience grant',
       grantRequired: 'Add at least one built-in app audience grant',
       manageRequired: 'Agent manage permission is required',
     },

@@ -643,22 +643,32 @@ assert.match(
 assert.match(
   runtimeAccessTabSource,
   /t\('policyNote'\)/,
-  'agent publication access should explain that account and department grants only apply to builtin_app until webapp/API private access is decided'
+  'agent publication access should explain the current WebApp, built-in app, and API audience policy'
 );
 assert.match(
   runtimeAccessTabSource,
-  /surface:\s*'webapp',[\s\S]*?enabled:\s*webAppEnabled,[\s\S]*?grants:\s*\[\{\s*subject_type:\s*'public',\s*enabled:\s*webAppEnabled\s*\}\]/,
-  'agent publication access should keep webapp grants public-only until webapp audience policy is decided'
+  /type WebAppAudienceMode = 'public' \| 'scoped'/,
+  'agent publication access should let WebApp switch between public and scoped audiences'
+);
+assert.match(
+  runtimeAccessTabSource,
+  /const buildWebAppGrants = \(\): UpdateAgentRuntimeSurfaceGrant\[\] \| null => \{[\s\S]*?webAppAudienceMode === 'public'[\s\S]*?subject_type:\s*'public'[\s\S]*?buildEditableAudienceGrants\(webAppGrants/,
+  'agent publication access should build either public or editable scoped WebApp grants'
+);
+assert.match(
+  runtimeAccessTabSource,
+  /surface:\s*'webapp',[\s\S]*?enabled:\s*webAppEnabled,[\s\S]*?grants:\s*webApp/,
+  'agent publication access should send the selected WebApp audience grants'
 );
 assert.match(
   runtimeAccessTabSource,
   /surface:\s*'api',[\s\S]*?enabled:\s*apiEnabled,[\s\S]*?grants:\s*\[\{\s*subject_type:\s*'public',\s*enabled:\s*apiEnabled\s*\}\]/,
-  'agent publication access should keep API grants public-only until API audience policy is decided'
+  'agent publication access should keep API grants public-only while API audience policy is out of scope'
 );
 assert.match(
   runtimeAccessTabSource,
   /surface:\s*'builtin_app',[\s\S]*?enabled:\s*builtinEnabled,[\s\S]*?grants:\s*builtin/,
-  'agent publication access should send editable audience grants only for builtin_app'
+  'agent publication access should send editable audience grants for builtin_app'
 );
 assert.match(
   runtimeAccessTabSource,
@@ -667,13 +677,13 @@ assert.match(
 );
 assert.doesNotMatch(
   runtimeAccessTabSource,
-  /\b(setWebAppGrants|setApiGrants|webAppGrants|apiGrants)\b/,
-  'agent publication access should not expose editable webapp or API audience grant state before product policy exists'
+  /\b(setApiGrants|apiGrants)\b/,
+  'agent publication access should not expose editable API audience grant state while API private access is out of scope'
 );
 assert.equal(
   (runtimeAccessTabSource.match(/<RuntimeGrantSubjectRow\b/g) ?? []).length,
-  1,
-  'agent publication access should render the editable subject row only inside the builtin_app grant list'
+  2,
+  'agent publication access should render editable subject rows for WebApp and builtin_app grant lists'
 );
 
 for (const appCenterPath of appCenterPaths) {
