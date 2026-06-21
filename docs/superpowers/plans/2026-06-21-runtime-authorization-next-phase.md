@@ -101,6 +101,7 @@ Progress note, 2026-06-21:
 - Route contract coverage now also proves the webapp capability endpoint stays off the public webapp route group and remains registered after `WebAppAuthMiddleware`. This keeps the future private-capability handshake from being accidentally exposed while `/config` remains public-compatible.
 - API key runtime validation now evaluates the `api` surface with the public-compatible bearer-key audience instead of reducing persisted authorization to a legacy boolean. If stale or manually inserted account/department API grants exist, the external API entry fails closed until API caller identity semantics are decided.
 - Public webapp config/runtime validation now applies the same public-compatible audience rule to the `webapp` surface. Explicitly enabled/open webapp surfaces remain compatible, but stale account/department webapp grants fail closed until the private webapp handshake is implemented.
+- Verification pass: frontend `pnpm test:route-access` and `pnpm type-check` pass; targeted backend middleware/agents/workflow/routes tests pass; zgi-c Docker API, web, and nginx health checks pass; browser smoke confirms organization-mode chat/image/app/settings are usable and workspace asset routes show the no-workspace state.
 
 Avoid these until decisions are made:
 
