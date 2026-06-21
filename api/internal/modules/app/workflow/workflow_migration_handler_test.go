@@ -76,6 +76,83 @@ func TestMigrateUserMapsSameAccountError(t *testing.T) {
 	requireWorkflowRunAccessCode(t, recorder, response.ErrSameAccountMigration)
 }
 
+func TestMigrateUserForWebAppAuthorizesBeforeMigration(t *testing.T) {
+	service := &workflowMigrationService{
+		result: &MigrationResult{AuthenticatedAccountID: "auth-account"},
+	}
+	authorizer := &workflowMigrationAuthorizer{}
+	handler := &WorkflowHandler{
+		userMigrationService:      service,
+		webAppMigrationAuthorizer: authorizer,
+	}
+	ctx, recorder := newWorkflowMigrationContext("virtual-account", "auth-account", true)
+	ctx.Params = gin.Params{{Key: "web_app_id", Value: "web-app-1"}}
+
+	handler.MigrateUserForWebApp(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !authorizer.called {
+		t.Fatalf("webapp migration authorizer was not called")
+	}
+	if authorizer.webAppID != "web-app-1" {
+		t.Fatalf("authorized web_app_id = %q, want %q", authorizer.webAppID, "web-app-1")
+	}
+	if authorizer.accountID != "auth-account" {
+		t.Fatalf("authorized account_id = %q, want %q", authorizer.accountID, "auth-account")
+	}
+	if !service.called {
+		t.Fatalf("migration service was not called after authorization")
+	}
+}
+
+func TestMigrateUserForWebAppRejectsUnauthorizedAccountBeforeServiceCall(t *testing.T) {
+	service := &workflowMigrationService{}
+	authorizer := &workflowMigrationAuthorizer{err: errWebAppMigrationAccessDenied}
+	handler := &WorkflowHandler{
+		userMigrationService:      service,
+		webAppMigrationAuthorizer: authorizer,
+	}
+	ctx, recorder := newWorkflowMigrationContext("virtual-account", "auth-account", true)
+	ctx.Params = gin.Params{{Key: "web_app_id", Value: "web-app-1"}}
+
+	handler.MigrateUserForWebApp(ctx)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
+	if !authorizer.called {
+		t.Fatalf("webapp migration authorizer was not called")
+	}
+	if service.called {
+		t.Fatalf("migration service should not be called when authorization fails")
+	}
+}
+
+func TestMigrateUserLegacyEndpointSkipsWebAppAuthorization(t *testing.T) {
+	service := &workflowMigrationService{}
+	authorizer := &workflowMigrationAuthorizer{err: errWebAppMigrationAccessDenied}
+	handler := &WorkflowHandler{
+		userMigrationService:      service,
+		webAppMigrationAuthorizer: authorizer,
+	}
+	ctx, recorder := newWorkflowMigrationContext("virtual-account", "auth-account", true)
+
+	handler.MigrateUser(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if authorizer.called {
+		t.Fatalf("legacy migrate-user should not call webapp migration authorizer")
+	}
+	if !service.called {
+		t.Fatalf("legacy migrate-user should still call migration service")
+	}
+}
+
 func newWorkflowMigrationContext(virtualAccountID, authenticatedAccountID string, migrationRequired bool) (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -114,4 +191,18 @@ func (s *workflowMigrationService) ValidateMigrationRequest(_, _ string) error {
 
 func (s *workflowMigrationService) GetMigrationStatistics(context.Context, string) (*MigrationStatistics, error) {
 	return &MigrationStatistics{}, nil
+}
+
+type workflowMigrationAuthorizer struct {
+	err       error
+	called    bool
+	webAppID  string
+	accountID string
+}
+
+func (s *workflowMigrationAuthorizer) AuthorizeWebAppMigration(_ context.Context, webAppID, accountID string) error {
+	s.called = true
+	s.webAppID = webAppID
+	s.accountID = accountID
+	return s.err
 }

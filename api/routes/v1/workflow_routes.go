@@ -92,6 +92,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 
 	// Initialize workflow handler with proper dependencies
 	handler := workflowHandlerPkg.NewWorkflowHandler(workflowService, deps.AccountService, deps.FileService, userMigrationService, deps.OrganizationService)
+	handler.SetWebAppMigrationAuthorizer(workflowHandlerPkg.NewWebAppMigrationAuthorizer(agentsRepo, deps.DB))
 	if llmClientTyped, ok := deps.LLMClient.(llmclient.LLMClient); ok {
 		diag := diagnosis.NewDiagnoser(context.Background(), llmClientTyped)
 		handler.SetDiagnoser(diag)
@@ -218,6 +219,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	protectedWorkflows.DELETE("/:web_app_id/conversations/:conversation_id", conversationQueryHandler.DeleteConversation)
 
 	// User migration endpoint - requires both Authorization and X-User-Account-Id headers
+	protectedWorkflows.POST("/:web_app_id/migrate-user", handler.MigrateUserForWebApp)
 	protectedWorkflows.POST("/migrate-user", handler.MigrateUser)
 
 	// Built-in workflows API (organization-level product surface, no workspace required)

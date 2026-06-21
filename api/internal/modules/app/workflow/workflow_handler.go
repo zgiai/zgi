@@ -22,6 +22,7 @@ type WorkflowHandler struct {
 	fileService                workflow_interfaces.FileService
 	enterpriseService          workflow_interfaces.OrganizationService
 	userMigrationService       UserMigrationService
+	webAppMigrationAuthorizer  WebAppMigrationAuthorizer
 	diagnoser                  *diagnosis.Diagnoser
 	validator                  *validator.Validate
 	advancedChatHandler        *AdvancedChatWorkflowHandler
