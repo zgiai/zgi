@@ -456,7 +456,6 @@ func (s *service) flushStreamMessageEventBuffer(ctx context.Context, messageID u
 	event, err := eventBuffer.flush(ctx)
 	if err != nil {
 		logger.WarnContext(ctx, "failed to append aichat stream message event", "message_id", messageID.String(), err)
-		return
 	}
 	s.deliverStreamEvent(ctx, messageID, event, onEvent)
 }

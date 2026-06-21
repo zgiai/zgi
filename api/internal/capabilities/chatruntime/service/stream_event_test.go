@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
@@ -66,6 +67,65 @@ func TestCollectStreamAnswerWithEventsEmitsRecoverableMessageID(t *testing.T) {
 	}
 	if events[0].Payload["answer"] != "hello" {
 		t.Fatalf("event payload = %#v, want answer hello", events[0].Payload)
+	}
+}
+
+func TestCollectStreamAnswerWithEventsFallsBackWhenEventAppendFails(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:         redisServer.Addr(),
+		DialTimeout:  10 * time.Millisecond,
+		ReadTimeout:  10 * time.Millisecond,
+		WriteTimeout: 10 * time.Millisecond,
+		MaxRetries:   -1,
+	})
+	defer redisClient.Close()
+	redisServer.Close()
+
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	svc := &service{
+		events:  newStreamEventStore(redisClient),
+		streams: newStreamRegistry(),
+	}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: conversationID},
+		Message:      &runtimemodel.Message{ID: messageID},
+	}
+	stream := make(chan adapter.StreamResponse, 3)
+	stream <- adapter.StreamResponse{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "hello"}}}}
+	stream <- adapter.StreamResponse{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: " world"}}}}
+	stream <- adapter.StreamResponse{Done: true}
+	close(stream)
+
+	var events []StreamEvent
+	answer, _, err := svc.collectStreamAnswerWithEvents(
+		context.Background(),
+		prepared,
+		stream,
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("collectStreamAnswerWithEvents() error = %v", err)
+	}
+	if answer != "hello world" {
+		t.Fatalf("answer = %q, want hello world", answer)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one fallback message event", events)
+	}
+	if events[0].ID != "" {
+		t.Fatalf("event id = %q, want empty id for non-recoverable fallback", events[0].ID)
+	}
+	if events[0].EventType != streamEventMessage {
+		t.Fatalf("event type = %q, want %q", events[0].EventType, streamEventMessage)
+	}
+	if events[0].Payload["answer"] != "hello world" {
+		t.Fatalf("event payload = %#v, want answer hello world", events[0].Payload)
 	}
 }
 
