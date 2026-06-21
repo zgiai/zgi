@@ -17,6 +17,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -26,6 +27,8 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
+
+const agentWebAppCapabilityReasonPublicCompatible = "allowed_public_compatible"
 
 type AgentsHandler struct {
 	appService                 AgentsService
@@ -812,6 +815,29 @@ func (h *AgentsHandler) GetWebAppRuntimeConfig(c *gin.Context) {
 	})
 }
 
+func (h *AgentsHandler) GetWebAppRuntimeCapability(c *gin.Context) {
+	result, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
+	if err != nil {
+		h.failWebAppRuntime(c, err)
+		return
+	}
+
+	response.Success(c, dto.AgentWebAppRuntimeCapabilityResponse{
+		AgentID:                result.AgentID,
+		WebAppID:               result.WebAppID,
+		WorkspaceID:            result.WorkspaceID,
+		OrganizationID:         result.OrganizationID,
+		Surface:                string(runtimeauth.PublishedRuntimeSurfaceWebApp),
+		Allowed:                true,
+		Reason:                 agentWebAppCapabilityReasonPublicCompatible,
+		AuthMode:               webAppRuntimeAuthMode(c),
+		PublicOnly:             true,
+		PrivateAudienceEnabled: false,
+		SupportedSubjectTypes:  []string{string(runtimeauth.PublishedRuntimeSubjectPublic)},
+		VersionUUID:            result.VersionUUID,
+	})
+}
+
 func (h *AgentsHandler) GetWebAppUploadConfig(c *gin.Context) {
 	if h.fileService == nil {
 		response.Fail(c, response.ErrSystemError)
@@ -961,6 +987,19 @@ func requireAuthenticatedWebAppAgentFileAccess(c *gin.Context) bool {
 		return false
 	}
 	return true
+}
+
+func webAppRuntimeAuthMode(c *gin.Context) string {
+	switch {
+	case c.GetBool("migration_required"):
+		return "migration"
+	case c.GetBool("is_authenticated"):
+		return "authenticated"
+	case strings.TrimSpace(c.GetString("virtual_account_id")) != "":
+		return "virtual"
+	default:
+		return "unknown"
+	}
 }
 
 func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {

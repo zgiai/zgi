@@ -481,6 +481,89 @@ func TestAgentsHandler_GetWebAppRuntimeConfig_MapsNotPublishedError(t *testing.T
 	require.Equal(t, "204009", body["code"])
 }
 
+func TestAgentsHandler_GetWebAppRuntimeCapability_ReturnsPublicOnlyContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	service := &stubWebAppStatusHandlerService{
+		publishedConfigResp: &dto.AgentWebAppRuntimeConfigResponse{
+			AgentID:        "11111111-1111-1111-1111-111111111111",
+			WebAppID:       "33333333-3333-3333-3333-333333333333",
+			WorkspaceID:    "22222222-2222-2222-2222-222222222222",
+			OrganizationID: "88888888-8888-8888-8888-888888888888",
+			VersionUUID:    "44444444-4444-4444-4444-444444444444",
+		},
+	}
+	handler := NewAgentsHandler(service, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("account_id", "99999999-9999-9999-9999-999999999999")
+		c.Set("is_authenticated", true)
+		c.Next()
+	})
+	router.GET("/webapps/:web_app_id/capability", handler.GetWebAppRuntimeCapability)
+
+	req := httptest.NewRequest(http.MethodGet, "/webapps/33333333-3333-3333-3333-333333333333/capability", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.True(t, service.publishedConfigCalled)
+	require.Equal(t, "33333333-3333-3333-3333-333333333333", service.publishedConfigWebAppID)
+
+	var body struct {
+		Code string `json:"code"`
+		Data struct {
+			AgentID                string   `json:"agent_id"`
+			WebAppID               string   `json:"web_app_id"`
+			WorkspaceID            string   `json:"workspace_id"`
+			OrganizationID         string   `json:"organization_id"`
+			Surface                string   `json:"surface"`
+			Allowed                bool     `json:"allowed"`
+			Reason                 string   `json:"reason"`
+			AuthMode               string   `json:"auth_mode"`
+			PublicOnly             bool     `json:"public_only"`
+			PrivateAudienceEnabled bool     `json:"private_audience_enabled"`
+			SupportedSubjectTypes  []string `json:"supported_subject_types"`
+			VersionUUID            string   `json:"version_uuid"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, "0", body.Code)
+	require.Equal(t, "11111111-1111-1111-1111-111111111111", body.Data.AgentID)
+	require.Equal(t, "33333333-3333-3333-3333-333333333333", body.Data.WebAppID)
+	require.Equal(t, "22222222-2222-2222-2222-222222222222", body.Data.WorkspaceID)
+	require.Equal(t, "88888888-8888-8888-8888-888888888888", body.Data.OrganizationID)
+	require.Equal(t, "webapp", body.Data.Surface)
+	require.True(t, body.Data.Allowed)
+	require.Equal(t, agentWebAppCapabilityReasonPublicCompatible, body.Data.Reason)
+	require.Equal(t, "authenticated", body.Data.AuthMode)
+	require.True(t, body.Data.PublicOnly)
+	require.False(t, body.Data.PrivateAudienceEnabled)
+	require.Equal(t, []string{"public"}, body.Data.SupportedSubjectTypes)
+	require.Equal(t, "44444444-4444-4444-4444-444444444444", body.Data.VersionUUID)
+}
+
+func TestAgentsHandler_GetWebAppRuntimeCapability_MapsOfflineError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	service := &stubWebAppStatusHandlerService{err: errAgentWebAppOffline}
+	handler := NewAgentsHandler(service, nil, nil, nil, nil)
+	router := gin.New()
+	router.GET("/webapps/:web_app_id/capability", handler.GetWebAppRuntimeCapability)
+
+	req := httptest.NewRequest(http.MethodGet, "/webapps/33333333-3333-3333-3333-333333333333/capability", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.True(t, service.publishedConfigCalled)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, "204008", body["code"])
+}
+
 func TestAgentsHandler_WebAppFileEndpointsRejectOfflineBeforeAuthOrFileValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -594,6 +677,7 @@ type stubWebAppStatusHandlerService struct {
 	rollbackAgentPublishedVersionCalled bool
 	publishedConfigCalled               bool
 	publishedConfigWebAppID             string
+	publishedConfigResp                 *dto.AgentWebAppRuntimeConfigResponse
 }
 
 func (s *stubWebAppStatusHandlerService) GetAgentsListWithPermissions(context.Context, string, dto.GetAgentsListRequest) (*dto.AgentsListResponse, error) {
@@ -711,7 +795,7 @@ func (s *stubWebAppStatusHandlerService) RollbackAgentPublishedVersion(context.C
 func (s *stubWebAppStatusHandlerService) GetPublishedAgentWebAppConfig(_ context.Context, webAppID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
 	s.publishedConfigCalled = true
 	s.publishedConfigWebAppID = webAppID
-	return nil, s.err
+	return s.publishedConfigResp, s.err
 }
 
 func (s *stubWebAppStatusHandlerService) UpdateWebAppStatus(ctx context.Context, agentID string, req dto.UpdateWebAppStatusRequest) (*dto.WebAppStatusResponse, error) {

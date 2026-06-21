@@ -143,6 +143,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.Use(middleware.SetupRequired())
 	protectedWebApps.Use(middleware.SetAccountService(accountService))
 	protectedWebApps.Use(middleware.WebAppAuthMiddleware())
+	protectedWebApps.GET("/:web_app_id/capability", appHandler.GetWebAppRuntimeCapability)
 	protectedWebApps.POST("/:web_app_id/chat", appHandler.ChatWebAppAgent)
 	protectedWebApps.GET("/:web_app_id/files/upload", appHandler.GetWebAppUploadConfig)
 	protectedWebApps.POST("/:web_app_id/files/upload", appHandler.UploadWebAppFile)

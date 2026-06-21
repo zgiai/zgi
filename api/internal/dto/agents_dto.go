@@ -443,3 +443,18 @@ type AgentPublicWebAppConfigResponse struct {
 	Version            string   `json:"version"`
 	VersionUUID        string   `json:"version_uuid"`
 }
+
+type AgentWebAppRuntimeCapabilityResponse struct {
+	AgentID                string   `json:"agent_id"`
+	WebAppID               string   `json:"web_app_id"`
+	WorkspaceID            string   `json:"workspace_id"`
+	OrganizationID         string   `json:"organization_id"`
+	Surface                string   `json:"surface"`
+	Allowed                bool     `json:"allowed"`
+	Reason                 string   `json:"reason"`
+	AuthMode               string   `json:"auth_mode"`
+	PublicOnly             bool     `json:"public_only"`
+	PrivateAudienceEnabled bool     `json:"private_audience_enabled"`
+	SupportedSubjectTypes  []string `json:"supported_subject_types"`
+	VersionUUID            string   `json:"version_uuid,omitempty"`
+}
