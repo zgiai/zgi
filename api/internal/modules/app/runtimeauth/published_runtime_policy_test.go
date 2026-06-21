@@ -223,6 +223,150 @@ func TestPublishedRuntimeSurfaceAudienceGrants(t *testing.T) {
 	}
 }
 
+func TestPublishedRuntimeSurfaceAudienceEvaluationReasons(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	otherAccountID := uuid.New()
+	departmentID := uuid.New()
+
+	tests := []struct {
+		name        string
+		auth        *ResourceAuthorization
+		surface     PublishedRuntimeSurface
+		audience    RuntimeAudience
+		wantAllowed bool
+		wantReason  RuntimeAccessDecisionReason
+		wantSubject PublishedRuntimeSubjectType
+	}{
+		{
+			name:        "missing surface",
+			auth:        &ResourceAuthorization{},
+			surface:     PublishedRuntimeSurfaceWebApp,
+			wantReason:  RuntimeAccessDeniedMissingSurface,
+			wantAllowed: false,
+		},
+		{
+			name: "disabled surface",
+			auth: &ResourceAuthorization{Surfaces: []SurfaceAuthorization{{
+				Surface: PublishedRuntimeSurfaceWebApp,
+				Enabled: false,
+			}}},
+			surface:     PublishedRuntimeSurfaceWebApp,
+			wantReason:  RuntimeAccessDeniedDisabledSurface,
+			wantAllowed: false,
+		},
+		{
+			name: "open surface without grants",
+			auth: &ResourceAuthorization{Surfaces: []SurfaceAuthorization{{
+				Surface: PublishedRuntimeSurfaceWebApp,
+				Enabled: true,
+			}}},
+			surface:     PublishedRuntimeSurfaceWebApp,
+			wantReason:  RuntimeAccessAllowedOpenSurface,
+			wantAllowed: true,
+		},
+		{
+			name: "public grant",
+			auth: &ResourceAuthorization{Surfaces: []SurfaceAuthorization{{
+				Surface: PublishedRuntimeSurfaceWebApp,
+				Enabled: true,
+				Grants: []SurfaceGrant{{
+					SubjectType: PublishedRuntimeSubjectPublic,
+					Enabled:     true,
+				}},
+			}}},
+			surface:     PublishedRuntimeSurfaceWebApp,
+			wantReason:  RuntimeAccessAllowedPublicGrant,
+			wantAllowed: true,
+			wantSubject: PublishedRuntimeSubjectPublic,
+		},
+		{
+			name: "account grant",
+			auth: &ResourceAuthorization{Surfaces: []SurfaceAuthorization{{
+				Surface: PublishedRuntimeSurfaceBuiltinApp,
+				Enabled: true,
+				Grants: []SurfaceGrant{{
+					SubjectType: PublishedRuntimeSubjectAccount,
+					SubjectID:   &accountID,
+					Enabled:     true,
+				}},
+			}}},
+			surface:     PublishedRuntimeSurfaceBuiltinApp,
+			audience:    RuntimeAudience{AccountID: accountID},
+			wantReason:  RuntimeAccessAllowedAccountGrant,
+			wantAllowed: true,
+			wantSubject: PublishedRuntimeSubjectAccount,
+		},
+		{
+			name: "department grant",
+			auth: &ResourceAuthorization{Surfaces: []SurfaceAuthorization{{
+				Surface: PublishedRuntimeSurfaceBuiltinApp,
+				Enabled: true,
+				Grants: []SurfaceGrant{{
+					SubjectType: PublishedRuntimeSubjectDepartment,
+					SubjectID:   &departmentID,
+					Enabled:     true,
+				}},
+			}}},
+			surface:     PublishedRuntimeSurfaceBuiltinApp,
+			audience:    RuntimeAudience{DepartmentIDs: []uuid.UUID{departmentID}},
+			wantReason:  RuntimeAccessAllowedDepartmentGrant,
+			wantAllowed: true,
+			wantSubject: PublishedRuntimeSubjectDepartment,
+		},
+		{
+			name: "internal grant",
+			auth: &ResourceAuthorization{Surfaces: []SurfaceAuthorization{{
+				Surface: PublishedRuntimeSurfaceInternal,
+				Enabled: true,
+				Grants: []SurfaceGrant{{
+					SubjectType: PublishedRuntimeSubjectInternal,
+					Enabled:     true,
+				}},
+			}}},
+			surface:     PublishedRuntimeSurfaceInternal,
+			audience:    RuntimeAudience{Internal: true},
+			wantReason:  RuntimeAccessAllowedInternalGrant,
+			wantAllowed: true,
+			wantSubject: PublishedRuntimeSubjectInternal,
+		},
+		{
+			name: "no matching grant",
+			auth: &ResourceAuthorization{Surfaces: []SurfaceAuthorization{{
+				Surface: PublishedRuntimeSurfaceBuiltinApp,
+				Enabled: true,
+				Grants: []SurfaceGrant{{
+					SubjectType: PublishedRuntimeSubjectAccount,
+					SubjectID:   &accountID,
+					Enabled:     true,
+				}},
+			}}},
+			surface:     PublishedRuntimeSurfaceBuiltinApp,
+			audience:    RuntimeAudience{OrganizationID: organizationID, AccountID: otherAccountID},
+			wantReason:  RuntimeAccessDeniedNoMatchingGrant,
+			wantAllowed: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.auth.Evaluate(tt.surface, tt.audience)
+			if got.Allowed != tt.wantAllowed {
+				t.Fatalf("Evaluate().Allowed = %v, want %v", got.Allowed, tt.wantAllowed)
+			}
+			if got.Reason != tt.wantReason {
+				t.Fatalf("Evaluate().Reason = %q, want %q", got.Reason, tt.wantReason)
+			}
+			if got.MatchedSubjectType != tt.wantSubject {
+				t.Fatalf("Evaluate().MatchedSubjectType = %q, want %q", got.MatchedSubjectType, tt.wantSubject)
+			}
+			if allows := tt.auth.Allows(tt.surface, tt.audience); allows != tt.wantAllowed {
+				t.Fatalf("Allows() = %v, want %v", allows, tt.wantAllowed)
+			}
+		})
+	}
+}
+
 func TestPublishedRuntimeResourceAuthorizationAudienceHelpers(t *testing.T) {
 	accountID := uuid.New()
 	departmentID := uuid.New()
