@@ -54,6 +54,13 @@ export function canShowAgentApiKeys(
   return canShowWorkflowDetailPages(agentType, permissions);
 }
 
+export function canShowAgentRuntimeAccess(
+  agentType: AgentDetailType,
+  permissions: AgentDetailRoutePermissions
+): boolean {
+  return supportsAgentRuntimeLogs(agentType) && permissions.canManage;
+}
+
 export function canShowAgentRuntimeLogs(
   agentType: AgentDetailType,
   permissions: AgentDetailRoutePermissions
@@ -84,6 +91,7 @@ export function getAgentDetailRouteAccess(
     canEditRuntime: permissions.canManage,
     supportsWorkflowPages,
     canShowApiKeys: canManageWorkflowPages,
+    canShowRuntimeAccess: canShowAgentRuntimeAccess(agentType, permissions),
     canShowRuntimeLogs: canManageRuntimeLogs,
     canShowBatchTest: canManageWorkflowPages,
   };

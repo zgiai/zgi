@@ -706,6 +706,63 @@ const messages = {
         title: 'New Role Scheme',
         subtitle: 'Custom permission combination',
       },
+      builtInRuntime: {
+        title: 'Built-in App Access',
+        subtitle:
+          'Manage built-in workflow visibility separately from workspace assets. Internal invocation stays available after publishing.',
+        loadError: 'Failed to load built-in app access settings',
+        saveSuccess: 'Built-in app access updated',
+        saveError: 'Failed to update built-in app access',
+        scenarios: {
+          globalChat: 'Chat',
+          biChat: 'App',
+          imageGenChat: 'Image',
+          unknown: '{scenario}',
+        },
+        surfaces: {
+          builtinApp: 'Built-in app',
+          builtinAppHint: 'Controls whether organization users can see and open this entry.',
+          internal: 'Internal invocation',
+          internalHint: 'Used by agents and scheduled tasks; kept enabled for compatibility.',
+        },
+        status: {
+          enabled: 'Enabled',
+          disabled: 'Disabled',
+        },
+        grants: {
+          title: 'Audience',
+          subtitle: 'Grant access to the whole organization, a department, or a specific account.',
+          empty: 'No audience grants',
+          subjectIdPlaceholder: 'Account or department ID',
+          organizationWide: 'Whole organization',
+          departmentPlaceholder: 'Select department',
+          accountPlaceholder: 'Select account',
+          searchMembersPlaceholder: 'Search members',
+          noMembers: 'No members found',
+          loadingMembers: 'Loading members...',
+          resolvingAccount: 'Resolving account...',
+          selectionRequired: 'Select an account or department before saving',
+          accountLookupFailed: 'Could not verify account',
+          departmentLookupFailed: 'Could not verify department',
+          unresolvedAccount: 'Unavailable account',
+          unresolvedDepartment: 'Unavailable department',
+        },
+        grantSubjects: {
+          organization: 'Organization',
+          department: 'Department',
+          account: 'Account',
+        },
+        actions: {
+          addGrant: 'Add',
+          removeGrant: 'Remove',
+          save: 'Save',
+        },
+        validation: {
+          subjectIdRequired: 'Account and department grants need an ID',
+          duplicateGrant: 'Duplicate audience grant',
+          grantRequired: 'Add at least one audience grant',
+        },
+      },
       deleteConfirm: {
         title: 'Confirm Delete',
         description:

@@ -13,6 +13,8 @@ export const ORGANIZATION_KEYS = {
   current: () => [...ORGANIZATION_KEYS.all, 'current'] as const,
   currentMembers: (params?: unknown) =>
     [...ORGANIZATION_KEYS.all, 'current-members', params].filter(Boolean),
+  currentMember: (memberId: string | null) =>
+    [...ORGANIZATION_KEYS.all, 'current-member', memberId].filter(Boolean),
   roles: (orgId: string) => [...ORGANIZATION_KEYS.all, 'roles', orgId] as const,
   roleDetail: (orgId: string, roleId: string) =>
     [...ORGANIZATION_KEYS.all, 'role-detail', orgId, roleId] as const,
@@ -62,6 +64,8 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.detail(id), 'workflow-binding-candidates'] as const,
   runnable: (workspaceId?: string | null) =>
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all'] as const,
+  runtimeSurfaces: (agentId: string) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-surfaces'] as const,
   runtimeRuns: (agentId: string, params: unknown) =>
     [...AGENT_KEYS.detail(agentId), 'runtime-runs', params] as const,
   runtimeRunDetail: (agentId: string, messageId: string) =>
@@ -141,6 +145,8 @@ export const WORKFLOW_KEYS = {
   chatMessages: (agentId: string, conversationId: string, params?: unknown) =>
     [...WORKFLOW_KEYS.runs(agentId), 'chat-messages', conversationId, params] as const,
   builtIn: () => ['built-in-workflows'] as const,
+  builtInRuntimeSurfaces: (scenario: string) =>
+    [...WORKFLOW_KEYS.builtIn(), 'runtime-surfaces', scenario] as const,
 } as const;
 
 export const WORKFLOW_TEST_KEYS = {
@@ -257,6 +263,7 @@ export const STATS_KEYS = {
 export const PROFILE_KEYS = {
   all: ['account'] as const,
   current: () => [...PROFILE_KEYS.all, 'profile'] as const,
+  capabilities: () => [...PROFILE_KEYS.all, 'capabilities'] as const,
 } as const;
 
 // 11. Webapp Related

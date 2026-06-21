@@ -18,6 +18,8 @@ import type {
   WorkflowPrecheckResult,
   WorkflowNodeRunRequest,
   WorkflowNodeRunResponse,
+  BuiltInWorkflowRuntimeSurfaceAuthorizationResponse,
+  UpdatePublishedRuntimeSurfacesRequest,
 } from './types/workflow';
 import type { ChatAttachment } from '@/components/chat/types';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
@@ -568,6 +570,26 @@ export class WorkflowService extends BaseService {
    */
   async getBuiltInWorkflows(): Promise<ApiResponseData<BuiltInWorkflowList>> {
     return this.request('get', '/built-in-workflows');
+  }
+
+  async getBuiltInWorkflowRuntimeSurfaces(
+    scenario: string
+  ): Promise<ApiResponseData<BuiltInWorkflowRuntimeSurfaceAuthorizationResponse>> {
+    return this.request(
+      'get',
+      `/built-in-workflows/${encodeURIComponent(scenario)}/runtime-surfaces`
+    );
+  }
+
+  async updateBuiltInWorkflowRuntimeSurfaces(
+    scenario: string,
+    payload: UpdatePublishedRuntimeSurfacesRequest
+  ): Promise<ApiResponseData<BuiltInWorkflowRuntimeSurfaceAuthorizationResponse>> {
+    return this.request(
+      'patch',
+      `/built-in-workflows/${encodeURIComponent(scenario)}/runtime-surfaces`,
+      payload
+    );
   }
 
   /**

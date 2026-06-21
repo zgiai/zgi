@@ -123,6 +123,7 @@ const messages: CommonMessages = {
     noWorkspaces: '没有可用的工作空间',
     noWorkspacesMember: '您还没有被分配到任何工作空间。',
     noWorkspacesAdmin: '当前还没有可用或已分配的工作空间。',
+    organizationMode: '组织模式',
   },
 
   workspaceRequired: {

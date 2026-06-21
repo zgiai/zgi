@@ -5,6 +5,7 @@ import { useQueries, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AGENT_KEYS } from '@/hooks/query-keys';
 import { WEBAPP_KEYS } from '@/hooks/query-keys';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { agentService } from '@/services';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
@@ -35,6 +36,13 @@ export function useRunnableWebApps({
   staleTime = 60 * 1000,
 }: UseRunnableWebAppsOptions = {}) {
   const currentWorkspace = useCurrentWorkspace();
+  const {
+    canUseRuntimeResourceList,
+    isLoading: isCapabilitiesLoading,
+    isFetching: isCapabilitiesFetching,
+  } = useAccountCapabilities();
+  const canUseAppCenterResourceList = canUseRuntimeResourceList('app_center');
+  const queryEnabled = enabled && canUseAppCenterResourceList;
 
   const resolvedWorkspaceId = useMemo(() => {
     if (typeof workspaceId !== 'undefined') {
@@ -49,7 +57,7 @@ export function useRunnableWebApps({
       agentService.getRunnableWebApps(
         resolvedWorkspaceId ? { workspace_id: resolvedWorkspaceId } : undefined
       ),
-    enabled,
+    enabled: queryEnabled,
     staleTime,
     gcTime: 10 * 60 * 1000,
     retry: false,
@@ -62,7 +70,7 @@ export function useRunnableWebApps({
       queryKey: WEBAPP_KEYS.config(item.web_app_id),
       queryFn: () => WebAppService.getConfig(item.web_app_id),
       staleTime,
-      enabled,
+      enabled: queryEnabled,
       retry: false,
     })),
   });
@@ -94,13 +102,16 @@ export function useRunnableWebApps({
   }, [configQueries, rawItems]);
 
   useEffect(() => {
-    if (!query.isError) return;
+    if (!queryEnabled || !query.isError) return;
     toast.error(getErrorMessage(query.error));
-  }, [query.isError, query.error]);
+  }, [queryEnabled, query.isError, query.error]);
 
   return {
     ...query,
-    items,
+    items: queryEnabled ? items : [],
+    isLoading: enabled && isCapabilitiesLoading ? true : query.isLoading,
+    isFetching: (enabled && isCapabilitiesFetching) || query.isFetching,
+    canUseResourceList: canUseAppCenterResourceList,
   };
 }
 

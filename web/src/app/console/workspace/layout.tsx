@@ -1,18 +1,18 @@
 'use client';
 
-import { useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { useT } from '@/i18n';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import { Users, Settings } from 'lucide-react';
+import { Loader2, Settings, ShieldAlert, Users } from 'lucide-react';
 import {
   useCurrentWorkspace,
   useWorkspaceContextStatus,
   useHasHydrated,
 } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-import { Loader2 } from 'lucide-react';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
+import { WorkspaceRequiredState } from '@/components/common/workspace-required-state';
 
 interface WorkspaceNavItem {
   id: string;
@@ -22,14 +22,42 @@ interface WorkspaceNavItem {
   href: string;
 }
 
+function WorkspaceAccessDeniedState() {
+  const t = useT();
+
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center p-4 text-center">
+      <ShieldAlert className="mb-4 h-12 w-12 text-muted-foreground" />
+      <h2 className="mb-2 text-xl font-semibold">{t('common.accessDenied')}</h2>
+      <p className="max-w-md text-muted-foreground">{t('common.unauthorizedDescription')}</p>
+    </div>
+  );
+}
+
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
   const contextStatus = useWorkspaceContextStatus();
   const hasHydrated = useHasHydrated();
-  const { hasPermission, isLoading: isLoadingPermissions } = useAccountPermissions();
+  const {
+    hasPermission,
+    isLoading: isLoadingPermissions,
+    isFetching: isFetchingPermissions,
+  } = useAccountPermissions();
+  const {
+    isLoading: isCapabilitiesLoading,
+    isFetching: isCapabilitiesFetching,
+    canUseWorkspaceScope,
+    isWorkspaceRequired,
+  } = useAccountCapabilities();
+  const isAccessLoading =
+    isLoadingPermissions ||
+    isFetchingPermissions ||
+    isCapabilitiesLoading ||
+    isCapabilitiesFetching;
+  const hasWorkspaceContext = contextStatus === 'ready' && !!currentWorkspace;
+  const canViewWorkspace = hasPermission('workspace.view');
 
   const workspaceNavItems: WorkspaceNavItem[] = [
     {
@@ -48,25 +76,8 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     },
   ];
 
-  // Access guard: redirect if not in workspace context or missing group.view permission
-  // Only execute AFTER hydration and permission loading are complete
-  useEffect(() => {
-    if (!hasHydrated || isLoadingPermissions) return;
-
-    if (contextStatus !== 'ready' || !currentWorkspace || !hasPermission('workspace.view')) {
-      router.replace('/console');
-    }
-  }, [
-    hasHydrated,
-    isLoadingPermissions,
-    contextStatus,
-    currentWorkspace,
-    hasPermission,
-    router,
-  ]);
-
   // Loading state
-  if (!hasHydrated || isLoadingPermissions) {
+  if (!hasHydrated || isAccessLoading) {
     return (
       <div className="flex h-full items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -74,9 +85,12 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     );
   }
 
-  // Don't render if not in workspace context or missing permission (safety check)
-  if (contextStatus !== 'ready' || !currentWorkspace || !hasPermission('workspace.view')) {
-    return null;
+  if (isWorkspaceRequired || !hasWorkspaceContext) {
+    return <WorkspaceRequiredState />;
+  }
+
+  if (!canUseWorkspaceScope || !canViewWorkspace) {
+    return <WorkspaceAccessDeniedState />;
   }
 
   return (

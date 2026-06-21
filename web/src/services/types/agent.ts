@@ -399,6 +399,52 @@ export interface AgentApiKeyList {
   total: number;
 }
 
+export type AgentRuntimeSurface = 'webapp' | 'api' | 'builtin_app' | 'internal' | string;
+
+export type AgentRuntimeGrantSubject =
+  | 'public'
+  | 'organization'
+  | 'department'
+  | 'account'
+  | 'internal'
+  | string;
+
+export interface AgentRuntimeSurfaceGrant {
+  subject_type: AgentRuntimeGrantSubject;
+  subject_id: string | null;
+  enabled: boolean;
+}
+
+export interface AgentRuntimeSurfaceAuthorization {
+  surface: AgentRuntimeSurface;
+  enabled: boolean;
+  compatibility_source: string;
+  grants: AgentRuntimeSurfaceGrant[];
+}
+
+export interface AgentRuntimeSurfaceAuthorizationResponse {
+  agent_id: string;
+  workspace_id: string;
+  organization_id: string;
+  surfaces: AgentRuntimeSurfaceAuthorization[];
+}
+
+export interface UpdateAgentRuntimeSurfaceGrant {
+  subject_type: AgentRuntimeGrantSubject;
+  subject_id?: string | null;
+  enabled?: boolean;
+}
+
+export interface UpdateAgentRuntimeSurfaceAuthorization {
+  surface: AgentRuntimeSurface;
+  enabled: boolean;
+  grants?: UpdateAgentRuntimeSurfaceGrant[];
+}
+
+export interface UpdateAgentRuntimeSurfacesRequest {
+  surfaces: UpdateAgentRuntimeSurfaceAuthorization[];
+}
+
 export interface CreateAgentApiKeyRequest {
   name: string;
   expires_at?: string | null; // ISO timestamp

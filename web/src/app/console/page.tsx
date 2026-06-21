@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAuthStore } from '@/store/auth-store';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { dashboardService } from '@/services';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { AlertCircle, ArrowRight, CheckCircle2, Circle, RefreshCw } from 'lucide-react';
 
 type ModelType = 'text-chat' | 'embedding' | 'rerank' | 'vision' | 'image-gen';
@@ -117,6 +118,8 @@ export default function ConsolePage() {
   const locale = useLocale();
   const { user } = useAuthStore();
   const currentWorkspace = useCurrentWorkspace();
+  const { canUseOrganizationScope, canUseWorkspaceScope } = useAccountCapabilities();
+  const canUseWorkspaceResources = canUseWorkspaceScope && !!currentWorkspace;
   const { data: statsData, isLoading, refetch, isRefetching } = useDashboardStats();
   const {
     data: recentWorkItems = [],
@@ -126,13 +129,16 @@ export default function ConsolePage() {
   } = useQuery({
     queryKey: ['console', 'recent-work'],
     queryFn: getRecentWorkItems,
+    enabled: canUseWorkspaceResources,
     staleTime: 60 * 1000,
     retry: false,
   });
   const stats = statsData?.data;
   const isAdminOrOwner = ['owner', 'admin'].includes(user?.organization_role || '');
   const workspaceLabel = currentWorkspace?.name || t('navigation.switchWorkspace');
-  const visibleRecentWorkItems = recentWorkItems.slice(0, RECENT_WORK_LIMIT);
+  const visibleRecentWorkItems = canUseWorkspaceResources
+    ? recentWorkItems.slice(0, RECENT_WORK_LIMIT)
+    : [];
   const dateFormatter = useMemo(
     () =>
       new Intl.DateTimeFormat(locale, {
@@ -146,7 +152,9 @@ export default function ConsolePage() {
 
   const handleRefresh = () => {
     void refetch();
-    void refetchRecentWork();
+    if (canUseWorkspaceResources) {
+      void refetchRecentWork();
+    }
   };
 
   const modelCapabilities: ModelCapability[] = [
@@ -191,7 +199,7 @@ export default function ConsolePage() {
   );
   const isReady = requiredMissing.length === 0;
 
-  const resourceRows: ResourceRow[] = [
+  const workspaceResourceRows: ResourceRow[] = [
     {
       key: 'agents',
       label: t('dashboard.stats.resources.agents'),
@@ -220,42 +228,68 @@ export default function ConsolePage() {
         : t('dashboard.stats.consoleHome.actions.create'),
     },
   ];
+  const resourceRows = canUseWorkspaceResources ? workspaceResourceRows : [];
 
-  const nextAction = !isReady
-    ? {
-        eyebrow: t('dashboard.stats.consoleHome.requiredSetup'),
-        title: t('dashboard.stats.consoleHome.nextActions.configureRoutingTitle'),
-        description: t('dashboard.stats.consoleHome.nextActions.configureRoutingDescription'),
-        href: isAdminOrOwner ? '/dashboard/provider' : '/console/settings',
-        label: isAdminOrOwner
-          ? t('dashboard.stats.consoleHome.actions.configureModels')
-          : t('dashboard.stats.consoleHome.actions.contactAdmin'),
-      }
-    : (stats?.resources.datasets ?? 0) === 0
+  const nextAction =
+    canUseOrganizationScope && !canUseWorkspaceResources
       ? {
-          eyebrow: t('dashboard.stats.consoleHome.nextAction'),
-          title: t('dashboard.stats.consoleHome.nextActions.createKnowledgeTitle'),
-          description: t('dashboard.stats.consoleHome.nextActions.createKnowledgeDescription'),
-          href: '/console/dataset',
-          label: t('dashboard.stats.consoleHome.actions.createKnowledge'),
+          eyebrow: t('dashboard.stats.consoleHome.continue'),
+          title: t('dashboard.stats.consoleHome.nextActions.startChatTitle'),
+          description: t('dashboard.stats.consoleHome.nextActions.startChatDescription'),
+          href: '/console/work/chat',
+          label: t('dashboard.stats.consoleHome.actions.openChat'),
         }
-      : (stats?.resources.agents ?? 0) === 0
+      : !isReady
         ? {
-            eyebrow: t('dashboard.stats.consoleHome.nextAction'),
-            title: t('dashboard.stats.consoleHome.nextActions.createAgentTitle'),
-            description: t('dashboard.stats.consoleHome.nextActions.createAgentDescription'),
-            href: '/console/agents',
-            label: t('dashboard.stats.consoleHome.actions.createAgent'),
+            eyebrow: t('dashboard.stats.consoleHome.requiredSetup'),
+            title: t('dashboard.stats.consoleHome.nextActions.configureRoutingTitle'),
+            description: t('dashboard.stats.consoleHome.nextActions.configureRoutingDescription'),
+            href: isAdminOrOwner ? '/dashboard/provider' : '/console/settings',
+            label: isAdminOrOwner
+              ? t('dashboard.stats.consoleHome.actions.configureModels')
+              : t('dashboard.stats.consoleHome.actions.contactAdmin'),
           }
-        : {
-            eyebrow: t('dashboard.stats.consoleHome.continue'),
-            title: t('dashboard.stats.consoleHome.nextActions.startChatTitle'),
-            description: t('dashboard.stats.consoleHome.nextActions.startChatDescription'),
-            href: '/console/work/chat',
-            label: t('dashboard.stats.consoleHome.actions.openChat'),
-          };
+        : (stats?.resources.datasets ?? 0) === 0
+          ? {
+              eyebrow: t('dashboard.stats.consoleHome.nextAction'),
+              title: t('dashboard.stats.consoleHome.nextActions.createKnowledgeTitle'),
+              description: t('dashboard.stats.consoleHome.nextActions.createKnowledgeDescription'),
+              href: '/console/dataset',
+              label: t('dashboard.stats.consoleHome.actions.createKnowledge'),
+            }
+          : (stats?.resources.agents ?? 0) === 0
+            ? {
+                eyebrow: t('dashboard.stats.consoleHome.nextAction'),
+                title: t('dashboard.stats.consoleHome.nextActions.createAgentTitle'),
+                description: t('dashboard.stats.consoleHome.nextActions.createAgentDescription'),
+                href: '/console/agents',
+                label: t('dashboard.stats.consoleHome.actions.createAgent'),
+              }
+            : {
+                eyebrow: t('dashboard.stats.consoleHome.continue'),
+                title: t('dashboard.stats.consoleHome.nextActions.startChatTitle'),
+                description: t('dashboard.stats.consoleHome.nextActions.startChatDescription'),
+                href: '/console/work/chat',
+                label: t('dashboard.stats.consoleHome.actions.openChat'),
+              };
 
-  const secondaryActions = resourceRows.filter(row => row.href !== nextAction.href).slice(0, 2);
+  const organizationSecondaryActions = [
+    {
+      key: 'app',
+      label: t('navigation.app'),
+      href: '/console/work/app',
+      action: t('dashboard.stats.consoleHome.actions.open'),
+    },
+    {
+      key: 'settings',
+      label: t('navigation.systemSettings'),
+      href: '/console/settings',
+      action: t('dashboard.stats.consoleHome.actions.open'),
+    },
+  ];
+  const secondaryActions = canUseWorkspaceResources
+    ? resourceRows.filter(row => row.href !== nextAction.href).slice(0, 2)
+    : organizationSecondaryActions.filter(row => row.href !== nextAction.href).slice(0, 2);
 
   return (
     <div className="min-h-full bg-bg-canvas px-6 py-6 text-foreground md:px-8 lg:px-10">
@@ -369,36 +403,38 @@ export default function ConsolePage() {
                 </CardContent>
               </Card>
 
-              <Card className="border-border/80 shadow-sm">
-                <CardHeader>
-                  <SectionLabel>{t('dashboard.stats.consoleHome.resources')}</SectionLabel>
-                  <CardTitle className="text-lg">
-                    {t('dashboard.stats.consoleHome.resources')}
-                  </CardTitle>
-                  <CardDescription>
-                    {t('dashboard.stats.consoleHome.noCriticalIssues')}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="divide-y divide-border/70 rounded-lg border border-border/70">
-                    {resourceRows.map(row => (
-                      <Link
-                        key={row.key}
-                        href={row.href}
-                        className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
-                      >
-                        <span className="truncate text-sm font-medium text-foreground">
-                          {row.label}
-                        </span>
-                        <span className="text-lg font-semibold leading-none text-foreground">
-                          {isLoading || row.value === undefined ? '-' : row.value}
-                        </span>
-                        <span className="text-xs font-medium text-primary">{row.action}</span>
-                      </Link>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+              {canUseWorkspaceResources ? (
+                <Card className="border-border/80 shadow-sm">
+                  <CardHeader>
+                    <SectionLabel>{t('dashboard.stats.consoleHome.resources')}</SectionLabel>
+                    <CardTitle className="text-lg">
+                      {t('dashboard.stats.consoleHome.resources')}
+                    </CardTitle>
+                    <CardDescription>
+                      {t('dashboard.stats.consoleHome.noCriticalIssues')}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="divide-y divide-border/70 rounded-lg border border-border/70">
+                      {resourceRows.map(row => (
+                        <Link
+                          key={row.key}
+                          href={row.href}
+                          className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
+                        >
+                          <span className="truncate text-sm font-medium text-foreground">
+                            {row.label}
+                          </span>
+                          <span className="text-lg font-semibold leading-none text-foreground">
+                            {isLoading || row.value === undefined ? '-' : row.value}
+                          </span>
+                          <span className="text-xs font-medium text-primary">{row.action}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
             </section>
 
             <Card className="border-border/80 shadow-sm">

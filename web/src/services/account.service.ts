@@ -6,6 +6,73 @@ const BASE_URL = '/console/api/account';
 const ACCOUNT_EX_BASE_URL = '/console/api/account';
 const WORKSPACE_URL = '/console/api/workspaces';
 
+export type AccountContextMode = 'none' | 'organization' | 'workspace';
+export type RuntimeSurface = 'webapp' | 'api' | 'builtin_app' | 'internal';
+export type RuntimeResourceList = 'app_center' | 'built_in_workflows';
+export type RuntimeGrantSubject = 'public' | 'organization' | 'department' | 'account' | 'internal';
+
+export interface AccountContextResponse {
+  account_id: string;
+  mode: AccountContextMode;
+  current_organization_id: string | null;
+  current_workspace_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AccountCapabilitiesResponse {
+  account_id: string;
+  context: {
+    mode: AccountContextMode;
+    current_organization_id: string | null;
+    current_workspace_id: string | null;
+  };
+  organization: {
+    id: string | null;
+    role: string;
+    is_member: boolean;
+    is_admin: boolean;
+    product_surfaces: {
+      chat: boolean;
+      image: boolean;
+      app: boolean;
+      settings: boolean;
+    };
+  };
+  workspace: {
+    id: string | null;
+    available: boolean;
+    requires_workspace: boolean;
+    can_view: boolean;
+    role: string;
+    role_name: string;
+    permissions: string[];
+  };
+  routes: {
+    organization_scope_allowed: boolean;
+    workspace_scope_allowed: boolean;
+    workspace_required: boolean;
+  };
+  runtime_audience: {
+    account_id: string;
+    organization_id: string | null;
+    subject_types: RuntimeGrantSubject[];
+    department_ids?: string[];
+  };
+  runtime_surfaces: Record<RuntimeSurface, {
+    enabled: boolean;
+    mode: string;
+    grant_subject_types: RuntimeGrantSubject[];
+  }>;
+  runtime_resource_lists: Record<RuntimeResourceList, {
+    enabled: boolean;
+    resource_type: string;
+    surface: RuntimeSurface;
+    mode: string;
+    endpoint: string;
+  }>;
+}
+
 // Account service with enhanced error handling
 export const accountService = {
   // Get current user profile
@@ -20,18 +87,18 @@ export const accountService = {
 
   // Update current workspace context
   updateContext: (data: {
+    mode?: AccountContextMode;
     current_workspace_id?: string | null;
     current_organization_id?: string | null;
   }) =>
-    http.put<
-      ApiResponseData<{
-        account_id: string;
-        current_organization_id: string;
-        current_workspace_id: string | null;
-        created_at: string;
-        updated_at: string;
-      }>
-    >(`${BASE_URL}/context`, data),
+    http.put<ApiResponseData<AccountContextResponse>>(`${BASE_URL}/context`, data),
+
+  getCapabilities: async () => {
+    const res = await http.get<ApiResponseData<AccountCapabilitiesResponse>>(
+      `${BASE_URL}/capabilities`
+    );
+    return res.data;
+  },
 
   // Change password
   changePassword: (data: {

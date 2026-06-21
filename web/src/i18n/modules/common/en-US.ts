@@ -122,6 +122,7 @@ const messages = {
     noWorkspaces: 'No workspaces available',
     noWorkspacesMember: 'You are not assigned to a workspace yet.',
     noWorkspacesAdmin: 'No workspaces are assigned or available yet.',
+    organizationMode: 'Organization mode',
   },
 
   workspaceRequired: {

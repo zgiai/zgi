@@ -30,6 +30,8 @@ import type {
   RunnableWebAppsParams,
   GenerateAgentSuggestedQuestionsRequest,
   GenerateAgentSuggestedQuestionsResponse,
+  AgentRuntimeSurfaceAuthorizationResponse,
+  UpdateAgentRuntimeSurfacesRequest,
 } from './types/agent';
 import type { WebAppRunRequest, WebAppRunSseCallbacks } from './types/webapp';
 import type { ApiResponseData } from './types/common';
@@ -96,6 +98,23 @@ class AgentService extends BaseService {
    */
   getAgent(agentId: string): Promise<ApiResponseData<AgentDetail>> {
     return this.request('get', `/agents/${agentId}`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentRuntimeSurfaces(
+    agentId: string
+  ): Promise<ApiResponseData<AgentRuntimeSurfaceAuthorizationResponse>> {
+    return this.request('get', `/agents/${agentId}/runtime-surfaces`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  updateAgentRuntimeSurfaces(
+    agentId: string,
+    data: UpdateAgentRuntimeSurfacesRequest
+  ): Promise<ApiResponseData<AgentRuntimeSurfaceAuthorizationResponse>> {
+    return this.request('patch', `/agents/${agentId}/runtime-surfaces`, data, {
       headers: { 'Content-Type': 'application/json' },
     });
   }

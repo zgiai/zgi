@@ -15,11 +15,18 @@ import {
  */
 import { WEBAPP_KEYS } from '@/hooks/query-keys';
 
-export function useWebAppConfig(versionUuid: string | null) {
+interface UseWebAppConfigOptions {
+  enabled?: boolean;
+}
+
+export function useWebAppConfig(
+  versionUuid: string | null,
+  { enabled = true }: UseWebAppConfigOptions = {}
+) {
   const query = useQuery<WebAppApiResponseData<WebAppWorkflowConfig>>({
     queryKey: WEBAPP_KEYS.config(versionUuid || 'none'),
     queryFn: () => WebAppService.getConfig(versionUuid ?? ''),
-    enabled: Boolean(versionUuid),
+    enabled: enabled && Boolean(versionUuid),
     staleTime: 0,
     gcTime: 10 * 60 * 1000,
     refetchOnMount: 'always',

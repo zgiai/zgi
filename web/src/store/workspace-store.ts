@@ -5,7 +5,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { createSelectors } from './utils/selectors';
-import { ALL_PERMISSION_CODES, type PermissionCode } from '@/constants/permissions';
+import type { PermissionCode } from '@/constants/permissions';
 
 /**
  * Workspace entity representing a workspace in the frontend
@@ -129,34 +129,22 @@ const useWorkspaceStoreBase = create<WorkspaceState>()(
       // Permission helpers
       hasPermission: (permission: PermissionCode) => {
         const { contextStatus, permissionState } = get();
-        if (contextStatus === 'workspace_required') {
-          const { organizationRole } = permissionState;
-          if (organizationRole === 'owner' || organizationRole === 'admin') {
-            return true;
-          }
-          return permission.endsWith('.view');
+        if (contextStatus !== 'ready') {
+          return false;
         }
         return permissionState.permissions.includes(permission);
       },
       hasAnyPermission: (permissions: PermissionCode[]) => {
         const { contextStatus, permissionState } = get();
-        if (contextStatus === 'workspace_required') {
-          const { organizationRole } = permissionState;
-          if (organizationRole === 'owner' || organizationRole === 'admin') {
-            return permissions.length > 0;
-          }
-          return permissions.some(p => p.endsWith('.view'));
+        if (contextStatus !== 'ready') {
+          return false;
         }
         return permissions.some(p => permissionState.permissions.includes(p));
       },
       hasAllPermissions: (permissions: PermissionCode[]) => {
         const { contextStatus, permissionState } = get();
-        if (contextStatus === 'workspace_required') {
-          const { organizationRole } = permissionState;
-          if (organizationRole === 'owner' || organizationRole === 'admin') {
-            return permissions.every(p => ALL_PERMISSION_CODES.includes(p));
-          }
-          return permissions.every(p => p.endsWith('.view'));
+        if (contextStatus !== 'ready') {
+          return false;
         }
         return permissions.every(p => permissionState.permissions.includes(p));
       },

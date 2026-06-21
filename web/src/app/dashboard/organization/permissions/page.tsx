@@ -22,6 +22,7 @@ import { useRoleActions } from '@/hooks/organization/use-role-actions';
 import { EditRoleInfoDialog } from '@/components/dashboard/organization/edit-role-info-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { Role } from '@/services/types/organization';
+import { BuiltInWorkflowRuntimeSection } from '@/components/dashboard/organization/built-in-workflow-runtime-section';
 
 export default function PermissionsPage() {
   const t = useT('dashboard.organization.permissions');
@@ -259,6 +260,8 @@ export default function PermissionsPage() {
           </Card>
         )}
       </div>
+
+      <BuiltInWorkflowRuntimeSection />
 
       {/* Modals remain functional */}
       <RoleMembersDrawer

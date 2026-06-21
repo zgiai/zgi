@@ -3,6 +3,7 @@ import type { ApiResponseData } from './types/common';
 import type {
   Organization,
   OrganizationList,
+  Member,
   MemberList,
   Role,
   RoleMemberList,
@@ -71,6 +72,14 @@ class OrganizationService extends BaseService {
       '/organizations/current/members',
       undefined,
       { params }
+    );
+    return response.data;
+  }
+
+  async getCurrentOrganizationMember(memberId: string) {
+    const response = await this.request<ApiResponseData<Member>>(
+      'get',
+      `/organizations/current/members/${memberId}`
     );
     return response.data;
   }

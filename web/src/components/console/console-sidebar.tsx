@@ -31,6 +31,7 @@ import { ENABLE_THEME_SWITCH, withBasePathIfInternal } from '@/lib/config';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
+import { getConsoleRouteAccess } from '@/routes/access';
 
 interface NavItem {
   title: string;
@@ -68,6 +69,52 @@ function isRootRouteItemActive(pathname: string, item: RootRouteItem): boolean {
     if (!matchPath.startsWith('/')) return false;
     return isItemActive(pathname, withBasePathIfInternal(matchPath));
   });
+}
+
+type HasPermission = (permission: PermissionCode) => boolean;
+
+function shouldShowConsoleNavItem(
+  item: NavItem,
+  isWorkspaceRequired: boolean,
+  hasPermission: HasPermission
+) {
+  const routeAccess = getConsoleRouteAccess(item.href);
+
+  if (isWorkspaceRequired) {
+    return routeAccess.scope === 'organization';
+  }
+
+  if (routeAccess.scope === 'organization') {
+    return true;
+  }
+
+  if (!item.permission) {
+    return true;
+  }
+
+  return hasPermission(item.permission);
+}
+
+function filterConsoleNavGroups(
+  groups: NavGroup[],
+  isWorkspaceRequired: boolean,
+  hasPermission: HasPermission
+) {
+  return groups
+    .map(group => {
+      let items = group.items;
+
+      if (!ENABLE_THEME_SWITCH) {
+        items = items.filter(item => item.href !== '/console/settings');
+      }
+
+      items = items.filter(item =>
+        shouldShowConsoleNavItem(item, isWorkspaceRequired, hasPermission)
+      );
+
+      return { ...group, items };
+    })
+    .filter(group => group.items.length > 0);
 }
 
 export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
@@ -198,31 +245,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
 
   // Filter groups and items
   const navGroups = React.useMemo(() => {
-    return allNavGroups
-      .map(group => {
-        let filteredItems = group.items;
-
-        // Hide workspace management when the console has no usable workspace.
-        if (group.key === 'management' && isWorkspaceRequired) {
-          filteredItems = filteredItems.filter(item => item.href !== '/console/workspace');
-        }
-
-        // Hide settings if theme switch disabled
-        if (!ENABLE_THEME_SWITCH) {
-          filteredItems = filteredItems.filter(item => item.href !== '/console/settings');
-        }
-
-        // Filter by permissions outside organization view
-        if (!isWorkspaceRequired) {
-          filteredItems = filteredItems.filter(item => {
-            if (!item.permission) return true;
-            return hasPermission(item.permission);
-          });
-        }
-
-        return { ...group, items: filteredItems };
-      })
-      .filter(group => group.items.length > 0);
+    return filterConsoleNavGroups(allNavGroups, isWorkspaceRequired, hasPermission);
   }, [isWorkspaceRequired, hasPermission, allNavGroups]);
 
   const rootRouteItems = React.useMemo(
@@ -551,25 +574,7 @@ export function ConsoleMobileSidebar({
       },
     ];
 
-    return groups
-      .map(group => {
-        let items = group.items;
-
-        if (group.key === 'management' && isWorkspaceRequired) {
-          items = items.filter(item => item.href !== '/console/workspace');
-        }
-
-        if (!ENABLE_THEME_SWITCH) {
-          items = items.filter(item => item.href !== '/console/settings');
-        }
-
-        if (!isWorkspaceRequired) {
-          items = items.filter(item => !item.permission || hasPermission(item.permission));
-        }
-
-        return { ...group, items };
-      })
-      .filter(group => group.items.length > 0);
+    return filterConsoleNavGroups(groups, isWorkspaceRequired, hasPermission);
   }, [hasPermission, isWorkspaceRequired, t]);
 
   const closeSidebar = () => onOpenChange(false);

@@ -11,7 +11,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { cn } from '@/lib/utils';
 import { useRunnableWebApps } from '@/hooks/agent/use-runnable-webapps';
 import { useT } from '@/i18n/translations';
-import { useCurrentWorkspace } from '@/store/workspace-store';
 import { getSidebarCollapsed, saveSidebarCollapsed } from '@/utils/ui-local';
 import type { RunnableWebAppResolvedItem } from '@/hooks/agent/use-runnable-webapps';
 import { Logo } from '@/components/logo';
@@ -48,12 +47,7 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
   const t = useT('webapp');
   const tNav = useT('navigation');
   const pathname = usePathname();
-  const currentWorkspace = useCurrentWorkspace();
-  const workspaceId = currentWorkspace?.id ?? null;
-  const { items, isLoading } = useRunnableWebApps({
-    workspaceId,
-    enabled: !!workspaceId,
-  });
+  const { items, isLoading } = useRunnableWebApps();
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => getSidebarCollapsed('app', false));
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
