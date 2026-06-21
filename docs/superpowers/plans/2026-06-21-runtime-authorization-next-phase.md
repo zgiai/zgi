@@ -99,6 +99,7 @@ Progress note, 2026-06-21:
 - `GET /console/api/webapps/:web_app_id/capability` is registered behind `WebAppAuthMiddleware` as a public-compatible skeleton. It returns `public_only=true`, `private_audience_enabled=false`, and `supported_subject_types=["public"]`; it reuses the existing published webapp config gate and does not evaluate account/department webapp grants yet.
 - The frontend service layer now has typed `WebAppService.getCapability` and an opt-in `useWebAppCapability` query. Existing `useWebAppConfig` still does not call the capability endpoint; `pnpm test:route-access` locks that separation until private webapp behavior is wired deliberately.
 - Route contract coverage now also proves the webapp capability endpoint stays off the public webapp route group and remains registered after `WebAppAuthMiddleware`. This keeps the future private-capability handshake from being accidentally exposed while `/config` remains public-compatible.
+- API key runtime validation now evaluates the `api` surface with the public-compatible bearer-key audience instead of reducing persisted authorization to a legacy boolean. If stale or manually inserted account/department API grants exist, the external API entry fails closed until API caller identity semantics are decided.
 
 Avoid these until decisions are made:
 

@@ -199,6 +199,118 @@ func TestValidateAPIKeyRejectsPersistedDisabledAgentAPISurface(t *testing.T) {
 	}
 }
 
+func TestValidateAPIKeyAllowsPersistedEnabledAgentAPISurface(t *testing.T) {
+	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
+	defer cleanup()
+
+	rawKey, keyHash := hashTestAPIKey("zgi_test_persisted_enabled_api")
+	keyID := uuid.New()
+	agentID := uuid.New()
+	tenantID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"agent_id",
+		"tenant_id",
+		"key_hash",
+		"key_prefix",
+		"name",
+		"status",
+		"expires_at",
+		"usage_count",
+		"last_used_at",
+		"created_at",
+		"updated_at",
+	}).AddRow(
+		keyID.String(),
+		agentID.String(),
+		tenantID.String(),
+		keyHash,
+		"zgi_test_per",
+		"persisted enabled api key",
+		"active",
+		nil,
+		int64(0),
+		nil,
+		now,
+		now,
+	)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_api_keys" WHERE (key_hash = $1 AND status = 'active') AND (expires_at IS NULL OR expires_at > $2) ORDER BY "agent_api_keys"."id" LIMIT $3`)).
+		WithArgs(keyHash, sqlmock.AnyArg(), 1).
+		WillReturnRows(rows)
+	expectAgentAPISurfaceWithPersistedSurface(mock, agentID, tenantID, false, true)
+
+	info, err := validateAPIKey(db, rawKey)
+	if err != nil {
+		t.Fatalf("validateAPIKey error = %v, want persisted enabled API surface to allow bearer key", err)
+	}
+	if info == nil {
+		t.Fatalf("validateAPIKey info = nil, want API key info")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
+func TestValidateAPIKeyRejectsPersistedNonPublicAgentAPISurfaceGrant(t *testing.T) {
+	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
+	defer cleanup()
+
+	rawKey, keyHash := hashTestAPIKey("zgi_test_persisted_account_api")
+	keyID := uuid.New()
+	agentID := uuid.New()
+	tenantID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"agent_id",
+		"tenant_id",
+		"key_hash",
+		"key_prefix",
+		"name",
+		"status",
+		"expires_at",
+		"usage_count",
+		"last_used_at",
+		"created_at",
+		"updated_at",
+	}).AddRow(
+		keyID.String(),
+		agentID.String(),
+		tenantID.String(),
+		keyHash,
+		"zgi_test_per",
+		"persisted account api key",
+		"active",
+		nil,
+		int64(0),
+		nil,
+		now,
+		now,
+	)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_api_keys" WHERE (key_hash = $1 AND status = 'active') AND (expires_at IS NULL OR expires_at > $2) ORDER BY "agent_api_keys"."id" LIMIT $3`)).
+		WithArgs(keyHash, sqlmock.AnyArg(), 1).
+		WillReturnRows(rows)
+	expectAgentAPISurfaceWithPersistedGrant(mock, agentID, tenantID, runtimeauth.PublishedRuntimeSubjectAccount, uuid.New())
+
+	info, err := validateAPIKey(db, rawKey)
+	if err == nil {
+		t.Fatalf("validateAPIKey error = nil, want non-public API surface grant rejection")
+	}
+	if info != nil {
+		t.Fatalf("validateAPIKey info = %#v, want nil", info)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
 func TestUpdateLastUsedWithoutRetiredQuotaColumns(t *testing.T) {
 	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
 	defer cleanup()
@@ -416,6 +528,61 @@ func expectAgentAPISurfaceWithPersistedSurface(mock sqlmock.Sqlmock, agentID, te
 			"updated_at",
 			"deleted_at",
 		}))
+}
+
+func expectAgentAPISurfaceWithPersistedGrant(mock sqlmock.Sqlmock, agentID, tenantID uuid.UUID, subjectType runtimeauth.PublishedRuntimeSubjectType, subjectID uuid.UUID) {
+	mock.ExpectQuery(`SELECT .* FROM "agents" WHERE id = \$1 AND tenant_id = \$2 AND deleted_at IS NULL LIMIT \$3`).
+		WithArgs(agentID, tenantID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"tenant_id",
+			"enable_api",
+			"web_app_status",
+			"deleted_at",
+		}).AddRow(
+			agentID.String(),
+			tenantID.String(),
+			true,
+			runtimeauth.WebAppStatusInactive,
+			nil,
+		))
+	surfaceID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Second)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surfaces" WHERE resource_type = $1 AND resource_id = $2 AND deleted_at IS NULL ORDER BY surface ASC`)).
+		WithArgs(string(runtimeauth.PublishedRuntimeResourceAgent), agentID).
+		WillReturnRows(sqlmock.NewRows(publishedRuntimeSurfaceColumns()).AddRow(
+			surfaceID.String(),
+			string(runtimeauth.PublishedRuntimeResourceAgent),
+			agentID.String(),
+			uuid.New().String(),
+			tenantID.String(),
+			string(runtimeauth.PublishedRuntimeSurfaceAPI),
+			true,
+			runtimeauth.PublishedRuntimeSourceGrant,
+			now,
+			now,
+			nil,
+		))
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surface_grants" WHERE surface_id IN \(.+\) AND deleted_at IS NULL ORDER BY subject_type ASC, subject_id ASC, created_at ASC`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"surface_id",
+			"subject_type",
+			"subject_id",
+			"enabled",
+			"created_at",
+			"updated_at",
+			"deleted_at",
+		}).AddRow(
+			uuid.NewString(),
+			surfaceID.String(),
+			string(subjectType),
+			subjectID.String(),
+			true,
+			now,
+			now,
+			nil,
+		))
 }
 
 func expectEmptyPublishedRuntimeSurfaces(mock sqlmock.Sqlmock, agentID uuid.UUID) {

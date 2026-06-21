@@ -142,7 +142,7 @@ func validateAgentAPISurface(db *gorm.DB, agentID, tenantID uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("failed to validate agent API surface authorization: %w", err)
 	}
-	if !runtimeauth.PolicyFromAuthorization(fallback, auth).Allows(runtimeauth.PublishedRuntimeSurfaceAPI) {
+	if !auth.Evaluate(runtimeauth.PublishedRuntimeSurfaceAPI, runtimeauth.RuntimeAudience{}).Allowed {
 		return fmt.Errorf("agent API service is disabled")
 	}
 	return nil
