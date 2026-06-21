@@ -17,7 +17,6 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
-	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -816,26 +815,13 @@ func (h *AgentsHandler) GetWebAppRuntimeConfig(c *gin.Context) {
 }
 
 func (h *AgentsHandler) GetWebAppRuntimeCapability(c *gin.Context) {
-	result, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
+	result, err := h.appService.GetWebAppRuntimeCapability(c.Request.Context(), c.Param("web_app_id"), c.GetString("account_id"), c.GetBool("is_authenticated"))
 	if err != nil {
 		h.failWebAppRuntime(c, err)
 		return
 	}
-
-	response.Success(c, dto.AgentWebAppRuntimeCapabilityResponse{
-		AgentID:                result.AgentID,
-		WebAppID:               result.WebAppID,
-		WorkspaceID:            result.WorkspaceID,
-		OrganizationID:         result.OrganizationID,
-		Surface:                string(runtimeauth.PublishedRuntimeSurfaceWebApp),
-		Allowed:                true,
-		Reason:                 agentWebAppCapabilityReasonPublicCompatible,
-		AuthMode:               webAppRuntimeAuthMode(c),
-		PublicOnly:             true,
-		PrivateAudienceEnabled: false,
-		SupportedSubjectTypes:  []string{string(runtimeauth.PublishedRuntimeSubjectPublic)},
-		VersionUUID:            result.VersionUUID,
-	})
+	result.AuthMode = webAppRuntimeAuthMode(c)
+	response.Success(c, result)
 }
 
 func (h *AgentsHandler) GetWebAppUploadConfig(c *gin.Context) {

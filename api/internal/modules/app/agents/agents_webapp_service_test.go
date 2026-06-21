@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -208,6 +209,122 @@ func TestAgentsService_GetPublishedAgentWebAppConfig_RejectsPersistedNonPublicWe
 
 	_, err := service.GetPublishedAgentWebAppConfig(context.Background(), webAppID.String())
 	require.ErrorIs(t, err, errAgentWebAppOffline)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAgentsService_GetWebAppRuntimeCapability_LoginRequiredForPrivateOrganizationGrant(t *testing.T) {
+	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
+	defer cleanup()
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	webAppID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	organizationID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+	versionID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:           agentID,
+			TenantID:     workspaceID,
+			WebAppID:     webAppID,
+			AgentsType:   "AGENT",
+			WebAppStatus: AgentWebAppStatusActive,
+		},
+		latestVersion: &AgentPublishedVersion{
+			AgentID:     agentID,
+			WorkspaceID: workspaceID,
+			Version:     "v1",
+			VersionUUID: versionID,
+		},
+	}
+	expectAgentRuntimeSurfaceRowsWithGrantAndOrganization(mock, agentID, organizationID, workspaceID, "webapp", true, "organization", organizationID)
+	service := &agentsService{agentsRepo: repo, db: db}
+
+	got, err := service.GetWebAppRuntimeCapability(context.Background(), webAppID.String(), uuid.NewString(), false)
+	require.NoError(t, err)
+	require.False(t, got.Allowed)
+	require.Equal(t, agentWebAppCapabilityReasonLoginRequired, got.Reason)
+	require.False(t, got.PublicOnly)
+	require.True(t, got.PrivateAudienceEnabled)
+	require.Equal(t, []string{"public", "organization", "department", "account"}, got.SupportedSubjectTypes)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAgentsService_GetWebAppRuntimeCapability_AllowsAuthenticatedOrganizationGrant(t *testing.T) {
+	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
+	defer cleanup()
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	webAppID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	organizationID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+	accountID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	versionID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:           agentID,
+			TenantID:     workspaceID,
+			WebAppID:     webAppID,
+			AgentsType:   "AGENT",
+			WebAppStatus: AgentWebAppStatusActive,
+		},
+		latestVersion: &AgentPublishedVersion{
+			AgentID:     agentID,
+			WorkspaceID: workspaceID,
+			Version:     "v1",
+			VersionUUID: versionID,
+		},
+	}
+	expectAgentRuntimeSurfaceRowsWithGrantAndOrganization(mock, agentID, organizationID, workspaceID, "webapp", true, "organization", organizationID)
+	expectWebAppRuntimeAudience(mock, accountID, organizationID, nil, 1)
+	service := &agentsService{agentsRepo: repo, db: db}
+
+	got, err := service.GetWebAppRuntimeCapability(context.Background(), webAppID.String(), accountID.String(), true)
+	require.NoError(t, err)
+	require.True(t, got.Allowed)
+	require.Equal(t, string(runtimeauth.RuntimeAccessAllowedOrganizationGrant), got.Reason)
+	require.False(t, got.PublicOnly)
+	require.True(t, got.PrivateAudienceEnabled)
+	require.Equal(t, versionID.String(), got.VersionUUID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAgentsService_GetWebAppRuntimeCapability_AllowsAuthenticatedDepartmentGrant(t *testing.T) {
+	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
+	defer cleanup()
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	webAppID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	organizationID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+	accountID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	departmentID := uuid.MustParse("99999999-9999-9999-9999-999999999998")
+	versionID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:           agentID,
+			TenantID:     workspaceID,
+			WebAppID:     webAppID,
+			AgentsType:   "AGENT",
+			WebAppStatus: AgentWebAppStatusActive,
+		},
+		latestVersion: &AgentPublishedVersion{
+			AgentID:     agentID,
+			WorkspaceID: workspaceID,
+			Version:     "v1",
+			VersionUUID: versionID,
+		},
+	}
+	expectAgentRuntimeSurfaceRowsWithGrantAndOrganization(mock, agentID, organizationID, workspaceID, "webapp", true, "department", departmentID)
+	expectWebAppRuntimeAudience(mock, accountID, organizationID, []uuid.UUID{departmentID}, 1)
+	service := &agentsService{agentsRepo: repo, db: db}
+
+	got, err := service.GetWebAppRuntimeCapability(context.Background(), webAppID.String(), accountID.String(), true)
+	require.NoError(t, err)
+	require.True(t, got.Allowed)
+	require.Equal(t, string(runtimeauth.RuntimeAccessAllowedDepartmentGrant), got.Reason)
+	require.False(t, got.PublicOnly)
+	require.True(t, got.PrivateAudienceEnabled)
+	require.Equal(t, versionID.String(), got.VersionUUID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -867,6 +984,10 @@ func expectAgentRuntimeSurfaceRows(mock sqlmock.Sqlmock, agentID, workspaceID uu
 }
 
 func expectAgentRuntimeSurfaceRowsWithGrant(mock sqlmock.Sqlmock, agentID, workspaceID uuid.UUID, surfaceName string, enabled bool, subjectType string, subjectID uuid.UUID) {
+	expectAgentRuntimeSurfaceRowsWithGrantAndOrganization(mock, agentID, uuid.New(), workspaceID, surfaceName, enabled, subjectType, subjectID)
+}
+
+func expectAgentRuntimeSurfaceRowsWithGrantAndOrganization(mock sqlmock.Sqlmock, agentID, organizationID, workspaceID uuid.UUID, surfaceName string, enabled bool, subjectType string, subjectID uuid.UUID) {
 	surfaceID := uuid.New()
 	now := time.Now().UTC().Truncate(time.Second)
 	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surfaces" WHERE resource_type = \$1 AND resource_id = \$2 AND deleted_at IS NULL ORDER BY surface ASC`).
@@ -887,7 +1008,7 @@ func expectAgentRuntimeSurfaceRowsWithGrant(mock sqlmock.Sqlmock, agentID, works
 			surfaceID.String(),
 			"agent",
 			agentID.String(),
-			uuid.New().String(),
+			organizationID.String(),
 			workspaceID.String(),
 			surfaceName,
 			enabled,
@@ -916,6 +1037,22 @@ func expectAgentRuntimeSurfaceRowsWithGrant(mock sqlmock.Sqlmock, agentID, works
 			now,
 			nil,
 		))
+}
+
+func expectWebAppRuntimeAudience(mock sqlmock.Sqlmock, accountID, organizationID uuid.UUID, departmentIDs []uuid.UUID, memberCount int64) {
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "members" WHERE organization_id = $1 AND account_id = $2 AND status = $3`)).
+		WithArgs(organizationID.String(), accountID.String(), workspace_model.OrganizationMemberStatusActive).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(memberCount))
+	if memberCount == 0 {
+		return
+	}
+	rows := sqlmock.NewRows([]string{"department_id"})
+	for _, departmentID := range departmentIDs {
+		rows.AddRow(departmentID.String())
+	}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT department_members.department_id FROM "department_members" JOIN departments ON departments.id = department_members.department_id WHERE department_members.account_id = $1 AND departments.group_id = $2 AND departments.status = $3`)).
+		WithArgs(accountID, organizationID, workspace_model.DepartmentStatusActive).
+		WillReturnRows(rows)
 }
 
 func runtimeSurfaceTestMap(surfaces []dto.AgentRuntimeSurfaceAuthorization) map[string]dto.AgentRuntimeSurfaceAuthorization {

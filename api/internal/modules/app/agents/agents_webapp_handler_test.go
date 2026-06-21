@@ -481,16 +481,22 @@ func TestAgentsHandler_GetWebAppRuntimeConfig_MapsNotPublishedError(t *testing.T
 	require.Equal(t, "204009", body["code"])
 }
 
-func TestAgentsHandler_GetWebAppRuntimeCapability_ReturnsPublicOnlyContract(t *testing.T) {
+func TestAgentsHandler_GetWebAppRuntimeCapability_ReturnsAuthorizationContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	service := &stubWebAppStatusHandlerService{
-		publishedConfigResp: &dto.AgentWebAppRuntimeConfigResponse{
-			AgentID:        "11111111-1111-1111-1111-111111111111",
-			WebAppID:       "33333333-3333-3333-3333-333333333333",
-			WorkspaceID:    "22222222-2222-2222-2222-222222222222",
-			OrganizationID: "88888888-8888-8888-8888-888888888888",
-			VersionUUID:    "44444444-4444-4444-4444-444444444444",
+		runtimeCapabilityResp: &dto.AgentWebAppRuntimeCapabilityResponse{
+			AgentID:                "11111111-1111-1111-1111-111111111111",
+			WebAppID:               "33333333-3333-3333-3333-333333333333",
+			WorkspaceID:            "22222222-2222-2222-2222-222222222222",
+			OrganizationID:         "88888888-8888-8888-8888-888888888888",
+			Surface:                "webapp",
+			Allowed:                true,
+			Reason:                 "allowed_organization_grant",
+			PublicOnly:             false,
+			PrivateAudienceEnabled: true,
+			SupportedSubjectTypes:  []string{"public", "organization", "department", "account"},
+			VersionUUID:            "44444444-4444-4444-4444-444444444444",
 		},
 	}
 	handler := NewAgentsHandler(service, nil, nil, nil, nil)
@@ -508,8 +514,10 @@ func TestAgentsHandler_GetWebAppRuntimeCapability_ReturnsPublicOnlyContract(t *t
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	require.True(t, service.publishedConfigCalled)
-	require.Equal(t, "33333333-3333-3333-3333-333333333333", service.publishedConfigWebAppID)
+	require.True(t, service.runtimeCapabilityCalled)
+	require.Equal(t, "33333333-3333-3333-3333-333333333333", service.runtimeCapabilityWebAppID)
+	require.Equal(t, "99999999-9999-9999-9999-999999999999", service.runtimeCapabilityAccountID)
+	require.True(t, service.runtimeCapabilityAuthenticated)
 
 	var body struct {
 		Code string `json:"code"`
@@ -536,11 +544,11 @@ func TestAgentsHandler_GetWebAppRuntimeCapability_ReturnsPublicOnlyContract(t *t
 	require.Equal(t, "88888888-8888-8888-8888-888888888888", body.Data.OrganizationID)
 	require.Equal(t, "webapp", body.Data.Surface)
 	require.True(t, body.Data.Allowed)
-	require.Equal(t, agentWebAppCapabilityReasonPublicCompatible, body.Data.Reason)
+	require.Equal(t, "allowed_organization_grant", body.Data.Reason)
 	require.Equal(t, "authenticated", body.Data.AuthMode)
-	require.True(t, body.Data.PublicOnly)
-	require.False(t, body.Data.PrivateAudienceEnabled)
-	require.Equal(t, []string{"public"}, body.Data.SupportedSubjectTypes)
+	require.False(t, body.Data.PublicOnly)
+	require.True(t, body.Data.PrivateAudienceEnabled)
+	require.Equal(t, []string{"public", "organization", "department", "account"}, body.Data.SupportedSubjectTypes)
 	require.Equal(t, "44444444-4444-4444-4444-444444444444", body.Data.VersionUUID)
 }
 
@@ -558,7 +566,7 @@ func TestAgentsHandler_GetWebAppRuntimeCapability_MapsOfflineError(t *testing.T)
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusForbidden, w.Code)
-	require.True(t, service.publishedConfigCalled)
+	require.True(t, service.runtimeCapabilityCalled)
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	require.Equal(t, "204008", body["code"])
@@ -678,6 +686,11 @@ type stubWebAppStatusHandlerService struct {
 	publishedConfigCalled               bool
 	publishedConfigWebAppID             string
 	publishedConfigResp                 *dto.AgentWebAppRuntimeConfigResponse
+	runtimeCapabilityCalled             bool
+	runtimeCapabilityWebAppID           string
+	runtimeCapabilityAccountID          string
+	runtimeCapabilityAuthenticated      bool
+	runtimeCapabilityResp               *dto.AgentWebAppRuntimeCapabilityResponse
 }
 
 func (s *stubWebAppStatusHandlerService) GetAgentsListWithPermissions(context.Context, string, dto.GetAgentsListRequest) (*dto.AgentsListResponse, error) {
@@ -796,6 +809,14 @@ func (s *stubWebAppStatusHandlerService) GetPublishedAgentWebAppConfig(_ context
 	s.publishedConfigCalled = true
 	s.publishedConfigWebAppID = webAppID
 	return s.publishedConfigResp, s.err
+}
+
+func (s *stubWebAppStatusHandlerService) GetWebAppRuntimeCapability(_ context.Context, webAppID, accountID string, authenticated bool) (*dto.AgentWebAppRuntimeCapabilityResponse, error) {
+	s.runtimeCapabilityCalled = true
+	s.runtimeCapabilityWebAppID = webAppID
+	s.runtimeCapabilityAccountID = accountID
+	s.runtimeCapabilityAuthenticated = authenticated
+	return s.runtimeCapabilityResp, s.err
 }
 
 func (s *stubWebAppStatusHandlerService) UpdateWebAppStatus(ctx context.Context, agentID string, req dto.UpdateWebAppStatusRequest) (*dto.WebAppStatusResponse, error) {
