@@ -123,6 +123,26 @@ const messages = {
     title: 'This web app has not been published',
     description: 'Publish this agent before opening its web app.',
   },
+  access: {
+    loading: {
+      title: 'Checking access',
+      description: 'Confirming whether your account can use this web app.',
+    },
+    login_required: {
+      title: 'Sign in to use this web app',
+      description: 'This web app is only open to selected organization members or departments.',
+    },
+    no_access: {
+      title: 'You do not have access',
+      description:
+        'Your account is not included in the audience for this web app. Contact the app owner if you need access.',
+    },
+    offline: {
+      title: 'This web app is offline',
+      description:
+        'The app is currently unavailable. Please contact the app owner or try again after it is brought online.',
+    },
+  },
   header: {
     guestMode: 'Guest mode: sign in to save conversations and unlock more capabilities.',
     guestModeShort: 'Guest',

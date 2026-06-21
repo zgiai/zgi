@@ -34,6 +34,14 @@ const builtInWorkflowsHookPath = path.join(
   'use-built-in-workflows.ts'
 );
 const webAppHookPath = path.join(rootDir, 'src', 'hooks', 'webapp', 'use-webapp.ts');
+const webAppMigrationHookPath = path.join(
+  rootDir,
+  'src',
+  'hooks',
+  'webapp',
+  'use-maybe-migrate-user.ts'
+);
+const webAppLayoutPath = path.join(rootDir, 'src', 'app', 'webapp', '[version_uuid]', 'layout.tsx');
 const teamSwitcherPath = path.join(rootDir, 'src', 'components', 'console', 'team-switcher.tsx');
 const runtimeAccessTabPath = path.join(
   rootDir,
@@ -742,6 +750,8 @@ assert.doesNotMatch(
 );
 
 const webAppHookSource = fs.readFileSync(webAppHookPath, 'utf8');
+const webAppMigrationHookSource = fs.readFileSync(webAppMigrationHookPath, 'utf8');
+const webAppLayoutSource = fs.readFileSync(webAppLayoutPath, 'utf8');
 const webAppServiceSource = fs.readFileSync(webAppServicePath, 'utf8');
 const webAppConfigHookSource = webAppHookSource.slice(
   webAppHookSource.indexOf('export function useWebAppConfig'),
@@ -760,17 +770,47 @@ assert.match(
 assert.match(
   webAppServiceSource,
   /getCapability[\s\S]*\/console\/api\/webapps\/\$\{webAppId\}\/capability/,
-  'webapp service should expose the protected capability skeleton endpoint for future gated config flows'
+  'webapp service should expose the protected capability endpoint for gated runtime flows'
 );
 assert.match(
   webAppHookSource,
   /function useWebAppCapability[\s\S]*enabled = false[\s\S]*WebAppService\.getCapability/,
-  'webapp capability hook should exist as an opt-in query before private webapp policy is enabled'
+  'webapp capability hook should exist as an opt-in query for private webapp gates'
+);
+assert.match(
+  webAppLayoutSource,
+  /useWebAppCapability\(runtimeWebAppId,[\s\S]*enabled:\s*Boolean\(isAgentWebApp && runtimeWebAppId\)/,
+  'webapp layout should gate agent webapp runtime pages through the protected capability endpoint'
+);
+assert.match(
+  webAppLayoutSource,
+  /getWebAppAccessStateKind\(capabilityQuery\.data\?\.data\)/,
+  'webapp layout should map capability responses into reader-facing private access states'
+);
+assert.match(
+  webAppLayoutSource,
+  /<WebAppAccessState\s+kind=\{accessStateKind\}\s+onLogin=\{handleLogin\}/,
+  'webapp layout should render login-required, no-access, and offline states before mounting runtime pages'
+);
+assert.match(
+  webAppLayoutSource,
+  /useMaybeMigrateUser\(version_uuid\)/,
+  'webapp layout should scope anonymous user migration to the current webapp when possible'
+);
+assert.match(
+  webAppMigrationHookSource,
+  /WebAppService\.migrateUser\(localToken,\s*webAppId\)/,
+  'webapp migration hook should pass the current webapp id to the migration service'
+);
+assert.match(
+  webAppServiceSource,
+  /\/console\/api\/workflows\/\$\{encodeURIComponent\(normalizedWebAppId\)\}\/migrate-user/,
+  'webapp service should use the resource-scoped migrate-user route when a webapp id is available'
 );
 assert.doesNotMatch(
   webAppConfigHookSource,
   /getCapability/,
-  'webapp config hook should not call the protected capability skeleton until private webapp behavior is wired deliberately'
+  'webapp config hook should remain a plain config fetch so callers own their authorization gate'
 );
 
 assert.equal(

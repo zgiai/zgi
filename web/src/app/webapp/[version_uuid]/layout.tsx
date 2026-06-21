@@ -3,16 +3,21 @@
 import React from 'react';
 import { LogIn, UserCheck } from 'lucide-react';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useWebAppConfig } from '@/hooks/webapp/use-webapp';
+import { useWebAppCapability, useWebAppConfig } from '@/hooks/webapp/use-webapp';
 import { useMaybeMigrateUser } from '@/hooks/webapp/use-maybe-migrate-user';
 import { Logo } from '@/components/logo';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  WebAppAccessState,
+  getWebAppAccessStateKind,
+} from '@/components/webapp/access-state';
 import { useT } from '@/i18n';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { Providers } from '@/providers';
 import { useAuthStore } from '@/store/auth-store';
+import { isWebAppOfflineError } from '@/utils/webapp/errors';
 
 export default function WebappVersionLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -32,10 +37,25 @@ function WebappVersionLayoutContent({ children }: { children: React.ReactNode })
   const isAuthLoading = useAuthStore.use.isLoading();
   const isAuthInitialized = useAuthStore.use.isInitialized();
   const user = useAuthStore.use.user();
-  useMaybeMigrateUser();
+  useMaybeMigrateUser(version_uuid);
   const { data, isLoading } = useWebAppConfig(version_uuid);
 
   const meta = data?.data?.config;
+  const isAgentWebApp = meta?.type?.toUpperCase?.() === 'AGENT';
+  const runtimeWebAppId = meta?.web_app_id || (isAgentWebApp ? version_uuid : '');
+  const capabilityQuery = useWebAppCapability(runtimeWebAppId, {
+    enabled: Boolean(isAgentWebApp && runtimeWebAppId),
+  });
+  const capabilityLoading =
+    Boolean(isAgentWebApp && runtimeWebAppId) &&
+    (capabilityQuery.isLoading || (capabilityQuery.isFetching && !capabilityQuery.data));
+  const capabilityStateKind = getWebAppAccessStateKind(capabilityQuery.data?.data);
+  const capabilityErrorStateKind = isWebAppOfflineError(capabilityQuery.error)
+    ? 'offline'
+    : null;
+  const accessStateKind = capabilityLoading
+    ? 'loading'
+    : (capabilityStateKind ?? capabilityErrorStateKind);
   const iconType = meta?.icon_type;
 
   // Derive icon props consistent with AgentSidebar
@@ -140,8 +160,13 @@ function WebappVersionLayoutContent({ children }: { children: React.ReactNode })
         </div>
       </div>
 
-      {/* Children pages */}
-      <div className="grow min-h-0 w-full overflow-hidden">{children}</div>
+      <div className="grow min-h-0 w-full overflow-hidden">
+        {accessStateKind ? (
+          <WebAppAccessState kind={accessStateKind} onLogin={handleLogin} />
+        ) : (
+          children
+        )}
+      </div>
     </div>
   );
 }

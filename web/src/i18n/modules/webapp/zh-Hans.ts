@@ -118,6 +118,24 @@ const messages: WebappMessages = {
     title: 'WebApp 尚未发布',
     description: '请先发布这个智能体，再打开它的 WebApp。',
   },
+  access: {
+    loading: {
+      title: '正在校验访问权限',
+      description: '正在确认当前账号是否可以使用这个 WebApp。',
+    },
+    login_required: {
+      title: '请登录后使用此 WebApp',
+      description: '该 WebApp 仅对指定组织成员或部门开放。',
+    },
+    no_access: {
+      title: '暂无访问权限',
+      description: '当前账号不在该 WebApp 的开放对象中。如需使用，请联系应用管理员。',
+    },
+    offline: {
+      title: '该 WebApp 已下架',
+      description: '当前应用暂不可访问。请联系应用管理员，或等待应用重新上架后再试。',
+    },
+  },
   header: {
     guestMode: '访客模式：登录后可保存对话并使用更多能力。',
     guestModeShort: '访客',
