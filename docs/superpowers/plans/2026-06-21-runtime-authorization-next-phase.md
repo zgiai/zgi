@@ -2,7 +2,7 @@
 
 Date: 2026-06-21
 Branch: `px/permission-system-overhaul`
-Status: Decision brief for post-MVP review
+Status: Ready for post-MVP review
 
 Related:
 
@@ -19,6 +19,8 @@ The permission MVP keeps these runtime surfaces intentionally separate:
 - `internal`: platform invocation surface for workflows, scheduled tasks, and internal calls. It remains enabled for compatibility and does not follow webapp/API exposure.
 
 The current implementation rejects non-public `webapp` and `api` grants at the frontend, service, and storage boundaries. That is deliberate: enabling private webapp/API audiences before the identity handshake is chosen would make config visibility, runtime execution, migration, and API caller semantics disagree.
+
+Closure readout: the first MVP backtest pass is ready for review. Current evidence covers the no-workspace product route contract, workspace asset blocking and recovery, public-compatible webapp/API runtime behavior, builtin app account/department grants, internal invocation compatibility, Docker zgi-c health, frontend route/type checks, and targeted backend regressions. The remaining work in this brief is next-phase product design or implementation after explicit approval, not an open blocker for the first MVP closure.
 
 ## Product Decisions Needed
 

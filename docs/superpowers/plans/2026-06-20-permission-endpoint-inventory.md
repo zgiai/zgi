@@ -1,7 +1,7 @@
 # Permission Endpoint Inventory
 
 Date: 2026-06-20
-Status: MVP closure evidence in progress
+Status: MVP closure evidence ready for first review
 
 This inventory records the expected authorization boundary for the permission foundation MVP. It is intentionally focused on the routes and surfaces involved in the product-user versus builder split.
 
