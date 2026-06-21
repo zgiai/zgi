@@ -75,6 +75,8 @@ Minimal storage contract:
 
 Decision needed before enabling webapp/API account or department grants:
 
+- Next-phase review brief: `docs/superpowers/plans/2026-06-21-runtime-authorization-next-phase.md`.
+
 - Webapp config currently lives on public `/console/api/webapps/:web_app_id/config` with `SetupRequired` only. Runtime calls under `/webapps/:web_app_id/*` have `WebAppAuthMiddleware` and can build an account audience, but the config endpoint cannot safely evaluate account/department grants without either optional auth parsing or a separate public capability response. Directly persisting non-public webapp grants now would make config visibility and runtime execution disagree.
 - Webapp user migration currently lives on `POST /console/api/workflows/migrate-user` without a route `web_app_id`. If webapp audience restrictions become non-public, migration needs either a resource-scoped migration route, a virtual-ID ownership proof, or an explicit decision to keep global virtual-account migration compatibility.
 - API key runtime validation currently knows the agent and workspace from the key, but it has no caller account or department audience. Supporting account/department grants for API requires a product choice: treat API keys as public bearer capabilities, bind keys to an owner audience, or require a caller/user claim on each API request.
