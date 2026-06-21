@@ -77,7 +77,7 @@ func (h *WorkflowHandler) migrateUser(c *gin.Context, webAppID string) {
 				"authenticated_account_id", authenticatedAccountID,
 				err,
 			)
-			failWebAppMigrationAuthorization(c, err)
+			failWebAppRuntimeAuthorization(c, err)
 			return
 		}
 	}
@@ -125,10 +125,12 @@ func (h *WorkflowHandler) migrateUser(c *gin.Context, webAppID string) {
 	response.Success(c, result)
 }
 
-func failWebAppMigrationAuthorization(c *gin.Context, err error) {
+func failWebAppRuntimeAuthorization(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, errWebAppMigrationInvalidRequest):
 		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, errWebAppRuntimeLoginRequired):
+		response.Fail(c, response.ErrUnauthorized)
 	case errors.Is(err, errWebAppMigrationNotFound):
 		response.Fail(c, response.ErrAppNotFound)
 	case errors.Is(err, errWebAppMigrationOffline):

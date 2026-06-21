@@ -31,6 +31,30 @@ func rejectInactiveWebApp(c *gin.Context, agent *agents.Agent, webAppID string) 
 	return true
 }
 
+func rejectUnauthorizedWebAppRuntime(c *gin.Context, agent *agents.Agent, webAppID string) bool {
+	err := authorizeWebAppRuntimeForAgent(
+		c.Request.Context(),
+		runtimeauth.NewStore(database.GetDB()),
+		database.GetDB(),
+		agent,
+		c.GetString("account_id"),
+		c.GetBool("is_authenticated"),
+	)
+	if err == nil {
+		return false
+	}
+
+	logger.WarnContext(c.Request.Context(), "web app runtime authorization failed",
+		"web_app_id", webAppID,
+		"agent_id", agent.ID.String(),
+		"account_id", c.GetString("account_id"),
+		"is_authenticated", c.GetBool("is_authenticated"),
+		err,
+	)
+	failWebAppRuntimeAuthorization(c, err)
+	return true
+}
+
 func publicCompatibleWebAppRuntimeAllowed(ctx context.Context, agent *agents.Agent) (bool, error) {
 	if agent == nil {
 		return false, fmt.Errorf("agent is required")

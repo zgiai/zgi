@@ -286,7 +286,7 @@ func (h *WorkflowHandler) resolveWebAppPrecheckAgent(c *gin.Context) (*agents.Ag
 		response.Fail(c, response.ErrAppNotFound)
 		return nil, "", err
 	}
-	if rejectInactiveWebApp(c, agent, webAppID) {
+	if rejectUnauthorizedWebAppRuntime(c, agent, webAppID) {
 		return nil, "", context.Canceled
 	}
 

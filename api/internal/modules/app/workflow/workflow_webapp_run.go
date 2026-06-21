@@ -258,7 +258,7 @@ func (h *WorkflowHandler) RunWorkflowByWebAppID(c *gin.Context) {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
-	if rejectInactiveWebApp(c, agent, webAppID) {
+	if rejectUnauthorizedWebAppRuntime(c, agent, webAppID) {
 		return
 	}
 

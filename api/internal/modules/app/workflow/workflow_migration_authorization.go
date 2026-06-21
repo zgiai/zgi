@@ -16,6 +16,7 @@ import (
 
 var (
 	errWebAppMigrationInvalidRequest = errors.New("webapp migration invalid request")
+	errWebAppRuntimeLoginRequired    = errors.New("webapp runtime login required")
 	errWebAppMigrationNotFound       = errors.New("webapp migration app not found")
 	errWebAppMigrationAccessDenied   = errors.New("webapp migration access denied")
 	errWebAppMigrationOffline        = errors.New("webapp migration offline")
@@ -65,10 +66,6 @@ func (a *runtimeWebAppMigrationAuthorizer) AuthorizeWebAppMigration(ctx context.
 		return errWebAppMigrationInvalidRequest
 	}
 
-	accountUUID, err := uuid.Parse(accountID)
-	if err != nil {
-		return errWebAppMigrationInvalidRequest
-	}
 	if a == nil || a.agentsRepo == nil {
 		return fmt.Errorf("webapp migration authorizer is unavailable")
 	}
@@ -81,14 +78,20 @@ func (a *runtimeWebAppMigrationAuthorizer) AuthorizeWebAppMigration(ctx context.
 		return fmt.Errorf("failed to load webapp migration agent: %w", err)
 	}
 
+	return authorizeWebAppRuntimeForAgent(ctx, a.store, a.db, agent, accountID, true)
+}
+
+func authorizeWebAppRuntimeForAgent(ctx context.Context, store *runtimeauth.Store, db *gorm.DB, agent *agents.Agent, accountID string, authenticated bool) error {
+	if agent == nil {
+		return errWebAppMigrationInvalidRequest
+	}
 	fallback := runtimeauth.PolicyFromAgentFields(string(agent.WebAppStatus), agent.EnableAPI)
-	store := a.store
 	if store == nil {
-		store = runtimeauth.NewStore(a.db)
+		store = runtimeauth.NewStore(db)
 	}
 	auth, err := store.GetResourceAuthorization(ctx, runtimeauth.PublishedRuntimeResourceAgent, agent.ID, fallback)
 	if err != nil {
-		return fmt.Errorf("failed to load webapp migration authorization: %w", err)
+		return fmt.Errorf("failed to load webapp runtime authorization: %w", err)
 	}
 
 	surface, ok := auth.Surface(runtimeauth.PublishedRuntimeSurfaceWebApp)
@@ -105,7 +108,15 @@ func (a *runtimeWebAppMigrationAuthorizer) AuthorizeWebAppMigration(ctx context.
 		return errWebAppMigrationOffline
 	}
 
-	audience, err := a.webAppMigrationAudienceForAccount(ctx, auth.OrganizationID, accountUUID)
+	if !authenticated {
+		return errWebAppRuntimeLoginRequired
+	}
+	accountUUID, err := uuid.Parse(strings.TrimSpace(accountID))
+	if err != nil {
+		return errWebAppMigrationInvalidRequest
+	}
+
+	audience, err := webAppRuntimeAudienceForAccount(ctx, db, auth.OrganizationID, accountUUID)
 	if err != nil {
 		return err
 	}
@@ -120,13 +131,13 @@ func (a *runtimeWebAppMigrationAuthorizer) AuthorizeWebAppMigration(ctx context.
 	return errWebAppMigrationAccessDenied
 }
 
-func (a *runtimeWebAppMigrationAuthorizer) webAppMigrationAudienceForAccount(ctx context.Context, organizationID, accountID uuid.UUID) (runtimeauth.RuntimeAudience, error) {
-	if a == nil || a.db == nil || organizationID == uuid.Nil || accountID == uuid.Nil {
+func webAppRuntimeAudienceForAccount(ctx context.Context, db *gorm.DB, organizationID, accountID uuid.UUID) (runtimeauth.RuntimeAudience, error) {
+	if db == nil || organizationID == uuid.Nil || accountID == uuid.Nil {
 		return runtimeauth.RuntimeAudience{}, nil
 	}
 
 	var memberCount int64
-	if err := a.db.WithContext(ctx).
+	if err := db.WithContext(ctx).
 		Model(&workspacemodel.OrganizationMember{}).
 		Where("organization_id = ? AND account_id = ? AND status = ?", organizationID.String(), accountID.String(), workspacemodel.OrganizationMemberStatusActive).
 		Count(&memberCount).Error; err != nil {
@@ -136,7 +147,7 @@ func (a *runtimeWebAppMigrationAuthorizer) webAppMigrationAudienceForAccount(ctx
 		return runtimeauth.RuntimeAudience{}, nil
 	}
 
-	departmentIDs, err := a.webAppMigrationDepartmentIDsForAccount(ctx, organizationID, accountID)
+	departmentIDs, err := webAppRuntimeDepartmentIDsForAccount(ctx, db, organizationID, accountID)
 	if err != nil {
 		return runtimeauth.RuntimeAudience{}, err
 	}
@@ -147,9 +158,9 @@ func (a *runtimeWebAppMigrationAuthorizer) webAppMigrationAudienceForAccount(ctx
 	}, nil
 }
 
-func (a *runtimeWebAppMigrationAuthorizer) webAppMigrationDepartmentIDsForAccount(ctx context.Context, organizationID, accountID uuid.UUID) ([]uuid.UUID, error) {
+func webAppRuntimeDepartmentIDsForAccount(ctx context.Context, db *gorm.DB, organizationID, accountID uuid.UUID) ([]uuid.UUID, error) {
 	var rawDepartmentIDs []string
-	if err := a.db.WithContext(ctx).
+	if err := db.WithContext(ctx).
 		Table("department_members").
 		Select("department_members.department_id").
 		Joins("JOIN departments ON departments.id = department_members.department_id").

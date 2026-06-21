@@ -174,6 +174,68 @@ func TestRejectInactiveWebAppRejectsPersistedNonPublicWebAppGrant(t *testing.T) 
 	}
 }
 
+func TestRejectUnauthorizedWebAppRuntimeRequiresLoginForPrivateGrant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, mock := setWorkflowWebAppRuntimeMockDB(t)
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	organizationID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+	expectWorkflowMigrationRuntimeSurface(mock, agentID, organizationID, workspaceID, true, runtimeauth.PublishedRuntimeSubjectOrganization, organizationID)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/workflows/web-app-id/run", nil)
+	ctx.Set("account_id", uuid.NewString())
+	ctx.Set("is_authenticated", false)
+
+	rejected := rejectUnauthorizedWebAppRuntime(ctx, &agents.Agent{
+		ID:           agentID,
+		TenantID:     workspaceID,
+		WebAppStatus: agents.AgentWebAppStatusActive,
+	}, "web-app-id")
+	if !rejected {
+		t.Fatalf("rejectUnauthorizedWebAppRuntime returned false, want private grant to require login")
+	}
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	requireWorkflowRunAccessCode(t, recorder, response.ErrUnauthorized)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
+func TestRejectUnauthorizedWebAppRuntimeAllowsAuthenticatedAccountGrant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, mock := setWorkflowWebAppRuntimeMockDB(t)
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	organizationID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+	accountID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	expectWorkflowMigrationRuntimeSurface(mock, agentID, organizationID, workspaceID, true, runtimeauth.PublishedRuntimeSubjectAccount, accountID)
+	expectWorkflowMigrationAudience(mock, accountID, organizationID, nil, 1)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/workflows/web-app-id/run", nil)
+	ctx.Set("account_id", accountID.String())
+	ctx.Set("is_authenticated", true)
+
+	rejected := rejectUnauthorizedWebAppRuntime(ctx, &agents.Agent{
+		ID:           agentID,
+		TenantID:     workspaceID,
+		WebAppStatus: agents.AgentWebAppStatusActive,
+	}, "web-app-id")
+	if rejected {
+		t.Fatalf("rejectUnauthorizedWebAppRuntime returned true, want authenticated account grant to run")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
 func TestResolveWebAppRunWorkspaceID_PrefersCurrentWorkspace(t *testing.T) {
 	workspaceID, err := resolveWebAppRunWorkspaceID(
 		context.Background(),
