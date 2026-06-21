@@ -17,7 +17,6 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
-	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -139,24 +138,8 @@ func (h *MembersHandler) GetCurrentOrganizationMembers(c *gin.Context) {
 		return
 	}
 
-	organizationID := helper.GetOrganizationID(c)
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			currentWorkspaceJoin.WorkspaceID,
-			accountID,
-			model.WorkspacePermissionWorkspaceView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspaceView) {
+		return
 	}
 
 	keyword := c.Query("keyword")
@@ -529,30 +512,8 @@ func (h *MembersHandler) GetWorkspaceMembersExtension(c *gin.Context) {
 		return
 	}
 
-	accountID := c.GetString("account_id")
-	if accountID == "" {
-		response.Fail(c, response.ErrUnauthorized)
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceView) {
 		return
-	}
-
-	organizationID := helper.GetOrganizationID(c)
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			workspaceID,
-			accountID,
-			model.WorkspacePermissionWorkspaceView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	members, err := h.workspaceManagementService.GetWorkspaceMembersWithExtensions(c.Request.Context(), workspaceID)
@@ -1392,36 +1353,20 @@ func (h *MembersHandler) CancelWorkspaceMemberInvite(c *gin.Context) {
 		return
 	}
 
-	member, err := h.accountService.GetAccountByID(c.Request.Context(), memberID)
-	if err != nil || member == nil {
-		response.Fail(c, response.ErrMemberNotFound)
-		return
-	}
-
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	organizationID := helper.GetOrganizationID(c)
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceManage) {
+		return
+	}
 
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			workspaceID,
-			accountID,
-			model.WorkspacePermissionWorkspaceManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	member, err := h.accountService.GetAccountByID(c.Request.Context(), memberID)
+	if err != nil || member == nil {
+		response.Fail(c, response.ErrMemberNotFound)
+		return
 	}
 
 	currentUser, err := h.accountService.GetAccountByID(c.Request.Context(), accountID)

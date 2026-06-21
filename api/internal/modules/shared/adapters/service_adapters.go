@@ -662,6 +662,10 @@ func (a *AccountServiceAdapter) GetAccountContext(ctx context.Context, accountID
 	return a.accountService.GetAccountContext(ctx, accountID)
 }
 
+func (a *AccountServiceAdapter) GetAccountCapabilities(ctx context.Context, accountID string) (*dto.AccountCapabilitiesResponse, error) {
+	return a.accountService.GetAccountCapabilities(ctx, accountID)
+}
+
 func (a *AccountServiceAdapter) UpdateAccountContext(ctx context.Context, accountID string, organizationID, workspaceID *string) (*auth_model.AccountContext, error) {
 	return a.accountService.UpdateAccountContext(ctx, accountID, organizationID, workspaceID)
 }

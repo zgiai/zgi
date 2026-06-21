@@ -43,6 +43,14 @@ const (
 
 var ErrCurrentPasswordMismatch = errors.New("current password is incorrect")
 
+const (
+	accountCapabilityModeNone         = "none"
+	accountCapabilityModeOrganization = "organization"
+	accountCapabilityModeWorkspace    = "workspace"
+
+	accountRuntimeResourceListModeCandidateFilter = "runtimeauth_candidate_filter"
+)
+
 func normalizedRateLimitEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
@@ -1871,6 +1879,129 @@ func (s *AccountService) GetAccountContext(ctx context.Context, accountID string
 	return ctxModel, nil
 }
 
+func (s *AccountService) GetAccountCapabilities(ctx context.Context, accountID string) (*dto.AccountCapabilitiesResponse, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("account id is required")
+	}
+
+	ctxModel, err := s.GetAccountContext(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	mode := accountCapabilitiesContextMode(ctxModel)
+	response := &dto.AccountCapabilitiesResponse{
+		AccountID: accountID,
+		Context: dto.AccountCapabilityContext{
+			Mode:                  mode,
+			CurrentOrganizationID: ctxModel.CurrentOrganizationID,
+			CurrentWorkspaceID:    ctxModel.CurrentWorkspaceID,
+		},
+		Workspace: dto.AccountWorkspaceCapabilities{
+			ID:                ctxModel.CurrentWorkspaceID,
+			RequiresWorkspace: mode != accountCapabilityModeWorkspace,
+			Permissions:       []string{},
+		},
+		RuntimeAudience: dto.AccountRuntimeAudienceCapability{
+			AccountID:    accountID,
+			SubjectTypes: []string{},
+		},
+		RuntimeSurfaces:      accountRuntimeSurfaceCapabilities(false),
+		RuntimeResourceLists: accountRuntimeResourceListCapabilities(false),
+	}
+
+	organizationID := ptrStringValue(ctxModel.CurrentOrganizationID)
+	if organizationID == "" {
+		response.Routes.WorkspaceRequired = true
+		return response, nil
+	}
+	if s.organizationService == nil {
+		return nil, fmt.Errorf("organization service is not initialized")
+	}
+
+	isMember, err := s.organizationService.IsOrganizationMember(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check organization membership: %w", err)
+	}
+	if !isMember {
+		response.Routes.WorkspaceRequired = true
+		return response, nil
+	}
+
+	role, err := s.organizationService.GetUserOrganizationRole(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organization role: %w", err)
+	}
+	isAdmin := role == workspace_model.OrganizationRoleOwner || role == workspace_model.OrganizationRoleAdmin
+	response.Organization = dto.AccountOrganizationCapabilities{
+		ID:       ctxModel.CurrentOrganizationID,
+		Role:     string(role),
+		IsMember: true,
+		IsAdmin:  isAdmin,
+		ProductSurfaces: dto.AccountProductSurfaceCapabilities{
+			Chat:     true,
+			Image:    true,
+			App:      true,
+			Settings: true,
+		},
+	}
+	response.Routes.OrganizationScopeAllowed = true
+	response.RuntimeSurfaces = accountRuntimeSurfaceCapabilities(true)
+	response.RuntimeResourceLists = accountRuntimeResourceListCapabilities(true)
+	runtimeAudience, err := s.accountRuntimeAudienceCapabilities(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	response.RuntimeAudience = runtimeAudience
+
+	workspaceID := ptrStringValue(ctxModel.CurrentWorkspaceID)
+	if workspaceID == "" {
+		response.Workspace.RequiresWorkspace = true
+		response.Routes.WorkspaceRequired = true
+		return response, nil
+	}
+	if s.workspaceManagementService == nil {
+		return nil, fmt.Errorf("workspace management service is not initialized")
+	}
+
+	accessible, err := s.isWorkspaceAccessibleInOrganization(ctx, accountID, workspaceID, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check workspace access: %w", err)
+	}
+	if !accessible {
+		response.Workspace.RequiresWorkspace = true
+		response.Routes.WorkspaceRequired = true
+		return response, nil
+	}
+
+	workspacePermissions, err := s.organizationService.GetWorkspaceMemberPermissions(ctx, organizationID, workspaceID, accountID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workspace permissions: %w", err)
+	}
+	if workspacePermissions == nil {
+		response.Workspace.RequiresWorkspace = true
+		response.Routes.WorkspaceRequired = true
+		return response, nil
+	}
+
+	permissions := append([]string(nil), workspacePermissions.Permissions...)
+	canViewWorkspace := isAdmin || hasAccountCapabilityPermission(permissions, string(workspace_model.WorkspacePermissionWorkspaceView))
+	response.Workspace = dto.AccountWorkspaceCapabilities{
+		ID:                &workspaceID,
+		Available:         true,
+		RequiresWorkspace: false,
+		CanView:           canViewWorkspace,
+		Role:              workspacePermissions.WorkspaceRole,
+		RoleName:          workspacePermissions.WorkspaceRoleName,
+		Permissions:       permissions,
+	}
+	response.Routes.WorkspaceScopeAllowed = canViewWorkspace
+	response.Routes.WorkspaceRequired = false
+
+	return response, nil
+}
+
 func (s *AccountService) EnsureAccountContextForWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error) {
 	accountID = strings.TrimSpace(accountID)
 	organizationID = strings.TrimSpace(organizationID)
@@ -1970,6 +2101,10 @@ func (s *AccountService) EnsureAccountContextForWorkspace(ctx context.Context, a
 }
 
 func (s *AccountService) populateDefaultOrganization(ctx context.Context, ctxModel *auth_model.AccountContext) bool {
+	if s == nil || s.organizationService == nil || ctxModel == nil {
+		return false
+	}
+
 	// 1. First owned
 	group, err := s.organizationService.GetFirstOwnedOrganization(ctx, ctxModel.AccountID)
 	if err == nil && group != nil {
@@ -2035,27 +2170,18 @@ func (s *AccountService) repairAccountContextWorkspace(ctx context.Context, ctxM
 	}
 
 	if currentOrganizationID != "" {
-		workspace, err := s.resolveWorkspaceForOrganizationContext(ctx, accountID, ctxModel, currentOrganizationID)
-		if err != nil {
-			return false, err
-		}
-		if workspace != nil {
-			changed = setStringPtrIfChanged(&ctxModel.CurrentWorkspaceID, workspace.ID) || changed
-			currentWorkspaceID = workspace.ID
-		} else {
-			changed = clearStringPtrIfChanged(&ctxModel.CurrentWorkspaceID) || changed
-			currentWorkspaceID = ""
-		}
-	}
-
-	if currentWorkspaceID == "" {
-		workspace, err := s.resolveAnyAccessibleWorkspace(ctx, accountID)
-		if err != nil {
-			return false, err
-		}
-		if workspace != nil && workspace.OrganizationID != nil && *workspace.OrganizationID != "" {
-			changed = setStringPtrIfChanged(&ctxModel.CurrentOrganizationID, *workspace.OrganizationID) || changed
-			changed = setStringPtrIfChanged(&ctxModel.CurrentWorkspaceID, workspace.ID) || changed
+		if currentWorkspaceID != "" {
+			workspace, err := s.resolveWorkspaceForOrganizationContext(ctx, accountID, ctxModel, currentOrganizationID)
+			if err != nil {
+				return false, err
+			}
+			if workspace != nil {
+				changed = setStringPtrIfChanged(&ctxModel.CurrentWorkspaceID, workspace.ID) || changed
+				currentWorkspaceID = workspace.ID
+			} else {
+				changed = clearStringPtrIfChanged(&ctxModel.CurrentWorkspaceID) || changed
+				currentWorkspaceID = ""
+			}
 		}
 	}
 
@@ -2144,28 +2270,6 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 		resolvedWorkspaceID = workspaceID
 	}
 
-	if organizationID != nil && *organizationID != "" && (workspaceID == nil || *workspaceID == "") {
-		workspace, err := s.resolveWorkspaceForOrganizationContext(ctx, accountID, ctxModel, *organizationID)
-		if err != nil {
-			return nil, err
-		}
-		if workspace != nil {
-			workspaceIDValue := workspace.ID
-			resolvedWorkspaceID = &workspaceIDValue
-		}
-	}
-
-	if organizationID == nil && workspaceID != nil && *workspaceID == "" && ctxModel.CurrentOrganizationID != nil && *ctxModel.CurrentOrganizationID != "" {
-		workspace, err := s.resolveDefaultWorkspaceForOrganization(ctx, accountID, *ctxModel.CurrentOrganizationID)
-		if err != nil {
-			return nil, err
-		}
-		if workspace != nil {
-			workspaceIDValue := workspace.ID
-			resolvedWorkspaceID = &workspaceIDValue
-		}
-	}
-
 	if organizationID != nil {
 		if *organizationID == "" {
 			ctxModel.CurrentOrganizationID = nil
@@ -2207,7 +2311,32 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 		}
 	}
 
+	if organizationID != nil || workspaceID != nil {
+		currentWorkspaceID := ptrStringValue(ctxModel.CurrentWorkspaceID)
+		if currentWorkspaceID == "" {
+			if err := s.clearCurrentWorkspaceMember(ctx, accountID); err != nil {
+				return nil, err
+			}
+		} else if err := s.syncCurrentWorkspaceMember(ctx, accountID, currentWorkspaceID); err != nil {
+			return nil, err
+		}
+	}
+
 	return ctxModel, nil
+}
+
+func (s *AccountService) clearCurrentWorkspaceMember(ctx context.Context, accountID string) error {
+	accountID = strings.TrimSpace(accountID)
+	if s.db == nil || accountID == "" {
+		return nil
+	}
+
+	if err := s.db.WithContext(ctx).Model(&workspace_model.WorkspaceMember{}).
+		Where("account_id = ?", accountID).
+		Update("current", false).Error; err != nil {
+		return fmt.Errorf("failed to clear current workspace: %w", err)
+	}
+	return nil
 }
 
 func (s *AccountService) syncCurrentWorkspaceMember(ctx context.Context, accountID, workspaceID string) error {
@@ -2264,81 +2393,23 @@ func (s *AccountService) resolveWorkspaceOrganizationContext(ctx context.Context
 }
 
 func (s *AccountService) resolveWorkspaceForOrganizationContext(ctx context.Context, accountID string, ctxModel *auth_model.AccountContext, organizationID string) (*workspace_model.Workspace, error) {
-	if ctxModel.CurrentWorkspaceID != nil && *ctxModel.CurrentWorkspaceID != "" {
-		isValid, err := s.isWorkspaceAccessibleInOrganization(ctx, accountID, *ctxModel.CurrentWorkspaceID, organizationID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check workspace organization: %w", err)
-		}
-		if isValid {
-			workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, *ctxModel.CurrentWorkspaceID)
-			if err != nil {
-				return nil, err
-			}
-			return workspace, nil
-		}
-	}
-
-	return s.resolveDefaultWorkspaceForOrganization(ctx, accountID, organizationID)
-}
-
-func (s *AccountService) resolveDefaultWorkspaceForOrganization(ctx context.Context, accountID, organizationID string) (*workspace_model.Workspace, error) {
-	if s.db == nil {
+	if ctxModel.CurrentWorkspaceID == nil || *ctxModel.CurrentWorkspaceID == "" {
 		return nil, nil
 	}
 
-	isAdmin, err := s.isOrganizationAdminOrOwner(ctx, organizationID, accountID)
+	isValid, err := s.isWorkspaceAccessibleInOrganization(ctx, accountID, *ctxModel.CurrentWorkspaceID, organizationID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check organization role: %w", err)
+		return nil, fmt.Errorf("failed to check workspace organization: %w", err)
 	}
-
-	query := s.db.WithContext(ctx).
-		Table("workspaces").
-		Select("workspaces.*").
-		Where("workspaces.organization_id = ? AND workspaces.status = ?", organizationID, workspace_model.WorkspaceStatusNormal).
-		Order("workspaces.created_at DESC")
-
-	if !isAdmin {
-		query = query.Joins("JOIN workspace_members ON workspaces.id = workspace_members.workspace_id").
-			Where("workspace_members.account_id = ?", accountID)
-	}
-
-	var workspace workspace_model.Workspace
-	if err := query.Limit(1).Scan(&workspace).Error; err != nil {
-		return nil, fmt.Errorf("failed to resolve current workspace: %w", err)
-	}
-	if workspace.ID == "" {
+	if !isValid {
 		return nil, nil
 	}
 
-	return &workspace, nil
-}
-
-func (s *AccountService) resolveAnyAccessibleWorkspace(ctx context.Context, accountID string) (*workspace_model.Workspace, error) {
-	if s.db == nil {
-		return nil, nil
-	}
-
-	var workspace workspace_model.Workspace
-	err := s.db.WithContext(ctx).
-		Table("workspaces").
-		Select("workspaces.*").
-		Joins("JOIN members AS organization_members ON organization_members.organization_id = workspaces.organization_id").
-		Joins("LEFT JOIN workspace_members ON workspaces.id = workspace_members.workspace_id AND workspace_members.account_id = organization_members.account_id").
-		Where("organization_members.account_id = ?", accountID).
-		Where("workspaces.status = ?", workspace_model.WorkspaceStatusNormal).
-		Where("workspaces.organization_id IS NOT NULL").
-		Where("(organization_members.role IN ? OR workspace_members.account_id IS NOT NULL)", []workspace_model.OrganizationRole{workspace_model.OrganizationRoleOwner, workspace_model.OrganizationRoleAdmin}).
-		Order("COALESCE(workspace_members.current, false) DESC, workspaces.created_at DESC").
-		Limit(1).
-		Scan(&workspace).Error
+	workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, *ctxModel.CurrentWorkspaceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve accessible workspace: %w", err)
+		return nil, err
 	}
-	if workspace.ID == "" {
-		return nil, nil
-	}
-
-	return &workspace, nil
+	return workspace, nil
 }
 
 func (s *AccountService) isWorkspaceAccessibleInOrganization(ctx context.Context, accountID, workspaceID, organizationID string) (bool, error) {
@@ -2381,6 +2452,108 @@ func (s *AccountService) isOrganizationAdminOrOwner(ctx context.Context, organiz
 		return false, nil
 	}
 	return s.organizationService.IsOrganizationAdminOrOwner(ctx, organizationID, accountID)
+}
+
+func accountCapabilitiesContextMode(ctxModel *auth_model.AccountContext) string {
+	if ctxModel == nil {
+		return accountCapabilityModeNone
+	}
+	if ptrStringValue(ctxModel.CurrentWorkspaceID) != "" {
+		return accountCapabilityModeWorkspace
+	}
+	if ptrStringValue(ctxModel.CurrentOrganizationID) != "" {
+		return accountCapabilityModeOrganization
+	}
+	return accountCapabilityModeNone
+}
+
+func accountRuntimeSurfaceCapabilities(enabled bool) map[string]dto.AccountRuntimeSurfaceCapability {
+	return map[string]dto.AccountRuntimeSurfaceCapability{
+		"webapp": {
+			Enabled:           enabled,
+			Mode:              "published_resource",
+			GrantSubjectTypes: []string{"public"},
+		},
+		"api": {
+			Enabled:           enabled,
+			Mode:              "api_key",
+			GrantSubjectTypes: []string{"public"},
+		},
+		"builtin_app": {
+			Enabled:           enabled,
+			Mode:              "runtime_grant",
+			GrantSubjectTypes: []string{"organization", "department", "account"},
+		},
+		"internal": {
+			Enabled:           enabled,
+			Mode:              "internal_runtime",
+			GrantSubjectTypes: []string{"internal"},
+		},
+	}
+}
+
+func accountRuntimeResourceListCapabilities(enabled bool) map[string]dto.AccountRuntimeResourceListCapability {
+	return map[string]dto.AccountRuntimeResourceListCapability{
+		"app_center": {
+			Enabled:      enabled,
+			ResourceType: "agent",
+			Surface:      "builtin_app",
+			Mode:         accountRuntimeResourceListModeCandidateFilter,
+			Endpoint:     "/console/api/agents/runnable-webapps",
+		},
+		"built_in_workflows": {
+			Enabled:      enabled,
+			ResourceType: "builtin_workflow",
+			Surface:      "builtin_app",
+			Mode:         accountRuntimeResourceListModeCandidateFilter,
+			Endpoint:     "/console/api/built-in-workflows",
+		},
+	}
+}
+
+func (s *AccountService) accountRuntimeAudienceCapabilities(ctx context.Context, organizationID, accountID string) (dto.AccountRuntimeAudienceCapability, error) {
+	audience := dto.AccountRuntimeAudienceCapability{
+		AccountID:      accountID,
+		OrganizationID: &organizationID,
+		SubjectTypes:   []string{"organization", "account"},
+		DepartmentIDs:  []string{},
+	}
+
+	departmentIDs, err := s.accountRuntimeAudienceDepartmentIDs(ctx, organizationID, accountID)
+	if err != nil {
+		return dto.AccountRuntimeAudienceCapability{}, err
+	}
+	if len(departmentIDs) > 0 {
+		audience.SubjectTypes = append(audience.SubjectTypes, "department")
+		audience.DepartmentIDs = departmentIDs
+	}
+	return audience, nil
+}
+
+func (s *AccountService) accountRuntimeAudienceDepartmentIDs(ctx context.Context, organizationID, accountID string) ([]string, error) {
+	if s == nil || s.db == nil || organizationID == "" || accountID == "" {
+		return nil, nil
+	}
+
+	var departmentIDs []string
+	if err := s.db.WithContext(ctx).
+		Table("department_members").
+		Select("department_members.department_id").
+		Joins("JOIN departments ON departments.id = department_members.department_id").
+		Where("department_members.account_id = ? AND departments.group_id = ? AND departments.status = ?", accountID, organizationID, workspace_model.DepartmentStatusActive).
+		Scan(&departmentIDs).Error; err != nil {
+		return nil, fmt.Errorf("failed to load account runtime audience departments: %w", err)
+	}
+	return departmentIDs, nil
+}
+
+func hasAccountCapabilityPermission(permissions []string, target string) bool {
+	for _, permission := range permissions {
+		if permission == target {
+			return true
+		}
+	}
+	return false
 }
 
 func ptrStringValue(value *string) string {

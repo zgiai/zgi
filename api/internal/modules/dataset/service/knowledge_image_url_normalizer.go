@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/zgiai/zgi/api/internal/util"
 )
 
 const (
@@ -127,7 +129,7 @@ func buildKnowledgeImageProxyURL(localPath string, filesBaseURL string) (string,
 	if err != nil {
 		return "", true, err
 	}
-	return baseURL + knowledgeImageEndpoint + "?path=" + url.QueryEscape(localPath), true, nil
+	return baseURL + util.GetSignedParserImagePathURL(localPath), true, nil
 }
 
 func joinKnowledgeFilesBaseURL(baseURL string, source string) string {

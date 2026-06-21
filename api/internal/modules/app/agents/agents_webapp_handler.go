@@ -29,14 +29,18 @@ func (h *AgentsHandler) UpdateWebAppStatus(c *gin.Context) {
 		return
 	}
 
+	ctx := context.WithValue(c.Request.Context(), "account_id", accountID)
+	ctx = context.WithValue(ctx, "tenant_id", callerOrganizationID)
+	if err := h.appService.RequireAgentManageAccess(ctx, agentID, accountID); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+
 	var req dto.UpdateWebAppStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-
-	ctx := context.WithValue(c.Request.Context(), "account_id", accountID)
-	ctx = context.WithValue(ctx, "tenant_id", callerOrganizationID)
 
 	result, err := h.appService.UpdateWebAppStatus(ctx, agentID, req)
 	if err != nil {

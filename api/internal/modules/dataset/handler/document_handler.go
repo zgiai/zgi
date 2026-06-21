@@ -9,7 +9,6 @@ import (
 
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
-	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -20,6 +19,7 @@ type DocumentHandler struct {
 	datasetService    datasetservice.DatasetService
 	accountService    interfaces.AccountService
 	enterpriseService interfaces.OrganizationService
+	authService       interfaces.AuthorizationService
 }
 
 // NewDocumentHandler creates a new DocumentHandler instance
@@ -28,12 +28,18 @@ func NewDocumentHandler(
 	datasetService datasetservice.DatasetService,
 	accountService interfaces.AccountService,
 	enterpriseService interfaces.OrganizationService,
+	authServices ...interfaces.AuthorizationService,
 ) *DocumentHandler {
+	var authService interfaces.AuthorizationService
+	if len(authServices) > 0 {
+		authService = authServices[0]
+	}
 	return &DocumentHandler{
 		documentService:   documentService,
 		datasetService:    datasetService,
 		accountService:    accountService,
 		enterpriseService: enterpriseService,
+		authService:       authService,
 	}
 }
 
@@ -59,40 +65,8 @@ func (h *DocumentHandler) GetProcessRule(c *gin.Context) {
 func (h *DocumentHandler) GetDocumentList(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 
-	accountID := c.GetString("account_id")
-	groupID := c.GetString("tenant_id")
-
-	if accountID == "" || groupID == "" {
-		response.Fail(c, response.ErrUnauthorized)
+	if _, ok := authorizeDatasetViewAccess(c, h.datasetService, h.authService, datasetID); !ok {
 		return
-	}
-
-	var datasetTenantID string
-	if h.datasetService != nil {
-		dataset, err := h.datasetService.GetDatasetByID(c.Request.Context(), datasetID)
-		if err != nil || dataset == nil {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		datasetTenantID = dataset.WorkspaceID
-	}
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			groupID,
-			datasetTenantID,
-			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		}
 	}
 
 	var req dto.DocumentListRequest
@@ -115,46 +89,15 @@ func (h *DocumentHandler) CreateDocument(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 
 	accountID := c.GetString("account_id")
-	organizationID := c.GetString("tenant_id")
-	groupID := c.GetString("group_id")
 
-	if accountID == "" || organizationID == "" {
+	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	if groupID == "" {
-		groupID = organizationID
-	}
-
-	var datasetTenantID string
-	if h.datasetService != nil {
-		dataset, err := h.datasetService.GetDatasetByID(c.Request.Context(), datasetID)
-		if err != nil || dataset == nil {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		datasetTenantID = dataset.WorkspaceID
-	} else {
-		datasetTenantID = organizationID
-	}
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			groupID,
-			datasetTenantID,
-			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	dataset, ok := authorizeDatasetManageAccess(c, h.datasetService, h.authService, datasetID)
+	if !ok {
+		return
 	}
 
 	var req dto.DocumentCreateRequest
@@ -163,7 +106,7 @@ func (h *DocumentHandler) CreateDocument(c *gin.Context) {
 		return
 	}
 
-	result, err := h.documentService.CreateDocument(c.Request.Context(), datasetID, &req, accountID, organizationID)
+	result, err := h.documentService.CreateDocument(c.Request.Context(), datasetID, &req, accountID, dataset.OrganizationID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrDocumentCreateFailed, err.Error())
 		return
@@ -176,47 +119,8 @@ func (h *DocumentHandler) CreateDocument(c *gin.Context) {
 func (h *DocumentHandler) DeleteDocuments(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 
-	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
-	groupID := c.GetString("group_id")
-
-	if accountID == "" || tenantID == "" {
-		response.Fail(c, response.ErrUnauthorized)
+	if _, ok := authorizeDatasetManageAccess(c, h.datasetService, h.authService, datasetID); !ok {
 		return
-	}
-
-	if groupID == "" {
-		groupID = tenantID
-	}
-
-	var datasetTenantID string
-	if h.datasetService != nil {
-		dataset, err := h.datasetService.GetDatasetByID(c.Request.Context(), datasetID)
-		if err != nil || dataset == nil {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		datasetTenantID = dataset.WorkspaceID
-	} else {
-		datasetTenantID = tenantID
-	}
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			groupID,
-			datasetTenantID,
-			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	// Get document IDs from query parameters
@@ -224,6 +128,11 @@ func (h *DocumentHandler) DeleteDocuments(c *gin.Context) {
 	if len(documentIDs) == 0 {
 		response.Fail(c, response.ErrInvalidParam)
 		return
+	}
+	for _, documentID := range documentIDs {
+		if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+			return
+		}
 	}
 
 	err := h.documentService.DeleteDocuments(c.Request.Context(), datasetID, documentIDs)
@@ -245,6 +154,10 @@ func (h *DocumentHandler) GetDocumentDetail(c *gin.Context) {
 		metadata = "all"
 	}
 
+	if _, _, ok := authorizeDatasetDocumentViewAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+		return
+	}
+
 	result, err := h.documentService.GetDocumentDetail(c.Request.Context(), datasetID, documentID, metadata)
 	if err != nil {
 		response.Fail(c, response.ErrDocumentGetFailed)
@@ -258,6 +171,10 @@ func (h *DocumentHandler) GetDocumentDetail(c *gin.Context) {
 func (h *DocumentHandler) UpdateDocument(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
+
+	if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+		return
+	}
 
 	var req struct {
 		Enabled *bool  `json:"enabled"`
@@ -285,47 +202,8 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 
-	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
-	groupID := c.GetString("group_id")
-
-	if accountID == "" || tenantID == "" {
-		response.Fail(c, response.ErrUnauthorized)
+	if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
 		return
-	}
-
-	if groupID == "" {
-		groupID = tenantID
-	}
-
-	var datasetTenantID string
-	if h.datasetService != nil {
-		dataset, err := h.datasetService.GetDatasetByID(c.Request.Context(), datasetID)
-		if err != nil || dataset == nil {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		datasetTenantID = dataset.WorkspaceID
-	} else {
-		datasetTenantID = tenantID
-	}
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			groupID,
-			datasetTenantID,
-			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	err := h.documentService.DeleteDocuments(c.Request.Context(), datasetID, []string{documentID})
@@ -342,6 +220,10 @@ func (h *DocumentHandler) GetBatchIndexingStatus(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 	batch := c.Param("batch")
 
+	if _, ok := authorizeDatasetViewAccess(c, h.datasetService, h.authService, datasetID); !ok {
+		return
+	}
+
 	result, err := h.documentService.GetBatchIndexingStatus(c.Request.Context(), datasetID, batch)
 	if err != nil {
 		response.Fail(c, response.ErrBatchIndexingStatusFailed)
@@ -355,6 +237,10 @@ func (h *DocumentHandler) GetBatchIndexingStatus(c *gin.Context) {
 func (h *DocumentHandler) GetDocumentIndexingStatus(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
+
+	if _, _, ok := authorizeDatasetDocumentViewAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+		return
+	}
 
 	result, err := h.documentService.GetDocumentIndexingStatus(c.Request.Context(), datasetID, documentID)
 	if err != nil {
@@ -370,6 +256,10 @@ func (h *DocumentHandler) GetDocumentProgress(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 
+	if _, _, ok := authorizeDatasetDocumentViewAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+		return
+	}
+
 	result, err := h.documentService.GetDocumentProgress(c.Request.Context(), datasetID, documentID)
 	if err != nil {
 		response.Fail(c, response.ErrDocumentNotFound)
@@ -383,6 +273,18 @@ func (h *DocumentHandler) GetDocumentProgress(c *gin.Context) {
 func (h *DocumentHandler) RetryDocument(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 
+	// Get user info from context
+	accountID := c.GetString("account_id")
+	tenantID := c.GetString("tenant_id")
+
+	if accountID == "" || tenantID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if _, ok := authorizeDatasetManageAccess(c, h.datasetService, h.authService, datasetID); !ok {
+		return
+	}
+
 	var req struct {
 		DocumentIDs []string `json:"document_ids" binding:"required"`
 	}
@@ -391,13 +293,10 @@ func (h *DocumentHandler) RetryDocument(c *gin.Context) {
 		return
 	}
 
-	// Get user info from context
-	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
-
-	if accountID == "" || tenantID == "" {
-		response.Fail(c, response.ErrUnauthorized)
-		return
+	for _, documentID := range req.DocumentIDs {
+		if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+			return
+		}
 	}
 
 	// Retry documents
@@ -417,6 +316,19 @@ func (h *DocumentHandler) UpdateDocumentStatus(c *gin.Context) {
 	// Validate dataset ID format
 	if _, err := uuid.Parse(datasetID); err != nil {
 		response.Fail(c, response.ErrInvalidUuid)
+		return
+	}
+
+	// Get account and tenant IDs from context
+	accountID := c.GetString("account_id")
+	tenantID := c.GetString("tenant_id")
+
+	if accountID == "" || tenantID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if _, ok := authorizeDatasetManageAccess(c, h.datasetService, h.authService, datasetID); !ok {
 		return
 	}
 
@@ -448,16 +360,11 @@ func (h *DocumentHandler) UpdateDocumentStatus(c *gin.Context) {
 		}
 	}
 
-	// Get account and tenant IDs from context
-	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
-
-	if accountID == "" || tenantID == "" {
-		response.Fail(c, response.ErrUnauthorized)
-		return
+	for _, documentID := range documentIDs {
+		if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+			return
+		}
 	}
-
-	// For now, we'll rely on the service layer to handle this
 
 	// Call document service to update document status
 	if err := h.documentService.UpdateDocumentStatus(c.Request.Context(), datasetID, action, documentIDs, accountID); err != nil {

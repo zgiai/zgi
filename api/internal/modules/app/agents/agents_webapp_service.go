@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -54,8 +55,14 @@ func (s *agentsService) UpdateWebAppStatus(ctx context.Context, agentID string, 
 		return nil, err
 	}
 
-	if err := s.agentsRepo.UpdateWebAppStatus(ctx, agentID, status, reason, accountID); err != nil {
-		return nil, err
+	if s.db != nil {
+		if err := s.updateAgentWebAppStatusAndRuntimeSurface(ctx, ag, status, reason, accountID); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.agentsRepo.UpdateWebAppStatus(ctx, agentID, status, reason, accountID); err != nil {
+			return nil, err
+		}
 	}
 
 	updatedAgent, err := s.agentsRepo.GetByID(ctx, agentID)
@@ -73,6 +80,31 @@ func (s *agentsService) UpdateWebAppStatus(ctx context.Context, agentID string, 
 
 func isSystemManagedAgent(ag *Agent) bool {
 	return ag == nil || ag.TenantID == uuid.Nil
+}
+
+func (s *agentsService) RequireAgentManageAccess(ctx context.Context, agentID, accountID string) error {
+	agentID = strings.TrimSpace(agentID)
+	accountID = strings.TrimSpace(accountID)
+	if agentID == "" {
+		return fmt.Errorf("%w: agent id is required", runtimeservice.ErrInvalidInput)
+	}
+	if accountID == "" {
+		return runtimeservice.ErrUnauthorized
+	}
+	if _, err := uuid.Parse(agentID); err != nil {
+		return fmt.Errorf("%w: invalid agent id", runtimeservice.ErrInvalidInput)
+	}
+	ag, err := s.agentsRepo.GetByID(ctx, agentID)
+	if err != nil || isSystemManagedAgent(ag) {
+		return fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
+	}
+	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+		if strings.EqualFold(err.Error(), "permission denied") {
+			return runtimeservice.ErrPermissionDenied
+		}
+		return err
+	}
+	return nil
 }
 
 func accountIDFromContext(ctx context.Context) string {

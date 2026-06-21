@@ -500,8 +500,20 @@ func (r *Repository) UpdateGenerationTaskStatus(ctx context.Context, taskID, sta
 }
 
 func (r *Repository) RecoverStaleRunningGenerationTasks(ctx context.Context, staleBefore time.Time, reason string, completedAt time.Time) (int64, error) {
-	result := r.db.WithContext(ctx).Model(&GenerationTask{}).
-		Where("status IN ? AND updated_at < ?", []string{GenerationTaskStatusQueued, GenerationTaskStatusRunning, GenerationTaskStatusCanceling}, staleBefore).
+	return r.recoverStaleRunningGenerationTasks(ctx, "", staleBefore, reason, completedAt)
+}
+
+func (r *Repository) RecoverStaleRunningGenerationTasksForAgent(ctx context.Context, agentID string, staleBefore time.Time, reason string, completedAt time.Time) (int64, error) {
+	return r.recoverStaleRunningGenerationTasks(ctx, agentID, staleBefore, reason, completedAt)
+}
+
+func (r *Repository) recoverStaleRunningGenerationTasks(ctx context.Context, agentID string, staleBefore time.Time, reason string, completedAt time.Time) (int64, error) {
+	query := r.db.WithContext(ctx).Model(&GenerationTask{}).
+		Where("status IN ? AND updated_at < ?", []string{GenerationTaskStatusQueued, GenerationTaskStatusRunning, GenerationTaskStatusCanceling}, staleBefore)
+	if agentID != "" {
+		query = query.Where("agent_id = ?", agentID)
+	}
+	result := query.
 		Updates(map[string]interface{}{
 			"status":       GenerationTaskStatusFailed,
 			"error":        reason,
@@ -653,8 +665,20 @@ func (r *Repository) UpdateScenarioRecognitionTaskStatus(ctx context.Context, ta
 }
 
 func (r *Repository) RecoverStaleRunningScenarioRecognitionTasks(ctx context.Context, staleBefore time.Time, reason string, completedAt time.Time) (int64, error) {
-	result := r.db.WithContext(ctx).Model(&ScenarioRecognitionTask{}).
-		Where("status IN ? AND updated_at < ?", []string{GenerationTaskStatusQueued, GenerationTaskStatusRunning, GenerationTaskStatusCanceling}, staleBefore).
+	return r.recoverStaleRunningScenarioRecognitionTasks(ctx, "", staleBefore, reason, completedAt)
+}
+
+func (r *Repository) RecoverStaleRunningScenarioRecognitionTasksForAgent(ctx context.Context, agentID string, staleBefore time.Time, reason string, completedAt time.Time) (int64, error) {
+	return r.recoverStaleRunningScenarioRecognitionTasks(ctx, agentID, staleBefore, reason, completedAt)
+}
+
+func (r *Repository) recoverStaleRunningScenarioRecognitionTasks(ctx context.Context, agentID string, staleBefore time.Time, reason string, completedAt time.Time) (int64, error) {
+	query := r.db.WithContext(ctx).Model(&ScenarioRecognitionTask{}).
+		Where("status IN ? AND updated_at < ?", []string{GenerationTaskStatusQueued, GenerationTaskStatusRunning, GenerationTaskStatusCanceling}, staleBefore)
+	if agentID != "" {
+		query = query.Where("agent_id = ?", agentID)
+	}
+	result := query.
 		Updates(map[string]interface{}{
 			"status":       GenerationTaskStatusFailed,
 			"error":        reason,

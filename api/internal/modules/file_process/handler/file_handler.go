@@ -285,6 +285,10 @@ func (h *FileHandler) GetFilePreview(c *gin.Context) {
 		return
 	}
 
+	if _, ok := authorizeFileViewAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+		return
+	}
+
 	// Check for ocr parameter
 	enableOCR := c.Query("ocr")
 	var content string
@@ -919,6 +923,12 @@ func (h *FileHandler) DeleteFiles(c *gin.Context) {
 	for _, fileID := range fileIDs {
 		if _, err := uuid.Parse(fileID); err != nil {
 			h.businessError(c, response.ErrInvalidParam)
+			return
+		}
+	}
+
+	for _, fileID := range fileIDs {
+		if _, ok := authorizeFileManageAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 			return
 		}
 	}

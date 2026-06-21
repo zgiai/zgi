@@ -3,7 +3,9 @@ package handler
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -151,8 +153,20 @@ func (h *ImagePreviewHandler) writeTextFilePreview(c *gin.Context, uploadFile *d
 }
 
 func (h *ImagePreviewHandler) GetMinerUImage(c *gin.Context) {
+	timestamp := c.Query("timestamp")
+	nonce := c.Query("nonce")
+	sign := c.Query("sign")
 	storageKey := c.Query("key")
 	if storageKey != "" {
+		var ok bool
+		storageKey, ok = normalizeMinerUImageStorageKey(storageKey)
+		if !ok {
+			response.Fail(c, response.ErrFileNotFound)
+			return
+		}
+		if !verifyOptionalParserImageSignature(c, "key", storageKey, timestamp, nonce, sign) {
+			return
+		}
 		if h.storage == nil {
 			response.Fail(c, response.ErrFileNotFound)
 			return
@@ -170,6 +184,13 @@ func (h *ImagePreviewHandler) GetMinerUImage(c *gin.Context) {
 	imagePath := c.Query("path")
 	if imagePath == "" {
 		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if !allowMinerULocalImagePath(imagePath) {
+		response.Fail(c, response.ErrFileNotFound)
+		return
+	}
+	if !verifyOptionalParserImageSignature(c, "path", imagePath, timestamp, nonce, sign) {
 		return
 	}
 
@@ -192,4 +213,81 @@ func (h *ImagePreviewHandler) writeCompressedImage(c *gin.Context, content []byt
 	c.Header("Content-Type", mimeType)
 	c.Header("Content-Length", strconv.Itoa(len(compressed)))
 	c.Data(http.StatusOK, mimeType, compressed)
+}
+
+func verifyOptionalParserImageSignature(c *gin.Context, kind, value, timestamp, nonce, sign string) bool {
+	hasSignatureParams := timestamp != "" || nonce != "" || sign != ""
+	if !hasSignatureParams {
+		return true
+	}
+	if timestamp == "" || nonce == "" || sign == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return false
+	}
+	if !util.VerifyParserImageSignature(kind, value, timestamp, nonce, sign) {
+		response.Fail(c, response.ErrFileNotFound)
+		return false
+	}
+	return true
+}
+
+func normalizeMinerUImageStorageKey(key string) (string, bool) {
+	value := strings.TrimSpace(key)
+	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
+		return "", false
+	}
+	normalized := strings.ReplaceAll(value, "\\", "/")
+	if hasUnsafePathSegment(normalized) || !hasAllowedMinerUImageKeyPrefix(normalized) || !hasSupportedImageExtension(normalized) {
+		return "", false
+	}
+	return normalized, true
+}
+
+func hasAllowedMinerUImageKeyPrefix(key string) bool {
+	lower := strings.ToLower(key)
+	return strings.HasPrefix(lower, "mineru/images/") ||
+		strings.HasPrefix(lower, "document-images/")
+}
+
+func allowMinerULocalImagePath(path string) bool {
+	value := strings.TrimSpace(path)
+	if value == "" || hasUnsafePathSegment(strings.ReplaceAll(value, "\\", "/")) {
+		return false
+	}
+	if !filepath.IsAbs(value) && !isWindowsAbsoluteFilePath(value) {
+		return false
+	}
+	normalized := strings.ToLower(strings.ReplaceAll(value, "\\", "/"))
+	if !strings.Contains(normalized, "/mineru/images/") &&
+		!strings.Contains(normalized, "/hyperparse/mineru/images/") &&
+		!strings.Contains(normalized, "/storage/mineru/images/") {
+		return false
+	}
+	return hasSupportedImageExtension(normalized)
+}
+
+func hasUnsafePathSegment(value string) bool {
+	parts := strings.Split(strings.ReplaceAll(value, "\\", "/"), "/")
+	for _, part := range parts {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSupportedImageExtension(value string) bool {
+	switch strings.ToLower(filepath.Ext(strings.SplitN(value, "?", 2)[0])) {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff":
+		return true
+	default:
+		return false
+	}
+}
+
+func isWindowsAbsoluteFilePath(value string) bool {
+	return len(value) >= 3 &&
+		((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z')) &&
+		value[1] == ':' &&
+		(value[2] == '\\' || value[2] == '/')
 }

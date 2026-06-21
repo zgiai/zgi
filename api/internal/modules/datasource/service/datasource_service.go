@@ -112,11 +112,12 @@ type DataSourceService interface {
 	UpdateTable(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateTableRequest) (*model.Table, error)
 	UpdateTableColumns(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateTableColumnsRequest) error
 	GetTableColumns(ctx context.Context, organizationID, dataSourceID, tableID string, includeSystemFields bool) (dto.GetTableColumnsResponse, error)
+	ResolveTableDataSourceID(ctx context.Context, organizationID, tableID string) (string, error)
 
 	// Table prompt operations
-	GetTablePrompt(ctx context.Context, tableID string, lang string) (*model.TablePrompt, error)
-	UpsertTablePrompt(ctx context.Context, tableID string, req dto.UpdateTablePromptRequest) (*model.TablePrompt, error)
-	DeleteTablePrompt(ctx context.Context, tableID string) error
+	GetTablePrompt(ctx context.Context, organizationID, dataSourceID, tableID, accountID, lang string) (*model.TablePrompt, error)
+	UpsertTablePrompt(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateTablePromptRequest) (*model.TablePrompt, error)
+	DeleteTablePrompt(ctx context.Context, organizationID, dataSourceID, tableID, accountID string) error
 
 	// Table data operations
 	AddTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.AddRecordRequest) (dto.AddRecordResponse, error)
@@ -135,13 +136,13 @@ type DataSourceService interface {
 	BatchIngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.BatchIngestFileToTableRequest) (dto.BatchIngestFileToTableResponse, error)
 
 	// SQL operation logs
-	ListOperationLogsByDataSourceID(ctx context.Context, organizationID, dataSourceID string, limit, offset int) ([]*model.DataSourceSQLOperation, error)
-	CountOperationLogsByDataSourceID(ctx context.Context, organizationID, dataSourceID string) (int64, error)
-	ListOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID string, filters dto.SQLOperationFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
-	CountOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID string, filters dto.SQLOperationFilter) (int64, error)
-	ListSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
-	CountSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error)
-	GetSQLAuditDetail(ctx context.Context, organizationID, workspaceID, operationID string) (*model.DataSourceSQLOperation, error)
+	ListOperationLogsByDataSourceID(ctx context.Context, organizationID, dataSourceID, accountID string, limit, offset int) ([]*model.DataSourceSQLOperation, error)
+	CountOperationLogsByDataSourceID(ctx context.Context, organizationID, dataSourceID, accountID string) (int64, error)
+	ListOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID, accountID string, filters dto.SQLOperationFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
+	CountOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID, accountID string, filters dto.SQLOperationFilter) (int64, error)
+	ListSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID, accountID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
+	CountSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID, accountID string, filters dto.SQLAuditFilter) (int64, error)
+	GetSQLAuditDetail(ctx context.Context, organizationID, workspaceID, operationID, accountID string) (*model.DataSourceSQLOperation, error)
 
 	// Table template operations
 	GenerateTableTemplateExcel(ctx context.Context, organizationID, dataSourceID, tableID string) ([]byte, error)
@@ -165,6 +166,7 @@ type dataSourceService struct {
 	accountService            interfaces.AccountService
 	fileService               interfaces.FileService
 	organizationService       interfaces.OrganizationService
+	authorizationService      interfaces.AuthorizationService
 	resourcePermissionService interfaces.ResourcePermissionService
 	quotaService              interfaces.QuotaService
 	llmClient                 llmclient.LLMClient
@@ -188,7 +190,7 @@ type databaseIngestionTableContext struct {
 }
 
 // NewDataSourceService creates a new DataSourceService
-func NewDataSourceService(repo repository.DataSourceRepository, tableRepo repository.TableRepository, promptRepo repository.PromptRepository, sqlOperationRepo repository.SQLOperationRepository, accountService interfaces.AccountService, fileService interfaces.FileService, organizationService interfaces.OrganizationService, resourcePermissionService interfaces.ResourcePermissionService, quotaService interfaces.QuotaService, llmClient llmclient.LLMClient, defaultModelResolver defaultmodelsvc.DefaultModelResolver, db *gorm.DB, options ...DataSourceServiceOption) DataSourceService {
+func NewDataSourceService(repo repository.DataSourceRepository, tableRepo repository.TableRepository, promptRepo repository.PromptRepository, sqlOperationRepo repository.SQLOperationRepository, accountService interfaces.AccountService, fileService interfaces.FileService, organizationService interfaces.OrganizationService, authorizationService interfaces.AuthorizationService, resourcePermissionService interfaces.ResourcePermissionService, quotaService interfaces.QuotaService, llmClient llmclient.LLMClient, defaultModelResolver defaultmodelsvc.DefaultModelResolver, db *gorm.DB, options ...DataSourceServiceOption) DataSourceService {
 	sqlAuditRecorder := audit.NewAsyncRecorder(sqlOperationRepo)
 	sqlBaseClient, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(sqlAuditRecorder))
 	if err != nil {
@@ -205,6 +207,7 @@ func NewDataSourceService(repo repository.DataSourceRepository, tableRepo reposi
 		accountService:            accountService,
 		fileService:               fileService,
 		organizationService:       organizationService,
+		authorizationService:      authorizationService,
 		resourcePermissionService: resourcePermissionService,
 		quotaService:              quotaService,
 		llmClient:                 llmClient,
@@ -228,6 +231,15 @@ func (s *dataSourceService) Close(ctx context.Context) error {
 
 // CreateDataSource creates a new data source
 func (s *dataSourceService) CreateDataSource(ctx context.Context, organizationID string, accountID string, req dto.CreateDataSourceRequest) (*dto.DataSourceResponse, error) {
+	workspaceID := strings.TrimSpace(getStringValue(req.WorkspaceID))
+	if workspaceID == "" {
+		return nil, fmt.Errorf("workspace_id is required")
+	}
+	if err := s.requireWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return nil, err
+	}
+	req.WorkspaceID = &workspaceID
+
 	// Check if data source with the same name already exists
 	existing, err := s.repo.FindByOrganizationAndName(ctx, organizationID, req.Name)
 	if err != nil {
@@ -236,9 +248,6 @@ func (s *dataSourceService) CreateDataSource(ctx context.Context, organizationID
 	if existing != nil {
 		return nil, fmt.Errorf("data source with name '%s' already exists", req.Name)
 	}
-
-	workspaceID := req.WorkspaceID
-	// use role_permissions to check if account has permission in handler, instead of check in service use role
 
 	// For virtual data sources, we don't create actual schemas
 	// Just use a fixed schema name and ID
@@ -267,7 +276,7 @@ func (s *dataSourceService) CreateDataSource(ctx context.Context, organizationID
 	// Create data source record
 	dataSource := &model.DataSource{
 		OrganizationID: organizationID,
-		WorkspaceID:    workspaceID,
+		WorkspaceID:    req.WorkspaceID,
 		Name:           req.Name,
 		SchemaID:       schemaID,
 		SchemaName:     schemaName,
@@ -352,6 +361,116 @@ func getStringValue(s *string) string {
 	return *s
 }
 
+func dataSourceWorkspaceID(dataSource *model.DataSource) string {
+	if dataSource == nil || dataSource.WorkspaceID == nil {
+		return ""
+	}
+	return strings.TrimSpace(*dataSource.WorkspaceID)
+}
+
+func tableBelongsToDataSource(table *model.Table, dataSource *model.DataSource) bool {
+	if table == nil || dataSource == nil {
+		return false
+	}
+	return strings.TrimSpace(table.OrganizationID) == strings.TrimSpace(dataSource.OrganizationID) &&
+		strings.TrimSpace(table.DataSourceID) == strings.TrimSpace(dataSource.ID)
+}
+
+func (s *dataSourceService) findDataSourceInOrganization(ctx context.Context, organizationID, dataSourceID string) (*model.DataSource, error) {
+	organizationID = strings.TrimSpace(organizationID)
+	dataSourceID = strings.TrimSpace(dataSourceID)
+	if organizationID == "" {
+		return nil, fmt.Errorf("organization id is required")
+	}
+	if dataSourceID == "" {
+		return nil, fmt.Errorf("data source id is required")
+	}
+
+	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find data source: %w", err)
+	}
+	if dataSource == nil || strings.TrimSpace(dataSource.OrganizationID) != organizationID {
+		return nil, nil
+	}
+	return dataSource, nil
+}
+
+func (s *dataSourceService) requireDataSourceInOrganization(ctx context.Context, organizationID, dataSourceID string) (*model.DataSource, error) {
+	dataSource, err := s.findDataSourceInOrganization(ctx, organizationID, dataSourceID)
+	if err != nil {
+		return nil, err
+	}
+	if dataSource == nil {
+		return nil, fmt.Errorf("data source with id '%s' not found", dataSourceID)
+	}
+	if dataSourceWorkspaceID(dataSource) == "" {
+		return nil, fmt.Errorf("data source with id '%s' has no workspace_id", dataSourceID)
+	}
+	return dataSource, nil
+}
+
+func (s *dataSourceService) requireWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissions ...workspace_model.WorkspacePermissionCode) error {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return fmt.Errorf("workspace_id is required")
+	}
+	if s.authorizationService == nil {
+		return fmt.Errorf("authorization service is not initialized")
+	}
+	_, err := s.authorizationService.RequireWorkspacePermission(ctx, interfaces.WorkspaceScopeRequest{
+		OrganizationID:  organizationID,
+		WorkspaceID:     workspaceID,
+		AccountID:       accountID,
+		PermissionCodes: permissions,
+	})
+	if err != nil {
+		return fmt.Errorf("workspace permission check failed: %w", err)
+	}
+	return nil
+}
+
+func (s *dataSourceService) requireDataSourceWorkspacePermission(ctx context.Context, organizationID, accountID string, dataSource *model.DataSource, permissions ...workspace_model.WorkspacePermissionCode) error {
+	workspaceID := dataSourceWorkspaceID(dataSource)
+	if workspaceID == "" {
+		return fmt.Errorf("data source with id '%s' has no workspace_id", dataSource.ID)
+	}
+	return s.requireWorkspacePermission(ctx, organizationID, workspaceID, accountID, permissions...)
+}
+
+func (s *dataSourceService) requireTableInDataSource(ctx context.Context, dataSource *model.DataSource, tableID string) (*model.Table, error) {
+	table, err := s.tableRepo.FindByID(ctx, tableID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find table: %w", err)
+	}
+	if !tableBelongsToDataSource(table, dataSource) {
+		return nil, fmt.Errorf("table with id '%s' not found", tableID)
+	}
+	return table, nil
+}
+
+func (s *dataSourceService) ResolveTableDataSourceID(ctx context.Context, organizationID, tableID string) (string, error) {
+	tableID = strings.TrimSpace(tableID)
+	if tableID == "" {
+		return "", fmt.Errorf("table id is required")
+	}
+	table, err := s.tableRepo.FindByID(ctx, tableID)
+	if err != nil {
+		return "", fmt.Errorf("failed to find table: %w", err)
+	}
+	if table == nil {
+		return "", fmt.Errorf("table with id '%s' not found", tableID)
+	}
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, table.DataSourceID)
+	if err != nil {
+		return "", err
+	}
+	if !tableBelongsToDataSource(table, dataSource) {
+		return "", fmt.Errorf("table with id '%s' not found", tableID)
+	}
+	return dataSource.ID, nil
+}
+
 func auditWorkspaceID(organizationID string, workspaceID *string) string {
 	if workspaceID != nil && *workspaceID != "" {
 		return *workspaceID
@@ -396,11 +515,10 @@ func (s *dataSourceService) GetDataSourceByName(ctx context.Context, organizatio
 
 // GetDataSourceByID gets a specific data source by ID
 func (s *dataSourceService) GetDataSourceByID(ctx context.Context, organizationID, id, accountID string) (*dto.DataSourceResponse, error) {
-	dataSource, err := s.repo.FindByID(ctx, id)
+	dataSource, err := s.findDataSourceInOrganization(ctx, organizationID, id)
 	if err != nil {
 		return nil, err
 	}
-
 	if dataSource == nil {
 		return nil, nil
 	}
@@ -408,15 +526,19 @@ func (s *dataSourceService) GetDataSourceByID(ctx context.Context, organizationI
 	response := dto.ConvertDataSourceModelToResponse(dataSource)
 
 	// Check single resource edit permission
-	canEdit, err := s.resourcePermissionService.CheckSingleResourceEditPermission(ctx, interfaces.SingleResourcePermissionParams{
-		AccountID: accountID,
-		TenantID:  getStringValue(dataSource.WorkspaceID),
-		CreatedBy: dataSource.CreatedBy,
-		GroupID:   &dataSource.OrganizationID,
-	})
-	if err != nil {
-		// On error, default to false
-		canEdit = false
+	canEdit := false
+	if s.resourcePermissionService != nil && strings.TrimSpace(accountID) != "" {
+		var err error
+		canEdit, err = s.resourcePermissionService.CheckSingleResourceEditPermission(ctx, interfaces.SingleResourcePermissionParams{
+			AccountID: accountID,
+			TenantID:  getStringValue(dataSource.WorkspaceID),
+			CreatedBy: dataSource.CreatedBy,
+			GroupID:   &dataSource.OrganizationID,
+		})
+		if err != nil {
+			// On error, default to false
+			canEdit = false
+		}
 	}
 	response.CanEdit = canEdit
 
@@ -426,12 +548,12 @@ func (s *dataSourceService) GetDataSourceByID(ctx context.Context, organizationI
 // DeleteDataSourceByID deletes a data source by ID
 func (s *dataSourceService) DeleteDataSourceByID(ctx context.Context, organizationID, id string, accountID string) error {
 	// Find the data source
-	dataSource, err := s.repo.FindByID(ctx, id)
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, id)
 	if err != nil {
-		return fmt.Errorf("failed to find data source: %w", err)
+		return err
 	}
-	if dataSource == nil {
-		return fmt.Errorf("data source with id '%s' not found", id)
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return err
 	}
 
 	// Find all tables associated with this data source
@@ -465,12 +587,12 @@ func (s *dataSourceService) DeleteDataSourceByID(ctx context.Context, organizati
 // CreateTable creates a new table in a data source
 func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dataSourceID string, accountID string, req dto.CreateTableRequest) (*model.Table, error) {
 	// Find the data source
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find data source: %w", err)
+		return nil, err
 	}
-	if dataSource == nil {
-		return nil, fmt.Errorf("data source with id '%s' not found", dataSourceID)
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return nil, err
 	}
 
 	// Check if a table with the same name already exists in this data source
@@ -695,12 +817,9 @@ func (s *dataSourceService) checkTableNameExists(ctx context.Context, tableName 
 // ListTables lists all tables in a data source
 func (s *dataSourceService) ListTables(ctx context.Context, organizationID, dataSourceID string, accountID string) ([]*model.Table, error) {
 	// Find the data source
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	_, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find data source: %w", err)
-	}
-	if dataSource == nil {
-		return nil, fmt.Errorf("data source with id '%s' not found", dataSourceID)
+		return nil, err
 	}
 
 	// Get table metadata
@@ -719,20 +838,13 @@ func (s *dataSourceService) ListTables(ctx context.Context, organizationID, data
 // GetTable gets a specific table in a data source
 func (s *dataSourceService) GetTable(ctx context.Context, organizationID, dataSourceID, tableID string, accountID string) (*model.Table, error) {
 	// Find the data source
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find data source: %w", err)
+		return nil, err
 	}
-	if dataSource == nil {
-		return nil, fmt.Errorf("data source with id '%s' not found", dataSourceID)
-	}
-
-	table, err := s.tableRepo.FindByID(ctx, tableID)
+	table, err := s.requireTableInDataSource(ctx, dataSource, tableID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find table: %w", err)
-	}
-	if table == nil {
-		return nil, fmt.Errorf("table with id '%s' not found", tableID)
+		return nil, err
 	}
 
 	// Log the operation
@@ -745,21 +857,18 @@ func (s *dataSourceService) GetTable(ctx context.Context, organizationID, dataSo
 // DeleteTable deletes a table in a data source
 func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dataSourceID, tableID string, accountID string) error {
 	// Find the data source
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return fmt.Errorf("failed to find data source: %w", err)
+		return err
 	}
-	if dataSource == nil {
-		return fmt.Errorf("data source with id '%s' not found", dataSourceID)
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return err
 	}
 
 	// Find the table metadata
-	tableMetadata, err := s.tableRepo.FindByID(ctx, tableID)
+	tableMetadata, err := s.requireTableInDataSource(ctx, dataSource, tableID)
 	if err != nil {
-		return fmt.Errorf("failed to find table metadata: %w", err)
-	}
-	if tableMetadata == nil {
-		return fmt.Errorf("table metadata with id '%s' not found", tableID)
+		return err
 	}
 
 	// Query total row count before deletion
@@ -856,21 +965,18 @@ func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dat
 // UpdateTable updates a table's metadata (name and/or description)
 func (s *dataSourceService) UpdateTable(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateTableRequest) (*model.Table, error) {
 	// Find the data source
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find data source: %w", err)
+		return nil, err
 	}
-	if dataSource == nil {
-		return nil, fmt.Errorf("data source with id '%s' not found", dataSourceID)
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return nil, err
 	}
 
 	// Find the table metadata
-	table, err := s.tableRepo.FindByID(ctx, tableID)
+	table, err := s.requireTableInDataSource(ctx, dataSource, tableID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find table: %w", err)
-	}
-	if table == nil {
-		return nil, fmt.Errorf("table with id '%s' not found", tableID)
+		return nil, err
 	}
 
 	// Update fields if provided
@@ -896,21 +1002,18 @@ func (s *dataSourceService) UpdateTable(ctx context.Context, organizationID, dat
 // UpdateTableColumns updates the columns of a specific table
 func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateTableColumnsRequest) error {
 	// Find the data source
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return fmt.Errorf("failed to find data source: %w", err)
+		return err
 	}
-	if dataSource == nil {
-		return fmt.Errorf("data source with id '%s' not found", dataSourceID)
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return err
 	}
 
 	// Find the table metadata
-	tableMetadata, err := s.tableRepo.FindByID(ctx, tableID)
+	tableMetadata, err := s.requireTableInDataSource(ctx, dataSource, tableID)
 	if err != nil {
-		return fmt.Errorf("failed to find table metadata: %w", err)
-	}
-	if tableMetadata == nil {
-		return fmt.Errorf("table metadata with id '%s' not found", tableID)
+		return err
 	}
 
 	// Get existing columns by getting the table information
@@ -1171,21 +1274,15 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 // GetTableColumns retrieves the columns of a specific table
 func (s *dataSourceService) GetTableColumns(ctx context.Context, organizationID, dataSourceID, tableID string, includeSystemFields bool) (dto.GetTableColumnsResponse, error) {
 	// Find the data source
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return dto.GetTableColumnsResponse{}, fmt.Errorf("failed to find data source: %w", err)
-	}
-	if dataSource == nil {
-		return dto.GetTableColumnsResponse{}, fmt.Errorf("data source with id '%s' not found", dataSourceID)
+		return dto.GetTableColumnsResponse{}, err
 	}
 
 	// Find the table metadata
-	tableMetadata, err := s.tableRepo.FindByID(ctx, tableID)
+	tableMetadata, err := s.requireTableInDataSource(ctx, dataSource, tableID)
 	if err != nil {
-		return dto.GetTableColumnsResponse{}, fmt.Errorf("failed to find table metadata: %w", err)
-	}
-	if tableMetadata == nil {
-		return dto.GetTableColumnsResponse{}, fmt.Errorf("table metadata with id '%s' not found", tableID)
+		return dto.GetTableColumnsResponse{}, err
 	}
 
 	// Get table information including columns from postgres-meta
@@ -1438,20 +1535,13 @@ func (s *dataSourceService) QueryTableRecords(ctx context.Context, organizationI
 
 // validateDataSourceAndTable validates data source and table existence
 func (s *dataSourceService) validateDataSourceAndTable(ctx context.Context, organizationID, dataSourceID, tableID string) (*model.DataSource, *model.Table, error) {
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to find data source: %w", err)
+		return nil, nil, err
 	}
-	if dataSource == nil {
-		return nil, nil, fmt.Errorf("data source with id '%s' not found", dataSourceID)
-	}
-
-	table, err := s.tableRepo.FindByID(ctx, tableID)
+	table, err := s.requireTableInDataSource(ctx, dataSource, tableID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to find table: %w", err)
-	}
-	if table == nil {
-		return nil, nil, fmt.Errorf("table with id '%s' not found", tableID)
+		return nil, nil, err
 	}
 
 	return dataSource, table, nil
@@ -1892,6 +1982,9 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 	} else {
 		return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("data source '%s' has no associated organization_id", dataSourceID)
 	}
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return dto.AnalyzeFileForTableResponse{}, err
+	}
 
 	var content string
 
@@ -2161,11 +2254,14 @@ func (s *dataSourceService) prepareDatabaseIngestionTable(ctx context.Context, o
 	}
 
 	dataSourceID := table.DataSourceID
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return databaseIngestionTableContext{}, fmt.Errorf("failed to find data source: %w", err)
+		return databaseIngestionTableContext{}, err
 	}
-	if dataSource == nil || dataSource.WorkspaceID == nil {
+	if !tableBelongsToDataSource(table, dataSource) {
+		return databaseIngestionTableContext{}, fmt.Errorf("table with id '%s' not found", tableID)
+	}
+	if dataSourceWorkspaceID(dataSource) == "" {
 		return databaseIngestionTableContext{}, fmt.Errorf("data source '%s' has no associated workspace scope", dataSourceID)
 	}
 
@@ -2586,14 +2682,16 @@ func (s *dataSourceService) BatchIngestFileToTable(ctx context.Context, organiza
 }
 
 // GetTablePrompt gets a prompt by table ID or returns a default one if it doesn't exist
-func (s *dataSourceService) GetTablePrompt(ctx context.Context, tableID string, lang string) (*model.TablePrompt, error) {
-	// Check if table exists
-	table, err := s.tableRepo.FindByID(ctx, tableID)
+func (s *dataSourceService) GetTablePrompt(ctx context.Context, organizationID, dataSourceID, tableID, accountID, lang string) (*model.TablePrompt, error) {
+	dataSource, _, err := s.validateDataSourceAndTable(ctx, organizationID, dataSourceID, tableID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find table: %w", err)
+		if strings.Contains(err.Error(), "table with id") {
+			return nil, fmt.Errorf("%w: %s", errDataSourceTableNotFound, tableID)
+		}
+		return nil, err
 	}
-	if table == nil {
-		return nil, fmt.Errorf("%w: %s", errDataSourceTableNotFound, tableID)
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseView); err != nil {
+		return nil, err
 	}
 
 	// Try to find existing prompt
@@ -2640,14 +2738,13 @@ func (s *dataSourceService) GetTablePrompt(ctx context.Context, tableID string, 
 }
 
 // UpsertTablePrompt updates a table prompt, or creates it if it doesn't exist
-func (s *dataSourceService) UpsertTablePrompt(ctx context.Context, tableID string, req dto.UpdateTablePromptRequest) (*model.TablePrompt, error) {
-	// Check if table exists
-	table, err := s.tableRepo.FindByID(ctx, tableID)
+func (s *dataSourceService) UpsertTablePrompt(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateTablePromptRequest) (*model.TablePrompt, error) {
+	dataSource, _, err := s.validateDataSourceAndTable(ctx, organizationID, dataSourceID, tableID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find table: %w", err)
+		return nil, err
 	}
-	if table == nil {
-		return nil, fmt.Errorf("table with id '%s' not found", tableID)
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return nil, err
 	}
 
 	// Check if prompt exists
@@ -2687,14 +2784,13 @@ func (s *dataSourceService) UpsertTablePrompt(ctx context.Context, tableID strin
 }
 
 // DeleteTablePrompt deletes a table prompt by table ID
-func (s *dataSourceService) DeleteTablePrompt(ctx context.Context, tableID string) error {
-	// Check if table exists
-	table, err := s.tableRepo.FindByID(ctx, tableID)
+func (s *dataSourceService) DeleteTablePrompt(ctx context.Context, organizationID, dataSourceID, tableID, accountID string) error {
+	dataSource, _, err := s.validateDataSourceAndTable(ctx, organizationID, dataSourceID, tableID)
 	if err != nil {
-		return fmt.Errorf("failed to find table: %w", err)
+		return err
 	}
-	if table == nil {
-		return fmt.Errorf("table with id '%s' not found", tableID)
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return err
 	}
 
 	// Delete prompt by table ID
@@ -2709,24 +2805,13 @@ func (s *dataSourceService) DeleteTablePrompt(ctx context.Context, tableID strin
 // UpdateDataSource updates an existing data source
 func (s *dataSourceService) UpdateDataSource(ctx context.Context, organizationID, id, accountID string, req dto.UpdateDataSourceRequest) (*dto.DataSourceResponse, error) {
 	// Find the data source
-	dataSource, err := s.repo.FindByID(ctx, id)
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find data source: %w", err)
-	}
-	if dataSource == nil {
-		return nil, fmt.Errorf("data source with id '%s' not found", id)
+		return nil, err
 	}
 
-	// Check permissions - only the creator or an admin can update the data source
-	if dataSource.CreatedBy != accountID {
-		// Check if the user is an admin in this tenant
-		isAdmin, err := s.accountService.CheckOrganizationpAdminByWorkspace(ctx, organizationID, accountID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check admin status: %w", err)
-		}
-		if !isAdmin {
-			return nil, fmt.Errorf("only the creator or an admin can update the data source")
-		}
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return nil, err
 	}
 
 	// Update fields if provided
@@ -2751,6 +2836,16 @@ func (s *dataSourceService) UpdateDataSource(ctx context.Context, organizationID
 	}
 
 	if req.WorkspaceID != nil {
+		workspaceID := strings.TrimSpace(*req.WorkspaceID)
+		if workspaceID == "" {
+			return nil, fmt.Errorf("workspace_id is required")
+		}
+		if workspaceID != dataSourceWorkspaceID(dataSource) {
+			if err := s.requireWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+				return nil, err
+			}
+			req.WorkspaceID = &workspaceID
+		}
 		dataSource.WorkspaceID = req.WorkspaceID
 	}
 
@@ -2915,17 +3010,13 @@ func (s *dataSourceService) logSQLOperationWithResult(ctx context.Context, organ
 }
 
 // ListOperationLogsByDataSourceID lists operation logs for a specific data source
-func (s *dataSourceService) ListOperationLogsByDataSourceID(ctx context.Context, organizationID, dataSourceID string, limit, offset int) ([]*model.DataSourceSQLOperation, error) {
-	// Validate data source exists and belongs to organization
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+func (s *dataSourceService) ListOperationLogsByDataSourceID(ctx context.Context, organizationID, dataSourceID, accountID string, limit, offset int) ([]*model.DataSourceSQLOperation, error) {
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find data source: %w", err)
+		return nil, err
 	}
-	if dataSource == nil {
-		return nil, fmt.Errorf("data source with id '%s' not found", dataSourceID)
-	}
-	if dataSource.OrganizationID != organizationID {
-		return nil, fmt.Errorf("data source does not belong to organization")
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseView); err != nil {
+		return nil, err
 	}
 
 	// Get logs from repository
@@ -2938,17 +3029,18 @@ func (s *dataSourceService) ListOperationLogsByDataSourceID(ctx context.Context,
 }
 
 // ListOperationLogsByDataSourceIDWithFilters lists operation logs for a specific data source with filters
-func (s *dataSourceService) ListOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID string, filters dto.SQLOperationFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error) {
-	// Validate data source exists and belongs to organization
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+func (s *dataSourceService) ListOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID, accountID string, filters dto.SQLOperationFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error) {
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find data source: %w", err)
+		return nil, err
 	}
-	if dataSource == nil {
-		return nil, fmt.Errorf("data source with id '%s' not found", dataSourceID)
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseView); err != nil {
+		return nil, err
 	}
-	if dataSource.OrganizationID != organizationID {
-		return nil, fmt.Errorf("data source does not belong to organization")
+	if filters.TableID != nil && strings.TrimSpace(*filters.TableID) != "" {
+		if _, err := s.requireTableInDataSource(ctx, dataSource, *filters.TableID); err != nil {
+			return nil, err
+		}
 	}
 
 	// Convert DTO filter to repository filter
@@ -2973,17 +3065,13 @@ func (s *dataSourceService) ListOperationLogsByDataSourceIDWithFilters(ctx conte
 }
 
 // CountOperationLogsByDataSourceID counts operation logs for a specific data source
-func (s *dataSourceService) CountOperationLogsByDataSourceID(ctx context.Context, organizationID, dataSourceID string) (int64, error) {
-	// Validate data source exists and belongs to organization
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+func (s *dataSourceService) CountOperationLogsByDataSourceID(ctx context.Context, organizationID, dataSourceID, accountID string) (int64, error) {
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to find data source: %w", err)
+		return 0, err
 	}
-	if dataSource == nil {
-		return 0, fmt.Errorf("data source with id '%s' not found", dataSourceID)
-	}
-	if dataSource.OrganizationID != organizationID {
-		return 0, fmt.Errorf("data source does not belong to organization")
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseView); err != nil {
+		return 0, err
 	}
 
 	// Get count from repository
@@ -2995,7 +3083,10 @@ func (s *dataSourceService) CountOperationLogsByDataSourceID(ctx context.Context
 	return count, nil
 }
 
-func (s *dataSourceService) ListSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error) {
+func (s *dataSourceService) ListSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID, accountID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error) {
+	if err := s.requireWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return nil, err
+	}
 	logs, err := s.sqlOperationRepo.ListAuditByWorkspace(ctx, organizationID, workspaceID, filters, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sql audit records: %w", err)
@@ -3003,7 +3094,10 @@ func (s *dataSourceService) ListSQLAuditByWorkspace(ctx context.Context, organiz
 	return logs, nil
 }
 
-func (s *dataSourceService) CountSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error) {
+func (s *dataSourceService) CountSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID, accountID string, filters dto.SQLAuditFilter) (int64, error) {
+	if err := s.requireWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return 0, err
+	}
 	count, err := s.sqlOperationRepo.CountAuditByWorkspace(ctx, organizationID, workspaceID, filters)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count sql audit records: %w", err)
@@ -3011,7 +3105,10 @@ func (s *dataSourceService) CountSQLAuditByWorkspace(ctx context.Context, organi
 	return count, nil
 }
 
-func (s *dataSourceService) GetSQLAuditDetail(ctx context.Context, organizationID, workspaceID, operationID string) (*model.DataSourceSQLOperation, error) {
+func (s *dataSourceService) GetSQLAuditDetail(ctx context.Context, organizationID, workspaceID, operationID, accountID string) (*model.DataSourceSQLOperation, error) {
+	if err := s.requireWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage); err != nil {
+		return nil, err
+	}
 	record, err := s.sqlOperationRepo.FindAuditByWorkspaceAndID(ctx, organizationID, workspaceID, operationID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sql audit record: %w", err)
@@ -3749,17 +3846,18 @@ func normalizeLocalTimestampValue(value string) (string, bool) {
 }
 
 // CountOperationLogsByDataSourceIDWithFilters counts operation logs for a specific data source with filters
-func (s *dataSourceService) CountOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID string, filters dto.SQLOperationFilter) (int64, error) {
-	// Validate data source exists and belongs to organization
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+func (s *dataSourceService) CountOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID, accountID string, filters dto.SQLOperationFilter) (int64, error) {
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to find data source: %w", err)
+		return 0, err
 	}
-	if dataSource == nil {
-		return 0, fmt.Errorf("data source with id '%s' not found", dataSourceID)
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseView); err != nil {
+		return 0, err
 	}
-	if dataSource.OrganizationID != organizationID {
-		return 0, fmt.Errorf("data source does not belong to organization")
+	if filters.TableID != nil && strings.TrimSpace(*filters.TableID) != "" {
+		if _, err := s.requireTableInDataSource(ctx, dataSource, *filters.TableID); err != nil {
+			return 0, err
+		}
 	}
 
 	// Convert DTO filter to repository filter

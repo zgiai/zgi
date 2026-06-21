@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"strings"
 )
 
@@ -13,7 +14,11 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	if err != nil {
 		return nil, err
 	}
-	if NormalizeAgentWebAppStatus(ag.WebAppStatus) != AgentWebAppStatusActive {
+	policy, err := s.publishedRuntimePolicyForAgent(ctx, ag)
+	if err != nil {
+		return nil, err
+	}
+	if !policy.Allows(runtimeauth.PublishedRuntimeSurfaceWebApp) {
 		return nil, errAgentWebAppOffline
 	}
 	if ag.AgentsType != "AGENT" {

@@ -5,12 +5,12 @@ import (
 	"encoding/base64"
 	"fmt"
 	"mime"
-	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
@@ -194,7 +194,7 @@ func stripMarkdownLinkBrackets(value string) string {
 }
 
 func buildMinerUImageAssetURL(key string) string {
-	return mineruImageEndpoint + "?key=" + url.QueryEscape(key)
+	return util.GetSignedParserImageKeyURL(key)
 }
 
 func sanitizeStoragePathPart(value string) string {

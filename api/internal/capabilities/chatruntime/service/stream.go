@@ -188,15 +188,19 @@ func (s *service) CleanupStaleActiveMessages(ctx context.Context) (int64, error)
 }
 
 func (s *service) StreamConversationEvents(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, afterID string, onEvent func(StreamEvent) error) error {
+	return s.StreamConversationEventsForCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, conversationID, messageID, afterID, onEvent)
+}
+
+func (s *service) StreamConversationEventsForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, afterID string, onEvent func(StreamEvent) error) error {
 	if onEvent == nil {
 		return fmt.Errorf("%w: event callback is required", ErrInvalidInput)
 	}
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return err
 	}
-	conversation, err := s.getConversation(ctx, scope, conversationID)
+	conversation, err := s.repos.Conversation.GetByCallerScoped(ctx, conversationID, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID))
 	if err != nil {
-		return err
+		return mapRepoError(err)
 	}
 	message, err := s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
 	if err != nil {
@@ -220,7 +224,7 @@ func (s *service) StreamConversationEvents(ctx context.Context, scope Scope, con
 			return err
 		}
 		if len(events) == 0 {
-			active, err := s.isConversationMessageStreaming(ctx, scope, conversationID, messageID)
+			active, err := s.isConversationMessageStreamingForCaller(ctx, scope, caller, conversationID, messageID)
 			if err != nil {
 				return err
 			}
@@ -268,9 +272,13 @@ func (s *service) ensureRecoverableEventStream(ctx context.Context, conversation
 }
 
 func (s *service) isConversationMessageStreaming(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID) (bool, error) {
-	conversation, err := s.getConversation(ctx, scope, conversationID)
+	return s.isConversationMessageStreamingForCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, conversationID, messageID)
+}
+
+func (s *service) isConversationMessageStreamingForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (bool, error) {
+	conversation, err := s.repos.Conversation.GetByCallerScoped(ctx, conversationID, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID))
 	if err != nil {
-		return false, err
+		return false, mapRepoError(err)
 	}
 	return conversationHasActiveMessage(conversation, messageID), nil
 }

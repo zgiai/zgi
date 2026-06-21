@@ -38,13 +38,18 @@ type FileFolderRepository interface {
 
 	// File statistics operations
 	GetTotalFileCount(ctx context.Context, tenantID string) (int64, error)
+	GetTotalFileCountWithVisibility(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) (int64, error)
 	// GetRecentFileCount gets the count of recent files (within last 3 months) for a tenant
 	// Note: This method counts all recent files without applying any limit.
 	// For actual file listing with limit, use ListAllFilesWithFiltersAndTenant method with appropriate parameters.
 	GetRecentFileCount(ctx context.Context, tenantID string) (int64, error)
+	GetRecentFileCountWithVisibility(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) (int64, error)
 	GetFavoriteFileCount(ctx context.Context, accountID, tenantID string) (int64, error)
+	GetFavoriteFileCountWithVisibility(ctx context.Context, accountID, tenantID string, allowAllFolders bool, workspaceIDs []string) (int64, error)
 	GetRootFolderFileCount(ctx context.Context, tenantID string) (int64, error)
+	GetRootFolderFileCountWithVisibility(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) (int64, error)
 	GetArchivedFileCount(ctx context.Context, tenantID string) (int64, error)
+	GetArchivedFileCountWithVisibility(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) (int64, error)
 
 	// Permission operations
 	GetFolderPermissionTenants(ctx context.Context, folderID string) ([]string, error)
@@ -68,6 +73,11 @@ func applyWorkspaceIDsFilter(query *gorm.DB, workspaceIDs []string, column strin
 	}
 
 	return query.Where(column+" IN ?", filtered)
+}
+
+func applyUploadFileVisibilityScope(query *gorm.DB, workspaceIDs []string, accountID string, allowAllFolders bool) *gorm.DB {
+	query = applyWorkspaceIDsFilter(query, workspaceIDs, "upload_files.workspace_id")
+	return applyVisibleFileAccessFilter(query, workspaceIDs, accountID, allowAllFolders)
 }
 
 func NewFileFolderRepository(db *gorm.DB) FileFolderRepository {
@@ -944,6 +954,17 @@ func (r *fileFolderRepository) GetTotalFileCount(ctx context.Context, tenantID s
 	return count, err
 }
 
+func (r *fileFolderRepository) GetTotalFileCountWithVisibility(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) (int64, error) {
+	var count int64
+	query := r.db.WithContext(ctx).
+		Model(&file_model.UploadFile{}).
+		Where("upload_files.organization_id = ? AND upload_files.is_archived = false", tenantID)
+	query = applyUploadFileVisibilityScope(query, workspaceIDs, accountID, allowAllFolders)
+
+	err := query.Count(&count).Error
+	return count, err
+}
+
 // GetRecentFileCount gets the count of recent files (within last 3 months) for a tenant
 // Note: This method counts all recent files without applying any limit.
 // For actual file listing with limit, use ListAllFilesWithFiltersAndTenant method with appropriate parameters.
@@ -954,6 +975,18 @@ func (r *fileFolderRepository) GetRecentFileCount(ctx context.Context, tenantID 
 		Model(&file_model.UploadFile{}).
 		Where("organization_id = ? AND is_archived = false AND created_at >= ?", tenantID, threeMonthsAgo).
 		Count(&count).Error
+	return count, err
+}
+
+func (r *fileFolderRepository) GetRecentFileCountWithVisibility(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) (int64, error) {
+	var count int64
+	threeMonthsAgo := time.Now().AddDate(0, -3, 0)
+	query := r.db.WithContext(ctx).
+		Model(&file_model.UploadFile{}).
+		Where("upload_files.organization_id = ? AND upload_files.is_archived = false AND upload_files.created_at >= ?", tenantID, threeMonthsAgo)
+	query = applyUploadFileVisibilityScope(query, workspaceIDs, accountID, allowAllFolders)
+
+	err := query.Count(&count).Error
 	return count, err
 }
 
@@ -968,6 +1001,18 @@ func (r *fileFolderRepository) GetFavoriteFileCount(ctx context.Context, account
 	return count, err
 }
 
+func (r *fileFolderRepository) GetFavoriteFileCountWithVisibility(ctx context.Context, accountID, tenantID string, allowAllFolders bool, workspaceIDs []string) (int64, error) {
+	var count int64
+	query := r.db.WithContext(ctx).
+		Model(&file_model.UploadFile{}).
+		Joins("JOIN file_favorites ON file_favorites.file_id = upload_files.id").
+		Where("file_favorites.account_id = ? AND upload_files.organization_id = ? AND upload_files.is_archived = false", accountID, tenantID)
+	query = applyUploadFileVisibilityScope(query, workspaceIDs, accountID, allowAllFolders)
+
+	err := query.Count(&count).Error
+	return count, err
+}
+
 // GetRootFolderFileCount gets the count of files in the root folder (not in any folder) for a tenant
 func (r *fileFolderRepository) GetRootFolderFileCount(ctx context.Context, tenantID string) (int64, error) {
 	var count int64
@@ -978,6 +1023,17 @@ func (r *fileFolderRepository) GetRootFolderFileCount(ctx context.Context, tenan
 	return count, err
 }
 
+func (r *fileFolderRepository) GetRootFolderFileCountWithVisibility(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) (int64, error) {
+	var count int64
+	query := r.db.WithContext(ctx).
+		Model(&file_model.UploadFile{}).
+		Where("upload_files.organization_id = ? AND upload_files.is_archived = false AND upload_files.id NOT IN (SELECT DISTINCT file_id FROM file_folder_joins WHERE file_id IS NOT NULL)", tenantID)
+	query = applyUploadFileVisibilityScope(query, workspaceIDs, accountID, allowAllFolders)
+
+	err := query.Count(&count).Error
+	return count, err
+}
+
 // GetArchivedFileCount gets the count of archived files for a tenant
 func (r *fileFolderRepository) GetArchivedFileCount(ctx context.Context, tenantID string) (int64, error) {
 	var count int64
@@ -985,6 +1041,17 @@ func (r *fileFolderRepository) GetArchivedFileCount(ctx context.Context, tenantI
 		Model(&file_model.UploadFile{}).
 		Where("organization_id = ? AND is_archived = true", tenantID).
 		Count(&count).Error
+	return count, err
+}
+
+func (r *fileFolderRepository) GetArchivedFileCountWithVisibility(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) (int64, error) {
+	var count int64
+	query := r.db.WithContext(ctx).
+		Model(&file_model.UploadFile{}).
+		Where("upload_files.organization_id = ? AND upload_files.is_archived = true", tenantID)
+	query = applyUploadFileVisibilityScope(query, workspaceIDs, accountID, allowAllFolders)
+
+	err := query.Count(&count).Error
 	return count, err
 }
 

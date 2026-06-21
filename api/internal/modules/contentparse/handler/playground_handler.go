@@ -12,6 +12,9 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -40,7 +43,14 @@ func (h *PlaygroundHandler) SetProviderCatalogResolver(resolver service.Provider
 	}
 }
 
+func (h *PlaygroundHandler) SetOrganizationService(service interfaces.OrganizationService) {
+	if h != nil {
+		h.organization = service
+	}
+}
+
 func (h *PlaygroundHandler) RegisterRoutes(rg *gin.RouterGroup) {
+	rg.Use(h.requirePlaygroundWorkspace())
 	rg.GET("/playground/providers", h.ListProviders)
 	rg.POST("/playground/parse", h.Parse)
 	rg.POST("/playground/save", h.SaveRun)
@@ -53,6 +63,46 @@ func (h *PlaygroundHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/playground/runs/:id/source-preview", h.RenderSavedRunSource)
 	rg.GET("/playground/runs/:id", h.GetRun)
 	rg.POST("/playground/pdf-render", h.RenderPDF)
+}
+
+func (h *PlaygroundHandler) requirePlaygroundWorkspace() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetBool(contentParseInternalRouteKey) {
+			c.Next()
+			return
+		}
+		if h == nil || h.organization == nil {
+			response.Fail(c, response.ErrPermissionDenied)
+			c.Abort()
+			return
+		}
+		organizationID := strings.TrimSpace(util.GetOrganizationID(c))
+		workspaceID := strings.TrimSpace(util.GetWorkspaceID(c))
+		accountID := strings.TrimSpace(util.GetAccountID(c))
+		if organizationID == "" || workspaceID == "" || accountID == "" {
+			response.Fail(c, response.ErrPermissionDenied)
+			c.Abort()
+			return
+		}
+		allowed, err := h.organization.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionWorkspaceView,
+		)
+		if err != nil {
+			response.FailWithMessage(c, response.ErrSystemError, err.Error())
+			c.Abort()
+			return
+		}
+		if !allowed {
+			response.Fail(c, response.ErrPermissionDenied)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 func (h *PlaygroundHandler) ListProviders(c *gin.Context) {

@@ -4,25 +4,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/modules/prompts/dto"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type PromptHandler struct {
-	service        promptservice.PromptService
-	accountService interfaces.AccountService
+	service             promptservice.PromptService
+	accountService      interfaces.AccountService
+	organizationService interfaces.OrganizationService
 }
 
-func NewPromptHandler(service promptservice.PromptService, accountService interfaces.AccountService) *PromptHandler {
+func NewPromptHandler(service promptservice.PromptService, accountService interfaces.AccountService, organizationServices ...interfaces.OrganizationService) *PromptHandler {
+	var organizationService interfaces.OrganizationService
+	if len(organizationServices) > 0 {
+		organizationService = organizationServices[0]
+	}
 	return &PromptHandler{
-		service:        service,
-		accountService: accountService,
+		service:             service,
+		accountService:      accountService,
+		organizationService: organizationService,
 	}
 }
 
@@ -163,6 +171,9 @@ func (h *PromptHandler) OptimizePrompt(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	if !h.requireCurrentPromptWorkspace(c, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
 	var req dto.PromptOptimizeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
@@ -187,6 +198,9 @@ func (h *PromptHandler) OptimizePromptStream(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if organizationID == "" || accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.requireCurrentPromptWorkspace(c, workspace_model.WorkspacePermissionAgentManage) {
 		return
 	}
 	var req dto.PromptOptimizeRequest
@@ -218,6 +232,9 @@ func (h *PromptHandler) PlaygroundPromptStream(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if organizationID == "" || accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.requireCurrentPromptWorkspace(c, workspace_model.WorkspacePermissionAgentView, workspace_model.WorkspacePermissionAgentManage) {
 		return
 	}
 	var req dto.PromptPlaygroundRequest
@@ -295,6 +312,37 @@ func (h *PromptHandler) AdoptOptimizationRun(c *gin.Context) {
 		return
 	}
 	response.Success(c, result)
+}
+
+func (h *PromptHandler) requireCurrentPromptWorkspace(c *gin.Context, permissionCodes ...workspace_model.WorkspacePermissionCode) bool {
+	organizationID := util.GetOrganizationIDCompat(c)
+	accountID := c.GetString("account_id")
+	workspaceID := strings.TrimSpace(util.GetWorkspaceID(c))
+	if organizationID == "" || accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return false
+	}
+	if workspaceID == "" || h.organizationService == nil {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+
+	hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
+		c.Request.Context(),
+		organizationID,
+		workspaceID,
+		accountID,
+		permissionCodes...,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+	return true
 }
 
 func (h *PromptHandler) RegisterRoutes(router *gin.RouterGroup) {

@@ -49,8 +49,11 @@ func (s *promptService) Optimize(
 	if optimizerPrompt == "" {
 		return nil, fmt.Errorf("raw prompt cannot be empty")
 	}
-	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
+	if s == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
+	}
+	if err := s.requirePromptWorkspaceAccess(ctx, organizationID, accountID, workspaceID, workspace_model.WorkspacePermissionAgentManage); err != nil {
+		return nil, err
 	}
 
 	goal := normalizePromptOptimizerGoal(req.Goal)
@@ -58,9 +61,12 @@ func (s *promptService) Optimize(
 	detectedVariables := detectPromptOptimizerVariables(optimizerPrompt)
 	outputLanguage := promptOptimizerOutputLanguage(req.Language)
 
-	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, req.PromptID)
+	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, workspaceID, req.PromptID)
 	if err != nil {
 		return nil, err
+	}
+	if s.llmClient == nil || s.defaultModelSvc == nil {
+		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
 
 	resolvedModel, err := s.defaultModelSvc.ResolveUseCase(
@@ -159,8 +165,11 @@ func (s *promptService) OptimizeStream(
 	if optimizerPrompt == "" {
 		return nil, fmt.Errorf("raw prompt cannot be empty")
 	}
-	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
+	if s == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
+	}
+	if err := s.requirePromptWorkspaceAccess(ctx, organizationID, accountID, workspaceID, workspace_model.WorkspacePermissionAgentManage); err != nil {
+		return nil, err
 	}
 
 	goal := normalizePromptOptimizerGoal(req.Goal)
@@ -168,9 +177,12 @@ func (s *promptService) OptimizeStream(
 	detectedVariables := detectPromptOptimizerVariables(optimizerPrompt)
 	outputLanguage := promptOptimizerOutputLanguage(req.Language)
 
-	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, req.PromptID)
+	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, workspaceID, req.PromptID)
 	if err != nil {
 		return nil, err
+	}
+	if s.llmClient == nil || s.defaultModelSvc == nil {
+		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
 
 	if onEvent != nil {
@@ -444,6 +456,7 @@ func (s *promptService) resolveOptimizerPromptID(
 	ctx context.Context,
 	organizationID,
 	accountID,
+	workspaceID,
 	rawPromptID string,
 ) (*string, error) {
 	if strings.TrimSpace(rawPromptID) == "" {
@@ -459,6 +472,10 @@ func (s *promptService) resolveOptimizerPromptID(
 	)
 	if err != nil {
 		return nil, err
+	}
+	if prompt.Source != promptmodel.PromptSourceOfficial &&
+		(prompt.WorkspaceID == nil || strings.TrimSpace(*prompt.WorkspaceID) != strings.TrimSpace(workspaceID)) {
+		return nil, fmt.Errorf("prompt not found")
 	}
 	return &prompt.ID, nil
 }

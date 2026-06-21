@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -169,16 +170,22 @@ func (h *WorkflowHandler) runWorkflowByVersionUUIDInternal(c *gin.Context, versi
 			conversationID, _ := req.Inputs["conversation_id"].(string)
 
 			if conversationID != "" {
+				if err := validateWebAppConversationAccess(ctx, h.advancedChatHandler, conversationID, agentID, accountID); err != nil {
+					logger.WarnContext(ctx, "workflow version run conversation access denied", "conversation_id", conversationID, "agent_id", agentID, err)
+					failWebAppConversationAccess(c, err)
+					return
+				}
+
 				logger.DebugContext(c.Request.Context(), "workflow version run continuing conversation", zap.String("conversation_id", conversationID))
 
-				latestMessageID, err := h.getLatestMessageID(conversationID)
+				latestMessageID, err := h.getLatestMessageIDForCaller(ctx, conversationID, agentID, accountID)
 				if err == nil && latestMessageID != "" {
 					req.Inputs["sys.parent_message_id"] = latestMessageID
 					logger.DebugContext(c.Request.Context(), "workflow version run parent message set", zap.Bool("has_parent_message_id", true))
 				}
 
 				req.Inputs["sys.conversation_id"] = conversationID
-				req.Inputs["sys.dialogue_count"] = h.getDialogueCount(conversationID)
+				req.Inputs["sys.dialogue_count"] = h.getDialogueCountForCaller(ctx, conversationID, agentID, accountID)
 			} else {
 				req.Inputs["sys.conversation_id"] = ""
 				req.Inputs["sys.parent_message_id"] = ""
@@ -387,16 +394,22 @@ func (h *WorkflowHandler) runWorkflowByWebAppIDInternal(c *gin.Context, webAppID
 		conversationID, _ := req.Inputs["conversation_id"].(string)
 
 		if conversationID != "" {
+			if err := validateWebAppConversationAccess(ctx, h.advancedChatHandler, conversationID, agentID, accountID); err != nil {
+				logger.WarnContext(ctx, "web app workflow run conversation access denied", "conversation_id", conversationID, "agent_id", agentID, err)
+				failWebAppConversationAccess(c, err)
+				return
+			}
+
 			logger.DebugContext(c.Request.Context(), "web app workflow run continuing conversation", zap.String("conversation_id", conversationID))
 
-			latestMessageID, err := h.getLatestMessageID(conversationID)
+			latestMessageID, err := h.getLatestMessageIDForCaller(ctx, conversationID, agentID, accountID)
 			if err == nil && latestMessageID != "" {
 				req.Inputs["sys.parent_message_id"] = latestMessageID
 				logger.DebugContext(c.Request.Context(), "web app workflow run parent message set", zap.Bool("has_parent_message_id", true))
 			}
 
 			req.Inputs["sys.conversation_id"] = conversationID
-			req.Inputs["sys.dialogue_count"] = h.getDialogueCount(conversationID)
+			req.Inputs["sys.dialogue_count"] = h.getDialogueCountForCaller(ctx, conversationID, agentID, accountID)
 		} else {
 			req.Inputs["sys.conversation_id"] = ""
 			req.Inputs["sys.parent_message_id"] = ""
@@ -420,4 +433,20 @@ func (h *WorkflowHandler) runWorkflowByWebAppIDInternal(c *gin.Context, webAppID
 	h.runWorkflowStream(c, tenantID, agentID, req, accountID, false, runType, "web-app")
 	return
 
+}
+
+func failWebAppConversationAccess(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errWebAppConversationInvalidID),
+		errors.Is(err, errWebAppConversationInvalidAgent):
+		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, errWebAppConversationInvalidAccount):
+		response.Fail(c, response.ErrUnauthorized)
+	case errors.Is(err, errWebAppConversationNotFound):
+		response.Fail(c, response.ErrAppNotFound)
+	case errors.Is(err, errWebAppConversationAccessDenied):
+		response.Fail(c, response.ErrPermissionDenied)
+	default:
+		response.Fail(c, response.ErrSystemError)
+	}
 }

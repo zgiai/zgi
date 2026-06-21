@@ -10,7 +10,7 @@ import (
 	external "github.com/zgiai/zgi/api/routes/external"
 )
 
-func TestExternalWorkflowStopTaskReturnsNotImplemented(t *testing.T) {
+func TestExternalWorkflowStopTaskRequiresAPIKeyInfo(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
@@ -23,7 +23,7 @@ func TestExternalWorkflowStopTaskReturnsNotImplemented(t *testing.T) {
 
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusNotImplemented)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }

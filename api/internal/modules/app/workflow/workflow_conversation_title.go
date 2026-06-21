@@ -67,12 +67,20 @@ func (s *WorkflowService) generateWebAppConversationTitle(ctx context.Context, p
 		return fmt.Errorf("conversation service is not configured")
 	}
 
-	conv, err := conversationSvc.GetConversation(ctx, params.ConversationID)
+	agentID, err := uuid.Parse(strings.TrimSpace(params.AgentID))
+	if err != nil || agentID == uuid.Nil {
+		return fmt.Errorf("valid agent id is required for title generation")
+	}
+
+	conv, err := conversationSvc.GetConversationByIDAndAgent(ctx, params.ConversationID, agentID)
 	if err != nil {
 		return err
 	}
 	if conv == nil {
 		return fmt.Errorf("conversation not found")
+	}
+	if !conversationBelongsToAccount(conv, params.AccountID) {
+		return fmt.Errorf("conversation not found: %w", errWebAppConversationAccessDenied)
 	}
 	if !isDefaultWorkflowConversationName(conv.Name) {
 		return nil

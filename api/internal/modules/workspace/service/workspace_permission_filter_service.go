@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/repository"
@@ -55,6 +56,11 @@ func (s *WorkspacePermissionFilterServiceImpl) GetAccessibleWorkspacesByPermissi
 	organizationID string,
 	permissionType string,
 ) ([]*WorkspacePermissionResponse, error) {
+	permissionCode, err := workspacePermissionCodeForFilterType(permissionType)
+	if err != nil {
+		return nil, err
+	}
+
 	organization, err := s.organizationRepo.GetByID(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -77,7 +83,7 @@ func (s *WorkspacePermissionFilterServiceImpl) GetAccessibleWorkspacesByPermissi
 		return s.getAllWorkspacesByOrganization(ctx, organizationID)
 	}
 
-	return s.getPermittedWorkspacesByUser(ctx, accountID, organizationID)
+	return s.getPermittedWorkspacesByUser(ctx, accountID, organizationID, permissionCode)
 }
 
 // getAllWorkspacesByOrganization returns all active workspaces in an organization.
@@ -108,6 +114,10 @@ func (s *WorkspacePermissionFilterServiceImpl) getAllWorkspacesByOrganization(ct
 	// Convert to response format and sort by creation date
 	responses := make([]*WorkspacePermissionResponse, 0, len(workspacesDetails))
 	for _, workspace := range workspacesDetails {
+		if workspace.Status != model.WorkspaceStatusNormal {
+			continue
+		}
+
 		responses = append(responses, &WorkspacePermissionResponse{
 			ID:   workspace.ID,
 			Name: workspace.Name,
@@ -125,6 +135,7 @@ func (s *WorkspacePermissionFilterServiceImpl) getPermittedWorkspacesByUser(
 	ctx context.Context,
 	accountID string,
 	organizationID string,
+	permissionCode model.WorkspacePermissionCode,
 ) ([]*WorkspacePermissionResponse, error) {
 	workspaces, err := s.organizationRepo.GetWorkspacesByOrganizationID(ctx, organizationID)
 	if err != nil {
@@ -139,9 +150,14 @@ func (s *WorkspacePermissionFilterServiceImpl) getPermittedWorkspacesByUser(
 	// Check permissions for each workspace
 	var permittedWorkspaces []*WorkspacePermissionResponse
 	workspaceMap := make(map[string]*model.Workspace)
+	customRoleIDs := make([]string, 0, len(workspaces))
+	workspaceJoins := make(map[string]*model.WorkspaceMember, len(workspaces))
 
 	for _, workspace := range workspaces {
 		workspaceID := workspace.ID
+		if workspace.Status != model.WorkspaceStatusNormal {
+			continue
+		}
 
 		// Get workspace account join to check if user is member
 		accountJoin, err := s.workspaceMemberRepo.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
@@ -155,24 +171,77 @@ func (s *WorkspacePermissionFilterServiceImpl) getPermittedWorkspacesByUser(
 			continue
 		}
 
-		// Simplified logic: Just check if user is a member
-		// Get workspace details
-		if _, exists := workspaceMap[workspaceID]; !exists {
-			workspaceMap[workspaceID] = workspace
+		workspaceJoins[workspaceID] = accountJoin
+		if accountJoin.RoleID != nil && *accountJoin.RoleID != "" && !model.IsBuiltinRole(*accountJoin.RoleID) {
+			customRoleIDs = append(customRoleIDs, *accountJoin.RoleID)
+		}
+	}
+
+	rolePermissions, err := s.listActiveRolePermissionsByID(ctx, organizationID, customRoleIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, workspace := range workspaces {
+		accountJoin := workspaceJoins[workspace.ID]
+		if accountJoin == nil {
+			continue
+		}
+		if !workspaceRoleAllowsPermission(accountJoin.Role, accountJoin.RoleID, rolePermissions, permissionCode) {
+			continue
 		}
 
-		if workspace, exists := workspaceMap[workspaceID]; exists {
-			permittedWorkspaces = append(permittedWorkspaces, &WorkspacePermissionResponse{
-				ID:   workspace.ID,
-				Name: workspace.Name,
-			})
-		}
+		workspaceMap[workspace.ID] = workspace
+		permittedWorkspaces = append(permittedWorkspaces, &WorkspacePermissionResponse{
+			ID:   workspace.ID,
+			Name: workspace.Name,
+		})
 	}
 
 	// Sort by creation date (ascending)
 	sortWorkspacesByCreatedAtFromMap(permittedWorkspaces, workspaceMap)
 
 	return permittedWorkspaces, nil
+}
+
+func workspacePermissionCodeForFilterType(permissionType string) (model.WorkspacePermissionCode, error) {
+	switch permissionType {
+	case "create_agent":
+		return model.WorkspacePermissionAgentManage, nil
+	case "create_database":
+		return model.WorkspacePermissionDatabaseManage, nil
+	case "create_knowledge":
+		return model.WorkspacePermissionKnowledgeBaseManage, nil
+	default:
+		return "", fmt.Errorf("invalid permission type: %s", permissionType)
+	}
+}
+
+func (s *WorkspacePermissionFilterServiceImpl) listActiveRolePermissionsByID(
+	ctx context.Context,
+	organizationID string,
+	roleIDs []string,
+) (map[string][]string, error) {
+	permissionsByRoleID := make(map[string][]string)
+	if len(roleIDs) == 0 {
+		return permissionsByRoleID, nil
+	}
+
+	slices.Sort(roleIDs)
+	roleIDs = slices.Compact(roleIDs)
+
+	var roles []model.WorkspaceCustomRole
+	if err := s.organizationRepo.GetDB().WithContext(ctx).
+		Where("group_id = ? AND status = ? AND id IN ?", organizationID, model.WorkspaceCustomRoleStatusActive, roleIDs).
+		Find(&roles).Error; err != nil {
+		return nil, fmt.Errorf("failed to list workspace roles: %w", err)
+	}
+
+	for _, role := range roles {
+		permissionsByRoleID[role.ID] = role.Permissions
+	}
+
+	return permissionsByRoleID, nil
 }
 
 // isOwnerOrAdmin checks if role is owner or admin

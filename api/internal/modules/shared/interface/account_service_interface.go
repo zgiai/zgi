@@ -97,6 +97,7 @@ type AccountService interface {
 	IsEditor(ctx context.Context, accountID string) (bool, error)
 
 	GetAccountContext(ctx context.Context, accountID string) (*auth_model.AccountContext, error)
+	GetAccountCapabilities(ctx context.Context, accountID string) (*dto.AccountCapabilitiesResponse, error)
 	UpdateAccountContext(ctx context.Context, accountID string, organizationID, workspaceID *string) (*auth_model.AccountContext, error)
 	EnsureAccountContextForWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error)
 

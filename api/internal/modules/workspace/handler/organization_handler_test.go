@@ -25,12 +25,17 @@ type fakeOrganizationService struct {
 	interfaces.OrganizationService
 	getWorkspaceMemberPermissionsFn  func(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error)
 	getOrganizationWorkspaceDetailFn func(ctx context.Context, organizationID, workspaceID, accountID string) (*shared_dto.OrganizationWorkspaceResponse, error)
+	getOrganizationByWorkspaceIDFn   func(ctx context.Context, workspaceID string) (*model.Organization, error)
+	checkWorkspacePermissionFn       func(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error)
+	checkWorkspaceAssetsFn           func(ctx context.Context, workspaceID string) (bool, map[string]int64, error)
 	updateOrganizationFn             func(ctx context.Context, organizationID, accountID string, req *shared_dto.UpdateOrganizationRequest) (*model.Organization, error)
 	updateCurrentMemberRoleFn        func(ctx context.Context, operatorID, memberID string, role model.OrganizationRole) error
 	updateMemberInfoFn               func(ctx context.Context, req *shared_dto.UpdateOrganizationMemberRequest) error
 	getByIDFn                        func(ctx context.Context, organizationID string) (*model.Organization, error)
 	checkAnyManagedWorkspaceFn       func(ctx context.Context, organizationID, accountID string) (bool, error)
+	isOrganizationAdminOrOwnerFn     func(ctx context.Context, organizationID, accountID string) (bool, error)
 	getMembersPaginatedFn            func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error)
+	getMemberByAccountIDFn           func(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error)
 	existsMemberByNameFn             func(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error)
 	isOrganizationMemberFn           func(ctx context.Context, organizationID, accountID string) (bool, error)
 	addMemberFn                      func(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error
@@ -49,6 +54,27 @@ func (f fakeOrganizationService) GetOrganizationWorkspaceDetail(ctx context.Cont
 		return f.getOrganizationWorkspaceDetailFn(ctx, organizationID, workspaceID, accountID)
 	}
 	return nil, nil
+}
+
+func (f fakeOrganizationService) GetOrganizationByWorkspaceID(ctx context.Context, workspaceID string) (*model.Organization, error) {
+	if f.getOrganizationByWorkspaceIDFn != nil {
+		return f.getOrganizationByWorkspaceIDFn(ctx, workspaceID)
+	}
+	return &model.Organization{ID: "org-1", Status: model.OrganizationStatusActive}, nil
+}
+
+func (f fakeOrganizationService) CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error) {
+	if f.checkWorkspacePermissionFn != nil {
+		return f.checkWorkspacePermissionFn(ctx, organizationID, workspaceID, accountID, permissionCode)
+	}
+	return true, nil
+}
+
+func (f fakeOrganizationService) CheckWorkspaceAssets(ctx context.Context, workspaceID string) (bool, map[string]int64, error) {
+	if f.checkWorkspaceAssetsFn != nil {
+		return f.checkWorkspaceAssetsFn(ctx, workspaceID)
+	}
+	return false, map[string]int64{}, nil
 }
 
 func (f fakeOrganizationService) UpdateOrganization(ctx context.Context, organizationID, accountID string, req *shared_dto.UpdateOrganizationRequest) (*model.Organization, error) {
@@ -86,11 +112,25 @@ func (f fakeOrganizationService) CheckAnyManagedWorkspacePermission(ctx context.
 	return true, nil
 }
 
+func (f fakeOrganizationService) IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
+	if f.isOrganizationAdminOrOwnerFn != nil {
+		return f.isOrganizationAdminOrOwnerFn(ctx, organizationID, accountID)
+	}
+	return false, nil
+}
+
 func (f fakeOrganizationService) GetOrganizationMembersPaginated(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
 	if f.getMembersPaginatedFn != nil {
 		return f.getMembersPaginatedFn(ctx, organizationID, page, limit, keyword)
 	}
 	return &shared_dto.OrganizationMemberPaginationResponse{}, nil
+}
+
+func (f fakeOrganizationService) GetOrganizationMemberByAccountID(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error) {
+	if f.getMemberByAccountIDFn != nil {
+		return f.getMemberByAccountIDFn(ctx, organizationID, accountID)
+	}
+	return nil, nil
 }
 
 func (f fakeOrganizationService) ExistsMemberByName(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error) {
@@ -330,6 +370,131 @@ func TestGetWorkspaceMemberPermissionsReturnsSuccessResponse(t *testing.T) {
 	require.Equal(t, "0", resp.Code)
 	require.Equal(t, "success", resp.Message)
 	require.Contains(t, recorder.Body.String(), `"workspace_id":"ws-1"`)
+}
+
+func TestOrganizationWorkspaceRoutesRejectCrossOrganizationWorkspaceBeforePermission(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		params gin.Params
+		body   string
+		call   func(*OrganizationHandler, *gin.Context)
+	}{
+		{
+			name:   "workspace assets",
+			method: http.MethodGet,
+			target: "/organizations/org-1/workspaces/ws-other/assets",
+			params: gin.Params{
+				{Key: "organization_id", Value: "org-1"},
+				{Key: "workspace_id", Value: "ws-other"},
+			},
+			call: (*OrganizationHandler).GetOrganizationWorkspaceAssets,
+		},
+		{
+			name:   "remove workspace member",
+			method: http.MethodDelete,
+			target: "/organizations/org-1/workspaces/ws-other/members/member-1",
+			params: gin.Params{
+				{Key: "organization_id", Value: "org-1"},
+				{Key: "workspace_id", Value: "ws-other"},
+				{Key: "member_id", Value: "member-1"},
+			},
+			call: (*OrganizationHandler).RemoveOrganizationWorkspaceMember,
+		},
+		{
+			name:   "update workspace member role",
+			method: http.MethodPut,
+			target: "/organizations/org-1/workspaces/ws-other/members/member-1/update-role",
+			params: gin.Params{
+				{Key: "organization_id", Value: "org-1"},
+				{Key: "workspace_id", Value: "ws-other"},
+				{Key: "member_id", Value: "member-1"},
+			},
+			body: `{"role":"normal"}`,
+			call: (*OrganizationHandler).UpdateOrganizationWorkspaceMemberRole,
+		},
+		{
+			name:   "batch add workspace members",
+			method: http.MethodPost,
+			target: "/organizations/org-1/workspaces/ws-other/members/batch-add",
+			params: gin.Params{
+				{Key: "organization_id", Value: "org-1"},
+				{Key: "workspace_id", Value: "ws-other"},
+			},
+			body: `{"account_ids":["member-1"],"role":"normal"}`,
+			call: (*OrganizationHandler).BatchAddOrganizationMembersToWorkspace,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			permissionChecked := false
+			workspaceAssetsChecked := false
+			workspaceDetailLoaded := false
+			accountLoaded := false
+			workspaceLoaded := false
+			handler := &OrganizationHandler{
+				organizationService: fakeOrganizationService{
+					getOrganizationByWorkspaceIDFn: func(ctx context.Context, workspaceID string) (*model.Organization, error) {
+						require.Equal(t, "ws-other", workspaceID)
+						return &model.Organization{ID: "org-other", Status: model.OrganizationStatusActive}, nil
+					},
+					checkWorkspacePermissionFn: func(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error) {
+						permissionChecked = true
+						return true, nil
+					},
+					checkWorkspaceAssetsFn: func(ctx context.Context, workspaceID string) (bool, map[string]int64, error) {
+						workspaceAssetsChecked = true
+						return false, nil, nil
+					},
+					getOrganizationWorkspaceDetailFn: func(ctx context.Context, organizationID, workspaceID, accountID string) (*shared_dto.OrganizationWorkspaceResponse, error) {
+						workspaceDetailLoaded = true
+						return nil, nil
+					},
+				},
+				workspaceManagementService: fakeWorkspaceManagementService{
+					getWorkspaceByIDFn: func(ctx context.Context, id string) (*model.Workspace, error) {
+						workspaceLoaded = true
+						return &model.Workspace{ID: id}, nil
+					},
+				},
+				accountService: fakeAccountService{
+					getAccountByIDFn: func(ctx context.Context, id string) (*auth_model.Account, error) {
+						accountLoaded = true
+						return &auth_model.Account{ID: id}, nil
+					},
+				},
+			}
+
+			c, recorder := newOrganizationHandlerTestContext(tt.method, tt.target)
+			c.Set("account_id", "operator-1")
+			c.Set("organization_id", "org-1")
+			c.Set("tenant_id", "org-1")
+			c.Params = tt.params
+			if tt.body != "" {
+				c.Request.Body = io.NopCloser(bytes.NewBufferString(tt.body))
+				c.Request.Header.Set("Content-Type", "application/json")
+			}
+
+			tt.call(handler, c)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			var resp response.Response
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp), recorder.Body.String())
+			require.Equal(t, strconv.Itoa(response.ErrWorkspaceNotInOrganization.Code), resp.Code, recorder.Body.String())
+			require.False(t, permissionChecked)
+			require.False(t, workspaceAssetsChecked)
+			require.False(t, workspaceDetailLoaded)
+			require.False(t, accountLoaded)
+			require.False(t, workspaceLoaded)
+		})
+	}
 }
 
 func TestGetOrganizationWorkspaceMemberDetailByIDReturnsHasMobile(t *testing.T) {
@@ -637,6 +802,93 @@ func TestGetCurrentOrganizationMembersUsesKeyword(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), `"email":"alice@example.com"`)
 }
 
+func TestGetCurrentOrganizationMembersAllowsOrganizationAdminWithoutManagedWorkspace(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationAdminOrOwnerFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "admin-1", accountID)
+				return true, nil
+			},
+			checkAnyManagedWorkspaceFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				t.Fatalf("organization admin should not need managed workspace permission")
+				return false, nil
+			},
+			getMembersPaginatedFn: func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, 1, page)
+				require.Equal(t, 20, limit)
+				require.Equal(t, "alice", keyword)
+				return &shared_dto.OrganizationMemberPaginationResponse{
+					Data: []*shared_dto.OrganizationMemberWithExtensionResponse{
+						{
+							ID:               "member-1",
+							Name:             "Alice",
+							Email:            "alice@example.com",
+							Status:           "active",
+							OrganizationRole: model.OrganizationRoleNormal,
+						},
+					},
+					Page:  1,
+					Limit: 20,
+					Total: 1,
+				}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/current/members?keyword=alice")
+	c.Set("account_id", "admin-1")
+	c.Set("organization_id", "org-1")
+	c.Set("tenant_id", "org-1")
+
+	handler.GetCurrentOrganizationMembers(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"email":"alice@example.com"`)
+}
+
+func TestGetCurrentOrganizationMemberDetailUsesOrganizationScope(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationMemberFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "viewer-1", accountID)
+				return true, nil
+			},
+			getMemberByAccountIDFn: func(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "member-1", accountID)
+				memberName := "Team Alice"
+				return &shared_dto.OrganizationMemberWithExtensionResponse{
+					ID:               "member-1",
+					Name:             "Team Alice",
+					MemberName:       &memberName,
+					Email:            "alice@example.com",
+					Status:           "active",
+					OrganizationRole: model.OrganizationRoleNormal,
+				}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/current/members/member-1")
+	c.Set("account_id", "viewer-1")
+	c.Set("organization_id", "org-1")
+	c.Set("tenant_id", "org-1")
+	c.Params = gin.Params{{Key: "member_id", Value: "member-1"}}
+
+	handler.GetOrganizationMemberDetailByID(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"email":"alice@example.com"`)
+	require.Contains(t, recorder.Body.String(), `"member_name":"Team Alice"`)
+}
+
 func TestDirectAddMemberMapsDepartmentConflict(t *testing.T) {
 	t.Parallel()
 
@@ -695,6 +947,24 @@ func TestOrganizationRoutesRegisterCurrentMembersList(t *testing.T) {
 	}
 
 	t.Fatalf("GET /organizations/current/members route was not registered")
+}
+
+func TestOrganizationRoutesRegisterCurrentMemberDetail(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := &OrganizationHandler{organizationService: fakeOrganizationService{}}
+
+	handler.RegisterRoutes(router.Group(""))
+
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodGet && route.Path == "/organizations/current/members/:member_id" {
+			return
+		}
+	}
+
+	t.Fatalf("GET /organizations/current/members/:member_id route was not registered")
 }
 
 func newOrganizationHandlerTestContext(method, target string) (*gin.Context, *httptest.ResponseRecorder) {

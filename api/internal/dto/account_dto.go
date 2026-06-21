@@ -69,6 +69,75 @@ type AccountProfileResponse struct {
 	CurrentWorkspaceID    *string            `json:"current_workspace_id"`
 }
 
+type AccountCapabilitiesResponse struct {
+	AccountID            string                                          `json:"account_id"`
+	Context              AccountCapabilityContext                        `json:"context"`
+	Organization         AccountOrganizationCapabilities                 `json:"organization"`
+	Workspace            AccountWorkspaceCapabilities                    `json:"workspace"`
+	Routes               AccountRouteCapabilities                        `json:"routes"`
+	RuntimeAudience      AccountRuntimeAudienceCapability                `json:"runtime_audience"`
+	RuntimeSurfaces      map[string]AccountRuntimeSurfaceCapability      `json:"runtime_surfaces"`
+	RuntimeResourceLists map[string]AccountRuntimeResourceListCapability `json:"runtime_resource_lists"`
+}
+
+type AccountCapabilityContext struct {
+	Mode                  string  `json:"mode"`
+	CurrentOrganizationID *string `json:"current_organization_id"`
+	CurrentWorkspaceID    *string `json:"current_workspace_id"`
+}
+
+type AccountOrganizationCapabilities struct {
+	ID              *string                           `json:"id"`
+	Role            string                            `json:"role"`
+	IsMember        bool                              `json:"is_member"`
+	IsAdmin         bool                              `json:"is_admin"`
+	ProductSurfaces AccountProductSurfaceCapabilities `json:"product_surfaces"`
+}
+
+type AccountProductSurfaceCapabilities struct {
+	Chat     bool `json:"chat"`
+	Image    bool `json:"image"`
+	App      bool `json:"app"`
+	Settings bool `json:"settings"`
+}
+
+type AccountWorkspaceCapabilities struct {
+	ID                *string  `json:"id"`
+	Available         bool     `json:"available"`
+	RequiresWorkspace bool     `json:"requires_workspace"`
+	CanView           bool     `json:"can_view"`
+	Role              string   `json:"role"`
+	RoleName          string   `json:"role_name"`
+	Permissions       []string `json:"permissions"`
+}
+
+type AccountRouteCapabilities struct {
+	OrganizationScopeAllowed bool `json:"organization_scope_allowed"`
+	WorkspaceScopeAllowed    bool `json:"workspace_scope_allowed"`
+	WorkspaceRequired        bool `json:"workspace_required"`
+}
+
+type AccountRuntimeSurfaceCapability struct {
+	Enabled           bool     `json:"enabled"`
+	Mode              string   `json:"mode"`
+	GrantSubjectTypes []string `json:"grant_subject_types"`
+}
+
+type AccountRuntimeResourceListCapability struct {
+	Enabled      bool   `json:"enabled"`
+	ResourceType string `json:"resource_type"`
+	Surface      string `json:"surface"`
+	Mode         string `json:"mode"`
+	Endpoint     string `json:"endpoint"`
+}
+
+type AccountRuntimeAudienceCapability struct {
+	AccountID      string   `json:"account_id"`
+	OrganizationID *string  `json:"organization_id"`
+	SubjectTypes   []string `json:"subject_types"`
+	DepartmentIDs  []string `json:"department_ids,omitempty"`
+}
+
 // MarshalJSON implements custom JSON marshaling to generate avatar URLs
 func (a *AccountProfileResponse) MarshalJSON() ([]byte, error) {
 	// Generate avatar URL if needed

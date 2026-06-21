@@ -44,12 +44,7 @@ func (h *WorkflowHandler) prepareWorkflowStreamSystemInputs(ctx context.Context,
 	logger.DebugContext(ctx, "workflow stream request inputs received",
 		zap.Int("input_count", len(params.Inputs)),
 	)
-	if convID, exists := params.Inputs["sys.conversation_id"]; exists && convID != "" {
-		systemInputs["sys.conversation_id"] = convID
-		logger.DebugContext(ctx, "workflow stream using existing conversation",
-			zap.Any("conversation_id", convID),
-		)
-	} else if convID, exists := params.Inputs["conversation_id"]; exists && convID != "" {
+	if convID, exists := workflowStreamSystemConversationInput(params.Inputs); exists {
 		systemInputs["sys.conversation_id"] = convID
 		logger.DebugContext(ctx, "workflow stream using existing conversation",
 			zap.Any("conversation_id", convID),
@@ -82,6 +77,17 @@ func (h *WorkflowHandler) prepareWorkflowStreamSystemInputs(ctx context.Context,
 	}
 
 	return systemInputs, true
+}
+
+func workflowStreamSystemConversationInput(inputs map[string]interface{}) (interface{}, bool) {
+	if len(inputs) == 0 {
+		return nil, false
+	}
+	convID, exists := inputs["sys.conversation_id"]
+	if !exists || convID == nil || convID == "" {
+		return nil, false
+	}
+	return convID, true
 }
 
 func (h *WorkflowHandler) createWorkflowStreamConversation(ctx context.Context, w http.ResponseWriter, params workflowStreamSystemInputParams, systemInputs map[string]interface{}) bool {

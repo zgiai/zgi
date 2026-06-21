@@ -11,6 +11,7 @@ import (
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	promptdto "github.com/zgiai/zgi/api/internal/modules/prompts/dto"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 func (s *promptService) PlaygroundStream(
@@ -26,7 +27,20 @@ func (s *promptService) PlaygroundStream(
 	if rawPrompt == "" && !hasMessages {
 		return fmt.Errorf("prompt cannot be empty")
 	}
-	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
+	if s == nil {
+		return fmt.Errorf("prompt playground is unavailable")
+	}
+	if err := s.requirePromptWorkspaceAccess(
+		ctx,
+		organizationID,
+		accountID,
+		workspaceID,
+		workspace_model.WorkspacePermissionAgentView,
+		workspace_model.WorkspacePermissionAgentManage,
+	); err != nil {
+		return err
+	}
+	if s.llmClient == nil || s.defaultModelSvc == nil {
 		return fmt.Errorf("prompt playground is unavailable")
 	}
 

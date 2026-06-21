@@ -1,25 +1,40 @@
 package handler
 
 import (
+	"context"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/system/service"
+	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
+type accountContextReader interface {
+	GetAccountContext(ctx context.Context, accountID string) (*authmodel.AccountContext, error)
+}
+
+type workspacePermissionChecker interface {
+	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error)
+}
+
 // DashboardHandler handles dashboard related requests
 type DashboardHandler struct {
 	dashboardService  service.DashboardService
-	enterpriseService interfaces.OrganizationService
+	enterpriseService workspacePermissionChecker
+	accountService    accountContextReader
 }
 
 // NewDashboardHandler creates a new DashboardHandler instance
-func NewDashboardHandler(dashboardService service.DashboardService, enterpriseService interfaces.OrganizationService) *DashboardHandler {
+func NewDashboardHandler(dashboardService service.DashboardService, enterpriseService interfaces.OrganizationService, accountService interfaces.AccountService) *DashboardHandler {
 	return &DashboardHandler{
 		dashboardService:  dashboardService,
 		enterpriseService: enterpriseService,
+		accountService:    accountService,
 	}
 }
 
@@ -67,7 +82,31 @@ func (h *DashboardHandler) GetRecentWork(c *gin.Context) {
 	}
 
 	accountID := util.GetAccountID(c)
-	recentWork, _ := h.dashboardService.GetRecentWork(ctx, organizationID, accountID, 10)
+	accountContext, err := h.accountService.GetAccountContext(ctx, accountID)
+	if err != nil || accountContext == nil || accountContext.CurrentWorkspaceID == nil {
+		response.Fail(c, response.ErrWorkspaceJoinedNotFound)
+		return
+	}
+
+	workspaceID := strings.TrimSpace(*accountContext.CurrentWorkspaceID)
+	if workspaceID == "" {
+		response.Fail(c, response.ErrWorkspaceJoinedNotFound)
+		return
+	}
+
+	hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
+		ctx,
+		organizationID,
+		workspaceID,
+		accountID,
+		workspacemodel.WorkspacePermissionWorkspaceView,
+	)
+	if err != nil || !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return
+	}
+
+	recentWork, _ := h.dashboardService.GetRecentWork(ctx, organizationID, workspaceID, accountID, 10)
 
 	response.Success(c, recentWork)
 }

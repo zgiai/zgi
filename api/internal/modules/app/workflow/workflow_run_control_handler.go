@@ -4,7 +4,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
-	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -24,31 +23,9 @@ func (h *WorkflowHandler) StopWorkflowTask(c *gin.Context) {
 	appID := c.Param("agent_id")
 	taskID := c.Param("task_id")
 	accountID := c.GetString("account_id")
-	workspaceID := util.GetWorkspaceID(c)
-	if workspaceID == "" {
-		resolvedWorkspaceID, ok := h.resolveAgentWorkspaceID(c, appID)
-		if !ok {
-			return
-		}
-		workspaceID = resolvedWorkspaceID
-	}
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			util.GetOrganizationID(c),
-			workspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionAgentManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	workspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage)
+	if !ok {
+		return
 	}
 
 	logger.Info("Stopping workflow task", appID, taskID, accountID)
@@ -81,6 +58,11 @@ func (h *WorkflowHandler) RunDraftWorkflowNode(c *gin.Context) {
 	nodeID := c.Param("node_id")
 	accountID := c.GetString("account_id")
 
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage)
+	if !ok {
+		return
+	}
+
 	var req dto.DraftWorkflowNodeRunRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.WarnContext(c.Request.Context(), "invalid request body", "agent_id", appID, "node_id", nodeID, err)
@@ -95,11 +77,6 @@ func (h *WorkflowHandler) RunDraftWorkflowNode(c *gin.Context) {
 	}
 
 	logger.Info("Running draft workflow node", appID, nodeID, accountID)
-
-	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage)
-	if !ok {
-		return
-	}
 
 	result, err := h.workflowService.RunDraftWorkflowNode(c.Request.Context(), appWorkspaceID, appID, nodeID, &req, accountID)
 	if err != nil {

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	apiKeyModule "github.com/zgiai/zgi/api/internal/modules/api_key"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
@@ -99,6 +101,10 @@ func validateAPIKey(db *gorm.DB, key string) (*APIKeyInfo, error) {
 		return nil, fmt.Errorf("failed to validate API key: %w", err)
 	}
 
+	if err := validateAgentAPISurface(db, apiKey.AgentID, apiKey.TenantID); err != nil {
+		return nil, err
+	}
+
 	return &APIKeyInfo{
 		ID:         apiKey.ID,
 		AgentID:    apiKey.AgentID,
@@ -111,6 +117,35 @@ func validateAPIKey(db *gorm.DB, key string) (*APIKeyInfo, error) {
 		LastUsedAt: apiKey.LastUsedAt,
 		CreatedAt:  apiKey.CreatedAt,
 	}, nil
+}
+
+func validateAgentAPISurface(db *gorm.DB, agentID, tenantID uuid.UUID) error {
+	var surface struct {
+		ID           uuid.UUID `gorm:"column:id"`
+		TenantID     uuid.UUID `gorm:"column:tenant_id"`
+		EnableAPI    bool      `gorm:"column:enable_api"`
+		WebAppStatus string    `gorm:"column:web_app_status"`
+	}
+	err := db.
+		Table("agents").
+		Select("id", "tenant_id", "enable_api", "web_app_status", "deleted_at").
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", agentID, tenantID).
+		Take(&surface).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("agent not found for API key")
+		}
+		return fmt.Errorf("failed to validate agent API surface: %w", err)
+	}
+	fallback := runtimeauth.PolicyFromAgentFields(surface.WebAppStatus, surface.EnableAPI)
+	auth, err := runtimeauth.NewStore(db).GetResourceAuthorization(context.Background(), runtimeauth.PublishedRuntimeResourceAgent, surface.ID, fallback)
+	if err != nil {
+		return fmt.Errorf("failed to validate agent API surface authorization: %w", err)
+	}
+	if !runtimeauth.PolicyFromAuthorization(fallback, auth).Allows(runtimeauth.PublishedRuntimeSurfaceAPI) {
+		return fmt.Errorf("agent API service is disabled")
+	}
+	return nil
 }
 
 // updateLastUsed updates the last used timestamp and usage counters for the API key

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/dto"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -18,6 +19,10 @@ func (h *WorkflowHandler) RunPublishedWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	requestedWorkspaceID := util.GetWorkspaceID(c)
 	organizationID := util.GetOrganizationID(c)
+
+	if _, ok := h.requirePublishedRuntimeAgentAccess(c, appID, workspace_model.WorkspacePermissionAgentView); !ok {
+		return
+	}
 
 	// Get invoke_from and created_from from context (set by external API middleware)
 	invokeFrom := c.GetString("invoke_from")
@@ -95,11 +100,21 @@ func (h *WorkflowHandler) RunPublishedWorkflow(c *gin.Context) {
 		return
 	}
 
+	runType := "WORKFLOW"
+	if workflowMap, ok := workflow.(map[string]interface{}); ok && workflowTypeString(workflowMap["type"]) == "chat" {
+		runType = "CONVERSATION_WORKFLOW"
+		if err := validateWorkflowInputConversationAccess(ctx, h.advancedChatHandler, req.Inputs, appID, accountID); err != nil {
+			logger.WarnContext(ctx, "published workflow run conversation access denied", "agent_id", appID, err)
+			failWebAppConversationAccess(c, err)
+			return
+		}
+		promoteWorkflowInputConversationIDToSystemInput(req.Inputs)
+	}
+
 	// Always use streaming mode
 	// Update context in gin.Context
 	c.Request = c.Request.WithContext(ctx)
 	// Determine runType and triggeredFrom
-	runType := "WORKFLOW"       // For published workflows
 	triggeredFrom := invokeFrom // Use invokeFrom from context (e.g., "external-api", "web-app")
 	if triggeredFrom == "" {
 		triggeredFrom = "app-run" // Default for published workflows

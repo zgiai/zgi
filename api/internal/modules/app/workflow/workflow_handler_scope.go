@@ -25,6 +25,14 @@ type shadowWorkspaceEnsurer interface {
 	GetShadowWorkspaceByID(ctx context.Context, organizationID string) (*workspace_model.Workspace, error)
 }
 
+type workflowAgentWorkspaceResolver interface {
+	GetAgentWorkspaceID(ctx context.Context, agentID string) (string, error)
+}
+
+type workflowWorkspacePermissionChecker interface {
+	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspace_model.WorkspacePermissionCode) (bool, error)
+}
+
 type webAppRunScope struct {
 	WorkspaceID        string
 	OrganizationID     string
@@ -153,7 +161,12 @@ func resolveWebAppRunScope(ctx context.Context, accountService interface {
 }
 
 func (h *WorkflowHandler) resolveAgentWorkspaceID(c *gin.Context, agentID string) (string, bool) {
-	workspaceID, err := h.workflowService.GetAgentWorkspaceID(c.Request.Context(), agentID)
+	resolver := h.getAgentWorkspaceResolver()
+	if resolver == nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", false
+	}
+	workspaceID, err := resolver.GetAgentWorkspaceID(c.Request.Context(), agentID)
 	if err != nil {
 		logger.CriticalContext(c.Request.Context(), "failed to get agent workspace id", "agent_id", agentID, err)
 		if strings.Contains(err.Error(), "agent not found") {
@@ -173,6 +186,13 @@ func (h *WorkflowHandler) resolveAgentWorkspaceID(c *gin.Context, agentID string
 	return workspaceID, true
 }
 
+func (h *WorkflowHandler) getAgentWorkspaceResolver() workflowAgentWorkspaceResolver {
+	if h.agentWorkspaceResolver != nil {
+		return h.agentWorkspaceResolver
+	}
+	return h.workflowService
+}
+
 func (h *WorkflowHandler) requireAgentWorkspacePermission(c *gin.Context, agentID string, permissionCode workspace_model.WorkspacePermissionCode) (string, bool) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -185,11 +205,12 @@ func (h *WorkflowHandler) requireAgentWorkspacePermission(c *gin.Context, agentI
 		return "", false
 	}
 
-	if h.enterpriseService == nil {
+	permissionChecker := h.getWorkspacePermissionChecker()
+	if permissionChecker == nil {
 		return workspaceID, true
 	}
 
-	hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
+	hasPermission, err := permissionChecker.CheckWorkspacePermission(
 		c.Request.Context(),
 		util.GetOrganizationID(c),
 		workspaceID,
@@ -206,6 +227,32 @@ func (h *WorkflowHandler) requireAgentWorkspacePermission(c *gin.Context, agentI
 	}
 
 	return workspaceID, true
+}
+
+func (h *WorkflowHandler) requirePublishedRuntimeAgentAccess(c *gin.Context, agentID string, permissionCode workspace_model.WorkspacePermissionCode) (string, bool) {
+	if c.GetString("invoke_from") != string(InvokeFromExternalAPI) {
+		return h.requireAgentWorkspacePermission(c, agentID, permissionCode)
+	}
+	if _, exists := c.Get("api_key_info"); !exists {
+		response.Fail(c, response.ErrUnauthorized)
+		return "", false
+	}
+	if scopedAgentID := c.GetString("agent_id"); scopedAgentID != "" && scopedAgentID != agentID {
+		response.Fail(c, response.ErrPermissionDenied)
+		return "", false
+	}
+	workspaceID := util.GetWorkspaceID(c)
+	if workspaceID != "" {
+		return workspaceID, true
+	}
+	return h.resolveAgentWorkspaceID(c, agentID)
+}
+
+func (h *WorkflowHandler) getWorkspacePermissionChecker() workflowWorkspacePermissionChecker {
+	if h.workspacePermissionChecker != nil {
+		return h.workspacePermissionChecker
+	}
+	return h.enterpriseService
 }
 
 func resolveRunOrganizationID(ctx context.Context, resolver workspaceOrganizationResolver, workspaceID string, inputs map[string]interface{}) string {

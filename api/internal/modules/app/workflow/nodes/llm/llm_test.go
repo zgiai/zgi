@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
@@ -15,6 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	"github.com/zgiai/zgi/api/pkg/storage"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -92,6 +94,9 @@ func openWorkflowImageInputTestDB(t *testing.T) *gorm.DB {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
+		if strings.Contains(err.Error(), "requires cgo") {
+			t.Skipf("sqlite driver unavailable without cgo: %v", err)
+		}
 		t.Fatalf("open sqlite: %v", err)
 	}
 	if err := db.Exec(`CREATE TABLE upload_files (
@@ -104,6 +109,26 @@ func openWorkflowImageInputTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("create upload_files table: %v", err)
 	}
 	return db
+}
+
+func openLLMHistoryMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {
+	t.Helper()
+
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatalf("create sqlmock: %v", err)
+	}
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		Conn:                 sqlDB,
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{})
+	if err != nil {
+		_ = sqlDB.Close()
+		t.Fatalf("open gorm db: %v", err)
+	}
+	return db, mock, func() {
+		_ = sqlDB.Close()
+	}
 }
 
 func insertWorkflowImageInputFile(t *testing.T, db *gorm.DB, id, key, mimeType, extension, storageType string) {
@@ -588,6 +613,40 @@ func TestFetchMemory_LegacyFallbackZeroWindowDoesNotLoadHistory(t *testing.T) {
 	memory, _ := node.fetchMemory(context.Background(), variablePool, "", nil, nil)
 	if len(memory.Messages) != 0 {
 		t.Fatalf("memory messages = %d, want 0", len(memory.Messages))
+	}
+}
+
+func TestLoadConversationHistoryPromptMessagesRejectsOtherAgentBeforeMessageQuery(t *testing.T) {
+	db, mock, cleanup := openLLMHistoryMockDB(t)
+	defer cleanup()
+
+	conversationID := uuid.New()
+	agentID := uuid.New()
+	node := &Node{
+		NodeStruct: base.NodeStruct{APPID: agentID.String()},
+		db:         db,
+	}
+	mock.ExpectQuery(`SELECT \* FROM "agents_conversations" WHERE id = \$1 AND agent_id = \$2 AND deleted_at IS NULL ORDER BY "agents_conversations"\."id" LIMIT \$3`).
+		WithArgs(conversationID, agentID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"agent_id",
+			"mode",
+			"name",
+			"inputs",
+			"status",
+			"from_source",
+			"dialogue_count",
+			"created_at",
+			"updated_at",
+		}))
+
+	_, err := node.loadConversationHistoryPromptMessages(context.Background(), conversationID.String(), 3)
+	if err == nil {
+		t.Fatalf("loadConversationHistoryPromptMessages() error = nil, want conversation not found")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
 	}
 }
 

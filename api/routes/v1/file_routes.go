@@ -46,8 +46,8 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	fileFavoriteService := fileProcessService.NewFileFavoriteService(fileFavoriteRepo, fileRepo)
 
 	fileHandler := fileProcessHandler.NewFileHandler(fileService, fileFolderService, deps.AccountService, deps.WorkspaceManagementService, deps.OrganizationService)
-	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.AccountService, deps.OrganizationService, fileFavoriteService)
-	fileFavoriteHandler := fileProcessHandler.NewFileFavoriteHandler(fileFavoriteService, fileService, deps.AccountService)
+	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.OrganizationService, fileFavoriteService)
+	fileFavoriteHandler := fileProcessHandler.NewFileFavoriteHandler(fileFavoriteService, fileService, deps.AccountService, deps.OrganizationService)
 
 	// Create image preview handler
 	imagePreviewHandler := fileProcessHandler.NewImagePreviewHandler(fileService, deps.AccountService, deps.OrganizationService, deps.Storage)

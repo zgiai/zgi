@@ -109,6 +109,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("/:agent_id/workflow-bindings/candidates", appHandler.ListAgentWorkflowBindingCandidates)
 	appsGroup.GET("/:agent_id", appHandler.GetAgent)
 	appsGroup.GET("/:agent_id/config", appHandler.GetAgentConfig)
+	appsGroup.GET("/:agent_id/runtime-surfaces", appHandler.GetAgentRuntimeSurfaces)
+	appsGroup.PATCH("/:agent_id/runtime-surfaces", appHandler.UpdateAgentRuntimeSurfaces)
 	appsGroup.PUT("/:agent_id/config", appHandler.UpdateAgentConfig)
 	appsGroup.POST("/:agent_id/suggested-questions/generate", appHandler.GenerateAgentSuggestedQuestions)
 	appsGroup.POST("/:agent_id/publish", appHandler.PublishAgent)

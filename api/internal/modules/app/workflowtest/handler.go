@@ -24,19 +24,28 @@ const (
 )
 
 type Handler struct {
-	service             *Service
-	workflowService     interfaces.WorkflowService
-	organizationService interfaces.OrganizationService
-	llmClient           llmclient.LLMClient
-	taskManager         *queue.TaskManager
-	taskBackend         string
+	service                *Service
+	workflowService        interfaces.WorkflowService
+	agentWorkspaceResolver workflowTestAgentWorkspaceResolver
+	organizationService    workflowTestWorkspacePermissionChecker
+	llmClient              llmclient.LLMClient
+	taskManager            *queue.TaskManager
+	taskBackend            string
+}
+
+type workflowTestAgentWorkspaceResolver interface {
+	GetAgentWorkspaceID(ctx context.Context, agentID string) (string, error)
+}
+
+type workflowTestWorkspacePermissionChecker interface {
+	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspace_model.WorkspacePermissionCode) (bool, error)
 }
 
 func NewHandler(service *Service, workflowService interfaces.WorkflowService, args ...interface{}) *Handler {
 	var wf interfaces.WorkflowService
 	wf = workflowService
 	var client llmclient.LLMClient
-	var organizationService interfaces.OrganizationService
+	var organizationService workflowTestWorkspacePermissionChecker
 	var taskManager *queue.TaskManager
 	taskBackend := "local"
 	for _, arg := range args {
@@ -56,7 +65,15 @@ func NewHandler(service *Service, workflowService interfaces.WorkflowService, ar
 	if service != nil {
 		service.SetWorkflowContextProvider(WorkflowServiceContextProvider{WorkflowService: wf})
 	}
-	return &Handler{service: service, workflowService: wf, organizationService: organizationService, llmClient: client, taskManager: taskManager, taskBackend: normalizeTaskBackend(taskBackend)}
+	return &Handler{
+		service:                service,
+		workflowService:        wf,
+		agentWorkspaceResolver: wf,
+		organizationService:    organizationService,
+		llmClient:              client,
+		taskManager:            taskManager,
+		taskBackend:            normalizeTaskBackend(taskBackend),
+	}
 }
 
 func (h *Handler) GetSettings(c *gin.Context) {
@@ -232,7 +249,7 @@ func (h *Handler) CreateScenarioRecognitionTask(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
-	if _, err := h.service.RecoverStaleRunningScenarioRecognitionTasks(c.Request.Context(), time.Now().Add(-staleAsyncTaskThreshold)); err != nil {
+	if _, err := h.service.RecoverStaleRunningScenarioRecognitionTasksForAgent(c.Request.Context(), agentID, time.Now().Add(-staleAsyncTaskThreshold)); err != nil {
 		logger.Warn("workflow test recover stale scenario recognition tasks failed", map[string]interface{}{
 			"agent_id": agentID,
 			"error":    err.Error(),
@@ -372,11 +389,15 @@ func (h *Handler) CreateCase(c *gin.Context) {
 }
 
 func (h *Handler) UpdateCase(c *gin.Context) {
-	agentID, caseID, ok := bindAgentAndCaseID(c)
+	agentID, ok := bindAgentID(c)
 	if !ok {
 		return
 	}
 	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	caseID, ok := bindCaseID(c)
+	if !ok {
 		return
 	}
 	var req UpdateCaseRequest
@@ -393,11 +414,15 @@ func (h *Handler) UpdateCase(c *gin.Context) {
 }
 
 func (h *Handler) DeleteCase(c *gin.Context) {
-	agentID, caseID, ok := bindAgentAndCaseID(c)
+	agentID, ok := bindAgentID(c)
 	if !ok {
 		return
 	}
 	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	caseID, ok := bindCaseID(c)
+	if !ok {
 		return
 	}
 	if err := h.service.DeleteCases(c.Request.Context(), agentID, []string{caseID}); err != nil {
@@ -485,7 +510,7 @@ func (h *Handler) CreateGenerationTask(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, err := h.service.RecoverStaleRunningGenerationTasks(c.Request.Context(), time.Now().Add(-staleAsyncTaskThreshold)); err != nil {
+	if _, err := h.service.RecoverStaleRunningGenerationTasksForAgent(c.Request.Context(), agentID, time.Now().Add(-staleAsyncTaskThreshold)); err != nil {
 		logger.Warn("workflow test recover stale generation tasks failed", map[string]interface{}{
 			"agent_id": agentID,
 			"error":    err.Error(),
@@ -587,7 +612,7 @@ func (h *Handler) CancelGenerationTask(c *gin.Context) {
 }
 
 func (h *Handler) recoverStaleGenerationTasks(c *gin.Context, agentID string) {
-	if _, err := h.service.RecoverStaleRunningGenerationTasks(c.Request.Context(), time.Now().Add(-staleAsyncTaskThreshold)); err != nil {
+	if _, err := h.service.RecoverStaleRunningGenerationTasksForAgent(c.Request.Context(), agentID, time.Now().Add(-staleAsyncTaskThreshold)); err != nil {
 		logger.Warn("workflow test recover stale generation tasks failed", map[string]interface{}{
 			"agent_id": agentID,
 			"error":    err.Error(),
@@ -596,7 +621,7 @@ func (h *Handler) recoverStaleGenerationTasks(c *gin.Context, agentID string) {
 }
 
 func (h *Handler) recoverStaleScenarioRecognitionTasks(c *gin.Context, agentID string) {
-	if _, err := h.service.RecoverStaleRunningScenarioRecognitionTasks(c.Request.Context(), time.Now().Add(-staleAsyncTaskThreshold)); err != nil {
+	if _, err := h.service.RecoverStaleRunningScenarioRecognitionTasksForAgent(c.Request.Context(), agentID, time.Now().Add(-staleAsyncTaskThreshold)); err != nil {
 		logger.Warn("workflow test recover stale scenario recognition tasks failed", map[string]interface{}{
 			"agent_id": agentID,
 			"error":    err.Error(),
@@ -670,11 +695,15 @@ func (h *Handler) ListBatchItems(c *gin.Context) {
 }
 
 func (h *Handler) RetestBatch(c *gin.Context) {
-	agentID, batchID, ok := bindAgentAndBatchID(c)
+	agentID, ok := bindAgentID(c)
 	if !ok {
 		return
 	}
 	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	batchID, ok := bindBatchID(c)
+	if !ok {
 		return
 	}
 	var req RetestBatchRequest
@@ -697,11 +726,15 @@ func (h *Handler) RetestBatch(c *gin.Context) {
 }
 
 func (h *Handler) StartBatch(c *gin.Context) {
-	agentID, batchID, ok := bindAgentAndBatchID(c)
+	agentID, ok := bindAgentID(c)
 	if !ok {
 		return
 	}
 	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	batchID, ok := bindBatchID(c)
+	if !ok {
 		return
 	}
 	batch, err := h.service.StartBatch(c.Request.Context(), agentID, batchID)
@@ -713,11 +746,15 @@ func (h *Handler) StartBatch(c *gin.Context) {
 }
 
 func (h *Handler) ExecuteBatch(c *gin.Context) {
-	agentID, batchID, ok := bindAgentAndBatchID(c)
+	agentID, ok := bindAgentID(c)
 	if !ok {
 		return
 	}
 	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	batchID, ok := bindBatchID(c)
+	if !ok {
 		return
 	}
 	accountID := c.GetString("account_id")
@@ -776,11 +813,15 @@ func (h *Handler) recoverStaleRunningBatches(c *gin.Context, agentID string) {
 }
 
 func (h *Handler) CancelBatch(c *gin.Context) {
-	agentID, batchID, ok := bindAgentAndBatchID(c)
+	agentID, ok := bindAgentID(c)
 	if !ok {
 		return
 	}
 	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+		return
+	}
+	batchID, ok := bindBatchID(c)
+	if !ok {
 		return
 	}
 	batch, err := h.service.CancelBatch(c.Request.Context(), agentID, batchID)
@@ -792,11 +833,12 @@ func (h *Handler) CancelBatch(c *gin.Context) {
 }
 
 func (h *Handler) resolveAgentWorkspaceID(c *gin.Context, agentID string) (string, bool) {
-	if h.workflowService == nil {
+	workspaceResolver := h.getAgentWorkspaceResolver()
+	if workspaceResolver == nil {
 		response.Fail(c, response.ErrSystemError)
 		return "", false
 	}
-	workspaceID, err := h.workflowService.GetAgentWorkspaceID(c.Request.Context(), agentID)
+	workspaceID, err := workspaceResolver.GetAgentWorkspaceID(c.Request.Context(), agentID)
 	if err != nil {
 		logger.Error(fmt.Sprintf("workflow test get agent workspace failed: agent_id=%s", agentID), err)
 		if err.Error() == "agent not found" {
@@ -827,11 +869,12 @@ func (h *Handler) ensureAgentPermission(c *gin.Context, agentID string, permissi
 		response.Fail(c, response.ErrOrganizationNotFound)
 		return false
 	}
-	if h.workflowService == nil {
+	workspaceResolver := h.getAgentWorkspaceResolver()
+	if workspaceResolver == nil {
 		response.Fail(c, response.ErrSystemError)
 		return false
 	}
-	workspaceID, err := h.workflowService.GetAgentWorkspaceID(c.Request.Context(), agentID)
+	workspaceID, err := workspaceResolver.GetAgentWorkspaceID(c.Request.Context(), agentID)
 	if err != nil {
 		logger.Error(fmt.Sprintf("workflow test get agent workspace failed: agent_id=%s", agentID), err)
 		if err.Error() == "agent not found" {
@@ -839,6 +882,10 @@ func (h *Handler) ensureAgentPermission(c *gin.Context, agentID string, permissi
 			return false
 		}
 		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if workspaceID == "" {
+		response.Fail(c, response.ErrWorkspaceNotFound)
 		return false
 	}
 	hasPermission, err := h.organizationService.CheckWorkspacePermission(
@@ -860,6 +907,13 @@ func (h *Handler) ensureAgentPermission(c *gin.Context, agentID string, permissi
 	return true
 }
 
+func (h *Handler) getAgentWorkspaceResolver() workflowTestAgentWorkspaceResolver {
+	if h.agentWorkspaceResolver != nil {
+		return h.agentWorkspaceResolver
+	}
+	return h.workflowService
+}
+
 func bindAgentID(c *gin.Context) (string, bool) {
 	agentID := c.Param("agent_id")
 	if _, err := uuid.Parse(agentID); err != nil {
@@ -869,28 +923,20 @@ func bindAgentID(c *gin.Context) (string, bool) {
 	return agentID, true
 }
 
-func bindAgentAndCaseID(c *gin.Context) (string, string, bool) {
-	agentID, ok := bindAgentID(c)
-	if !ok {
-		return "", "", false
-	}
+func bindCaseID(c *gin.Context) (string, bool) {
 	caseID := c.Param("case_id")
 	if _, err := uuid.Parse(caseID); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
-		return "", "", false
+		return "", false
 	}
-	return agentID, caseID, true
+	return caseID, true
 }
 
-func bindAgentAndBatchID(c *gin.Context) (string, string, bool) {
-	agentID, ok := bindAgentID(c)
-	if !ok {
-		return "", "", false
-	}
+func bindBatchID(c *gin.Context) (string, bool) {
 	batchID := c.Param("batch_id")
 	if _, err := uuid.Parse(batchID); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
-		return "", "", false
+		return "", false
 	}
-	return agentID, batchID, true
+	return batchID, true
 }

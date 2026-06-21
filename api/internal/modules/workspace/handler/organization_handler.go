@@ -100,6 +100,25 @@ func (h *OrganizationHandler) getOrganizationID(c *gin.Context) string {
 	return organizationID
 }
 
+func (h *OrganizationHandler) requireRouteWorkspaceInOrganization(c *gin.Context, organizationID, workspaceID string) bool {
+	if h.organizationService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+
+	workspaceOrganization, err := h.organizationService.GetOrganizationByWorkspaceID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if workspaceOrganization == nil || workspaceOrganization.ID != organizationID {
+		response.Fail(c, response.ErrWorkspaceNotInOrganization)
+		return false
+	}
+
+	return true
+}
+
 func handleOrganizationWorkspaceDetailError(c *gin.Context, err error) bool {
 	if err == nil {
 		return false
@@ -981,6 +1000,10 @@ func (h *OrganizationHandler) GetOrganizationWorkspaceAssets(c *gin.Context) {
 		return
 	}
 
+	if !h.requireRouteWorkspaceInOrganization(c, organizationID, workspaceID) {
+		return
+	}
+
 	if h.organizationService != nil {
 		hasPermission, err := h.organizationService.CheckWorkspacePermission(
 			c.Request.Context(),
@@ -997,16 +1020,6 @@ func (h *OrganizationHandler) GetOrganizationWorkspaceAssets(c *gin.Context) {
 			response.Fail(c, response.ErrPermissionDenied)
 			return
 		}
-	}
-
-	workspaceInOrganization, err := h.organizationService.GetOrganizationByWorkspaceID(c.Request.Context(), workspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-	if workspaceInOrganization == nil || workspaceInOrganization.ID != organizationID {
-		response.Fail(c, response.ErrWorkspaceNotInOrganization)
-		return
 	}
 
 	hasAssets, assetCounts, err := h.organizationService.CheckWorkspaceAssets(c.Request.Context(), workspaceID)
@@ -1450,15 +1463,21 @@ func (h *OrganizationHandler) GetOrganizationMembers(c *gin.Context) {
 		return
 	}
 
-	// If not system admin, check if has management permissions
-	hasPermission, err := h.organizationService.CheckAnyManagedWorkspacePermission(c.Request.Context(), organizationID, accountID)
+	isOrganizationAdminOrOwner, err := h.organizationService.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
-	if !hasPermission {
-		response.Fail(c, response.ErrPermissionDenied)
-		return
+	if !isOrganizationAdminOrOwner {
+		hasPermission, err := h.organizationService.CheckAnyManagedWorkspacePermission(c.Request.Context(), organizationID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
 	}
 
 	page := 1
@@ -2778,15 +2797,21 @@ func (h *OrganizationHandler) GetCurrentOrganizationMembers(c *gin.Context) {
 		return
 	}
 
-	// If not system admin, check if has management permissions
-	hasPermission, err := h.organizationService.CheckAnyManagedWorkspacePermission(c.Request.Context(), organizationID, accountID)
+	isOrganizationAdminOrOwner, err := h.organizationService.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
-	if !hasPermission {
-		response.Fail(c, response.ErrPermissionDenied)
-		return
+	if !isOrganizationAdminOrOwner {
+		hasPermission, err := h.organizationService.CheckAnyManagedWorkspacePermission(c.Request.Context(), organizationID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
 	}
 
 	page := 1
@@ -3392,6 +3417,10 @@ func (h *OrganizationHandler) RemoveOrganizationWorkspaceMember(c *gin.Context) 
 		return
 	}
 
+	if !h.requireRouteWorkspaceInOrganization(c, organizationID, workspaceID) {
+		return
+	}
+
 	if h.organizationService != nil {
 		hasPermission, err := h.organizationService.CheckWorkspacePermission(
 			c.Request.Context(),
@@ -3524,6 +3553,10 @@ func (h *OrganizationHandler) UpdateOrganizationWorkspaceMemberRole(c *gin.Conte
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if !h.requireRouteWorkspaceInOrganization(c, organizationID, workspaceID) {
 		return
 	}
 
@@ -3664,6 +3697,10 @@ func (h *OrganizationHandler) BatchAddOrganizationMembersToWorkspace(c *gin.Cont
 		return
 	}
 
+	if !h.requireRouteWorkspaceInOrganization(c, organizationID, workspaceID) {
+		return
+	}
+
 	if h.organizationService != nil {
 		hasPermission, err := h.organizationService.CheckWorkspacePermission(
 			c.Request.Context(),
@@ -3766,16 +3803,6 @@ func (h *OrganizationHandler) BatchAddOrganizationMembersToWorkspace(c *gin.Cont
 			}
 			roleIDForAdd = &roleID
 		}
-	}
-
-	organizationByOrganization, err := h.organizationService.GetOrganizationByWorkspaceID(c.Request.Context(), workspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-	if organizationByOrganization == nil || organizationByOrganization.ID != organizationID {
-		response.Fail(c, response.ErrWorkspaceNotInOrganization)
-		return
 	}
 
 	results := make([]map[string]interface{}, 0, len(req.AccountIDs))
@@ -4135,6 +4162,7 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 		organization.DELETE("/", h.DeleteOrganization)
 
 		organization.GET("/current/members", h.GetCurrentOrganizationMembers)
+		organization.GET("/current/members/:member_id", h.GetOrganizationMemberDetailByID)
 		organization.POST("/current/members/invite", h.InviteCurrentOrganizationMember)
 		organization.POST("/current/members/reset-password", h.ResetCurrentOrganizationMemberPassword)
 		organization.PATCH("/current/members/:member_id/organization-role", h.UpdateCurrentOrganizationMemberRole)

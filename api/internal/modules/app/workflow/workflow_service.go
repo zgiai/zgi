@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -28,7 +30,6 @@ import (
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
-	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -50,6 +51,11 @@ type WorkflowService struct {
 	runningWorkflowsMu sync.RWMutex
 	diagnoser          *diagnosis.Diagnoser
 }
+
+var (
+	errWorkflowRunNotFoundOrDenied = errors.New("workflow run not found or access denied")
+	errWorkflowRunAccessDenied     = errors.New("workflow run access denied")
+)
 
 type workflowRunMessageLookup interface {
 	GetFirstMessagesByWorkflowRunIDs(ctx context.Context, workflowRunIDs []string) (map[string]*conversation.AgentMessage, error)
@@ -693,6 +699,9 @@ func (s *WorkflowService) RunDraftWorkflow(ctx context.Context, workspaceID, age
 
 			// Get or create conversation
 			var convIDStr string
+			if err := webAppConversationAccessServiceError(validateWorkflowInputConversationAccess(ctx, s.advancedChatHandler, draftReq.Inputs, agentID, accountID, "sys.conversation_id")); err != nil {
+				return nil, err
+			}
 			if convID, exists := draftReq.Inputs["sys.conversation_id"].(string); exists && convID != "" {
 				convIDStr = convID
 			} else {
@@ -1126,22 +1135,19 @@ func (s *WorkflowService) GetExecutor() interface{} {
 	return s.executor
 }
 
-func (s *WorkflowService) getDialogueCount(conversationID string) int {
+func (s *WorkflowService) getDialogueCountForCaller(ctx context.Context, conversationID, agentID, accountID string) int {
 	if conversationID == "" {
 		return 1
 	}
-
-	conversationUUID, err := uuid.Parse(conversationID)
-	if err != nil {
+	if s == nil || s.advancedChatHandler == nil {
 		return 1
 	}
 
-	db := database.GetDB()
-	conversationRepo := conversation.NewAgentConversationRepository(db)
-
-	ctx := context.Background()
-	conv, err := conversationRepo.GetByID(ctx, conversationUUID)
+	_, conv, err := loadWebAppConversationForCaller(ctx, s.advancedChatHandler, conversationID, agentID, accountID)
 	if err != nil {
+		return 1
+	}
+	if conv == nil {
 		return 1
 	}
 
@@ -1167,8 +1173,11 @@ func (s *WorkflowService) RunAdvancedChatDraftWorkflow(ctx context.Context, work
 		}
 
 		if advancedReq.ConversationID != "" {
+			if err := webAppConversationAccessServiceError(validateWebAppConversationAccess(ctx, s.advancedChatHandler, advancedReq.ConversationID, agentID, accountID)); err != nil {
+				return nil, err
+			}
 			draftReq.Inputs["sys.conversation_id"] = advancedReq.ConversationID
-			draftReq.Inputs["sys.dialogue_count"] = s.getDialogueCount(advancedReq.ConversationID)
+			draftReq.Inputs["sys.dialogue_count"] = s.getDialogueCountForCaller(ctx, advancedReq.ConversationID, agentID, accountID)
 		}
 		if advancedReq.Query != "" {
 			draftReq.Inputs["sys.query"] = advancedReq.Query
@@ -1195,8 +1204,11 @@ func (s *WorkflowService) RunAdvancedChatWorkflow(ctx context.Context, workspace
 		}
 
 		if advancedReq.ConversationID != "" {
+			if err := webAppConversationAccessServiceError(validateWebAppConversationAccess(ctx, s.advancedChatHandler, advancedReq.ConversationID, agentID, accountID)); err != nil {
+				return nil, err
+			}
 			draftReq.Inputs["sys.conversation_id"] = advancedReq.ConversationID
-			draftReq.Inputs["sys.dialogue_count"] = s.getDialogueCount(advancedReq.ConversationID)
+			draftReq.Inputs["sys.dialogue_count"] = s.getDialogueCountForCaller(ctx, advancedReq.ConversationID, agentID, accountID)
 		}
 		if advancedReq.Query != "" {
 			draftReq.Inputs["sys.query"] = advancedReq.Query
@@ -1478,6 +1490,11 @@ func (s *WorkflowService) RunPublishedWorkflow(ctx context.Context, workspaceID,
 		if err != nil {
 			logger.Error("Invalid graph data format", err)
 			return nil, fmt.Errorf("invalid graph data format: %w", err)
+		}
+		if workflowTypeString(workflowMap["type"]) == "chat" {
+			if err := webAppConversationAccessServiceError(validateWorkflowInputConversationAccess(ctx, s.advancedChatHandler, draftReq.Inputs, agentID, accountID, "sys.conversation_id")); err != nil {
+				return nil, err
+			}
 		}
 
 		// Resolve organization scope for workflow system variables.
@@ -2236,6 +2253,83 @@ func (s *WorkflowService) UpdateWorkflowNodeRuntimeLog(ctx context.Context, node
 	return nil
 }
 
+func (s *WorkflowService) ValidateWorkflowRunAccess(ctx context.Context, appWorkspaceID, agentID, runID, accountID string) error {
+	if strings.TrimSpace(agentID) == "" || strings.TrimSpace(runID) == "" {
+		return errWorkflowRunNotFoundOrDenied
+	}
+	if s.workflowRunLogRepo == nil {
+		return fmt.Errorf("workflow run log repository not initialized")
+	}
+
+	run, err := s.workflowRunLogRepo.GetByID(ctx, runID)
+	if err != nil || run == nil || run.AgentID != agentID {
+		return errWorkflowRunNotFoundOrDenied
+	}
+
+	if isSystemWorkflowTenantID(appWorkspaceID) {
+		if strings.TrimSpace(accountID) == "" || run.CreatedBy != accountID {
+			return errWorkflowRunAccessDenied
+		}
+	}
+
+	return nil
+}
+
+func (s *WorkflowService) ValidateExternalWorkflowRunAccess(ctx context.Context, workspaceID, agentID, runID, apiKeyID string) error {
+	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(agentID) == "" || strings.TrimSpace(runID) == "" || strings.TrimSpace(apiKeyID) == "" {
+		return errWorkflowRunNotFoundOrDenied
+	}
+	if s.workflowRunLogRepo == nil {
+		return fmt.Errorf("workflow run log repository not initialized")
+	}
+
+	run, err := s.workflowRunLogRepo.GetByID(ctx, runID)
+	if err != nil || run == nil {
+		return errWorkflowRunNotFoundOrDenied
+	}
+	if run.TenantID != workspaceID || run.AgentID != agentID || run.CreatedBy != apiKeyID {
+		return errWorkflowRunNotFoundOrDenied
+	}
+
+	return nil
+}
+
+func (s *WorkflowService) ValidateWorkflowRunNodeScope(ctx context.Context, agentID, runID, nodeLogID string) error {
+	if strings.TrimSpace(agentID) == "" || strings.TrimSpace(runID) == "" || strings.TrimSpace(nodeLogID) == "" {
+		return fmt.Errorf("agent id, run id, and node log id are required")
+	}
+	if s.workflowRunLogRepo == nil {
+		return fmt.Errorf("workflow run log repository not initialized")
+	}
+	if s.workflowNodeRuntimeLogRepo == nil {
+		return fmt.Errorf("workflow node runtime log repository not initialized")
+	}
+
+	run, err := s.workflowRunLogRepo.GetByID(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("workflow run not found: %w", err)
+	}
+	if run == nil || run.AgentID != agentID {
+		return fmt.Errorf("workflow run not found")
+	}
+
+	nodeLog, err := s.workflowNodeRuntimeLogRepo.GetByID(ctx, nodeLogID)
+	if err != nil {
+		return fmt.Errorf("workflow node runtime log not found: %w", err)
+	}
+	if nodeLog == nil || nodeLog.AgentID != agentID {
+		return fmt.Errorf("workflow node runtime log not found")
+	}
+	if nodeLog.WorkflowRunID == nil || *nodeLog.WorkflowRunID != runID {
+		return fmt.Errorf("workflow node runtime log not found")
+	}
+	if nodeLog.WorkflowID != "" && run.WorkflowID != "" && nodeLog.WorkflowID != run.WorkflowID {
+		return fmt.Errorf("workflow node runtime log not found")
+	}
+
+	return nil
+}
+
 func (s *WorkflowService) PauseWorkflowNodeRuntimeLog(ctx context.Context, nodeLogID string, outputs map[string]interface{}, processData map[string]interface{}, executionMetadata map[string]interface{}, elapsedTime float64) error {
 	if s.workflowNodeRuntimeLogRepo == nil {
 		return fmt.Errorf("workflow node runtime log repository not initialized")
@@ -2340,9 +2434,9 @@ func (s *WorkflowService) GetWorkflowRuns(ctx context.Context, agentID string, r
 		if linkedMessage, exists := runMessages[workflowRuns[i].ID]; exists {
 			workflowRuns[i].ConversationID = newStringPointer(linkedMessage.ConversationID)
 			workflowRuns[i].MessageID = newStringPointer(linkedMessage.MessageID)
-		} else if conversationID := workflowRunInputConversationID(logs[i]); conversationID != "" {
+		} else if conversationID := workflowRunSystemInputConversationID(logs[i]); conversationID != "" {
 			workflowRuns[i].ConversationID = newStringPointer(conversationID)
-		} else if conversationID := s.workflowRunNodeInputConversationID(ctx, workflowRuns[i].ID); conversationID != "" {
+		} else if conversationID := s.workflowRunNodeSystemInputConversationID(ctx, workflowRuns[i].ID); conversationID != "" {
 			workflowRuns[i].ConversationID = newStringPointer(conversationID)
 		}
 		if workflowRuns[i].TotalSteps == 0 {
@@ -2456,9 +2550,9 @@ func (s *WorkflowService) GetWorkflowRunDetail(ctx context.Context, tenantID, ag
 	if linkedMessage, exists := runMessages[log.ID]; exists {
 		conversationID = newStringPointer(linkedMessage.ConversationID)
 		messageID = newStringPointer(linkedMessage.MessageID)
-	} else if inputConversationID := workflowRunInputConversationID(*log); inputConversationID != "" {
+	} else if inputConversationID := workflowRunSystemInputConversationID(*log); inputConversationID != "" {
 		conversationID = newStringPointer(inputConversationID)
-	} else if nodeInputConversationID := s.workflowRunNodeInputConversationID(ctx, log.ID); nodeInputConversationID != "" {
+	} else if nodeInputConversationID := s.workflowRunNodeSystemInputConversationID(ctx, log.ID); nodeInputConversationID != "" {
 		conversationID = newStringPointer(nodeInputConversationID)
 	}
 
@@ -2846,6 +2940,13 @@ func workflowRunInputConversationID(log WorkflowRunLog) string {
 	return inputMapConversationID(*log.Inputs)
 }
 
+func workflowRunSystemInputConversationID(log WorkflowRunLog) string {
+	if log.Inputs == nil || *log.Inputs == "" {
+		return ""
+	}
+	return inputMapSystemConversationID(*log.Inputs)
+}
+
 func (s *WorkflowService) workflowRunNodeInputConversationID(ctx context.Context, workflowRunID string) string {
 	if s == nil || s.workflowNodeRuntimeLogRepo == nil || workflowRunID == "" {
 		return ""
@@ -2861,6 +2962,28 @@ func (s *WorkflowService) workflowRunNodeInputConversationID(ctx context.Context
 		}
 
 		conversationID := inputMapConversationID(*nodeLog.Inputs)
+		if conversationID != "" {
+			return conversationID
+		}
+	}
+	return ""
+}
+
+func (s *WorkflowService) workflowRunNodeSystemInputConversationID(ctx context.Context, workflowRunID string) string {
+	if s == nil || s.workflowNodeRuntimeLogRepo == nil || workflowRunID == "" {
+		return ""
+	}
+
+	nodeLogs, err := s.workflowNodeRuntimeLogRepo.GetByWorkflowRunID(ctx, workflowRunID)
+	if err != nil {
+		return ""
+	}
+	for _, nodeLog := range nodeLogs {
+		if nodeLog.Inputs == nil || *nodeLog.Inputs == "" {
+			continue
+		}
+
+		conversationID := inputMapSystemConversationID(*nodeLog.Inputs)
 		if conversationID != "" {
 			return conversationID
 		}
@@ -2911,6 +3034,18 @@ func inputMapConversationID(rawInputs string) string {
 		return conversationID
 	}
 	if conversationID, ok := inputs["conversation_id"].(string); ok {
+		return conversationID
+	}
+	return ""
+}
+
+func inputMapSystemConversationID(rawInputs string) string {
+	var inputs map[string]interface{}
+	if err := json.Unmarshal([]byte(rawInputs), &inputs); err != nil {
+		return ""
+	}
+
+	if conversationID, ok := inputs["sys.conversation_id"].(string); ok {
 		return conversationID
 	}
 	return ""
@@ -3039,6 +3174,9 @@ func (s *WorkflowService) RunWorkflowByVersionUUID(ctx context.Context, versionU
 		logger.Info("Checking for existing conversation ID", "sys.conversation_id", draftReq.Inputs["sys.conversation_id"])
 		if convID, exists := draftReq.Inputs["sys.conversation_id"].(string); exists && convID != "" {
 			convIDStr = convID
+			if err := webAppConversationAccessServiceError(validateWebAppConversationAccess(ctx, s.advancedChatHandler, convIDStr, agentID, accountID)); err != nil {
+				return nil, err
+			}
 			// Update existing conversation with web_app_id
 			logger.Info("Updating existing conversation with web_app_id", "conversationID", convIDStr, "webAppID", versionUUID)
 			err := s.advancedChatHandler.UpdateConversationWebAppID(convIDStr, versionUUID)
@@ -3256,7 +3394,11 @@ func (s *WorkflowService) RunWorkflowByWebAppID(ctx context.Context, webAppID st
 		logger.Error("Failed to get agent by web_app_id", err)
 		return nil, fmt.Errorf("agent not found")
 	}
-	if !agent.IsWebAppActive() {
+	policy, err := webAppRuntimePolicyForAgent(ctx, agent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve web app runtime policy: %w", err)
+	}
+	if !policy.Allows(runtimeauth.PublishedRuntimeSurfaceWebApp) {
 		logger.Warn("Web app is offline", map[string]interface{}{
 			"web_app_id": webAppID,
 			"agent_id":   agent.ID.String(),
@@ -3324,6 +3466,9 @@ func (s *WorkflowService) RunWorkflowByWebAppID(ctx context.Context, webAppID st
 		logger.Info("Checking for existing conversation ID", "sys.conversation_id", draftReq.Inputs["sys.conversation_id"])
 		if convID, exists := draftReq.Inputs["sys.conversation_id"].(string); exists && convID != "" {
 			convIDStr = convID
+			if err := webAppConversationAccessServiceError(validateWebAppConversationAccess(ctx, s.advancedChatHandler, convIDStr, agentID, accountID)); err != nil {
+				return nil, err
+			}
 			// Update existing conversation with web_app_id
 			logger.Info("Updating existing conversation with web_app_id", "conversationID", convIDStr, "webAppID", webAppID)
 			err := s.advancedChatHandler.UpdateConversationWebAppID(convIDStr, webAppID)

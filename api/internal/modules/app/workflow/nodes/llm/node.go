@@ -1359,6 +1359,18 @@ func (n *Node) loadConversationHistoryPromptMessages(ctx context.Context, conver
 	if err != nil {
 		return nil, fmt.Errorf("invalid conversation id: %w", err)
 	}
+	agentUUID, err := uuid.Parse(n.APPID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid agent id: %w", err)
+	}
+	if n.db == nil {
+		return nil, fmt.Errorf("conversation history database is not configured")
+	}
+
+	conversationRepo := conversation.NewAgentConversationRepository(n.db)
+	if _, err := conversationRepo.GetByIDAndAgent(ctx, conversationUUID, agentUUID); err != nil {
+		return nil, err
+	}
 
 	repo := conversation.NewAgentMessageRepository(n.db)
 	_, total, err := repo.GetByConversationID(ctx, conversationUUID, 1, 0)

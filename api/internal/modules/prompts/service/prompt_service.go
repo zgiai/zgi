@@ -371,6 +371,29 @@ func (s *promptService) ResolveRuntimeReference(ctx context.Context, organizatio
 	}, nil
 }
 
+func (s *promptService) requirePromptWorkspaceAccess(ctx context.Context, organizationID, accountID, workspaceID string, permissionCodes ...workspace_model.WorkspacePermissionCode) error {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return fmt.Errorf("workspace is required")
+	}
+
+	scope, err := shared_visibility.ResolveVisibleWorkspaceScope(
+		ctx,
+		s.organizationService,
+		organizationID,
+		accountID,
+		workspaceID,
+		permissionCodes...,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve prompt workspace access: %w", err)
+	}
+	if !slices.Contains(scope.WorkspaceIDs, workspaceID) {
+		return fmt.Errorf("workspace not accessible")
+	}
+	return nil
+}
+
 func (s *promptService) getAccessiblePrompt(ctx context.Context, organizationID, accountID, id string, permissionCodes ...workspace_model.WorkspacePermissionCode) (*promptmodel.Prompt, error) {
 	prompt, err := s.repo.FindByID(ctx, id)
 	if err != nil {

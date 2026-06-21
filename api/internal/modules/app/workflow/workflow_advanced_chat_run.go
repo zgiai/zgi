@@ -30,6 +30,10 @@ func (h *WorkflowHandler) RunAdvancedChatDraftWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	requestedWorkspaceID := util.GetWorkspaceID(c)
 
+	if _, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage); !ok {
+		return
+	}
+
 	var req dto.AdvancedChatDraftWorkflowRunRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.WarnContext(c.Request.Context(), "invalid request body", "agent_id", appID, err)
@@ -45,10 +49,6 @@ func (h *WorkflowHandler) RunAdvancedChatDraftWorkflow(c *gin.Context) {
 
 	logger.Info("Running advanced chat draft workflow", appID, accountID)
 
-	if _, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage); !ok {
-		return
-	}
-
 	// Validate workflow inputs before execution
 	workflow, err := h.workflowService.GetDraftWorkflow(c.Request.Context(), appID, true)
 	if err != nil {
@@ -61,6 +61,14 @@ func (h *WorkflowHandler) RunAdvancedChatDraftWorkflow(c *gin.Context) {
 		logger.WarnContext(c.Request.Context(), "workflow input validation failed", "agent_id", appID, err)
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
+	}
+
+	if req.ConversationID != "" {
+		if err := validateWebAppConversationAccess(c.Request.Context(), h.advancedChatHandler, req.ConversationID, appID, accountID); err != nil {
+			logger.WarnContext(c.Request.Context(), "advanced chat draft conversation access denied", "conversation_id", req.ConversationID, "agent_id", appID, err)
+			failWebAppConversationAccess(c, err)
+			return
+		}
 	}
 
 	if err := h.updateAgentWorkflowConfig(c.Request.Context(), appID, req.ConversationID, req.Inputs); err != nil {
@@ -87,7 +95,7 @@ func (h *WorkflowHandler) RunAdvancedChatDraftWorkflow(c *gin.Context) {
 			zap.String("conversation_id", req.ConversationID),
 		)
 
-		latestMessageID, err := h.getLatestMessageID(req.ConversationID)
+		latestMessageID, err := h.getLatestMessageIDForCaller(c.Request.Context(), req.ConversationID, appID, accountID)
 		if err == nil && latestMessageID != "" {
 			draftReq.Inputs["sys.parent_message_id"] = latestMessageID
 			logger.DebugContext(c.Request.Context(), "advanced chat draft set parent message",
@@ -102,7 +110,7 @@ func (h *WorkflowHandler) RunAdvancedChatDraftWorkflow(c *gin.Context) {
 
 	if req.ConversationID != "" {
 		draftReq.Inputs["sys.conversation_id"] = req.ConversationID
-		draftReq.Inputs["sys.dialogue_count"] = h.getDialogueCount(req.ConversationID)
+		draftReq.Inputs["sys.dialogue_count"] = h.getDialogueCountForCaller(c.Request.Context(), req.ConversationID, appID, accountID)
 		logger.DebugContext(c.Request.Context(), "advanced chat draft added existing conversation id",
 			zap.String("conversation_id", req.ConversationID),
 		)
@@ -148,6 +156,10 @@ func (h *WorkflowHandler) RunAdvancedChatWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	requestedWorkspaceID := util.GetWorkspaceID(c)
 	organizationID := util.GetOrganizationID(c)
+
+	if _, ok := h.requirePublishedRuntimeAgentAccess(c, appID, workspace_model.WorkspacePermissionAgentView); !ok {
+		return
+	}
 
 	// Get invoke_from and created_from from context (set by external API middleware)
 	invokeFrom := c.GetString("invoke_from")
@@ -254,6 +266,14 @@ func (h *WorkflowHandler) RunAdvancedChatWorkflow(c *gin.Context) {
 		return
 	}
 
+	if req.ConversationID != "" {
+		if err := validateWebAppConversationAccess(ctx, h.advancedChatHandler, req.ConversationID, appID, accountID); err != nil {
+			logger.WarnContext(ctx, "advanced chat conversation access denied", "conversation_id", req.ConversationID, "agent_id", appID, err)
+			failWebAppConversationAccess(c, err)
+			return
+		}
+	}
+
 	// Always use streaming mode (no need to check req.ResponseMode)
 	{
 		// Convert to DraftWorkflowRunRequest for streaming
@@ -276,7 +296,7 @@ func (h *WorkflowHandler) RunAdvancedChatWorkflow(c *gin.Context) {
 				zap.String("conversation_id", req.ConversationID),
 			)
 
-			latestMessageID, err := h.getLatestMessageID(req.ConversationID)
+			latestMessageID, err := h.getLatestMessageIDForCaller(ctx, req.ConversationID, appID, accountID)
 			if err == nil && latestMessageID != "" {
 				draftReq.Inputs["sys.parent_message_id"] = latestMessageID
 				logger.DebugContext(ctx, "advanced chat set parent message",
@@ -291,7 +311,7 @@ func (h *WorkflowHandler) RunAdvancedChatWorkflow(c *gin.Context) {
 
 		if req.ConversationID != "" {
 			draftReq.Inputs["sys.conversation_id"] = req.ConversationID
-			draftReq.Inputs["sys.dialogue_count"] = h.getDialogueCount(req.ConversationID)
+			draftReq.Inputs["sys.dialogue_count"] = h.getDialogueCountForCaller(ctx, req.ConversationID, appID, accountID)
 			logger.DebugContext(ctx, "advanced chat added existing conversation id",
 				zap.String("conversation_id", req.ConversationID),
 			)

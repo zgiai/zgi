@@ -11,6 +11,7 @@ import (
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	agentsHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	workflowHandlerPkg "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	announcementruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/announcement"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
@@ -101,7 +102,11 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 		conversation.NewAgentConversationService(conversationRepo, messageRepo),
 		conversation.NewAgentMessageService(messageRepo, conversationRepo),
 	)
-	runtimeLogHandler := workflowHandlerPkg.NewRuntimeLogHandler(workflowRunLogRepo, workflowNodeRuntimeLogRepo)
+	runtimeLogHandler := workflowHandlerPkg.NewRuntimeLogHandler(
+		workflowRunLogRepo,
+		workflowNodeRuntimeLogRepo,
+		workflowHandlerPkg.WithRuntimeLogAuthorization(agentsRepo, deps.OrganizationService),
+	)
 	chatRuntimeService := runtimeservice.NewServiceWithDependencies(
 		runtimerepo.NewRepositories(deps.DB),
 		nil,
@@ -118,7 +123,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 		runtimeLogHandler,
 		chatRuntimeService,
 	)
-	agentRuntimeLogsHandler := workflowHandlerPkg.NewAgentRuntimeLogsHandler(agentsRepo, chatRuntimeService)
+	agentRuntimeLogsHandler := workflowHandlerPkg.NewAgentRuntimeLogsHandler(agentsRepo, chatRuntimeService, deps.OrganizationService)
 
 	apps := router.Group("/agents")
 	// Add middleware for workflow routes
@@ -215,18 +220,26 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	// User migration endpoint - requires both Authorization and X-User-Account-Id headers
 	protectedWorkflows.POST("/migrate-user", handler.MigrateUser)
 
-	// Built-in workflows API (public, no authentication required)
+	// Built-in workflows API (organization-level product surface, no workspace required)
 	// Requirements: 3.1, 3.2
 	builtInWorkflows := router.Group("/built-in-workflows")
 	builtInWorkflows.Use(middleware.SetupRequired())
+	builtInWorkflows.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
+	builtInWorkflows.Use(middleware.SetAccountService(deps.AccountService))
 
 	// Initialize built-in workflow repository and service
 	builtInRepo := workflowHandlerPkg.NewBuiltInWorkflowRepository(deps.DB)
-	builtInService := workflowHandlerPkg.NewBuiltInWorkflowService(builtInRepo)
+	builtInService := workflowHandlerPkg.NewBuiltInWorkflowService(builtInRepo, runtimeauth.NewStore(deps.DB), deps.DB)
 	builtInHandler := workflowHandlerPkg.NewBuiltInWorkflowHandler(builtInService)
 
 	// Register built-in workflow routes
 	builtInWorkflows.GET("", builtInHandler.GetBuiltInWorkflows)
+
+	builtInWorkflowRuntimeSurfaces := builtInWorkflows.Group("")
+	builtInWorkflowRuntimeSurfaces.Use(middleware.EnterpriseAdminOrOwnerRequired())
+	builtInWorkflowRuntimeSurfaces.GET("/:scenario/runtime-surfaces", builtInHandler.GetBuiltInWorkflowRuntimeSurfaces)
+	builtInWorkflowRuntimeSurfaces.PATCH("/:scenario/runtime-surfaces", builtInHandler.UpdateBuiltInWorkflowRuntimeSurfaces)
+
 	builtInWorkflows.GET("/:scenario", builtInHandler.GetBuiltInWorkflowByScenario)
 }
 

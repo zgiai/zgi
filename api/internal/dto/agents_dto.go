@@ -150,6 +150,42 @@ type WebAppStatusResponse struct {
 	UpdatedAt    int64  `json:"updated_at"`
 }
 
+type AgentRuntimeSurfaceAuthorizationResponse struct {
+	AgentID        string                             `json:"agent_id"`
+	WorkspaceID    string                             `json:"workspace_id"`
+	OrganizationID string                             `json:"organization_id"`
+	Surfaces       []AgentRuntimeSurfaceAuthorization `json:"surfaces"`
+}
+
+type UpdateAgentRuntimeSurfacesRequest struct {
+	Surfaces []UpdateAgentRuntimeSurfaceAuthorization `json:"surfaces" binding:"required"`
+}
+
+type UpdateAgentRuntimeSurfaceAuthorization struct {
+	Surface string                           `json:"surface" binding:"required"`
+	Enabled bool                             `json:"enabled"`
+	Grants  []UpdateAgentRuntimeSurfaceGrant `json:"grants,omitempty"`
+}
+
+type UpdateAgentRuntimeSurfaceGrant struct {
+	SubjectType string  `json:"subject_type" binding:"required"`
+	SubjectID   *string `json:"subject_id,omitempty"`
+	Enabled     *bool   `json:"enabled,omitempty"`
+}
+
+type AgentRuntimeSurfaceAuthorization struct {
+	Surface             string                     `json:"surface"`
+	Enabled             bool                       `json:"enabled"`
+	CompatibilitySource string                     `json:"compatibility_source"`
+	Grants              []AgentRuntimeSurfaceGrant `json:"grants"`
+}
+
+type AgentRuntimeSurfaceGrant struct {
+	SubjectType string  `json:"subject_type"`
+	SubjectID   *string `json:"subject_id"`
+	Enabled     bool    `json:"enabled"`
+}
+
 type AgentRuntimeModeConfig struct {
 	EnabledSkillIDs           []string                `json:"enabled_skill_ids"`
 	UseMemory                 bool                    `json:"use_memory"`

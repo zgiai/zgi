@@ -15,6 +15,9 @@ type AgentsService interface {
 	UpdateAgent(ctx context.Context, agentID string, req interface{}) (interface{}, error)
 	GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error)
 	GetAgentDraftRuntimeConfig(ctx context.Context, agentID, accountID string) (*dto.AgentDraftRuntimeConfigResponse, error)
+	RequireAgentManageAccess(ctx context.Context, agentID, accountID string) error
+	GetAgentRuntimeSurfaces(ctx context.Context, agentID, accountID string) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error)
+	UpdateAgentRuntimeSurfaces(ctx context.Context, agentID, accountID string, req dto.UpdateAgentRuntimeSurfacesRequest) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error)
 	UpdateAgentConfig(ctx context.Context, agentID, accountID string, req dto.AgentConfigRequest) (*dto.AgentConfigResponse, error)
 	ListAgentWorkflowBindingCandidates(ctx context.Context, agentID, accountID string) (*dto.AgentWorkflowBindingCandidatesResponse, error)
 	ListAgentMemorySlots(ctx context.Context, agentID, accountID string) ([]dto.AgentMemorySlotConfig, error)

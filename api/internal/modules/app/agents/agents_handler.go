@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -247,15 +248,40 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 		return
 	}
 
-	var req dto.CreateAgentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
 	callerOrganizationID := util.GetOrganizationID(c)
 	if callerOrganizationID == "" {
 		response.Fail(c, response.ErrOrganizationNotFound)
+		return
+	}
+
+	precheckedWorkspaceID := ""
+	if targetWorkspaceID, ok := h.peekCreateAgentWorkspaceID(c); ok && targetWorkspaceID != "" && h.organizationService != nil {
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			callerOrganizationID,
+			targetWorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionAgentManage,
+		)
+		if err != nil {
+			logger.Error("Failed to check create agent workspace permission", err)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			logger.Warn("CreateAgent: workspace permission denied", map[string]interface{}{
+				"account_id":   accountID,
+				"workspace_id": targetWorkspaceID,
+			})
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+		precheckedWorkspaceID = targetWorkspaceID
+	}
+
+	var req dto.CreateAgentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 
@@ -265,7 +291,7 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 		return
 	}
 
-	if h.organizationService != nil {
+	if h.organizationService != nil && precheckedWorkspaceID != targetWorkspaceID {
 		hasPermission, err := h.organizationService.CheckWorkspacePermission(
 			c.Request.Context(),
 			callerOrganizationID,
@@ -299,6 +325,25 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 	}
 
 	response.Success(c, result)
+}
+
+func (h *AgentsHandler) peekCreateAgentWorkspaceID(c *gin.Context) (string, bool) {
+	if c == nil || c.Request == nil || c.Request.Body == nil {
+		return "", false
+	}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.Request.Body = io.NopCloser(bytes.NewReader(nil))
+		return "", false
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	var req struct {
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(req.WorkspaceID), true
 }
 
 func (h *AgentsHandler) GetAgent(c *gin.Context) {
@@ -353,10 +398,52 @@ func (h *AgentsHandler) GetAgentConfig(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) GetAgentRuntimeSurfaces(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx := agentRuntimeRequestContext(c, accountID)
+	result, err := h.appService.GetAgentRuntimeSurfaces(ctx, c.Param("agent_id"), accountID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) UpdateAgentRuntimeSurfaces(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.UpdateAgentRuntimeSurfacesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.appService.UpdateAgentRuntimeSurfaces(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
 		return
 	}
 	var req dto.AgentConfigRequest
@@ -368,7 +455,6 @@ func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 		return
 	}
-	ctx := agentRuntimeRequestContext(c, accountID)
 	result, err := h.appService.UpdateAgentConfig(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
 		h.failRuntime(c, err)
@@ -383,7 +469,10 @@ func (h *AgentsHandler) ListAgentWorkflowBindingCandidates(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	ctx := agentRuntimeRequestContext(c, accountID)
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
 	result, err := h.appService.ListAgentWorkflowBindingCandidates(ctx, c.Param("agent_id"), accountID)
 	if err != nil {
 		h.failRuntime(c, err)
@@ -410,6 +499,9 @@ func (h *AgentsHandler) ReplaceAgentMemorySlots(c *gin.Context) {
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {
 		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if _, ok := h.requireAgentManageAccess(c, accountID.String()); !ok {
 		return
 	}
 	var req struct {
@@ -447,6 +539,9 @@ func (h *AgentsHandler) UpdateAgentMemoryValue(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	if _, ok := h.requireAgentManageAccess(c, accountID.String()); !ok {
+		return
+	}
 	var req dto.UpdateAgentMemoryValueRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
@@ -480,11 +575,14 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
 	var req dto.PublishAgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		req = dto.PublishAgentRequest{}
 	}
-	ctx := agentRuntimeRequestContext(c, accountID)
 	cfg, err := h.appService.GetAgentConfig(ctx, c.Param("agent_id"), accountID)
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
@@ -512,12 +610,15 @@ func (h *AgentsHandler) GenerateAgentSuggestedQuestions(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
 	var req dto.GenerateAgentSuggestedQuestionsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	ctx := agentRuntimeRequestContext(c, accountID)
 	result, err := h.appService.GenerateAgentSuggestedQuestions(ctx, c.Param("agent_id"), accountID, &req)
 	if err != nil {
 		logger.ErrorContext(c.Request.Context(), "failed to generate agent suggested questions", "agent_id", c.Param("agent_id"), err)
@@ -555,12 +656,15 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID.String())
+	if !ok {
+		return
+	}
 	var req runtimedto.ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	ctx := agentRuntimeRequestContext(c, accountID.String())
 	draft, err := h.appService.GetAgentDraftRuntimeConfig(ctx, agentID.String(), accountID.String())
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
@@ -661,12 +765,15 @@ func (h *AgentsHandler) RollbackAgentPublishedVersion(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
 	var req dto.RollbackAgentPublishedVersionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	ctx := agentRuntimeRequestContext(c, accountID)
 	result, err := h.appService.RollbackAgentPublishedVersion(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
@@ -805,6 +912,15 @@ func agentRuntimeRequestContext(c *gin.Context, accountID string) context.Contex
 		ctx = context.WithValue(ctx, "tenant_id", callerOrganizationID)
 	}
 	return ctx
+}
+
+func (h *AgentsHandler) requireAgentManageAccess(c *gin.Context, accountID string) (context.Context, bool) {
+	ctx := agentRuntimeRequestContext(c, accountID)
+	if err := h.appService.RequireAgentManageAccess(ctx, c.Param("agent_id"), accountID); err != nil {
+		h.failRuntime(c, err)
+		return nil, false
+	}
+	return ctx, true
 }
 
 func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.AgentPublicWebAppConfigResponse {
@@ -1005,6 +1121,11 @@ func (h *AgentsHandler) UpdateAgent(c *gin.Context) {
 		return
 	}
 
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+
 	// Bind update request (partial update)
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1032,9 +1153,6 @@ func (h *AgentsHandler) UpdateAgent(c *gin.Context) {
 		}
 	}
 
-	// Pass account_id and caller organization context for permission verification in service
-	ctx := context.WithValue(c.Request.Context(), "account_id", accountID)
-	ctx = context.WithValue(ctx, "tenant_id", callerOrganizationID)
 	result, err := h.appService.UpdateAgent(ctx, agentID, req)
 	if err != nil {
 		// Map specific errors to appropriate responses

@@ -3931,14 +3931,14 @@ func (s *organizationService) CheckAnyWorkspaceCreateDatasetPermission(ctx conte
 }
 
 func (s *organizationService) CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error) {
-	if organizationID == "" {
-		return true, nil
+	if strings.TrimSpace(organizationID) == "" {
+		return false, nil
 	}
 
 	organization, err := s.organizationRepo.GetByID(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return true, nil
+			return false, nil
 		}
 		return false, fmt.Errorf("failed to get organization: %w", err)
 	}
@@ -4009,14 +4009,14 @@ func (s *organizationService) CheckWorkspaceOrganizationAnyPermission(
 		return false, nil
 	}
 
-	if organizationID == "" {
-		return true, nil
+	if strings.TrimSpace(organizationID) == "" {
+		return false, nil
 	}
 
 	organization, err := s.organizationRepo.GetByID(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return true, nil
+			return false, nil
 		}
 		return false, fmt.Errorf("failed to get organization: %w", err)
 	}

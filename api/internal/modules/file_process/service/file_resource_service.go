@@ -65,6 +65,7 @@ type FileFolderService interface {
 	BatchGetRelatedDatasetCount(ctx context.Context, fileIDs []string) (map[string]int, error)
 
 	// File statistics operations
+	GetFileStatistics(ctx context.Context, tenantID, accountID string, visibleWorkspaceIDs []string) (*dto.FileStatisticsResponse, error)
 	GetTotalFileCount(ctx context.Context, tenantID string) (int64, error)
 	// GetRecentFileCount gets the count of recent files (within last 3 months) for a tenant
 	// Note: This method counts all recent files without applying the RecentFilesLimit.
@@ -769,6 +770,57 @@ func (s *fileResourceService) GetFileFolderID(ctx context.Context, fileID string
 // GetTotalFileCount gets the total count of files for a tenant
 func (s *fileResourceService) GetTotalFileCount(ctx context.Context, tenantID string) (int64, error) {
 	return s.fileFolderRepo.GetTotalFileCount(ctx, tenantID)
+}
+
+func (s *fileResourceService) GetFileStatistics(ctx context.Context, tenantID, accountID string, visibleWorkspaceIDs []string) (*dto.FileStatisticsResponse, error) {
+	if len(visibleWorkspaceIDs) == 0 {
+		return &dto.FileStatisticsResponse{}, nil
+	}
+
+	allowAllFolders := false
+	if s.accountService != nil && accountID != "" {
+		isAdmin, err := s.accountService.CheckOrganizationpAdminByWorkspace(ctx, accountID, tenantID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check group admin permission: %w", err)
+		}
+		allowAllFolders = isAdmin
+	}
+
+	totalCount, err := s.fileFolderRepo.GetTotalFileCountWithVisibility(ctx, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get total file count: %w", err)
+	}
+
+	recentCount, err := s.fileFolderRepo.GetRecentFileCountWithVisibility(ctx, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recent file count: %w", err)
+	}
+	if recentCount > RecentFilesLimit {
+		recentCount = RecentFilesLimit
+	}
+
+	favoriteCount, err := s.fileFolderRepo.GetFavoriteFileCountWithVisibility(ctx, accountID, tenantID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get favorite file count: %w", err)
+	}
+
+	rootFolderCount, err := s.fileFolderRepo.GetRootFolderFileCountWithVisibility(ctx, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get root folder file count: %w", err)
+	}
+
+	archivedCount, err := s.fileFolderRepo.GetArchivedFileCountWithVisibility(ctx, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get archived file count: %w", err)
+	}
+
+	return &dto.FileStatisticsResponse{
+		TotalCount:      totalCount,
+		RecentCount:     recentCount,
+		FavoriteCount:   favoriteCount,
+		RootFolderCount: rootFolderCount,
+		ArchivedCount:   archivedCount,
+	}, nil
 }
 
 // GetRecentFileCount gets the count of recent files (within last 3 months) for a tenant

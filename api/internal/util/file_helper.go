@@ -14,6 +14,13 @@ import (
 	appconfig "github.com/zgiai/zgi/api/config"
 )
 
+const parserImageEndpoint = "/console/api/files/mineru-images"
+
+const (
+	parserImageKindKey  = "key"
+	parserImageKindPath = "path"
+)
+
 // GetSignedFileURL generates a signed URL for file preview
 // It signs file-preview URLs with timestamp, nonce, and HMAC-SHA256
 // Parameters:
@@ -92,6 +99,74 @@ func GetSignedFileURLWithConfig(uploadFileID, filesURL, secretKey string) (strin
 	params.Add("sign", signature)
 
 	return fmt.Sprintf("%s?%s", baseURL, params.Encode()), nil
+}
+
+// GetSignedParserImageKeyURL returns a signed parser image URL for object storage keys.
+// If signing config is unavailable, it falls back to the legacy unsigned URL.
+func GetSignedParserImageKeyURL(key string) string {
+	return getSignedParserImageURL(parserImageKindKey, key)
+}
+
+// GetSignedParserImagePathURL returns a signed parser image URL for legacy local image paths.
+// If signing config is unavailable, it falls back to the legacy unsigned URL.
+func GetSignedParserImagePathURL(path string) string {
+	return getSignedParserImageURL(parserImageKindPath, path)
+}
+
+func getSignedParserImageURL(kind, value string) string {
+	params := url.Values{}
+	params.Add(kind, value)
+
+	cfg := appconfig.GlobalConfig
+	if cfg == nil || cfg.App.SecretKey == "" {
+		return parserImageEndpoint + "?" + params.Encode()
+	}
+
+	timestampStr := strconv.FormatInt(time.Now().Unix(), 10)
+	nonce, err := generateNonce()
+	if err != nil {
+		return parserImageEndpoint + "?" + params.Encode()
+	}
+	signature, err := generateParserImageSignature(kind, value, timestampStr, nonce, cfg.App.SecretKey)
+	if err != nil {
+		return parserImageEndpoint + "?" + params.Encode()
+	}
+
+	params.Add("timestamp", timestampStr)
+	params.Add("nonce", nonce)
+	params.Add("sign", signature)
+	return parserImageEndpoint + "?" + params.Encode()
+}
+
+// VerifyParserImageSignature verifies signed parser image URLs for key/path access.
+func VerifyParserImageSignature(kind, value, timestamp, nonce, sign string) bool {
+	cfg := appconfig.GlobalConfig
+	if cfg == nil || cfg.App.SecretKey == "" {
+		return false
+	}
+	if kind != parserImageKindKey && kind != parserImageKindPath {
+		return false
+	}
+
+	recalculatedSign, err := generateParserImageSignature(kind, value, timestamp, nonce, cfg.App.SecretKey)
+	if err != nil {
+		return false
+	}
+	if !hmac.Equal([]byte(sign), []byte(recalculatedSign)) {
+		return false
+	}
+
+	timestampInt, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return false
+	}
+
+	return time.Now().Unix()-timestampInt <= int64(cfg.App.FilesAccessTimeout)
+}
+
+func generateParserImageSignature(kind, value, timestamp, nonce, secretKey string) (string, error) {
+	dataToSign := fmt.Sprintf("parser-image|%s|%s|%s|%s", kind, value, timestamp, nonce)
+	return generateFileSignature(dataToSign, secretKey)
 }
 
 // generateNonce generates a random 16-byte hex string

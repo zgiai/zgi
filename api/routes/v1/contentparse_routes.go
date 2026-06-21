@@ -14,6 +14,7 @@ import (
 type ContentParseRouteDeps struct {
 	DB                  *gorm.DB
 	AccountService      interfaces.AccountService
+	OrganizationService interfaces.OrganizationService
 	LLMClient           llmclient.LLMClient
 	DefaultModelService llmdefaultservice.DefaultModelService
 }
@@ -24,6 +25,9 @@ func RegisterContentParseRoutes(v1 *gin.RouterGroup, deps ContentParseRouteDeps)
 	}
 	if deps.AccountService == nil {
 		panic("content parse routes require account service")
+	}
+	if deps.OrganizationService == nil {
+		panic("content parse routes require organization service")
 	}
 	if deps.LLMClient == nil {
 		panic("content parse routes require llm client")
@@ -38,6 +42,7 @@ func RegisterContentParseRoutes(v1 *gin.RouterGroup, deps ContentParseRouteDeps)
 
 	contentparsemodule.NewModule(
 		deps.DB,
+		contentparsemodule.WithOrganizationService(deps.OrganizationService),
 		contentparsemodule.WithSystemVisionModel(deps.LLMClient, deps.DefaultModelService),
 	).RegisterPlaygroundRoutes(group)
 }

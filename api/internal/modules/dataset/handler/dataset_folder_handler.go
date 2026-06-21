@@ -27,6 +27,7 @@ type DatasetFolderHandler struct {
 	accountService             interfaces.AccountService
 	organizationService        interfaces.OrganizationService
 	permissionService          interfaces.ResourcePermissionService
+	authorizationService       interfaces.AuthorizationService
 }
 
 // NewDatasetFolderHandler creates a new DatasetFolderHandler instance
@@ -37,6 +38,7 @@ func NewDatasetFolderHandler(
 	accountService interfaces.AccountService,
 	enterpriseService interfaces.OrganizationService,
 	permissionService interfaces.ResourcePermissionService,
+	authorizationService interfaces.AuthorizationService,
 ) *DatasetFolderHandler {
 	return &DatasetFolderHandler{
 		datasetService:             datasetService,
@@ -45,6 +47,7 @@ func NewDatasetFolderHandler(
 		accountService:             accountService,
 		organizationService:        enterpriseService,
 		permissionService:          permissionService,
+		authorizationService:       authorizationService,
 	}
 }
 
@@ -80,6 +83,28 @@ func (h *DatasetFolderHandler) GetFolders(c *gin.Context) {
 	}
 	if req.Sort == "" || (req.Sort != "asc" && req.Sort != "desc") {
 		req.Sort = "desc"
+	}
+
+	if req.FolderID != "" {
+		if _, err := uuid.Parse(req.FolderID); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		parentFolder, ok := authorizeDatasetFolderViewAccess(c, h.folderService, h.authorizationService, req.FolderID)
+		if !ok {
+			return
+		}
+		if req.WorkspaceID != "" && req.WorkspaceID != parentFolder.WorkspaceID {
+			response.Success(c, gin.H{
+				"data":     []dto.DatasetFolderDetailResponse{},
+				"has_more": false,
+				"limit":    req.Limit,
+				"total":    0,
+				"page":     req.Page,
+			})
+			return
+		}
+		req.WorkspaceID = parentFolder.WorkspaceID
 	}
 
 	// Step 1: Get current organization (aligned with Agent logic)
@@ -289,6 +314,11 @@ func (h *DatasetFolderHandler) GetFolders(c *gin.Context) {
 		if !exists {
 			canEdit = false
 		}
+		if !canEdit && !datasetFolderVisibleToAccount(folderModel, accountID, &interfaces.WorkspaceScope{
+			OrganizationScope: interfaces.OrganizationScope{IsAdmin: isOrgAdmin},
+		}) {
+			continue
+		}
 		detailResponse.CanEdit = canEdit
 
 		folderDetailResponses = append(folderDetailResponses, detailResponse)
@@ -396,13 +426,22 @@ func (h *DatasetFolderHandler) PostFolder(c *gin.Context) {
 	}
 
 	// Validate parent folder if provided
+	var parentFolder *model.DatasetFolder
 	if req.ParentID != nil {
-		if _, err := uuid.Parse(*req.ParentID); err != nil {
-			response.Fail(c, response.ErrInvalidParam)
-			return
-		}
+		if *req.ParentID == "" {
+			req.ParentID = nil
+		} else {
+			if _, err := uuid.Parse(*req.ParentID); err != nil {
+				response.Fail(c, response.ErrInvalidParam)
+				return
+			}
 
-		// TODO: check parent folder exists and permission
+			var ok bool
+			parentFolder, ok = authorizeDatasetFolderManageAccess(c, h.folderService, h.authorizationService, *req.ParentID)
+			if !ok {
+				return
+			}
+		}
 	}
 
 	// Set default permission
@@ -421,23 +460,20 @@ func (h *DatasetFolderHandler) PostFolder(c *gin.Context) {
 	if workspaceID != "" {
 		folderWorkspaceID = workspaceID
 	}
-
-	if h.organizationService != nil {
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			folderWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
+	if parentFolder != nil {
+		if folderWorkspaceID != "" && folderWorkspaceID != parentFolder.WorkspaceID {
 			response.Fail(c, response.ErrDatasetPermissionDenied)
 			return
 		}
+		folderWorkspaceID = parentFolder.WorkspaceID
+	}
+	if folderWorkspaceID == "" {
+		response.Fail(c, response.ErrDatasetPermissionDenied)
+		return
+	}
+
+	if !authorizeDatasetWorkspaceFolderManageAccess(c, h.authorizationService, folderWorkspaceID) {
+		return
 	}
 
 	// Create folder
@@ -482,29 +518,12 @@ func (h *DatasetFolderHandler) GetFolder(c *gin.Context) {
 		return
 	}
 
-	// Get account and tenant IDs from context
 	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
 
-	print(accountID, tenantID)
-	folder, err := h.folderService.GetFolderByID(c.Request.Context(), folderID)
-	if err != nil {
-		// Check if the error is because the folder was not found
-		if strings.Contains(err.Error(), "not found") {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		// For other errors, return a system error
-		response.Fail(c, response.ErrSystemError)
+	folder, ok := authorizeDatasetFolderViewAccess(c, h.folderService, h.authorizationService, folderID)
+	if !ok {
 		return
 	}
-
-	// Check permission
-	// hasPermission, err := h.folderService.CheckFolderPermission(c.Request.Context(), folderID, accountID, tenantID)
-	// if err != nil || !hasPermission {
-	// 	response.Fail(c, response.ErrDatasetPermissionDenied)
-	// 	return
-	// }
 
 	// Check edit permission
 	canEdit, err := h.permissionService.CheckSingleResourceEditPermission(c.Request.Context(), interfaces.SingleResourcePermissionParams{
@@ -538,10 +557,6 @@ func (h *DatasetFolderHandler) PatchFolder(c *gin.Context) {
 		return
 	}
 
-	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
-
-	print(accountID, tenantID)
 	var req dto.DatasetFolderUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
@@ -556,31 +571,31 @@ func (h *DatasetFolderHandler) PatchFolder(c *gin.Context) {
 		}
 	}
 
-	// Validate parent folder if provided
-	if req.ParentID != nil {
-		if _, err := uuid.Parse(*req.ParentID); err != nil {
-			response.Fail(c, response.ErrInvalidParam)
-			return
-		}
-
-		// TODO: check parent folder exists and permission
+	currentFolder, ok := authorizeDatasetFolderManageAccess(c, h.folderService, h.authorizationService, folderID)
+	if !ok {
+		return
 	}
 
-	// TODO: check permission
-	// hasPermission, err := h.folderService.CheckFolderEditorPermission(c.Request.Context(), folderID, accountID, tenantID)
-	// if err != nil {
-	// 	if strings.Contains(err.Error(), "not found") {
-	// 		response.Fail(c, response.ErrDatasetNotFound)
-	// 		return
-	// 	}
-	// 	response.Fail(c, response.ErrSystemError)
-	// 	return
-	// }
-	//
-	// if !hasPermission {
-	// 	response.Fail(c, response.ErrDatasetPermissionDenied)
-	// 	return
-	// }
+	// Validate parent folder if provided
+	if req.ParentID != nil {
+		if *req.ParentID == "" {
+			req.ParentID = nil
+		} else {
+			if _, err := uuid.Parse(*req.ParentID); err != nil {
+				response.Fail(c, response.ErrInvalidParam)
+				return
+			}
+
+			parentFolder, ok := authorizeDatasetFolderManageAccess(c, h.folderService, h.authorizationService, *req.ParentID)
+			if !ok {
+				return
+			}
+			if parentFolder.WorkspaceID != currentFolder.WorkspaceID {
+				response.Fail(c, response.ErrDatasetPermissionDenied)
+				return
+			}
+		}
+	}
 
 	// Prepare update data
 	updateData := map[string]interface{}{}
@@ -613,7 +628,14 @@ func (h *DatasetFolderHandler) PatchFolder(c *gin.Context) {
 		workspaceID = req.WorkspaceID
 	}
 	if workspaceID != nil {
-		updateData["workspace_id"] = *workspaceID
+		if *workspaceID == "" {
+			response.Fail(c, response.ErrDatasetPermissionDenied)
+			return
+		}
+		if *workspaceID != currentFolder.WorkspaceID && !authorizeDatasetWorkspaceFolderManageAccess(c, h.authorizationService, *workspaceID) {
+			return
+		}
+		updateData["tenant_id"] = *workspaceID
 	}
 
 	updatedFolder, err := h.folderService.UpdateFolder(c.Request.Context(), folderID, updateData)
@@ -640,25 +662,9 @@ func (h *DatasetFolderHandler) DeleteFolder(c *gin.Context) {
 		return
 	}
 
-	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
-
-	print(accountID, tenantID)
-	// TODO: check permission
-	// hasPermission, err := h.folderService.CheckFolderEditorPermission(c.Request.Context(), folderID, accountID, tenantID)
-	// if err != nil {
-	// 	if strings.Contains(err.Error(), "not found") {
-	// 		response.Fail(c, response.ErrDatasetNotFound)
-	// 		return
-	// 	}
-	// 	response.Fail(c, response.ErrSystemError)
-	// 	return
-	// }
-	//
-	// if !hasPermission {
-	// 	response.Fail(c, response.ErrDatasetPermissionDenied)
-	// 	return
-	// }
+	if _, ok := authorizeDatasetFolderManageAccess(c, h.folderService, h.authorizationService, folderID); !ok {
+		return
+	}
 
 	err := h.folderService.DeleteFolder(c.Request.Context(), folderID)
 	if err != nil {
@@ -673,7 +679,6 @@ func (h *DatasetFolderHandler) DeleteFolder(c *gin.Context) {
 // MoveDatasetToFolder handles POST /dataset-folders/move-dataset
 func (h *DatasetFolderHandler) MoveDatasetToFolder(c *gin.Context) {
 	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
 
 	var req dto.MoveDatasetToFolderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -687,6 +692,11 @@ func (h *DatasetFolderHandler) MoveDatasetToFolder(c *gin.Context) {
 		return
 	}
 
+	dataset, ok := authorizeDatasetManageAccess(c, h.datasetService, h.authorizationService, req.DatasetID)
+	if !ok {
+		return
+	}
+
 	// Validate FolderID only if it's not empty
 	if req.FolderID != "" {
 		if _, err := uuid.Parse(req.FolderID); err != nil {
@@ -694,27 +704,18 @@ func (h *DatasetFolderHandler) MoveDatasetToFolder(c *gin.Context) {
 			return
 		}
 
-		// Check if folder exists and user has permission to access it
-		_, err := h.folderService.GetFolderByID(c.Request.Context(), req.FolderID)
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				response.Fail(c, response.ErrDatasetNotFound)
-				return
-			}
-			response.Fail(c, response.ErrSystemError)
+		folder, ok := authorizeDatasetFolderManageAccess(c, h.folderService, h.authorizationService, req.FolderID)
+		if !ok {
+			return
+		}
+		if folder.WorkspaceID != dataset.WorkspaceID {
+			response.Fail(c, response.ErrDatasetPermissionDenied)
 			return
 		}
 	}
 
-	// Check if dataset exists and user has permission to access it
-	_, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), req.DatasetID, accountID, tenantID)
-	if err != nil {
-		failDatasetFolderRead(c, err)
-		return
-	}
-
 	// Move dataset to folder (or to root if FolderID is empty)
-	err = h.folderService.MoveDatasetToFolder(c.Request.Context(), req.DatasetID, req.FolderID, accountID)
+	err := h.folderService.MoveDatasetToFolder(c.Request.Context(), req.DatasetID, req.FolderID, accountID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
@@ -751,6 +752,22 @@ func (h *DatasetFolderHandler) GetDatasetsByFolder(c *gin.Context) {
 		Limit:   req.Limit,
 		Total:   0,
 		Page:    req.Page,
+	}
+
+	if req.FolderID != "" {
+		if _, err := uuid.Parse(req.FolderID); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		folder, ok := authorizeDatasetFolderViewAccess(c, h.folderService, h.authorizationService, req.FolderID)
+		if !ok {
+			return
+		}
+		if req.WorkspaceID != "" && req.WorkspaceID != folder.WorkspaceID {
+			response.Success(c, emptyResult)
+			return
+		}
+		req.WorkspaceID = folder.WorkspaceID
 	}
 
 	// Step 1: Get user's organization role

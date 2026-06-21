@@ -16,6 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
 
 // DataSourceHandler handles HTTP requests for data sources
@@ -79,54 +80,20 @@ func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
 		return
 	}
 
-	var req dto.UpdateDataSourceRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
-		return
-	}
-
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
 	}
 
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := ""
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	var req dto.UpdateDataSourceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
 	}
 
 	// Update data source
@@ -157,8 +124,10 @@ func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
 		return
 	}
 
-	var req dto.CreateDataSourceRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var workspaceReq struct {
+		WorkspaceID *string `json:"workspace_id"`
+	}
+	if err := c.ShouldBindBodyWith(&workspaceReq, binding.JSON); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
 		return
 	}
@@ -168,29 +137,22 @@ func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	if workspaceReq.WorkspaceID == nil || strings.TrimSpace(*workspaceReq.WorkspaceID) == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "workspace_id is required")
+		return
+	}
+	workspaceID := strings.TrimSpace(*workspaceReq.WorkspaceID)
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	if !h.ensureDatabaseWorkspacePermission(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
 	}
 
-	if h.organizationService != nil && req.WorkspaceID != nil && *req.WorkspaceID != "" {
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			*req.WorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	var req dto.CreateDataSourceRequest
+	if err := c.ShouldBindBodyWith(&req, binding.JSON); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
 	}
+	req.WorkspaceID = &workspaceID
 
 	// Create data source
 	dataSource, err := h.service.CreateDataSource(c.Request.Context(), organizationID, accountID, req)
@@ -291,6 +253,18 @@ func (h *DataSourceHandler) GetDataSourceByID(c *gin.Context) {
 		return
 	}
 
+	if !h.ensureDatabasePermission(
+		c,
+		organizationID,
+		id,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseView,
+		workspace_model.WorkspacePermissionDatabaseManage,
+		workspace_model.WorkspacePermissionDatabaseDataEdit,
+	) {
+		return
+	}
+
 	// Get data source
 	dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
 	if err != nil {
@@ -336,42 +310,8 @@ func (h *DataSourceHandler) DeleteDataSourceByID(c *gin.Context) {
 		return
 	}
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
-	}
-
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
 	}
 
 	// Delete data source
@@ -409,54 +349,20 @@ func (h *DataSourceHandler) CreateTable(c *gin.Context) {
 		return
 	}
 
-	var req dto.CreateTableRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
-		return
-	}
-
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
 	}
 
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	var req dto.CreateTableRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
 	}
 
 	// Create table in data source
@@ -493,43 +399,13 @@ func (h *DataSourceHandler) ListTables(c *gin.Context) {
 	}
 
 	accountID := c.GetString("account_id")
-
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
 	}
 
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+		return
 	}
 
 	// List tables in data source
@@ -574,6 +450,14 @@ func (h *DataSourceHandler) GetTable(c *gin.Context) {
 	}
 
 	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+		return
+	}
 
 	// Get table in data source
 	table, err := h.service.GetTable(c.Request.Context(), organizationID, id, tableID, accountID)
@@ -627,42 +511,8 @@ func (h *DataSourceHandler) DeleteTable(c *gin.Context) {
 		return
 	}
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
-	}
-
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, id, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
 	}
 
 	// Delete table in data source
@@ -708,54 +558,20 @@ func (h *DataSourceHandler) UpdateTable(c *gin.Context) {
 		return
 	}
 
-	var req dto.UpdateTableRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
-		return
-	}
-
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
 	}
 
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	var req dto.UpdateTableRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
 	}
 
 	// Update table metadata
@@ -806,15 +622,19 @@ func (h *DataSourceHandler) UpdateTableColumns(c *gin.Context) {
 		return
 	}
 
-	var req dto.UpdateTableColumnsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
-		return
-	}
-
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
+	}
+
+	var req dto.UpdateTableColumnsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
 		return
 	}
 
@@ -859,43 +679,13 @@ func (h *DataSourceHandler) GetTableColumns(c *gin.Context) {
 	}
 
 	accountID := c.GetString("account_id")
-
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
 	}
 
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+		return
 	}
 
 	// Check if system fields should be included
@@ -944,55 +734,27 @@ func (h *DataSourceHandler) AddTableRecords(c *gin.Context) {
 		return
 	}
 
-	var req dto.AddRecordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
-		return
-	}
-
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	if !h.ensureDatabasePermission(
+		c,
+		organizationID,
+		dataSourceID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseManage,
+		workspace_model.WorkspacePermissionDatabaseDataEdit,
+	) {
+		return
 	}
 
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-			workspace_model.WorkspacePermissionDatabaseDataEdit,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	var req dto.AddRecordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
 	}
 
 	// Add records to table
@@ -1043,43 +805,13 @@ func (h *DataSourceHandler) QueryTableRecords(c *gin.Context) {
 	order := c.DefaultQuery("order", "id DESC")
 
 	accountID := c.GetString("account_id")
-
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
 	}
 
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+		return
 	}
 
 	data, err := h.service.QueryTableRecords(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, limit, offset, order)
@@ -1124,55 +856,27 @@ func (h *DataSourceHandler) UpdateTableRecords(c *gin.Context) {
 		return
 	}
 
-	var req dto.UpdateRecordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
-		return
-	}
-
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	if !h.ensureDatabasePermission(
+		c,
+		organizationID,
+		dataSourceID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseManage,
+		workspace_model.WorkspacePermissionDatabaseDataEdit,
+	) {
+		return
 	}
 
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-			workspace_model.WorkspacePermissionDatabaseDataEdit,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	var req dto.UpdateRecordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
 	}
 
 	// Update records in table
@@ -1217,56 +921,28 @@ func (h *DataSourceHandler) DeleteTableRecords(c *gin.Context) {
 		return
 	}
 
-	// Get IDs from query parameters
-	ids := c.QueryArray("ids")
-	if len(ids) == 0 {
-		response.FailWithMessage(c, response.ErrInvalidParam, "at least one record id is required")
-		return
-	}
-
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	if !h.ensureDatabasePermission(
+		c,
+		organizationID,
+		dataSourceID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseManage,
+		workspace_model.WorkspacePermissionDatabaseDataEdit,
+	) {
+		return
 	}
 
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-			workspace_model.WorkspacePermissionDatabaseDataEdit,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	// Get IDs from query parameters
+	ids := c.QueryArray("ids")
+	if len(ids) == 0 {
+		response.FailWithMessage(c, response.ErrInvalidParam, "at least one record id is required")
+		return
 	}
 
 	// Construct DeleteRecordRequest from IDs
@@ -1297,14 +973,32 @@ func (h *DataSourceHandler) DeleteTableRecords(c *gin.Context) {
 // @Failure 500 {object} response.Response
 // @Router /data-dbs/analyze-file-for-table [post]
 func (h *DataSourceHandler) AnalyzeFileForTable(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
+	var scopeReq struct {
+		DataSourceID string `json:"data_source_id" binding:"required"`
+	}
+	if err := c.ShouldBindBodyWith(&scopeReq, binding.JSON); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	if !h.ensureDatabasePermission(c, organizationID, scopeReq.DataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
+	}
+
 	var req dto.AnalyzeFileForTableRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWith(&req, binding.JSON); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
 		return
 	}
@@ -1359,6 +1053,10 @@ func (h *DataSourceHandler) DownloadTableTemplate(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseView) {
 		return
 	}
 
@@ -1429,6 +1127,17 @@ func (h *DataSourceHandler) ImportTableRecords(c *gin.Context) {
 		return
 	}
 
+	if !h.ensureDatabasePermission(
+		c,
+		organizationID,
+		dataSourceID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseManage,
+		workspace_model.WorkspacePermissionDatabaseDataEdit,
+	) {
+		return
+	}
+
 	contentType := c.GetHeader("Content-Type")
 	if strings.Contains(contentType, "application/json") {
 		var req dto.ImportRecordRequest
@@ -1494,8 +1203,26 @@ func (h *DataSourceHandler) IngestFileToTable(c *gin.Context) {
 		return
 	}
 
+	var scopeReq struct {
+		TableID string `json:"table_id" binding:"required"`
+	}
+	if err := c.ShouldBindBodyWith(&scopeReq, binding.JSON); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	if !h.ensureDatabaseTablePermission(
+		c,
+		organizationID,
+		scopeReq.TableID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseManage,
+		workspace_model.WorkspacePermissionDatabaseDataEdit,
+	) {
+		return
+	}
+
 	var req dto.IngestFileToTableRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWith(&req, binding.JSON); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
 		return
 	}
@@ -1524,8 +1251,26 @@ func (h *DataSourceHandler) ParseFileForTableIngest(c *gin.Context) {
 		return
 	}
 
+	var scopeReq struct {
+		TableID string `json:"table_id" binding:"required"`
+	}
+	if err := c.ShouldBindBodyWith(&scopeReq, binding.JSON); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	if !h.ensureDatabaseTablePermission(
+		c,
+		organizationID,
+		scopeReq.TableID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseManage,
+		workspace_model.WorkspacePermissionDatabaseDataEdit,
+	) {
+		return
+	}
+
 	var req dto.ParseFileForTableIngestRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWith(&req, binding.JSON); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
 		return
 	}
@@ -1553,8 +1298,26 @@ func (h *DataSourceHandler) ExtractTextToTableRecords(c *gin.Context) {
 		return
 	}
 
+	var scopeReq struct {
+		TableID string `json:"table_id" binding:"required"`
+	}
+	if err := c.ShouldBindBodyWith(&scopeReq, binding.JSON); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	if !h.ensureDatabaseTablePermission(
+		c,
+		organizationID,
+		scopeReq.TableID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseManage,
+		workspace_model.WorkspacePermissionDatabaseDataEdit,
+	) {
+		return
+	}
+
 	var req dto.ExtractTextToTableRecordsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWith(&req, binding.JSON); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
 		return
 	}
@@ -1582,8 +1345,26 @@ func (h *DataSourceHandler) BatchIngestFileToTable(c *gin.Context) {
 		return
 	}
 
+	var scopeReq struct {
+		TableID string `json:"table_id" binding:"required"`
+	}
+	if err := c.ShouldBindBodyWith(&scopeReq, binding.JSON); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	if !h.ensureDatabaseTablePermission(
+		c,
+		organizationID,
+		scopeReq.TableID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseManage,
+		workspace_model.WorkspacePermissionDatabaseDataEdit,
+	) {
+		return
+	}
+
 	var req dto.BatchIngestFileToTableRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWith(&req, binding.JSON); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
 		return
 	}
@@ -1628,49 +1409,18 @@ func (h *DataSourceHandler) GetTablePrompt(c *gin.Context) {
 		return
 	}
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
 	}
 
-	accountID := c.GetString("account_id")
-
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+		return
 	}
 
 	// Determine language - prioritize user's interface language setting
 	lang := "en" // default language
-	accountID = c.GetString("account_id")
 	if accountID != "" {
 		// Get user's profile to check interface language setting
 		profile, err := h.accountService.GetAccountProfile(c.Request.Context(), accountID)
@@ -1693,7 +1443,7 @@ func (h *DataSourceHandler) GetTablePrompt(c *gin.Context) {
 	}
 
 	// Get prompt for table
-	prompt, err := h.service.GetTablePrompt(c.Request.Context(), tableID, lang)
+	prompt, err := h.service.GetTablePrompt(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, lang)
 	if err != nil {
 		if service.IsDataSourceTableNotFound(err) {
 			response.Fail(c, response.ErrNotFound)
@@ -1783,24 +1533,26 @@ func (h *DataSourceHandler) UpsertTablePrompt(c *gin.Context) {
 		return
 	}
 
-	var req dto.UpdateTablePromptRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
-		return
-	}
-
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	_ = organizationID
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
+	}
+
+	var req dto.UpdateTablePromptRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
 
 	req.UpdatedBy = accountID
 
 	// Update or create prompt for table
-	prompt, err := h.service.UpsertTablePrompt(c.Request.Context(), tableID, req)
+	prompt, err := h.service.UpsertTablePrompt(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
@@ -1839,10 +1591,17 @@ func (h *DataSourceHandler) DeleteTablePrompt(c *gin.Context) {
 		return
 	}
 
-	// Delete prompt for table
-	_ = organizationID
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
 
-	err := h.service.DeleteTablePrompt(c.Request.Context(), tableID)
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
+	}
+
+	err := h.service.DeleteTablePrompt(c.Request.Context(), organizationID, dataSourceID, tableID, accountID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
@@ -1882,44 +1641,14 @@ func (h *DataSourceHandler) ListOperationLogsByDataSourceID(c *gin.Context) {
 		return
 	}
 
-	permissionOrganizationID := util.GetOrganizationIDCompat(c)
-	if permissionOrganizationID == "" {
-		permissionOrganizationID = organizationID
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
 	}
 
-	accountID := c.GetString("account_id")
-
-	if h.organizationService != nil {
-		dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if dataSource == nil {
-			response.FailWithMessage(c, response.ErrSystemError, "data source not found")
-			return
-		}
-
-		dataSourceWorkspaceID := organizationID
-		if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-			dataSourceWorkspaceID = *dataSource.WorkspaceID
-		}
-
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			permissionOrganizationID,
-			dataSourceWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+		return
 	}
 
 	// Parse query parameters
@@ -1953,14 +1682,14 @@ func (h *DataSourceHandler) ListOperationLogsByDataSourceID(c *gin.Context) {
 	}
 
 	// List operation logs with filters
-	operations, err := h.service.ListOperationLogsByDataSourceIDWithFilters(c.Request.Context(), organizationID, dataSourceID, filters, limit, offset)
+	operations, err := h.service.ListOperationLogsByDataSourceIDWithFilters(c.Request.Context(), organizationID, dataSourceID, accountID, filters, limit, offset)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
 
 	// Get total count for pagination info
-	total, err := h.service.CountOperationLogsByDataSourceIDWithFilters(c.Request.Context(), organizationID, dataSourceID, filters)
+	total, err := h.service.CountOperationLogsByDataSourceIDWithFilters(c.Request.Context(), organizationID, dataSourceID, accountID, filters)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
@@ -2027,22 +1756,8 @@ func (h *DataSourceHandler) ListSQLAuditByWorkspace(c *gin.Context) {
 		return
 	}
 
-	if h.organizationService != nil {
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			workspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.ensureDatabaseWorkspacePermission(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
 	}
 
 	var req dto.ListSQLAuditRequest
@@ -2074,12 +1789,12 @@ func (h *DataSourceHandler) ListSQLAuditByWorkspace(c *gin.Context) {
 		EndTime:       req.EndTime,
 	}
 
-	records, err := h.service.ListSQLAuditByWorkspace(c.Request.Context(), organizationID, workspaceID, filters, limit, offset)
+	records, err := h.service.ListSQLAuditByWorkspace(c.Request.Context(), organizationID, workspaceID, accountID, filters, limit, offset)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
-	total, err := h.service.CountSQLAuditByWorkspace(c.Request.Context(), organizationID, workspaceID, filters)
+	total, err := h.service.CountSQLAuditByWorkspace(c.Request.Context(), organizationID, workspaceID, accountID, filters)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
@@ -2124,25 +1839,11 @@ func (h *DataSourceHandler) GetSQLAuditDetail(c *gin.Context) {
 		return
 	}
 
-	if h.organizationService != nil {
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			workspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionDatabaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.ensureDatabaseWorkspacePermission(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+		return
 	}
 
-	record, err := h.service.GetSQLAuditDetail(c.Request.Context(), organizationID, workspaceID, operationID)
+	record, err := h.service.GetSQLAuditDetail(c.Request.Context(), organizationID, workspaceID, operationID, accountID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return

@@ -70,6 +70,8 @@ type WorkflowService interface {
 	UpdateWorkflowRunLogStatus(ctx context.Context, workflowRunLogID string, status string, outputs map[string]interface{}, elapsedTime float64, totalTokens int64, totalSteps int, errorMsg string) error
 	CreateWorkflowNodeRuntimeLog(ctx context.Context, tenantID, agentID, workflowID, triggeredFrom, workflowRunID, nodeID, nodeType, title string, index int, predecessorNodeID *string, inputs map[string]interface{}, accountID string) (interface{}, error)
 	UpdateWorkflowNodeRuntimeLog(ctx context.Context, nodeLogID string, status string, outputs map[string]interface{}, processData map[string]interface{}, executionMetadata map[string]interface{}, elapsedTime float64, errorMsg string) error
+	ValidateWorkflowRunAccess(ctx context.Context, appWorkspaceID, agentID, runID, accountID string) error
+	ValidateWorkflowRunNodeScope(ctx context.Context, agentID, runID, nodeLogID string) error
 
 	GetLatestWorkflowVersion(ctx context.Context, workspaceID, agentID string) (string, error)
 	ManualDiagnoseNode(ctx context.Context, nodeLogID string, model string, lang string) (interface{}, error)

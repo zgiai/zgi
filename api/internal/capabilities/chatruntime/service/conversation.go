@@ -286,6 +286,13 @@ func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.U
 	return s.getConversation(ctx, scope, id)
 }
 
+func (s *service) UpdateConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {
+	if _, err := s.GetConversationByCaller(ctx, scope, caller, id); err != nil {
+		return nil, err
+	}
+	return s.UpdateConversation(ctx, scope, id, req)
+}
+
 func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, leafID uuid.UUID) error {
 	message, err := s.repos.Message.GetScoped(ctx, leafID, scope.OrganizationID, scope.AccountID)
 	if err != nil {
@@ -316,6 +323,13 @@ func (s *service) DeleteConversation(ctx context.Context, scope Scope, id uuid.U
 	return mapRepoError(s.repos.Conversation.DeleteScoped(ctx, id, scope.OrganizationID, scope.AccountID))
 }
 
+func (s *service) DeleteConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) error {
+	if _, err := s.GetConversationByCaller(ctx, scope, caller, id); err != nil {
+		return err
+	}
+	return s.DeleteConversation(ctx, scope, id)
+}
+
 func (s *service) ListMessages(ctx context.Context, scope Scope, conversationID uuid.UUID, page, limit int) ([]*runtimemodel.Message, int64, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, 0, err
@@ -328,6 +342,13 @@ func (s *service) ListMessages(ctx context.Context, scope Scope, conversationID 
 	}
 	hydrateMessagesGeneratedFileURLs(messages)
 	return messages, total, nil
+}
+
+func (s *service) ListConversationMessagesByCaller(ctx context.Context, scope Scope, caller Caller, conversationID uuid.UUID, page, limit int) ([]*runtimemodel.Message, int64, error) {
+	if _, err := s.GetConversationByCaller(ctx, scope, caller, conversationID); err != nil {
+		return nil, 0, err
+	}
+	return s.ListMessages(ctx, scope, conversationID, page, limit)
 }
 
 func (s *service) ListMessagesByCaller(ctx context.Context, scope Scope, caller Caller, page, limit int) ([]*runtimemodel.Message, int64, error) {
@@ -502,4 +523,11 @@ func (s *service) StopConversation(ctx context.Context, scope Scope, id uuid.UUI
 		return nil, err
 	}
 	return &StopConversationResult{Conversation: updated, Message: message}, nil
+}
+
+func (s *service) StopConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*StopConversationResult, error) {
+	if _, err := s.GetConversationByCaller(ctx, scope, caller, id); err != nil {
+		return nil, err
+	}
+	return s.StopConversation(ctx, scope, id)
 }

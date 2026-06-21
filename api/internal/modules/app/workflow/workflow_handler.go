@@ -9,21 +9,22 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflow_interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
-	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // WorkflowHandler handles workflow-related HTTP requests
 type WorkflowHandler struct {
-	workflowService      workflow_interfaces.WorkflowService
-	accountService       workflow_interfaces.AccountService
-	fileService          workflow_interfaces.FileService
-	enterpriseService    workflow_interfaces.OrganizationService
-	userMigrationService UserMigrationService
-	diagnoser            *diagnosis.Diagnoser
-	validator            *validator.Validate
-	advancedChatHandler  *AdvancedChatWorkflowHandler
+	workflowService            workflow_interfaces.WorkflowService
+	agentWorkspaceResolver     workflowAgentWorkspaceResolver
+	workspacePermissionChecker workflowWorkspacePermissionChecker
+	accountService             workflow_interfaces.AccountService
+	fileService                workflow_interfaces.FileService
+	enterpriseService          workflow_interfaces.OrganizationService
+	userMigrationService       UserMigrationService
+	diagnoser                  *diagnosis.Diagnoser
+	validator                  *validator.Validate
+	advancedChatHandler        *AdvancedChatWorkflowHandler
 }
 
 // NewWorkflowHandler creates a new workflow handler
@@ -35,13 +36,15 @@ func NewWorkflowHandler(
 	enterpriseService workflow_interfaces.OrganizationService,
 ) *WorkflowHandler {
 	return &WorkflowHandler{
-		workflowService:      workflowService,
-		accountService:       accountService,
-		fileService:          fileService,
-		enterpriseService:    enterpriseService,
-		userMigrationService: userMigrationService,
-		validator:            validator.New(),
-		advancedChatHandler:  NewAdvancedChatWorkflowHandler(),
+		workflowService:            workflowService,
+		agentWorkspaceResolver:     workflowService,
+		workspacePermissionChecker: enterpriseService,
+		accountService:             accountService,
+		fileService:                fileService,
+		enterpriseService:          enterpriseService,
+		userMigrationService:       userMigrationService,
+		validator:                  validator.New(),
+		advancedChatHandler:        NewAdvancedChatWorkflowHandler(),
 	}
 }
 
@@ -69,40 +72,9 @@ func (h *WorkflowHandler) SetDiagnoser(diagnoser *diagnosis.Diagnoser) {
 func (h *WorkflowHandler) GetDraftWorkflow(c *gin.Context) {
 	appID := c.Param("agent_id")
 	accountID := c.GetString("account_id")
-	organizationID := util.GetOrganizationID(c)
 
-	if accountID == "" {
-		response.Fail(c, response.ErrUnauthorized)
+	if _, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentView); !ok {
 		return
-	}
-
-	appWorkspaceID, err := h.workflowService.GetAgentWorkspaceID(c.Request.Context(), appID)
-	if err != nil {
-		logger.CriticalContext(c.Request.Context(), "failed to get agent workspace id", "agent_id", appID, err)
-		if err.Error() == "agent not found" {
-			response.Fail(c, response.ErrAppNotFound)
-		} else {
-			response.Fail(c, response.ErrSystemError)
-		}
-		return
-	}
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			appWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionAgentView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	logger.Info("Getting draft workflow", appID, accountID)
@@ -136,40 +108,10 @@ func (h *WorkflowHandler) GetDraftWorkflow(c *gin.Context) {
 func (h *WorkflowHandler) SyncDraftWorkflow(c *gin.Context) {
 	appID := c.Param("agent_id")
 	accountID := c.GetString("account_id")
-	organizationID := util.GetOrganizationID(c)
 
-	if accountID == "" {
-		response.Fail(c, response.ErrUnauthorized)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage)
+	if !ok {
 		return
-	}
-
-	appWorkspaceID, err := h.workflowService.GetAgentWorkspaceID(c.Request.Context(), appID)
-	if err != nil {
-		logger.CriticalContext(c.Request.Context(), "failed to get agent workspace id", "agent_id", appID, err)
-		if err.Error() == "agent not found" {
-			response.Fail(c, response.ErrAppNotFound)
-		} else {
-			response.Fail(c, response.ErrSystemError)
-		}
-		return
-	}
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			appWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionAgentManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	var req dto.SyncDraftWorkflowRequest
@@ -300,9 +242,19 @@ type ManualDiagnoseRequest struct {
 // @Failure 500 {object} response.ErrorResponse
 // @Router /agents/{agent_id}/workflow-runs/{run_id}/nodes/{node_log_id}/diagnose [post]
 func (h *WorkflowHandler) ManualDiagnoseNode(c *gin.Context) {
+	agentID := c.Param("agent_id")
+	runID := c.Param("run_id")
 	nodeLogID := c.Param("node_log_id")
-	if nodeLogID == "" {
+	if agentID == "" || runID == "" || nodeLogID == "" {
 		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if _, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionAgentManage); !ok {
+		return
+	}
+	if err := h.workflowService.ValidateWorkflowRunNodeScope(c.Request.Context(), agentID, runID, nodeLogID); err != nil {
+		logger.WarnContext(c.Request.Context(), "workflow node diagnosis scope rejected", "agent_id", agentID, "run_id", runID, "node_log_id", nodeLogID, err)
+		response.Fail(c, response.ErrNotFound)
 		return
 	}
 

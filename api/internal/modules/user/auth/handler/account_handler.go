@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/zgiai/zgi/api/config"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
@@ -58,6 +59,31 @@ type LoginResult struct {
 	LoginError  *LoginError  `json:"-"`
 	SpecialData interface{}  `json:"-"`
 	SpecialCode string       `json:"-"`
+}
+
+type accountContextMode string
+
+const (
+	accountContextModeNone         accountContextMode = "none"
+	accountContextModeOrganization accountContextMode = "organization"
+	accountContextModeWorkspace    accountContextMode = "workspace"
+)
+
+type updateAccountContextRequest struct {
+	Mode                  string  `json:"mode"`
+	CurrentGroupID        *string `json:"current_group_id"`
+	CurrentTeamID         *string `json:"current_team_id"`
+	CurrentOrganizationID *string `json:"current_organization_id"`
+	CurrentWorkspaceID    *string `json:"current_workspace_id"`
+}
+
+type accountContextResponse struct {
+	AccountID             string             `json:"account_id"`
+	Mode                  accountContextMode `json:"mode"`
+	CurrentOrganizationID *string            `json:"current_organization_id"`
+	CurrentWorkspaceID    *string            `json:"current_workspace_id"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
 }
 
 // Methods for LoginResult
@@ -125,7 +151,23 @@ func (h *AccountHandler) GetAccountContext(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, ctxModel)
+	response.Success(c, newAccountContextResponse(ctxModel))
+}
+
+func (h *AccountHandler) GetAccountCapabilities(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	capabilities, err := h.accountService.GetAccountCapabilities(c.Request.Context(), accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	response.Success(c, capabilities)
 }
 
 func (h *AccountHandler) UpdateAccountContext(c *gin.Context) {
@@ -135,13 +177,7 @@ func (h *AccountHandler) UpdateAccountContext(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		CurrentGroupID        *string `json:"current_group_id"`
-		CurrentTeamID         *string `json:"current_team_id"`
-		CurrentOrganizationID *string `json:"current_organization_id"`
-		CurrentWorkspaceID    *string `json:"current_workspace_id"`
-	}
-
+	var req updateAccountContextRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
@@ -158,13 +194,65 @@ func (h *AccountHandler) UpdateAccountContext(c *gin.Context) {
 		workspaceID = req.CurrentTeamID
 	}
 
+	switch accountContextMode(strings.TrimSpace(req.Mode)) {
+	case "":
+	case accountContextModeOrganization:
+		if organizationID == nil || strings.TrimSpace(*organizationID) == "" {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		emptyWorkspaceID := ""
+		workspaceID = &emptyWorkspaceID
+	case accountContextModeWorkspace:
+		if workspaceID == nil || strings.TrimSpace(*workspaceID) == "" {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+	case accountContextModeNone:
+		emptyOrganizationID := ""
+		emptyWorkspaceID := ""
+		organizationID = &emptyOrganizationID
+		workspaceID = &emptyWorkspaceID
+	default:
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
 	ctxModel, err := h.accountService.UpdateAccountContext(c.Request.Context(), accountID, organizationID, workspaceID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
-	response.Success(c, ctxModel)
+	response.Success(c, newAccountContextResponse(ctxModel))
+}
+
+func newAccountContextResponse(ctxModel *auth_model.AccountContext) accountContextResponse {
+	if ctxModel == nil {
+		return accountContextResponse{Mode: accountContextModeNone}
+	}
+
+	return accountContextResponse{
+		AccountID:             ctxModel.AccountID,
+		Mode:                  accountContextModeFromModel(ctxModel),
+		CurrentOrganizationID: ctxModel.CurrentOrganizationID,
+		CurrentWorkspaceID:    ctxModel.CurrentWorkspaceID,
+		CreatedAt:             ctxModel.CreatedAt,
+		UpdatedAt:             ctxModel.UpdatedAt,
+	}
+}
+
+func accountContextModeFromModel(ctxModel *auth_model.AccountContext) accountContextMode {
+	if ctxModel == nil {
+		return accountContextModeNone
+	}
+	if ctxModel.CurrentWorkspaceID != nil && strings.TrimSpace(*ctxModel.CurrentWorkspaceID) != "" {
+		return accountContextModeWorkspace
+	}
+	if ctxModel.CurrentOrganizationID != nil && strings.TrimSpace(*ctxModel.CurrentOrganizationID) != "" {
+		return accountContextModeOrganization
+	}
+	return accountContextModeNone
 }
 
 func (h *AccountHandler) GetProfileEx(c *gin.Context) {
@@ -286,6 +374,7 @@ func (h *AccountHandler) RegisterRoutes(router *gin.RouterGroup) {
 		accountAuth.POST("/logout", h.Logout)
 		accountAuth.GET("/context", h.GetAccountContext)
 		accountAuth.PUT("/context", h.UpdateAccountContext)
+		accountAuth.GET("/capabilities", h.GetAccountCapabilities)
 		accountAuth.GET("/profile", h.GetProfile)
 		accountAuth.PUT("/profile", h.UpdateProfile)
 		accountAuth.POST("/change-password", h.ChangePassword)

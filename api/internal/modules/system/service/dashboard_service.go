@@ -18,7 +18,7 @@ import (
 // DashboardService provides dashboard statistics functionality
 type DashboardService interface {
 	GetDashboardStats(ctx context.Context, organizationID string) (*model.DashboardStatsResponse, error)
-	GetRecentWork(ctx context.Context, organizationID string, accountID string, limit int) (*model.RecentWorkResponse, error)
+	GetRecentWork(ctx context.Context, organizationID string, workspaceID string, accountID string, limit int) (*model.RecentWorkResponse, error)
 }
 
 // AvailableModelsLister lists organization-scoped models that are callable by business features.
@@ -99,21 +99,22 @@ func (s *dashboardService) GetDashboardStats(ctx context.Context, organizationID
 	return &stats, nil
 }
 
-// GetRecentWork retrieves recently updated console work items for an organization.
-func (s *dashboardService) GetRecentWork(ctx context.Context, organizationID string, accountID string, limit int) (*model.RecentWorkResponse, error) {
+// GetRecentWork retrieves recently updated console work items for one workspace.
+func (s *dashboardService) GetRecentWork(ctx context.Context, organizationID string, workspaceID string, accountID string, limit int) (*model.RecentWorkResponse, error) {
 	if limit <= 0 || limit > 20 {
 		limit = 10
 	}
+	if workspaceID == "" {
+		return &model.RecentWorkResponse{Items: []model.RecentWorkItem{}}, nil
+	}
 
-	wsIDs := s.getWorkspaceIDs(ctx, organizationID)
+	workspaceIDs := []string{workspaceID}
 	items := make([]model.RecentWorkItem, 0, limit)
 
-	if len(wsIDs) > 0 {
-		items = append(items, s.getRecentAgents(ctx, wsIDs, limit)...)
-		items = append(items, s.getRecentDatasets(ctx, wsIDs, limit)...)
-		items = append(items, s.getRecentAgentConversations(ctx, wsIDs, accountID, limit)...)
-	}
-	items = append(items, s.getRecentDataSources(ctx, organizationID, limit)...)
+	items = append(items, s.getRecentAgents(ctx, workspaceIDs, limit)...)
+	items = append(items, s.getRecentDatasets(ctx, workspaceIDs, limit)...)
+	items = append(items, s.getRecentAgentConversations(ctx, workspaceIDs, accountID, limit)...)
+	items = append(items, s.getRecentDataSources(ctx, organizationID, workspaceID, limit)...)
 
 	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].UpdatedAt > items[j].UpdatedAt
@@ -297,7 +298,7 @@ func (s *dashboardService) getRecentDatasets(ctx context.Context, workspaceIDs [
 	return makeRecentWorkItems("dataset", rows)
 }
 
-func (s *dashboardService) getRecentDataSources(ctx context.Context, organizationID string, limit int) []model.RecentWorkItem {
+func (s *dashboardService) getRecentDataSources(ctx context.Context, organizationID string, workspaceID string, limit int) []model.RecentWorkItem {
 	if !s.tableExists(ctx, "data_sources") {
 		return nil
 	}
@@ -306,7 +307,7 @@ func (s *dashboardService) getRecentDataSources(ctx context.Context, organizatio
 	err := s.db.WithContext(ctx).
 		Table("data_sources").
 		Select("id, name AS title, id AS resource_id, updated_at, created_at").
-		Where("organization_id = ?", organizationID).
+		Where("organization_id = ? AND workspace_id = ?", organizationID, workspaceID).
 		Order("updated_at DESC").
 		Limit(limit).
 		Scan(&rows).Error

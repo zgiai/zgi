@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -50,8 +51,9 @@ func (h *WorkflowHandler) GetWorkflowRuns(c *gin.Context) {
 
 	// System workflows use the built-in tenant ID; authenticated users can view only their own runs.
 	if !isSystemWorkflowTenantID(appWorkspaceID) {
-		if h.enterpriseService != nil {
-			hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
+		permissionChecker := h.getWorkspacePermissionChecker()
+		if permissionChecker != nil {
+			hasPermission, err := permissionChecker.CheckWorkspacePermission(
 				c.Request.Context(),
 				organizationID,
 				appWorkspaceID,
@@ -114,13 +116,9 @@ func (h *WorkflowHandler) GetWorkflowRuns(c *gin.Context) {
 func (h *WorkflowHandler) GetWorkflowRunDetail(c *gin.Context) {
 	agentID := c.Param("agent_id")
 	runID := c.Param("run_id")
-	workspaceID := util.GetWorkspaceID(c)
-	if workspaceID == "" {
-		resolvedWorkspaceID, ok := h.resolveAgentWorkspaceID(c, agentID)
-		if !ok {
-			return
-		}
-		workspaceID = resolvedWorkspaceID
+	workspaceID, ok := h.requireWorkflowRunReadAccess(c, agentID, runID)
+	if !ok {
+		return
 	}
 
 	logger.Info("Getting workflow run detail", "agentID", agentID, "runID", runID, "workspaceID", workspaceID)
@@ -155,13 +153,9 @@ func (h *WorkflowHandler) GetWorkflowRunDetail(c *gin.Context) {
 func (h *WorkflowHandler) GetWorkflowRunNodeExecutions(c *gin.Context) {
 	agentID := c.Param("agent_id")
 	runID := c.Param("run_id")
-	workspaceID := util.GetWorkspaceID(c)
-	if workspaceID == "" {
-		resolvedWorkspaceID, ok := h.resolveAgentWorkspaceID(c, agentID)
-		if !ok {
-			return
-		}
-		workspaceID = resolvedWorkspaceID
+	workspaceID, ok := h.requireWorkflowRunReadAccess(c, agentID, runID)
+	if !ok {
+		return
 	}
 
 	logger.Info("Getting workflow run node executions", "agentID", agentID, "runID", runID, "workspaceID", workspaceID)
@@ -174,4 +168,60 @@ func (h *WorkflowHandler) GetWorkflowRunNodeExecutions(c *gin.Context) {
 	}
 
 	response.Success(c, result)
+}
+
+func (h *WorkflowHandler) requireWorkflowRunReadAccess(c *gin.Context, agentID, runID string) (string, bool) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return "", false
+	}
+	if strings.TrimSpace(agentID) == "" || strings.TrimSpace(runID) == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return "", false
+	}
+
+	workspaceID, ok := h.resolveAgentWorkspaceID(c, agentID)
+	if !ok {
+		return "", false
+	}
+
+	if !isSystemWorkflowTenantID(workspaceID) {
+		permissionChecker := h.getWorkspacePermissionChecker()
+		if permissionChecker != nil {
+			hasPermission, err := permissionChecker.CheckWorkspacePermission(
+				c.Request.Context(),
+				util.GetOrganizationID(c),
+				workspaceID,
+				accountID,
+				workspace_model.WorkspacePermissionAgentView,
+			)
+			if err != nil {
+				response.Fail(c, response.ErrSystemError)
+				return "", false
+			}
+			if !hasPermission {
+				response.Fail(c, response.ErrPermissionDenied)
+				return "", false
+			}
+		}
+	}
+
+	if err := h.workflowService.ValidateWorkflowRunAccess(c.Request.Context(), workspaceID, agentID, runID, accountID); err != nil {
+		h.failWorkflowRunAccess(c, err)
+		return "", false
+	}
+
+	return workspaceID, true
+}
+
+func (h *WorkflowHandler) failWorkflowRunAccess(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errWorkflowRunAccessDenied):
+		response.Fail(c, response.ErrPermissionDenied)
+	case errors.Is(err, errWorkflowRunNotFoundOrDenied):
+		response.Fail(c, response.ErrNotFound)
+	default:
+		response.Fail(c, response.ErrSystemError)
+	}
 }

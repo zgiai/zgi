@@ -65,6 +65,7 @@ type DatasetRouteDeps struct {
 	GraphFlowService           *graphflow.Service
 	TaskHandlerRegistry        datasetTaskHandlerRegistry
 	ResourcePermissionService  interfaces.ResourcePermissionService
+	AuthorizationService       interfaces.AuthorizationService
 }
 
 func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
@@ -147,6 +148,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		datasetServiceObj,
 		deps.AccountService,
 		deps.OrganizationService,
+		deps.AuthorizationService,
 	)
 	segmentHandlerObj := datasetHandler.NewSegmentHandler(
 		segmentServiceObj,
@@ -154,9 +156,10 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		documentServiceObj,
 		deps.AccountService,
 		deps.OrganizationService,
+		deps.AuthorizationService,
 	)
 
-	folderHandler := datasetHandler.NewDatasetFolderHandler(datasetServiceObj, folderService, deps.WorkspaceManagementService, deps.AccountService, deps.OrganizationService, deps.ResourcePermissionService)
+	folderHandler := datasetHandler.NewDatasetFolderHandler(datasetServiceObj, folderService, deps.WorkspaceManagementService, deps.AccountService, deps.OrganizationService, deps.ResourcePermissionService, deps.AuthorizationService)
 
 	datasetHandlerObj.RegisterRoutes(router)
 	documentHandlerObj.RegisterRoutes(router)
@@ -235,6 +238,9 @@ func validateDatasetRouteDeps(deps DatasetRouteDeps) {
 	}
 	if deps.ResourcePermissionService == nil {
 		panic("dataset routes require resource permission service")
+	}
+	if deps.AuthorizationService == nil {
+		panic("dataset routes require authorization service")
 	}
 }
 

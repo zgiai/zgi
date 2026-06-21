@@ -176,6 +176,7 @@ type ServiceContainer struct {
 
 	// Permission services
 	permissionRepo            shared_repo.PermissionRepository
+	authorizationService      interfaces.AuthorizationService
 	resourcePermissionService interfaces.ResourcePermissionService
 
 	// Task management
@@ -627,6 +628,7 @@ func (c *ServiceContainer) GetDataSourceService() service.DataSourceService {
 			c.GetAccountService(),
 			c.GetFileService(),
 			c.GetOrganizationService(),
+			c.GetAuthorizationService(),
 			c.GetResourcePermissionService(),
 			c.GetQuotaService(),
 			c.GetLLMClient(),
@@ -714,6 +716,13 @@ func (c *ServiceContainer) GetPermissionRepository() shared_repo.PermissionRepos
 		c.permissionRepo = shared_repo.NewPermissionRepository(c.db)
 	}
 	return c.permissionRepo
+}
+
+func (c *ServiceContainer) GetAuthorizationService() interfaces.AuthorizationService {
+	if c.authorizationService == nil {
+		c.authorizationService = shared_service.NewAuthorizationService(c.GetOrganizationService())
+	}
+	return c.authorizationService
 }
 
 func (c *ServiceContainer) GetResourcePermissionService() interfaces.ResourcePermissionService {

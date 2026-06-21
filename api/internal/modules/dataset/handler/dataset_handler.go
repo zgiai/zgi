@@ -1111,17 +1111,8 @@ func (h *DatasetHandler) AsyncBatchHitTesting(c *gin.Context) {
 // GetBatchHitTestingTaskStatus handles GET /datasets/:id/batch-hit-testing/tasks/:task_id
 // This endpoint retrieves the status of an asynchronous batch hit testing task
 func (h *DatasetHandler) GetBatchHitTestingTaskStatus(c *gin.Context) {
-	// Get task ID from URL parameter
-	taskID := c.Param("task_id")
-	if taskID == "" {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
-	// Get task
-	task, ok := h.batchTaskManager.GetTask(taskID)
+	_, task, ok := h.authorizeBatchHitTestingTaskAccess(c)
 	if !ok {
-		response.Fail(c, response.ErrNotFound)
 		return
 	}
 
@@ -1134,15 +1125,13 @@ func (h *DatasetHandler) GetBatchHitTestingTaskStatus(c *gin.Context) {
 // GetBatchHitTestingTaskReport handles GET /datasets/:id/batch-hit-testing/tasks/:task_id/report
 // This endpoint retrieves the report of a completed batch hit testing task
 func (h *DatasetHandler) GetBatchHitTestingTaskReport(c *gin.Context) {
-	// Get task ID from URL parameter
-	taskID := c.Param("task_id")
-	if taskID == "" {
-		response.Fail(c, response.ErrInvalidParam)
+	_, task, ok := h.authorizeBatchHitTestingTaskAccess(c)
+	if !ok {
 		return
 	}
 
 	// Get task report
-	report, err := h.batchTaskManager.GetTaskReport(taskID)
+	report, err := h.batchTaskManager.GetTaskReport(task.TaskID)
 	if err != nil {
 		// Check if it's a "not found" error
 		if err.Error() == "task not found" {
@@ -1165,28 +1154,8 @@ func (h *DatasetHandler) GetBatchHitTestingTaskReport(c *gin.Context) {
 // StopBatchHitTestingTask handles POST /datasets/:id/batch-hit-testing/tasks/:task_id/stop
 // This endpoint stops an asynchronous batch hit testing task
 func (h *DatasetHandler) StopBatchHitTestingTask(c *gin.Context) {
-	// Get task ID from URL parameter
-	taskID := c.Param("task_id")
-	if taskID == "" {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
-	// Get account and tenant IDs from context
-	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
-
-	// Get task to verify ownership
-	task, ok := h.batchTaskManager.GetTask(taskID)
+	_, task, ok := h.authorizeBatchHitTestingTaskAccess(c)
 	if !ok {
-		response.Fail(c, response.ErrNotFound)
-		return
-	}
-
-	// Check if user has permission to stop this task
-	// Task must belong to the same account and tenant
-	if task.AccountID != accountID || task.OrganizationID != tenantID {
-		response.Fail(c, response.ErrPermissionDenied)
 		return
 	}
 
@@ -1199,7 +1168,7 @@ func (h *DatasetHandler) StopBatchHitTestingTask(c *gin.Context) {
 	// Stop the task
 	// TODO: In a production environment, we might need a more sophisticated way to stop
 	// ongoing processing, such as signaling the goroutine to stop.
-	if err := h.batchTaskManager.StopTask(taskID); err != nil {
+	if err := h.batchTaskManager.StopTask(task.TaskID); err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
@@ -1443,37 +1412,14 @@ func (h *DatasetHandler) GetRandomDatasetQuestions(c *gin.Context) {
 // SaveBatchHitTestingResults handles POST /datasets/:dataset_id/batch-hit-testing/tasks/:task_id/save
 // This endpoint saves the results of a completed batch hit testing task
 func (h *DatasetHandler) SaveBatchHitTestingResults(c *gin.Context) {
-	// Get dataset ID and task ID from URL parameters
-	datasetID := c.Param("dataset_id")
-	taskID := c.Param("task_id")
-
-	if datasetID == "" {
-		response.Fail(c, response.ErrDatasetIdRequired)
-		return
-	}
-
-	if taskID == "" {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
-	// Parse request body
-	var req dto.SaveBatchHitTestingRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
+	datasetID, task, ok := h.authorizeBatchHitTestingTaskAccess(c)
+	if !ok {
 		return
 	}
 
 	// Get account and tenant IDs from context
 	accountID := c.GetString("account_id")
-	organizationID := c.GetString("tenant_id")
-
-	// Get task to verify ownership and completion
-	task, ok := h.batchTaskManager.GetTask(taskID)
-	if !ok {
-		response.Fail(c, response.ErrNotFound)
-		return
-	}
+	organizationID := util.GetOrganizationIDCompat(c)
 
 	// Check if task is completed
 	if task.Status != "completed" && task.Status != "failed" {
@@ -1485,15 +1431,16 @@ func (h *DatasetHandler) SaveBatchHitTestingResults(c *gin.Context) {
 		return
 	}
 
-	// Verify task belongs to the dataset
-	if task.DatasetID != datasetID {
+	// Parse request body after task ownership and dataset access are verified.
+	var req dto.SaveBatchHitTestingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 
 	// Save batch hit testing results
 	saveReq := &service.SaveBatchHitTestingResultsRequest{
-		BatchTaskID:    taskID,
+		BatchTaskID:    task.TaskID,
 		BatchName:      req.BatchName,
 		DatasetID:      datasetID,
 		AccountID:      accountID,
@@ -1509,6 +1456,63 @@ func (h *DatasetHandler) SaveBatchHitTestingResults(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"message": "batch hit testing results saved successfully"})
+}
+
+func (h *DatasetHandler) authorizeBatchHitTestingTaskAccess(c *gin.Context) (string, *service.BatchHitTestingTask, bool) {
+	datasetID := c.Param("dataset_id")
+	if datasetID == "" {
+		response.Fail(c, response.ErrDatasetIdRequired)
+		return "", nil, false
+	}
+	if _, err := uuid.Parse(datasetID); err != nil {
+		response.Fail(c, response.ErrInvalidUuid)
+		return "", nil, false
+	}
+
+	taskID := c.Param("task_id")
+	if taskID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return "", nil, false
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return "", nil, false
+	}
+
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return "", nil, false
+	}
+
+	if h.batchTaskManager == nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", nil, false
+	}
+
+	task, ok := h.batchTaskManager.GetTask(taskID)
+	if !ok {
+		response.Fail(c, response.ErrNotFound)
+		return "", nil, false
+	}
+
+	if task.DatasetID != datasetID || task.AccountID != accountID || task.OrganizationID != organizationID {
+		response.Fail(c, response.ErrPermissionDenied)
+		return "", nil, false
+	}
+
+	if h.datasetService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", nil, false
+	}
+	if _, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID, accountID, organizationID); err != nil {
+		failDatasetRead(c, err, response.ErrDatasetGetFailed)
+		return "", nil, false
+	}
+
+	return datasetID, task, true
 }
 
 // GetDatasetErrorDocs handles GET /datasets/:dataset_id/error-docs
