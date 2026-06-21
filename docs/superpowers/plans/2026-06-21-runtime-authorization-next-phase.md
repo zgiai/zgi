@@ -98,6 +98,7 @@ Progress note, 2026-06-21:
 - `runtimeauth` now has an explainable audience evaluation helper that returns stable allow/deny reasons while preserving the existing boolean `Allows` contract. It is covered by unit tests only and is not wired into webapp/API private access until the decisions above are approved.
 - `GET /console/api/webapps/:web_app_id/capability` is registered behind `WebAppAuthMiddleware` as a public-compatible skeleton. It returns `public_only=true`, `private_audience_enabled=false`, and `supported_subject_types=["public"]`; it reuses the existing published webapp config gate and does not evaluate account/department webapp grants yet.
 - The frontend service layer now has typed `WebAppService.getCapability` and an opt-in `useWebAppCapability` query. Existing `useWebAppConfig` still does not call the capability endpoint; `pnpm test:route-access` locks that separation until private webapp behavior is wired deliberately.
+- Route contract coverage now also proves the webapp capability endpoint stays off the public webapp route group and remains registered after `WebAppAuthMiddleware`. This keeps the future private-capability handshake from being accidentally exposed while `/config` remains public-compatible.
 
 Avoid these until decisions are made:
 
