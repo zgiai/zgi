@@ -208,10 +208,10 @@ func TestPublishedRuntimeStoreRejectsUnsupportedSurfaceGrantSubjectsBeforeSQL(t 
 		want    string
 	}{
 		{
-			name:    "webapp rejects account grant",
+			name:    "webapp rejects internal grant",
 			surface: PublishedRuntimeSurfaceWebApp,
-			subject: PublishedRuntimeSubjectAccount,
-			want:    "webapp runtime grants must use public subject",
+			subject: PublishedRuntimeSubjectInternal,
+			want:    "webapp runtime grants must target public, organization, account, or department",
 		},
 		{
 			name:    "api rejects organization grant",

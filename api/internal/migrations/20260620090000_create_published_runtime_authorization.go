@@ -81,12 +81,7 @@ SELECT
 	COALESCE(workspaces.organization_id, agents.tenant_id),
 	agents.tenant_id,
 	surfaces.surface,
-	CASE surfaces.surface
-		WHEN 'webapp' THEN COALESCE(NULLIF(agents.web_app_status, ''), 'active') = 'active'
-		WHEN 'api' THEN agents.enable_api
-		WHEN 'internal' THEN true
-		ELSE false
-	END,
+	true,
 	'legacy_agent_fields',
 	jsonb_build_object('seeded_from', 'agents')
 FROM public.agents
@@ -107,13 +102,18 @@ SELECT
 	surfaces.id,
 	CASE surfaces.surface
 		WHEN 'internal' THEN 'internal'
-		ELSE 'public'
+		WHEN 'api' THEN 'public'
+		ELSE 'organization'
 	END,
-	NULL,
+	CASE surfaces.surface
+		WHEN 'webapp' THEN surfaces.organization_id
+		WHEN 'builtin_app' THEN surfaces.organization_id
+		ELSE NULL
+	END,
 	surfaces.enabled
 FROM public.published_runtime_surfaces surfaces
 WHERE surfaces.resource_type = 'agent'
-  AND surfaces.surface IN ('webapp', 'api', 'internal')
+  AND surfaces.surface IN ('webapp', 'api', 'builtin_app', 'internal')
   AND surfaces.deleted_at IS NULL
 ON CONFLICT DO NOTHING
 `

@@ -309,7 +309,13 @@ func (s *agentsService) runtimeGrantDepartmentInOrganization(ctx context.Context
 func agentRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntimeSurface, organizationID uuid.UUID, surfaceEnabled bool, grants []dto.UpdateAgentRuntimeSurfaceGrant) ([]runtimeauth.SurfaceGrant, error) {
 	if len(grants) == 0 {
 		switch surface {
-		case runtimeauth.PublishedRuntimeSurfaceWebApp, runtimeauth.PublishedRuntimeSurfaceAPI:
+		case runtimeauth.PublishedRuntimeSurfaceWebApp:
+			return []runtimeauth.SurfaceGrant{{
+				SubjectType: runtimeauth.PublishedRuntimeSubjectOrganization,
+				SubjectID:   copyRuntimeUUIDPtr(organizationID),
+				Enabled:     surfaceEnabled,
+			}}, nil
+		case runtimeauth.PublishedRuntimeSurfaceAPI:
 			return []runtimeauth.SurfaceGrant{{
 				SubjectType: runtimeauth.PublishedRuntimeSubjectPublic,
 				Enabled:     surfaceEnabled,
@@ -335,8 +341,13 @@ func agentRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntimeSu
 		}
 		switch surface {
 		case runtimeauth.PublishedRuntimeSurfaceWebApp:
-			if subjectType != runtimeauth.PublishedRuntimeSubjectPublic {
-				return nil, fmt.Errorf("%w: webapp runtime grants must use public subject", runtimeservice.ErrInvalidInput)
+			switch subjectType {
+			case runtimeauth.PublishedRuntimeSubjectPublic,
+				runtimeauth.PublishedRuntimeSubjectOrganization,
+				runtimeauth.PublishedRuntimeSubjectAccount,
+				runtimeauth.PublishedRuntimeSubjectDepartment:
+			default:
+				return nil, fmt.Errorf("%w: webapp runtime grants must target public, organization, account, or department", runtimeservice.ErrInvalidInput)
 			}
 		case runtimeauth.PublishedRuntimeSurfaceAPI:
 			if subjectType != runtimeauth.PublishedRuntimeSubjectPublic {
@@ -496,7 +507,8 @@ func (s *agentsService) updateAgentWebAppStatusAndRuntimeSurface(ctx context.Con
 				Enabled:             surfaceEnabled,
 				CompatibilitySource: runtimeauth.PublishedRuntimeSourceGrant,
 				Grants: []runtimeauth.SurfaceGrant{{
-					SubjectType: runtimeauth.PublishedRuntimeSubjectPublic,
+					SubjectType: runtimeauth.PublishedRuntimeSubjectOrganization,
+					SubjectID:   copyRuntimeUUIDPtr(organizationID),
 					Enabled:     surfaceEnabled,
 				}},
 			}},

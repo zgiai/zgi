@@ -530,8 +530,14 @@ func validateSurfaceAuthorization(surface SurfaceAuthorization) error {
 func validateSurfaceGrantSubject(surface PublishedRuntimeSurface, subjectType PublishedRuntimeSubjectType) error {
 	switch surface {
 	case PublishedRuntimeSurfaceWebApp:
-		if subjectType != PublishedRuntimeSubjectPublic {
-			return fmt.Errorf("webapp runtime grants must use public subject")
+		switch subjectType {
+		case PublishedRuntimeSubjectPublic,
+			PublishedRuntimeSubjectOrganization,
+			PublishedRuntimeSubjectAccount,
+			PublishedRuntimeSubjectDepartment:
+			return nil
+		default:
+			return fmt.Errorf("webapp runtime grants must target public, organization, account, or department")
 		}
 	case PublishedRuntimeSurfaceAPI:
 		if subjectType != PublishedRuntimeSubjectPublic {

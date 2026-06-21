@@ -18,7 +18,7 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	if err != nil {
 		return nil, err
 	}
-	if !auth.Evaluate(runtimeauth.PublishedRuntimeSurfaceWebApp, runtimeauth.RuntimeAudience{}).Allowed {
+	if !auth.Evaluate(runtimeauth.PublishedRuntimeSurfaceWebApp, runtimeauth.RuntimeAudience{OrganizationID: auth.OrganizationID}).Allowed {
 		return nil, errAgentWebAppOffline
 	}
 	if ag.AgentsType != "AGENT" {
