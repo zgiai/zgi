@@ -894,15 +894,18 @@ func expectWorkflowRoutesSQL(t *testing.T, mock sqlmock.Sqlmock, webAppID, userI
 	case "TestWorkflowRoutes_BuiltInWorkflowsAcceptOrganizationMemberWithoutWorkspace":
 		agentID := expectBuiltInWorkflows(mock)
 		expectBuiltInWorkflowAudienceDepartments(mock, nil)
+		expectBuiltInWorkflowAudienceWorkspaces(mock, nil)
 		expectBuiltInWorkflowRuntimeBatchFallback(mock, agentID)
 	case "TestWorkflowRoutes_BuiltInWorkflowsFilterRuntimeGrantForOtherAccount":
 		agentID := expectBuiltInWorkflows(mock)
 		expectBuiltInWorkflowAudienceDepartments(mock, nil)
+		expectBuiltInWorkflowAudienceWorkspaces(mock, nil)
 		expectBuiltInWorkflowRuntimeBatchAccountGrant(mock, agentID, uuid.New())
 	case "TestWorkflowRoutes_BuiltInWorkflowsAllowRuntimeGrantForDepartmentMember":
 		departmentID := uuid.New()
 		agentID := expectBuiltInWorkflows(mock)
 		expectBuiltInWorkflowAudienceDepartments(mock, []uuid.UUID{departmentID})
+		expectBuiltInWorkflowAudienceWorkspaces(mock, nil)
 		expectBuiltInWorkflowRuntimeBatchDepartmentGrant(mock, agentID, departmentID)
 	case "TestWorkflowRoutes_BuiltInWorkflowDetailRejectsRuntimeGrantForOtherAccount":
 		agentID := expectBuiltInWorkflowByScenario(mock, "imagegen_chat")
@@ -1254,6 +1257,16 @@ func expectBuiltInWorkflowAudienceDepartments(mock sqlmock.Sqlmock, departmentID
 	}
 	mock.ExpectQuery(`SELECT department_members\.department_id FROM "department_members" JOIN departments ON departments\.id = department_members\.department_id WHERE department_members\.account_id = \$1 AND departments\.group_id = \$2 AND departments\.status = \$3`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), workspace_model.DepartmentStatusActive).
+		WillReturnRows(rows)
+}
+
+func expectBuiltInWorkflowAudienceWorkspaces(mock sqlmock.Sqlmock, workspaceIDs []uuid.UUID) {
+	rows := sqlmock.NewRows([]string{"workspace_id"})
+	for _, workspaceID := range workspaceIDs {
+		rows.AddRow(workspaceID.String())
+	}
+	mock.ExpectQuery(`SELECT workspace_members\.workspace_id FROM "workspace_members" JOIN workspaces ON workspaces\.id = workspace_members\.workspace_id WHERE workspace_members\.account_id = \$1 AND workspaces\.organization_id = \$2 AND workspaces\.status = \$3`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), workspace_model.WorkspaceStatusNormal).
 		WillReturnRows(rows)
 }
 
