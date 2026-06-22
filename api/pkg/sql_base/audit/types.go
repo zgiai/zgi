@@ -3,6 +3,8 @@ package audit
 import (
 	"context"
 	"time"
+
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 )
 
 type ClientType string
@@ -34,6 +36,7 @@ type Context struct {
 	OperationType  string
 	RequestID      string
 	Attempt        int
+	GuardPolicy    *guard.Policy
 }
 
 type Record struct {
@@ -46,6 +49,10 @@ type Record struct {
 	Status       Status
 	ErrorCode    string
 	ErrorMessage string
+	GuardVerdict string
+	GuardAction  string
+	GuardReasons []byte
+	GuardPolicy  []byte
 	StartTime    time.Time
 	EndTime      time.Time
 	ExecutedAt   time.Time

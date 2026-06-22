@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
 	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 	"gorm.io/gorm"
 
 	"github.com/google/uuid"
@@ -23,6 +24,7 @@ type DataSourceRepository interface {
 	// ListByOrganizationWithPermissionFilter lists data sources with permission filtering
 	ListByOrganizationWithPermissionFilter(ctx context.Context, organizationID, accountID string, isAdmin bool, filterWorkspaceIDs []string) ([]*model.DataSource, error)
 	Update(ctx context.Context, ds *model.DataSource) error
+	UpdateGuardPolicy(ctx context.Context, id string, policy []byte) error
 	UpdateStatus(ctx context.Context, id, status string) error
 	Delete(ctx context.Context, id string) error
 }
@@ -75,9 +77,13 @@ func (r *PostgresDataSourceRepository) Create(ctx context.Context, ds *model.Dat
 	ds.UpdatedAt = time.Now()
 
 	query := `
-		INSERT INTO data_sources (id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO data_sources (id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background, guard_policy)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
+	guardPolicy := []byte(ds.GuardPolicy)
+	if len(guardPolicy) == 0 {
+		guardPolicy = guard.DefaultPolicyJSON()
+	}
 	err := r.db.WithContext(ctx).Exec(
 		query,
 		ds.ID,
@@ -96,6 +102,7 @@ func (r *PostgresDataSourceRepository) Create(ctx context.Context, ds *model.Dat
 		ds.IconType,
 		ds.Icon,
 		ds.IconBackground,
+		guardPolicy,
 	).Error
 	return err
 }
@@ -131,7 +138,7 @@ func (r *PostgresDataSourceRepository) FindByOrganizationAndName(ctx context.Con
 // ListByOrganization lists all data sources for a organization
 func (r *PostgresDataSourceRepository) ListByOrganization(ctx context.Context, organizationID string) ([]*model.DataSource, error) {
 	query := `
-		SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background
+		SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background, guard_policy
 		FROM data_sources
 		WHERE organization_id = ?
 		ORDER BY created_at DESC
@@ -162,6 +169,7 @@ func (r *PostgresDataSourceRepository) ListByOrganization(ctx context.Context, o
 			&ds.IconType,
 			&ds.Icon,
 			&ds.IconBackground,
+			&ds.GuardPolicy,
 		)
 		if err != nil {
 			return nil, err
@@ -179,7 +187,7 @@ func (r *PostgresDataSourceRepository) ListByOrganizationWithPermissionFilter(ct
 	// If user is admin, show all data sources
 	if isAdmin {
 		query := `
-			SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background
+			SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background, guard_policy
 			FROM data_sources
 			WHERE organization_id = ?
 		`
@@ -218,6 +226,7 @@ func (r *PostgresDataSourceRepository) ListByOrganizationWithPermissionFilter(ct
 				&ds.IconType,
 				&ds.Icon,
 				&ds.IconBackground,
+				&ds.GuardPolicy,
 			)
 			if err != nil {
 				return nil, err
@@ -234,7 +243,7 @@ func (r *PostgresDataSourceRepository) ListByOrganizationWithPermissionFilter(ct
 	var rows *sql.Rows
 	var err error
 	query := `
-		SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background
+		SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background, guard_policy
 		FROM data_sources
 		WHERE organization_id = ?
 	`
@@ -290,6 +299,7 @@ func (r *PostgresDataSourceRepository) ListByOrganizationWithPermissionFilter(ct
 			&ds.IconType,
 			&ds.Icon,
 			&ds.IconBackground,
+			&ds.GuardPolicy,
 		)
 		if err != nil {
 			return nil, err
@@ -339,6 +349,14 @@ func (r *PostgresDataSourceRepository) Update(ctx context.Context, ds *model.Dat
 	return err
 }
 
+func (r *PostgresDataSourceRepository) UpdateGuardPolicy(ctx context.Context, id string, policy []byte) error {
+	return r.db.WithContext(ctx).Exec(
+		`UPDATE data_sources SET guard_policy = ?, updated_at = NOW() WHERE id = ?`,
+		policy,
+		id,
+	).Error
+}
+
 // Delete deletes a data source record
 func (r *PostgresDataSourceRepository) Delete(ctx context.Context, id string) error {
 	query := `
@@ -363,10 +381,10 @@ func (r *PostgresSQLOperationRepository) Create(ctx context.Context, log *model.
 		INSERT INTO data_source_sql_operations (
 			id, organization_id, workspace_id, data_source_id, table_id, table_name, data_source_name,
 			sql_statement, operation_type, client_type, workflow_run_id, node_id, params_json, row_count,
-			duration_ms, error_code, error_message, executed_at, request_id, start_time, end_time,
-			status, created_by, created_at
+			duration_ms, error_code, error_message, executed_at, request_id, guard_verdict,
+			guard_action, guard_reasons, guard_policy, start_time, end_time, status, created_by, created_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	err := r.db.WithContext(ctx).Exec(
 		query,
@@ -389,6 +407,10 @@ func (r *PostgresSQLOperationRepository) Create(ctx context.Context, log *model.
 		log.ErrorMessage,
 		log.ExecutedAt,
 		log.RequestID,
+		log.GuardVerdict,
+		log.GuardAction,
+		log.GuardReasons,
+		log.GuardPolicy,
 		log.StartTime,
 		log.EndTime,
 		log.Status,
@@ -427,6 +449,10 @@ func (r *PostgresSQLOperationRepository) Insert(ctx context.Context, records []a
 			ErrorMessage:   stringPtrOrNil(record.ErrorMessage),
 			ExecutedAt:     &executedAt,
 			RequestID:      stringPtrOrNil(record.RequestID),
+			GuardVerdict:   stringPtrOrNil(record.GuardVerdict),
+			GuardAction:    stringPtrOrNil(record.GuardAction),
+			GuardReasons:   record.GuardReasons,
+			GuardPolicy:    record.GuardPolicy,
 			StartTime:      record.StartTime,
 			EndTime:        record.EndTime,
 			Status:         string(record.Status),

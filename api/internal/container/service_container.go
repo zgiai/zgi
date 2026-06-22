@@ -78,6 +78,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/scheduler"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
 	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
 )
@@ -669,7 +670,21 @@ func (c *ServiceContainer) CloseDataSourceSQLAuditRecorder(ctx context.Context) 
 
 func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
 	if c.sqlBase == nil {
-		client, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(c.GetSQLAuditRecorder()))
+		dataSourceRepo := repository.NewPostgresDataSourceRepository(c.db)
+		client, err := sql_base.NewSQLBaseClient(
+			sql_base.WithAuditRecorder(c.GetSQLAuditRecorder()),
+			sql_base.WithGuardPolicyProvider(func(ctx context.Context, dataSourceID string) (*guard.Policy, error) {
+				dataSource, err := dataSourceRepo.FindByID(ctx, dataSourceID)
+				if err != nil || dataSource == nil {
+					return nil, err
+				}
+				policy, err := guard.ParsePolicyJSON([]byte(dataSource.GuardPolicy))
+				if err != nil {
+					return nil, err
+				}
+				return &policy, nil
+			}),
+		)
 		if err != nil {
 			panic("failed to create sql base client: " + err.Error())
 		}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/driver"
 
 	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/columns"
@@ -30,9 +31,10 @@ type internalClient struct {
 	columnsService metaService.ColumnsService
 	queryService   metaService.QueryService
 	recorder       audit.Recorder
+	policyProvider GuardPolicyProvider
 }
 
-func NewInternalClient(host, port, user, password, dbname string, recorder audit.Recorder) (SQLBase, error) {
+func NewInternalClient(host, port, user, password, dbname string, recorder audit.Recorder, policyProvider GuardPolicyProvider) (SQLBase, error) {
 	cfg := driver.Config{
 		DBHost: host,
 		DBPort: port,
@@ -83,6 +85,7 @@ func NewInternalClient(host, port, user, password, dbname string, recorder audit
 		columnsService: columnsSvc,
 		queryService:   querySvc,
 		recorder:       recorder,
+		policyProvider: policyProvider,
 	}, nil
 }
 
@@ -670,9 +673,16 @@ func (c *internalClient) ListTypes(ctx context.Context) ([]Type, error) {
 // Query operations
 func (c *internalClient) ExecuteSQL(ctx context.Context, query string, params []interface{}, auditCtx *audit.Context) (*QueryResult, error) {
 	start := time.Now()
-	result, err := c.executeSQL(ctx, query, params)
+	guardResult, guarded, guardErr := checkSQLGuard(ctx, query, auditCtx, c.policyProvider)
+	var result *QueryResult
+	var err error
+	if guardErr != nil {
+		err = guardErr
+	} else {
+		result, err = c.executeSQL(ctx, query, params)
+	}
 	end := time.Now()
-	c.recordAudit(ctx, auditCtx, query, params, result, err, start, end)
+	c.recordAudit(ctx, auditCtx, query, params, result, err, start, end, guardResult, guarded)
 	return result, err
 }
 
@@ -742,7 +752,7 @@ func (c *internalClient) executeSQL(ctx context.Context, query string, params []
 	return result, nil
 }
 
-func (c *internalClient) recordAudit(ctx context.Context, auditCtx *audit.Context, query string, params []interface{}, result *QueryResult, execErr error, start, end time.Time) {
+func (c *internalClient) recordAudit(ctx context.Context, auditCtx *audit.Context, query string, params []interface{}, result *QueryResult, execErr error, start, end time.Time, guardResult guard.Result, guarded bool) {
 	if c.recorder == nil || auditCtx == nil {
 		return
 	}
@@ -757,6 +767,7 @@ func (c *internalClient) recordAudit(ctx context.Context, auditCtx *audit.Contex
 		EndTime:      end,
 		ExecutedAt:   start,
 	}
+	applyGuardAudit(&record, guardResult, guarded)
 	if record.ClientType == "" {
 		record.ClientType = audit.ClientTypeUnknown
 	}
