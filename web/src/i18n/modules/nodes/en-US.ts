@@ -1008,7 +1008,8 @@ const messages = {
       helpTipTitle: 'Tip: ',
       helpTipText:
         'Most workflows work well with the default order. If you want the model to mimic a standard exchange, add an example conversation between history and the current input.',
-      systemFixedDescription: 'System prompt is fixed at the beginning and is edited in the main panel.',
+      systemFixedDescription:
+        'System prompt is fixed at the beginning and is edited in the main panel.',
       contextPlaceholder: 'Extra context',
       contextPlaceholderDescription: 'Provide the model with more information or answer examples.',
       historyPanelHint:
@@ -1314,6 +1315,7 @@ const messages = {
       select: 'Select (string)',
       number: 'Number (number)',
       checkbox: 'Checkbox (boolean)',
+      datetime: 'Date & Time (string)',
       file: 'File (file)',
       'file-list': 'File List (array[file])',
     },
@@ -1326,6 +1328,7 @@ const messages = {
       variableNameRequired: 'Variable Name is required.',
       selectNeedsOptions: 'Select type requires options',
       defaultMustBeNumber: 'Default value must be a valid number for number type',
+      defaultMustBeDateTime: 'Default value must be a valid date and time',
       maxLengthGtZero: 'Max length must be greater than 0',
       fileTypeRequired: 'At least one file type must be selected.',
       customExtensionsRequired: 'Custom file type requires at least one file extension.',
@@ -1335,6 +1338,10 @@ const messages = {
         optionsTitle: 'Options',
         addOption: 'Add Option',
         optionN: 'Option {index}',
+      },
+      dateTimeDefault: {
+        fixed: 'Fixed date and time',
+        now: 'Current date and time',
       },
       title: {
         edit: 'Edit Variable',

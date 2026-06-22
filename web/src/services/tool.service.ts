@@ -21,8 +21,10 @@ class ToolService extends BaseService {
    * Get available tool providers and tools for the current organization.
    * GET /console/api/tools/builtin
    */
-  getBuiltinTools(): Promise<ApiResponseData<BuiltinToolsResponse>> {
-    return this.request('get', '/tools/builtin');
+  getBuiltinTools(caller?: 'workflow'): Promise<ApiResponseData<BuiltinToolsResponse>> {
+    return this.request('get', '/tools/builtin', undefined, {
+      params: caller ? { caller } : undefined,
+    });
   }
 }
 

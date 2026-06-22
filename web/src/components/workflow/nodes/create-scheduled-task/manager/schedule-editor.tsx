@@ -13,6 +13,10 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { WorkflowValueEditor } from '@/components/workflow/ui';
+import {
+  toLocalDateTimeInputValue,
+  WorkflowDateTimeInput,
+} from '@/components/workflow/common/workflow-date-time-input';
 import { useT } from '@/i18n';
 import type { CreateScheduledTaskNodeData } from '../config';
 
@@ -46,36 +50,6 @@ const SCHEDULE_WEEKDAYS: Array<{
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
-}
-
-function toLocalInputValue(value: string): string {
-  if (!value) {
-    return '';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function toOffsetDateTime(value: string): string {
-  if (!value) {
-    return '';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-
-  const offsetMinutes = -date.getTimezoneOffset();
-  const sign = offsetMinutes >= 0 ? '+' : '-';
-  const absolute = Math.abs(offsetMinutes);
-
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`;
 }
 
 function parseCronWeekdays(token: string): ScheduleWeekdayKey[] {
@@ -238,7 +212,12 @@ export function ScheduleEditor({
       const nextType = value as CreateScheduledTaskNodeData['task']['schedule']['type'];
       const nextCronExpr =
         nextType === 'cron' && !schedule.cron.expr.trim()
-          ? getCronExpressionFromPreset('daily', DEFAULT_RECURRING_TIME, ['mon'], schedule.cron.expr)
+          ? getCronExpressionFromPreset(
+              'daily',
+              DEFAULT_RECURRING_TIME,
+              ['mon'],
+              schedule.cron.expr
+            )
           : schedule.cron.expr;
 
       if (nextType === 'cron') {
@@ -284,7 +263,13 @@ export function ScheduleEditor({
         },
       });
     },
-    [derivedRecurring.recurringDays, derivedRecurring.recurringTime, onChange, schedule, selectedRecurringMode]
+    [
+      derivedRecurring.recurringDays,
+      derivedRecurring.recurringTime,
+      onChange,
+      schedule,
+      selectedRecurringMode,
+    ]
   );
 
   const handleRecurringTimeChange = React.useCallback(
@@ -347,23 +332,12 @@ export function ScheduleEditor({
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Label>{t('createScheduledTask.fields.scheduleType')}</Label>
-        <Tabs
-          value={schedule.type}
-          onValueChange={handleScheduleTypeChange}
-        >
+        <Tabs value={schedule.type} onValueChange={handleScheduleTypeChange}>
           <TabsList className={SCHEDULE_TABS_LIST_CLASS}>
-            <TabsTrigger
-              value="once"
-              className={SCHEDULE_TABS_TRIGGER_CLASS}
-              disabled={readOnly}
-            >
+            <TabsTrigger value="once" className={SCHEDULE_TABS_TRIGGER_CLASS} disabled={readOnly}>
               {t('createScheduledTask.scheduleTypeOnce')}
             </TabsTrigger>
-            <TabsTrigger
-              value="cron"
-              className={SCHEDULE_TABS_TRIGGER_CLASS}
-              disabled={readOnly}
-            >
+            <TabsTrigger value="cron" className={SCHEDULE_TABS_TRIGGER_CLASS} disabled={readOnly}>
               {t('createScheduledTask.scheduleTypeCron')}
             </TabsTrigger>
           </TabsList>
@@ -382,7 +356,7 @@ export function ScheduleEditor({
                 const nextRunAt =
                   nextInputMode === 'fixed' &&
                   schedule.once.run_at &&
-                  !toLocalInputValue(schedule.once.run_at)
+                  !toLocalDateTimeInputValue(schedule.once.run_at)
                     ? ''
                     : schedule.once.run_at;
 
@@ -418,17 +392,18 @@ export function ScheduleEditor({
           <div className="rounded-2xl border border-border bg-background p-4">
             {schedule.once.input_mode === 'fixed' ? (
               <div className="space-y-2">
-                <Label htmlFor="workflow-task-run-at">{t('createScheduledTask.fields.runAt')}</Label>
-                <Input
+                <Label htmlFor="workflow-task-run-at">
+                  {t('createScheduledTask.fields.runAt')}
+                </Label>
+                <WorkflowDateTimeInput
                   id="workflow-task-run-at"
-                  type="datetime-local"
-                  value={toLocalInputValue(schedule.once.run_at)}
-                  onChange={event =>
+                  value={schedule.once.run_at}
+                  onChange={value =>
                     onChange({
                       ...schedule,
                       once: {
                         ...schedule.once,
-                        run_at: toOffsetDateTime(event.target.value),
+                        run_at: value,
                       },
                     })
                   }
@@ -503,7 +478,9 @@ export function ScheduleEditor({
           {selectedRecurringMode !== 'customCron' ? (
             <div className="rounded-2xl border border-border bg-background p-4">
               <div className="space-y-2">
-                <Label htmlFor="workflow-task-recurring-time">{t('createScheduledTask.fields.time')}</Label>
+                <Label htmlFor="workflow-task-recurring-time">
+                  {t('createScheduledTask.fields.time')}
+                </Label>
                 <Input
                   id="workflow-task-recurring-time"
                   type="time"
@@ -544,7 +521,9 @@ export function ScheduleEditor({
           {selectedRecurringMode === 'customCron' ? (
             <div className="rounded-2xl border border-border bg-background p-4">
               <div className="space-y-2">
-                <Label htmlFor="workflow-task-cron">{t('createScheduledTask.fields.cronExpr')}</Label>
+                <Label htmlFor="workflow-task-cron">
+                  {t('createScheduledTask.fields.cronExpr')}
+                </Label>
                 <Input
                   id="workflow-task-cron"
                   value={schedule.cron.expr}
@@ -567,7 +546,6 @@ export function ScheduleEditor({
               </div>
             </div>
           ) : null}
-
         </div>
       )}
     </section>

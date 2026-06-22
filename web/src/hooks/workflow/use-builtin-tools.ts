@@ -8,7 +8,7 @@ import { toolService } from '@/services/tool.service';
 /* -------------------------------------------------------------------------- */
 
 const TOOLS_QUERY_KEY = 'tools';
-const getBuiltinToolsKey = () => [TOOLS_QUERY_KEY, 'builtin'] as const;
+const getBuiltinToolsKey = () => [TOOLS_QUERY_KEY, 'builtin', 'workflow'] as const;
 
 /* -------------------------------------------------------------------------- */
 /* Hook: useBuiltinTools                                                      */
@@ -29,7 +29,7 @@ export interface UseBuiltinToolsOptions {
 export function useBuiltinTools(options: UseBuiltinToolsOptions = {}) {
   const query = useQuery({
     queryKey: getBuiltinToolsKey(),
-    queryFn: async () => toolService.getBuiltinTools(),
+    queryFn: async () => toolService.getBuiltinTools('workflow'),
     select: resp => resp.data,
     enabled: options.enabled ?? true,
     staleTime: options.staleTime ?? 10 * 60 * 1000, // 10 minutes

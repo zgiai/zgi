@@ -341,10 +341,12 @@ func agentWorkflowRuntimeStartInputs(inputs []dto.AgentWorkflowStartInput) []run
 			continue
 		}
 		out = append(out, runtimeservice.AgentWorkflowStartInput{
-			Variable: variable,
-			Label:    strings.TrimSpace(input.Label),
-			Type:     strings.TrimSpace(input.Type),
-			Required: input.Required,
+			Variable:            variable,
+			Label:               strings.TrimSpace(input.Label),
+			Type:                strings.TrimSpace(input.Type),
+			Required:            input.Required,
+			Default:             input.Default,
+			DefaultDateTimeMode: strings.TrimSpace(input.DefaultDateTimeMode),
 		})
 	}
 	return out

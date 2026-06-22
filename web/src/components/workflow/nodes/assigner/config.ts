@@ -161,7 +161,12 @@ export const checkValid = (nodeData: AssignerNodeData, ctx?: ValidationCtx): Val
             // Map InputVar type to primitive
             if (v) {
               if (v.type === 'number') varType = 'number';
-              else if (v.type === 'text-input' || v.type === 'paragraph' || v.type === 'select') {
+              else if (
+                v.type === 'text-input' ||
+                v.type === 'paragraph' ||
+                v.type === 'select' ||
+                v.type === 'datetime'
+              ) {
                 varType = 'string';
               }
             }

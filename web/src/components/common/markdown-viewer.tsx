@@ -44,6 +44,22 @@ interface MarkdownViewerProps {
 
 import { MarkdownImage } from '@/components/common/markdown-image';
 
+interface MarkdownElementNode {
+  children?: Array<{
+    type?: string;
+    tagName?: string;
+  }>;
+}
+
+interface MarkdownImageRendererProps extends React.ImgHTMLAttributes<HTMLImageElement> {
+  children?: React.ReactNode;
+}
+
+interface MarkdownParagraphRendererProps extends React.HTMLAttributes<HTMLParagraphElement> {
+  children?: React.ReactNode;
+  node?: MarkdownElementNode;
+}
+
 const remarkPluginsList: PluggableList = [remarkGfm, remarkMath];
 const rehypePluginsList: PluggableList = [
   [rehypeHighlight, { ignoreMissing: true }],
@@ -402,6 +418,7 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
         const [raw, alt, rawSrc] = match;
         const start = match.index;
         const end = start + raw.length;
+        const normalizedSrc = normalizeMinerUImageSource(rawSrc);
         if (start > lastIndex) {
           parts.push(
             <React.Fragment key={`${keyPrefix}-text-${lastIndex}`}>
@@ -411,8 +428,8 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
         }
         parts.push(
           <MarkdownImage
-            key={`${keyPrefix}-image-${start}`}
-            src={normalizeMinerUImageSource(rawSrc)}
+            key={`${keyPrefix}-image-${hashString(`${normalizedSrc}:${alt}`)}-${start}`}
+            src={normalizedSrc}
             alt={alt}
           />
         );
@@ -513,6 +530,46 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
     [renderChildrenWithHighlights]
   );
 
+  const renderMarkdownImage = React.useCallback(
+    ({ children: _c, ...rest }: MarkdownImageRendererProps) => {
+      const { src, alt, className, ...props } = rest;
+      const normalizedSrc = typeof src === 'string' ? normalizeMinerUImageSource(src) : src;
+      return (
+        <MarkdownImage
+          key={
+            typeof normalizedSrc === 'string'
+              ? `md-image-${hashString(`${normalizedSrc}:${alt ?? ''}`)}`
+              : undefined
+          }
+          src={normalizedSrc as string}
+          alt={alt as string}
+          className={className}
+          {...props}
+        />
+      );
+    },
+    []
+  );
+
+  const renderParagraph = React.useCallback(
+    ({ children, node, ...rest }: MarkdownParagraphRendererProps) => {
+      const hasImage = node?.children?.some(
+        child => child.type === 'element' && child.tagName === 'img'
+      );
+
+      if (hasImage || containsMarkdownImageText(children)) {
+        return (
+          <div {...rest} className={cn('relative my-4', rest.className)}>
+            {renderChildrenWithHighlights(children)}
+          </div>
+        );
+      }
+
+      return <p {...rest}>{renderChildrenWithHighlights(children)}</p>;
+    },
+    [renderChildrenWithHighlights]
+  );
+
   let mermaidCodeBlockIndex = 0;
 
   return (
@@ -610,19 +667,7 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
           pre({ children }) {
             return <>{children}</>;
           },
-          img({ children: _c, ...rest }) {
-            const { src, alt, className, ...props } = rest;
-            const normalizedSrc =
-              typeof src === 'string' ? normalizeMinerUImageSource(src) : src;
-            return (
-              <MarkdownImage
-                src={normalizedSrc as string}
-                alt={alt as string}
-                className={className}
-                {...props}
-              />
-            );
-          },
+          img: renderMarkdownImage,
           code(nodeProps) {
             const isInline = hasInlineFlag(nodeProps) ? nodeProps.inline : false;
             const codeClassName = getClassName(nodeProps);
@@ -719,22 +764,7 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
             return renderCodeBlock(langMatch?.[1] || 'code');
           },
           // Apply highlights to common text containers; skip code blocks to avoid noise
-          p({ children, node, ...rest }) {
-            // Check if paragraph contains an image element in its hast node children
-            const hasImage = node?.children?.some(
-              child => child.type === 'element' && child.tagName === 'img'
-            );
-
-            if (hasImage || containsMarkdownImageText(children)) {
-              return (
-                <div {...rest} className={cn('relative my-4', rest.className)}>
-                  {renderChildrenWithHighlights(children)}
-                </div>
-              );
-            }
-
-            return <p {...rest}>{renderChildrenWithHighlights(children)}</p>;
-          },
+          p: renderParagraph,
           li({ children, id, ...rest }) {
             const cls = getClassName(rest);
             const normalizedId = typeof id === 'string' ? normalizeAnchorId(id) : id;

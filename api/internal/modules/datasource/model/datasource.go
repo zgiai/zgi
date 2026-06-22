@@ -2,6 +2,8 @@ package model
 
 import (
 	"time"
+
+	"gorm.io/datatypes"
 )
 
 // DataSourcePermissionType represents the permission levels for data sources
@@ -105,6 +107,10 @@ type DataSourceSQLOperation struct {
 	ErrorMessage   *string    `json:"error_message" gorm:"type:text"`
 	ExecutedAt     *time.Time `json:"executed_at" gorm:"type:timestamp"`
 	RequestID      *string    `json:"request_id" gorm:"type:varchar(128)"`
+	GuardVerdict   *string    `json:"guard_verdict" gorm:"type:varchar(16)"`
+	GuardAction    *string    `json:"guard_action" gorm:"type:varchar(16)"`
+	GuardReasons   []byte     `json:"guard_reasons" gorm:"type:jsonb"`
+	GuardPolicy    []byte     `json:"guard_policy" gorm:"type:jsonb"`
 	StartTime      time.Time  `json:"start_time" gorm:"type:timestamp;not null;default:CURRENT_TIMESTAMP"`
 	EndTime        time.Time  `json:"end_time" gorm:"type:timestamp;not null;default:CURRENT_TIMESTAMP"`
 	Status         string     `json:"status" gorm:"type:varchar(10);not null"`
@@ -114,20 +120,21 @@ type DataSourceSQLOperation struct {
 
 // DataSource represents a user-created data source (PostgreSQL schema)
 type DataSource struct {
-	ID             string    `json:"id"`
-	OrganizationID string    `json:"organization_id"`
-	WorkspaceID    *string   `json:"workspace_id"`
-	Name           string    `json:"name"`
-	SchemaID       int       `json:"schema_id"`
-	SchemaName     string    `json:"schema_name"`
-	Description    string    `json:"description"`
-	Permission     string    `json:"permission"`
-	Status         string    `json:"status"`
-	CreatedBy      string    `json:"created_by"`
-	UpdatedBy      string    `json:"updated_by"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	IconType       *string   `gorm:"type:varchar(255)" json:"icon_type"`
-	Icon           *string   `json:"icon" gorm:"type:varchar(255)"`
-	IconBackground *string   `json:"icon_background" gorm:"type:varchar(255)"`
+	ID             string         `json:"id"`
+	OrganizationID string         `json:"organization_id"`
+	WorkspaceID    *string        `json:"workspace_id"`
+	Name           string         `json:"name"`
+	SchemaID       int            `json:"schema_id"`
+	SchemaName     string         `json:"schema_name"`
+	Description    string         `json:"description"`
+	Permission     string         `json:"permission"`
+	Status         string         `json:"status"`
+	CreatedBy      string         `json:"created_by"`
+	UpdatedBy      string         `json:"updated_by"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	IconType       *string        `gorm:"type:varchar(255)" json:"icon_type"`
+	Icon           *string        `json:"icon" gorm:"type:varchar(255)"`
+	IconBackground *string        `json:"icon_background" gorm:"type:varchar(255)"`
+	GuardPolicy    datatypes.JSON `json:"guard_policy" gorm:"type:jsonb;not null"`
 }

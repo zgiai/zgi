@@ -1,6 +1,16 @@
 'use client';
 
-import { FileText, FolderOpen, ImageIcon, Info, Paperclip, Send, Square } from 'lucide-react';
+import {
+  FileText,
+  FolderOpen,
+  ImageIcon,
+  Info,
+  Maximize2,
+  Minimize2,
+  Paperclip,
+  Send,
+  Square,
+} from 'lucide-react';
 import {
   ModelSelector,
   type ModelSelectorModelProps,
@@ -46,6 +56,8 @@ interface AIChatInputToolbarProps {
   imageExtensions: string[];
   showModelSelector?: boolean;
   showMemoryToggle?: boolean;
+  showComposerExpandButton?: boolean;
+  isComposerExpanded?: boolean;
   enableUpload?: boolean;
   showFileLibraryPicker?: boolean;
   surface?: AIChatComposerSurface;
@@ -55,6 +67,7 @@ interface AIChatInputToolbarProps {
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
   onMemoryEnabledChange: (enabled: boolean) => void;
+  onToggleComposerExpanded?: () => void;
   onSend: () => void | Promise<void>;
   onStop: () => void;
 }
@@ -88,6 +101,8 @@ export function AIChatInputToolbar({
   imageExtensions,
   showModelSelector = true,
   showMemoryToggle = true,
+  showComposerExpandButton = false,
+  isComposerExpanded = false,
   enableUpload = true,
   showFileLibraryPicker = true,
   surface = 'aichat',
@@ -97,6 +112,7 @@ export function AIChatInputToolbar({
   onUploadImage,
   onSelectFromFiles,
   onMemoryEnabledChange,
+  onToggleComposerExpanded,
   onSend,
   onStop,
 }: AIChatInputToolbarProps) {
@@ -214,6 +230,32 @@ export function AIChatInputToolbar({
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
+        ) : null}
+        {showComposerExpandButton && onToggleComposerExpanded ? (
+          <Button
+            type="button"
+            isIcon
+            variant="ghost"
+            className="size-8 rounded-full"
+            onClick={onToggleComposerExpanded}
+            title={t(
+              isComposerExpanded
+                ? 'consoleChat.composer.collapseEditor'
+                : 'consoleChat.composer.expandEditor'
+            )}
+            aria-label={t(
+              isComposerExpanded
+                ? 'consoleChat.composer.collapseEditor'
+                : 'consoleChat.composer.expandEditor'
+            )}
+            aria-pressed={isComposerExpanded}
+          >
+            {isComposerExpanded ? (
+              <Minimize2 className="size-4" />
+            ) : (
+              <Maximize2 className="size-4" />
+            )}
+          </Button>
         ) : null}
         {showStopButton ? (
           <Button

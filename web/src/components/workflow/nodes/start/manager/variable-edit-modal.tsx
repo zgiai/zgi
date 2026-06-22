@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { FileTypeSelector } from '../../../common/file-type-selector';
 import { FileExtensionEditor } from '../../../common/file-extension-editor';
+import { WorkflowDateTimeInput } from '../../../common/workflow-date-time-input';
 import { OptionEditor } from '@/components/ui/option-editor';
 import type { InputVar, InputVarType } from '../../../types/input-var';
 import { toast } from 'sonner';
@@ -78,6 +79,9 @@ const VariableEditModal: React.FC<VariableEditModalProps> = ({
       if (newVar.type === InputVarTypeEnum.PARAGRAPH && newVar.max_length === undefined) {
         newVar.max_length = 100;
       }
+      if (newVar.type === InputVarTypeEnum.DATETIME && !newVar.default_datetime_mode) {
+        newVar.default_datetime_mode = 'fixed';
+      }
       if (!variable) {
         newVar.required = true;
       }
@@ -100,7 +104,8 @@ const VariableEditModal: React.FC<VariableEditModalProps> = ({
     }
 
     const isFileVariable =
-      localVariable.type === InputVarTypeEnum.FILE || localVariable.type === InputVarTypeEnum.FILE_LIST;
+      localVariable.type === InputVarTypeEnum.FILE ||
+      localVariable.type === InputVarTypeEnum.FILE_LIST;
 
     let nextVariable: InputVar = { ...localVariable };
 
@@ -141,6 +146,24 @@ const VariableEditModal: React.FC<VariableEditModalProps> = ({
       description: trimmedDescription || undefined,
     };
 
+    if (nextVariable.type === InputVarTypeEnum.DATETIME) {
+      nextVariable = {
+        ...nextVariable,
+        default:
+          nextVariable.default_datetime_mode === 'now'
+            ? ''
+            : typeof nextVariable.default === 'string'
+              ? nextVariable.default
+              : '',
+        default_datetime_mode: nextVariable.default_datetime_mode ?? 'fixed',
+      };
+    } else {
+      nextVariable = {
+        ...nextVariable,
+        default_datetime_mode: undefined,
+      };
+    }
+
     onSave(nextVariable);
     onClose();
   };
@@ -154,12 +177,18 @@ const VariableEditModal: React.FC<VariableEditModalProps> = ({
     // Reset default value based on new type
     if (type === InputVarTypeEnum.CHECKBOX) {
       update.default = false;
+      update.default_datetime_mode = undefined;
     } else if (type === InputVarTypeEnum.FILE || type === InputVarTypeEnum.FILE_LIST) {
       update.default = undefined;
       update.allowed_file_upload_methods = ['local_file'];
+      update.default_datetime_mode = undefined;
+    } else if (type === InputVarTypeEnum.DATETIME) {
+      update.default = '';
+      update.default_datetime_mode = 'fixed';
     } else {
       // For text-based types, convert to string or clear
       update.default = '';
+      update.default_datetime_mode = undefined;
     }
     // Set max_length based on type
     if (type === InputVarTypeEnum.FILE_LIST) {
@@ -327,7 +356,44 @@ const VariableEditModal: React.FC<VariableEditModalProps> = ({
                   <Label htmlFor="default-value" className="text-sm font-bold px-0.5">
                     {t('nodes.start.modal.fields.defaultValue')}
                   </Label>
-                  {localVariable.type === InputVarTypeEnum.SELECT ? (
+                  {localVariable.type === InputVarTypeEnum.DATETIME ? (
+                    <div className="space-y-3">
+                      <Select
+                        value={localVariable.default_datetime_mode ?? 'fixed'}
+                        onValueChange={value =>
+                          updateLocalVariable({
+                            default_datetime_mode: value === 'now' ? 'now' : 'fixed',
+                            default:
+                              value === 'now'
+                                ? ''
+                                : typeof localVariable.default === 'string'
+                                  ? localVariable.default
+                                  : '',
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-10 shadow-sm font-medium">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="fixed" className="font-medium">
+                            {t('nodes.start.modal.dateTimeDefault.fixed')}
+                          </SelectItem>
+                          <SelectItem value="now" className="font-medium">
+                            {t('nodes.start.modal.dateTimeDefault.now')}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {(localVariable.default_datetime_mode ?? 'fixed') === 'fixed' && (
+                        <WorkflowDateTimeInput
+                          id="default-value"
+                          value={(localVariable.default as string) || ''}
+                          className="h-10 shadow-sm font-medium bg-neutral-50/50 border-neutral-200"
+                          onChange={value => updateLocalVariable({ default: value })}
+                        />
+                      )}
+                    </div>
+                  ) : localVariable.type === InputVarTypeEnum.SELECT ? (
                     <Select
                       value={(() => {
                         const opts = (localVariable.options || [])
