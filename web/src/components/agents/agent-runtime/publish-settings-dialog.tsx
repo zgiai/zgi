@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
+  Boxes,
   Globe2,
   KeyRound,
   LayoutGrid,
@@ -512,6 +513,7 @@ export function PublishSettingsDialog({
                           grants={webAppGrants}
                           disabled={!canManage}
                           wholeOrganizationDisabled={!canUseWholeOrganization}
+                          showOwningWorkspaceDefault={Boolean(owningWorkspaceId)}
                           emptyText={t('picker.emptySelected')}
                           onUseWholeOrganization={() => requestWholeOrganization('webapp')}
                           onEdit={() => setPickerTarget('webapp')}
@@ -540,6 +542,7 @@ export function PublishSettingsDialog({
                       grants={appCenterGrants}
                       disabled={!canManage}
                       wholeOrganizationDisabled={!canUseWholeOrganization}
+                      showOwningWorkspaceDefault={Boolean(owningWorkspaceId)}
                       emptyText={t('picker.emptySelected')}
                       onUseWholeOrganization={() => requestWholeOrganization('app_center')}
                       onEdit={() => setPickerTarget('app_center')}
@@ -779,6 +782,7 @@ function AudienceSummaryPanel({
   grants,
   disabled,
   wholeOrganizationDisabled,
+  showOwningWorkspaceDefault,
   emptyText,
   onUseWholeOrganization,
   onEdit,
@@ -789,6 +793,7 @@ function AudienceSummaryPanel({
   grants: RuntimeAudienceGrant[];
   disabled: boolean;
   wholeOrganizationDisabled: boolean;
+  showOwningWorkspaceDefault: boolean;
   emptyText: string;
   onUseWholeOrganization: () => void;
   onEdit: () => void;
@@ -797,6 +802,8 @@ function AudienceSummaryPanel({
   const t = useT('agents.runtimeAccess');
   const selectedWholeOrganization = hasOrganizationGrant(grants);
   const selectedScopedGrants = scopedAudienceGrants(grants);
+  const showDefaultWorkspaceOnly =
+    showOwningWorkspaceDefault && !selectedWholeOrganization && selectedScopedGrants.length === 0;
 
   return (
     <div className="rounded-md border border-border/70 bg-muted/20 p-3">
@@ -842,6 +849,20 @@ function AudienceSummaryPanel({
             </span>
             <span className="mt-1 block text-xs leading-5 text-muted-foreground">
               {t('grants.wholeOrganizationSelectedDescription')}
+            </span>
+          </span>
+        </div>
+      ) : showDefaultWorkspaceOnly ? (
+        <div className="mt-3 flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/20 dark:text-emerald-300">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-emerald-200 bg-background dark:border-emerald-900/70">
+            <Boxes className="h-4 w-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-foreground">
+              {t('grants.owningWorkspaceDefaultTitle')}
+            </span>
+            <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+              {t('grants.owningWorkspaceDefaultDescription')}
             </span>
           </span>
         </div>

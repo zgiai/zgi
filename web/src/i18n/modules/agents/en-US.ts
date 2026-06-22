@@ -948,6 +948,9 @@ const messages = {
       wholeOrganizationSelectedTitle: 'Open to the whole organization',
       wholeOrganizationSelectedDescription:
         'Every member in the organization can see and use this entry. Switch to edit range to limit the audience.',
+      owningWorkspaceDefaultTitle: 'Owning workspace only',
+      owningWorkspaceDefaultDescription:
+        'No extra workspaces, departments, or members are selected. Members of the owning workspace can see and use this entry by default.',
     },
     picker: {
       webappDialogTitle: 'Select WebApp audience',

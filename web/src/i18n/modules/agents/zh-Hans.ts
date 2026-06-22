@@ -913,6 +913,9 @@ const messages: AgentsMessages = {
       wholeOrganizationSelectedTitle: '已开放给整个组织',
       wholeOrganizationSelectedDescription:
         '当前组织内所有成员都可以看到和使用该入口。若要限制范围，请改为编辑指定对象。',
+      owningWorkspaceDefaultTitle: '仅所属工作空间成员可见',
+      owningWorkspaceDefaultDescription:
+        '当前没有额外选择工作空间、部门或成员；所属工作空间成员默认可以看到和使用该入口。',
     },
     picker: {
       webappDialogTitle: '选择 WebApp 开放对象',
