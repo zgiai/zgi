@@ -15,6 +15,7 @@ import (
 
 type userInputGuardState struct {
 	guard               UserInputGuard
+	toolCallGuard       ToolCallGuard
 	round               int
 	skillUsed           bool
 	toolCallCount       int
@@ -60,6 +61,19 @@ func (r *Runner) handleProgressiveSkillCall(
 		if doc, ok := resolved.Get(skillID); ok && len(doc.Tools) == 0 {
 			trace := blockedSkillGuardrailTrace(skillID, toolName, "skill does not provide callable tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false)
+		}
+		if guardResult, blocked := runToolCallGuard(userInputGuard.toolCallGuard, ToolCallGuardRequest{
+			SkillID:             skillID,
+			ToolName:            toolName,
+			Arguments:           copyStringAnyMap(toolArgs),
+			Round:               userInputGuard.round,
+			SkillUsed:           userInputGuard.skillUsed,
+			ToolCallCount:       userInputGuard.toolCallCount,
+			AttemptedToolCalls:  append([]SkillToolCallRef{}, userInputGuard.attemptedToolCalls...),
+			SuccessfulToolCalls: append([]SkillToolCallRef{}, userInputGuard.successfulToolCalls...),
+		}); blocked {
+			trace := toolCallGuardrailTrace(guardResult, skillID, toolName, toolArgs)
+			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, toolCallGuardrailPayload(guardResult, skillID, toolName)), false, false)
 		}
 		if currentToolCalls >= maxBusinessToolCalls(resolved) {
 			err := fmt.Errorf("%w: too many skill tool calls", ErrInvalidInput)
@@ -350,6 +364,7 @@ func (r *Runner) handleCallSkillTool(
 	if summary := summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages); len(summary) > 0 {
 		invocation.Trace.Result = summary
 	}
+	guardToolResult := skillToolResultForGuard(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages, invocation.Trace.Result)
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),
 		"message_id", prepared.Message.ID.String(),
@@ -365,6 +380,7 @@ func (r *Runner) handleCallSkillTool(
 	if payload := clientActionRequiredPayload(prepared, invocation.Trace, callID); len(payload) > 0 {
 		r.emitEvent(EventClientActionRequired, payload)
 		result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+		result.toolResult = guardToolResult
 		result.pendingClientAction = payload
 		return result
 	}
@@ -372,11 +388,13 @@ func (r *Runner) handleCallSkillTool(
 		if payload := agentWorkflowResultPayload(invocation.Messages); len(payload) > 0 {
 			if strings.EqualFold(stringFromInterface(payload["status"]), "pending_approval") {
 				result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+				result.toolResult = guardToolResult
 				result.pendingApproval = payload
 				return result
 			}
 			if strings.EqualFold(stringFromInterface(payload["status"]), "pending_question") {
 				result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+				result.toolResult = guardToolResult
 				result.pendingQuestion = payload
 				return result
 			}
@@ -387,6 +405,7 @@ func (r *Runner) handleCallSkillTool(
 					answer = "工作流已运行，但未返回可展示输出。workflow_run_id: " + stringFromInterface(payload["workflow_run_id"])
 				}
 				result := terminalSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+				result.toolResult = guardToolResult
 				result.answer = answer
 				return result
 			}
@@ -394,10 +413,13 @@ func (r *Runner) handleCallSkillTool(
 	}
 	if toolGovernanceApprovalPending(invocation.Trace) {
 		result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+		result.toolResult = guardToolResult
 		result.pendingGovernance = toolGovernanceDecisionPayload(prepared, invocation.Trace)
 		return result
 	}
-	return successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+	result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+	result.toolResult = guardToolResult
+	return result
 }
 
 func toolGovernanceApprovalPending(trace skills.SkillTrace) bool {
@@ -451,6 +473,54 @@ func isAgentWorkflowRunTool(skillID string, toolName string) bool {
 }
 
 func agentWorkflowResultPayload(messages []tools.ToolInvokeMessage) map[string]interface{} {
+	for _, message := range messages {
+		if message.Type == tools.ToolInvokeMessageTypeJSON && len(message.Data) > 0 {
+			return message.Data
+		}
+	}
+	return nil
+}
+
+func skillToolResultForGuard(skillID string, toolName string, messages []tools.ToolInvokeMessage, summary map[string]interface{}) map[string]interface{} {
+	result := copyStringAnyMap(summary)
+	if !isFileGeneratorTool(skillID, toolName) {
+		return result
+	}
+	payload := firstJSONToolInvokePayload(messages)
+	if len(payload) == 0 {
+		return result
+	}
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	if id := strings.TrimSpace(firstNonEmptyString(payload["tool_file_id"], payload["file_id"])); id != "" {
+		result["tool_file_id"] = id
+		result["file_id"] = id
+	}
+	for _, key := range []string{"filename", "format", "mime_type", "size", "target", "download_url"} {
+		if value, ok := payload[key]; ok && value != nil && strings.TrimSpace(stringFromInterface(value)) != "" {
+			result[key] = value
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func isFileGeneratorTool(skillID string, toolName string) bool {
+	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillFileGenerator) {
+		return false
+	}
+	switch strings.TrimSpace(toolName) {
+	case "generate_file", "generate_docx", "generate_pdf", "generate_pptx":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstJSONToolInvokePayload(messages []tools.ToolInvokeMessage) map[string]interface{} {
 	for _, message := range messages {
 		if message.Type == tools.ToolInvokeMessageTypeJSON && len(message.Data) > 0 {
 			return message.Data

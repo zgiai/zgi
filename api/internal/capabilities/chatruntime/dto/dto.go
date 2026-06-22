@@ -55,6 +55,7 @@ type ToolGovernanceDecisionResponse struct {
 
 type ClientActionResultRequest struct {
 	Status           string                 `json:"status" binding:"required"`
+	Surface          string                 `json:"surface,omitempty"`
 	RuntimeContext   string                 `json:"runtime_context,omitempty"`
 	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
 	Result           map[string]interface{} `json:"result,omitempty"`

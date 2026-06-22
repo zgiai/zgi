@@ -417,6 +417,9 @@ func isManagedFileCreateIntent(query string) bool {
 	if text == "" {
 		return false
 	}
+	if hasManagedFileCreateNegation(text) {
+		return false
+	}
 	createTerms := []string{
 		"create", "generate", "save", "upload", "export", "write",
 		"\u521b\u5efa", "\u65b0\u5efa", "\u751f\u6210", "\u4fdd\u5b58", "\u4e0a\u4f20", "\u5bfc\u51fa", "\u5199\u5165",
@@ -425,7 +428,28 @@ func isManagedFileCreateIntent(query string) bool {
 		"file management", "files page", "current files page", "managed file", "workspace file",
 		"\u6587\u4ef6\u7ba1\u7406", "\u6587\u4ef6\u9875", "\u5f53\u524d\u6587\u4ef6\u9875", "\u6587\u4ef6\u5217\u8868", "\u5de5\u4f5c\u533a\u6587\u4ef6",
 	}
-	return containsAnySubstring(text, createTerms) && containsAnySubstring(text, targetTerms)
+	if !containsAnySubstring(text, createTerms) {
+		return false
+	}
+	if containsAnySubstring(text, targetTerms) {
+		return true
+	}
+	fileTerms := []string{"file", "\u6587\u4ef6"}
+	managementTerms := []string{"management", "manage", "\u7ba1\u7406", "\u7ba1\u7406\u9875", "\u7ba1\u7406\u91cc", "\u7ba1\u7406\u91cc\u9762"}
+	return containsAnySubstring(text, fileTerms) && containsAnySubstring(text, managementTerms)
+}
+
+func hasManagedFileCreateNegation(text string) bool {
+	negativePhrases := []string{
+		"do not save", "don't save", "dont save", "not save", "without saving", "temporary only",
+		"do not add", "don't add", "dont add", "do not upload", "don't upload", "dont upload",
+		"\u4e0d\u8981\u4fdd\u5b58", "\u4e0d\u7528\u4fdd\u5b58", "\u4e0d\u4fdd\u5b58", "\u65e0\u9700\u4fdd\u5b58", "\u522b\u4fdd\u5b58",
+		"\u4e0d\u8981\u5b58", "\u4e0d\u7528\u5b58", "\u522b\u5b58",
+		"\u4e0d\u8981\u6dfb\u52a0", "\u4e0d\u7528\u6dfb\u52a0", "\u522b\u6dfb\u52a0",
+		"\u4e0d\u8981\u4e0a\u4f20", "\u4e0d\u7528\u4e0a\u4f20", "\u522b\u4e0a\u4f20",
+		"\u4ec5\u4e34\u65f6", "\u53ea\u751f\u6210\u4e34\u65f6", "\u4e34\u65f6\u5373\u53ef",
+	}
+	return containsAnySubstring(text, negativePhrases)
 }
 
 func collectConsoleFilesFileIDs(parts *chatRequestParts) []string {

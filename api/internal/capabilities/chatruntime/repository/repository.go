@@ -22,6 +22,7 @@ type ConversationRepository interface {
 	GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 	ListScoped(ctx context.Context, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
+	ListByCallerSurfaceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, surface string, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	DeleteScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) error
@@ -223,6 +224,20 @@ func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organiz
 	return conversations, total, nil
 }
 
+func (r *conversationRepository) ListByCallerSurfaceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, surface string, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
+	var conversations []*runtimemodel.Conversation
+	var total int64
+	query := applyConversationSurfaceFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), surface)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
+	}
+	if err := query.Order("updated_at DESC, created_at DESC, id DESC").Limit(limit).Offset(offset).Find(&conversations).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to list chat runtime conversations: %w", err)
+	}
+	return conversations, total, nil
+}
+
 func applyCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID) *gorm.DB {
 	if callerType == "" {
 		callerType = runtimemodel.ConversationCallerAIChat
@@ -232,6 +247,41 @@ func applyCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID) *
 		return query.Where("caller_id = ?", *callerID)
 	}
 	return query.Where("caller_id IS NULL")
+}
+
+func applyConversationSurfaceFilter(query *gorm.DB, surface string) *gorm.DB {
+	surface = strings.TrimSpace(surface)
+	if surface == "" {
+		return query
+	}
+	if surface == "work_chat" {
+		return query.Where(`(
+			metadata->>'surface' = ?
+			OR (
+				(metadata->>'surface' IS NULL OR metadata->>'surface' = '')
+				AND NOT EXISTS (
+					SELECT 1 FROM chat_runtime_messages AS m
+					WHERE m.conversation_id = chat_runtime_conversations.id
+						AND m.deleted_at IS NULL
+						AND m.metadata->>'surface' IS NOT NULL
+						AND m.metadata->>'surface' <> ''
+						AND m.metadata->>'surface' <> ?
+				)
+			)
+		)`, surface, surface)
+	}
+	return query.Where(`(
+		metadata->>'surface' = ?
+		OR (
+			(metadata->>'surface' IS NULL OR metadata->>'surface' = '')
+			AND EXISTS (
+				SELECT 1 FROM chat_runtime_messages AS m
+				WHERE m.conversation_id = chat_runtime_conversations.id
+					AND m.deleted_at IS NULL
+					AND m.metadata->>'surface' = ?
+			)
+		)
+	)`, surface, surface)
 }
 
 func applyRuntimeLogCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID, alias string) *gorm.DB {

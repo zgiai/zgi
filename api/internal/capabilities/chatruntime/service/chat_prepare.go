@@ -45,7 +45,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
-	conversation, err := s.resolveChatConversation(ctx, scope, caller, req, parts.Query)
+	conversation, err := s.resolveChatConversation(ctx, scope, caller, req, parts.Query, parts.Surface)
 	if err != nil {
 		return nil, err
 	}
@@ -241,9 +241,9 @@ func (s *service) getConversation(ctx context.Context, scope Scope, id uuid.UUID
 	return conversation, nil
 }
 
-func (s *service) resolveChatConversation(ctx context.Context, scope Scope, caller Caller, req runtimedto.ChatRequest, query string) (*runtimemodel.Conversation, error) {
+func (s *service) resolveChatConversation(ctx context.Context, scope Scope, caller Caller, req runtimedto.ChatRequest, query, surface string) (*runtimemodel.Conversation, error) {
 	if strings.TrimSpace(req.ConversationID) == "" {
-		return s.createConversationForChat(ctx, scope, caller, query)
+		return s.createConversationForChat(ctx, scope, caller, query, surface)
 	}
 	conversationID, err := uuid.Parse(strings.TrimSpace(req.ConversationID))
 	if err != nil {
@@ -256,9 +256,9 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 	return conversation, nil
 }
 
-func (s *service) createConversationForChat(ctx context.Context, scope Scope, caller Caller, query string) (*runtimemodel.Conversation, error) {
+func (s *service) createConversationForChat(ctx context.Context, scope Scope, caller Caller, query, surface string) (*runtimemodel.Conversation, error) {
 	fallbackTitle := generateTitle(query)
-	conversation, err := s.CreateConversationForCaller(ctx, scope, caller, fallbackTitle)
+	conversation, err := s.createConversationForCaller(ctx, scope, caller, fallbackTitle, surface)
 	if err != nil {
 		return nil, err
 	}
@@ -361,6 +361,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 				return nil, err
 			}
 			applyRecentAssetCandidatesFromBranch(parts, branch)
+			applyRecentGeneratedArtifactsFromBranch(parts, branch)
 			result, err := s.buildTokenBudgetMessages(ctx, spec, parts, systemPrompt, branch)
 			if err != nil {
 				return nil, err
@@ -399,6 +400,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			mergeRecentExecutionContextMetadata(contextMetadata, recentExecutionMetadata)
 		}
 		applyRecentAssetCandidatesFromBranch(parts, branch)
+		applyRecentGeneratedArtifactsFromBranch(parts, branch)
 	}
 	messages = append(messages, adapter.Message{Role: "user", Content: currentContent})
 	return &contextBudgetResult{Messages: messages, Metadata: contextMetadata}, nil

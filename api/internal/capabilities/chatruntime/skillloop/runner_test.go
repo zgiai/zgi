@@ -934,6 +934,133 @@ Use the calculator tool.
 	}
 }
 
+func TestRunnerToolCallGuardBlocksToolBeforeExecutionAndReplans(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a required tool.
+when_to_use: Use when testing tool call guards.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"limited-calculator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_eval", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1+1",
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "continued after tool guard"},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "calculate after navigation"}},
+	})
+	guardCalls := 0
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		ToolCallGuard: func(req ToolCallGuardRequest) (FinalAnswerGuardResult, bool) {
+			guardCalls++
+			if req.SkillID != "limited-calculator" || req.ToolName != "evaluate_expression" {
+				t.Fatalf("tool call guard request = %#v, want limited-calculator/evaluate_expression", req)
+			}
+			return FinalAnswerGuardResult{
+				SkillID:       "console-navigator",
+				ToolName:      "navigate",
+				Message:       "navigate first",
+				SystemMessage: `call console-navigator/navigate with href "/console/files" before evaluating`,
+			}, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "continued after tool guard" {
+		t.Fatalf("answer = %q, want replanned answer", answer)
+	}
+	if guardCalls != 1 {
+		t.Fatalf("guard calls = %d, want 1", guardCalls)
+	}
+	if findRunnerTestEvent(events, EventSkillCallStart) != nil {
+		t.Fatalf("events = %#v, want no skill_call_start for guarded tool call", events)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want guard-triggered replan", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) < 3 || !runnerTestRequestContains(fakeLLM.appChatRequests[2], "navigate first") {
+		t.Fatalf("third planning request did not include tool guard feedback")
+	}
+	foundGuardrail := false
+	for _, trace := range traces {
+		if trace.Kind == "guardrail" && trace.ToolName == "navigate" && strings.Contains(trace.Error, "navigate first") {
+			foundGuardrail = true
+			break
+		}
+	}
+	if !foundGuardrail {
+		t.Fatalf("traces = %#v, want tool call guardrail trace", traces)
+	}
+}
+
 func TestRunnerFinalAnswerGuardAllowsAnswerAfterRequiredToolAttemptFails(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()

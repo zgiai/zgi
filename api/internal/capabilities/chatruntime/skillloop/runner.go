@@ -26,6 +26,7 @@ const (
 type skillStepResult struct {
 	trace               skills.SkillTrace
 	toolMessage         adapter.Message
+	toolResult          map[string]interface{}
 	answer              string
 	usedSkill           bool
 	usedTool            bool
@@ -191,6 +192,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			stepCount++
 			result := r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, userInputGuardState{
 				guard:               req.UserInputGuard,
+				toolCallGuard:       req.ToolCallGuard,
 				round:               round,
 				skillUsed:           skillUsed,
 				toolCallCount:       toolCallCount,
@@ -222,6 +224,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					SkillID:   strings.TrimSpace(result.trace.SkillID),
 					ToolName:  strings.TrimSpace(result.trace.ToolName),
 					Arguments: copyStringAnyMap(result.trace.Arguments),
+					Result:    copyStringAnyMap(result.toolResult),
 				})
 			}
 			if result.usedTool {
@@ -233,6 +236,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						SkillID:   strings.TrimSpace(result.trace.SkillID),
 						ToolName:  strings.TrimSpace(result.trace.ToolName),
 						Arguments: copyStringAnyMap(result.trace.Arguments),
+						Result:    copyStringAnyMap(result.toolResult),
 					})
 					finalAnswerGuardBlockCount = 0
 				}
@@ -381,6 +385,21 @@ func runUserInputGuard(guard UserInputGuard, req UserInputGuardRequest) (FinalAn
 	return result, true
 }
 
+func runToolCallGuard(guard ToolCallGuard, req ToolCallGuardRequest) (FinalAnswerGuardResult, bool) {
+	if guard == nil {
+		return FinalAnswerGuardResult{}, false
+	}
+	result, blocked := guard(req)
+	if !blocked {
+		return FinalAnswerGuardResult{}, false
+	}
+	result.Message = strings.TrimSpace(result.Message)
+	if result.Message == "" {
+		result.Message = "The requested skill tool call was blocked because it would run the task in the wrong order. Continue planning and call the required skill/tool first."
+	}
+	return result, true
+}
+
 func finalAnswerGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {
 	return skills.SkillTrace{
 		Kind:     "guardrail",
@@ -392,6 +411,18 @@ func finalAnswerGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace 
 			"next_step": "continue_planning",
 		},
 	}
+}
+
+func toolCallGuardrailTrace(result FinalAnswerGuardResult, blockedSkillID string, blockedToolName string, blockedArguments map[string]interface{}) skills.SkillTrace {
+	trace := finalAnswerGuardrailTrace(result)
+	trace.Arguments = map[string]interface{}{
+		"blocked_tool": strings.TrimSpace(blockedSkillID) + "/" + strings.TrimSpace(blockedToolName),
+		"next_step":    "continue_planning",
+	}
+	if len(blockedArguments) > 0 {
+		trace.Arguments["blocked_arguments"] = summarizeSkillToolArguments(blockedSkillID, blockedToolName, blockedArguments)
+	}
+	return trace
 }
 
 func userInputGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {

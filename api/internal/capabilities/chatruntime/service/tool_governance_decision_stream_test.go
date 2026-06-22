@@ -16,8 +16,10 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/dto"
+	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	builtinfiles "github.com/zgiai/zgi/api/internal/modules/tools/builtin/files"
@@ -324,11 +326,11 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if err != nil {
 		t.Fatalf("RunToolGovernanceDecisionStream() error = %v", err)
 	}
-	if result.Status != runtimemodel.MessageStatusCompleted {
-		t.Fatalf("result status = %q, want completed", result.Status)
+	if result.Status != runtimemodel.MessageStatusWaitingClientAction {
+		t.Fatalf("result status = %q, want waiting_client_action", result.Status)
 	}
-	if result.Answer != "Deleted report.pdf." {
-		t.Fatalf("result answer = %q, want direct execution summary", result.Answer)
+	if result.Answer != "" {
+		t.Fatalf("result answer = %q, want empty answer before client observation", result.Answer)
 	}
 	if len(fileService.deleted) != 1 || fileService.deleted[0] != "file-1" {
 		t.Fatalf("deleted files = %#v, want one delete for approved file-1", fileService.deleted)
@@ -339,26 +341,8 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if len(llm.appChatRequests) != 0 {
 		t.Fatalf("AppChat requests = %d, want no model tool-planning calls", len(llm.appChatRequests))
 	}
-	if len(llm.streamRequests) != 1 {
-		t.Fatalf("AppChatStream requests = %d, want one execution-summary call", len(llm.streamRequests))
-	}
-	if toolGovernanceStreamRequestHasTool(llm.streamRequests[0], skills.MetaToolCallSkillTool) {
-		t.Fatalf("execution-summary request should not expose %s tool", skills.MetaToolCallSkillTool)
-	}
-	if !toolGovernanceStreamRequestContains(llm.streamRequests[0], "runtime has already executed the frozen invocation exactly once") {
-		t.Fatalf("execution-summary request missing direct execution context")
-	}
-	for _, hidden := range []string{
-		`"file_id"`,
-		`"deleted_count"`,
-		`"workspace_id"`,
-		"file-1",
-		"workspace-1",
-		"corr-approve",
-	} {
-		if toolGovernanceStreamRequestContains(llm.streamRequests[0], hidden) {
-			t.Fatalf("execution-summary request exposed %q in %q", hidden, toolGovernanceStreamRequestText(llm.streamRequests[0]))
-		}
+	if len(llm.streamRequests) != 0 {
+		t.Fatalf("AppChatStream requests = %d, want no summary call before client observation", len(llm.streamRequests))
 	}
 
 	metadataEvent, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, "corr-approve")
@@ -383,11 +367,152 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileManager, "delete_file", "success") {
 		t.Fatalf("metadata skill_invocations = %#v, want successful file-manager/delete_file tool call", message.Metadata["skill_invocations"])
 	}
+	if !toolGovernanceStreamHasInvocation(message.Metadata, "client_action", skills.SkillFileManager, "delete_file", "waiting_client_action") {
+		t.Fatalf("metadata skill_invocations = %#v, want waiting client action for delete_file", message.Metadata["skill_invocations"])
+	}
+	clientAction := governanceMapFromAny(message.Metadata["client_action_continuation"])
+	if clientAction["status"] != clientActionStatusWaiting || clientAction["action_type"] != "asset_observation" {
+		t.Fatalf("client_action_continuation = %#v, want waiting asset observation", clientAction)
+	}
 	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
 	if continuation["status"] != "approved" || continuation["approval_status"] != "approved" {
 		t.Fatalf("tool_governance_continuation = %#v, want approved", continuation)
 	}
 	assertToolGovernanceApprovedStreamEvents(t, events)
+}
+
+func TestRunClientActionContinuationStreamAssetObservationFinalizesWithoutTools(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	provider := "deepseek"
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	actionID := "asset_observation:corr-approve"
+	event := map[string]interface{}{
+		"action_id":   actionID,
+		"action_type": "asset_observation",
+		"status":      clientActionStatusWaiting,
+		"skill_id":    skills.SkillFileManager,
+		"tool_name":   "delete_file",
+		"effect":      "delete",
+		"asset_type":  "file",
+		"assets": []interface{}{
+			map[string]interface{}{"type": "file", "name": "report.pdf"},
+		},
+	}
+	metadata := mergeClientActionMetadata(map[string]interface{}{
+		"surface":              "sidebar",
+		"configured_skill_ids": []string{skills.SkillFileManager},
+	}, event)
+	metadata["client_action_continuation"] = compactSkillInvocation(event)
+
+	conversation := &runtimemodel.Conversation{
+		ID:                   conversationID,
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		CallerType:           runtimemodel.ConversationCallerAIChat,
+		Title:                "Files",
+		Status:               runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
+		CurrentLeafMessageID: &messageID,
+		Metadata:             map[string]interface{}{},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	message := &runtimemodel.Message{
+		ID:              messageID,
+		ConversationID:  conversationID,
+		Query:           "Delete report.pdf",
+		Status:          runtimemodel.MessageStatusWaitingClientAction,
+		ModelProvider:   &provider,
+		ModelName:       "deepseek-chat",
+		ModelParameters: map[string]interface{}{},
+		Metadata:        metadata,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	runtime := newToolGovernanceStreamSkillRuntime(t, &toolGovernanceStreamFileService{}, &toolGovernanceStreamWorkspacePermissionService{allowed: true})
+	llm := &toolGovernanceStreamLLM{
+		streamChunks: []string{"已确认 report.pdf 已从当前页面消失。"},
+	}
+	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
+	conversationRepo := &toolGovernanceStreamConversationRepo{conversation: conversation}
+	svc := NewServiceWithSkillRuntime(
+		&repository.Repositories{
+			Access:       toolGovernanceStreamAccessRepo{},
+			Conversation: conversationRepo,
+			Message:      messageRepo,
+			SkillConfig:  toolGovernanceStreamSkillConfigRepo{skillID: skills.SkillFileManager},
+		},
+		llm,
+		nil,
+		toolGovernanceStreamModelSpecResolver{},
+		nil,
+		nil,
+		nil,
+		runtime,
+		nil,
+	).(*service)
+	svc.events = newStreamEventStore(nil)
+
+	var events []StreamEvent
+	result, err := svc.RunClientActionContinuationStream(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		actionID,
+		runtimedto.ClientActionResultRequest{
+			Status:         "succeeded",
+			Surface:        "sidebar",
+			RuntimeContext: "当前文件页面已经刷新，report.pdf 不再出现在文件列表中。",
+			Result: map[string]interface{}{
+				"observed": true,
+			},
+		},
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunClientActionContinuationStream() error = %v", err)
+	}
+	if result.Status != runtimemodel.MessageStatusCompleted {
+		t.Fatalf("result status = %q, want completed", result.Status)
+	}
+	if result.Answer != "已确认 report.pdf 已从当前页面消失。" {
+		t.Fatalf("result answer = %q", result.Answer)
+	}
+	if len(llm.appChatRequests) != 0 {
+		t.Fatalf("AppChat planning requests = %d, want no skill loop replanning after asset observation", len(llm.appChatRequests))
+	}
+	if len(llm.streamRequests) != 1 {
+		t.Fatalf("AppChatStream requests = %d, want one final answer request", len(llm.streamRequests))
+	}
+	streamReq := llm.streamRequests[0]
+	if len(streamReq.Tools) != 0 || len(streamReq.Functions) != 0 || streamReq.ToolChoice != nil || streamReq.FunctionCall != nil {
+		t.Fatalf("client action final request tools = %#v functions = %#v tool_choice = %#v function_call = %#v, want none", streamReq.Tools, streamReq.Functions, streamReq.ToolChoice, streamReq.FunctionCall)
+	}
+	if !toolGovernanceStreamRequestContains(streamReq, "do not repeat the same side-effecting tool") {
+		t.Fatalf("client action final request missing continuation safety instruction: %q", toolGovernanceStreamRequestText(streamReq))
+	}
+	if !messageRepo.updateCompletedCalled {
+		t.Fatal("UpdateCompleted was not called")
+	}
+	if message.Status != runtimemodel.MessageStatusCompleted {
+		t.Fatalf("message status = %q, want completed", message.Status)
+	}
+	if !toolGovernanceStreamHasInvocation(message.Metadata, "client_action", skills.SkillFileManager, "delete_file", clientActionStatusSucceeded) {
+		t.Fatalf("metadata skill_invocations = %#v, want succeeded client action", message.Metadata["skill_invocations"])
+	}
+	for _, event := range events {
+		if event.EventType == streamEventSkillCallStart {
+			t.Fatalf("events = %#v, want no skill call after asset observation", events)
+		}
+	}
 }
 
 func TestBeginToolGovernanceContinuationRejectsAlreadyStreamingMessage(t *testing.T) {
@@ -819,6 +944,7 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 	seen := map[string]bool{}
 	var approvedDecision bool
 	var runtimeAllowedDecision bool
+	var clientActionRequired bool
 	for _, event := range events {
 		seen[event.EventType] = true
 		if event.EventType == streamEventToolGovernanceDecision && event.Payload["approval_status"] == "approved" {
@@ -836,13 +962,16 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 				t.Fatalf("delete_file event status = %#v, want success", event.Payload["status"])
 			}
 		}
+		if event.EventType == streamEventClientActionRequired && event.Payload["action_type"] == "asset_observation" {
+			clientActionRequired = true
+		}
 	}
 	for _, want := range []string{
 		streamEventMessageStart,
 		streamEventToolGovernanceDecision,
 		streamEventSkillCallStart,
 		streamEventSkillCallEnd,
-		streamEventMessage,
+		streamEventClientActionRequired,
 		streamEventMessageEnd,
 	} {
 		if !seen[want] {
@@ -854,6 +983,9 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 	}
 	if !runtimeAllowedDecision {
 		t.Fatalf("events = %#v, want runtime allowed tool governance decision", events)
+	}
+	if !clientActionRequired {
+		t.Fatalf("events = %#v, want asset observation client action", events)
 	}
 }
 
@@ -1049,6 +1181,13 @@ func (r *toolGovernanceStreamConversationRepo) UpdateMetadata(_ context.Context,
 	return nil
 }
 
+func (r *toolGovernanceStreamConversationRepo) FinishContinuationMessage(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
+	r.conversation.RuntimeStatus = runtimemodel.ConversationRuntimeStatusIdle
+	r.conversation.ActiveMessageID = nil
+	r.conversation.UpdatedAt = time.Now()
+	return nil
+}
+
 type toolGovernanceStreamMessageRepo struct {
 	repository.MessageRepository
 	message                       *runtimemodel.Message
@@ -1075,6 +1214,13 @@ func (r *toolGovernanceStreamMessageRepo) UpdateMetadata(_ context.Context, _ uu
 
 func (r *toolGovernanceStreamMessageRepo) UpdateMetadataAnyStatus(_ context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
 	r.updateMetadataAnyStatusCalled = true
+	r.message.Metadata = copyStringAnyMap(metadata)
+	r.message.UpdatedAt = time.Now()
+	return nil
+}
+
+func (r *toolGovernanceStreamMessageRepo) UpdateWaitingClientAction(_ context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
+	r.message.Status = runtimemodel.MessageStatusWaitingClientAction
 	r.message.Metadata = copyStringAnyMap(metadata)
 	r.message.UpdatedAt = time.Now()
 	return nil
@@ -1137,6 +1283,17 @@ func (s *toolGovernanceStreamFileService) GetFile(_ context.Context, fileID stri
 		return "", errors.New("file content not found")
 	}
 	return content, nil
+}
+
+func (s *toolGovernanceStreamFileService) UploadFile(context.Context, string, []byte, string, string, string, filemodel.CreatedByRole, *interfaces.FileSource, *string, bool, bool) (*dto.UploadFile, error) {
+	return nil, errors.New("upload not supported in this test")
+}
+
+func (s *toolGovernanceStreamFileService) GetFileURL(_ context.Context, fileID string) (string, error) {
+	if s == nil || s.files[fileID] == nil {
+		return "", errors.New("file not found")
+	}
+	return "https://files.example/" + fileID, nil
 }
 
 func (s *toolGovernanceStreamFileService) DeleteFiles(_ context.Context, fileIDs []string) error {

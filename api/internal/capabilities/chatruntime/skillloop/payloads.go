@@ -80,6 +80,9 @@ func assetObservationClientActionRequiredPayload(prepared *PreparedChat, trace s
 	if !strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
 		return nil
 	}
+	if isTemporaryFileGenerationTrace(trace) {
+		return nil
+	}
 	audit := assetOperationAuditFromTrace(trace)
 	if len(audit) == 0 {
 		return nil
@@ -136,6 +139,18 @@ func assetOperationAuditFromTrace(trace skills.SkillTrace) map[string]interface{
 		return copyStringAnyMap(audit)
 	}
 	return nil
+}
+
+func isTemporaryFileGenerationTrace(trace skills.SkillTrace) bool {
+	if !strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillFileGenerator) {
+		return false
+	}
+	switch strings.TrimSpace(trace.ToolName) {
+	case "generate_file", "generate_docx", "generate_pdf", "generate_pptx":
+		return true
+	default:
+		return false
+	}
 }
 
 func requiresAssetObservation(effect string) bool {
@@ -392,5 +407,21 @@ func userInputGuardrailPayload(result FinalAnswerGuardResult, blockedMessage str
 		"skill_id":          strings.TrimSpace(result.SkillID),
 		"tool_name":         strings.TrimSpace(result.ToolName),
 		"next_step":         "continue planning and call the required skill/tool instead of asking the user to clarify information already resolved in runtime context",
+	}
+}
+
+func toolCallGuardrailPayload(result FinalAnswerGuardResult, blockedSkillID string, blockedToolName string) map[string]interface{} {
+	nextStep := strings.TrimSpace(result.SystemMessage)
+	if nextStep == "" {
+		nextStep = strings.TrimSpace(result.Message)
+	}
+	return map[string]interface{}{
+		"error":          strings.TrimSpace(result.Message),
+		"status":         "blocked",
+		"blocked_tool":   strings.TrimSpace(blockedSkillID) + "/" + strings.TrimSpace(blockedToolName),
+		"skill_id":       strings.TrimSpace(result.SkillID),
+		"tool_name":      strings.TrimSpace(result.ToolName),
+		"model_feedback": nextStep,
+		"next_step":      "continue planning with the required skill/tool before retrying the blocked action",
 	}
 }

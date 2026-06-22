@@ -490,6 +490,43 @@ func TestConsoleFilesActionDecisionDoesNotMatchProfileReadCapability(t *testing.
 	}
 }
 
+func TestManagedFileCreateIntentRespectsNegativeSaveRequest(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{
+			name:  "explicit file management create",
+			query: "请在文件管理中创建一个 md 文件",
+			want:  true,
+		},
+		{
+			name:  "negative file management save",
+			query: "请生成一个临时 md 文件，不要保存到文件管理",
+			want:  false,
+		},
+		{
+			name:  "english negative file management save",
+			query: "generate a temporary md file, do not save it to file management",
+			want:  false,
+		},
+		{
+			name:  "referenced file upload to management page",
+			query: "\u5bfc\u822a\u540e\uff0c\u5982\u679c\u4e0d\u5728\u7ba1\u7406\u9875\u9762\uff0c\u5c31\u628a\u8fd9\u4e2a\u6587\u4ef6\u4e0a\u4f20\u5230\u7ba1\u7406\u91cc\u9762",
+			want:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isManagedFileCreateIntent(tt.query); got != tt.want {
+				t.Fatalf("isManagedFileCreateIntent(%q) = %v, want %v", tt.query, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConsoleFilesActionDecisionIgnoresRuntimeContextOnlySpoof(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:          "read this file",

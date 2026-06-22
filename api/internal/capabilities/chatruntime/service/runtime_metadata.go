@@ -65,6 +65,7 @@ func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
+	metadata = mergeConversationArtifactMetadata(metadata, artifact)
 	storedArtifact := persistentGeneratedArtifact(artifact)
 	files := generatedFilesFromMetadata(metadata["generated_files"])
 	fileID := stringFromAny(storedArtifact["file_id"])
@@ -861,12 +862,27 @@ func upsertSkillInvocation(current []map[string]interface{}, incoming map[string
 			return current
 		}
 	}
+	for index, invocation := range current {
+		if sameInvocationIdentity(invocation, incoming) && shouldMergeClosedInvocation(invocation, incoming) {
+			current[index] = mergeInvocation(invocation, incoming)
+			return current
+		}
+	}
 	for _, invocation := range current {
 		if reflect.DeepEqual(invocation, incoming) {
 			return current
 		}
 	}
 	return append(current, incoming)
+}
+
+func shouldMergeClosedInvocation(existing map[string]interface{}, incoming map[string]interface{}) bool {
+	if strings.TrimSpace(stringFromAny(existing["kind"])) != "guardrail" ||
+		strings.TrimSpace(stringFromAny(incoming["kind"])) != "guardrail" {
+		return false
+	}
+	return strings.TrimSpace(stringFromAny(existing["message"])) == strings.TrimSpace(stringFromAny(incoming["message"])) &&
+		strings.TrimSpace(stringFromAny(existing["error"])) == strings.TrimSpace(stringFromAny(incoming["error"]))
 }
 
 func mergeInvocation(existing map[string]interface{}, incoming map[string]interface{}) map[string]interface{} {

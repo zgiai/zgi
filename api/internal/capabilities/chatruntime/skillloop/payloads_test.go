@@ -52,6 +52,38 @@ func TestClientActionRequiredPayloadEmitsObservationForPublishEffect(t *testing.
 	}
 }
 
+func TestClientActionRequiredPayloadSkipsTemporaryFileGeneration(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Status:   "success",
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "file.generate",
+				Effect:    toolgovernance.EffectCreate,
+				AssetType: "file",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "file.generate",
+				"effect":     "create",
+				"asset_type": "file",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":   "tool-file-1",
+						"type": "file",
+						"name": "temporary.md",
+					},
+				},
+			},
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-generate"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for temporary file generation", payload)
+	}
+}
+
 func TestSummarizeSkillToolResultCompactsAgentKnowledgePayload(t *testing.T) {
 	result := summarizeSkillToolResult("agent-knowledge", "retrieve_agent_knowledge", []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,

@@ -251,6 +251,7 @@ func TestAddContextualAIChatSkillIDsAddsFileGeneratorForConsoleFileCreateCapabil
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillFileGenerator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillFileManager, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 	}
 	parts := consoleFilesCreateCapabilityTestParts("create a txt file in File Management")
@@ -262,7 +263,7 @@ func TestAddContextualAIChatSkillIDsAddsFileGeneratorForConsoleFileCreateCapabil
 		catalog,
 		parts,
 	)
-	want := []string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileGenerator}
+	want := []string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("contextual skills = %#v, want %#v", got, want)
 	}
@@ -286,28 +287,21 @@ func TestAddContextualAIChatSkillIDsAddsConsoleNavigatorForSidebar(t *testing.T)
 	}
 }
 
-func TestAddContextualAIChatSkillIDsRespectsOrganizationDisabledSkill(t *testing.T) {
+func TestAddContextualAIChatSkillIDsRespectsOrganizationDisabledUserSelectableSkill(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillFileManager, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 	}
-	parts := &chatRequestParts{
-		Surface:        aiChatSurfaceContextualSidebar,
-		RuntimeContext: "route=/console/files capabilities=file.delete",
-		RawOperationContext: map[string]interface{}{
-			"capabilities": []interface{}{
-				map[string]interface{}{"id": "file.delete"},
-			},
-		},
-	}
+	parts := contextualConsoleFilesAllCapabilityPartsForTest()
 
-	got := addContextualAIChatSkillIDs(
+	got := addContextualAIChatSkillIDsWithCapabilities(
 		[]string{skills.SkillCalculator},
 		[]string{skills.SkillCalculator},
 		catalog,
 		parts,
+		contextualAIChatSkillCapabilities{FileRead: true},
 	)
 	want := []string{skills.SkillCalculator}
 	if !reflect.DeepEqual(got, want) {
@@ -345,7 +339,6 @@ func TestAddContextualAIChatSkillIDsWithCapabilitiesUsesTrustedCapabilities(t *t
 		skills.SkillCalculator,
 		skills.SkillConsoleNavigator,
 		skills.SkillFileGenerator,
-		skills.SkillFileManager,
 		skills.SkillFileReader,
 	}
 	parts := contextualConsoleFilesAllCapabilityPartsForTest()
@@ -422,6 +415,31 @@ func TestTrustedContextualAIChatSkillCapabilitiesUseWorkspacePermissions(t *test
 	}
 }
 
+func TestTrustedContextualAIChatSkillCapabilitiesUsesOperationContextWorkspace(t *testing.T) {
+	workspaceID := uuid.New()
+	parts := contextualConsoleFilesAllCapabilityPartsForTest()
+	resources := parts.RawOperationContext["resources"].([]interface{})
+	fileResource := resources[1].(map[string]interface{})
+	metadata := fileResource["metadata"].(map[string]interface{})
+	metadata["workspace_id"] = workspaceID.String()
+
+	permissionService := &skillConfigWorkspacePermissionService{
+		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
+			workspacemodel.WorkspacePermissionFileDownload:     true,
+			workspacemodel.WorkspacePermissionFileManage:       true,
+			workspacemodel.WorkspacePermissionFileUploadCreate: true,
+		},
+	}
+	got := (&service{workspacePerms: permissionService}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
+		OrganizationID: uuid.New(),
+		AccountID:      uuid.New(),
+	}, parts)
+	want := contextualAIChatSkillCapabilities{Navigation: true, FileRead: true, FileDelete: true, FileCreate: true}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("trusted contextual capabilities from operation context workspace = %#v, want %#v", got, want)
+	}
+}
+
 func TestFilterAIChatSkillIDsForSurfaceRemovesNavigatorOutsideSidebar(t *testing.T) {
 	got := filterAIChatSkillIDsForSurface(
 		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileManager, skills.SkillFileReader},
@@ -455,14 +473,16 @@ func TestFilterAIChatSkillIDsForSurfaceRemovesSystemAssetSkillsFromExternalPageC
 		[]string{
 			skills.SkillCalculator,
 			skills.SkillConsoleNavigator,
+			skills.SkillFileGenerator,
 			skills.SkillFileManager,
 			skills.SkillFileReader,
+			skills.SkillChartGenerator,
 			skills.SkillInternalDatabase,
 			skills.SkillInternalKnowledge,
 		},
 		&chatRequestParts{Surface: aiChatSurfaceExternalPageChat},
 	)
-	want := []string{skills.SkillCalculator, skills.SkillFileReader}
+	want := []string{skills.SkillCalculator, skills.SkillChartGenerator, skills.SkillFileGenerator, skills.SkillFileReader}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("external page chat skills = %#v, want %#v", got, want)
 	}

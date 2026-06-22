@@ -177,6 +177,36 @@ func TestRegenerateRequestCarriesOperationContext(t *testing.T) {
 	}
 }
 
+func TestRegenerateRequestInheritsMessageSurfaceWhenOmitted(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query:           "open the agents page",
+		ModelName:       "test-model",
+		ModelParameters: map[string]interface{}{},
+		Metadata: map[string]interface{}{
+			"surface": aiChatSurfaceContextualSidebar,
+		},
+	}
+
+	parts, err := normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{}, message)
+	if err != nil {
+		t.Fatalf("normalizeRegenerateRequest() error = %v", err)
+	}
+	if parts.Surface != aiChatSurfaceContextualSidebar {
+		t.Fatalf("surface = %q, want inherited %q", parts.Surface, aiChatSurfaceContextualSidebar)
+	}
+
+	override := aiChatSurfaceExternalPageChat
+	parts, err = normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{
+		Surface: override,
+	}, message)
+	if err != nil {
+		t.Fatalf("normalizeRegenerateRequest() with override error = %v", err)
+	}
+	if parts.Surface != override {
+		t.Fatalf("surface = %q, want explicit override %q", parts.Surface, override)
+	}
+}
+
 func TestOperationContextDoesNotEnterModelContentAndRuntimeContextRemainsTransient(t *testing.T) {
 	svc := &service{}
 	runtimeContext := "Page /console/resources with selected chips."

@@ -272,7 +272,7 @@ func (h *Handler) ListConversations(c *gin.Context) {
 		return
 	}
 	page, limit := pagination(c, 1, defaultConversationPageLimit, maxConversationPageLimit)
-	conversations, total, err := h.service.ListConversations(c.Request.Context(), scope, page, limit)
+	conversations, total, err := h.service.ListConversationsBySurface(c.Request.Context(), scope, c.Query("surface"), page, limit)
 	if err != nil {
 		h.fail(c, err)
 		return

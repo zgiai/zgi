@@ -93,6 +93,7 @@ func (s *service) runPreparedSkillStreamWithFinalAnswerGuard(
 		AdditionalSystemMessages: skillLoopAdditionalSystemMessages(prepared),
 		FinalAnswerGuard:         combineFinalAnswerGuards(extraFinalAnswerGuard, skillLoopFinalAnswerGuard(prepared)),
 		UserInputGuard:           skillLoopUserInputGuard(prepared),
+		ToolCallGuard:            skillLoopToolCallGuard(prepared),
 		OnChunk:                  onChunk,
 	})
 }
@@ -178,8 +179,11 @@ func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message
 	if prepared == nil {
 		return nil
 	}
-	messages := make([]adapter.Message, 0, 3)
+	messages := make([]adapter.Message, 0, 4)
 	if message, ok := agentWorkflowAvailableBindingsMessage(prepared.RunConfig.WorkflowBindings); ok {
+		messages = append(messages, message)
+	}
+	if message, ok := contextualAIChatTurnStrategyMessage(prepared); ok {
 		messages = append(messages, message)
 	}
 	if message, ok := contextualConsoleNavigationSkillMessage(prepared); ok {
@@ -189,6 +193,265 @@ func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message
 		messages = append(messages, message)
 	}
 	return messages
+}
+
+func contextualAIChatTurnStrategyMessage(prepared *PreparedChat) (adapter.Message, bool) {
+	if prepared == nil || prepared.parts == nil || !isContextualAIChatSurface(prepared.parts.Surface) {
+		return adapter.Message{}, false
+	}
+	if len(prepared.parts.SkillIDs) == 0 || prepared.parts.SkillMode == skillModeDisabled {
+		return adapter.Message{}, false
+	}
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if len(strategy) == 0 {
+		return adapter.Message{}, false
+	}
+	encoded, err := json.Marshal(strategy)
+	if err != nil {
+		return adapter.Message{}, false
+	}
+	content := strings.Join([]string{
+		"ZGI AIChat turn strategy guidance:",
+		"This is a soft execution strategy for the current user turn, not a fixed action runtime plan.",
+		"Use it to choose the first useful skill/tool, but revise the plan when tool results, governance, or client actions provide new evidence.",
+		"Do not expose this strategy JSON, internal IDs, or raw fields to the user.",
+		"Turn strategy JSON: " + string(encoded),
+	}, "\n")
+	return adapter.Message{Role: "system", Content: content}, true
+}
+
+func contextualAIChatTurnStrategy(prepared *PreparedChat) map[string]interface{} {
+	if prepared == nil || prepared.parts == nil {
+		return nil
+	}
+	parts := prepared.parts
+	strategy := map[string]interface{}{
+		"surface":            normalizeAIChatSurface(parts.Surface),
+		"current_page":       contextualTurnCurrentPage(parts),
+		"intent":             "answer_or_explain_zgi_context",
+		"target_page":        contextualTurnCurrentPage(parts),
+		"route_required":     false,
+		"primary_skills":     []string{},
+		"supporting_skills":  []string{},
+		"asset_effect":       "none",
+		"asset_risk":         "low",
+		"approval":           "none",
+		"success_criteria":   []string{"answer from the current ZGI page context and enabled skills"},
+		"observation_points": []string{"current_page_context"},
+	}
+
+	if target, ok := resolveConsoleNavigationTargetForPrepared(prepared); ok {
+		strategy["target_page"] = target.Href
+		routeRequired := !clientActionContinuationLoadedRoute(parts, target.Href)
+		if consoleNavigationLoadedHrefMatchesTarget(target.Href, "/console/files") && consoleFilesRouteAlreadyAvailable(parts) {
+			routeRequired = false
+		}
+		strategy["route_required"] = routeRequired
+		if routeRequired && skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+			strategy["primary_skills"] = appendUniqueStrings(nil, skills.SkillConsoleNavigator)
+		}
+	}
+
+	switch {
+	case isManagedFileCreateIntent(parts.Query):
+		return contextualManagedFileCreateStrategy(prepared, strategy)
+	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
+		isFileDeleteIntent(parts.Query):
+		return contextualFileDeleteStrategy(parts, strategy)
+	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
+		isFileReadIntent(parts.Query):
+		return contextualFileReadStrategy(parts, strategy)
+	case isConsoleNavigationIntent(parts.Query):
+		return contextualNavigationStrategy(parts, strategy)
+	default:
+		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+			strategy["supporting_skills"] = appendUniqueStrings(stringSliceInterface(strategy["supporting_skills"]), skills.SkillConsoleNavigator)
+		}
+		return strategy
+	}
+}
+
+func contextualManagedFileCreateStrategy(prepared *PreparedChat, strategy map[string]interface{}) map[string]interface{} {
+	parts := prepared.parts
+	strategy["intent"] = "save_generated_file_to_file_management"
+	strategy["target_page"] = consoleFilesRouteHint().Href
+	strategy["asset_effect"] = "create"
+	strategy["asset_risk"] = "medium"
+	strategy["approval"] = "file-manager/save_file_to_management is governed; approval depends on the user's permission tier"
+	strategy["success_criteria"] = []string{
+		"Files page context is loaded before File Management mutation when needed",
+		"exactly one temporary artifact is selected for the request",
+		"file-manager/save_file_to_management succeeds for that artifact",
+		"asset observation or refreshed page context confirms the created file is visible",
+	}
+	strategy["observation_points"] = []string{"route_loaded:/console/files", "asset_observation:file.create", "files_page_visible_list"}
+
+	primary := stringSliceInterface(strategy["primary_skills"])
+	supporting := stringSliceInterface(strategy["supporting_skills"])
+	if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
+		strategy["route_required"] = true
+		primary = appendUniqueStrings(primary, skills.SkillConsoleNavigator)
+		supporting = appendUniqueStrings(supporting, skills.SkillFileManager)
+		if len(parts.RecentGeneratedArtifacts) == 0 {
+			supporting = appendArtifactProducerSkills(supporting, parts)
+		}
+	} else if len(parts.RecentGeneratedArtifacts) > 0 {
+		primary = appendUniqueStrings(primary, skills.SkillFileManager)
+		strategy["artifact_source"] = "recent_generated_file"
+		strategy["avoid"] = []string{"do not generate another file when the user refers to a recent generated file"}
+	} else {
+		primary = appendArtifactProducerSkills(primary, parts)
+		primary = appendUniqueStrings(primary, skills.SkillFileManager)
+	}
+	strategy["primary_skills"] = primary
+	strategy["supporting_skills"] = supporting
+	return strategy
+}
+
+func contextualFileDeleteStrategy(parts *chatRequestParts, strategy map[string]interface{}) map[string]interface{} {
+	strategy["intent"] = "delete_visible_file"
+	strategy["target_page"] = "/console/files"
+	strategy["route_required"] = false
+	strategy["asset_effect"] = "delete"
+	strategy["asset_risk"] = "high"
+	strategy["approval"] = "file-manager/delete_file always requires governed approval unless an approved session grant applies"
+	if skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
+		strategy["primary_skills"] = appendUniqueStrings(stringSliceInterface(strategy["primary_skills"]), skills.SkillFileManager)
+	}
+	strategy["success_criteria"] = []string{
+		"resolved visible file target is used as the tool argument",
+		"file-manager/delete_file succeeds or reports the actual failure",
+		"asset observation or refreshed page context confirms deletion state",
+	}
+	strategy["observation_points"] = []string{"resolved_files_page_target", "asset_observation:file.delete", "files_page_visible_list"}
+	return strategy
+}
+
+func contextualFileReadStrategy(parts *chatRequestParts, strategy map[string]interface{}) map[string]interface{} {
+	strategy["intent"] = "read_visible_file_content"
+	strategy["target_page"] = "/console/files"
+	strategy["route_required"] = false
+	strategy["asset_effect"] = "read"
+	strategy["asset_risk"] = "low"
+	strategy["approval"] = "none for ordinary file read when workspace permissions allow it"
+	if skillIDEnabled(parts.SkillIDs, skills.SkillFileReader) {
+		strategy["primary_skills"] = appendUniqueStrings(stringSliceInterface(strategy["primary_skills"]), skills.SkillFileReader)
+	}
+	strategy["success_criteria"] = []string{
+		"resolved visible file target is used as the tool argument",
+		"file-reader/read_file returns extracted content or an explicit read failure",
+		"final answer is based on the returned file content instead of page metadata only",
+	}
+	strategy["observation_points"] = []string{"resolved_files_page_target", "read_file_result"}
+	return strategy
+}
+
+func contextualNavigationStrategy(parts *chatRequestParts, strategy map[string]interface{}) map[string]interface{} {
+	strategy["intent"] = "navigate_console_page"
+	strategy["asset_effect"] = "none"
+	strategy["asset_risk"] = "low"
+	strategy["approval"] = "none"
+	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+		strategy["primary_skills"] = appendUniqueStrings(stringSliceInterface(strategy["primary_skills"]), skills.SkillConsoleNavigator)
+	}
+	strategy["success_criteria"] = []string{
+		"console-navigator/navigate succeeds for the resolved route",
+		"frontend client action reports route_loaded for the same href",
+		"the same AIChat turn continues from updated page context",
+	}
+	strategy["observation_points"] = []string{"route_navigation_client_action", "updated_page_context"}
+	return strategy
+}
+
+func appendArtifactProducerSkills(values []string, parts *chatRequestParts) []string {
+	if parts == nil {
+		return values
+	}
+	if skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) && isChartVisualizationIntent(parts.Query) {
+		return appendUniqueStrings(values, skills.SkillChartGenerator)
+	}
+	if skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) {
+		values = appendUniqueStrings(values, skills.SkillFileGenerator)
+	}
+	if skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) {
+		values = appendUniqueStrings(values, skills.SkillChartGenerator)
+	}
+	return values
+}
+
+func contextualTurnCurrentPage(parts *chatRequestParts) string {
+	if parts == nil {
+		return ""
+	}
+	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		for _, resource := range mapSliceFromAny(source["resources"]) {
+			if strings.TrimSpace(stringFromAny(resource["resource_type"])) != "page" {
+				continue
+			}
+			if href := normalizeConsoleNavigationGuardHref(stringFromAny(resource["href"])); href != "" {
+				return href
+			}
+			if metadata := governanceMapFromAny(resource["metadata"]); len(metadata) > 0 {
+				if route := normalizeConsoleNavigationGuardHref(stringFromAny(metadata["route"])); route != "" {
+					return route
+				}
+			}
+		}
+		if metadata := governanceMapFromAny(source["metadata"]); len(metadata) > 0 {
+			if route := normalizeConsoleNavigationGuardHref(stringFromAny(metadata["route"])); route != "" {
+				return route
+			}
+		}
+	}
+	if isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return "/console/files"
+	}
+	return ""
+}
+
+func appendUniqueStrings(values []string, additions ...string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values)+len(additions))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	for _, value := range additions {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func stringSliceInterface(value interface{}) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(stringFromAny(item)); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 type consoleNavigationRouteHint struct {
@@ -237,7 +500,8 @@ func contextualConsoleNavigationSkillMessage(prepared *PreparedChat) (adapter.Me
 		"tool_name": "navigate",
 		"routes":    routes,
 	}
-	if target, ok := resolveConsoleNavigationTarget(prepared.parts.Query); ok {
+	target, hasResolvedTarget := resolveConsoleNavigationTargetForPrepared(prepared)
+	if hasResolvedTarget {
 		payload["resolved_target_from_user_request"] = map[string]string{
 			"href":  target.Href,
 			"label": target.Label,
@@ -251,6 +515,7 @@ func contextualConsoleNavigationSkillMessage(prepared *PreparedChat) (adapter.Me
 	content := strings.Join([]string{
 		"ZGI console navigation guidance:",
 		"Use console-navigator/navigate when the user asks to open, go to, enter, switch to, or navigate to a known ZGI console module page.",
+		"When the user explicitly asks to create, save, upload, import, or write a file into File Management from another console page, navigate to /console/files before generating temporary files or saving into File Management.",
 		"Do not use request_user_input when the destination is resolved from the site map.",
 		"Do not say a page has been opened unless console-navigator/navigate succeeded in this turn. If the navigate tool fails, report that failure plainly.",
 		"Navigation does not mutate user assets and must use only whitelisted internal /console routes.",
@@ -270,12 +535,14 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 	fileReaderEnabled := skillIDEnabled(parts.SkillIDs, skills.SkillFileReader)
 	fileManagerEnabled := skillIDEnabled(parts.SkillIDs, skills.SkillFileManager)
 	fileGeneratorEnabled := skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator)
-	if !fileReaderEnabled && !fileManagerEnabled && !fileGeneratorEnabled {
+	chartGeneratorEnabled := skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator)
+	artifactProducerEnabled := fileGeneratorEnabled || chartGeneratorEnabled
+	if !fileReaderEnabled && !fileManagerEnabled && !artifactProducerEnabled {
 		return adapter.Message{}, false
 	}
 	hasRead := fileReaderEnabled && hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
 	hasDelete := fileManagerEnabled && hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext)
-	hasCreate := fileGeneratorEnabled && hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
+	hasCreate := artifactProducerEnabled && fileManagerEnabled && hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
 	if !hasRead && !hasDelete && !hasCreate {
 		return adapter.Message{}, false
 	}
@@ -283,6 +550,9 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 	payload := map[string]interface{}{
 		"page":          "console.files",
 		"visible_files": consoleFilesPromptVisibleFiles(parts),
+	}
+	if recentGeneratedFiles := consoleFilesPromptRecentGeneratedFiles(parts); len(recentGeneratedFiles) > 0 {
+		payload["recent_generated_files"] = recentGeneratedFiles
 	}
 	preferredSkills := []string{}
 	if hasRead {
@@ -292,7 +562,15 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 		preferredSkills = append(preferredSkills, skills.SkillFileManager)
 	}
 	if hasCreate {
-		preferredSkills = append(preferredSkills, skills.SkillFileGenerator)
+		if fileGeneratorEnabled {
+			preferredSkills = append(preferredSkills, skills.SkillFileGenerator)
+		}
+		if chartGeneratorEnabled {
+			preferredSkills = append(preferredSkills, skills.SkillChartGenerator)
+		}
+		if !hasDelete {
+			preferredSkills = append(preferredSkills, skills.SkillFileManager)
+		}
 	}
 	payload["preferred_skills"] = preferredSkills
 	if len(preferredSkills) == 1 {
@@ -319,13 +597,27 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 		})
 	}
 	if hasCreate {
-		for _, toolName := range []string{"generate_file", "generate_docx", "generate_pdf", "generate_pptx"} {
+		if fileGeneratorEnabled {
+			for _, toolName := range []string{"generate_file", "generate_docx", "generate_pdf", "generate_pptx"} {
+				tools = append(tools, map[string]string{
+					"capability_id": "file.generate_temporary_artifact",
+					"skill_id":      skills.SkillFileGenerator,
+					"tool_name":     toolName,
+				})
+			}
+		}
+		if chartGeneratorEnabled {
 			tools = append(tools, map[string]string{
-				"capability_id": "file.create",
-				"skill_id":      skills.SkillFileGenerator,
-				"tool_name":     toolName,
+				"capability_id": "file.generate_temporary_artifact",
+				"skill_id":      skills.SkillChartGenerator,
+				"tool_name":     "generate_chart",
 			})
 		}
+		tools = append(tools, map[string]string{
+			"capability_id": "file.create",
+			"skill_id":      skills.SkillFileManager,
+			"tool_name":     "save_file_to_management",
+		})
 	}
 	payload["tools"] = tools
 	if targets := consoleFilesPromptResolvedTargets(parts); len(targets) > 0 {
@@ -352,9 +644,13 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 		"If a prior approval or session grant exists, it only skips the approval prompt. You must still call file-manager/delete_file in this turn and wait for the tool result before saying the file was deleted.",
 		"Never claim a file was deleted, removed, updated, created, saved, or otherwise changed based only on previous conversation context.",
 		"If the target file is missing or ambiguous, call request_user_input with a concise clarification instead of guessing.",
-		"For requests to create, generate, write, save, upload, or export a new file into File Management or the current Files page, use file-generator and pass target \"managed_file\". Select the file-generator tool by output format; generate_file handles TXT, Markdown, HTML, JSON, CSV, and simple text-like files.",
-		"For generated or downloadable files without an explicit File Management, current Files page, workspace folder, save, create, or upload target, keep the default temporary artifact behavior by omitting target or using target \"temporary_artifact\".",
-		"Creating a managed file is a governed file.create operation. Tool governance handles the approval card when the permission tier requires it; do not ask for a separate natural-language confirmation first.",
+		"For requests to create, generate, write, save, upload, import, or export a new file into File Management or the current Files page, use a two-step flow: first use the appropriate artifact-producing skill to create a temporary artifact, then use file-manager/save_file_to_management with source_type \"tool_file\", the generated tool_file_id/file_id, and the destination filename.",
+		"Use file-generator for regular files, documents, generic SVG/vector files, PDFs, DOCX, PPTX, XLSX, CSV, JSON, Markdown, HTML, or TXT. Use chart-generator only when the user explicitly asks for a chart, graph, data visualization, or a supported chart type.",
+		"When the user says this file, the previous file, the generated file, or the file just created and asks to save/upload/import it into File Management, resolve that reference from recent_generated_files before considering visible_files. Use the listed tool_file_id only as a tool argument.",
+		"Do not treat a visible File Management asset as the same file as a recent temporary generated artifact unless the filenames and requested action make that explicit.",
+		"For requests to save or import a public external URL into File Management, use file-manager/save_file_to_management with source_type \"url\" and the destination filename.",
+		"For generated or downloadable files without an explicit File Management, current Files page, save, create, or upload target, keep the default temporary artifact behavior and do not call file-manager/save_file_to_management.",
+		"Creating a File Management file is a governed file.create operation owned by file-manager/save_file_to_management. Tool governance handles the approval card when the permission tier requires it; do not ask for a separate natural-language confirmation first.",
 		"Do not call unrelated discovery or domain tools, such as database, knowledge, or calculator, before completing the requested files-page operation.",
 		"For existing-file read/delete operations, do not call file-generation tools before the requested read/delete is completed.",
 		"Files-page context JSON: " + string(encoded),
@@ -380,6 +676,98 @@ func skillLoopFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuar
 	return combineFinalAnswerGuards(guards...)
 }
 
+func skillLoopToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard {
+	if prepared == nil || prepared.parts == nil {
+		return nil
+	}
+	parts := prepared.parts
+	if !isManagedFileCreateIntent(parts.Query) && !isConsoleNavigationIntent(parts.Query) {
+		return nil
+	}
+	return func(req skillloop.ToolCallGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) {
+			if target, ok := resolveConsoleNavigationTargetForPrepared(prepared); ok &&
+				clientActionContinuationLoadedRoute(parts, target.Href) &&
+				consoleNavigationLoadedHrefMatchesTarget(skillToolCallArgumentString(req.Arguments, "href"), target.Href) {
+				return skillloop.FinalAnswerGuardResult{
+					SkillID:  skills.SkillConsoleNavigator,
+					ToolName: "navigate",
+					Message: strings.Join([]string{
+						"The requested console page is already loaded by the previous client navigation action.",
+						"Do not navigate to the same page again; continue from the current page context.",
+					}, " "),
+					SystemMessage: strings.Join([]string{
+						"The route navigation client action has already completed successfully for this request.",
+						"Do not call console-navigator/navigate again for the same href.",
+						"Continue with any remaining page operation or provide the final answer from the loaded page context.",
+					}, " "),
+				}, true
+			}
+		}
+		if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
+			target := consoleFilesRouteHint()
+			if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) &&
+				consoleNavigationLoadedHrefMatchesTarget(skillToolCallArgumentString(req.Arguments, "href"), target.Href) {
+				return skillloop.FinalAnswerGuardResult{}, false
+			}
+			if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) ||
+				isKnownArtifactGeneratorToolCall(req.SkillID, req.ToolName) ||
+				isFileManagerSaveToolCall(req.SkillID, req.ToolName) {
+				result := consoleNavigationRequiredToolGuardResult(target)
+				result.Message = strings.Join([]string{
+					"The user asked to create or save a file in File Management from another console page.",
+					"Navigate to the Files page before generating temporary artifacts or saving into File Management.",
+				}, " ")
+				if result.SystemMessage != "" {
+					result.SystemMessage = result.Message + " " + result.SystemMessage
+				}
+				return result, true
+			}
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+
+		if isManagedFileCreateIntent(parts.Query) {
+			if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) &&
+				(consoleFilesRouteAlreadyAvailable(parts) || clientActionContinuationLoadedRoute(parts, consoleFilesRouteHint().Href)) {
+				return skillloop.FinalAnswerGuardResult{
+					SkillID:  skills.SkillFileGenerator,
+					ToolName: "generate_file",
+					Message: strings.Join([]string{
+						"The Files page is already loaded for this request.",
+						"Do not navigate to the same Files page again; continue the file creation flow from the current page context.",
+					}, " "),
+					SystemMessage: strings.Join([]string{
+						"The Files page is already loaded for this File Management creation request.",
+						"Do not call console-navigator/navigate again.",
+						"Generate one temporary artifact with the appropriate artifact-producing skill if none exists, then call file-manager/save_file_to_management.",
+					}, " "),
+				}, true
+			}
+			if isChartGeneratorToolCall(req.SkillID, req.ToolName) && !isChartVisualizationIntent(parts.Query) {
+				message := strings.Join([]string{
+					"The user asked to create a regular SVG or file in File Management, not a chart or data visualization.",
+					"Use file-generator/generate_file for generic SVG/vector file creation, then save the generated artifact with file-manager/save_file_to_management.",
+				}, " ")
+				return skillloop.FinalAnswerGuardResult{
+					SkillID:       skills.SkillFileGenerator,
+					ToolName:      "generate_file",
+					Message:       message,
+					SystemMessage: message,
+				}, true
+			}
+			if isKnownArtifactGeneratorToolCall(req.SkillID, req.ToolName) {
+				if saveArgs := latestGeneratedArtifactSaveArguments(req.SuccessfulToolCalls); len(saveArgs) > 0 {
+					return fileManagerSaveRequiredToolGuardResult(saveArgs), true
+				}
+				if saveArgs := latestRecentGeneratedArtifactSaveArguments(parts); len(saveArgs) > 0 {
+					return fileManagerSaveRequiredToolGuardResult(saveArgs), true
+				}
+			}
+		}
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+}
+
 func skillLoopConsoleFilesFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuard {
 	if prepared == nil || prepared.parts == nil {
 		return nil
@@ -389,9 +777,10 @@ func skillLoopConsoleFilesFinalAnswerGuard(prepared *PreparedChat) skillloop.Fin
 		return nil
 	}
 	if hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
-		skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) &&
+		skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) &&
+		(skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) || skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator)) &&
 		isManagedFileCreateIntent(parts.Query) {
-		return consoleFilesManagedFileCreateFinalAnswerGuard()
+		return consoleFilesFileManagementCreateFinalAnswerGuard(parts)
 	}
 	targets := consoleFilesPromptResolvedTargets(parts)
 	if len(targets) == 0 {
@@ -425,24 +814,91 @@ func skillLoopConsoleFilesFinalAnswerGuard(prepared *PreparedChat) skillloop.Fin
 	return nil
 }
 
-func consoleFilesManagedFileCreateFinalAnswerGuard() skillloop.FinalAnswerGuard {
+func consoleFilesFileManagementCreateFinalAnswerGuard(parts *chatRequestParts) skillloop.FinalAnswerGuard {
 	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		if finalAnswerGuardHasManagedFileGeneratorTool(req) {
+		if finalAnswerGuardHasSuccessfulFileManagerSaveTool(req) {
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
-		message := strings.Join([]string{
+		if finalAnswerGuardHasAttemptedFileManagerSaveTool(req) {
+			if !answerClaimsFileManagementSaveSuccess(req.Answer) {
+				return skillloop.FinalAnswerGuardResult{}, false
+			}
+			return skillloop.FinalAnswerGuardResult{
+				SkillID:  skills.SkillFileManager,
+				ToolName: "save_file_to_management",
+				Message: strings.Join([]string{
+					"The file-manager/save_file_to_management call did not succeed in this turn.",
+					"Do not say the file was created, saved, uploaded, imported, or added to File Management.",
+					"Report the actual tool result or failure and ask for the next safe step only when needed.",
+				}, " "),
+				SystemMessage: strings.Join([]string{
+					"The previous candidate answer claimed a File Management save succeeded, but file-manager/save_file_to_management has only been attempted and has not succeeded.",
+					"Do not retry the same side-effecting save with identical arguments unless the tool result indicates the operation is safely retryable.",
+					"Provide a user-visible failure or pending-status answer based on the actual tool result.",
+				}, " "),
+			}, true
+		}
+		messageLines := []string{
 			"The user's current files-page request explicitly asks to create or save a new file into File Management or the current Files page.",
 			"Do not finish by saying this is unsupported.",
-			"Load the file-generator skill if needed, select the appropriate generator tool for the requested file format, and call it with target \"managed_file\".",
-			"Keep generated files temporary only when the user did not explicitly ask for File Management, current Files page, workspace folder, save, create, or upload as the target.",
-			"Only after the governed file-generator tool succeeds may you say the managed file was created. If approval is required, wait for tool governance instead of asking for a separate natural-language confirmation.",
-		}, " ")
+			"Load the appropriate artifact-producing skill and file-manager if needed. First create one temporary artifact, then call file-manager/save_file_to_management with source_type \"tool_file\", the generated tool_file_id/file_id, and the destination filename.",
+			"Use file-generator for normal files and generic SVG/vector files. Use chart-generator only when the user explicitly asks for a chart, graph, data visualization, or a supported chart type.",
+			"Keep generated files temporary only when the user did not explicitly ask for File Management, current Files page, save, create, upload, or import as the target.",
+			"Only after file-manager/save_file_to_management succeeds may you say the File Management file was created. If approval is required, wait for tool governance instead of asking for a separate natural-language confirmation.",
+		}
+		systemLines := append([]string{}, messageLines...)
+		saveArgs := latestGeneratedArtifactSaveArguments(req.SuccessfulToolCalls)
+		saveSourceMessage := "A temporary artifact has already been generated in this turn. Do not generate another file for the same request."
+		if len(saveArgs) == 0 {
+			saveArgs = latestRecentGeneratedArtifactSaveArguments(parts)
+			if len(saveArgs) > 0 {
+				saveSourceMessage = "The user is referring to a recent generated/downloadable file from the conversation. Do not generate another file or substitute a visible File Management asset for it."
+			}
+		}
+		if len(saveArgs) > 0 {
+			systemLines = append(systemLines,
+				saveSourceMessage,
+				"Load file-manager if needed, then call call_skill_tool with skill_id \"file-manager\", tool_name \"save_file_to_management\", and the resolved arguments JSON below.",
+			)
+			if encoded, err := json.Marshal(map[string]interface{}{
+				"skill_id":  skills.SkillFileManager,
+				"tool_name": "save_file_to_management",
+				"arguments": saveArgs,
+			}); err == nil {
+				systemLines = append(systemLines, "Resolved generated-file save JSON for tool arguments only; do not reveal internal IDs to the user: "+string(encoded))
+			}
+		}
+		message := strings.Join(messageLines, " ")
 		return skillloop.FinalAnswerGuardResult{
-			SkillID:       skills.SkillFileGenerator,
-			ToolName:      "generate_file",
+			SkillID:       skills.SkillFileManager,
+			ToolName:      "save_file_to_management",
 			Message:       message,
-			SystemMessage: message,
+			SystemMessage: strings.Join(systemLines, " "),
 		}, true
+	}
+}
+
+func fileManagerSaveRequiredToolGuardResult(saveArgs map[string]interface{}) skillloop.FinalAnswerGuardResult {
+	messageLines := []string{
+		"A temporary artifact has already been generated for this File Management creation request.",
+		"Do not generate another file for the same request.",
+		"Call file-manager/save_file_to_management with the generated temporary artifact.",
+	}
+	systemLines := append([]string{}, messageLines...)
+	if len(saveArgs) > 0 {
+		if encoded, err := json.Marshal(map[string]interface{}{
+			"skill_id":  skills.SkillFileManager,
+			"tool_name": "save_file_to_management",
+			"arguments": saveArgs,
+		}); err == nil {
+			systemLines = append(systemLines, "Resolved generated-file save JSON for tool arguments only; do not reveal internal IDs to the user: "+string(encoded))
+		}
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       skills.SkillFileManager,
+		ToolName:      "save_file_to_management",
+		Message:       strings.Join(messageLines, " "),
+		SystemMessage: strings.Join(systemLines, " "),
 	}
 }
 
@@ -450,8 +906,12 @@ func skillLoopConsoleNavigationFinalAnswerGuard(prepared *PreparedChat) skillloo
 	if prepared == nil || prepared.parts == nil || !skillIDEnabled(prepared.parts.SkillIDs, skills.SkillConsoleNavigator) {
 		return nil
 	}
-	target, ok := resolveConsoleNavigationTarget(prepared.parts.Query)
+	target, ok := resolveConsoleNavigationTargetForPrepared(prepared)
 	if !ok {
+		return nil
+	}
+	if consoleNavigationLoadedHrefMatchesTarget("/console/files", target.Href) &&
+		consoleFilesRouteAlreadyAvailable(prepared.parts) {
 		return nil
 	}
 	if clientActionContinuationLoadedRoute(prepared.parts, target.Href) {
@@ -479,11 +939,87 @@ func clientActionContinuationLoadedRoute(parts *chatRequestParts, href string) b
 		if strings.TrimSpace(stringFromAny(continuation["status"])) != clientActionStatusSucceeded {
 			continue
 		}
-		if normalizeConsoleNavigationGuardHref(stringFromAny(continuation["href"])) == href {
+		if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(continuation["href"]), href) {
 			return true
+		}
+		result := governanceMapFromAny(continuation["result"])
+		for _, key := range []string{"href", "observed_path"} {
+			if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(result[key]), href) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func consoleFilesRouteAlreadyAvailable(parts *chatRequestParts) bool {
+	if parts == nil {
+		return false
+	}
+	return isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
+}
+
+func requiresConsoleFilesRouteBeforeManagedFileCreate(parts *chatRequestParts) bool {
+	if parts == nil || !isManagedFileCreateIntent(parts.Query) {
+		return false
+	}
+	if consoleFilesRouteAlreadyAvailable(parts) {
+		return false
+	}
+	if clientActionContinuationLoadedRoute(parts, consoleFilesRouteHint().Href) {
+		return false
+	}
+	return skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator)
+}
+
+func resolveConsoleNavigationTargetForPrepared(prepared *PreparedChat) (consoleNavigationRouteHint, bool) {
+	if prepared == nil || prepared.parts == nil {
+		return consoleNavigationRouteHint{}, false
+	}
+	if requiresConsoleFilesRouteBeforeManagedFileCreate(prepared.parts) {
+		return consoleFilesRouteHint(), true
+	}
+	return resolveConsoleNavigationTarget(prepared.parts.Query)
+}
+
+func consoleFilesRouteHint() consoleNavigationRouteHint {
+	for _, route := range consoleNavigationRouteHints {
+		if consoleNavigationLoadedHrefMatchesTarget(route.Href, "/console/files") {
+			return route
+		}
+	}
+	return consoleNavigationRouteHint{Href: "/console/files", Label: "File Management"}
+}
+
+func isConsoleNavigatorNavigateTool(skillID string, toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillConsoleNavigator) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "navigate")
+}
+
+func isFileGeneratorToolCall(skillID string, toolName string) bool {
+	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillFileGenerator) {
+		return false
+	}
+	switch strings.TrimSpace(toolName) {
+	case "generate_file", "generate_docx", "generate_pdf", "generate_pptx":
+		return true
+	default:
+		return false
+	}
+}
+
+func isChartGeneratorToolCall(skillID string, toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillChartGenerator) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "generate_chart")
+}
+
+func isKnownArtifactGeneratorToolCall(skillID string, toolName string) bool {
+	return isFileGeneratorToolCall(skillID, toolName) || isChartGeneratorToolCall(skillID, toolName)
+}
+
+func isFileManagerSaveToolCall(skillID string, toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillFileManager) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "save_file_to_management")
 }
 
 func skillLoopUserInputGuard(prepared *PreparedChat) skillloop.UserInputGuard {
@@ -526,33 +1062,37 @@ func consoleNavigationRequiredToolFinalAnswerGuard(target consoleNavigationRoute
 			finalAnswerGuardHasAttemptedToolForConsoleHref(req, skills.SkillConsoleNavigator, "navigate", target.Href) {
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
-		message := strings.Join([]string{
-			fmt.Sprintf("The user's current request is to open the ZGI console page %s (%s).", target.Label, target.Href),
-			"Do not finish with a natural-language message saying the page has opened yet.",
-			fmt.Sprintf("Load the console-navigator skill if needed, then call call_skill_tool with skill_id %q, tool_name %q, and href %q.", skills.SkillConsoleNavigator, "navigate", target.Href),
-			"Only after navigate succeeds in this turn may you tell the user that the page was opened. If the tool fails, report the actual tool result.",
-		}, " ")
-		payload := map[string]interface{}{
-			"skill_id":  skills.SkillConsoleNavigator,
-			"tool_name": "navigate",
-			"arguments": map[string]interface{}{
-				"href": target.Href,
-			},
-		}
-		if target.Label != "" {
-			payload["label"] = target.Label
-		}
-		encoded, err := json.Marshal(payload)
-		systemMessage := message
-		if err == nil {
-			systemMessage = systemMessage + " Resolved route JSON for tool arguments: " + string(encoded)
-		}
-		return skillloop.FinalAnswerGuardResult{
-			SkillID:       skills.SkillConsoleNavigator,
-			ToolName:      "navigate",
-			Message:       message,
-			SystemMessage: systemMessage,
-		}, true
+		return consoleNavigationRequiredToolGuardResult(target), true
+	}
+}
+
+func consoleNavigationRequiredToolGuardResult(target consoleNavigationRouteHint) skillloop.FinalAnswerGuardResult {
+	message := strings.Join([]string{
+		fmt.Sprintf("The user's current request is to open the ZGI console page %s (%s).", target.Label, target.Href),
+		"Do not finish with a natural-language message saying the page has opened yet.",
+		fmt.Sprintf("Load the console-navigator skill if needed, then call call_skill_tool with skill_id %q, tool_name %q, and href %q.", skills.SkillConsoleNavigator, "navigate", target.Href),
+		"Only after navigate succeeds in this turn may you tell the user that the page was opened. If the tool fails, report the actual tool result.",
+	}, " ")
+	payload := map[string]interface{}{
+		"skill_id":  skills.SkillConsoleNavigator,
+		"tool_name": "navigate",
+		"arguments": map[string]interface{}{
+			"href": target.Href,
+		},
+	}
+	if target.Label != "" {
+		payload["label"] = target.Label
+	}
+	encoded, err := json.Marshal(payload)
+	systemMessage := message
+	if err == nil {
+		systemMessage = systemMessage + " Resolved route JSON for tool arguments: " + string(encoded)
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       skills.SkillConsoleNavigator,
+		ToolName:      "navigate",
+		Message:       message,
+		SystemMessage: systemMessage,
 	}
 }
 
@@ -594,33 +1134,166 @@ func finalAnswerGuardHasAttemptedTool(req skillloop.FinalAnswerGuardRequest, ski
 	return finalAnswerGuardHasAttemptedToolForTargets(req, skillID, toolName, nil)
 }
 
-func finalAnswerGuardHasManagedFileGeneratorTool(req skillloop.FinalAnswerGuardRequest) bool {
-	return finalAnswerGuardHasManagedFileGeneratorCall(req.SuccessfulToolCalls) ||
-		finalAnswerGuardHasManagedFileGeneratorCall(req.AttemptedToolCalls)
+func finalAnswerGuardHasSuccessfulFileManagerSaveTool(req skillloop.FinalAnswerGuardRequest) bool {
+	return finalAnswerGuardHasFileManagerSaveCall(req.SuccessfulToolCalls)
 }
 
-func finalAnswerGuardHasManagedFileGeneratorCall(calls []skillloop.SkillToolCallRef) bool {
+func finalAnswerGuardHasAttemptedFileManagerSaveTool(req skillloop.FinalAnswerGuardRequest) bool {
+	return finalAnswerGuardHasFileManagerSaveCall(req.AttemptedToolCalls)
+}
+
+func finalAnswerGuardHasFileManagerSaveCall(calls []skillloop.SkillToolCallRef) bool {
 	for _, call := range calls {
-		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillFileGenerator) {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillFileManager) {
 			continue
 		}
-		if !isFileGeneratorToolName(call.ToolName) {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(skillToolCallArgumentString(call.Arguments, "target")), "managed_file") {
+		if strings.EqualFold(strings.TrimSpace(call.ToolName), "save_file_to_management") {
 			return true
 		}
 	}
 	return false
 }
 
-func isFileGeneratorToolName(toolName string) bool {
-	switch strings.TrimSpace(toolName) {
-	case "generate_file", "generate_docx", "generate_pdf", "generate_pptx":
-		return true
-	default:
+func answerClaimsFileManagementSaveSuccess(answer string) bool {
+	text := normalizeConsoleNavigationQuery(answer)
+	if text == "" {
 		return false
 	}
+	saveTerms := []string{
+		"created", "saved", "uploaded", "imported", "added", "stored", "successfully", "done", "completed",
+		"\u5df2\u521b\u5efa", "\u521b\u5efa\u6210\u529f", "\u5df2\u4fdd\u5b58", "\u4fdd\u5b58\u6210\u529f", "\u5df2\u4e0a\u4f20", "\u4e0a\u4f20\u6210\u529f", "\u5df2\u5bfc\u5165", "\u5bfc\u5165\u6210\u529f", "\u5df2\u6dfb\u52a0", "\u6dfb\u52a0\u6210\u529f", "\u5df2\u5b58\u5165", "\u5df2\u653e\u5165", "\u5df2\u7ecf\u5728",
+	}
+	targetTerms := []string{
+		"file management", "files page", "managed file", "file list",
+		"\u6587\u4ef6\u7ba1\u7406", "\u6587\u4ef6\u9875", "\u6587\u4ef6\u5217\u8868", "\u7ba1\u7406\u91cc",
+	}
+	return containsAnySubstring(text, saveTerms) && containsAnySubstring(text, targetTerms)
+}
+
+func latestGeneratedArtifactSaveArguments(calls []skillloop.SkillToolCallRef) map[string]interface{} {
+	for idx := len(calls) - 1; idx >= 0; idx-- {
+		call := calls[idx]
+		if args := generatedArtifactSaveArguments(call); len(args) > 0 {
+			return args
+		}
+	}
+	return nil
+}
+
+func latestRecentGeneratedArtifactSaveArguments(parts *chatRequestParts) map[string]interface{} {
+	if parts == nil || !isRecentGeneratedArtifactReferenceIntent(parts.Query) {
+		return nil
+	}
+	for _, artifact := range parts.RecentGeneratedArtifacts {
+		if args := generatedArtifactMapSaveArguments(artifact); len(args) > 0 {
+			return args
+		}
+	}
+	return nil
+}
+
+func generatedArtifactSaveArguments(call skillloop.SkillToolCallRef) map[string]interface{} {
+	if finalAnswerGuardHasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
+		return nil
+	}
+	if !toolCallResultLooksLikeGeneratedArtifact(call) {
+		return nil
+	}
+	toolFileID := strings.TrimSpace(firstNonEmptyString(call.Result["tool_file_id"], call.Result["file_id"]))
+	if toolFileID == "" {
+		return nil
+	}
+	filename := strings.TrimSpace(firstNonEmptyString(
+		call.Result["filename"],
+		call.Result["name"],
+		call.Arguments["filename"],
+		call.Arguments["output_filename"],
+	))
+	args := map[string]interface{}{
+		"source_type":  "tool_file",
+		"tool_file_id": toolFileID,
+	}
+	if filename != "" {
+		args["filename"] = filename
+	}
+	return args
+}
+
+func generatedArtifactMapSaveArguments(artifact map[string]interface{}) map[string]interface{} {
+	if len(artifact) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(stringFromAny(artifact["upload_file_id"])) != "" ||
+		strings.EqualFold(strings.TrimSpace(stringFromAny(artifact["target"])), "managed_file") {
+		return nil
+	}
+	toolFileID := strings.TrimSpace(firstNonEmptyString(artifact["tool_file_id"], artifact["file_id"]))
+	if toolFileID == "" {
+		return nil
+	}
+	args := map[string]interface{}{
+		"source_type":  "tool_file",
+		"tool_file_id": toolFileID,
+	}
+	if filename := strings.TrimSpace(firstNonEmptyString(artifact["filename"], artifact["name"])); filename != "" {
+		args["filename"] = filename
+	}
+	return args
+}
+
+func isRecentGeneratedArtifactReferenceIntent(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	if !containsAnySubstring(text, []string{
+		"save", "upload", "import", "add", "put",
+		"\u4fdd\u5b58", "\u4e0a\u4f20", "\u5bfc\u5165", "\u6dfb\u52a0", "\u52a0\u5230", "\u653e\u5230", "\u5b58\u5230",
+	}) {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"this file", "that file", "previous file", "last file", "generated file", "created file", "the file just",
+		"\u8fd9\u4e2a\u6587\u4ef6", "\u8fd9\u4efd\u6587\u4ef6", "\u8fd9\u4e2a", "\u8fd9\u4efd",
+		"\u521a\u521a\u7684\u6587\u4ef6", "\u521a\u624d\u7684\u6587\u4ef6", "\u521a\u751f\u6210\u7684\u6587\u4ef6",
+		"\u4e0a\u4e00\u4e2a\u6587\u4ef6", "\u4e0a\u4efd\u6587\u4ef6", "\u751f\u6210\u7684\u6587\u4ef6",
+	})
+}
+
+func toolCallResultLooksLikeGeneratedArtifact(call skillloop.SkillToolCallRef) bool {
+	if len(call.Result) == 0 {
+		return false
+	}
+	if strings.TrimSpace(stringFromAny(call.Result["upload_file_id"])) != "" ||
+		strings.EqualFold(strings.TrimSpace(stringFromAny(call.Result["target"])), "managed_file") {
+		return false
+	}
+	if strings.TrimSpace(stringFromAny(call.Result["tool_file_id"])) != "" {
+		return true
+	}
+	if isKnownArtifactGeneratorToolCall(call.SkillID, call.ToolName) &&
+		strings.TrimSpace(stringFromAny(call.Result["file_id"])) != "" {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(stringFromAny(call.Result["transfer_method"])), "tool_file") {
+		return true
+	}
+	if !hasGeneratedArtifactURL(call.Result) {
+		return false
+	}
+	if strings.TrimSpace(stringFromAny(call.Result["file_id"])) == "" {
+		return false
+	}
+	return strings.TrimSpace(firstNonEmptyString(
+		call.Result["filename"],
+		call.Result["name"],
+		call.Result["mime_type"],
+		call.Result["format"],
+	)) != ""
+}
+
+func hasGeneratedArtifactURL(result map[string]interface{}) bool {
+	return strings.TrimSpace(firstNonEmptyString(result["download_url"], result["url"])) != ""
 }
 
 func finalAnswerGuardHasAttemptedToolForTargets(req skillloop.FinalAnswerGuardRequest, skillID string, toolName string, targetFileIDs []string) bool {
@@ -681,11 +1354,31 @@ func finalAnswerGuardHasToolForConsoleHref(calls []skillloop.SkillToolCallRef, s
 			!strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
 			continue
 		}
-		if normalizeConsoleNavigationGuardHref(skillToolCallArgumentString(call.Arguments, "href")) == href {
+		if consoleNavigationLoadedHrefMatchesTarget(skillToolCallArgumentString(call.Arguments, "href"), href) {
 			return true
 		}
 	}
 	return false
+}
+
+func consoleNavigationLoadedHrefMatchesTarget(loadedHref string, targetHref string) bool {
+	loadedHref = normalizeConsoleNavigationGuardHref(loadedHref)
+	targetHref = normalizeConsoleNavigationGuardHref(targetHref)
+	if loadedHref == "" || targetHref == "" {
+		return false
+	}
+	if loadedHref == targetHref {
+		return true
+	}
+	if targetHref == "/" || targetHref == "/console" {
+		return false
+	}
+	switch targetHref {
+	case "/console/agents":
+		return strings.HasPrefix(loadedHref, targetHref+"/")
+	default:
+		return false
+	}
 }
 
 func skillToolCallArgumentString(arguments map[string]interface{}, key string) string {
@@ -746,6 +1439,23 @@ func isConsoleNavigationIntent(query string) bool {
 	for _, marker := range []string{
 		"带我去", "带我到", "打开", "跳转", "切换到", "进入", "前往", "导航到", "转到",
 		"go to", "open", "switch to", "navigate to", "take me to", "show me",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isChartVisualizationIntent(query string) bool {
+	normalized := normalizeConsoleNavigationQuery(query)
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"chart", "graph", "visualization", "visualisation", "data visual", "radar", "spider",
+		"bar chart", "line chart", "pie chart", "doughnut", "donut", "scatter", "score distribution",
+		"图表", "图形", "可视化", "数据可视化", "雷达图", "柱状图", "条形图", "折线图", "饼图", "环形图", "散点图", "分布图",
 	} {
 		if strings.Contains(normalized, marker) {
 			return true
@@ -922,6 +1632,35 @@ func consoleFilesPromptVisibleFiles(parts *chatRequestParts) []map[string]interf
 		}
 		if strings.TrimSpace(file.WorkspaceID) != "" {
 			item["workspace_id"] = strings.TrimSpace(file.WorkspaceID)
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func consoleFilesPromptRecentGeneratedFiles(parts *chatRequestParts) []map[string]interface{} {
+	if parts == nil || len(parts.RecentGeneratedArtifacts) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, min(len(parts.RecentGeneratedArtifacts), 5))
+	for idx, artifact := range parts.RecentGeneratedArtifacts {
+		if idx >= 5 {
+			break
+		}
+		toolFileID := strings.TrimSpace(firstNonEmptyString(artifact["tool_file_id"], artifact["file_id"]))
+		if toolFileID == "" {
+			continue
+		}
+		item := map[string]interface{}{
+			"tool_file_id": toolFileID,
+		}
+		if filename := strings.TrimSpace(firstNonEmptyString(artifact["filename"], artifact["name"])); filename != "" {
+			item["filename"] = filename
+		}
+		for _, key := range []string{"artifact_id", "status", "lifecycle", "extension", "mime_type", "file_type", "skill_id", "tool_name", "source_message_id"} {
+			if value := strings.TrimSpace(stringFromAny(artifact[key])); value != "" {
+				item[key] = value
+			}
 		}
 		out = append(out, item)
 	}

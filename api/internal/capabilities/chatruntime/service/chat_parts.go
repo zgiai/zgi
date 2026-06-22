@@ -219,7 +219,7 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 		useMemory = *req.UseMemory
 	}
 	runtimeContext := normalizeRuntimeContext(req.RuntimeContext)
-	surface := normalizeAIChatSurface(req.Surface)
+	surface := normalizeAIChatSurface(regenerateRequestSurface(req, message))
 	operationContext, operationLedger := normalizeOperationContext(req.OperationContext)
 
 	return &chatRequestParts{
@@ -235,6 +235,16 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 		Parameters:          params,
 		UseMemory:           useMemory,
 	}, nil
+}
+
+func regenerateRequestSurface(req runtimedto.RegenerateMessageRequest, message *runtimemodel.Message) string {
+	if strings.TrimSpace(req.Surface) != "" {
+		return req.Surface
+	}
+	if message == nil {
+		return ""
+	}
+	return stringMetadataValue(message.Metadata["surface"])
 }
 
 func replacementRootMessage(source *runtimemodel.Message, parts *chatRequestParts) *runtimemodel.Message {

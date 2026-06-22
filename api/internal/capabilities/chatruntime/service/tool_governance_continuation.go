@@ -216,6 +216,12 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
 		}
+		var pendingClientAction *skillloop.ClientActionPendingError
+		if errors.As(err, &pendingClientAction) {
+			metadata := s.persistClientActionPending(context.WithoutCancel(ctx), prepared, pendingClientAction.Payload, usage)
+			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, nil
+		}
 		s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
 		return nil, newFinalizedStreamError(err)
 	}
@@ -308,6 +314,12 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 			for _, artifact := range skillArtifactsFromToolMessages(prepared, invocation.Trace, invocation.Messages) {
 				s.persistGeneratedArtifactBestEffort(persistCtx, prepared, artifact)
 				timeline.Emit(streamEventSkillArtifactCreated, artifact)
+			}
+			if payload := clientActionRequiredPayload(prepared, invocation.Trace, callID); len(payload) > 0 {
+				timeline.RecordEvent(streamEventClientActionRequired, payload)
+				metadata := s.persistClientActionPending(persistCtx, prepared, payload, nil)
+				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
+				return &ChatResult{Answer: "", Metadata: metadata, Usage: nil, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
 			}
 		}
 	}

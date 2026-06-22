@@ -1044,6 +1044,10 @@ func (s *fakeRuntimeHistoryService) ListConversationsByCaller(ctx context.Contex
 	return nil, 0, fmt.Errorf("not implemented")
 }
 
+func (s *fakeRuntimeHistoryService) ListConversationsBySurface(ctx context.Context, scope runtimeservice.Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
+	return nil, 0, fmt.Errorf("not implemented")
+}
+
 func (s *fakeRuntimeHistoryService) GetConversation(ctx context.Context, scope runtimeservice.Scope, id uuid.UUID) (*runtimemodel.Conversation, error) {
 	return nil, fmt.Errorf("not implemented")
 }
@@ -1136,6 +1140,18 @@ func (s *fakeRuntimeHistoryService) RunPreparedStream(ctx context.Context, prepa
 
 func (s *fakeRuntimeHistoryService) StreamConversationEvents(ctx context.Context, scope runtimeservice.Scope, conversationID, messageID uuid.UUID, afterID string, onEvent func(runtimeservice.StreamEvent) error) error {
 	return fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) SubmitToolGovernanceDecision(ctx context.Context, scope runtimeservice.Scope, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest) (*runtimedto.ToolGovernanceDecisionResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) RunToolGovernanceDecisionStream(ctx context.Context, scope runtimeservice.Scope, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest, onEvent func(runtimeservice.StreamEvent) error) (*runtimeservice.ChatResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) RunClientActionContinuationStream(ctx context.Context, scope runtimeservice.Scope, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(runtimeservice.StreamEvent) error) (*runtimeservice.ChatResult, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 func (s *fakeRuntimeHistoryService) BeginWorkflowApprovalContinuation(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, conversationID, messageID uuid.UUID) (*runtimeservice.WorkflowApprovalContinuation, error) {

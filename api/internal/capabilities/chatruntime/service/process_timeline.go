@@ -253,7 +253,7 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 				kind = "tool_call"
 			}
 		}
-		invocation := newSkillInvocation(kind, payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), "error", map[string]interface{}{
+		invocation := newSkillInvocation(kind, payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "error"), map[string]interface{}{
 			"duration_ms": payload["duration_ms"],
 			"message":     payloadString(payload, "message"),
 			"error":       payloadString(payload, "message"),

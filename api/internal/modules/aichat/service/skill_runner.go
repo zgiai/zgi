@@ -1070,7 +1070,6 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	runtimeParameters = applySkillToolGovernanceRuntimeParameters(runtimeParameters, prepared)
 	if prepared != nil && prepared.parts != nil && isConsoleFilesContext(prepared.parts) {
 		runtimeParameters["console_files_page"] = true
-		runtimeParameters["file_generation_default_target"] = "managed_file"
 	}
 	if visibleFiles := consoleFilesRuntimeVisibleFiles(prepared); len(visibleFiles) > 0 {
 		runtimeParameters["console_files_visible_files"] = visibleFiles

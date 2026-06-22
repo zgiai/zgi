@@ -120,12 +120,15 @@ type RunRequest struct {
 	AdditionalSystemMessages []adapter.Message
 	FinalAnswerGuard         FinalAnswerGuard
 	UserInputGuard           UserInputGuard
+	ToolCallGuard            ToolCallGuard
 	OnChunk                  func(string) error
 }
 
 type FinalAnswerGuard func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool)
 
 type UserInputGuard func(UserInputGuardRequest) (FinalAnswerGuardResult, bool)
+
+type ToolCallGuard func(ToolCallGuardRequest) (FinalAnswerGuardResult, bool)
 
 type FinalAnswerGuardRequest struct {
 	Answer              string
@@ -153,10 +156,22 @@ type UserInputGuardRequest struct {
 	SuccessfulToolCalls []SkillToolCallRef
 }
 
+type ToolCallGuardRequest struct {
+	SkillID             string
+	ToolName            string
+	Arguments           map[string]interface{}
+	Round               int
+	SkillUsed           bool
+	ToolCallCount       int
+	AttemptedToolCalls  []SkillToolCallRef
+	SuccessfulToolCalls []SkillToolCallRef
+}
+
 type SkillToolCallRef struct {
 	SkillID   string
 	ToolName  string
 	Arguments map[string]interface{}
+	Result    map[string]interface{}
 }
 
 type ModelInvocationTrace struct {

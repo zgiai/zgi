@@ -51,6 +51,7 @@ func (s *service) buildTokenBudgetMessages(
 	parentMessages []*runtimemodel.Message,
 ) (*contextBudgetResult, error) {
 	applyRecentAssetCandidatesFromBranch(parts, parentMessages)
+	applyRecentGeneratedArtifactsFromBranch(parts, parentMessages)
 	baseMessages := []adapter.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: s.currentUserContent(parts, parts.Query)},
@@ -384,6 +385,7 @@ type recentExecutionContextStats struct {
 	IntermediateAnswerTurns   int
 	IncludedToolEvents        int
 	IncludedIntermediate      int
+	IncludedGeneratedFiles    int
 	ToolHistoryTruncated      bool
 	IntermediateTruncated     bool
 	ExecutionContextTruncated bool
@@ -402,6 +404,15 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	builder.WriteString("Do not resubmit these notes as intermediate answers; reuse them directly for export, save, convert, or file-generation requests.\n")
 
 	remaining := recentExecutionContextBudgetChars - builder.Len()
+	generatedSection, generatedStats := recentGeneratedFilesSection(branch, remaining)
+	stats.IncludedGeneratedFiles = generatedStats.IncludedGeneratedFiles
+	stats.ExecutionContextTruncated = stats.ExecutionContextTruncated || generatedStats.ExecutionContextTruncated
+	if generatedSection != "" {
+		builder.WriteString("\nMost recent generated/downloadable files:\n")
+		builder.WriteString(generatedSection)
+	}
+
+	remaining = recentExecutionContextBudgetChars - builder.Len()
 	toolSection, toolStats := recentToolHistorySection(branch, remaining)
 	stats.ToolHistoryTurns = toolStats.ToolHistoryTurns
 	stats.IncludedToolEvents = toolStats.IncludedToolEvents
@@ -424,10 +435,65 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	}
 
 	content := strings.TrimSpace(builder.String())
-	if stats.IncludedToolEvents == 0 && stats.IncludedIntermediate == 0 {
+	if stats.IncludedToolEvents == 0 && stats.IncludedIntermediate == 0 && stats.IncludedGeneratedFiles == 0 {
 		return nil, stats
 	}
 	return &adapter.Message{Role: "system", Content: content}, stats
+}
+
+func recentGeneratedFilesSection(branch []*runtimemodel.Message, budget int) (string, recentExecutionContextStats) {
+	stats := recentExecutionContextStats{}
+	if budget <= 0 {
+		stats.ExecutionContextTruncated = true
+		return "", stats
+	}
+	var builder strings.Builder
+	artifacts := recentGeneratedArtifactsFromBranch(branch)
+	if len(artifacts) == 0 {
+		return "", stats
+	}
+	if !appendBudgetedLine(&builder, budget, "Use tool_file_id/file_id values only as tool arguments; do not reveal them to the user.\n") {
+		stats.ExecutionContextTruncated = true
+		return "", stats
+	}
+	for index, artifact := range artifacts {
+		line := formatRecentGeneratedFile(index+1, artifact)
+		if !appendBudgetedLine(&builder, budget, line) {
+			stats.ExecutionContextTruncated = true
+			return builder.String(), stats
+		}
+		stats.IncludedGeneratedFiles++
+	}
+	return builder.String(), stats
+}
+
+func formatRecentGeneratedFile(index int, artifact map[string]interface{}) string {
+	parts := []string{
+		fmt.Sprintf("  %d. filename=%s", index, compactForPrompt(firstNonEmptyString(artifact["filename"], artifact["name"]), 180)),
+		"tool_file_id=" + compactForPrompt(stringFromAny(artifact["tool_file_id"]), 160),
+	}
+	if artifactID := strings.TrimSpace(stringFromAny(artifact["artifact_id"])); artifactID != "" {
+		parts = append(parts, "artifact_id="+compactForPrompt(artifactID, 160))
+	}
+	if status := strings.TrimSpace(stringFromAny(artifact["status"])); status != "" {
+		parts = append(parts, "status="+compactForPrompt(status, 80))
+	}
+	if extension := strings.TrimSpace(stringFromAny(artifact["extension"])); extension != "" {
+		parts = append(parts, "extension="+compactForPrompt(extension, 40))
+	}
+	if mimeType := strings.TrimSpace(stringFromAny(artifact["mime_type"])); mimeType != "" {
+		parts = append(parts, "mime_type="+compactForPrompt(mimeType, 120))
+	}
+	if skillID := strings.TrimSpace(stringFromAny(artifact["skill_id"])); skillID != "" {
+		parts = append(parts, "skill_id="+compactForPrompt(skillID, 120))
+	}
+	if toolName := strings.TrimSpace(stringFromAny(artifact["tool_name"])); toolName != "" {
+		parts = append(parts, "tool_name="+compactForPrompt(toolName, 120))
+	}
+	if messageID := strings.TrimSpace(stringFromAny(artifact["source_message_id"])); messageID != "" {
+		parts = append(parts, "source_message_id="+compactForPrompt(messageID, 160))
+	}
+	return strings.Join(parts, " ") + "\n"
 }
 
 func recentToolHistorySection(branch []*runtimemodel.Message, budget int) (string, recentExecutionContextStats) {
@@ -732,7 +798,7 @@ func mergeRecentExecutionContextMetadata(target map[string]interface{}, stats re
 	if target == nil {
 		return
 	}
-	if stats.IncludedToolEvents == 0 && stats.IncludedIntermediate == 0 {
+	if stats.IncludedToolEvents == 0 && stats.IncludedIntermediate == 0 && stats.IncludedGeneratedFiles == 0 {
 		return
 	}
 	target["recent_execution_context"] = map[string]interface{}{
@@ -740,6 +806,7 @@ func mergeRecentExecutionContextMetadata(target map[string]interface{}, stats re
 		"intermediate_answer_turns":     stats.IntermediateAnswerTurns,
 		"included_tool_events":          stats.IncludedToolEvents,
 		"included_intermediate_answers": stats.IncludedIntermediate,
+		"included_generated_files":      stats.IncludedGeneratedFiles,
 		"tool_history_truncated":        stats.ToolHistoryTruncated,
 		"intermediate_truncated":        stats.IntermediateTruncated,
 		"truncated":                     stats.ExecutionContextTruncated,

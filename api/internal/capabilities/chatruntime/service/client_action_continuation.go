@@ -119,38 +119,52 @@ func (s *service) RunClientActionContinuationStream(
 	s.emitPreparedEvent(ctx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
 	s.emitPreparedEvent(ctx, prepared, streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req), onEvent)
 
-	answer, usage, err := s.runPreparedSkillStream(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
-	if err != nil {
-		var pendingGovernance *skillloop.ToolGovernancePendingError
-		if errors.As(err, &pendingGovernance) {
-			metadata := s.persistToolGovernanceApprovalPending(context.WithoutCancel(ctx), prepared, pendingGovernance.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
-			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
+	var answer string
+	var usage *adapter.Usage
+	if shouldFinalizeClientActionWithoutSkillLoop(continuation.Event, req) {
+		answer, usage, err = s.runClientActionFinalAnswerStream(runCtx, prepared, onEvent)
+		if err != nil {
+			if errors.Is(err, ErrMessageStopped) {
+				_ = s.clearPreparedRuntime(context.WithoutCancel(ctx), prepared)
+				return nil, err
+			}
+			s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
+			return nil, newFinalizedStreamError(err)
 		}
-		var pendingApproval *skillloop.WorkflowApprovalPendingError
-		if errors.As(err, &pendingApproval) {
-			metadata := s.persistWorkflowApprovalPending(context.WithoutCancel(ctx), prepared, pendingApproval.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
-			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
+	} else {
+		answer, usage, err = s.runPreparedSkillStream(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
+		if err != nil {
+			var pendingGovernance *skillloop.ToolGovernancePendingError
+			if errors.As(err, &pendingGovernance) {
+				metadata := s.persistToolGovernanceApprovalPending(context.WithoutCancel(ctx), prepared, pendingGovernance.Payload, usage)
+				s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
+			}
+			var pendingApproval *skillloop.WorkflowApprovalPendingError
+			if errors.As(err, &pendingApproval) {
+				metadata := s.persistWorkflowApprovalPending(context.WithoutCancel(ctx), prepared, pendingApproval.Payload, usage)
+				s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
+			}
+			var pendingQuestion *skillloop.WorkflowQuestionPendingError
+			if errors.As(err, &pendingQuestion) {
+				metadata := s.persistWorkflowQuestionPending(context.WithoutCancel(ctx), prepared, pendingQuestion.Payload, usage)
+				s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
+			}
+			var pendingClientAction *skillloop.ClientActionPendingError
+			if errors.As(err, &pendingClientAction) {
+				metadata := s.persistClientActionPending(context.WithoutCancel(ctx), prepared, pendingClientAction.Payload, usage)
+				s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, nil
+			}
+			if errors.Is(err, ErrMessageStopped) {
+				_ = s.clearPreparedRuntime(context.WithoutCancel(ctx), prepared)
+				return nil, err
+			}
+			s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
+			return nil, newFinalizedStreamError(err)
 		}
-		var pendingQuestion *skillloop.WorkflowQuestionPendingError
-		if errors.As(err, &pendingQuestion) {
-			metadata := s.persistWorkflowQuestionPending(context.WithoutCancel(ctx), prepared, pendingQuestion.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
-			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
-		}
-		var pendingClientAction *skillloop.ClientActionPendingError
-		if errors.As(err, &pendingClientAction) {
-			metadata := s.persistClientActionPending(context.WithoutCancel(ctx), prepared, pendingClientAction.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
-			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, nil
-		}
-		if errors.Is(err, ErrMessageStopped) {
-			_ = s.clearPreparedRuntime(context.WithoutCancel(ctx), prepared)
-			return nil, err
-		}
-		s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
-		return nil, newFinalizedStreamError(err)
 	}
 	if s.streams.IsStopped(message.ID) {
 		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
@@ -165,6 +179,26 @@ func (s *service) RunClientActionContinuationStream(
 	}
 	s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func shouldFinalizeClientActionWithoutSkillLoop(event map[string]interface{}, req runtimedto.ClientActionResultRequest) bool {
+	return strings.EqualFold(strings.TrimSpace(stringFromAny(event["action_type"])), "asset_observation") &&
+		strings.EqualFold(strings.TrimSpace(req.Status), clientActionStatusSucceeded)
+}
+
+func (s *service) runClientActionFinalAnswerStream(ctx context.Context, prepared *PreparedChat, onEvent func(StreamEvent) error) (string, *adapter.Usage, error) {
+	if prepared == nil || prepared.LLMRequest == nil {
+		return "", nil, fmt.Errorf("%w: prepared chat is required", ErrInvalidInput)
+	}
+	prepared.LLMRequest.Tools = nil
+	prepared.LLMRequest.ToolChoice = nil
+	prepared.LLMRequest.Functions = nil
+	prepared.LLMRequest.FunctionCall = nil
+	stream, err := s.openChatStream(ctx, prepared)
+	if err != nil {
+		return "", nil, err
+	}
+	return s.collectStreamAnswerWithEvents(ctx, prepared, stream, onEvent, nil)
 }
 
 func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {
@@ -251,6 +285,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	}
 	message := continuation.Message
 	parts, err := normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{
+		Surface:          req.Surface,
 		RuntimeContext:   req.RuntimeContext,
 		OperationContext: req.OperationContext,
 	}, message)
@@ -399,6 +434,7 @@ func mergeClientActionMetadata(source map[string]interface{}, event map[string]i
 	metadata["client_actions"] = mapsToInterfaceSlice(records)
 
 	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	invocationReplaced := false
 	for index, invocation := range invocations {
 		if strings.TrimSpace(stringFromAny(invocation["kind"])) != "client_action" {
 			continue
@@ -407,6 +443,22 @@ func mergeClientActionMetadata(source map[string]interface{}, event map[string]i
 			continue
 		}
 		invocations[index] = mergeInvocation(invocation, event)
+		invocationReplaced = true
+		break
+	}
+	if !invocationReplaced {
+		values := copyStringAnyMap(event)
+		if values == nil {
+			values = map[string]interface{}{}
+		}
+		values["runtime_id"] = "client_action:" + actionID
+		invocations = append(invocations, newSkillInvocation(
+			"client_action",
+			stringFromAny(event["skill_id"]),
+			stringFromAny(event["tool_name"]),
+			firstNonEmptyString(event["status"], clientActionStatusWaiting),
+			values,
+		))
 	}
 	applySkillInvocationSummary(metadata, invocations)
 	return metadata

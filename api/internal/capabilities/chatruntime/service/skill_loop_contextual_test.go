@@ -143,7 +143,7 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesCreateGuidance(t *test
 	prepared := &PreparedChat{
 		parts: consoleFilesCreateCapabilityTestParts("please create a txt file in File Management"),
 	}
-	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager, skills.SkillChartGenerator}
 	prepared.parts.SkillMode = skillModeAuto
 
 	messages := skillLoopAdditionalSystemMessages(prepared)
@@ -153,10 +153,13 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesCreateGuidance(t *test
 	content := messageContentText(messages[0].Content)
 	for _, want := range []string{
 		"file-generator",
+		"file-manager",
+		"chart-generator",
 		"generate_file",
+		"save_file_to_management",
 		`"capability_id":"file.create"`,
-		`target "managed_file"`,
 		"temporary_artifact",
+		"generic SVG/vector",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("contextual create guidance missing %q in:\n%s", want, content)
@@ -164,11 +167,165 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesCreateGuidance(t *test
 	}
 }
 
+func TestContextualAIChatTurnStrategyPlansRouteBeforeManagedFileCreate(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "please create an svg file in File Management",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/work/chat",
+			SkillIDs: []string{
+				skills.SkillConsoleNavigator,
+				skills.SkillFileGenerator,
+				skills.SkillFileManager,
+				skills.SkillChartGenerator,
+			},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	message, ok := contextualAIChatTurnStrategyMessage(prepared)
+	if !ok {
+		t.Fatal("contextualAIChatTurnStrategyMessage() ok = false, want true")
+	}
+	content := messageContentText(message.Content)
+	for _, want := range []string{
+		"ZGI AIChat turn strategy guidance",
+		`"intent":"save_generated_file_to_file_management"`,
+		`"target_page":"/console/files"`,
+		`"route_required":true`,
+		skills.SkillConsoleNavigator,
+		skills.SkillFileGenerator,
+		skills.SkillFileManager,
+		"exactly one temporary artifact",
+		"asset_observation:file.create",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("turn strategy missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestContextualAIChatTurnStrategyUsesRecentArtifactWithoutRegeneration(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("\u628a\u8fd9\u4e2a\u6587\u4ef6\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\u4e2d"),
+	}
+	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.RecentGeneratedArtifacts = []map[string]interface{}{{
+		"tool_file_id": "tool-recent-1",
+		"filename":     "monthly-sales-bar.svg",
+	}}
+
+	message, ok := contextualAIChatTurnStrategyMessage(prepared)
+	if !ok {
+		t.Fatal("contextualAIChatTurnStrategyMessage() ok = false, want true")
+	}
+	content := messageContentText(message.Content)
+	for _, want := range []string{
+		`"artifact_source":"recent_generated_file"`,
+		`"primary_skills":["file-manager"]`,
+		"do not generate another file",
+		"save_generated_file_to_file_management",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("recent-artifact strategy missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestContextualAIChatTurnStrategyClassifiesFilesPageRead(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSnapshotTestParts("\u603b\u7ed3\u7b2c\u4e00\u4e2a\u6587\u4ef6", []consoleFilesTestFile{
+			{ID: "file-1", Name: "notes.md", Extension: "md", MimeType: "text/markdown"},
+		}),
+	}
+	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	message, ok := contextualAIChatTurnStrategyMessage(prepared)
+	if !ok {
+		t.Fatal("contextualAIChatTurnStrategyMessage() ok = false, want true")
+	}
+	content := messageContentText(message.Content)
+	for _, want := range []string{
+		`"intent":"read_visible_file_content"`,
+		`"target_page":"/console/files"`,
+		`"primary_skills":["file-reader"]`,
+		"read_file_result",
+		"final answer is based on the returned file content",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("files-read strategy missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestSkillLoopAdditionalSystemMessagesIncludesRecentGeneratedFiles(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("\u628a\u8fd9\u4e2a\u6587\u4ef6\u4e0a\u4f20\u5230\u6587\u4ef6\u7ba1\u7406"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.RecentGeneratedArtifacts = []map[string]interface{}{{
+		"tool_file_id":      "tool-recent-1",
+		"filename":          "monthly-sales-bar.svg",
+		"extension":         ".svg",
+		"mime_type":         "image/svg+xml",
+		"source_message_id": "message-1",
+	}}
+
+	messages := skillLoopAdditionalSystemMessages(prepared)
+	if len(messages) != 1 {
+		t.Fatalf("additional messages = %d, want 1", len(messages))
+	}
+	content := messageContentText(messages[0].Content)
+	for _, want := range []string{
+		"recent_generated_files",
+		`"tool_file_id":"tool-recent-1"`,
+		`"filename":"monthly-sales-bar.svg"`,
+		"before considering visible_files",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("recent generated file guidance missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestSkillLoopAdditionalSystemMessagesAddsChartOnlyCreateGuidance(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("please create a radar chart in File Management"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillChartGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	messages := skillLoopAdditionalSystemMessages(prepared)
+	if len(messages) != 1 {
+		t.Fatalf("additional messages = %d, want 1", len(messages))
+	}
+	content := messageContentText(messages[0].Content)
+	for _, want := range []string{
+		"chart-generator",
+		"generate_chart",
+		"file-manager",
+		"save_file_to_management",
+		"artifact-producing skill",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("chart-only create guidance missing %q in:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, `"skill_id":"file-generator"`) {
+		t.Fatalf("chart-only create guidance should not expose disabled file-generator tools:\n%s", content)
+	}
+}
+
 func TestSkillLoopFinalAnswerGuardBlocksManagedFileCreateWithoutToolCall(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesCreateCapabilityTestParts("\u8bf7\u5728\u6587\u4ef6\u7ba1\u7406\u4e2d\u521b\u5efa\u4e00\u4e2a txt \u6587\u4ef6"),
 	}
-	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
 	prepared.parts.SkillMode = skillModeAuto
 
 	guard := skillLoopFinalAnswerGuard(prepared)
@@ -181,24 +338,401 @@ func TestSkillLoopFinalAnswerGuardBlocksManagedFileCreateWithoutToolCall(t *test
 	if !blocked {
 		t.Fatal("guard blocked = false, want true")
 	}
-	for _, want := range []string{skills.SkillFileGenerator, "managed_file", "Do not finish"} {
+	for _, want := range []string{skills.SkillFileGenerator, skills.SkillFileManager, "save_file_to_management", "Do not finish"} {
 		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
 			t.Fatalf("guard result missing %q: %#v", want, result)
 		}
 	}
 
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+	result, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The file has been created.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
 			SkillID:  skills.SkillFileGenerator,
 			ToolName: "generate_file",
 			Arguments: map[string]interface{}{
-				"filename": "smoke.txt",
-				"target":   "managed_file",
+				"filename": "smoke",
+				"format":   "txt",
+			},
+			Result: map[string]interface{}{
+				"tool_file_id": "tool-1",
+				"filename":     "smoke.txt",
+			},
+		}},
+	})
+	if !blocked {
+		t.Fatal("guard allowed completion after temporary generation without file-manager save")
+	}
+	for _, want := range []string{
+		"Do not generate another file",
+		`"skill_id":"file-manager"`,
+		`"tool_name":"save_file_to_management"`,
+		`"tool_file_id":"tool-1"`,
+		`"filename":"smoke.txt"`,
+	} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+	if strings.Contains(result.Message, "tool-1") {
+		t.Fatalf("guard user-visible message exposed tool file id: %s", result.Message)
+	}
+
+	result, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The chart has been generated.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillChartGenerator,
+			ToolName: "generate_chart",
+			Arguments: map[string]interface{}{
+				"output_filename": "chart",
+			},
+			Result: map[string]interface{}{
+				"file_id":      "chart-tool-1",
+				"filename":     "chart.svg",
+				"mime_type":    "image/svg+xml",
+				"download_url": "/tool-files/chart-tool-1?download=1",
+			},
+		}},
+	})
+	if !blocked {
+		t.Fatal("guard allowed completion after chart artifact generation without file-manager save")
+	}
+	for _, want := range []string{`"tool_file_id":"chart-tool-1"`, `"filename":"chart.svg"`, `"tool_name":"save_file_to_management"`} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("chart artifact guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileManager,
+			ToolName: "save_file_to_management",
+			Arguments: map[string]interface{}{
+				"source_type":  "tool_file",
+				"tool_file_id": "tool-1",
+				"filename":     "smoke.txt",
 			},
 		}},
 	})
 	if blocked {
-		t.Fatal("guard blocked = true after managed file-generator tool call, want false")
+		t.Fatal("guard blocked = true after file-manager save tool call, want false")
+	}
+
+	result, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The file has been saved to File Management.",
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileManager,
+			ToolName: "save_file_to_management",
+			Arguments: map[string]interface{}{
+				"source_type":  "tool_file",
+				"tool_file_id": "tool-1",
+				"filename":     "smoke.txt",
+			},
+		}},
+	})
+	if !blocked {
+		t.Fatal("guard allowed a success claim after save_file_to_management was only attempted")
+	}
+	for _, want := range []string{"did not succeed", "Do not say the file was created", "actual tool result"} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("attempted-save guard message missing %q in:\n%s", want, result.Message)
+		}
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The save to File Management failed; please retry after checking permissions.",
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileManager,
+			ToolName: "save_file_to_management",
+			Arguments: map[string]interface{}{
+				"source_type":  "tool_file",
+				"tool_file_id": "tool-1",
+				"filename":     "smoke.txt",
+			},
+		}},
+	})
+	if blocked {
+		t.Fatal("guard blocked a failure report after save_file_to_management was attempted")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardUsesRecentGeneratedArtifactForReferencedSave(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("\u5bfc\u822a\u540e\uff0c\u5982\u679c\u4e0d\u5728\u7ba1\u7406\u9875\u9762\uff0c\u5c31\u628a\u8fd9\u4e2a\u6587\u4ef6\u4e0a\u4f20\u5230\u7ba1\u7406\u91cc\u9762"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.RecentGeneratedArtifacts = []map[string]interface{}{{
+		"tool_file_id": "tool-recent-1",
+		"filename":     "monthly-sales-bar.svg",
+		"extension":    ".svg",
+		"mime_type":    "image/svg+xml",
+	}}
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for referenced recent artifact save")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "It is already in File Management.",
+	})
+	if !blocked {
+		t.Fatal("guard allowed completion before saving the referenced recent artifact")
+	}
+	for _, want := range []string{
+		"recent generated/downloadable file",
+		`"tool_name":"save_file_to_management"`,
+		`"tool_file_id":"tool-recent-1"`,
+		`"filename":"monthly-sales-bar.svg"`,
+	} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+	if strings.Contains(result.Message, "tool-recent-1") {
+		t.Fatalf("guard user-visible message exposed tool file id: %s", result.Message)
+	}
+}
+
+func TestSkillLoopToolCallGuardRoutesManagedFileCreateBeforeGeneration(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "please create an svg file in File Management",
+			RuntimeContext: "route=/console/work/chat",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager, skills.SkillChartGenerator},
+			SkillMode:      skillModeAuto,
+		},
+	}
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want managed-file route guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "hello.svg",
+			"format":   "svg",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed file generation before Files page navigation")
+	}
+	for _, want := range []string{skills.SkillConsoleNavigator, "navigate", "/console/files"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("guard result missing %q: %#v", want, result)
+		}
+	}
+
+	_, blocked = guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillConsoleNavigator,
+		ToolName:  "navigate",
+		Arguments: map[string]interface{}{"href": "/console/files"},
+	})
+	if blocked {
+		t.Fatal("tool guard blocked the required Files page navigation")
+	}
+
+	result, blocked = guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillChartGenerator,
+		ToolName: "generate_chart",
+		Arguments: map[string]interface{}{
+			"chart_type":      "radar",
+			"output_filename": "wrong",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed chart generation before Files page navigation")
+	}
+	for _, want := range []string{skills.SkillConsoleNavigator, "navigate", "/console/files"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("chart route guard result missing %q: %#v", want, result)
+		}
+	}
+}
+
+func TestSkillLoopToolCallGuardPreventsDuplicateManagedFileGeneration(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("please create a txt file in File Management"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want managed-file duplicate generation guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "second.txt",
+			"format":   "txt",
+		},
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileGenerator,
+			ToolName: "generate_file",
+			Arguments: map[string]interface{}{
+				"filename": "first",
+				"format":   "txt",
+			},
+			Result: map[string]interface{}{
+				"tool_file_id": "tool-1",
+				"filename":     "first.txt",
+			},
+		}},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed duplicate file generation after a temporary artifact already existed")
+	}
+	for _, want := range []string{skills.SkillFileManager, "save_file_to_management", `"tool_file_id":"tool-1"`, `"filename":"first.txt"`} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+	if strings.Contains(result.Message, "tool-1") {
+		t.Fatalf("guard user-visible message exposed tool file id: %s", result.Message)
+	}
+
+	_, blocked = guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Arguments: map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": "tool-1",
+			"filename":     "first.txt",
+		},
+	})
+	if blocked {
+		t.Fatal("tool guard blocked file-manager save")
+	}
+
+	result, blocked = guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "second.txt",
+			"format":   "txt",
+		},
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillChartGenerator,
+			ToolName: "generate_chart",
+			Result: map[string]interface{}{
+				"file_id":      "chart-tool-1",
+				"filename":     "scores.svg",
+				"format":       "svg",
+				"download_url": "/tool-files/chart-tool-1?download=1",
+			},
+		}},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed duplicate generation after a chart artifact already existed")
+	}
+	for _, want := range []string{skills.SkillFileManager, "save_file_to_management", `"tool_file_id":"chart-tool-1"`, `"filename":"scores.svg"`} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("chart duplicate guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+}
+
+func TestSkillLoopToolCallGuardBlocksDuplicateGenerationForReferencedRecentArtifact(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("\u628a\u8fd9\u4e2a\u6587\u4ef6\u4e0a\u4f20\u5230\u6587\u4ef6\u7ba1\u7406\u91cc\u9762"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.RecentGeneratedArtifacts = []map[string]interface{}{{
+		"tool_file_id": "tool-recent-1",
+		"filename":     "monthly-sales-bar.svg",
+	}}
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want guard for recent artifact save")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "duplicate.svg",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed duplicate generation instead of saving recent artifact")
+	}
+	for _, want := range []string{`"tool_file_id":"tool-recent-1"`, `"filename":"monthly-sales-bar.svg"`, "save_file_to_management"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("tool guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+}
+
+func TestSkillLoopToolCallGuardKeepsGenericSVGOnFileGenerator(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("please create an svg file in File Management"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager, skills.SkillChartGenerator}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want managed-file generator guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillChartGenerator,
+		ToolName: "generate_chart",
+		Arguments: map[string]interface{}{
+			"chart_type":      "radar",
+			"output_filename": "wrong",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed chart-generator for generic SVG creation")
+	}
+	for _, want := range []string{skills.SkillFileGenerator, "generate_file", "generic SVG"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("generic SVG guard result missing %q: %#v", want, result)
+		}
+	}
+}
+
+func TestSkillLoopToolCallGuardBlocksRepeatedFilesNavigationAfterContinuation(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "please create an svg file in File Management",
+			RuntimeContext: "route=/console/work/chat",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
+			SkillMode:      skillModeAuto,
+			OperationContext: map[string]interface{}{
+				"client_action_continuation": map[string]interface{}{
+					"action_type": "route_navigation",
+					"status":      clientActionStatusSucceeded,
+					"href":        "/console/files",
+					"result": map[string]interface{}{
+						"href":          "/console/files",
+						"observed_path": "/console/files",
+					},
+				},
+			},
+		},
+	}
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want repeated navigation guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillConsoleNavigator,
+		ToolName:  "navigate",
+		Arguments: map[string]interface{}{"href": "/console/files"},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed repeated Files page navigation after continuation")
+	}
+	for _, want := range []string{"already loaded", "Do not navigate"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("guard result missing %q: %#v", want, result)
+		}
 	}
 }
 
@@ -296,6 +830,59 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleNavigationWithoutToolCall(t *test
 	})
 	if blocked {
 		t.Fatal("guard blocked after navigate was attempted for the resolved route")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardAllowsAgentDetailRouteForAgentsModule(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "open the first agent page and inspect its config",
+			SkillIDs:  []string{skills.SkillConsoleNavigator},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard before navigation")
+	}
+	_, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Opened the first agent.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillConsoleNavigator, ToolName: "navigate", Arguments: map[string]interface{}{"href": "/console/agents/3806ca05-55c0-4380-a07a-e1cbf6fdcdd1/agent"}},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after navigating to an Agent detail route under /console/agents")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardSkipsAfterClientActionLoadedAgentDetailRoute(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "open the first agent page and inspect its config",
+			SkillIDs:  []string{skills.SkillConsoleNavigator},
+			SkillMode: skillModeAuto,
+			OperationContext: map[string]interface{}{
+				"client_action_continuation": map[string]interface{}{
+					"action_type": "route_navigation",
+					"status":      clientActionStatusSucceeded,
+					"result": map[string]interface{}{
+						"event_type":     "route_loaded",
+						"href":           "/console/agents/3806ca05-55c0-4380-a07a-e1cbf6fdcdd1/agent",
+						"observed_path":  "/console/agents/3806ca05-55c0-4380-a07a-e1cbf6fdcdd1/agent",
+						"context_scope":  "agent-runtime",
+						"context_status": "ready",
+					},
+				},
+			},
+		},
+	}
+
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		if _, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: "Here is the agent configuration."}); blocked {
+			t.Fatal("guard blocked after client action continuation loaded the Agent detail route")
+		}
 	}
 }
 
