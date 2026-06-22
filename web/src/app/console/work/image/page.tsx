@@ -220,6 +220,7 @@ function ImagePageContent() {
         isLoading={isLoading}
         modelSelectorValue={modelSelectorValue}
         onModelChange={handleModelChange}
+        conversationSearchKey={['webapp', 'conversations', webAppId ?? 'image', 'search']}
         inputTopNotice={
           precheckWarnings.length > 0 ? (
             <WorkflowPrecheckWarningBanner

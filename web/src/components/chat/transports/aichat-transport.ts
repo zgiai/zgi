@@ -24,6 +24,7 @@ import type {
   AIChatUserInputRequestedEventData,
   AIChatRegenerateMessageRequest,
   AIChatRuntimeSurface,
+  AIChatSearchResult,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
   AIChatSkillCallStartEventData,
@@ -38,6 +39,7 @@ import type {
   AIChatWorkflowNodeEventData,
   AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
+import type { ConversationSearchResult } from '@/components/chat/controllers/types';
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
   type AIChatPagination,
@@ -163,6 +165,7 @@ export interface AIChatRuntimeTransport {
     }
   ): Promise<AIChatConversation>;
   removeConversation(conversationId: string): Promise<void>;
+  searchConversations?(query: string, limit: number): Promise<ConversationSearchResult[]>;
   stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData>;
   streamChat(
     payload: AIChatChatRequest,
@@ -211,6 +214,17 @@ export interface AIChatRuntimeTransport {
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;
+}
+
+export function mapAIChatSearchResult(item: AIChatSearchResult): ConversationSearchResult {
+  return {
+    type: item.type,
+    conversationId: item.conversation_id,
+    conversationTitle: item.conversation_title,
+    messageId: item.message_id,
+    snippet: item.snippet,
+    updatedAt: item.updated_at * 1000,
+  };
 }
 
 export function dispatchAIChatStreamEvent(
@@ -480,6 +494,11 @@ export class AIChatTransport implements AIChatRuntimeTransport {
 
   async removeConversation(conversationId: string): Promise<void> {
     await aichatService.deleteConversation(conversationId);
+  }
+
+  async searchConversations(query: string, limit: number): Promise<ConversationSearchResult[]> {
+    const response = await aichatService.search(query, limit);
+    return (response.data ?? []).map(mapAIChatSearchResult);
   }
 
   async stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData> {

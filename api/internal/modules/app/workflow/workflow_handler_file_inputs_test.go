@@ -28,6 +28,10 @@ func (m *mockWorkflowFileService) UploadFile(ctx context.Context, filename strin
 	return nil, nil
 }
 
+func (m *mockWorkflowFileService) ReplaceFileContent(ctx context.Context, fileID string, filename string, content []byte, mimeType string, userID, tenantID string) (*dto.UploadFile, error) {
+	return nil, nil
+}
+
 func (m *mockWorkflowFileService) GetFilePreview(ctx context.Context, fileID string) (string, error) {
 	return "", nil
 }

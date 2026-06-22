@@ -522,6 +522,7 @@ const WebappChat: React.FC<WebappChatProps> = ({
         isStopping={isStopping}
         placeholder={inputPlaceholder}
         surface="webapp"
+        conversationSearchKey={['webapp', 'conversations', versionUuid, 'search']}
         inputReplacement={approvalInputReplacement}
         inputTopNotice={
           questionAnswerNotice ||

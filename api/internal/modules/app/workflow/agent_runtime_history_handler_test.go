@@ -841,6 +841,7 @@ func (r *fakeRuntimeAgentRepo) GetByID(ctx context.Context, id string) (*agentsp
 }
 
 type fakeRuntimeHistoryService struct {
+	runtimeservice.Service
 	conversations map[uuid.UUID]*runtimemodel.Conversation
 	messages      []*runtimemodel.Message
 }
@@ -1046,6 +1047,14 @@ func (s *fakeRuntimeHistoryService) ListConversationsByCaller(ctx context.Contex
 
 func (s *fakeRuntimeHistoryService) ListConversationsBySurface(ctx context.Context, scope runtimeservice.Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
 	return nil, 0, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) Search(ctx context.Context, scope runtimeservice.Scope, query string, limit int) ([]*runtimeservice.SearchResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) SearchByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, query string, limit int) ([]*runtimeservice.SearchResult, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 func (s *fakeRuntimeHistoryService) GetConversation(ctx context.Context, scope runtimeservice.Scope, id uuid.UUID) (*runtimemodel.Conversation, error) {

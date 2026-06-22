@@ -186,6 +186,15 @@ type MessageResponse struct {
 	UpdatedAt           int64                  `json:"updated_at"`
 }
 
+type SearchResultResponse struct {
+	Type              string  `json:"type"`
+	ConversationID    string  `json:"conversation_id"`
+	ConversationTitle string  `json:"conversation_title"`
+	MessageID         *string `json:"message_id,omitempty"`
+	Snippet           string  `json:"snippet"`
+	UpdatedAt         int64   `json:"updated_at"`
+}
+
 type ListResponse[T any] struct {
 	Data    []T   `json:"data"`
 	Page    int   `json:"page"`

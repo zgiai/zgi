@@ -5,10 +5,13 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 
 	// Import builtin tools to trigger init() registration
+	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/architecturediagram"
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/chartgenerator"
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/consolenavigation"
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
+	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/intentrouter"
+	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/sensitiveredaction"
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
 

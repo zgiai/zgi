@@ -105,7 +105,7 @@ func (r *Runtime) ResolveEnabledSkills(ctx context.Context, skillIDs []string) (
 
 func (r *Runtime) ResolveEnabledSkillsWithCustom(ctx context.Context, skillIDs []string, custom []CustomSkillCatalogEntry) (*ResolvedSkills, error) {
 	_ = ctx
-	ids := normalizeSkillIDs(skillIDs)
+	ids := withRequiredPreflightSkills(normalizeSkillIDs(skillIDs))
 	resolved := &ResolvedSkills{Skills: make([]SkillDocument, 0, len(ids))}
 	locations, err := r.skillLocations(custom)
 	if err != nil {
@@ -123,6 +123,43 @@ func (r *Runtime) ResolveEnabledSkillsWithCustom(ctx context.Context, skillIDs [
 		resolved.Skills = append(resolved.Skills, doc)
 	}
 	return resolved, nil
+}
+
+func withRequiredPreflightSkills(ids []string) []string {
+	if len(ids) == 0 {
+		return ids
+	}
+	hasPromptProfessionalizer := false
+	needsPromptProfessionalizer := false
+	for _, id := range ids {
+		switch normalizeSkillID(id) {
+		case SkillPromptProfessionalizer:
+			hasPromptProfessionalizer = true
+		case SkillImageGenerator, SkillArchitectureDiagram, SkillChartGenerator:
+			needsPromptProfessionalizer = true
+		}
+	}
+	if !needsPromptProfessionalizer || hasPromptProfessionalizer {
+		return ids
+	}
+	out := append([]string{}, ids...)
+	out = append(out, SkillPromptProfessionalizer)
+	return out
+}
+
+func RequiresPromptProfessionalizerPreflight(skillID string, toolName string) bool {
+	switch normalizeSkillID(skillID) {
+	case SkillImageGenerator:
+		switch strings.TrimSpace(toolName) {
+		case "generate_image", "edit_image":
+			return true
+		}
+	case SkillArchitectureDiagram:
+		return strings.TrimSpace(toolName) == "generate_architecture_diagram"
+	case SkillChartGenerator:
+		return strings.TrimSpace(toolName) == "generate_chart"
+	}
+	return false
 }
 
 func (r *Runtime) ListSkills(ctx context.Context) ([]SkillDiscoveryMetadata, error) {
@@ -1091,7 +1128,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 					"content":   stringValueSchema("Text content to write into the generated file. Use valid CSV content for xlsx, runnable HTML content for html, and a complete self-contained <svg> document for svg."),
 					"format":    enumStringSchema("Output format.", []string{"txt", "md", "html", "json", "csv", "svg", "docx", "xlsx", "pdf"}),
 					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
-					"title":     stringValueSchema("Optional document title used by generated HTML and PDF files."),
+					"title":     stringValueSchema("Optional document title used by generated HTML, XLSX, and PDF files. For XLSX, this becomes a merged title row above the table."),
 					"lifecycle": enumStringSchema("Temporary artifact lifecycle. Defaults to temporary.", []string{"persistent", "temporary"}),
 				},
 				[]string{"content", "format"},
@@ -1205,10 +1242,46 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 				"filename":     "quarterly-report",
 			},
 		},
+		SkillSensitiveRedaction + "/redact_text": {
+			SkillID:     SkillSensitiveRedaction,
+			ToolName:    "redact_text",
+			Description: "Detect and redact sensitive information from text. Use only after source text or parsed document content is available. Never pass unredacted content to file generation; call this tool first.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"text":     stringValueSchema("Source text to redact. Required. Do not pass binary file contents."),
+					"level":    enumStringSchema("Redaction level. Defaults to medium. Use high for external sharing, model training, logs, contracts, resumes, HR data, or customer data.", []string{"low", "medium", "high"}),
+					"strategy": enumStringSchema("Redaction strategy. Defaults to auto. Secrets, tokens, passwords, and private keys are fully hidden even under partial strategy.", []string{"auto", "partial", "full", "label"}),
+					"preserve_rules": objectSchema(
+						map[string]interface{}{
+							"keep_last_digits":  numberSchema("How many trailing digits to keep for partial masking. Must be 0-8. Defaults to 4."),
+							"keep_email_domain": booleanSchema("Whether to keep email domains during partial masking. Defaults to true."),
+							"keep_city":         booleanSchema("Whether to keep city-level address context during partial masking. Defaults to false."),
+							"keep_url_domain":   booleanSchema("Whether to keep URL domain/path while redacting sensitive query parameters. Defaults to true."),
+						},
+						nil,
+					),
+					"entity_types": map[string]interface{}{
+						"description": "Optional entity type filter. Omit to scan all supported types.",
+						"oneOf": []interface{}{
+							arraySchema("Entity types to scan.", enumStringSchema("Entity type.", []string{"phone", "email", "id_card", "bank_card", "address", "name", "customer_name", "company", "order_id", "contract_id", "secret", "token", "password", "private_key", "ip", "url_parameter"})),
+							stringValueSchema("Comma-separated entity types or JSON array string."),
+						},
+					},
+					"locale":             enumStringSchema("Locale hint. Defaults to auto.", []string{"auto", "zh-CN", "en-US"}),
+					"include_field_list": booleanSchema("Whether to return redacted field summaries. Defaults to true. Field summaries never contain complete original sensitive values."),
+				},
+				[]string{"text"},
+			),
+			Example: map[string]interface{}{
+				"text":     "Name: Zhang San, phone: 13812345678, token=abcdef1234567890",
+				"level":    "high",
+				"strategy": "auto",
+			},
+		},
 		SkillChartGenerator + "/generate_chart": {
 			SkillID:     SkillChartGenerator,
 			ToolName:    "generate_chart",
-			Description: "Generate a downloadable SVG chart artifact from structured data after chart type, title, data mapping, and rendering style have been provided or confirmed. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution. For generic chart requests, call request_user_input before this tool.",
+			Description: "Generate a downloadable SVG chart artifact from structured data after prompt-professionalizer has been loaded and chart type, title, data mapping, and rendering style have been provided or confirmed. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution. For generic chart requests, call request_user_input before this tool.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"chart_type":      enumStringSchema("Chart type.", []string{"radar", "bar", "line", "pie", "doughnut", "scatter", "score_distribution"}),
@@ -1245,6 +1318,142 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 				},
 			},
 		},
+		SkillIntentRouter + "/route_intent": {
+			SkillID:     SkillIntentRouter,
+			ToolName:    "route_intent",
+			Description: "Validate and normalize a structured intent routing result. The model must classify the user's real intent first, then pass a stable task type, confidence, recommended action, evidence, missing information, routing hints, and normalized request.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"user_input":              stringValueSchema("The current user message being classified."),
+					"context_summary":         stringValueSchema("Optional concise summary of relevant conversation context."),
+					"uploaded_files":          intentUploadedFilesSchema(),
+					"intent_id":               stringValueSchema("Stable dotted lowercase identifier such as file_generation.docx or database_query.filter_records."),
+					"task_type":               enumStringSchema("Standard task type.", intentTaskTypes()),
+					"subtype":                 stringValueSchema("Optional normalized subtype such as docx, bar, filter_records, or unknown."),
+					"confidence":              boundedNumberSchema("Confidence from 0 to 1.", 0, 1),
+					"recommended_action":      enumStringSchema("Recommended next action.", intentRecommendedActions()),
+					"recommended_skill_id":    enumStringSchema("Optional target skill ID when recommended_action is call_skill.", []string{"file-generator", "chart-generator", "work-report-generator", "schedule-planner", "calculator", "internal-knowledge", "agent-knowledge", "internal-database", "agent-database", "agent-workflow"}),
+					"recommended_tool_name":   stringValueSchema("Optional target tool name when recommended_action is call_tool."),
+					"recommended_workflow_id": stringValueSchema("Optional workflow or workflow binding identifier when known."),
+					"recommended_database_id": stringValueSchema("Optional database identifier when known."),
+					"recommended_dataset_ids": intentStringArraySchema("Optional knowledge base or dataset IDs when known."),
+					"routing_hints":           intentRoutingHintsSchema(),
+					"missing_info":            intentMissingInfoSchema(),
+					"evidence":                intentStringArraySchema("Evidence strings grounded in the user input or supplied context."),
+					"normalized_request":      stringValueSchema("Concise restatement of what the user is actually asking."),
+					"alternate_intents":       intentAlternateIntentsSchema(),
+				},
+				[]string{"user_input", "intent_id", "task_type", "confidence", "recommended_action", "evidence", "normalized_request"},
+			),
+			Example: map[string]interface{}{
+				"user_input":            "Export the current report as a Word document.",
+				"intent_id":             "file_generation.docx",
+				"task_type":             "file_generation",
+				"subtype":               "docx",
+				"confidence":            0.94,
+				"recommended_action":    "call_skill",
+				"recommended_skill_id":  "file-generator",
+				"recommended_tool_name": "generate_docx",
+				"routing_hints": map[string]interface{}{
+					"requires_file_generation": true,
+				},
+				"missing_info":       []map[string]interface{}{},
+				"evidence":           []string{"User explicitly asked to export as a Word document."},
+				"normalized_request": "Generate a DOCX file from the current report.",
+			},
+		},
+		SkillArchitectureDiagram + "/generate_architecture_diagram": {
+			SkillID:     SkillArchitectureDiagram,
+			ToolName:    "generate_architecture_diagram",
+			Description: "Generate downloadable SVG and HTML technical diagram artifacts after prompt-professionalizer has been loaded and diagram type, title, scope, and rendering style have been provided or confirmed. Supports system_architecture, agent_architecture, data_flow, flowchart, comparison_matrix, sequence, state, and er. For generic diagram requests, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"diagram_type":    enumStringSchema("Diagram type.", []string{"system_architecture", "agent_architecture", "data_flow", "flowchart", "comparison_matrix", "sequence", "state", "er"}),
+					"title":           stringValueSchema("Optional diagram title."),
+					"description":     stringValueSchema("Optional short subtitle or source summary."),
+					"output_filename": stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"data":            architectureDiagramDataSchema(),
+					"options": objectSchema(
+						map[string]interface{}{
+							"formats":     arraySchema("Output formats. Defaults to svg and html.", enumStringSchema("Output format.", []string{"svg", "html"})),
+							"width":       numberSchema("Optional SVG width. Defaults to 1200 and must be between 480 and 2400."),
+							"height":      numberSchema("Optional SVG height. Defaults to 760 and must be between 320 and 1800."),
+							"style":       enumStringSchema("Rendering style. Use technical for engineering docs, business for reports, presentation for slide-ready diagrams, paper for warm report visuals, and simple when unspecified.", []string{"simple", "business", "technical", "presentation", "paper"}),
+							"direction":   enumStringSchema("Layout direction.", []string{"left_to_right", "top_to_bottom"}),
+							"show_legend": booleanSchema("Whether to show legend when supported. Defaults to true."),
+							"show_labels": booleanSchema("Whether to show edge labels. Defaults to true."),
+						},
+						nil,
+					),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"diagram_type", "data"},
+			),
+			Example: map[string]interface{}{
+				"diagram_type":    "agent_architecture",
+				"title":           "RAG Agent Architecture",
+				"output_filename": "rag-agent-architecture",
+				"data": map[string]interface{}{
+					"nodes": []map[string]interface{}{
+						{"id": "user", "label": "User", "type": "actor", "layer": "input"},
+						{"id": "agent", "label": "Agent Orchestrator", "type": "agent", "layer": "agent"},
+						{"id": "retriever", "label": "Retriever", "type": "tool", "layer": "tools"},
+						{"id": "vector", "label": "Vector Store", "type": "memory", "layer": "memory"},
+						{"id": "llm", "label": "LLM", "type": "model", "layer": "model"},
+					},
+					"edges": []map[string]interface{}{
+						{"from": "user", "to": "agent", "label": "query"},
+						{"from": "agent", "to": "retriever", "label": "retrieve"},
+						{"from": "retriever", "to": "vector", "label": "search"},
+						{"from": "agent", "to": "llm", "label": "prompt + context"},
+					},
+				},
+				"options": map[string]interface{}{"style": "technical", "formats": []string{"svg", "html"}},
+			},
+		},
+		SkillImageGenerator + "/generate_image": {
+			SkillID:     SkillImageGenerator,
+			ToolName:    "generate_image",
+			Description: "Generate downloadable image files from a text prompt after prompt-professionalizer has been loaded. Supports style, aspect ratio, count, negative prompt, and optional current-user reference image URL guidance. Reference images are passed as signed URLs in the prompt, not as structured image inputs. For generic image requests, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"prompt":          stringValueSchema("Required image description. Include subject, scene, composition, intended use, and constraints."),
+					"style":           imageStyleSchema(),
+					"aspect_ratio":    imageAspectRatioSchema(),
+					"count":           numberSchema("Number of candidate images. Must be an integer from 1 to 4."),
+					"negative_prompt": stringValueSchema("Optional elements, styles, or risks to avoid."),
+					"reference_image": imageFileObjectSchema("Optional current-user reference image file object or file ID. The tool places a signed URL in the prompt for loose visual guidance; it is not a structured image input."),
+					"filename":        stringValueSchema("Optional base filename. Do not include path separators or an extension."),
+					"lifecycle":       enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"provider":        stringValueSchema("Optional explicit image model provider. Usually omit this and use the default image generation model."),
+					"model":           stringValueSchema("Optional explicit image generation model. Usually omit this and use the default image generation model."),
+				},
+				[]string{"prompt"},
+			),
+			Example: map[string]interface{}{"prompt": "A clean product concept image of a smart desk lamp on a white studio background", "style": "product", "aspect_ratio": "1:1", "count": 1},
+		},
+		SkillImageGenerator + "/edit_image": {
+			SkillID:     SkillImageGenerator,
+			ToolName:    "edit_image",
+			Description: "Create prompt-plus-reference-URL variants or edit-style regenerated images from a current-user reference image and instruction after prompt-professionalizer has been loaded. This is not precise in-place editing and does not pass structured image input to the provider. For ambiguous edits, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"image":            imageFileObjectSchema("Required current-user reference image file object or file ID. The tool places a signed URL in the prompt for loose visual guidance; it is not a structured image input."),
+					"edit_instruction": stringValueSchema("Required edit or variant instruction. State what to change, preserve, and avoid."),
+					"edit_type":        enumStringSchema("Edit type.", []string{"auto", "variant", "background", "color", "add_element", "remove_element", "style_transfer"}),
+					"style":            imageStyleSchema(),
+					"aspect_ratio":     imageAspectRatioSchema(),
+					"count":            numberSchema("Number of candidate images. Must be an integer from 1 to 4."),
+					"negative_prompt":  stringValueSchema("Optional elements, styles, or risks to avoid."),
+					"filename":         stringValueSchema("Optional base filename. Do not include path separators or an extension."),
+					"lifecycle":        enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"provider":         stringValueSchema("Optional explicit image model provider. Usually omit this and use the default image generation model."),
+					"model":            stringValueSchema("Optional explicit image generation model. Usually omit this and use the default image generation model."),
+				},
+				[]string{"image", "edit_instruction"},
+			),
+			Example: map[string]interface{}{"image": map[string]interface{}{"upload_file_id": "file-id"}, "edit_instruction": "Change the background to a bright office scene and keep the main product shape", "edit_type": "background", "count": 1},
+		},
 		SkillWorkReport + "/generate_file": {
 			SkillID:     SkillWorkReport,
 			ToolName:    "generate_file",
@@ -1260,6 +1469,27 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 				[]string{"content", "format"},
 			),
 			Example: map[string]interface{}{"content": "# Weekly Work Report\n\n## Summary\n\n...", "format": "md", "filename": "weekly-work-report"},
+		},
+		SkillContractFieldExtractor + "/generate_file": {
+			SkillID:     SkillContractFieldExtractor,
+			ToolName:    "generate_file",
+			Description: "Generate a downloadable JSON, CSV, Markdown, or text file from completed contract field extraction results. Use only after contract text and configured fields have been processed and missing fields are marked explicitly.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"content":   stringValueSchema("Final contract extraction result content to write into the generated file. Preserve missing, uncertain, conflict, confidence, evidence, and source_location fields."),
+					"format":    enumStringSchema("Output format.", []string{"json", "csv", "md", "txt"}),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional document title used by generated file formats that support titles."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"content", "format"},
+			),
+			Example: map[string]interface{}{
+				"content":  `{"contract_summary":{"field_count":2,"extracted_count":1,"missing_count":1},"fields":[{"field_key":"contract_amount","field_label":"Contract Amount","value":"CNY 120,000","normalized_value":"120000","value_type":"money","extraction_status":"extracted","confidence":0.92,"evidence":"The total contract price is CNY 120,000.","source_location":"Section 3","notes":""},{"field_key":"renewal_clause","field_label":"Renewal Clause","value":"Not found","normalized_value":"","value_type":"clause","extraction_status":"missing","confidence":0,"evidence":"","source_location":"","notes":"No explicit renewal clause was found in the contract text."}]}`,
+				"format":   "json",
+				"filename": "contract-field-extraction",
+				"title":    "Contract Field Extraction",
+			},
 		},
 		SkillInternalKnowledge + "/list_accessible_knowledge_bases": {
 			SkillID:     SkillInternalKnowledge,
@@ -1543,13 +1773,6 @@ func enumStringSchema(description string, values []string) map[string]interface{
 	return schema
 }
 
-func booleanSchema(description string) map[string]interface{} {
-	return map[string]interface{}{
-		"type":        "boolean",
-		"description": description,
-	}
-}
-
 func arraySchema(description string, items map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
 		"type":        "array",
@@ -1642,8 +1865,14 @@ func chartDataSchema() map[string]interface{} {
 		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
 	}
 	distributionRangeProps := map[string]interface{}{
-		"bands":     scoreRangeBands,
-		"scores":    arraySchema("Raw score values or objects with value.", map[string]interface{}{"oneOf": []interface{}{numberSchema("Raw score value."), objectSchema(map[string]interface{}{"label": stringValueSchema("Optional score label."), "value": numberSchema("Raw score value.")}, []string{"value"})}}),
+		"bands": scoreRangeBands,
+		"scores": arraySchema("Raw score values or objects with value.", map[string]interface{}{"oneOf": []interface{}{
+			numberSchema("Raw score value."),
+			objectSchema(map[string]interface{}{
+				"label": stringValueSchema("Optional score label."),
+				"value": numberSchema("Raw score value."),
+			}, []string{"value"}),
+		}}),
 		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
 	}
 
@@ -1662,12 +1891,104 @@ func chartDataSchema() map[string]interface{} {
 	}
 }
 
+func architectureDiagramDataSchema() map[string]interface{} {
+	node := objectSchema(map[string]interface{}{
+		"id":    stringValueSchema("Stable node ID. Edges must reference this value."),
+		"label": stringValueSchema("Human-readable node label."),
+		"type":  stringValueSchema("Optional node type such as frontend, service, database, agent, model, tool, memory, input, output, or approval."),
+		"group": stringValueSchema("Optional logical group."),
+		"layer": stringValueSchema("Optional layout layer used to order nodes."),
+	}, []string{"id"})
+	edge := objectSchema(map[string]interface{}{
+		"from":  stringValueSchema("Source node ID, participant name, state ID, or entity ID."),
+		"to":    stringValueSchema("Target node ID, participant name, state ID, or entity ID."),
+		"label": stringValueSchema("Optional relationship, transition, message, or data-flow label."),
+	}, []string{"from", "to"})
+	group := objectSchema(map[string]interface{}{
+		"id":    stringValueSchema("Group ID."),
+		"label": stringValueSchema("Group label."),
+	}, []string{"id"})
+	entity := objectSchema(map[string]interface{}{
+		"id":     stringValueSchema("Stable entity ID. Relationships must reference this value."),
+		"label":  stringValueSchema("Entity label."),
+		"fields": stringArrayOrCSVSchema("Optional entity fields such as id PK, user_id FK, status."),
+	}, []string{"id"})
+	matrixCells := arraySchema("Matrix cell rows. Must align with rows and columns.", map[string]interface{}{
+		"type":  "array",
+		"items": map[string]interface{}{"type": "string"},
+	})
+	nodeEdgeProps := map[string]interface{}{
+		"nodes":  arraySchema("Diagram nodes.", node),
+		"edges":  arraySchema("Diagram edges.", edge),
+		"groups": arraySchema("Optional visual or logical groups.", group),
+	}
+	return map[string]interface{}{
+		"description": "Diagram-specific data. Node-edge diagrams use nodes, edges, and optional groups; comparison_matrix uses rows, columns, and cells; sequence uses participants and messages; state uses states and transitions; er uses entities and relationships.",
+		"anyOf": []interface{}{
+			objectSchema(nodeEdgeProps, []string{"nodes", "edges"}),
+			objectSchema(map[string]interface{}{
+				"columns": stringArrayOrCSVSchema("Compared products, vendors, options, or plans."),
+				"rows":    stringArrayOrCSVSchema("Comparison criteria, features, metrics, or factors."),
+				"cells":   matrixCells,
+			}, []string{"columns", "rows", "cells"}),
+			objectSchema(map[string]interface{}{
+				"participants": stringArrayOrCSVSchema("Ordered sequence participants."),
+				"messages":     arraySchema("Ordered sequence messages.", edge),
+			}, []string{"participants", "messages"}),
+			objectSchema(map[string]interface{}{
+				"states":      arraySchema("State nodes.", node),
+				"transitions": arraySchema("State transitions.", edge),
+			}, []string{"states", "transitions"}),
+			objectSchema(map[string]interface{}{
+				"entities":      arraySchema("ER entities.", entity),
+				"relationships": arraySchema("ER relationships.", edge),
+			}, []string{"entities", "relationships"}),
+		},
+	}
+}
+
 func copySchemaProperties(input map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(input))
 	for key, value := range input {
 		out[key] = value
 	}
 	return out
+}
+
+func imageStyleSchema() map[string]interface{} {
+	return enumStringSchema("Visual style. Defaults to auto.", []string{"auto", "realistic", "illustration", "flat", "3d", "guofeng", "tech", "poster", "product", "icon", "cover"})
+}
+
+func imageAspectRatioSchema() map[string]interface{} {
+	return enumStringSchema("Image aspect ratio. Defaults to 1:1.", []string{"1:1", "16:9", "9:16", "4:3"})
+}
+
+func imageFileObjectSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"description": description + " Supported formats: PNG, JPG, JPEG, WEBP.",
+		"anyOf": []interface{}{
+			stringValueSchema("File object encoded as JSON, or a file ID string."),
+			map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"upload_file_id": stringValueSchema("Uploaded file ID."),
+					"file_id":        stringValueSchema("Uploaded file ID."),
+					"id":             stringValueSchema("Uploaded file ID."),
+					"related_id":     stringValueSchema("Related uploaded file ID."),
+					"name":           stringValueSchema("Optional filename."),
+					"mime_type":      stringValueSchema("Optional MIME type."),
+				},
+				"additionalProperties": true,
+			},
+		},
+	}
+}
+
+func booleanSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "boolean",
+		"description": description,
+	}
 }
 
 func stringArrayOrCSVSchema(description string) map[string]interface{} {
@@ -1683,6 +2004,136 @@ func stringArrayOrCSVSchema(description string) map[string]interface{} {
 			},
 		},
 	}
+}
+
+func intentStringArraySchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"description": description,
+		"oneOf": []interface{}{
+			map[string]interface{}{
+				"type":  "array",
+				"items": map[string]interface{}{"type": "string"},
+			},
+			map[string]interface{}{
+				"type":        "string",
+				"description": "JSON array string of strings.",
+			},
+		},
+	}
+}
+
+func boundedNumberSchema(description string, minimum float64, maximum float64) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "number",
+		"description": description,
+		"minimum":     minimum,
+		"maximum":     maximum,
+	}
+}
+
+func intentTaskTypes() []string {
+	return []string{
+		"general_qa",
+		"knowledge_retrieval",
+		"database_query",
+		"database_mutation",
+		"workflow_execution",
+		"file_generation",
+		"chart_generation",
+		"report_generation",
+		"schedule_planning",
+		"calculation",
+		"code_or_debugging",
+		"data_analysis",
+		"clarification_required",
+		"unsupported",
+	}
+}
+
+func intentRecommendedActions() []string {
+	return []string{
+		"answer_directly",
+		"call_skill",
+		"call_tool",
+		"run_workflow",
+		"query_database",
+		"mutate_database",
+		"retrieve_knowledge",
+		"request_user_input",
+		"reject_or_escalate",
+	}
+}
+
+func intentRoutingHintsSchema() map[string]interface{} {
+	return objectSchema(
+		map[string]interface{}{
+			"needs_context":             booleanSchema("Whether more conversation or domain context is needed."),
+			"uses_uploaded_files":       booleanSchema("Whether uploaded files are required for execution."),
+			"requires_database":         booleanSchema("Whether database access is required."),
+			"requires_knowledge_base":   booleanSchema("Whether knowledge retrieval is required."),
+			"requires_workflow":         booleanSchema("Whether workflow execution or inspection is required."),
+			"requires_file_generation":  booleanSchema("Whether file generation is required."),
+			"requires_chart_generation": booleanSchema("Whether chart generation is required."),
+			"requires_confirmation":     booleanSchema("Whether explicit user confirmation is required."),
+			"is_high_impact":            booleanSchema("Whether the next action is high impact."),
+			"is_multi_intent":           booleanSchema("Whether the request contains multiple task intents."),
+		},
+		nil,
+	)
+}
+
+func intentMissingInfoSchema() map[string]interface{} {
+	return arraySchema(
+		"Missing information that blocks reliable execution.",
+		objectSchema(
+			map[string]interface{}{
+				"field":    stringValueSchema("Stable missing field name such as chart_type, file_format, database_table, workflow_binding_id, or confirmation."),
+				"reason":   stringValueSchema("Why this field is required."),
+				"question": stringValueSchema("Concise user-facing question that resolves this blocker."),
+				"options":  intentStringArraySchema("Optional concrete quick-reply options, maximum five."),
+			},
+			[]string{"field", "reason", "question"},
+		),
+	)
+}
+
+func intentUploadedFilesSchema() map[string]interface{} {
+	return arraySchema(
+		"Uploaded file metadata relevant to routing. Do not include raw file contents.",
+		map[string]interface{}{
+			"anyOf": []interface{}{
+				objectSchema(intentUploadedFileProperties(), []string{"file_id"}),
+				objectSchema(intentUploadedFileProperties(), []string{"filename"}),
+			},
+		},
+	)
+}
+
+func intentUploadedFileProperties() map[string]interface{} {
+	return map[string]interface{}{
+		"file_id":   stringValueSchema("Optional file identifier."),
+		"filename":  stringValueSchema("Optional filename."),
+		"mime_type": stringValueSchema("Optional MIME type."),
+		"format":    stringValueSchema("Optional file format or extension."),
+		"role":      stringValueSchema("Optional role such as source, reference, attachment, or output_template."),
+		"summary":   stringValueSchema("Optional short file summary."),
+	}
+}
+
+func intentAlternateIntentsSchema() map[string]interface{} {
+	return arraySchema(
+		"Optional secondary plausible intents.",
+		objectSchema(
+			map[string]interface{}{
+				"intent_id":            stringValueSchema("Stable dotted lowercase identifier for the alternate intent."),
+				"task_type":            enumStringSchema("Alternate task type.", intentTaskTypes()),
+				"confidence":           boundedNumberSchema("Alternate confidence from 0 to 1.", 0, 1),
+				"recommended_action":   enumStringSchema("Optional recommended action for the alternate intent.", intentRecommendedActions()),
+				"recommended_skill_id": stringValueSchema("Optional target skill for the alternate intent."),
+			},
+			[]string{"intent_id", "task_type", "confidence"},
+		),
+	)
 }
 
 func precisionSchema() map[string]interface{} {

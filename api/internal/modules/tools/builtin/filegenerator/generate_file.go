@@ -27,6 +27,12 @@ const (
 	pptxMimeType             = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 	pdfMimeType              = "application/pdf"
 	svgMimeType              = "image/svg+xml"
+	xlsxTitleFontColor       = "111827"
+	xlsxHeaderFillColor      = "D9EAF7"
+	xlsxHeaderFontColor      = "1F2937"
+	xlsxBodyFontColor        = "1F2937"
+	xlsxBorderColor          = "D9E2F3"
+	xlsxOuterBorderColor     = "7EA6C8"
 )
 
 var filenameUnsafePattern = regexp.MustCompile(`[^a-zA-Z0-9._\-\p{Han}]`)
@@ -111,8 +117,8 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 			{
 				Name:             "title",
 				Label:            tools.I18nText{"en_US": "Title", "zh_Hans": "标题"},
-				HumanDescription: tools.I18nText{"en_US": "Optional document title used by generated HTML and PDF files.", "zh_Hans": "可选文档标题，生成 HTML 和 PDF 文件时使用。"},
-				LLMDescription:   "Optional title for generated HTML and PDF files.",
+				HumanDescription: tools.I18nText{"en_US": "Optional document title used by generated HTML, XLSX, and PDF files.", "zh_Hans": "可选文档标题，生成 HTML、XLSX 和 PDF 文件时使用。"},
+				LLMDescription:   "Optional title for generated HTML, XLSX, and PDF files. For XLSX, this becomes a merged title row above the table.",
 				Type:             tools.ToolParameterTypeString,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
@@ -413,7 +419,7 @@ func renderContent(content string, format string, title string) ([]byte, error) 
 	case "docx":
 		return renderDocx(content)
 	case "xlsx":
-		return renderXLSX(content)
+		return renderXLSX(content, title)
 	case "pdf":
 		return renderPDF(content, title)
 	default:
@@ -421,7 +427,7 @@ func renderContent(content string, format string, title string) ([]byte, error) 
 	}
 }
 
-func renderXLSX(content string) ([]byte, error) {
+func renderXLSX(content string, title string) ([]byte, error) {
 	reader := csv.NewReader(strings.NewReader(content))
 	reader.FieldsPerRecord = -1
 
@@ -441,9 +447,18 @@ func renderXLSX(content string) ([]byte, error) {
 		sheet = "Sheet1"
 	}
 
+	title = strings.TrimSpace(title)
+	rowOffset := 0
+	if title != "" {
+		rowOffset = 1
+		if err := workbook.SetCellStr(sheet, "A1", title); err != nil {
+			return nil, fmt.Errorf("failed to write XLSX title: %w", err)
+		}
+	}
+
 	for rowIndex, row := range records {
 		for colIndex, value := range row {
-			cell, err := excelize.CoordinatesToCellName(colIndex+1, rowIndex+1)
+			cell, err := excelize.CoordinatesToCellName(colIndex+1, rowIndex+1+rowOffset)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve XLSX cell: %w", err)
 			}
@@ -453,11 +468,244 @@ func renderXLSX(content string) ([]byte, error) {
 		}
 	}
 
+	if err := applyDefaultXLSXTableStyle(workbook, sheet, records, title); err != nil {
+		return nil, err
+	}
+
 	buf, err := workbook.WriteToBuffer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to render XLSX: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+func applyDefaultXLSXTableStyle(workbook *excelize.File, sheet string, records [][]string, title string) error {
+	maxCols := maxXLSXColumns(records)
+	if maxCols == 0 {
+		if strings.TrimSpace(title) != "" {
+			maxCols = 1
+		}
+	}
+	if maxCols == 0 {
+		return nil
+	}
+
+	title = strings.TrimSpace(title)
+	lastColumn, err := excelize.ColumnNumberToName(maxCols)
+	if err != nil {
+		return fmt.Errorf("failed to resolve XLSX column: %w", err)
+	}
+
+	headerRow := 1
+	if title != "" {
+		headerRow = 2
+		lastTitleCell := lastColumn + "1"
+		if maxCols > 1 {
+			if err := workbook.MergeCell(sheet, "A1", lastTitleCell); err != nil {
+				return fmt.Errorf("failed to merge XLSX title cells: %w", err)
+			}
+		}
+		if err := workbook.SetRowHeight(sheet, 1, 28); err != nil {
+			return fmt.Errorf("failed to set XLSX title height: %w", err)
+		}
+	}
+
+	if err := workbook.SetRowHeight(sheet, headerRow, 22); err != nil {
+		return fmt.Errorf("failed to set XLSX header height: %w", err)
+	}
+
+	lastDataRow := headerRow + len(records) - 1
+	if err := applyXLSXCellStyles(workbook, sheet, headerRow, lastDataRow, maxCols, title != ""); err != nil {
+		return err
+	}
+
+	filterRange := fmt.Sprintf("A%d:%s%d", headerRow, lastColumn, lastDataRow)
+	if err := workbook.AutoFilter(sheet, filterRange, []excelize.AutoFilterOptions{}); err != nil {
+		return fmt.Errorf("failed to add XLSX auto filter: %w", err)
+	}
+
+	widths := xlsxColumnWidths(records, maxCols)
+	for colIndex, width := range widths {
+		colName, err := excelize.ColumnNumberToName(colIndex + 1)
+		if err != nil {
+			return fmt.Errorf("failed to resolve XLSX column width: %w", err)
+		}
+		if err := workbook.SetColWidth(sheet, colName, colName, width); err != nil {
+			return fmt.Errorf("failed to set XLSX column width: %w", err)
+		}
+	}
+	return nil
+}
+
+func applyXLSXCellStyles(workbook *excelize.File, sheet string, headerRow int, lastDataRow int, maxCols int, hasTitle bool) error {
+	styleCache := map[string]int{}
+	firstRow := headerRow
+	if hasTitle {
+		firstRow = 1
+	}
+	for row := firstRow; row <= lastDataRow; row++ {
+		role := "body"
+		switch {
+		case hasTitle && row == 1:
+			role = "title"
+		case row == headerRow:
+			role = "header"
+		}
+		for col := 1; col <= maxCols; col++ {
+			styleID, err := xlsxStyleForCell(workbook, styleCache, role, xlsxBorderMask(row, col, firstRow, lastDataRow, maxCols))
+			if err != nil {
+				return err
+			}
+			cell, err := excelize.CoordinatesToCellName(col, row)
+			if err != nil {
+				return fmt.Errorf("failed to resolve XLSX styled cell: %w", err)
+			}
+			if err := workbook.SetCellStyle(sheet, cell, cell, styleID); err != nil {
+				return fmt.Errorf("failed to style XLSX cell %s: %w", cell, err)
+			}
+		}
+	}
+	return nil
+}
+
+func xlsxStyleForCell(workbook *excelize.File, cache map[string]int, role string, borderMask int) (int, error) {
+	key := fmt.Sprintf("%s:%d", role, borderMask)
+	if styleID, ok := cache[key]; ok {
+		return styleID, nil
+	}
+	style := excelize.Style{
+		Border: xlsxBorders(borderMask),
+	}
+	switch role {
+	case "title":
+		style.Font = &excelize.Font{
+			Bold:  true,
+			Color: xlsxTitleFontColor,
+			Size:  16,
+		}
+		style.Alignment = &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+			WrapText:   true,
+		}
+	case "header":
+		style.Font = &excelize.Font{
+			Bold:  true,
+			Color: xlsxHeaderFontColor,
+			Size:  12,
+		}
+		style.Fill = excelize.Fill{
+			Type:    "pattern",
+			Pattern: 1,
+			Color:   []string{xlsxHeaderFillColor},
+		}
+		style.Alignment = &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+			WrapText:   true,
+		}
+	default:
+		style.Font = &excelize.Font{
+			Color: xlsxBodyFontColor,
+			Size:  11,
+		}
+		style.Alignment = &excelize.Alignment{
+			Vertical: "top",
+			WrapText: true,
+		}
+	}
+	styleID, err := workbook.NewStyle(&style)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create XLSX %s style: %w", role, err)
+	}
+	cache[key] = styleID
+	return styleID, nil
+}
+
+func xlsxBorderMask(row int, col int, firstRow int, lastRow int, maxCols int) int {
+	mask := 0
+	if row == firstRow {
+		mask |= 1
+	}
+	if row == lastRow {
+		mask |= 2
+	}
+	if col == 1 {
+		mask |= 4
+	}
+	if col == maxCols {
+		mask |= 8
+	}
+	return mask
+}
+
+func xlsxBorders(outerMask int) []excelize.Border {
+	return []excelize.Border{
+		xlsxBorder("left", outerMask&4 != 0),
+		xlsxBorder("right", outerMask&8 != 0),
+		xlsxBorder("top", outerMask&1 != 0),
+		xlsxBorder("bottom", outerMask&2 != 0),
+	}
+}
+
+func xlsxBorder(side string, outer bool) excelize.Border {
+	if outer {
+		return excelize.Border{Type: side, Color: xlsxOuterBorderColor, Style: 2}
+	}
+	return excelize.Border{Type: side, Color: xlsxBorderColor, Style: 1}
+}
+
+func maxXLSXColumns(records [][]string) int {
+	maxCols := 0
+	for _, row := range records {
+		if len(row) > maxCols {
+			maxCols = len(row)
+		}
+	}
+	return maxCols
+}
+
+func xlsxColumnWidths(records [][]string, maxCols int) []float64 {
+	widths := make([]float64, maxCols)
+	for _, row := range records {
+		for colIndex := 0; colIndex < maxCols; colIndex++ {
+			value := ""
+			if colIndex < len(row) {
+				value = row[colIndex]
+			}
+			if width := float64(xlsxDisplayWidth(value)); width > widths[colIndex] {
+				widths[colIndex] = width
+			}
+		}
+	}
+	for index, width := range widths {
+		width += 2
+		if width < 10 {
+			width = 10
+		}
+		if width > 40 {
+			width = 40
+		}
+		widths[index] = width
+	}
+	return widths
+}
+
+func xlsxDisplayWidth(value string) int {
+	width := 0
+	for _, r := range value {
+		switch {
+		case r == '\t':
+			width += 4
+		case r < 0x20:
+			continue
+		case r >= 0x2E80:
+			width += 2
+		default:
+			width++
+		}
+	}
+	return width
 }
 
 func renderPDF(content string, title string) ([]byte, error) {

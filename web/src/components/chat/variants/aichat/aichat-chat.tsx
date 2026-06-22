@@ -547,6 +547,17 @@ export function AIChatShell({
       })),
     [activeConversationId, conversations, isRecoveringMessages, isStopping]
   );
+  const conversationSearchKey = useMemo(
+    () =>
+      [
+        'aichat-runtime',
+        surface,
+        uploadScope?.type === 'webapp' ? uploadScope.webAppId : 'console',
+        'conversations',
+        'search',
+      ] as const,
+    [surface, uploadScope]
+  );
 
   const suggestions = useMemo<AIChatSuggestion[]>(() => {
     if (configuredSuggestions) {
@@ -1002,6 +1013,8 @@ export function AIChatShell({
             onDelete={handleDeleteConversation}
             onRename={handleRenameConversation}
             backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
+            search={controller.search}
+            searchKey={conversationSearchKey}
           />
         </div>
       ) : null}
@@ -1154,6 +1167,8 @@ export function AIChatShell({
               onRename={handleRenameConversation}
               backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
               onClose={() => setMobileSidebarOpen(false)}
+              search={controller.search}
+              searchKey={conversationSearchKey}
             />
           </SheetContent>
         </Sheet>

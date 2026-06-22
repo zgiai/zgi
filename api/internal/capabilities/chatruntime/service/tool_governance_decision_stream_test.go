@@ -33,7 +33,7 @@ func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	conversationID := uuid.New()
 	messageID := uuid.New()
 	provider := "deepseek"
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 
 	conversation := &runtimemodel.Conversation{
 		ID:                   conversationID,
@@ -191,7 +191,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	conversationID := uuid.New()
 	messageID := uuid.New()
 	provider := "deepseek"
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 
 	metadata := pendingToolGovernanceDecisionMetadata("corr-approve")
 	metadata["configured_skill_ids"] = []interface{}{skills.SkillFileManager}
@@ -388,7 +388,7 @@ func TestRunClientActionContinuationStreamAssetObservationFinalizesWithoutTools(
 	conversationID := uuid.New()
 	messageID := uuid.New()
 	provider := "deepseek"
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	actionID := "asset_observation:corr-approve"
 	event := map[string]interface{}{
 		"action_id":   actionID,
@@ -521,7 +521,7 @@ func TestBeginToolGovernanceContinuationRejectsAlreadyStreamingMessage(t *testin
 	accountID := uuid.New()
 	conversationID := uuid.New()
 	messageID := uuid.New()
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 
 	conversation := &runtimemodel.Conversation{
 		ID:                   conversationID,
@@ -573,7 +573,7 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 	conversationID := uuid.New()
 	messageID := uuid.New()
 	provider := "deepseek"
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 
 	metadata := pendingToolGovernanceDecisionMetadata("corr-approve")
 	metadata["configured_skill_ids"] = []interface{}{skills.SkillFileManager}
@@ -754,7 +754,7 @@ func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversati
 	accountID := uuid.New()
 	conversationID := uuid.New()
 	messageID := uuid.New()
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 
 	metadata := pendingToolGovernanceDecisionMetadata("corr-session")
 	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})

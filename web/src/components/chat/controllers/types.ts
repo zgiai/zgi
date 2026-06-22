@@ -21,6 +21,22 @@ export interface ConversationSummary {
   metadata?: Record<string, unknown>;
 }
 
+export type ConversationSearchResultType = 'conversation' | 'message';
+
+export interface ConversationSearchResult {
+  type: ConversationSearchResultType;
+  conversationId: string;
+  conversationTitle: string;
+  messageId?: string;
+  snippet: string;
+  updatedAt?: number;
+}
+
+export type ConversationSearchFn = (
+  query: string,
+  limit: number
+) => Promise<ConversationSearchResult[]>;
+
 // Conversation detail (messages loaded)
 export interface ConversationDetail {
   summary: ConversationSummary;
@@ -102,6 +118,9 @@ export interface ConversationTransport {
 
   // Optional: rename conversation
   rename?(conversationId: string, title: string): Promise<void>;
+
+  // Optional: search conversations and messages in the transport's own scope
+  search?(query: string, limit: number): Promise<ConversationSearchResult[]>;
 }
 
 // Chat controller state (read-only for component)
@@ -145,6 +164,9 @@ export interface ChatControllerActions {
 
   // Optional: rename conversation
   rename?(id: string, title: string): Promise<void>;
+
+  // Optional: search conversations and messages in the active controller scope
+  search?(query: string, limit: number): Promise<ConversationSearchResult[]>;
 }
 
 import type { StoreApi } from 'zustand';

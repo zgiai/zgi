@@ -57,6 +57,7 @@ import {
   isWorkspaceNotFoundError,
   mapWebAppConversationDetailToDetail,
   mapWebAppConversationToSummary,
+  mapWebAppSearchResult,
   normalizeFinalRunStatus,
   parseSseRunError,
   stripQuestionAnswerPromptText,
@@ -637,6 +638,16 @@ export function useWebappConversationTransport(
           console.error('[WebappTransportHook] Failed to get conversation:', err);
           throw err as Error;
         }
+      },
+
+      async search(query: string, limit: number) {
+        const normalizedQuery = query.trim();
+        if (!normalizedQuery) return [];
+        const response = await WebAppService.searchConversations(versionUuid, {
+          query: normalizedQuery,
+          limit,
+        });
+        return response.data.map(mapWebAppSearchResult);
       },
 
       async create(payload?: { title?: string }): Promise<ConversationSummary> {

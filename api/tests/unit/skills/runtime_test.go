@@ -10,8 +10,10 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	architecturediagrampkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/architecturediagram"
 	calculatorpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
 	filegeneratorpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
+	intentrouterpkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/intentrouter"
 	timepkg "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
 
@@ -437,6 +439,65 @@ func TestRuntime_ValidateCatalog_AcceptsFileGeneratorSkill(t *testing.T) {
 	}
 }
 
+func TestRuntime_ValidateCatalog_AcceptsIntentRouterSkill(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeIntentRouterSkill(t, catalogDir)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	if err := runtime.ValidateCatalog(context.Background()); err != nil {
+		t.Fatalf("ValidateCatalog() error = %v", err)
+	}
+}
+
+func TestRuntime_ValidateCatalog_AcceptsPPTSlidePlannerSkill(t *testing.T) {
+	catalogDir := t.TempDir()
+	writePPTSlidePlannerSkill(t, catalogDir)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	if err := runtime.ValidateCatalog(context.Background()); err != nil {
+		t.Fatalf("ValidateCatalog() error = %v", err)
+	}
+	if _, ok := skills.SkillToolArgumentContractFor("ppt-slide-planner", "generate_pptx"); ok {
+		t.Fatal("ppt slide planner must not expose generate_pptx; file-generator owns PPTX generation")
+	}
+}
+
+func TestRuntime_ValidateCatalog_AcceptsContractFieldExtractorSkill(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeContractFieldExtractorSkill(t, catalogDir)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	if err := runtime.ValidateCatalog(context.Background()); err != nil {
+		t.Fatalf("ValidateCatalog() error = %v", err)
+	}
+	contract, ok := skills.SkillToolArgumentContractFor("contract-field-extractor", "generate_file")
+	if !ok {
+		t.Fatal("contract field extractor contract missing")
+	}
+	if contract.Schema["properties"] == nil ||
+		!strings.Contains(fmt.Sprintf("%#v", contract.Schema), "content") ||
+		!strings.Contains(fmt.Sprintf("%#v", contract.Schema), "format") {
+		t.Fatalf("contract field extractor contract = %#v, want content and format schema", contract.Schema)
+	}
+}
+
+func TestRuntime_ValidateCatalog_AcceptsArchitectureDiagramSkill(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeArchitectureDiagramSkill(t, catalogDir)
+	runtime := newSkillRuntimeFromCatalog(t, catalogDir)
+
+	if err := runtime.ValidateCatalog(context.Background()); err != nil {
+		t.Fatalf("ValidateCatalog() error = %v", err)
+	}
+	contract, ok := skills.SkillToolArgumentContractFor("architecture-diagram-generator", "generate_architecture_diagram")
+	if !ok {
+		t.Fatal("architecture diagram contract missing")
+	}
+	if contract.Schema["properties"] == nil || !strings.Contains(fmt.Sprintf("%#v", contract.Schema), "comparison_matrix") || !strings.Contains(fmt.Sprintf("%#v", contract.Schema), "entities") {
+		t.Fatalf("architecture diagram contract = %#v, want diagram type and data branches", contract.Schema)
+	}
+}
+
 func TestRuntime_ValidateCatalog_RejectsMissingTool(t *testing.T) {
 	catalogDir := t.TempDir()
 	timeDir := filepath.Join(catalogDir, "time")
@@ -520,7 +581,13 @@ func newSkillRuntimeFromCatalog(t *testing.T, catalogDir string) *skills.Runtime
 	if err := manager.RegisterProvider(calculatorpkg.NewProvider()); err != nil {
 		t.Fatalf("RegisterProvider() error = %v", err)
 	}
+	if err := manager.RegisterProvider(architecturediagrampkg.NewProvider()); err != nil {
+		t.Fatalf("RegisterProvider() error = %v", err)
+	}
 	if err := manager.RegisterProvider(filegeneratorpkg.NewProvider()); err != nil {
+		t.Fatalf("RegisterProvider() error = %v", err)
+	}
+	if err := manager.RegisterProvider(intentrouterpkg.NewProvider()); err != nil {
 		t.Fatalf("RegisterProvider() error = %v", err)
 	}
 	return skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
@@ -551,6 +618,54 @@ func writeFileGeneratorSkill(t *testing.T, catalogDir string) {
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(testFileGeneratorSkillMarkdown()), 0o644); err != nil {
 		t.Fatalf("write file generator skill: %v", err)
 	}
+}
+
+func writeIntentRouterSkill(t *testing.T, catalogDir string) {
+	t.Helper()
+	writeSkillMarkdown(t, catalogDir, "intent-router", testIntentRouterSkillMarkdown())
+}
+
+func writePPTSlidePlannerSkill(t *testing.T, catalogDir string) {
+	t.Helper()
+	writeSkillMarkdown(t, catalogDir, "ppt-slide-planner", `---
+name: ppt-slide-planner
+description: Plan precise PPT slides from strict per-slide plans before PPTX generation through file-generator.
+when_to_use: Use for PPT planning, PowerPoint outline, slides, slide planning, and presentation structure before file generation.
+runtime_type: prompt
+max_calls_per_turn: 5
+timeout_seconds: 60
+---
+
+# PPT Slide Planner Skill
+
+Create a strict per-slide plan and hand the result to file-generator when PPTX output is required.
+`)
+}
+
+func writeContractFieldExtractorSkill(t *testing.T, catalogDir string) {
+	t.Helper()
+	writeSkillMarkdown(t, catalogDir, "contract-field-extractor", `---
+name: contract-field-extractor
+description: Extract configured contract fields from already parsed contract text.
+when_to_use: Use for contract field extraction, contract metadata extraction, and contract ledger output.
+provider_type: builtin
+provider_id: file_generator
+runtime_type: hybrid
+tools:
+  - generate_file
+max_calls_per_turn: 5
+timeout_seconds: 10
+---
+
+# Contract Field Extractor Skill
+
+Extract configured fields and export results only when requested.
+`)
+}
+
+func writeArchitectureDiagramSkill(t *testing.T, catalogDir string) {
+	t.Helper()
+	writeSkillMarkdown(t, catalogDir, "architecture-diagram-generator", testArchitectureDiagramSkillMarkdown())
 }
 
 func writeSkillMarkdown(t *testing.T, catalogDir string, skillID string, markdown string) {
@@ -693,6 +808,46 @@ timeout_seconds: 5
 # File Generator Skill
 
 Always load this skill before generating files.
+`
+}
+
+func testIntentRouterSkillMarkdown() string {
+	return `---
+name: intent-router
+description: Classify user intent and route tasks.
+when_to_use: Use for intent recognition and task routing before selecting downstream tools.
+provider_type: builtin
+provider_id: intent_router
+runtime_type: hybrid
+tools:
+  - route_intent
+max_calls_per_turn: 3
+timeout_seconds: 5
+---
+
+# Intent Router Skill
+
+Always load this skill before routing ambiguous user requests.
+`
+}
+
+func testArchitectureDiagramSkillMarkdown() string {
+	return `---
+name: architecture-diagram-generator
+description: Generate technical architecture diagrams.
+when_to_use: Use for system architecture, Agent architecture, data flow, flowchart, matrix, sequence, state, and ER diagrams.
+provider_type: builtin
+provider_id: architecture_diagram_generator
+runtime_type: tool
+tools:
+  - generate_architecture_diagram
+max_calls_per_turn: 3
+timeout_seconds: 10
+---
+
+# Architecture Diagram Generator Skill
+
+Always load this skill before generating architecture diagrams.
 `
 }
 

@@ -1,7 +1,7 @@
 ---
 name: chart-generator
 description: Generate downloadable SVG charts from structured data, including radar, bar, line, pie, doughnut, scatter, and score distribution charts.
-when_to_use: Use this skill when the user asks to create, export, or generate a chart, graph, radar chart, spider chart, bar chart, line chart, pie chart, doughnut chart, scatter chart, score distribution chart, score chart, comparison chart, or data visualization from provided data.
+when_to_use: Use this skill when the user asks to create, export, or generate a chart, graph, radar chart, spider chart, bar chart, line chart, pie chart, doughnut chart, scatter chart, score distribution chart, score chart, comparison chart, or data visualization from provided data. For casual, vague, incomplete, or non-structured chart and data visualization requests, first route through prompt-professionalizer to optimize the visualization prompt and extract chart requirements, then call this skill.
 provider_type: builtin
 provider_id: chart_generator
 runtime_type: tool
@@ -58,7 +58,7 @@ display:
 
 # Chart Generator Skill
 
-Use this skill to generate temporary downloadable SVG chart artifacts from structured data. It does not write to File Management. Supported chart types are `radar`, `bar`, `line`, `pie`, `doughnut`, `scatter`, and `score_distribution`; the structure is designed so future chart types can be added with a reference document and builtin renderer.
+Use this skill to generate downloadable SVG chart artifacts from structured data. Supported chart types are `radar`, `bar`, `line`, `pie`, `doughnut`, `scatter`, and `score_distribution`; the structure is designed so future chart types can be added with a reference document and builtin renderer.
 
 ## Supported Chart Types
 
@@ -73,13 +73,14 @@ Use this skill to generate temporary downloadable SVG chart artifacts from struc
 ## Workflow
 
 1. Determine whether the user explicitly requested a `chart_type`: `radar`, `bar`, `line`, `pie`, `doughnut`, `scatter`, or `score_distribution`.
-2. If the user only says a generic request such as "generate a chart", "make a graph", "生成图表", "做个图", or "可视化", call `request_user_input` before calling `generate_chart`.
-3. Read exactly one reference document for that chart type before calling `generate_chart`.
-4. Convert the user's data into the JSON payload documented in the selected reference.
-5. Validate that all required data is present and internally consistent.
-6. Call `call_skill_tool` with `tool_name` set to `generate_chart`.
-7. If the user explicitly asks to save, create, add, upload, or import the chart into File Management or the current Files page, first generate the temporary chart artifact here, then call `file-manager/save_file_to_management` with the returned `tool_file_id`/`file_id` and destination filename.
-8. In the final answer, briefly mention the generated chart filename and any assumptions. Do not paste SVG source unless the user explicitly asks for it.
+2. If the request is casual, vague, incomplete, or not already structured for a chart or visualization tool, first use `prompt-professionalizer` to produce an optimized data visualization prompt and chart requirements.
+3. If the user only says a generic request such as "generate a chart", "make a graph", "生成图表", "做个图", or "可视化", call `request_user_input` before calling `generate_chart`.
+4. Read exactly one reference document for that chart type before calling `generate_chart`.
+5. Convert the user's data into the JSON payload documented in the selected reference.
+6. Validate that all required data is present and internally consistent.
+7. Call `call_skill_tool` with `tool_name` set to `generate_chart`.
+8. If the user explicitly asks to save, create, add, upload, or import the chart into File Management or the current Files page, first generate the temporary chart artifact here, then call `file-manager/save_file_to_management` with the returned `tool_file_id`/`file_id` and destination filename.
+9. In the final answer, briefly mention the generated chart filename and any assumptions. Do not paste SVG source unless the user explicitly asks for it.
 
 ## Clarification Workflow
 
@@ -172,15 +173,14 @@ If the user requests a chart type that is not listed, say it is not supported ye
 - `data`: required chart-specific data object.
 - `options`: optional rendering options. Common keys: `width`, `height`, `style`, `show_values`, `legend`, `grid`.
 - For scatter charts, `options.show_labels` controls point labels.
-- `lifecycle`: optional file lifecycle, `persistent` or `temporary`. Defaults to `temporary`.
+- `lifecycle`: optional file lifecycle, `persistent` or `temporary`. Defaults to `persistent`.
 
 ## Constraints
 
+- Before calling `generate_chart`, use `prompt-professionalizer` when the user's request is casual, vague, incomplete, or not already structured for chart generation. Direct tool calls are allowed only when the chart type, data mapping, title or purpose, and key rendering requirements are already complete.
 - Do not call `generate_chart` until the selected chart reference has been read.
 - Do not read a chart reference until the chart type has been explicitly provided by the user or confirmed through `request_user_input`.
 - Generate SVG artifacts only. Do not promise PNG, PDF, or interactive charts.
-- Do not use this skill for generic SVG/vector image requests that are not charts or data visualization. Use `file-generator` with `format: "svg"` for generic SVG files.
-- Do not claim a chart was saved into File Management until `file-manager/save_file_to_management` succeeds.
 - Do not invent scores, labels, dimensions, class averages, or comparison data.
 - Do not silently choose a chart type, title, or style for a generic chart request.
 - Do not use unsupported chart types silently. Unsupported chart types must be reported as unsupported.

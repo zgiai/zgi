@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
@@ -178,6 +179,75 @@ func (h *ConversationQueryHandler) GetConversationList(c *gin.Context) {
 		"total":    total,
 		"has_more": hasMore,
 	})
+}
+
+// SearchConversationList handles GET /workflows/:web_app_id/search
+// @Summary Search conversations
+// @Description Search conversations and messages for a web application
+// @Tags Conversation
+// @Accept json
+// @Produce json
+// @Param web_app_id path string true "Web App ID"
+// @Param query query string true "Search query"
+// @Param limit query int false "Result limit" default(20)
+// @Success 200 {array} runtimedto.SearchResultResponse
+// @Failure 400 {object} response.ErrorResponse
+// @Failure 500 {object} response.ErrorResponse
+// @Router /workflows/{web_app_id}/search [get]
+func (h *ConversationQueryHandler) SearchConversationList(c *gin.Context) {
+	webAppID := c.Param("web_app_id")
+	accountID := c.GetString("account_id")
+	query := strings.TrimSpace(c.Query("query"))
+	limit := parsePositiveInt(c.Query("limit"), 20)
+	if limit > 50 {
+		limit = 50
+	}
+
+	agent, ok := h.requireActiveWebAppAgent(c, webAppID)
+	if !ok {
+		return
+	}
+	agentUUID, err := uuid.Parse(agent.ID.String())
+	if err != nil {
+		logger.Error("Invalid agent ID", err)
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	accountUUID, err := uuid.Parse(accountID)
+	if err != nil {
+		logger.Error("Invalid account ID", err)
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	results, err := h.conversationService.SearchConversationsByAgent(
+		c.Request.Context(),
+		agentUUID,
+		accountUUID,
+		webAppID,
+		query,
+		limit,
+	)
+	if err != nil {
+		logger.Error("Failed to search conversations", err)
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	items := make([]runtimedto.SearchResultResponse, 0, len(results))
+	for _, result := range results {
+		item := runtimedto.SearchResultResponse{
+			Type:              result.Type,
+			ConversationID:    result.ConversationID.String(),
+			ConversationTitle: result.ConversationTitle,
+			Snippet:           result.Snippet,
+			UpdatedAt:         result.UpdatedAt.Unix(),
+		}
+		if result.MessageID != nil {
+			item.MessageID = stringPtr(result.MessageID.String())
+		}
+		items = append(items, item)
+	}
+	response.Success(c, items)
 }
 
 // GetConversationDetail handles GET /workflows/:web_app_id/conversations/:conversation_id

@@ -159,7 +159,7 @@ func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {
 	})
 
 	t.Run("xlsx", func(t *testing.T) {
-		data, err := renderContent("Name,Score\nCafé,10\n", "xlsx", "Report")
+		data, err := renderContent("Name,Score\nCafé,10\n", "xlsx", "")
 		require.NoError(t, err)
 
 		workbook, err := excelize.OpenReader(bytes.NewReader(data))
@@ -178,6 +178,134 @@ func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {
 		require.Contains(t, string(data), "00430061006600E9")
 		require.NoError(t, api.Validate(bytes.NewReader(data), nil))
 	})
+}
+
+func TestRenderXLSXAppliesDefaultTableStyle(t *testing.T) {
+	data, err := renderContent("Name,Score,Comment\nAlice,10,Excellent\nBob,8,Good\n", "xlsx", "")
+	require.NoError(t, err)
+
+	workbook, err := excelize.OpenReader(bytes.NewReader(data))
+	require.NoError(t, err)
+	defer workbook.Close()
+
+	rows, err := workbook.GetRows("Sheet1")
+	require.NoError(t, err)
+	require.Equal(t, [][]string{
+		{"Name", "Score", "Comment"},
+		{"Alice", "10", "Excellent"},
+		{"Bob", "8", "Good"},
+	}, rows)
+
+	headerStyleID, err := workbook.GetCellStyle("Sheet1", "A1")
+	require.NoError(t, err)
+	headerStyle, err := workbook.GetStyle(headerStyleID)
+	require.NoError(t, err)
+	require.NotNil(t, headerStyle.Font)
+	require.True(t, headerStyle.Font.Bold)
+	require.Equal(t, 12.0, headerStyle.Font.Size)
+	require.Equal(t, xlsxHeaderFontColor, headerStyle.Font.Color)
+	require.Contains(t, headerStyle.Fill.Color, xlsxHeaderFillColor)
+	require.Len(t, headerStyle.Border, 4)
+	requireXLSXBorder(t, headerStyle, "top", 2, xlsxOuterBorderColor)
+	requireXLSXBorder(t, headerStyle, "left", 2, xlsxOuterBorderColor)
+
+	bodyStyleID, err := workbook.GetCellStyle("Sheet1", "B2")
+	require.NoError(t, err)
+	bodyStyle, err := workbook.GetStyle(bodyStyleID)
+	require.NoError(t, err)
+	require.NotNil(t, bodyStyle.Font)
+	require.Equal(t, 11.0, bodyStyle.Font.Size)
+	require.Equal(t, xlsxBodyFontColor, bodyStyle.Font.Color)
+	require.Len(t, bodyStyle.Border, 4)
+
+	bottomRightStyleID, err := workbook.GetCellStyle("Sheet1", "C3")
+	require.NoError(t, err)
+	bottomRightStyle, err := workbook.GetStyle(bottomRightStyleID)
+	require.NoError(t, err)
+	requireXLSXBorder(t, bottomRightStyle, "right", 2, xlsxOuterBorderColor)
+	requireXLSXBorder(t, bottomRightStyle, "bottom", 2, xlsxOuterBorderColor)
+
+	width, err := workbook.GetColWidth("Sheet1", "A")
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, width, 10.0)
+
+	panes, err := workbook.GetPanes("Sheet1")
+	require.NoError(t, err)
+	require.False(t, panes.Freeze)
+	require.Equal(t, 0, panes.YSplit)
+	require.Equal(t, "", panes.TopLeftCell)
+	requireZipEntryContains(t, data, "xl/worksheets/sheet1.xml", `autoFilter ref="$A$1:$C$3"`)
+	requireZipEntryNotContains(t, data, "xl/worksheets/sheet1.xml", `<pane `)
+}
+
+func TestRenderXLSXUsesTitleRowWhenProvided(t *testing.T) {
+	data, err := renderContent("Order ID,Amount\nSO-2026-0001,1068\nSO-2026-0002,1260\n", "xlsx", "2026年订单数据")
+	require.NoError(t, err)
+
+	workbook, err := excelize.OpenReader(bytes.NewReader(data))
+	require.NoError(t, err)
+	defer workbook.Close()
+
+	title, err := workbook.GetCellValue("Sheet1", "A1")
+	require.NoError(t, err)
+	require.Equal(t, "2026年订单数据", title)
+
+	rows, err := workbook.GetRows("Sheet1")
+	require.NoError(t, err)
+	require.Equal(t, [][]string{
+		{"2026年订单数据"},
+		{"Order ID", "Amount"},
+		{"SO-2026-0001", "1068"},
+		{"SO-2026-0002", "1260"},
+	}, rows)
+
+	mergedCells, err := workbook.GetMergeCells("Sheet1")
+	require.NoError(t, err)
+	require.Len(t, mergedCells, 1)
+	require.Equal(t, "A1", mergedCells[0].GetStartAxis())
+	require.Equal(t, "B1", mergedCells[0].GetEndAxis())
+
+	titleStyleID, err := workbook.GetCellStyle("Sheet1", "A1")
+	require.NoError(t, err)
+	titleStyle, err := workbook.GetStyle(titleStyleID)
+	require.NoError(t, err)
+	require.NotNil(t, titleStyle.Font)
+	require.True(t, titleStyle.Font.Bold)
+	require.Equal(t, 16.0, titleStyle.Font.Size)
+	require.Equal(t, xlsxTitleFontColor, titleStyle.Font.Color)
+	requireXLSXBorder(t, titleStyle, "top", 2, xlsxOuterBorderColor)
+	requireXLSXBorder(t, titleStyle, "left", 2, xlsxOuterBorderColor)
+
+	headerStyleID, err := workbook.GetCellStyle("Sheet1", "A2")
+	require.NoError(t, err)
+	headerStyle, err := workbook.GetStyle(headerStyleID)
+	require.NoError(t, err)
+	require.NotNil(t, headerStyle.Font)
+	require.True(t, headerStyle.Font.Bold)
+	require.Equal(t, xlsxHeaderFontColor, headerStyle.Font.Color)
+	require.Contains(t, headerStyle.Fill.Color, xlsxHeaderFillColor)
+	requireXLSXBorder(t, headerStyle, "left", 2, xlsxOuterBorderColor)
+
+	rightTitleStyleID, err := workbook.GetCellStyle("Sheet1", "B1")
+	require.NoError(t, err)
+	rightTitleStyle, err := workbook.GetStyle(rightTitleStyleID)
+	require.NoError(t, err)
+	requireXLSXBorder(t, rightTitleStyle, "right", 2, xlsxOuterBorderColor)
+
+	bottomRightStyleID, err := workbook.GetCellStyle("Sheet1", "B4")
+	require.NoError(t, err)
+	bottomRightStyle, err := workbook.GetStyle(bottomRightStyleID)
+	require.NoError(t, err)
+	requireXLSXBorder(t, bottomRightStyle, "right", 2, xlsxOuterBorderColor)
+	requireXLSXBorder(t, bottomRightStyle, "bottom", 2, xlsxOuterBorderColor)
+
+	panes, err := workbook.GetPanes("Sheet1")
+	require.NoError(t, err)
+	require.False(t, panes.Freeze)
+	require.Equal(t, 0, panes.YSplit)
+	require.Equal(t, "", panes.TopLeftCell)
+	requireZipEntryContains(t, data, "xl/worksheets/sheet1.xml", `autoFilter ref="$A$2:$B$4"`)
+	requireZipEntryNotContains(t, data, "xl/worksheets/sheet1.xml", `<pane `)
 }
 
 func TestRenderContentGeneratesRunnableHTML(t *testing.T) {
@@ -330,6 +458,7 @@ func TestParsePPTXDocumentSpecNormalizesAndRejectsInvalidInput(t *testing.T) {
 		{name: "unknown element", raw: `{"slides":[{"elements":[{"type":"video"}]}]}`, want: "unsupported PPTX element type"},
 		{name: "bad color", raw: `{"slides":[{"elements":[{"type":"text","text":"x","style":{"color":"red"}}]}]}`, want: "expected RRGGBB hex color"},
 		{name: "bad table", raw: `{"slides":[{"elements":[{"type":"table"}]}]}`, want: "table requires headers or rows"},
+		{name: "bad shape", raw: `{"slides":[{"elements":[{"type":"shape"}]}]}`, want: "shape requires fill_color or line_color"},
 		{name: "bad line spacing", raw: `{"slides":[{"elements":[{"type":"text","text":"x","style":{"line_spacing":4}}]}]}`, want: "line_spacing must be between 0.5 and 3"},
 		{name: "bad language", raw: `{"language":"not a language","slides":[{"elements":[{"type":"text","text":"x"}]}]}`, want: "presentation.language must be a valid BCP 47 language tag"},
 	}
@@ -382,6 +511,26 @@ func TestParsePPTXDocumentSpecAllowsVisibleBleedShapes(t *testing.T) {
 	require.Contains(t, normalized, `"y":-0.2`)
 }
 
+func TestPPTSlidePlannerPayloadReferenceExamplesAreValid(t *testing.T) {
+	raw, err := os.ReadFile("../../../skills/catalog/ppt-slide-planner/references/pptx-payload-contract.md")
+	require.NoError(t, err)
+	content := string(raw)
+
+	payloadExample := extractJSONExampleAfterMarker(t, content, "## Valid Payload Example")
+	spec, normalized, err := parsePPTXDocumentSpec(payloadExample)
+	require.NoError(t, err)
+	require.NotEmpty(t, normalized)
+	require.Equal(t, "wide", spec.Layout)
+	require.Equal(t, "zh-CN", spec.Language)
+	require.NotEmpty(t, spec.Slides)
+
+	shapeExample := extractJSONExampleAfterMarker(t, content, "## Minimal Valid Shape")
+	_, normalized, err = parsePPTXDocumentSpec(`{"slides":[{"elements":[` + shapeExample + `]}]}`)
+	require.NoError(t, err)
+	require.Contains(t, normalized, `"fill_color":"F8FAFC"`)
+	require.Contains(t, normalized, `"line_color":"CBD5E1"`)
+}
+
 func TestParsePPTXDocumentSpecWrapsLongChineseText(t *testing.T) {
 	raw := `{
   "slides": [
@@ -399,6 +548,19 @@ func TestParsePPTXDocumentSpecWrapsLongChineseText(t *testing.T) {
 	measure := measurePPTXText(element.Text, &element, spec.DefaultStyle, *element.W, false)
 	require.LessOrEqual(t, measure.LongestLineUnits, measure.LineCapacity+pptxLayoutEpsilon)
 	require.LessOrEqual(t, measure.EstimatedHeight, *element.H+pptxFitHeightSlack(*element.H))
+}
+
+func extractJSONExampleAfterMarker(t *testing.T, content string, marker string) string {
+	t.Helper()
+	markerIndex := strings.Index(content, marker)
+	require.NotEqual(t, -1, markerIndex, "marker %q not found", marker)
+	afterMarker := content[markerIndex+len(marker):]
+	fenceStart := strings.Index(afterMarker, "```json")
+	require.NotEqual(t, -1, fenceStart, "json fence after %q not found", marker)
+	jsonStart := fenceStart + len("```json")
+	fenceEnd := strings.Index(afterMarker[jsonStart:], "```")
+	require.NotEqual(t, -1, fenceEnd, "json fence after %q not closed", marker)
+	return strings.TrimSpace(afterMarker[jsonStart : jsonStart+fenceEnd])
 }
 
 func TestParsePPTXDocumentSpecRejectsBadLayout(t *testing.T) {
@@ -1100,6 +1262,48 @@ func requireZipEntryContains(t *testing.T, data []byte, entryName string, want s
 		names = append(names, file.Name)
 	}
 	require.Failf(t, "missing zip entry", "entry %s not found in %s", entryName, strings.Join(names, ", "))
+}
+
+func requireZipEntryNotContains(t *testing.T, data []byte, entryName string, unwanted string) {
+	t.Helper()
+
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+
+	for _, file := range reader.File {
+		if file.Name != entryName {
+			continue
+		}
+		handle, err := file.Open()
+		require.NoError(t, err)
+		defer handle.Close()
+
+		var buf bytes.Buffer
+		_, err = buf.ReadFrom(handle)
+		require.NoError(t, err)
+		require.NotContains(t, buf.String(), unwanted)
+		return
+	}
+
+	names := make([]string, 0, len(reader.File))
+	for _, file := range reader.File {
+		names = append(names, file.Name)
+	}
+	require.Failf(t, "missing zip entry", "entry %s not found in %s", entryName, strings.Join(names, ", "))
+}
+
+func requireXLSXBorder(t *testing.T, style *excelize.Style, side string, borderStyle int, color string) {
+	t.Helper()
+	require.NotNil(t, style)
+	for _, border := range style.Border {
+		if border.Type != side {
+			continue
+		}
+		require.Equal(t, borderStyle, border.Style)
+		require.Equal(t, color, border.Color)
+		return
+	}
+	require.Failf(t, "missing border", "border %s not found in %#v", side, style.Border)
 }
 
 func requireZipEntries(t *testing.T, data []byte, entryNames ...string) {
