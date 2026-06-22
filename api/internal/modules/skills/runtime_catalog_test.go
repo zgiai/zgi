@@ -412,6 +412,7 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 	}{
 		{SkillFileGenerator, "generate_file", []string{"content", "format"}},
 		{SkillFileManager, "delete_file", []string{"file_id"}},
+		{SkillFileManager, "save_file_to_management", []string{"source_type", "filename"}},
 		{SkillFileReader, "read_file", []string{"file_id"}},
 		{SkillFileGenerator, "generate_docx", []string{"document"}},
 		{SkillFileGenerator, "generate_pdf", []string{"html"}},

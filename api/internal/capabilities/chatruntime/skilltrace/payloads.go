@@ -86,13 +86,17 @@ func ToolGovernanceDecisionPayload(ids PayloadIDs, trace skills.SkillTrace) map[
 
 // SkillCallErrorPayload builds the public skill_call_error event payload.
 func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status string, includeKind bool) map[string]interface{} {
+	resolvedStatus := strings.TrimSpace(status)
+	if strings.TrimSpace(trace.Kind) == "guardrail" && strings.TrimSpace(trace.Status) != "" {
+		resolvedStatus = strings.TrimSpace(trace.Status)
+	}
 	payload := map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"skill_id":        trace.SkillID,
 		"tool_name":       trace.ToolName,
 		"duration_ms":     trace.DurationMS,
-		"status":          status,
+		"status":          resolvedStatus,
 		"message":         trace.Error,
 		"created_at":      time.Now().Unix(),
 	}
@@ -168,6 +172,9 @@ func SkillArtifactsFromToolMessages(ids PayloadIDs, trace skills.SkillTrace, mes
 			continue
 		}
 		artifacts = append(artifacts, skillArtifactFromToolFile(ids, trace, message, file))
+	}
+	if artifact := skillArtifactFromManagedFileJSON(ids, trace, firstJSONToolPayload(messages)); len(artifact) > 0 && !containsSkillArtifact(artifacts, artifact) {
+		artifacts = append(artifacts, artifact)
 	}
 	return artifacts
 }
@@ -278,6 +285,16 @@ func summarizeFileReaderResult(toolName string, payload map[string]interface{}) 
 		return result
 	case "delete_file":
 		result := compactFields(payload, "status", "deleted_count", "reversible", "error")
+		if file := recordFromAny(payload["file"]); len(file) > 0 {
+			for _, field := range []string{"id", "name", "workspace_id", "extension", "mime_type", "size"} {
+				if value, ok := file[field]; ok {
+					result["file_"+field] = value
+				}
+			}
+		}
+		return result
+	case "save_file_to_management":
+		result := compactFields(payload, "status", "target", "transfer_method", "source_type", "error")
 		if file := recordFromAny(payload["file"]); len(file) > 0 {
 			for _, field := range []string{"id", "name", "workspace_id", "extension", "mime_type", "size"} {
 				if value, ok := file[field]; ok {
@@ -515,6 +532,90 @@ func skillArtifactFromToolFile(ids PayloadIDs, trace skills.SkillTrace, message 
 		}
 	}
 	return artifact
+}
+
+func skillArtifactFromManagedFileJSON(ids PayloadIDs, trace skills.SkillTrace, payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	if !strings.EqualFold(firstNonEmptyString(payload["target"]), "managed_file") {
+		return nil
+	}
+	file := recordFromAny(payload["file"])
+	fileID := firstNonEmptyString(payload["upload_file_id"], payload["file_id"], file["id"], file["file_id"])
+	if fileID == "" {
+		return nil
+	}
+	artifact := map[string]interface{}{
+		"conversation_id": ids.ConversationID,
+		"message_id":      ids.MessageID,
+		"artifact_type":   "file",
+		"skill_id":        trace.SkillID,
+		"tool_name":       trace.ToolName,
+		"file_id":         fileID,
+		"upload_file_id":  fileID,
+		"filename":        firstNonEmptyString(payload["filename"], file["name"], file["filename"]),
+		"extension":       firstNonEmptyString(payload["extension"], file["extension"]),
+		"mime_type":       firstNonEmptyString(payload["mime_type"], file["mime_type"]),
+		"size":            firstNonEmptyValue(payload["size"], file["size"]),
+		"target":          "managed_file",
+		"workspace_id":    firstNonEmptyString(payload["workspace_id"], file["workspace_id"]),
+		"transfer_method": firstNonEmptyString(payload["transfer_method"]),
+		"created_at":      time.Now().Unix(),
+	}
+	for _, field := range []string{"folder_id", "source_type", "source_file_id", "source_url", "url", "download_url"} {
+		if value := firstNonEmptyString(payload[field], file[field]); value != "" {
+			artifact[field] = value
+		}
+	}
+	if trace.Governance != nil {
+		if correlationID := strings.TrimSpace(trace.Governance.CorrelationID); correlationID != "" {
+			artifact["correlation_id"] = correlationID
+			artifact["operation_id"] = "tool_governance:" + correlationID
+		}
+		if len(trace.Governance.AssetOperationAudit) > 0 {
+			artifact["asset_operation_audit"] = trace.Governance.AssetOperationAudit
+		}
+	}
+	return artifact
+}
+
+func containsSkillArtifact(artifacts []map[string]interface{}, candidate map[string]interface{}) bool {
+	candidateKey := skillArtifactKey(candidate)
+	if candidateKey == "" {
+		return false
+	}
+	for _, artifact := range artifacts {
+		if skillArtifactKey(artifact) == candidateKey {
+			return true
+		}
+	}
+	return false
+}
+
+func skillArtifactKey(artifact map[string]interface{}) string {
+	if len(artifact) == 0 {
+		return ""
+	}
+	target := strings.ToLower(strings.TrimSpace(firstNonEmptyString(artifact["target"])))
+	id := strings.TrimSpace(firstNonEmptyString(artifact["upload_file_id"], artifact["file_id"]))
+	if id == "" {
+		return ""
+	}
+	return target + ":" + id
+}
+
+func firstNonEmptyValue(values ...interface{}) interface{} {
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			continue
+		}
+		return value
+	}
+	return nil
 }
 
 func firstNonEmptyString(values ...interface{}) string {

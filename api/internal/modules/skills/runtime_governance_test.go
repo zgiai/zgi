@@ -198,7 +198,7 @@ func TestPolicyToolGovernanceFileGeneratorTemporaryArtifactsDoNotNeedApproval(t 
 	}
 }
 
-func TestPolicyToolGovernanceFileGeneratorManagedFileUsesCreateApprovalPolicy(t *testing.T) {
+func TestPolicyToolGovernanceFileGeneratorLegacyManagedTargetStillStaysTemporaryPolicy(t *testing.T) {
 	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
 	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
 		Manifest: fileGeneratorGovernanceManifestForTest(),
@@ -218,11 +218,11 @@ func TestPolicyToolGovernanceFileGeneratorManagedFileUsesCreateApprovalPolicy(t 
 	if err != nil {
 		t.Fatalf("DecideSkillTool() error = %v", err)
 	}
-	if decision.Status != toolgovernance.DecisionStatusNeedsApproval || !decision.RequiresApproval {
-		t.Fatalf("decision = %#v, want approval for managed file create on basic tier", decision)
+	if decision.Status != toolgovernance.DecisionStatusAllowed || decision.RequiresApproval {
+		t.Fatalf("decision = %#v, want allowed without approval because file-generator only creates temporary artifacts", decision)
 	}
-	if decision.Manifest.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyAutoByPermissionTier {
-		t.Fatalf("manifest policy = %q, want original create policy", decision.Manifest.DefaultApprovalPolicy)
+	if decision.Manifest.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyNeverAsk {
+		t.Fatalf("manifest policy = %q, want generator override", decision.Manifest.DefaultApprovalPolicy)
 	}
 }
 
@@ -251,44 +251,6 @@ func TestPolicyToolGovernanceFileGeneratorConsoleFilesDefaultKeepsTemporaryArtif
 	}
 	if decision.Manifest.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyNeverAsk {
 		t.Fatalf("manifest policy = %q, want temporary artifact override", decision.Manifest.DefaultApprovalPolicy)
-	}
-}
-
-func TestRewriteFileGeneratorTargetFromRuntimeContextIgnoresConsoleFilesPageWithoutExplicitDefault(t *testing.T) {
-	_, _, ok := rewriteFileGeneratorTargetFromRuntimeContext(
-		"file-generator",
-		"generate_pdf",
-		map[string]interface{}{"filename": "report.pdf"},
-		ExecutionContext{RuntimeParameters: map[string]interface{}{
-			"console_files_page": true,
-			"workspace_id":       "workspace-1",
-		}},
-	)
-	if ok {
-		t.Fatal("rewriteFileGeneratorTargetFromRuntimeContext() ok = true, want false for Files-page context without explicit managed default")
-	}
-}
-
-func TestRewriteFileGeneratorTargetFromRuntimeContextUsesVisibleFileWorkspaceForExplicitManagedDefault(t *testing.T) {
-	rewritten, summary, ok := rewriteFileGeneratorTargetFromRuntimeContext(
-		"file-generator",
-		"generate_file",
-		map[string]interface{}{"filename": "smoke.txt"},
-		ExecutionContext{RuntimeParameters: map[string]interface{}{
-			"file_generation_default_target": "managed_file",
-			"console_files_visible_files": []map[string]interface{}{
-				{"file_id": "file-1", "name": "source.pdf", "workspace_id": "workspace-from-file"},
-			},
-		}},
-	)
-	if !ok {
-		t.Fatal("rewriteFileGeneratorTargetFromRuntimeContext() ok = false, want true")
-	}
-	if rewritten["target"] != "managed_file" || rewritten["workspace_id"] != "workspace-from-file" {
-		t.Fatalf("rewritten = %#v, want managed target with visible file workspace", rewritten)
-	}
-	if summary["reason"] != "explicit_runtime_default_target" || summary["to_workspace_id"] != "workspace-from-file" {
-		t.Fatalf("summary = %#v, want visible file workspace", summary)
 	}
 }
 

@@ -13,14 +13,10 @@ import (
 	"strings"
 
 	"github.com/xuri/excelize/v2"
-	"github.com/zgiai/zgi/api/internal/dto"
 	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
-	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
-	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
-	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 const (
@@ -30,6 +26,7 @@ const (
 	xlsxMimeType             = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 	pptxMimeType             = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 	pdfMimeType              = "application/pdf"
+	svgMimeType              = "image/svg+xml"
 )
 
 var filenameUnsafePattern = regexp.MustCompile(`[^a-zA-Z0-9._\-\p{Han}]`)
@@ -38,34 +35,12 @@ type generatedFileTarget string
 
 const (
 	generatedFileTargetTemporaryArtifact generatedFileTarget = "temporary_artifact"
-	generatedFileTargetManagedFile       generatedFileTarget = "managed_file"
 )
-
-type ManagedFileService interface {
-	UploadFile(ctx context.Context, filename string, content []byte, mimeType string, userID, tenantID string, userRole filemodel.CreatedByRole, source *interfaces.FileSource, teamTenantID *string, isTemporary bool, isIcon bool) (*dto.UploadFile, error)
-	GetFileURL(ctx context.Context, fileID string) (string, error)
-}
-
-type WorkspacePermissionService interface {
-	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error)
-}
-
-type ManagedFileFolderService interface {
-	CheckFolderEditorPermission(ctx context.Context, folderID, accountID, tenantID string) (bool, error)
-	AddFileToFolder(ctx context.Context, fileID, folderID, accountID string) error
-}
-
-type fileGeneratorServices struct {
-	managedFiles   ManagedFileService
-	workspacePerms WorkspacePermissionService
-	folders        ManagedFileFolderService
-}
 
 // GenerateFileTool creates text-based files in the workflow tool file store.
 type GenerateFileTool struct {
 	*builtin.BuiltinTool
-	runtime  *tools.ToolRuntime
-	services fileGeneratorServices
+	runtime *tools.ToolRuntime
 }
 
 // NewGenerateFileTool creates a generate_file tool.
@@ -86,7 +61,7 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 				"en_US":   "Generate a downloadable file from provided content.",
 				"zh_Hans": "根据提供的内容生成可下载文件。",
 			},
-			LLM: "Generate a file from provided content. Supported formats: txt, md, html, json, csv, docx, xlsx, and pdf. By default, create a temporary downloadable artifact without writing to File Management. Set target=managed_file only when the user explicitly asks to save/create/upload the result into File Management or the current files page. When the user asks to export or save existing conversation content, pass that existing content here directly; do not first repeat it with submit_intermediate_answer.",
+			LLM: "Generate a temporary downloadable file artifact from provided content. Supported formats: txt, md, html, json, csv, svg, docx, xlsx, and pdf. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. When the user asks to export or save existing conversation content, pass that existing content here directly; do not first repeat it with submit_intermediate_answer.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -104,7 +79,7 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 				Name:             "format",
 				Label:            tools.I18nText{"en_US": "Format", "zh_Hans": "格式"},
 				HumanDescription: tools.I18nText{"en_US": "Output file format.", "zh_Hans": "生成文件的输出格式。"},
-				LLMDescription:   "Output format: txt, md, html, json, csv, docx, xlsx, or pdf.",
+				LLMDescription:   "Output format: txt, md, html, json, csv, svg, docx, xlsx, or pdf.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         true,
@@ -116,6 +91,7 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 					{Value: "html", Label: tools.I18nText{"en_US": "HTML", "zh_Hans": "HTML 网页"}},
 					{Value: "json", Label: tools.I18nText{"en_US": "JSON", "zh_Hans": "JSON 文件"}},
 					{Value: "csv", Label: tools.I18nText{"en_US": "CSV", "zh_Hans": "CSV 表格"}},
+					{Value: "svg", Label: tools.I18nText{"en_US": "SVG", "zh_Hans": "SVG 图像"}},
 					{Value: "docx", Label: tools.I18nText{"en_US": "Word", "zh_Hans": "Word 文档"}},
 					{Value: "xlsx", Label: tools.I18nText{"en_US": "Excel", "zh_Hans": "Excel 表格"}},
 					{Value: "pdf", Label: tools.I18nText{"en_US": "PDF", "zh_Hans": "PDF 文档"}},
@@ -147,7 +123,7 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "生命周期"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated file is persistent or temporary.", "zh_Hans": "生成文件是持久保存还是临时保存。"},
-				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary. Ignored when target is managed_file.",
+				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
@@ -158,9 +134,6 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 					{Value: "temporary", Label: tools.I18nText{"en_US": "Temporary", "zh_Hans": "临时文件"}},
 				},
 			},
-			fileTargetParameter(),
-			fileTargetWorkspaceParameter(),
-			fileTargetFolderParameter(),
 		},
 		OutputType: "file",
 		Tags:       []string{"utilities", "file"},
@@ -168,17 +141,12 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 	return &GenerateFileTool{BuiltinTool: builtin.NewBuiltinTool(entity, tenantID)}
 }
 
-func (t *GenerateFileTool) withServices(services fileGeneratorServices) *GenerateFileTool {
-	t.services = services
-	return t
-}
-
 func (t *GenerateFileTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 	tenantID := t.GetTenantID()
 	if runtime != nil && runtime.TenantID != "" {
 		tenantID = runtime.TenantID
 	}
-	fork := NewGenerateFileTool(tenantID).withServices(t.services)
+	fork := NewGenerateFileTool(tenantID)
 	fork.runtime = runtime
 	return fork
 }
@@ -220,12 +188,6 @@ func (t *GenerateFileTool) Invoke(
 	if err != nil {
 		return nil, err
 	}
-	rawTarget := rawStringParam(toolParameters, "target")
-	target, err := resolveGeneratedFileTarget(rawTarget)
-	if err != nil {
-		return nil, err
-	}
-
 	filename := buildFilename(rawStringParam(toolParameters, "filename"), spec.extension)
 	return createGeneratedFileForRuntime(ctx, t.GetTenantID(), t.runtime, generatedFileParams{
 		userID:         userID,
@@ -236,11 +198,6 @@ func (t *GenerateFileTool) Invoke(
 		filename:       filename,
 		lifecycle:      lifecycle,
 		format:         format,
-		target:         target,
-		targetExplicit: strings.TrimSpace(rawTarget) != "",
-		workspaceID:    rawStringParam(toolParameters, "workspace_id"),
-		folderID:       rawStringParam(toolParameters, "folder_id"),
-		services:       t.services,
 	})
 }
 
@@ -253,11 +210,6 @@ type generatedFileParams struct {
 	filename       string
 	lifecycle      tool_file.ToolFileLifecycle
 	format         string
-	target         generatedFileTarget
-	targetExplicit bool
-	workspaceID    string
-	folderID       string
-	services       fileGeneratorServices
 }
 
 func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime *tools.ToolRuntime, params generatedFileParams) ([]tools.ToolInvokeMessage, error) {
@@ -269,15 +221,6 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 	}
 	if strings.TrimSpace(params.userID) == "" {
 		return nil, fmt.Errorf("user id is required")
-	}
-	if !params.targetExplicit && runtimeDefaultsGeneratedFileTargetToManaged(runtime) {
-		params.target = generatedFileTargetManagedFile
-	}
-	if params.target == "" {
-		params.target = generatedFileTargetTemporaryArtifact
-	}
-	if params.target == generatedFileTargetManagedFile {
-		return createManagedFileForRuntime(ctx, tenantID, runtime, params)
 	}
 
 	toolFile, err := tool_file.CreateFileByRawGlobal(ctx, tool_file.CreateFileByRawParams{
@@ -326,6 +269,7 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 		},
 		builtin.CreateJSONMessage(map[string]interface{}{
 			"file_id":      toolFile.ID,
+			"tool_file_id": toolFile.ID,
 			"filename":     toolFile.Name,
 			"format":       params.format,
 			"mime_type":    params.mimeType,
@@ -334,116 +278,6 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 			"download_url": downloadURL,
 			"target":       string(generatedFileTargetTemporaryArtifact),
 		}),
-	}, nil
-}
-
-func createManagedFileForRuntime(ctx context.Context, tenantID string, runtime *tools.ToolRuntime, params generatedFileParams) ([]tools.ToolInvokeMessage, error) {
-	organizationID := firstNonEmptyStringParam(runtimeStringParam(runtime, "organization_id"), tenantID)
-	workspaceID := firstNonEmptyStringParam(params.workspaceID, runtimeManagedFileWorkspaceID(runtime))
-	if organizationID == "" {
-		return nil, fmt.Errorf("organization id is required to create a file in File Management")
-	}
-	if workspaceID == "" {
-		return nil, fmt.Errorf("workspace id is required to create a file in File Management")
-	}
-	if params.services.managedFiles == nil {
-		return nil, fmt.Errorf("file management service is not configured")
-	}
-	if params.services.workspacePerms == nil {
-		return nil, fmt.Errorf("workspace permission service is not configured")
-	}
-	allowed, err := params.services.workspacePerms.CheckWorkspacePermission(ctx, organizationID, workspaceID, params.userID, workspacemodel.WorkspacePermissionFileUploadCreate)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check file creation permission: %w", err)
-	}
-	if !allowed {
-		return nil, fmt.Errorf("user does not have permission to create files in this workspace")
-	}
-	if params.folderID != "" {
-		if params.services.folders == nil {
-			return nil, fmt.Errorf("file folder service is not configured")
-		}
-		allowed, err := params.services.folders.CheckFolderEditorPermission(ctx, params.folderID, params.userID, organizationID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check folder permission: %w", err)
-		}
-		if !allowed {
-			return nil, fmt.Errorf("user does not have permission to add files to this folder")
-		}
-	}
-
-	uploadFile, err := params.services.managedFiles.UploadFile(
-		ctx,
-		params.filename,
-		params.data,
-		params.mimeType,
-		params.userID,
-		organizationID,
-		filemodel.CreatedByRoleAccount,
-		nil,
-		&workspaceID,
-		false,
-		false,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create file in File Management: %w", err)
-	}
-	if params.folderID != "" {
-		if err := params.services.folders.AddFileToFolder(ctx, uploadFile.ID, params.folderID, params.userID); err != nil {
-			return nil, fmt.Errorf("created file but failed to add it to folder: %w", err)
-		}
-	}
-
-	url, _ := params.services.managedFiles.GetFileURL(ctx, uploadFile.ID)
-	downloadURL := fmt.Sprintf("/console/api/files/%s/download", uploadFile.ID)
-	fileObj := workflowfile.NewFile(
-		organizationID,
-		workflowfile.FileTypeDocument,
-		workflowfile.FileTransferMethodLocalFile,
-		workflowfile.WithID(uploadFile.ID),
-		workflowfile.WithRelatedID(uploadFile.ID),
-		workflowfile.WithFilename(uploadFile.Name),
-		workflowfile.WithExtension(params.extension),
-		workflowfile.WithMimeType(uploadFile.MimeType),
-		workflowfile.WithSize(int(uploadFile.Size)),
-	)
-	fileMeta := fileObj.ToDict()
-	if url != "" {
-		fileMeta["url"] = url
-	}
-	fileMeta["download_url"] = downloadURL
-	fileMeta["target"] = string(generatedFileTargetManagedFile)
-	fileMeta["workspace_id"] = workspaceID
-	if params.folderID != "" {
-		fileMeta["folder_id"] = params.folderID
-	}
-
-	payload := map[string]interface{}{
-		"file_id":         uploadFile.ID,
-		"upload_file_id":  uploadFile.ID,
-		"filename":        uploadFile.Name,
-		"format":          params.format,
-		"mime_type":       uploadFile.MimeType,
-		"size":            uploadFile.Size,
-		"url":             url,
-		"download_url":    downloadURL,
-		"target":          string(generatedFileTargetManagedFile),
-		"workspace_id":    workspaceID,
-		"transfer_method": string(workflowfile.FileTransferMethodLocalFile),
-	}
-	if params.folderID != "" {
-		payload["folder_id"] = params.folderID
-	}
-
-	return []tools.ToolInvokeMessage{
-		{
-			Type: tools.ToolInvokeMessageTypeFile,
-			Text: firstNonEmptyStringParam(url, downloadURL),
-			Meta: map[string]interface{}{
-				"file": fileMeta,
-			},
-		},
-		builtin.CreateJSONMessage(payload),
 	}, nil
 }
 
@@ -480,52 +314,6 @@ func runtimeAllowedOutputFormats(runtime *tools.ToolRuntime) map[string]struct{}
 		return nil
 	}
 	return allowed
-}
-
-func runtimeDefaultsGeneratedFileTargetToManaged(runtime *tools.ToolRuntime) bool {
-	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
-		return false
-	}
-	return isManagedFileTargetAlias(runtimeStringParam(runtime, "file_generation_default_target"))
-}
-
-func runtimeManagedFileWorkspaceID(runtime *tools.ToolRuntime) string {
-	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
-		return ""
-	}
-	if workspaceID := runtimeStringParam(runtime, "workspace_id"); workspaceID != "" {
-		return workspaceID
-	}
-	raw, ok := runtime.RuntimeParameters["console_files_visible_files"]
-	if !ok {
-		return ""
-	}
-	switch typed := raw.(type) {
-	case []map[string]interface{}:
-		return firstWorkspaceIDFromRuntimeFiles(typed)
-	case []interface{}:
-		files := make([]map[string]interface{}, 0, len(typed))
-		for _, item := range typed {
-			if mapped, ok := item.(map[string]interface{}); ok {
-				files = append(files, mapped)
-			}
-		}
-		return firstWorkspaceIDFromRuntimeFiles(files)
-	default:
-		return ""
-	}
-}
-
-func firstWorkspaceIDFromRuntimeFiles(files []map[string]interface{}) string {
-	for _, file := range files {
-		if workspaceID := strings.TrimSpace(stringFromRuntimeAny(file["workspace_id"])); workspaceID != "" {
-			return workspaceID
-		}
-		if workspaceID := strings.TrimSpace(stringFromRuntimeAny(file["workspaceId"])); workspaceID != "" {
-			return workspaceID
-		}
-	}
-	return ""
 }
 
 func collectRuntimeOutputFormats(value interface{}, allowed map[string]struct{}) {
@@ -588,6 +376,8 @@ func resolveFormat(raw string) (string, formatSpec, error) {
 		return "json", formatSpec{extension: ".json", mimeType: "application/json"}, nil
 	case "csv":
 		return "csv", formatSpec{extension: ".csv", mimeType: "text/csv"}, nil
+	case "svg":
+		return "svg", formatSpec{extension: ".svg", mimeType: svgMimeType}, nil
 	case "docx", "word":
 		return "docx", formatSpec{extension: ".docx", mimeType: docxMimeType}, nil
 	case "xlsx", "excel":
@@ -798,71 +588,6 @@ func resolveToolFileLifecycle(raw string) (tool_file.ToolFileLifecycle, error) {
 		return tool_file.ToolFileLifecyclePersistent, nil
 	default:
 		return "", fmt.Errorf("unsupported lifecycle: %s", raw)
-	}
-}
-
-func resolveGeneratedFileTarget(raw string) (generatedFileTarget, error) {
-	normalized := strings.ToLower(strings.TrimSpace(raw))
-	switch normalized {
-	case "", string(generatedFileTargetTemporaryArtifact), "temporary", "artifact", "download":
-		return generatedFileTargetTemporaryArtifact, nil
-	case string(generatedFileTargetManagedFile), "file_management", "managed", "workspace_file":
-		return generatedFileTargetManagedFile, nil
-	default:
-		return "", fmt.Errorf("unsupported file generation target: %s", raw)
-	}
-}
-
-func isManagedFileTargetAlias(raw string) bool {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case string(generatedFileTargetManagedFile), "file_management", "managed", "workspace_file":
-		return true
-	default:
-		return false
-	}
-}
-
-func fileTargetParameter() tools.ToolParameter {
-	return tools.ToolParameter{
-		Name:             "target",
-		Label:            tools.I18nText{"en_US": "Target"},
-		HumanDescription: tools.I18nText{"en_US": "Where to put the generated file."},
-		LLMDescription:   "Generation target: temporary_artifact or managed_file. Use temporary_artifact by default. Use managed_file only when the user explicitly asks to save, create, or upload the result into File Management, the current files page, or a workspace folder.",
-		Type:             tools.ToolParameterTypeSelect,
-		Form:             tools.ToolParameterFormLLM,
-		Required:         false,
-		Default:          string(generatedFileTargetTemporaryArtifact),
-		SupportVariable:  true,
-		Options: []tools.ToolParameterOption{
-			{Value: string(generatedFileTargetTemporaryArtifact), Label: tools.I18nText{"en_US": "Temporary artifact"}},
-			{Value: string(generatedFileTargetManagedFile), Label: tools.I18nText{"en_US": "File Management"}},
-		},
-	}
-}
-
-func fileTargetWorkspaceParameter() tools.ToolParameter {
-	return tools.ToolParameter{
-		Name:             "workspace_id",
-		Label:            tools.I18nText{"en_US": "Workspace ID"},
-		HumanDescription: tools.I18nText{"en_US": "Optional workspace for File Management creation."},
-		LLMDescription:   "Optional workspace ID for target=managed_file. Usually omit it so the current AIChat workspace context is used. Do not invent IDs.",
-		Type:             tools.ToolParameterTypeString,
-		Form:             tools.ToolParameterFormLLM,
-		Required:         false,
-		SupportVariable:  true,
-	}
-}
-
-func fileTargetFolderParameter() tools.ToolParameter {
-	return tools.ToolParameter{
-		Name:             "folder_id",
-		Label:            tools.I18nText{"en_US": "Folder ID"},
-		HumanDescription: tools.I18nText{"en_US": "Optional target folder for File Management creation."},
-		LLMDescription:   "Optional folder ID for target=managed_file when the user explicitly refers to a known folder. Do not invent IDs.",
-		Type:             tools.ToolParameterTypeString,
-		Form:             tools.ToolParameterFormLLM,
-		Required:         false,
-		SupportVariable:  true,
 	}
 }
 

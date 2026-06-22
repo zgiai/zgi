@@ -1,7 +1,7 @@
 ---
 name: file-generator
-description: Generate downloadable files from provided content, including basic exports, styled DOCX documents, HTML-rendered PDFs, and static editable PPTX decks.
-when_to_use: Use this skill when the user asks to create, export, save, download, or produce a file such as TXT, Markdown, HTML, JSON, CSV, DOCX, XLSX, PDF, or PPTX.
+description: Generate downloadable files from provided content, including basic exports, SVG files, styled DOCX documents, HTML-rendered PDFs, and static editable PPTX decks.
+when_to_use: Use this skill when the user asks to create, export, save, download, or produce a file such as TXT, Markdown, HTML, JSON, CSV, SVG, DOCX, XLSX, PDF, or PPTX.
 provider_type: builtin
 provider_id: file_generator
 runtime_type: tool
@@ -30,7 +30,7 @@ tool_governance:
     external_side_effect: false
     permission_scopes:
       - file:create
-    default_approval_policy: auto_by_permission_tier
+    default_approval_policy: never_ask
     allowed_permission_tiers:
       - basic
       - advanced
@@ -50,7 +50,7 @@ tool_governance:
     external_side_effect: false
     permission_scopes:
       - file:create
-    default_approval_policy: auto_by_permission_tier
+    default_approval_policy: never_ask
     allowed_permission_tiers:
       - basic
       - advanced
@@ -70,7 +70,7 @@ tool_governance:
     external_side_effect: false
     permission_scopes:
       - file:create
-    default_approval_policy: auto_by_permission_tier
+    default_approval_policy: never_ask
     allowed_permission_tiers:
       - basic
       - advanced
@@ -90,7 +90,7 @@ tool_governance:
     external_side_effect: false
     permission_scopes:
       - file:create
-    default_approval_policy: auto_by_permission_tier
+    default_approval_policy: never_ask
     allowed_permission_tiers:
       - basic
       - advanced
@@ -104,7 +104,7 @@ display:
     en_US: File Generator
     zh_Hans: 文件生成器
   description:
-    en_US: Creates downloadable TXT, Markdown, HTML, JSON, CSV, DOCX, XLSX, PDF, and PPTX files.
+    en_US: Creates downloadable TXT, Markdown, HTML, JSON, CSV, SVG, DOCX, XLSX, PDF, and PPTX files.
     zh_Hans: 创建可下载的 TXT、Markdown、HTML、JSON、CSV、DOCX、XLSX、PDF 和 PPTX 文件。
   when_to_use:
     en_US: Use when the answer should be delivered as a generated file.
@@ -134,6 +134,7 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
    - Use `pptx` when the user explicitly asks for PowerPoint, slides, a deck, or an editable presentation.
    - Use `txt` for plain text without formatting.
    - Use `html` for runnable HTML pages or previewable web documents.
+   - Use `svg` when the user explicitly asks for an SVG/vector image file.
    - Use `json` for machine-readable structured data.
    - Use `csv` for table-like data.
 3. Read the reference document for the selected format before calling a tool.
@@ -144,11 +145,10 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
 8. For PPTX, plan the slide layout before writing JSON. Use non-overlapping boxes for titles, text, and tables. Split dense content into more slides instead of shrinking text or stacking elements.
 9. For PPTX with Chinese or other dense text, treat "more text" as more slides, not denser text boxes. Keep body paragraphs short; use bullets, columns, or additional slides before exceeding the readable capacity of a box.
 10. Before calling `generate_pptx`, self-check that each slide's readable content fits within the slide bounds, does not overlap, uses explicit `x`, `y`, `w`, and `h` when the layout matters, and avoids long unbroken lines.
-11. Create a temporary downloadable artifact by default. Do not write generated output into File Management unless the user explicitly asks to save, create, or upload it there.
-12. Use `target=managed_file` only when the user explicitly asks to save, create, or upload the generated file into File Management, the current files page, or a known workspace folder. Otherwise omit `target` or use `temporary_artifact`.
-13. For `target=managed_file`, omit `workspace_id` unless a known workspace ID is already provided by runtime context; do not invent IDs.
-14. In the final answer, briefly mention the generated filename and format.
-15. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
+11. Always create a temporary downloadable artifact. This skill does not write generated output into File Management.
+12. If the user explicitly asks to save, create, upload, add, or import the generated result into File Management or the current Files page, first generate the artifact here, then use `file-manager/save_file_to_management` with the returned `tool_file_id`/`file_id` and destination filename.
+13. In the final answer, briefly mention the generated filename and format.
+14. Do not invent, rewrite, shorten, or manually format download links. The system UI displays generated file download controls from structured artifact events.
 
 ## References
 
@@ -161,6 +161,7 @@ Read exactly one reference after choosing the target format:
 | `html`, `htm` | `format-html.md` |
 | `json` | `format-json.md` |
 | `csv` | `format-csv.md` |
+| `svg` | `format-svg.md` |
 | simple `docx`, `word` | `format-docx.md` |
 | styled `docx`, `word` | `format-docx-rich.md` |
 | `xlsx`, `excel` | `format-xlsx.md` |
@@ -187,23 +188,17 @@ Read exactly one reference after choosing the target format:
 `generate_file` accepts:
 
 - `content`: text content to write into the file.
-- `format`: `txt`, `md`, `html`, `json`, `csv`, `docx`, `xlsx`, or `pdf`.
+- `format`: `txt`, `md`, `html`, `json`, `csv`, `svg`, `docx`, `xlsx`, or `pdf`.
 - `filename`: optional display filename. The extension is added automatically.
 - `title`: optional title used by generated HTML and PDF files.
-- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`. Ignored when `target=managed_file`.
-- `target`: optional generation target, `temporary_artifact` or `managed_file`. Defaults to `temporary_artifact`.
-- `workspace_id`: optional workspace ID for `target=managed_file`. Usually omit and use runtime context. Do not invent IDs.
-- `folder_id`: optional folder ID for `target=managed_file` when the user explicitly refers to a known folder. Do not invent IDs.
+- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`.
 
 `generate_docx` accepts:
 
 - `document`: JSON string describing the styled DOCX document.
 - `filename`: optional display filename. The `.docx` extension is added automatically.
 - `title`: optional title hint. Visible content must be in `document.blocks`.
-- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`. Ignored when `target=managed_file`.
-- `target`: optional generation target, `temporary_artifact` or `managed_file`. Defaults to `temporary_artifact`.
-- `workspace_id`: optional workspace ID for `target=managed_file`. Usually omit and use runtime context. Do not invent IDs.
-- `folder_id`: optional folder ID for `target=managed_file` when the user explicitly refers to a known folder. Do not invent IDs.
+- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`.
 
 `generate_pdf` accepts:
 
@@ -211,17 +206,11 @@ Read exactly one reference after choosing the target format:
 - `css`: optional inline CSS appended to the document.
 - `filename`: optional display filename. The `.pdf` extension is added automatically.
 - `title`: optional title used when wrapping an HTML fragment. Visible content must be in `html`.
-- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`. Ignored when `target=managed_file`.
-- `target`: optional generation target, `temporary_artifact` or `managed_file`. Defaults to `temporary_artifact`.
-- `workspace_id`: optional workspace ID for `target=managed_file`. Usually omit and use runtime context. Do not invent IDs.
-- `folder_id`: optional folder ID for `target=managed_file` when the user explicitly refers to a known folder. Do not invent IDs.
+- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`.
 
 `generate_pptx` accepts:
 
 - `presentation`: JSON string describing the editable static PPTX deck.
 - `filename`: optional display filename. The `.pptx` extension is added automatically.
 - `title`: optional title hint. Visible content must be in `presentation.slides`.
-- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`. Ignored when `target=managed_file`.
-- `target`: optional generation target, `temporary_artifact` or `managed_file`. Defaults to `temporary_artifact`.
-- `workspace_id`: optional workspace ID for `target=managed_file`. Usually omit and use runtime context. Do not invent IDs.
-- `folder_id`: optional folder ID for `target=managed_file` when the user explicitly refers to a known folder. Do not invent IDs.
+- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`.

@@ -64,16 +64,11 @@ func governancePermissionTier(params map[string]interface{}, governance map[stri
 }
 
 func governanceManifestForArguments(manifest toolgovernance.Manifest, skillID, toolName string, arguments map[string]interface{}, runtimeParams map[string]interface{}) toolgovernance.Manifest {
-	if !isFileGeneratorTool(skillID, toolName) {
-		return manifest
+	_ = arguments
+	_ = runtimeParams
+	if isFileGeneratorTool(skillID, toolName) {
+		manifest.DefaultApprovalPolicy = toolgovernance.ApprovalPolicyNeverAsk
 	}
-	if isManagedFileGenerationTarget(stringMapValue(arguments, "target")) {
-		return manifest
-	}
-	if stringMapValue(arguments, "target") == "" && runtimeDefaultsFileGenerationToManaged(runtimeParams) {
-		return manifest
-	}
-	manifest.DefaultApprovalPolicy = toolgovernance.ApprovalPolicyNeverAsk
 	return manifest
 }
 
@@ -87,57 +82,6 @@ func isFileGeneratorTool(skillID, toolName string) bool {
 	default:
 		return false
 	}
-}
-
-func isManagedFileGenerationTarget(target string) bool {
-	switch strings.ToLower(strings.TrimSpace(target)) {
-	case "managed_file", "file_management", "managed", "workspace_file":
-		return true
-	default:
-		return false
-	}
-}
-
-func rewriteFileGeneratorTargetFromRuntimeContext(skillID, toolName string, arguments map[string]interface{}, execCtx ExecutionContext) (map[string]interface{}, map[string]interface{}, bool) {
-	if !isFileGeneratorTool(skillID, toolName) || stringMapValue(arguments, "target") != "" {
-		return nil, nil, false
-	}
-	if !runtimeDefaultsFileGenerationToManaged(execCtx.RuntimeParameters) {
-		return nil, nil, false
-	}
-	rewritten := copyStringAnyMap(arguments)
-	if rewritten == nil {
-		rewritten = map[string]interface{}{}
-	}
-	rewritten["target"] = "managed_file"
-	summary := map[string]interface{}{
-		"reason":    "explicit_runtime_default_target",
-		"to_target": "managed_file",
-	}
-	if workspaceID := runtimeWorkspaceIDForFileGeneration(execCtx.RuntimeParameters); workspaceID != "" && stringMapValue(rewritten, "workspace_id", "workspaceId") == "" {
-		rewritten["workspace_id"] = workspaceID
-		summary["to_workspace_id"] = workspaceID
-	}
-	return rewritten, summary, true
-}
-
-func runtimeDefaultsFileGenerationToManaged(params map[string]interface{}) bool {
-	if len(params) == 0 {
-		return false
-	}
-	return isManagedFileGenerationTarget(stringMapValue(params, "file_generation_default_target"))
-}
-
-func runtimeWorkspaceIDForFileGeneration(params map[string]interface{}) string {
-	if workspaceID := stringMapValue(params, "workspace_id", "workspaceId"); workspaceID != "" {
-		return workspaceID
-	}
-	for _, asset := range assetRefsFromAny(params["console_files_visible_files"]) {
-		if workspaceID := strings.TrimSpace(asset.WorkspaceID); workspaceID != "" {
-			return workspaceID
-		}
-	}
-	return ""
 }
 
 func governanceAssets(params map[string]interface{}, governance map[string]interface{}, manifest toolgovernance.Manifest, arguments map[string]interface{}) []toolgovernance.AssetRef {

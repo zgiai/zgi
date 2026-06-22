@@ -6,12 +6,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,12 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
 	"github.com/zgiai/zgi/api/config"
-	"github.com/zgiai/zgi/api/internal/dto"
 	workflowtoolfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
-	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
-	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
-	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -68,6 +62,12 @@ func TestResolveFormatSupportsOfficeAndPDF(t *testing.T) {
 			wantExt:  ".pdf",
 			wantMIME: "application/pdf",
 		},
+		{
+			raw:      "svg",
+			wantFmt:  "svg",
+			wantExt:  ".svg",
+			wantMIME: "image/svg+xml",
+		},
 	}
 
 	for _, tt := range tests {
@@ -85,60 +85,6 @@ func TestResolveToolFileLifecycleDefaultsToTemporary(t *testing.T) {
 	lifecycle, err := resolveToolFileLifecycle("")
 	require.NoError(t, err)
 	require.Equal(t, workflowtoolfile.ToolFileLifecycleTemporary, lifecycle)
-}
-
-func TestResolveGeneratedFileTarget(t *testing.T) {
-	target, err := resolveGeneratedFileTarget("")
-	require.NoError(t, err)
-	require.Equal(t, generatedFileTargetTemporaryArtifact, target)
-
-	target, err = resolveGeneratedFileTarget("managed_file")
-	require.NoError(t, err)
-	require.Equal(t, generatedFileTargetManagedFile, target)
-}
-
-func TestCreateManagedFileForRuntimeUploadsToFileManagement(t *testing.T) {
-	workspaceID := "workspace-1"
-	managedFiles := &fakeManagedFileService{}
-	workspacePerms := &fakeWorkspacePermissionService{allowed: true}
-	folders := &fakeManagedFileFolderService{allowed: true}
-
-	messages, err := createGeneratedFileForRuntime(context.Background(), "org-1", &tools.ToolRuntime{
-		TenantID: "org-1",
-		RuntimeParameters: map[string]interface{}{
-			"organization_id": "org-1",
-			"workspace_id":    workspaceID,
-		},
-	}, generatedFileParams{
-		userID:      "account-1",
-		data:        []byte("hello"),
-		mimeType:    "text/plain",
-		extension:   ".txt",
-		filename:    "hello.txt",
-		format:      "txt",
-		target:      generatedFileTargetManagedFile,
-		folderID:    "folder-1",
-		workspaceID: "",
-		services: fileGeneratorServices{
-			managedFiles:   managedFiles,
-			workspacePerms: workspacePerms,
-			folders:        folders,
-		},
-	})
-	require.NoError(t, err)
-	require.Len(t, messages, 2)
-	require.Equal(t, "hello.txt", managedFiles.filename)
-	require.Equal(t, workspaceID, managedFiles.workspaceID)
-	require.Equal(t, "folder-1", folders.addedFolderID)
-
-	fileMeta, ok := messages[0].Meta["file"].(map[string]interface{})
-	require.True(t, ok)
-	require.Equal(t, "local_file", fmt.Sprint(fileMeta["transfer_method"]))
-	require.Equal(t, string(generatedFileTargetManagedFile), fileMeta["target"])
-	require.Equal(t, "/console/api/files/upload-1/download", fileMeta["download_url"])
-
-	require.Equal(t, string(generatedFileTargetManagedFile), messages[1].Data["target"])
-	require.Equal(t, "upload-1", messages[1].Data["upload_file_id"])
 }
 
 func TestCreateGeneratedFileForRuntimeKeepsTemporaryDefaultOnConsoleFilesPage(t *testing.T) {
@@ -166,15 +112,11 @@ func TestCreateGeneratedFileForRuntimeKeepsTemporaryDefaultOnConsoleFilesPage(t 
 		},
 	})
 
-	workspaceID := "workspace-1"
-	managedFiles := &fakeManagedFileService{}
-	workspacePerms := &fakeWorkspacePermissionService{allowed: true}
-
 	messages, err := createGeneratedFileForRuntime(context.Background(), "org-1", &tools.ToolRuntime{
 		TenantID: "org-1",
 		RuntimeParameters: map[string]interface{}{
 			"organization_id":       "org-1",
-			"workspace_id":          workspaceID,
+			"workspace_id":          "workspace-1",
 			"console_files_page":    true,
 			"consoleFilesPage":      true,
 			"console_files_context": "/console/files",
@@ -186,52 +128,15 @@ func TestCreateGeneratedFileForRuntimeKeepsTemporaryDefaultOnConsoleFilesPage(t 
 		extension: ".txt",
 		filename:  "hello.txt",
 		format:    "txt",
-		target:    generatedFileTargetTemporaryArtifact,
-		services: fileGeneratorServices{
-			managedFiles:   managedFiles,
-			workspacePerms: workspacePerms,
-		},
 	})
 	require.NoError(t, err)
 	require.Len(t, messages, 2)
-	require.Empty(t, managedFiles.filename)
-	require.Empty(t, managedFiles.workspaceID)
 	require.Equal(t, string(generatedFileTargetTemporaryArtifact), messages[1].Data["target"])
 	require.Empty(t, messages[1].Data["upload_file_id"])
 	require.NotEmpty(t, messages[1].Data["file_id"])
+	require.Equal(t, messages[1].Data["file_id"], messages[1].Data["tool_file_id"])
 	require.NotEmpty(t, fileStorage.onlyFileData(t))
 	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateGeneratedFileForRuntimeUsesVisibleFileWorkspaceForExplicitManagedTarget(t *testing.T) {
-	managedFiles := &fakeManagedFileService{}
-	workspacePerms := &fakeWorkspacePermissionService{allowed: true}
-
-	_, err := createGeneratedFileForRuntime(context.Background(), "org-1", &tools.ToolRuntime{
-		TenantID: "org-1",
-		RuntimeParameters: map[string]interface{}{
-			"organization_id":    "org-1",
-			"console_files_page": true,
-			"console_files_visible_files": []map[string]interface{}{
-				{"file_id": "file-1", "name": "source.pdf", "workspace_id": "workspace-from-file"},
-			},
-		},
-	}, generatedFileParams{
-		userID:         "account-1",
-		data:           []byte("hello"),
-		mimeType:       "text/plain",
-		extension:      ".txt",
-		filename:       "hello.txt",
-		format:         "txt",
-		target:         generatedFileTargetManagedFile,
-		targetExplicit: true,
-		services: fileGeneratorServices{
-			managedFiles:   managedFiles,
-			workspacePerms: workspacePerms,
-		},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "workspace-from-file", managedFiles.workspaceID)
 }
 
 func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {
@@ -934,75 +839,6 @@ func TestRuntimeAllowedOutputFormatsNormalizesSkillPolicies(t *testing.T) {
 
 type memoryStorage struct {
 	files map[string][]byte
-}
-
-type fakeManagedFileService struct {
-	filename    string
-	workspaceID string
-}
-
-func (s *fakeManagedFileService) UploadFile(ctx context.Context, filename string, content []byte, mimeType string, userID, tenantID string, userRole filemodel.CreatedByRole, source *interfaces.FileSource, teamTenantID *string, isTemporary bool, isIcon bool) (*dto.UploadFile, error) {
-	_ = ctx
-	_ = userRole
-	_ = source
-	_ = isIcon
-	s.filename = filename
-	if teamTenantID != nil {
-		s.workspaceID = *teamTenantID
-	}
-	return &dto.UploadFile{
-		ID:             "upload-1",
-		TenantID:       tenantID,
-		OrganizationID: tenantID,
-		WorkspaceID:    teamTenantID,
-		Name:           filename,
-		Size:           int64(len(content)),
-		Extension:      strings.TrimPrefix(filepath.Ext(filename), "."),
-		MimeType:       mimeType,
-		CreatedBy:      userID,
-		IsTemporary:    isTemporary,
-	}, nil
-}
-
-func (s *fakeManagedFileService) GetFileURL(ctx context.Context, fileID string) (string, error) {
-	_ = ctx
-	return "https://files.example/" + fileID, nil
-}
-
-type fakeWorkspacePermissionService struct {
-	allowed bool
-	code    workspacemodel.WorkspacePermissionCode
-}
-
-func (s *fakeWorkspacePermissionService) CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error) {
-	_ = ctx
-	_ = organizationID
-	_ = workspaceID
-	_ = accountID
-	s.code = permissionCode
-	return s.allowed, nil
-}
-
-type fakeManagedFileFolderService struct {
-	allowed       bool
-	addedFileID   string
-	addedFolderID string
-}
-
-func (s *fakeManagedFileFolderService) CheckFolderEditorPermission(ctx context.Context, folderID, accountID, tenantID string) (bool, error) {
-	_ = ctx
-	_ = folderID
-	_ = accountID
-	_ = tenantID
-	return s.allowed, nil
-}
-
-func (s *fakeManagedFileFolderService) AddFileToFolder(ctx context.Context, fileID, folderID, accountID string) error {
-	_ = ctx
-	_ = accountID
-	s.addedFileID = fileID
-	s.addedFolderID = folderID
-	return nil
 }
 
 type fakeFileGeneratorSandbox struct {

@@ -3,6 +3,8 @@ package files
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
@@ -555,6 +560,103 @@ func TestDeleteFileToolRejectsWorkspacePermissionDenied(t *testing.T) {
 	}
 }
 
+func TestSaveFileToolSavesGeneratedToolFileWithAdvancedPermission(t *testing.T) {
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	conversationID := uuid.NewString()
+	fileService := &fakeFileService{
+		files: map[string]*dto.UploadFile{},
+	}
+	toolFiles := &fakeToolFileStore{
+		files: map[string]*tool_file.ToolFile{
+			"tool-1": {
+				ID:             "tool-1",
+				UserID:         accountID,
+				TenantID:       organizationID,
+				ConversationID: &conversationID,
+				Name:           "draft.md",
+				MimeType:       "text/markdown",
+				Size:           13,
+			},
+		},
+		data: map[string][]byte{
+			"tool-1": []byte("# Draft\nHello"),
+		},
+	}
+	perms := &fakeWorkspacePermissionService{allowed: true}
+	provider := NewProvider(fileService, nil, perms, WithToolFileStore(toolFiles))
+	tool := saveFileRuntimeToolFrom(t, provider, organizationID, tools.ToolInvokeFromAIChat, map[string]interface{}{
+		"organization_id":                 organizationID,
+		"workspace_id":                    workspaceID,
+		"tool_governance_permission_tier": "advanced",
+	})
+
+	messages, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{
+		"source_type":  "tool_file",
+		"tool_file_id": "tool-1",
+		"filename":     "saved-draft.md",
+	}, &conversationID, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if len(fileService.uploads) != 1 {
+		t.Fatalf("uploads = %#v, want 1 upload", fileService.uploads)
+	}
+	upload := fileService.uploads[0]
+	if upload.filename != "saved-draft.md" || string(upload.content) != "# Draft\nHello" || upload.workspaceID != workspaceID {
+		t.Fatalf("upload = %#v, want saved markdown into workspace", upload)
+	}
+	if len(perms.codes) != 1 || perms.codes[0] != workspacemodel.WorkspacePermissionFileUploadCreate {
+		t.Fatalf("permission codes = %#v, want file upload create", perms.codes)
+	}
+	if len(messages) != 1 || messages[0].Type != tools.ToolInvokeMessageTypeJSON {
+		t.Fatalf("messages = %#v, want json message only", messages)
+	}
+	payload := messages[0].Data
+	if payload["target"] != "managed_file" || payload["transfer_method"] != "local_file" || payload["upload_file_id"] == "" {
+		t.Fatalf("payload = %#v, want managed local file metadata", payload)
+	}
+}
+
+func TestSaveFileToolRequiresGovernanceApprovalOnBasicPermission(t *testing.T) {
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	conversationID := uuid.NewString()
+	fileService := &fakeFileService{files: map[string]*dto.UploadFile{}}
+	toolFiles := &fakeToolFileStore{
+		files: map[string]*tool_file.ToolFile{
+			"tool-1": {
+				ID:             "tool-1",
+				UserID:         accountID,
+				TenantID:       organizationID,
+				ConversationID: &conversationID,
+				Name:           "draft.md",
+				MimeType:       "text/markdown",
+			},
+		},
+		data: map[string][]byte{"tool-1": []byte("# Draft")},
+	}
+	provider := NewProvider(fileService, nil, &fakeWorkspacePermissionService{allowed: true}, WithToolFileStore(toolFiles))
+	tool := saveFileRuntimeToolFrom(t, provider, organizationID, tools.ToolInvokeFromAIChat, map[string]interface{}{
+		"organization_id": organizationID,
+		"workspace_id":    workspaceID,
+	})
+
+	_, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{
+		"source_type":  "tool_file",
+		"tool_file_id": "tool-1",
+		"filename":     "saved-draft.md",
+	}, &conversationID, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "tool governance approval") {
+		t.Fatalf("Invoke() error = %v, want governance approval requirement", err)
+	}
+	if len(fileService.uploads) != 0 {
+		t.Fatalf("uploads = %#v, want no upload before approval", fileService.uploads)
+	}
+}
+
 func readFileRuntimeTool(t *testing.T, provider *Provider, organizationID string) tools.Tool {
 	t.Helper()
 	tool, err := provider.GetTool(ToolReadFile)
@@ -705,6 +807,19 @@ func deleteFileRuntimeToolFrom(t *testing.T, provider *Provider, organizationID 
 	})
 }
 
+func saveFileRuntimeToolFrom(t *testing.T, provider *Provider, organizationID string, invokeFrom tools.ToolInvokeFrom, runtimeParameters map[string]interface{}) tools.Tool {
+	t.Helper()
+	tool, err := provider.GetTool(ToolSaveFile)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	return tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:          organizationID,
+		InvokeFrom:        invokeFrom,
+		RuntimeParameters: runtimeParameters,
+	})
+}
+
 func singleJSONPayload(t *testing.T, messages []tools.ToolInvokeMessage) map[string]interface{} {
 	t.Helper()
 	if len(messages) != 1 {
@@ -720,6 +835,16 @@ type fakeFileService struct {
 	files   map[string]*dto.UploadFile
 	content map[string]string
 	deleted []string
+	uploads []fakeFileUpload
+}
+
+type fakeFileUpload struct {
+	filename       string
+	content        []byte
+	mimeType       string
+	userID         string
+	organizationID string
+	workspaceID    string
 }
 
 func (s *fakeFileService) GetFileByID(_ context.Context, fileID string) (*dto.UploadFile, error) {
@@ -738,6 +863,50 @@ func (s *fakeFileService) GetFile(_ context.Context, fileID string) (string, err
 	return content, nil
 }
 
+func (s *fakeFileService) UploadFile(_ context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole filemodel.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool) (*dto.UploadFile, error) {
+	_ = userRole
+	_ = source
+	_ = isTemporary
+	_ = isIcon
+	workspace := ""
+	if workspaceID != nil {
+		workspace = *workspaceID
+	}
+	if s.files == nil {
+		s.files = map[string]*dto.UploadFile{}
+	}
+	id := "upload-" + strconv.Itoa(len(s.uploads)+1)
+	upload := fakeFileUpload{
+		filename:       filename,
+		content:        append([]byte(nil), content...),
+		mimeType:       mimeType,
+		userID:         userID,
+		organizationID: organizationID,
+		workspaceID:    workspace,
+	}
+	s.uploads = append(s.uploads, upload)
+	file := &dto.UploadFile{
+		ID:             id,
+		OrganizationID: organizationID,
+		WorkspaceID:    workspaceID,
+		Name:           filename,
+		Size:           int64(len(content)),
+		Extension:      strings.TrimPrefix(filepath.Ext(filename), "."),
+		MimeType:       mimeType,
+		CreatedBy:      userID,
+		CreatedAt:      time.Unix(1700000200, 0),
+	}
+	s.files[id] = file
+	return file, nil
+}
+
+func (s *fakeFileService) GetFileURL(_ context.Context, fileID string) (string, error) {
+	if s.files[fileID] == nil {
+		return "", errors.New("file not found")
+	}
+	return "https://files.example/" + fileID, nil
+}
+
 func (s *fakeFileService) DeleteFiles(_ context.Context, fileIDs []string) error {
 	for _, fileID := range fileIDs {
 		if s.files[fileID] == nil {
@@ -747,6 +916,28 @@ func (s *fakeFileService) DeleteFiles(_ context.Context, fileIDs []string) error
 		delete(s.files, fileID)
 	}
 	return nil
+}
+
+type fakeToolFileStore struct {
+	files map[string]*tool_file.ToolFile
+	data  map[string][]byte
+}
+
+func (s *fakeToolFileStore) GetToolFileByID(_ context.Context, toolFileID string) (*tool_file.ToolFile, error) {
+	file := s.files[toolFileID]
+	if file == nil {
+		return nil, errors.New("tool file not found")
+	}
+	return file, nil
+}
+
+func (s *fakeToolFileStore) GetFileBinary(_ context.Context, toolFileID string) ([]byte, string, error) {
+	file := s.files[toolFileID]
+	data := s.data[toolFileID]
+	if file == nil || data == nil {
+		return nil, "", errors.New("tool file not found")
+	}
+	return append([]byte(nil), data...), file.MimeType, nil
 }
 
 type fakeContentExtractor struct {

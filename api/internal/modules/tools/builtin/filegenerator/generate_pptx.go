@@ -3,7 +3,6 @@ package filegenerator
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
@@ -12,8 +11,7 @@ import (
 // GeneratePPTXTool creates editable PowerPoint presentations in the workflow tool file store.
 type GeneratePPTXTool struct {
 	*builtin.BuiltinTool
-	runtime  *tools.ToolRuntime
-	services fileGeneratorServices
+	runtime *tools.ToolRuntime
 }
 
 // NewGeneratePPTXTool creates a generate_pptx tool.
@@ -34,7 +32,7 @@ func NewGeneratePPTXTool(tenantID string) *GeneratePPTXTool {
 				"en_US":   "Generate an editable PPTX presentation from a structured specification.",
 				"zh_Hans": "根据结构化规格生成可编辑的 PPTX 演示文稿。",
 			},
-			LLM: "Generate an editable static PPTX presentation from a JSON presentation specification. By default, create a temporary downloadable artifact without writing to File Management. Set target=managed_file only when the user explicitly asks to save/create/upload the result into File Management or the current files page. Use this when the user asks for PowerPoint, slides, or a presentation deck. Supports text, title, basic table, and simple shape elements; readable content must use non-overlapping boxes. Animations and speaker notes are not supported.",
+			LLM: "Generate an editable static PPTX temporary artifact from a JSON presentation specification. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. Use this when the user asks for PowerPoint, slides, or a presentation deck. Supports text, title, basic table, and simple shape elements; readable content must use non-overlapping boxes. Animations and speaker notes are not supported.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -74,7 +72,7 @@ func NewGeneratePPTXTool(tenantID string) *GeneratePPTXTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "生命周期"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated file is persistent or temporary.", "zh_Hans": "生成文件是持久保存还是临时保存。"},
-				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary. Ignored when target is managed_file.",
+				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
@@ -85,9 +83,6 @@ func NewGeneratePPTXTool(tenantID string) *GeneratePPTXTool {
 					{Value: "temporary", Label: tools.I18nText{"en_US": "Temporary", "zh_Hans": "临时文件"}},
 				},
 			},
-			fileTargetParameter(),
-			fileTargetWorkspaceParameter(),
-			fileTargetFolderParameter(),
 		},
 		OutputType: "file",
 		Tags:       []string{"utilities", "file", "pptx", "presentation"},
@@ -95,17 +90,12 @@ func NewGeneratePPTXTool(tenantID string) *GeneratePPTXTool {
 	return &GeneratePPTXTool{BuiltinTool: builtin.NewBuiltinTool(entity, tenantID)}
 }
 
-func (t *GeneratePPTXTool) withServices(services fileGeneratorServices) *GeneratePPTXTool {
-	t.services = services
-	return t
-}
-
 func (t *GeneratePPTXTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 	tenantID := t.GetTenantID()
 	if runtime != nil && runtime.TenantID != "" {
 		tenantID = runtime.TenantID
 	}
-	fork := NewGeneratePPTXTool(tenantID).withServices(t.services)
+	fork := NewGeneratePPTXTool(tenantID)
 	fork.runtime = runtime
 	return fork
 }
@@ -140,11 +130,6 @@ func (t *GeneratePPTXTool) Invoke(
 	if err != nil {
 		return nil, err
 	}
-	rawTarget := rawStringParam(toolParameters, "target")
-	target, err := resolveGeneratedFileTarget(rawTarget)
-	if err != nil {
-		return nil, err
-	}
 	filename := buildFilename(rawStringParam(toolParameters, "filename"), ".pptx")
 	return createGeneratedFileForRuntime(ctx, t.GetTenantID(), t.runtime, generatedFileParams{
 		userID:         userID,
@@ -155,11 +140,6 @@ func (t *GeneratePPTXTool) Invoke(
 		filename:       filename,
 		lifecycle:      lifecycle,
 		format:         "pptx",
-		target:         target,
-		targetExplicit: strings.TrimSpace(rawTarget) != "",
-		workspaceID:    rawStringParam(toolParameters, "workspace_id"),
-		folderID:       rawStringParam(toolParameters, "folder_id"),
-		services:       t.services,
 	})
 }
 

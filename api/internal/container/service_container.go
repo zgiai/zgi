@@ -877,7 +877,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 
 		// Register builtin tool providers
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
-		_ = c.toolManager.RegisterProvider(filegenerator_tools.NewProvider(filegenerator_tools.WithManagedFileServices(c.GetFileService(), c.GetOrganizationService(), c.GetFileFolderService())))
+		_ = c.toolManager.RegisterProvider(filegenerator_tools.NewProvider())
 		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
 		_ = c.toolManager.RegisterProvider(database_tools.NewProvider(c.GetDataSourceService(), c.GetOrganizationService()))
 		_ = c.toolManager.RegisterProvider(files_tools.NewProvider(c.GetFileService(), c.GetContentExtractor(), c.GetOrganizationService()))

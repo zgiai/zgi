@@ -41,7 +41,7 @@ func NewGenerateChartTool(tenantID string) *GenerateChartTool {
 				"en_US":   "Generate a downloadable SVG chart from structured data.",
 				"zh_Hans": "Generate a downloadable SVG chart from structured data.",
 			},
-			LLM: "Generate a downloadable SVG chart from structured data. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution charts. For generic requests such as 'generate a chart' or 'generate visualization', do not infer the chart type, title, or style; ask the user to confirm those decisions before calling.",
+			LLM: "Generate a temporary downloadable SVG chart artifact from structured data. This tool does not write to File Management. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution charts. For generic requests such as 'generate a chart' or 'generate visualization', do not infer the chart type, title, or style; ask the user to confirm those decisions before calling. When the user asks to save the chart into File Management, generate the chart first and then use file-manager/save_file_to_management.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -108,11 +108,11 @@ func NewGenerateChartTool(tenantID string) *GenerateChartTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "Lifecycle"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated chart is persistent or temporary.", "zh_Hans": "Whether the generated chart is persistent or temporary."},
-				LLMDescription:   "File lifecycle: persistent or temporary. Defaults to persistent.",
+				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
-				Default:          "persistent",
+				Default:          "temporary",
 				SupportVariable:  true,
 				Options: []tools.ToolParameterOption{
 					{Value: "persistent", Label: tools.I18nText{"en_US": "Persistent", "zh_Hans": "Persistent"}},
@@ -219,6 +219,7 @@ func (t *GenerateChartTool) Invoke(
 	fileMeta := fileObj.ToDict()
 	fileMeta["url"] = url
 	fileMeta["download_url"] = downloadURL
+	fileMeta["target"] = "temporary_artifact"
 
 	return []tools.ToolInvokeMessage{
 		{
@@ -228,6 +229,7 @@ func (t *GenerateChartTool) Invoke(
 		},
 		builtin.CreateJSONMessage(map[string]interface{}{
 			"file_id":      toolFile.ID,
+			"tool_file_id": toolFile.ID,
 			"filename":     toolFile.Name,
 			"chart_type":   meta.ChartType,
 			"format":       "svg",
@@ -235,6 +237,7 @@ func (t *GenerateChartTool) Invoke(
 			"size":         toolFile.Size,
 			"url":          url,
 			"download_url": downloadURL,
+			"target":       "temporary_artifact",
 			"x_count":      meta.XCount,
 			"series_count": meta.SeriesCount,
 		}),

@@ -116,8 +116,8 @@ func TestFileManagerSystemSkillGovernanceManifest(t *testing.T) {
 	if got := docTimeoutSeconds(*doc); got != 120 {
 		t.Fatalf("timeout_seconds = %d, want 120", got)
 	}
-	if got := toolNames(doc.Tools); !sameStrings(got, []string{"delete_file"}) {
-		t.Fatalf("file-manager tools = %v, want delete_file", got)
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"delete_file", "save_file_to_management"}) {
+		t.Fatalf("file-manager tools = %v, want delete_file and save_file_to_management", got)
 	}
 	deleteTool, ok := findSkillTool(*doc, "delete_file")
 	if !ok {
@@ -152,6 +152,40 @@ func TestFileManagerSystemSkillGovernanceManifest(t *testing.T) {
 	}
 	if !deleteTool.Governance.AuditRequired {
 		t.Fatalf("delete audit_required = false, want true")
+	}
+	saveTool, ok := findSkillTool(*doc, "save_file_to_management")
+	if !ok {
+		t.Fatalf("save_file_to_management tool not found")
+	}
+	if saveTool.ProviderType != tools.ToolProviderTypeBuiltin || saveTool.ProviderID != "files" {
+		t.Fatalf("save_file_to_management provider = %s/%s, want builtin/files", saveTool.ProviderType, saveTool.ProviderID)
+	}
+	if saveTool.Governance == nil {
+		t.Fatalf("save_file_to_management governance manifest missing")
+	}
+	if saveTool.Governance.ToolID != "file.save_to_management" {
+		t.Fatalf("save tool_id = %q, want file.save_to_management", saveTool.Governance.ToolID)
+	}
+	if saveTool.Governance.Effect != toolgovernance.EffectCreate {
+		t.Fatalf("save effect = %q, want create", saveTool.Governance.Effect)
+	}
+	if saveTool.Governance.AssetType != "file" {
+		t.Fatalf("save asset_type = %q, want file", saveTool.Governance.AssetType)
+	}
+	if saveTool.Governance.RiskLevel != toolgovernance.RiskLevelMedium {
+		t.Fatalf("save risk_level = %q, want medium", saveTool.Governance.RiskLevel)
+	}
+	if saveTool.Governance.RequiresAssetResolution {
+		t.Fatalf("save requires_asset_resolution = true, want false")
+	}
+	if saveTool.Governance.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyAutoByPermissionTier {
+		t.Fatalf("save default_approval_policy = %q, want auto_by_permission_tier", saveTool.Governance.DefaultApprovalPolicy)
+	}
+	if got := saveTool.Governance.PermissionScopes; len(got) != 1 || got[0] != "file:create" {
+		t.Fatalf("save permission_scopes = %#v, want file:create", got)
+	}
+	if !saveTool.Governance.AuditRequired {
+		t.Fatalf("save audit_required = false, want true")
 	}
 }
 
@@ -259,5 +293,43 @@ func TestFileManagerDeleteGovernanceNeedsApproval(t *testing.T) {
 	}
 	if decision.Status != toolgovernance.DecisionStatusNeedsApproval || !decision.RequiresApproval {
 		t.Fatalf("delete decision = %#v, want needs_approval", decision)
+	}
+}
+
+func TestFileManagerSaveGovernanceRequiresApprovalOnBasic(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillFileManager})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillFileManager)
+	if !ok {
+		t.Fatalf("file-manager skill was not resolved")
+	}
+	saveTool, ok := findSkillTool(*doc, "save_file_to_management")
+	if !ok {
+		t.Fatalf("save_file_to_management tool not found")
+	}
+	decision, err := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()).DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: *saveTool.Governance,
+		SkillID:  SkillFileManager,
+		ToolName: "save_file_to_management",
+		Arguments: map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": "tool-1",
+			"filename":     "report.pdf",
+		},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance_permission_tier": string(toolgovernance.PermissionTierBasic),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool(save_file_to_management) error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusNeedsApproval || !decision.RequiresApproval {
+		t.Fatalf("save decision = %#v, want needs_approval", decision)
 	}
 }

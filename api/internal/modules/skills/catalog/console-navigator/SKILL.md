@@ -53,7 +53,7 @@ Use this skill only to request safe internal ZGI console navigation. It does not
 2. If the user only asks what AIChat can do or what a module is for, answer directly from the site map instead of navigating.
 3. If the requested destination is ambiguous, ask one concise clarification.
 4. Do not navigate to external URLs or non-console paths.
-5. After navigation, continue the same conversation normally. The frontend will switch routes and provide the updated page context on the next user turn.
+5. After navigation, pause for the frontend client action result. The sidebar will switch routes, wait for supported target page context, and continue this same AIChat turn with the updated page context when available.
 6. Never claim that navigation performed an asset operation. If the user asks to delete, publish, run, schedule, create, or modify assets, explain that those actions need a supported governed tool and user approval when available.
 
 ## Tool Usage

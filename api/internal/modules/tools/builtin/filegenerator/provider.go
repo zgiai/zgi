@@ -10,21 +10,10 @@ import (
 // Provider is the builtin provider for generating workflow files from text.
 type Provider struct {
 	*builtin.BuiltinProvider
-	services fileGeneratorServices
-}
-
-type ProviderOption func(*Provider)
-
-func WithManagedFileServices(fileService ManagedFileService, workspacePerms WorkspacePermissionService, folders ManagedFileFolderService) ProviderOption {
-	return func(p *Provider) {
-		p.services.managedFiles = fileService
-		p.services.workspacePerms = workspacePerms
-		p.services.folders = folders
-	}
 }
 
 // NewProvider creates a file generator provider.
-func NewProvider(options ...ProviderOption) *Provider {
+func NewProvider() *Provider {
 	identity := tools.ToolProviderIdentity{
 		Name:   "file_generator",
 		Author: "System",
@@ -43,15 +32,10 @@ func NewProvider(options ...ProviderOption) *Provider {
 	provider := &Provider{
 		BuiltinProvider: builtin.NewBuiltinProvider(identity),
 	}
-	for _, option := range options {
-		if option != nil {
-			option(provider)
-		}
-	}
-	provider.RegisterTool(NewGenerateFileTool("").withServices(provider.services))
-	provider.RegisterTool(NewGenerateDocxTool("").withServices(provider.services))
-	provider.RegisterTool(NewGeneratePDFTool("").withServices(provider.services))
-	provider.RegisterTool(NewGeneratePPTXTool("").withServices(provider.services))
+	provider.RegisterTool(NewGenerateFileTool(""))
+	provider.RegisterTool(NewGenerateDocxTool(""))
+	provider.RegisterTool(NewGeneratePDFTool(""))
+	provider.RegisterTool(NewGeneratePPTXTool(""))
 	return provider
 }
 

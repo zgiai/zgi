@@ -4,12 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -20,18 +30,24 @@ const (
 	ToolListVisibleFiles = "list_visible_files"
 	ToolReadFile         = "read_file"
 	ToolDeleteFile       = "delete_file"
+	ToolSaveFile         = "save_file_to_management"
 
 	defaultReadFileMaxChars = 4000
 	maxReadFileMaxChars     = 12000
+	maxSaveFileBytes        = 25 * 1024 * 1024
+	saveFileHTTPTimeout     = 30 * time.Second
 
 	governedFileDeleteSkillID       = "file-manager"
 	legacyGovernedFileDeleteSkillID = "file-reader"
 	governedFileDeleteToolID        = "file.delete"
+	governedFileSaveToolID          = "file.save_to_management"
 )
 
 type FileService interface {
 	GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error)
 	GetFile(ctx context.Context, fileID string) (string, error)
+	UploadFile(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole filemodel.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool) (*dto.UploadFile, error)
+	GetFileURL(ctx context.Context, fileID string) (string, error)
 	DeleteFiles(ctx context.Context, fileIDs []string) error
 }
 
@@ -43,14 +59,28 @@ type WorkspacePermissionService interface {
 	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error)
 }
 
+type ToolFileStore interface {
+	GetToolFileByID(ctx context.Context, toolFileID string) (*tool_file.ToolFile, error)
+	GetFileBinary(ctx context.Context, toolFileID string) ([]byte, string, error)
+}
+
 type Provider struct {
 	*builtin.BuiltinProvider
 	fileService      FileService
 	contentExtractor ContentExtractionService
 	workspacePerms   WorkspacePermissionService
+	toolFiles        ToolFileStore
 }
 
-func NewProvider(fileService FileService, contentExtractor ContentExtractionService, workspacePerms WorkspacePermissionService) *Provider {
+type ProviderOption func(*Provider)
+
+func WithToolFileStore(store ToolFileStore) ProviderOption {
+	return func(p *Provider) {
+		p.toolFiles = store
+	}
+}
+
+func NewProvider(fileService FileService, contentExtractor ContentExtractionService, workspacePerms WorkspacePermissionService, options ...ProviderOption) *Provider {
 	identity := tools.ToolProviderIdentity{
 		Name:   ProviderID,
 		Author: "System",
@@ -68,10 +98,17 @@ func NewProvider(fileService FileService, contentExtractor ContentExtractionServ
 		fileService:      fileService,
 		contentExtractor: contentExtractor,
 		workspacePerms:   workspacePerms,
+		toolFiles:        globalToolFileStore{},
+	}
+	for _, option := range options {
+		if option != nil {
+			option(provider)
+		}
 	}
 	provider.RegisterTool(newReadFileTool(fileService, contentExtractor, workspacePerms))
 	provider.RegisterTool(newListVisibleFilesTool())
 	provider.RegisterTool(newDeleteFileTool(fileService, workspacePerms))
+	provider.RegisterTool(newSaveFileTool(fileService, workspacePerms, provider.toolFiles))
 	return provider
 }
 
@@ -92,6 +129,13 @@ type deleteFileTool struct {
 	workspacePerms WorkspacePermissionService
 }
 
+type saveFileTool struct {
+	*builtin.BuiltinTool
+	fileService    FileService
+	workspacePerms WorkspacePermissionService
+	toolFiles      ToolFileStore
+}
+
 type fileScope struct {
 	OrganizationID string
 	WorkspaceID    string
@@ -99,11 +143,22 @@ type fileScope struct {
 	InvokeFrom     tools.ToolInvokeFrom
 }
 
+type saveFileSource struct {
+	Data       []byte
+	Filename   string
+	MimeType   string
+	SourceType string
+	SourceID   string
+	SourceURL  string
+}
+
 type readFileContent struct {
 	Text      string
 	FromCache bool
 	Error     error
 }
+
+type globalToolFileStore struct{}
 
 func newListVisibleFilesTool() tools.Tool {
 	entity := tools.ToolEntity{
@@ -214,6 +269,86 @@ func newDeleteFileTool(fileService FileService, workspacePerms WorkspacePermissi
 		BuiltinTool:    builtin.NewBuiltinTool(entity, ""),
 		fileService:    fileService,
 		workspacePerms: workspacePerms,
+	}
+}
+
+func newSaveFileTool(fileService FileService, workspacePerms WorkspacePermissionService, toolFiles ToolFileStore) tools.Tool {
+	entity := tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     ToolSaveFile,
+			Author:   "System",
+			Provider: ProviderID,
+			Label: tools.I18nText{
+				"en_US": "Save File to Management",
+			},
+			Icon: "file-plus-2",
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{
+				"en_US": "Save a generated file or external file URL into File Management.",
+			},
+			LLM: "Save an already generated tool file or a public external file URL into File Management. Use this only when the user explicitly asks to save, create, upload, import, or add the file to File Management/current Files page. If the file content still needs to be generated, first call file-generator to create a temporary artifact, then call this tool with source_type=tool_file and the generated tool_file_id. This operation mutates File Management and is governed by file.create approval.",
+		},
+		Parameters: []tools.ToolParameter{
+			{
+				Name:            "source_type",
+				Label:           tools.I18nText{"en_US": "Source type"},
+				LLMDescription:  "Required source type. Use tool_file for a file just produced by another tool, or url for a public external file URL supplied by the user.",
+				Type:            tools.ToolParameterTypeSelect,
+				Form:            tools.ToolParameterFormLLM,
+				Required:        true,
+				Default:         "tool_file",
+				SupportVariable: true,
+				Options: []tools.ToolParameterOption{
+					{Value: "tool_file", Label: tools.I18nText{"en_US": "Generated tool file"}},
+					{Value: "url", Label: tools.I18nText{"en_US": "External URL"}},
+				},
+			},
+			{
+				Name:            "tool_file_id",
+				Label:           tools.I18nText{"en_US": "Tool file ID"},
+				LLMDescription:  "Required when source_type is tool_file. Use the file_id/tool_file_id returned by the generation tool. Do not invent IDs.",
+				Type:            tools.ToolParameterTypeString,
+				Form:            tools.ToolParameterFormLLM,
+				Required:        false,
+				SupportVariable: true,
+			},
+			{
+				Name:            "url",
+				Label:           tools.I18nText{"en_US": "URL"},
+				LLMDescription:  "Required when source_type is url. Must be an absolute public http or https URL supplied by the user.",
+				Type:            tools.ToolParameterTypeString,
+				Form:            tools.ToolParameterFormLLM,
+				Required:        false,
+				SupportVariable: true,
+			},
+			{
+				Name:            "filename",
+				Label:           tools.I18nText{"en_US": "Filename"},
+				LLMDescription:  "Required destination filename shown in File Management. Include a suitable extension and do not include path separators.",
+				Type:            tools.ToolParameterTypeString,
+				Form:            tools.ToolParameterFormLLM,
+				Required:        true,
+				SupportVariable: true,
+			},
+			{
+				Name:            "workspace_id",
+				Label:           tools.I18nText{"en_US": "Workspace ID"},
+				LLMDescription:  "Optional target workspace ID. Usually omit so the current AIChat workspace context is used. Do not invent IDs.",
+				Type:            tools.ToolParameterTypeString,
+				Form:            tools.ToolParameterFormLLM,
+				Required:        false,
+				SupportVariable: true,
+			},
+		},
+		OutputType: "file",
+		Tags:       []string{"file", "system"},
+	}
+	return &saveFileTool{
+		BuiltinTool:    builtin.NewBuiltinTool(entity, ""),
+		fileService:    fileService,
+		workspacePerms: workspacePerms,
+		toolFiles:      toolFiles,
 	}
 }
 
@@ -352,6 +487,105 @@ func (t *deleteFileTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool 
 	}
 }
 
+func (t *saveFileTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
+	_ = appID
+	_ = messageID
+
+	if t.fileService == nil {
+		return nil, fmt.Errorf("file service is not configured")
+	}
+	scope, err := fileScopeFromRuntime(t.Runtime(), t.GetTenantID(), userID)
+	if err != nil {
+		return nil, err
+	}
+	workspaceID := firstNonEmptyString(stringValue(params, "workspace_id"), scope.WorkspaceID)
+	if workspaceID == "" {
+		return nil, fmt.Errorf("workspace_id is required to save a file into File Management")
+	}
+	source, err := t.resolveSource(ctx, scope, params, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	source.Filename = finalizeFileManagementFilename(stringValue(params, "filename"), source.Filename, source.MimeType)
+	if source.Filename == "" {
+		return nil, fmt.Errorf("filename is required")
+	}
+	if len(source.Data) == 0 {
+		return nil, fmt.Errorf("source file is empty")
+	}
+	if err := t.ensureFileCreatable(ctx, scope, workspaceID); err != nil {
+		return nil, err
+	}
+	asset := toolgovernance.AssetRef{
+		Type:        "file",
+		Name:        source.Filename,
+		WorkspaceID: workspaceID,
+		Source:      "tool_arguments",
+		Metadata: map[string]interface{}{
+			"source_type": source.SourceType,
+		},
+	}
+	if err := t.ensureGovernedSaveAllowed(scope, asset, conversationID); err != nil {
+		return nil, err
+	}
+
+	uploadFile, err := t.fileService.UploadFile(
+		ctx,
+		source.Filename,
+		source.Data,
+		source.MimeType,
+		scope.AccountID,
+		scope.OrganizationID,
+		filemodel.CreatedByRoleAccount,
+		nil,
+		&workspaceID,
+		false,
+		false,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to save file into File Management: %w", err)
+	}
+
+	filePayload := uploadFilePayload(uploadFile)
+	urlValue, _ := t.fileService.GetFileURL(ctx, uploadFile.ID)
+	downloadURL := fmt.Sprintf("/console/api/files/%s/download", uploadFile.ID)
+
+	payload := map[string]interface{}{
+		"status":          "completed",
+		"file":            filePayload,
+		"file_id":         uploadFile.ID,
+		"upload_file_id":  uploadFile.ID,
+		"filename":        uploadFile.Name,
+		"mime_type":       uploadFile.MimeType,
+		"size":            uploadFile.Size,
+		"target":          "managed_file",
+		"workspace_id":    workspaceID,
+		"transfer_method": string(workflowfile.FileTransferMethodLocalFile),
+		"download_url":    downloadURL,
+		"source_type":     source.SourceType,
+	}
+	if urlValue != "" {
+		payload["url"] = urlValue
+	}
+	if source.SourceID != "" {
+		payload["source_file_id"] = source.SourceID
+	}
+	if source.SourceURL != "" {
+		payload["source_url"] = source.SourceURL
+	}
+
+	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(payload)}, nil
+}
+
+func (t *saveFileTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
+	return &saveFileTool{
+		BuiltinTool:    t.BuiltinTool.ForkToolRuntime(runtime),
+		fileService:    t.fileService,
+		workspacePerms: t.workspacePerms,
+		toolFiles:      t.toolFiles,
+	}
+}
+
 func (t *deleteFileTool) ensureFileManageable(ctx context.Context, scope fileScope, file *dto.UploadFile) error {
 	return ensureScopedFilePermission(ctx, scope, file, t.workspacePerms, workspacemodel.WorkspacePermissionFileManage)
 }
@@ -392,6 +626,158 @@ func (t *deleteFileTool) governedDeleteApprovedWithSkill(scope fileScope, file *
 		return true
 	}
 	return false
+}
+
+func (t *saveFileTool) resolveSource(ctx context.Context, scope fileScope, params map[string]interface{}, conversationID *string) (saveFileSource, error) {
+	sourceType := strings.ToLower(strings.TrimSpace(stringValue(params, "source_type")))
+	if sourceType == "" {
+		if stringValue(params, "url") != "" {
+			sourceType = "url"
+		} else {
+			sourceType = "tool_file"
+		}
+	}
+	switch sourceType {
+	case "tool_file", "generated_file", "artifact":
+		return t.resolveToolFileSource(ctx, scope, params, conversationID)
+	case "url", "external_url":
+		return resolveURLFileSource(ctx, params)
+	default:
+		return saveFileSource{}, fmt.Errorf("unsupported source_type: %s", sourceType)
+	}
+}
+
+func (t *saveFileTool) resolveToolFileSource(ctx context.Context, scope fileScope, params map[string]interface{}, conversationID *string) (saveFileSource, error) {
+	if t.toolFiles == nil {
+		return saveFileSource{}, fmt.Errorf("tool file store is not configured")
+	}
+	toolFileID := firstNonEmptyString(stringValue(params, "tool_file_id"), stringValue(params, "source_file_id"), stringValue(params, "file_id"))
+	if toolFileID == "" {
+		return saveFileSource{}, fmt.Errorf("tool_file_id is required when source_type is tool_file")
+	}
+	toolFile, err := t.toolFiles.GetToolFileByID(ctx, toolFileID)
+	if err != nil {
+		return saveFileSource{}, fmt.Errorf("failed to load generated file metadata: %w", err)
+	}
+	if toolFile == nil {
+		return saveFileSource{}, fmt.Errorf("generated file %s not found", toolFileID)
+	}
+	if strings.TrimSpace(toolFile.TenantID) != scope.OrganizationID {
+		return saveFileSource{}, fmt.Errorf("generated file is not accessible")
+	}
+	if strings.TrimSpace(toolFile.UserID) != "" && strings.TrimSpace(toolFile.UserID) != scope.AccountID {
+		return saveFileSource{}, fmt.Errorf("generated file is not accessible")
+	}
+	if conversationID != nil && strings.TrimSpace(*conversationID) != "" && toolFile.ConversationID != nil && strings.TrimSpace(*toolFile.ConversationID) != strings.TrimSpace(*conversationID) {
+		return saveFileSource{}, fmt.Errorf("generated file is not accessible in this conversation")
+	}
+	data, mimeType, err := t.toolFiles.GetFileBinary(ctx, toolFileID)
+	if err != nil {
+		return saveFileSource{}, fmt.Errorf("failed to read generated file: %w", err)
+	}
+	if mimeType == "" {
+		mimeType = toolFile.MimeType
+	}
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	return saveFileSource{
+		Data:       data,
+		Filename:   toolFile.Name,
+		MimeType:   normalizeMimeType(mimeType),
+		SourceType: "tool_file",
+		SourceID:   toolFileID,
+	}, nil
+}
+
+func resolveURLFileSource(ctx context.Context, params map[string]interface{}) (saveFileSource, error) {
+	rawURL := strings.TrimSpace(stringValue(params, "url"))
+	if rawURL == "" {
+		return saveFileSource{}, fmt.Errorf("url is required when source_type is url")
+	}
+	info, err := workflowfile.InspectExternalURL(rawURL)
+	if err != nil {
+		return saveFileSource{}, err
+	}
+	if !info.IsPublic && !workflowfile.IsDevelopmentEnvironment() {
+		return saveFileSource{}, fmt.Errorf("file URL must be publicly reachable")
+	}
+
+	client := &http.Client{Timeout: saveFileHTTPTimeout}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return saveFileSource{}, fmt.Errorf("failed to create file download request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return saveFileSource{}, fmt.Errorf("failed to download file URL: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return saveFileSource{}, fmt.Errorf("failed to download file URL: status %d", resp.StatusCode)
+	}
+	reader := io.LimitReader(resp.Body, maxSaveFileBytes+1)
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return saveFileSource{}, fmt.Errorf("failed to read downloaded file: %w", err)
+	}
+	if len(data) > maxSaveFileBytes {
+		return saveFileSource{}, fmt.Errorf("downloaded file exceeds %d bytes", maxSaveFileBytes)
+	}
+	mimeType := normalizeMimeType(resp.Header.Get("Content-Type"))
+	if shouldPreferDetectedFileMimeType(mimeType, http.DetectContentType(data)) {
+		mimeType = http.DetectContentType(data)
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	return saveFileSource{
+		Data:       data,
+		Filename:   filenameFromURL(rawURL),
+		MimeType:   mimeType,
+		SourceType: "url",
+		SourceURL:  rawURL,
+	}, nil
+}
+
+func (t *saveFileTool) ensureFileCreatable(ctx context.Context, scope fileScope, workspaceID string) error {
+	if t.workspacePerms == nil {
+		return fmt.Errorf("workspace permission service is not configured")
+	}
+	allowed, err := t.workspacePerms.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionFileUploadCreate)
+	if err != nil {
+		return fmt.Errorf("failed to check workspace file creation permission: %w", err)
+	}
+	if !allowed {
+		return fmt.Errorf("user does not have permission to create files in this workspace")
+	}
+	return nil
+}
+
+func (t *saveFileTool) ensureGovernedSaveAllowed(scope fileScope, asset toolgovernance.AssetRef, conversationID *string) error {
+	conversation := ""
+	if conversationID != nil {
+		conversation = strings.TrimSpace(*conversationID)
+	}
+	if conversation == "" {
+		return fmt.Errorf("file save requires tool governance context")
+	}
+	decision := toolgovernance.Decide(toolgovernance.Request{
+		Manifest:       governedFileSaveManifest(),
+		PermissionTier: toolGovernancePermissionTierFromRuntime(t.Runtime()),
+		ConversationID: conversation,
+		OrganizationID: scope.OrganizationID,
+		UserID:         scope.AccountID,
+		SkillID:        governedFileDeleteSkillID,
+		ProviderType:   string(tools.ToolProviderTypeBuiltin),
+		ProviderID:     ProviderID,
+		Assets:         []toolgovernance.AssetRef{asset},
+		SessionGrants:  toolGovernanceSessionGrantsFromRuntime(t.Runtime()),
+	}, toolgovernance.DefaultPolicy())
+	if decision.Status == toolgovernance.DecisionStatusAllowed {
+		return nil
+	}
+	return fmt.Errorf("file save requires tool governance approval")
 }
 
 func toolGovernanceGrantMatchesFile(grant toolgovernance.SessionGrant, file *dto.UploadFile) bool {
@@ -436,6 +822,21 @@ func governedFileDeleteManifest(skillID string) toolgovernance.Manifest {
 	}
 }
 
+func governedFileSaveManifest() toolgovernance.Manifest {
+	return toolgovernance.Manifest{
+		ToolID:                 governedFileSaveToolID,
+		SkillID:                governedFileDeleteSkillID,
+		Domain:                 "files",
+		Effect:                 toolgovernance.EffectCreate,
+		AssetType:              "file",
+		RiskLevel:              toolgovernance.RiskLevelMedium,
+		PermissionScopes:       []string{"file:create"},
+		DefaultApprovalPolicy:  toolgovernance.ApprovalPolicyAutoByPermissionTier,
+		AllowedPermissionTiers: []toolgovernance.PermissionTier{toolgovernance.PermissionTierBasic, toolgovernance.PermissionTierAdvanced, toolgovernance.PermissionTierFull},
+		AuditRequired:          true,
+	}
+}
+
 func governedFileAsset(file *dto.UploadFile) toolgovernance.AssetRef {
 	if file == nil {
 		return toolgovernance.AssetRef{Type: "file"}
@@ -446,6 +847,22 @@ func governedFileAsset(file *dto.UploadFile) toolgovernance.AssetRef {
 		Name:        strings.TrimSpace(file.Name),
 		WorkspaceID: uploadFileWorkspaceID(file),
 	}
+}
+
+func toolGovernancePermissionTierFromRuntime(runtime *tools.ToolRuntime) toolgovernance.PermissionTier {
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return ""
+	}
+	params := runtime.RuntimeParameters
+	if value := strings.TrimSpace(stringValue(params, "tool_governance_permission_tier")); value != "" {
+		return toolgovernance.PermissionTier(value)
+	}
+	if governance := mapFromAny(params["tool_governance"]); len(governance) > 0 {
+		if value := strings.TrimSpace(stringValue(governance, "permission_tier")); value != "" {
+			return toolgovernance.PermissionTier(value)
+		}
+	}
+	return ""
 }
 
 func toolGovernanceSessionGrantsFromRuntime(runtime *tools.ToolRuntime) []toolgovernance.SessionGrant {
@@ -768,6 +1185,115 @@ func mapFromAny(value interface{}) map[string]interface{} {
 	default:
 		return nil
 	}
+}
+
+func (globalToolFileStore) GetToolFileByID(ctx context.Context, toolFileID string) (*tool_file.ToolFile, error) {
+	if tool_file.GlobalToolFileManager == nil {
+		return nil, fmt.Errorf("tool file manager is not configured")
+	}
+	return tool_file.GlobalToolFileManager.GetToolFileByID(ctx, toolFileID)
+}
+
+func (globalToolFileStore) GetFileBinary(ctx context.Context, toolFileID string) ([]byte, string, error) {
+	return tool_file.GetFileBinaryGlobal(ctx, toolFileID)
+}
+
+func finalizeFileManagementFilename(requested string, sourceName string, mimeType string) string {
+	name := cleanFileManagementFilename(requested)
+	if name == "" {
+		name = cleanFileManagementFilename(sourceName)
+	}
+	if name == "" {
+		name = "imported-file"
+	}
+	if filepath.Ext(name) == "" {
+		if ext := filepath.Ext(cleanFileManagementFilename(sourceName)); ext != "" {
+			name += ext
+		} else if ext := extensionFromMimeType(mimeType); ext != "" {
+			name += ext
+		}
+	}
+	if len(name) > 200 {
+		ext := filepath.Ext(name)
+		base := strings.TrimSuffix(name, ext)
+		if len(base) > 200-len(ext) {
+			base = base[:200-len(ext)]
+		}
+		name = base + ext
+	}
+	return name
+}
+
+func cleanFileManagementFilename(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	raw = strings.ReplaceAll(raw, "\\", "/")
+	if unescaped, err := url.PathUnescape(raw); err == nil {
+		raw = unescaped
+	}
+	name := path.Base(raw)
+	if name == "." || name == "/" {
+		return ""
+	}
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r < 32:
+			return -1
+		case r == '/' || r == '\\':
+			return '_'
+		default:
+			return r
+		}
+	}, name)
+	name = strings.Trim(name, " ._-")
+	return name
+}
+
+func filenameFromURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return cleanFileManagementFilename(parsed.Path)
+}
+
+func normalizeMimeType(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if mediaType, _, err := mime.ParseMediaType(raw); err == nil {
+		return mediaType
+	}
+	return raw
+}
+
+func shouldPreferDetectedFileMimeType(currentMimeType, detectedMimeType string) bool {
+	currentMimeType = strings.TrimSpace(strings.ToLower(currentMimeType))
+	detectedMimeType = strings.TrimSpace(strings.ToLower(detectedMimeType))
+	if detectedMimeType == "" || detectedMimeType == "application/octet-stream" {
+		return false
+	}
+	return currentMimeType == "" || currentMimeType == "application/octet-stream"
+}
+
+func extensionFromMimeType(mimeType string) string {
+	extensions, err := mime.ExtensionsByType(strings.TrimSpace(mimeType))
+	if err != nil || len(extensions) == 0 {
+		return ""
+	}
+	return extensions[0]
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func stringValue(params map[string]interface{}, key string) string {

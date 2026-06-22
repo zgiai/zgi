@@ -3,7 +3,6 @@ package filegenerator
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
@@ -12,8 +11,7 @@ import (
 // GenerateDocxTool creates rich Word documents in the workflow tool file store.
 type GenerateDocxTool struct {
 	*builtin.BuiltinTool
-	runtime  *tools.ToolRuntime
-	services fileGeneratorServices
+	runtime *tools.ToolRuntime
 }
 
 // NewGenerateDocxTool creates a generate_docx tool.
@@ -34,7 +32,7 @@ func NewGenerateDocxTool(tenantID string) *GenerateDocxTool {
 				"en_US":   "Generate a styled DOCX file from a structured document specification.",
 				"zh_Hans": "根据结构化文档规格生成带样式的 DOCX 文件。",
 			},
-			LLM: "Generate a styled DOCX file from a JSON document specification. By default, create a temporary downloadable artifact without writing to File Management. Set target=managed_file only when the user explicitly asks to save/create/upload the result into File Management or the current files page. Use this instead of generate_file when the Word document needs headings, fonts, font sizes, bold or colored text, paragraph alignment, spacing, page margins, page breaks, or simple tables. Every runs item must include non-empty text; omit empty runs.",
+			LLM: "Generate a styled DOCX temporary artifact from a JSON document specification. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. Use this instead of generate_file when the Word document needs headings, fonts, font sizes, bold or colored text, paragraph alignment, spacing, page margins, page breaks, or simple tables. Every runs item must include non-empty text; omit empty runs.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -74,7 +72,7 @@ func NewGenerateDocxTool(tenantID string) *GenerateDocxTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "生命周期"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated file is persistent or temporary.", "zh_Hans": "生成文件是持久保存还是临时保存。"},
-				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary. Ignored when target is managed_file.",
+				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
@@ -85,9 +83,6 @@ func NewGenerateDocxTool(tenantID string) *GenerateDocxTool {
 					{Value: "temporary", Label: tools.I18nText{"en_US": "Temporary", "zh_Hans": "临时文件"}},
 				},
 			},
-			fileTargetParameter(),
-			fileTargetWorkspaceParameter(),
-			fileTargetFolderParameter(),
 		},
 		OutputType: "file",
 		Tags:       []string{"utilities", "file", "docx"},
@@ -95,17 +90,12 @@ func NewGenerateDocxTool(tenantID string) *GenerateDocxTool {
 	return &GenerateDocxTool{BuiltinTool: builtin.NewBuiltinTool(entity, tenantID)}
 }
 
-func (t *GenerateDocxTool) withServices(services fileGeneratorServices) *GenerateDocxTool {
-	t.services = services
-	return t
-}
-
 func (t *GenerateDocxTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 	tenantID := t.GetTenantID()
 	if runtime != nil && runtime.TenantID != "" {
 		tenantID = runtime.TenantID
 	}
-	fork := NewGenerateDocxTool(tenantID).withServices(t.services)
+	fork := NewGenerateDocxTool(tenantID)
 	fork.runtime = runtime
 	return fork
 }
@@ -140,11 +130,6 @@ func (t *GenerateDocxTool) Invoke(
 	if err != nil {
 		return nil, err
 	}
-	rawTarget := rawStringParam(toolParameters, "target")
-	target, err := resolveGeneratedFileTarget(rawTarget)
-	if err != nil {
-		return nil, err
-	}
 	filename := buildFilename(rawStringParam(toolParameters, "filename"), ".docx")
 	return createGeneratedFileForRuntime(ctx, t.GetTenantID(), t.runtime, generatedFileParams{
 		userID:         userID,
@@ -155,11 +140,6 @@ func (t *GenerateDocxTool) Invoke(
 		filename:       filename,
 		lifecycle:      lifecycle,
 		format:         "docx",
-		target:         target,
-		targetExplicit: strings.TrimSpace(rawTarget) != "",
-		workspaceID:    rawStringParam(toolParameters, "workspace_id"),
-		folderID:       rawStringParam(toolParameters, "folder_id"),
-		services:       t.services,
 	})
 }
 
