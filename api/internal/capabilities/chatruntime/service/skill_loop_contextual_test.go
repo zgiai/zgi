@@ -262,6 +262,67 @@ func TestContextualAIChatTurnStrategyClassifiesFilesPageRead(t *testing.T) {
 	}
 }
 
+func TestContextualAIChatTurnStrategyIsTypedAndRecordedInMetadata(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "please create an svg file in File Management",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/work/chat",
+			SkillIDs: []string{
+				skills.SkillConsoleNavigator,
+				skills.SkillFileGenerator,
+				skills.SkillFileManager,
+			},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "save_generated_file_to_file_management" {
+		t.Fatalf("Intent = %q, want save_generated_file_to_file_management", strategy.Intent)
+	}
+	if strategy.TargetPage != "/console/files" || !strategy.RouteRequired {
+		t.Fatalf("target/route = %q/%v, want /console/files/true", strategy.TargetPage, strategy.RouteRequired)
+	}
+	if len(strategy.PrimarySkills) == 0 || strategy.PrimarySkills[0] != skills.SkillConsoleNavigator {
+		t.Fatalf("PrimarySkills = %#v, want console navigator first", strategy.PrimarySkills)
+	}
+
+	metadata := streamingMessageMetadata(prepared.parts)
+	stored, ok := metadata["turn_strategy"].(*AIChatTurnStrategy)
+	if !ok || stored == nil {
+		t.Fatalf("metadata turn_strategy = %#v, want *AIChatTurnStrategy", metadata["turn_strategy"])
+	}
+	if stored.Intent != strategy.Intent || stored.TargetPage != strategy.TargetPage {
+		t.Fatalf("stored strategy = %#v, want same intent and target as %#v", stored, strategy)
+	}
+}
+
+func TestContextualAIChatTurnStrategyResolvesChineseFilesRoute(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "\u8bf7\u6253\u5f00\u6587\u4ef6\u7ba1\u7406\u9875\u9762",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillIDs:  []string{skills.SkillConsoleNavigator},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "navigate_console_page" {
+		t.Fatalf("Intent = %q, want navigate_console_page", strategy.Intent)
+	}
+	if strategy.TargetPage != "/console/files" || !strategy.RouteRequired {
+		t.Fatalf("target/route = %q/%v, want /console/files/true", strategy.TargetPage, strategy.RouteRequired)
+	}
+}
+
 func TestSkillLoopAdditionalSystemMessagesIncludesRecentGeneratedFiles(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesCreateCapabilityTestParts("\u628a\u8fd9\u4e2a\u6587\u4ef6\u4e0a\u4f20\u5230\u6587\u4ef6\u7ba1\u7406"),

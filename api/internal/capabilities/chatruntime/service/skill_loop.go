@@ -16,10 +16,7 @@ import (
 )
 
 func (p *PreparedChat) skillsEnabled() bool {
-	if p == nil || p.parts == nil {
-		return false
-	}
-	return p.parts.SkillMode != skillModeDisabled && len(p.parts.SkillIDs) > 0
+	return p != nil && chatPartsSkillsEnabled(p.parts)
 }
 
 func (s *service) runPreparedSkillStream(
@@ -196,14 +193,8 @@ func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message
 }
 
 func contextualAIChatTurnStrategyMessage(prepared *PreparedChat) (adapter.Message, bool) {
-	if prepared == nil || prepared.parts == nil || !isContextualAIChatSurface(prepared.parts.Surface) {
-		return adapter.Message{}, false
-	}
-	if len(prepared.parts.SkillIDs) == 0 || prepared.parts.SkillMode == skillModeDisabled {
-		return adapter.Message{}, false
-	}
 	strategy := contextualAIChatTurnStrategy(prepared)
-	if len(strategy) == 0 {
+	if strategy == nil {
 		return adapter.Message{}, false
 	}
 	encoded, err := json.Marshal(strategy)
@@ -220,41 +211,67 @@ func contextualAIChatTurnStrategyMessage(prepared *PreparedChat) (adapter.Messag
 	return adapter.Message{Role: "system", Content: content}, true
 }
 
-func contextualAIChatTurnStrategy(prepared *PreparedChat) map[string]interface{} {
-	if prepared == nil || prepared.parts == nil {
+// AIChatTurnStrategy is the typed, internal plan hint for one contextual sidebar turn.
+// It is guidance for the skill loop, not an executable action plan.
+type AIChatTurnStrategy struct {
+	Surface           string   `json:"surface"`
+	CurrentPage       string   `json:"current_page,omitempty"`
+	Intent            string   `json:"intent"`
+	TargetPage        string   `json:"target_page,omitempty"`
+	RouteRequired     bool     `json:"route_required"`
+	PrimarySkills     []string `json:"primary_skills"`
+	SupportingSkills  []string `json:"supporting_skills"`
+	AssetEffect       string   `json:"asset_effect"`
+	AssetRisk         string   `json:"asset_risk"`
+	Approval          string   `json:"approval"`
+	SuccessCriteria   []string `json:"success_criteria"`
+	ObservationPoints []string `json:"observation_points"`
+	ArtifactSource    string   `json:"artifact_source,omitempty"`
+	Avoid             []string `json:"avoid,omitempty"`
+}
+
+func contextualAIChatTurnStrategy(prepared *PreparedChat) *AIChatTurnStrategy {
+	if prepared == nil {
 		return nil
 	}
-	parts := prepared.parts
-	strategy := map[string]interface{}{
-		"surface":            normalizeAIChatSurface(parts.Surface),
-		"current_page":       contextualTurnCurrentPage(parts),
-		"intent":             "answer_or_explain_zgi_context",
-		"target_page":        contextualTurnCurrentPage(parts),
-		"route_required":     false,
-		"primary_skills":     []string{},
-		"supporting_skills":  []string{},
-		"asset_effect":       "none",
-		"asset_risk":         "low",
-		"approval":           "none",
-		"success_criteria":   []string{"answer from the current ZGI page context and enabled skills"},
-		"observation_points": []string{"current_page_context"},
+	return contextualAIChatTurnStrategyFromParts(prepared.parts)
+}
+
+func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnStrategy {
+	if parts == nil || !isContextualAIChatSurface(parts.Surface) || !chatPartsSkillsEnabled(parts) {
+		return nil
+	}
+	currentPage := contextualTurnCurrentPage(parts)
+	strategy := &AIChatTurnStrategy{
+		Surface:           normalizeAIChatSurface(parts.Surface),
+		CurrentPage:       currentPage,
+		Intent:            "answer_or_explain_zgi_context",
+		TargetPage:        currentPage,
+		RouteRequired:     false,
+		PrimarySkills:     []string{},
+		SupportingSkills:  []string{},
+		AssetEffect:       "none",
+		AssetRisk:         "low",
+		Approval:          "none",
+		SuccessCriteria:   []string{"answer from the current ZGI page context and enabled skills"},
+		ObservationPoints: []string{"current_page_context"},
 	}
 
-	if target, ok := resolveConsoleNavigationTargetForPrepared(prepared); ok {
-		strategy["target_page"] = target.Href
+	if target, ok := resolveConsoleNavigationTargetForParts(parts); ok {
+		strategy.TargetPage = target.Href
 		routeRequired := !clientActionContinuationLoadedRoute(parts, target.Href)
 		if consoleNavigationLoadedHrefMatchesTarget(target.Href, "/console/files") && consoleFilesRouteAlreadyAvailable(parts) {
 			routeRequired = false
 		}
-		strategy["route_required"] = routeRequired
+		strategy.RouteRequired = routeRequired
 		if routeRequired && skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-			strategy["primary_skills"] = appendUniqueStrings(nil, skills.SkillConsoleNavigator)
+			strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillConsoleNavigator)
 		}
 	}
 
 	switch {
 	case isManagedFileCreateIntent(parts.Query):
-		return contextualManagedFileCreateStrategy(prepared, strategy)
+		return contextualManagedFileCreateStrategy(parts, strategy)
 	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
 		isFileDeleteIntent(parts.Query):
 		return contextualFileDeleteStrategy(parts, strategy)
@@ -265,31 +282,34 @@ func contextualAIChatTurnStrategy(prepared *PreparedChat) map[string]interface{}
 		return contextualNavigationStrategy(parts, strategy)
 	default:
 		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-			strategy["supporting_skills"] = appendUniqueStrings(stringSliceInterface(strategy["supporting_skills"]), skills.SkillConsoleNavigator)
+			strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
 		}
 		return strategy
 	}
 }
 
-func contextualManagedFileCreateStrategy(prepared *PreparedChat, strategy map[string]interface{}) map[string]interface{} {
-	parts := prepared.parts
-	strategy["intent"] = "save_generated_file_to_file_management"
-	strategy["target_page"] = consoleFilesRouteHint().Href
-	strategy["asset_effect"] = "create"
-	strategy["asset_risk"] = "medium"
-	strategy["approval"] = "file-manager/save_file_to_management is governed; approval depends on the user's permission tier"
-	strategy["success_criteria"] = []string{
+func chatPartsSkillsEnabled(parts *chatRequestParts) bool {
+	return parts != nil && parts.SkillMode != skillModeDisabled && len(parts.SkillIDs) > 0
+}
+
+func contextualManagedFileCreateStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	strategy.Intent = "save_generated_file_to_file_management"
+	strategy.TargetPage = consoleFilesRouteHint().Href
+	strategy.AssetEffect = "create"
+	strategy.AssetRisk = "medium"
+	strategy.Approval = "file-manager/save_file_to_management is governed; approval depends on the user's permission tier"
+	strategy.SuccessCriteria = []string{
 		"Files page context is loaded before File Management mutation when needed",
 		"exactly one temporary artifact is selected for the request",
 		"file-manager/save_file_to_management succeeds for that artifact",
 		"asset observation or refreshed page context confirms the created file is visible",
 	}
-	strategy["observation_points"] = []string{"route_loaded:/console/files", "asset_observation:file.create", "files_page_visible_list"}
+	strategy.ObservationPoints = []string{"route_loaded:/console/files", "asset_observation:file.create", "files_page_visible_list"}
 
-	primary := stringSliceInterface(strategy["primary_skills"])
-	supporting := stringSliceInterface(strategy["supporting_skills"])
+	primary := append([]string(nil), strategy.PrimarySkills...)
+	supporting := append([]string(nil), strategy.SupportingSkills...)
 	if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
-		strategy["route_required"] = true
+		strategy.RouteRequired = true
 		primary = appendUniqueStrings(primary, skills.SkillConsoleNavigator)
 		supporting = appendUniqueStrings(supporting, skills.SkillFileManager)
 		if len(parts.RecentGeneratedArtifacts) == 0 {
@@ -297,69 +317,69 @@ func contextualManagedFileCreateStrategy(prepared *PreparedChat, strategy map[st
 		}
 	} else if len(parts.RecentGeneratedArtifacts) > 0 {
 		primary = appendUniqueStrings(primary, skills.SkillFileManager)
-		strategy["artifact_source"] = "recent_generated_file"
-		strategy["avoid"] = []string{"do not generate another file when the user refers to a recent generated file"}
+		strategy.ArtifactSource = "recent_generated_file"
+		strategy.Avoid = []string{"do not generate another file when the user refers to a recent generated file"}
 	} else {
 		primary = appendArtifactProducerSkills(primary, parts)
 		primary = appendUniqueStrings(primary, skills.SkillFileManager)
 	}
-	strategy["primary_skills"] = primary
-	strategy["supporting_skills"] = supporting
+	strategy.PrimarySkills = primary
+	strategy.SupportingSkills = supporting
 	return strategy
 }
 
-func contextualFileDeleteStrategy(parts *chatRequestParts, strategy map[string]interface{}) map[string]interface{} {
-	strategy["intent"] = "delete_visible_file"
-	strategy["target_page"] = "/console/files"
-	strategy["route_required"] = false
-	strategy["asset_effect"] = "delete"
-	strategy["asset_risk"] = "high"
-	strategy["approval"] = "file-manager/delete_file always requires governed approval unless an approved session grant applies"
+func contextualFileDeleteStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	strategy.Intent = "delete_visible_file"
+	strategy.TargetPage = "/console/files"
+	strategy.RouteRequired = false
+	strategy.AssetEffect = "delete"
+	strategy.AssetRisk = "high"
+	strategy.Approval = "file-manager/delete_file always requires governed approval unless an approved session grant applies"
 	if skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
-		strategy["primary_skills"] = appendUniqueStrings(stringSliceInterface(strategy["primary_skills"]), skills.SkillFileManager)
+		strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillFileManager)
 	}
-	strategy["success_criteria"] = []string{
+	strategy.SuccessCriteria = []string{
 		"resolved visible file target is used as the tool argument",
 		"file-manager/delete_file succeeds or reports the actual failure",
 		"asset observation or refreshed page context confirms deletion state",
 	}
-	strategy["observation_points"] = []string{"resolved_files_page_target", "asset_observation:file.delete", "files_page_visible_list"}
+	strategy.ObservationPoints = []string{"resolved_files_page_target", "asset_observation:file.delete", "files_page_visible_list"}
 	return strategy
 }
 
-func contextualFileReadStrategy(parts *chatRequestParts, strategy map[string]interface{}) map[string]interface{} {
-	strategy["intent"] = "read_visible_file_content"
-	strategy["target_page"] = "/console/files"
-	strategy["route_required"] = false
-	strategy["asset_effect"] = "read"
-	strategy["asset_risk"] = "low"
-	strategy["approval"] = "none for ordinary file read when workspace permissions allow it"
+func contextualFileReadStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	strategy.Intent = "read_visible_file_content"
+	strategy.TargetPage = "/console/files"
+	strategy.RouteRequired = false
+	strategy.AssetEffect = "read"
+	strategy.AssetRisk = "low"
+	strategy.Approval = "none for ordinary file read when workspace permissions allow it"
 	if skillIDEnabled(parts.SkillIDs, skills.SkillFileReader) {
-		strategy["primary_skills"] = appendUniqueStrings(stringSliceInterface(strategy["primary_skills"]), skills.SkillFileReader)
+		strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillFileReader)
 	}
-	strategy["success_criteria"] = []string{
+	strategy.SuccessCriteria = []string{
 		"resolved visible file target is used as the tool argument",
 		"file-reader/read_file returns extracted content or an explicit read failure",
 		"final answer is based on the returned file content instead of page metadata only",
 	}
-	strategy["observation_points"] = []string{"resolved_files_page_target", "read_file_result"}
+	strategy.ObservationPoints = []string{"resolved_files_page_target", "read_file_result"}
 	return strategy
 }
 
-func contextualNavigationStrategy(parts *chatRequestParts, strategy map[string]interface{}) map[string]interface{} {
-	strategy["intent"] = "navigate_console_page"
-	strategy["asset_effect"] = "none"
-	strategy["asset_risk"] = "low"
-	strategy["approval"] = "none"
+func contextualNavigationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	strategy.Intent = "navigate_console_page"
+	strategy.AssetEffect = "none"
+	strategy.AssetRisk = "low"
+	strategy.Approval = "none"
 	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-		strategy["primary_skills"] = appendUniqueStrings(stringSliceInterface(strategy["primary_skills"]), skills.SkillConsoleNavigator)
+		strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillConsoleNavigator)
 	}
-	strategy["success_criteria"] = []string{
+	strategy.SuccessCriteria = []string{
 		"console-navigator/navigate succeeds for the resolved route",
 		"frontend client action reports route_loaded for the same href",
 		"the same AIChat turn continues from updated page context",
 	}
-	strategy["observation_points"] = []string{"route_navigation_client_action", "updated_page_context"}
+	strategy.ObservationPoints = []string{"route_navigation_client_action", "updated_page_context"}
 	return strategy
 }
 
@@ -973,13 +993,20 @@ func requiresConsoleFilesRouteBeforeManagedFileCreate(parts *chatRequestParts) b
 }
 
 func resolveConsoleNavigationTargetForPrepared(prepared *PreparedChat) (consoleNavigationRouteHint, bool) {
-	if prepared == nil || prepared.parts == nil {
+	if prepared == nil {
 		return consoleNavigationRouteHint{}, false
 	}
-	if requiresConsoleFilesRouteBeforeManagedFileCreate(prepared.parts) {
+	return resolveConsoleNavigationTargetForParts(prepared.parts)
+}
+
+func resolveConsoleNavigationTargetForParts(parts *chatRequestParts) (consoleNavigationRouteHint, bool) {
+	if parts == nil {
+		return consoleNavigationRouteHint{}, false
+	}
+	if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
 		return consoleFilesRouteHint(), true
 	}
-	return resolveConsoleNavigationTarget(prepared.parts.Query)
+	return resolveConsoleNavigationTarget(parts.Query)
 }
 
 func consoleFilesRouteHint() consoleNavigationRouteHint {

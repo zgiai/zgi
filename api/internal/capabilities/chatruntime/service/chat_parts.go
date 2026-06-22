@@ -323,6 +323,9 @@ func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
 	if parts.OperationLedger != nil {
 		metadata["operation_ledger"] = copyStringAnyMap(parts.OperationLedger)
 	}
+	if strategy := contextualAIChatTurnStrategyFromParts(parts); strategy != nil {
+		metadata["turn_strategy"] = strategy
+	}
 	if snapshot := consoleFilesContextSnapshot(parts); snapshot != nil {
 		metadata[consoleFilesContextSnapshotKey] = snapshot
 	}
