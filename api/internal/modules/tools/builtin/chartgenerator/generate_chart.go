@@ -41,7 +41,7 @@ func NewGenerateChartTool(tenantID string) *GenerateChartTool {
 				"en_US":   "Generate a downloadable SVG chart from structured data.",
 				"zh_Hans": "Generate a downloadable SVG chart from structured data.",
 			},
-			LLM: "Generate a downloadable SVG chart from structured data. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution charts. For generic requests such as 'generate a chart' or 'generate visualization', do not infer the chart type, title, or style; ask the user to confirm those decisions before calling.",
+			LLM: "Generate a downloadable SVG chart from structured data. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution charts. For casual, vague, incomplete, or non-structured chart requests, use prompt-professionalizer before this tool. For generic requests such as 'generate a chart' or 'generate visualization', do not infer the chart type, title, or style; ask the user to confirm those decisions before calling.",
 		},
 		Parameters: []tools.ToolParameter{
 			{

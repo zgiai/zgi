@@ -28,6 +28,7 @@ export interface SysChatProps {
   extraInputs?: Record<string, unknown>;
   historyWindowSize?: number;
   inputTopNotice?: React.ReactNode;
+  conversationSearchKey?: readonly unknown[];
 }
 
 export function SysChat({
@@ -37,6 +38,7 @@ export function SysChat({
   extraInputs,
   historyWindowSize,
   inputTopNotice,
+  conversationSearchKey,
 }: SysChatProps) {
   const activeId = useStore(controller.store, s => s.activeId);
   const conversationList = useStore(controller.store, s => s.conversations);
@@ -79,6 +81,11 @@ export function SysChat({
     messages,
     activeId,
   });
+  const conversationSearch = React.useCallback(
+    (query: string, limit: number) => controller.search?.(query, limit) ?? Promise.resolve([]),
+    [controller]
+  );
+  const hasConversationSearch = typeof controller.search === 'function';
 
   const handleSend = React.useCallback(async () => {
     const trimmedInput = input.trim();
@@ -134,6 +141,8 @@ export function SysChat({
           onSelect={handleSelectChat}
           onDelete={handleDeleteChat}
           isHome={isHome}
+          search={hasConversationSearch ? conversationSearch : undefined}
+          searchKey={conversationSearchKey}
         />
       </div>
 
@@ -242,6 +251,8 @@ export function SysChat({
             onDelete={handleDeleteChat}
             onClose={() => setIsMobileSidebarOpen(false)}
             isHome={isHome}
+            search={hasConversationSearch ? conversationSearch : undefined}
+            searchKey={conversationSearchKey}
           />
         </SheetContent>
       </Sheet>

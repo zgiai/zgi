@@ -6,6 +6,7 @@ import type {
   ChatController,
   ConversationTransport,
   ConversationSummary,
+  ConversationSearchResult,
   ConversationDetail,
   Pagination,
   SendMessagePayload,
@@ -733,6 +734,25 @@ export class SingleChatController implements ChatController {
     } catch (err) {
       console.error('[SingleChatController] Failed to rename:', err);
     }
+  }
+
+  async search(query: string, limit: number) {
+    if (!this.transport.search) {
+      const normalizedQuery = query.trim().toLowerCase();
+      if (!normalizedQuery) return [];
+      return this.store
+        .getState()
+        .conversations.filter(conversation => conversation.title.toLowerCase().includes(normalizedQuery))
+        .slice(0, limit)
+        .map<ConversationSearchResult>(conversation => ({
+          type: 'conversation',
+          conversationId: conversation.id,
+          conversationTitle: conversation.title,
+          snippet: conversation.title,
+          updatedAt: conversation.updatedAt,
+        }));
+    }
+    return this.transport.search(query, limit);
   }
 
   subscribe(

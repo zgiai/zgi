@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ type AgentConversationRepository interface {
 	GetByAgentAndUser(ctx context.Context, agentID uuid.UUID, fromSource string, userID uuid.UUID, limit, offset int) ([]*AgentConversation, int64, error)
 	GetByAgent(ctx context.Context, agentID uuid.UUID, limit, offset int) ([]*AgentConversation, int64, error)
 	GetByAgentWithFilters(ctx context.Context, agentID, userID uuid.UUID, versionUUID string, limit, offset int) ([]*AgentConversation, int64, error)
+	SearchByAgentAndUser(ctx context.Context, agentID, userID uuid.UUID, webAppID string, queryText string, limit int) ([]*AgentConversationSearchResult, error)
 	GetHistoryByAgent(ctx context.Context, filter AgentConversationHistoryFilter) ([]*AgentConversation, int64, error)
 	IncrementDialogueCount(ctx context.Context, id uuid.UUID) error
 	GetWithMessages(ctx context.Context, id uuid.UUID, messageLimit int) (*AgentConversation, error)
@@ -37,6 +39,15 @@ type AgentConversationHistoryFilter struct {
 	InvokeFroms []string
 	Limit       int
 	Offset      int
+}
+
+type AgentConversationSearchResult struct {
+	Type              string
+	ConversationID    uuid.UUID
+	ConversationTitle string
+	MessageID         *uuid.UUID
+	MatchText         string
+	UpdatedAt         time.Time
 }
 
 // agentConversationRepository implements AgentConversationRepository
@@ -230,6 +241,101 @@ func (r *agentConversationRepository) GetByAgentWithFilters(ctx context.Context,
 	return conversations, total, nil
 }
 
+func (r *agentConversationRepository) SearchByAgentAndUser(ctx context.Context, agentID, userID uuid.UUID, webAppID string, queryText string, limit int) ([]*AgentConversationSearchResult, error) {
+	keyword := strings.TrimSpace(queryText)
+	if keyword == "" || limit <= 0 {
+		return []*AgentConversationSearchResult{}, nil
+	}
+	pattern := "%" + escapeLikePattern(strings.ToLower(keyword)) + "%"
+
+	type searchRow struct {
+		Type              string     `gorm:"column:type"`
+		ConversationID    uuid.UUID  `gorm:"column:conversation_id"`
+		ConversationTitle string     `gorm:"column:conversation_title"`
+		MessageID         *uuid.UUID `gorm:"column:message_id"`
+		MatchText         string     `gorm:"column:match_text"`
+		UpdatedAt         time.Time  `gorm:"column:updated_at"`
+		Rank              int        `gorm:"column:rank"`
+	}
+
+	args := []interface{}{
+		agentID,
+		userID,
+		webAppID,
+		pattern,
+		pattern,
+		agentID,
+		userID,
+		webAppID,
+		pattern,
+		pattern,
+		limit,
+	}
+	var rows []searchRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT *
+		FROM (
+			SELECT
+				'conversation' AS type,
+				c.id AS conversation_id,
+				c.name AS conversation_title,
+				NULL::uuid AS message_id,
+				c.name AS match_text,
+				c.updated_at AS updated_at,
+				0 AS rank
+			FROM agents_conversations AS c
+			WHERE c.agent_id = ?
+				AND c.created_by = ?
+				AND c.invoke_from = 'web-app'
+				AND c.web_app_id = ?
+				AND c.deleted_at IS NULL
+				AND LOWER(COALESCE(c.name, '')) LIKE ? ESCAPE '\'
+			UNION ALL
+			SELECT
+				'message' AS type,
+				c.id AS conversation_id,
+				c.name AS conversation_title,
+				m.id AS message_id,
+				CASE
+					WHEN LOWER(COALESCE(m.query, '')) LIKE ? ESCAPE '\' THEN m.query
+					ELSE m.answer
+				END AS match_text,
+				GREATEST(m.updated_at, c.updated_at) AS updated_at,
+				1 AS rank
+			FROM agents_messages AS m
+			JOIN agents_conversations AS c ON c.id = m.conversation_id
+			WHERE c.agent_id = ?
+				AND c.created_by = ?
+				AND c.invoke_from = 'web-app'
+				AND c.web_app_id = ?
+				AND c.deleted_at IS NULL
+				AND m.deleted_at IS NULL
+				AND (
+					LOWER(COALESCE(m.query, '')) LIKE ? ESCAPE '\'
+					OR LOWER(COALESCE(m.answer, '')) LIKE ? ESCAPE '\'
+				)
+		) AS matches
+		ORDER BY rank ASC, updated_at DESC
+		LIMIT ?
+	`, args...).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to search agent conversations: %w", err)
+	}
+
+	results := make([]*AgentConversationSearchResult, 0, len(rows))
+	for _, row := range rows {
+		results = append(results, &AgentConversationSearchResult{
+			Type:              row.Type,
+			ConversationID:    row.ConversationID,
+			ConversationTitle: row.ConversationTitle,
+			MessageID:         row.MessageID,
+			MatchText:         row.MatchText,
+			UpdatedAt:         row.UpdatedAt,
+		})
+	}
+	return results, nil
+}
+
 // GetHistoryByAgent retrieves agent conversations for console history views.
 func (r *agentConversationRepository) GetHistoryByAgent(ctx context.Context, filter AgentConversationHistoryFilter) ([]*AgentConversation, int64, error) {
 	var conversations []*AgentConversation
@@ -350,6 +456,11 @@ func (r *agentConversationRepository) UpdateNameIfCurrent(ctx context.Context, c
 		return false, fmt.Errorf("failed to update conversation name: %w", result.Error)
 	}
 	return result.RowsAffected > 0, nil
+}
+
+func escapeLikePattern(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(value)
 }
 
 // MigrateConversationsByAccountID migrates conversations from virtual user to authenticated user

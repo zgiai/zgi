@@ -68,6 +68,7 @@ interface ChatWithControllerProps {
   allowWorkspaceSwitch?: boolean;
   renderMessageAddon?: (message: Message) => React.ReactNode;
   surface?: 'default' | 'webapp';
+  conversationSearchKey?: readonly unknown[];
 }
 
 const ChatWithController: React.FC<ChatWithControllerProps> = ({
@@ -103,6 +104,7 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
   allowWorkspaceSwitch = false,
   renderMessageAddon,
   surface = 'default',
+  conversationSearchKey,
 }) => {
   const t = useT();
   const isWebappSurface = surface === 'webapp';
@@ -232,6 +234,7 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
           <ConversationHistoryList
             controller={controller}
             backgroundImage={isWebappSurface ? WEBAPP_CHAT_SIDEBAR_BG_IMAGE : undefined}
+            searchKey={conversationSearchKey}
           />
         </div>
 
@@ -372,6 +375,7 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
                 className="border-0 h-full w-full"
                 backgroundImage={isWebappSurface ? WEBAPP_CHAT_SIDEBAR_BG_IMAGE : undefined}
                 onActionComplete={() => setMobileDrawerOpen(false)}
+                searchKey={conversationSearchKey}
               />
             </div>
           </div>

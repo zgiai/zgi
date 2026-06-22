@@ -1,4 +1,8 @@
-import type { ConversationSummary, ConversationDetail } from '@/components/chat/controllers/types';
+import type {
+  ConversationDetail,
+  ConversationSearchResult,
+  ConversationSummary,
+} from '@/components/chat/controllers/types';
 import type { Message, TerminalRunStatus } from '@/components/chat/types';
 import { normalizeMessageRunStatus } from '@/components/chat/types';
 import { useChatStore } from '@/components/chat/store';
@@ -6,6 +10,7 @@ import type {
   WebAppConversation,
   WebAppConversationDetail,
   WebAppConversationMessageItem,
+  WebAppConversationSearchResult,
 } from '@/services/types/webapp';
 import type { QuestionAnswerChoice } from '@/services/types/workflow';
 import {
@@ -157,6 +162,17 @@ export function mapWebAppConversationToSummary(item: WebAppConversation): Conver
       invoke_from: item.invoke_from,
       created_at: item.created_at,
     },
+  };
+}
+
+export function mapWebAppSearchResult(item: WebAppConversationSearchResult): ConversationSearchResult {
+  return {
+    type: item.type,
+    conversationId: item.conversation_id,
+    conversationTitle: item.conversation_title,
+    messageId: item.message_id,
+    snippet: item.snippet,
+    updatedAt: item.updated_at * 1000,
   };
 }
 

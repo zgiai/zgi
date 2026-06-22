@@ -18,6 +18,7 @@ import type {
   AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
+import type { ConversationSearchResult } from '@/components/chat/controllers/types';
 import type { NodeInfo, RunStatus } from '@/components/chat/types';
 import type { StoreApi } from 'zustand/vanilla';
 
@@ -214,6 +215,7 @@ export interface AIChatController {
     inputs: { query: string; question_answer_option_id?: string }
   ) => Promise<void>;
   switchBranch: (messageId: string) => void;
+  search?: (query: string, limit: number) => Promise<ConversationSearchResult[]>;
 }
 
 export type AIChatSetControllerState = (

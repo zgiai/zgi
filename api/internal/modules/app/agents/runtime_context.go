@@ -94,6 +94,14 @@ func (h *AgentsHandler) ListWebAppAgentRuntimeConversations(c *gin.Context) {
 	h.listRuntimeConversations(c, runtimeCtx)
 }
 
+func (h *AgentsHandler) SearchWebAppAgentRuntimeConversations(c *gin.Context) {
+	runtimeCtx, ok := h.webAppAgentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	h.searchRuntimeConversations(c, runtimeCtx)
+}
+
 func (h *AgentsHandler) GetWebAppAgentRuntimeConversation(c *gin.Context) {
 	runtimeCtx, ok := h.webAppAgentRuntimeContext(c)
 	if !ok {
@@ -397,6 +405,24 @@ func (h *AgentsHandler) listRuntimeConversations(c *gin.Context, runtimeCtx agen
 	})
 }
 
+func (h *AgentsHandler) searchRuntimeConversations(c *gin.Context, runtimeCtx agentRuntimeContext) {
+	query := strings.TrimSpace(c.Query("query"))
+	limit := positiveQueryInt(c, "limit", 20)
+	if limit > 50 {
+		limit = 50
+	}
+	results, err := h.chatRuntimeService.SearchByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, query, limit)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	items := make([]runtimedto.SearchResultResponse, 0, len(results))
+	for _, result := range results {
+		items = append(items, runtimeSearchResultResponse(result))
+	}
+	response.Success(c, items)
+}
+
 func (h *AgentsHandler) getRuntimeConversation(c *gin.Context, runtimeCtx agentRuntimeContext) {
 	conversationID, ok := uuidParam(c, "conversation_id")
 	if !ok {
@@ -657,6 +683,20 @@ func runtimeStopConversationResponse(result *runtimeservice.StopConversationResu
 	if result.Message != nil {
 		resp.MessageID = stringPtr(result.Message.ID.String())
 		resp.Status = result.Message.Status
+	}
+	return resp
+}
+
+func runtimeSearchResultResponse(result *runtimeservice.SearchResult) runtimedto.SearchResultResponse {
+	resp := runtimedto.SearchResultResponse{
+		Type:              result.Type,
+		ConversationID:    result.ConversationID.String(),
+		ConversationTitle: result.ConversationTitle,
+		Snippet:           result.Snippet,
+		UpdatedAt:         result.UpdatedAt.Unix(),
+	}
+	if result.MessageID != nil {
+		resp.MessageID = stringPtr(result.MessageID.String())
 	}
 	return resp
 }

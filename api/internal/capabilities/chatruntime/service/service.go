@@ -24,6 +24,9 @@ const (
 	systemPromptVersion      = "aichat.v1"
 	maxContextMessages       = 20
 	maxConversationTitleLen  = 50
+	defaultSearchLimit       = 20
+	maxSearchLimit           = 50
+	searchSnippetRunes       = 120
 	staleActiveMessageTTL    = time.Hour
 	staleActiveMessageError  = "stream interrupted before completion"
 	streamEventsExpiredError = "stream events expired"
@@ -139,6 +142,8 @@ type Service interface {
 	CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error)
 	ListConversations(ctx context.Context, scope Scope, page, limit int) ([]*runtimemodel.Conversation, int64, error)
 	ListConversationsByCaller(ctx context.Context, scope Scope, caller Caller, page, limit int) ([]*runtimemodel.Conversation, int64, error)
+	Search(ctx context.Context, scope Scope, query string, limit int) ([]*SearchResult, error)
+	SearchByCaller(ctx context.Context, scope Scope, caller Caller, query string, limit int) ([]*SearchResult, error)
 	GetConversation(ctx context.Context, scope Scope, id uuid.UUID) (*runtimemodel.Conversation, error)
 	GetConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Conversation, error)
 	UpdateConversation(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error)
@@ -294,6 +299,15 @@ type ChatResult struct {
 type StopConversationResult struct {
 	Conversation *runtimemodel.Conversation
 	Message      *runtimemodel.Message
+}
+
+type SearchResult struct {
+	Type              string
+	ConversationID    uuid.UUID
+	ConversationTitle string
+	MessageID         *uuid.UUID
+	Snippet           string
+	UpdatedAt         time.Time
 }
 
 type SkillConfig struct {

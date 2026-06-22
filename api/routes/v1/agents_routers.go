@@ -144,6 +144,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.POST("/:web_app_id/chat", appHandler.ChatWebAppAgent)
 	protectedWebApps.GET("/:web_app_id/files/upload", appHandler.GetWebAppUploadConfig)
 	protectedWebApps.POST("/:web_app_id/files/upload", appHandler.UploadWebAppFile)
+	protectedWebApps.GET("/:web_app_id/runtime/search", appHandler.SearchWebAppAgentRuntimeConversations)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations", appHandler.ListWebAppAgentRuntimeConversations)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id", appHandler.GetWebAppAgentRuntimeConversation)
 	protectedWebApps.PATCH("/:web_app_id/runtime/conversations/:conversation_id", appHandler.UpdateWebAppAgentRuntimeConversation)

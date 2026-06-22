@@ -89,7 +89,7 @@ Read exactly one reference after choosing the target format:
 
 - The skill creates new files only. It does not edit existing uploaded files or preserve an existing template.
 - Do not call `generate_file`, `generate_docx`, `generate_pdf`, or `generate_pptx` until the selected format reference has been read.
-- `generate_file` accepts only its documented simple parameters. Do not invent format-specific parameters such as `sheets`, `styles`, `pages`, `columns`, `headers`, or `metadata`.
+- `generate_file` accepts only its documented simple parameters. Do not invent format-specific parameters such as `sheets`, `styles`, `pages`, `columns`, `headers`, or `metadata`. XLSX output applies the default table styling documented in `format-xlsx.md`; the caller cannot customize those styles through `generate_file`.
 - `generate_docx` accepts a JSON string document specification. Do not pass raw Markdown or HTML as `document`.
 - `generate_pdf` accepts self-contained HTML and optional inline CSS. Do not pass JSON document specs.
 - `generate_pptx` accepts a JSON string presentation specification. Do not pass HTML or Markdown as `presentation`.
@@ -106,7 +106,7 @@ Read exactly one reference after choosing the target format:
 - `content`: text content to write into the file.
 - `format`: `txt`, `md`, `html`, `json`, `csv`, `docx`, `xlsx`, or `pdf`.
 - `filename`: optional display filename. The extension is added automatically.
-- `title`: optional title used by generated HTML and PDF files.
+- `title`: optional title used by generated HTML, XLSX, and PDF files. For XLSX, this becomes a merged title row above the table.
 - `lifecycle`: optional file lifecycle, `persistent` or `temporary`. Defaults to `persistent`.
 
 `generate_docx` accepts:

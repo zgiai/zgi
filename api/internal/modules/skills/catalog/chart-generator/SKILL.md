@@ -1,7 +1,7 @@
 ---
 name: chart-generator
 description: Generate downloadable SVG charts from structured data, including radar, bar, line, pie, doughnut, scatter, and score distribution charts.
-when_to_use: Use this skill when the user asks to create, export, or generate a chart, graph, radar chart, spider chart, bar chart, line chart, pie chart, doughnut chart, scatter chart, score distribution chart, score chart, comparison chart, or data visualization from provided data.
+when_to_use: Use this skill when the user asks to create, export, or generate a chart, graph, radar chart, spider chart, bar chart, line chart, pie chart, doughnut chart, scatter chart, score distribution chart, score chart, comparison chart, or data visualization from provided data. For casual, vague, incomplete, or non-structured chart and data visualization requests, first route through prompt-professionalizer to optimize the visualization prompt and extract chart requirements, then call this skill.
 provider_type: builtin
 provider_id: chart_generator
 runtime_type: tool
@@ -52,12 +52,13 @@ Use this skill to generate downloadable SVG chart artifacts from structured data
 ## Workflow
 
 1. Determine whether the user explicitly requested a `chart_type`: `radar`, `bar`, `line`, `pie`, `doughnut`, `scatter`, or `score_distribution`.
-2. If the user only says a generic request such as "generate a chart", "make a graph", "生成图表", "做个图", or "可视化", call `request_user_input` before calling `generate_chart`.
-3. Read exactly one reference document for that chart type before calling `generate_chart`.
-4. Convert the user's data into the JSON payload documented in the selected reference.
-5. Validate that all required data is present and internally consistent.
-6. Call `call_skill_tool` with `tool_name` set to `generate_chart`.
-7. In the final answer, briefly mention the generated chart filename and any assumptions. Do not paste SVG source unless the user explicitly asks for it.
+2. If the request is casual, vague, incomplete, or not already structured for a chart or visualization tool, first use `prompt-professionalizer` to produce an optimized data visualization prompt and chart requirements.
+3. If the user only says a generic request such as "generate a chart", "make a graph", "生成图表", "做个图", or "可视化", call `request_user_input` before calling `generate_chart`.
+4. Read exactly one reference document for that chart type before calling `generate_chart`.
+5. Convert the user's data into the JSON payload documented in the selected reference.
+6. Validate that all required data is present and internally consistent.
+7. Call `call_skill_tool` with `tool_name` set to `generate_chart`.
+8. In the final answer, briefly mention the generated chart filename and any assumptions. Do not paste SVG source unless the user explicitly asks for it.
 
 ## Clarification Workflow
 
@@ -154,6 +155,7 @@ If the user requests a chart type that is not listed, say it is not supported ye
 
 ## Constraints
 
+- Before calling `generate_chart`, use `prompt-professionalizer` when the user's request is casual, vague, incomplete, or not already structured for chart generation. Direct tool calls are allowed only when the chart type, data mapping, title or purpose, and key rendering requirements are already complete.
 - Do not call `generate_chart` until the selected chart reference has been read.
 - Do not read a chart reference until the chart type has been explicitly provided by the user or confirmed through `request_user_input`.
 - Generate SVG artifacts only. Do not promise PNG, PDF, or interactive charts.
