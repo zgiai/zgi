@@ -171,7 +171,7 @@ func NewMiniMaxAdapter(config *adapter.AdapterConfig) (*MiniMaxAdapter, error) {
 
 	return &MiniMaxAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClientWithAuthHook(timeout, maxRetries, config.AuthHook),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, maxRetries),
 		baseURL:    baseURL,
 		openAI:     openAICompatible,
 	}, nil

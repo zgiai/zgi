@@ -463,6 +463,9 @@ type AdapterConfig struct {
 	CustomParams map[string]interface{} `json:"custom_params,omitempty"`
 	Organization string                 `json:"organization,omitempty"` // OpenAI specific
 
+	GuardOutboundURL    bool `json:"-"`
+	AllowPrivateBaseURL bool `json:"-"`
+
 	// ProviderConfig carries provider-specific parameters, such as cloud project or signing metadata.
 	ProviderConfig map[string]interface{} `json:"provider_config,omitempty"`
 

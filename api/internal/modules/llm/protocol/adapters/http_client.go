@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/modules/llm/internal/urlguard"
 	"github.com/zgiai/zgi/api/internal/observability"
 )
 
@@ -21,6 +23,13 @@ type HTTPClient struct {
 	streamClient *http.Client // Separate client for streaming (no timeout)
 	maxRetries   int
 	authHook     func(req *http.Request) // Optional: called before each request for custom auth
+}
+
+type HTTPClientOptions struct {
+	AuthHook            func(req *http.Request)
+	GuardOutboundURL    bool
+	AllowPrivateBaseURL bool
+	URLPolicy           urlguard.Policy
 }
 
 // HTTPResponse carries the response pieces needed by transport-specific adapters.
@@ -38,11 +47,41 @@ func NewHTTPClient(timeout time.Duration, maxRetries int) *HTTPClient {
 // NewHTTPClientWithAuthHook creates an HTTP client with an optional auth hook.
 // The authHook is called on every outgoing request before it is sent.
 func NewHTTPClientWithAuthHook(timeout time.Duration, maxRetries int, authHook func(req *http.Request)) *HTTPClient {
+	return NewHTTPClientWithOptions(timeout, maxRetries, HTTPClientOptions{AuthHook: authHook})
+}
+
+func NewHTTPClientFromConfig(config *AdapterConfig, timeout time.Duration, maxRetries int) *HTTPClient {
+	opts := HTTPClientOptions{}
+	if config != nil {
+		opts.AuthHook = config.AuthHook
+		opts.GuardOutboundURL = config.GuardOutboundURL
+		opts.AllowPrivateBaseURL = config.AllowPrivateBaseURL
+	}
+	return NewHTTPClientWithOptions(timeout, maxRetries, opts)
+}
+
+func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPClientOptions) *HTTPClient {
 	if timeout == 0 {
 		timeout = 60 * time.Second
 	}
 	if maxRetries == 0 {
 		maxRetries = 2 // Default to 2 retries for transient failures
+	}
+
+	policy := opts.URLPolicy
+	if opts.AllowPrivateBaseURL {
+		policy.AllowPrivate = true
+	}
+	var dialContext func(ctx context.Context, network, address string) (net.Conn, error)
+	var checkRedirect func(req *http.Request, via []*http.Request) error
+	if opts.GuardOutboundURL {
+		dialContext = guardedDialContext(policy)
+		checkRedirect = func(req *http.Request, _ []*http.Request) error {
+			if err := urlguard.ValidateURL(req.Context(), req.URL, policy); err != nil {
+				return fmt.Errorf("blocked unsafe target: %w", err)
+			}
+			return nil
+		}
 	}
 
 	// Non-streaming transport: force HTTP/1.1 to avoid HTTP/2 multiplexing issues
@@ -57,6 +96,7 @@ func NewHTTPClientWithAuthHook(timeout time.Duration, maxRetries int, authHook f
 		DisableKeepAlives:     false,
 		ForceAttemptHTTP2:     false,                                                                  // Disable HTTP/2
 		TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper), // Force HTTP/1.1
+		DialContext:           dialContext,
 	}
 
 	// Streaming transport - disable keep-alives to prevent connection reuse issues
@@ -72,21 +112,59 @@ func NewHTTPClientWithAuthHook(timeout time.Duration, maxRetries int, authHook f
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableKeepAlives:     true, // IMPORTANT: Disable keep-alives for streaming to avoid stale data issues
 		ResponseHeaderTimeout: 600 * time.Second,
+		DialContext:           dialContext,
 	}
 
 	return &HTTPClient{
 		client: &http.Client{
-			Timeout:   timeout,
-			Transport: observability.HTTPTransport(transport),
+			Timeout:       timeout,
+			Transport:     observability.HTTPTransport(transport),
+			CheckRedirect: checkRedirect,
 		},
 		// Stream client has no Timeout - relies on context cancellation
 		// This allows streaming responses to run for as long as needed
 		streamClient: &http.Client{
-			Timeout:   0, // No timeout for streaming - context handles cancellation
-			Transport: observability.HTTPTransport(streamTransport),
+			Timeout:       0, // No timeout for streaming - context handles cancellation
+			Transport:     observability.HTTPTransport(streamTransport),
+			CheckRedirect: checkRedirect,
 		},
 		maxRetries: maxRetries,
-		authHook:   authHook,
+		authHook:   opts.AuthHook,
+	}
+}
+
+func (c *HTTPClient) StandardClient() *http.Client {
+	if c == nil {
+		return nil
+	}
+	return c.client
+}
+
+func guardedDialContext(policy urlguard.Policy) func(ctx context.Context, network, address string) (net.Conn, error) {
+	dialer := &net.Dialer{}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("blocked unsafe target %q: %w", address, err)
+		}
+
+		addrs, err := urlguard.ResolveSafeHost(ctx, host, policy)
+		if err != nil {
+			return nil, fmt.Errorf("blocked unsafe target %q: %w", host, err)
+		}
+
+		var lastErr error
+		for _, addr := range addrs {
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("no resolved address for %q", host)
 	}
 }
 

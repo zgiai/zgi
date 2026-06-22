@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	appconfig "github.com/zgiai/zgi/api/config"
 	channeldto "github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
@@ -34,6 +35,21 @@ var (
 	_ ChannelValidator                      = (*fakeChannelValidator)(nil)
 	_ llmmodelsvc.AvailableModelsService    = (*fakeAvailableModelsService)(nil)
 )
+
+func setLLMAllowPrivateBaseURL(t *testing.T, allow bool) {
+	t.Helper()
+	previous := appconfig.GlobalConfig
+	next := &appconfig.Config{}
+	if previous != nil {
+		copied := *previous
+		next = &copied
+	}
+	next.LLM.AllowPrivateBaseURL = allow
+	appconfig.GlobalConfig = next
+	t.Cleanup(func() {
+		appconfig.GlobalConfig = previous
+	})
+}
 
 type fakeTenantRouteRepo struct {
 	created   *channelmodel.LLMRoute
@@ -820,7 +836,59 @@ func TestCreateRoute_OpenAICompatibleRequiresAPIKey(t *testing.T) {
 	require.Nil(t, credSvc.createdReq)
 }
 
+func TestCreateRoute_RejectsPrivateBaseURLBeforeValidation(t *testing.T) {
+	repo := &fakeTenantRouteRepo{}
+	credSvc := &fakeTenantCredentialService{}
+	validator := &fakeChannelValidator{}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: credSvc,
+		validator:         validator,
+		modelRepo:         &fakeModelRepo{},
+	}
+
+	_, err := svc.CreateRoute(context.Background(), uuid.New(), &channeldto.CreateRouteRequest{
+		Name:            "Internal Proxy",
+		ChannelProvider: "openai-compatible",
+		APIKey:          "test-key",
+		APIBaseURL:      "http://127.0.0.1:8080/v1",
+		Models:          []string{"gpt-4o"},
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "api_base_url")
+	require.Equal(t, 0, validator.createCalls)
+	require.Nil(t, repo.created)
+	require.Nil(t, credSvc.createdReq)
+}
+
+func TestCreateRoute_OllamaRejectsPrivateBaseURLByDefault(t *testing.T) {
+	repo := &fakeTenantRouteRepo{}
+	credSvc := &fakeTenantCredentialService{}
+	validator := &fakeChannelValidator{}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: credSvc,
+		validator:         validator,
+		modelRepo:         &fakeModelRepo{},
+	}
+
+	_, err := svc.CreateRoute(context.Background(), uuid.New(), &channeldto.CreateRouteRequest{
+		Name:            "Local Ollama",
+		ChannelProvider: "ollama",
+		APIBaseURL:      "http://localhost:11434",
+		Models:          []string{"qwen3.5:4b"},
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "api_base_url")
+	require.Equal(t, 0, validator.createCalls)
+	require.Nil(t, repo.created)
+	require.Nil(t, credSvc.createdReq)
+}
+
 func TestCreateRoute_OllamaAllowsEmptyAPIKey(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	repo := &fakeTenantRouteRepo{}
 	credSvc := &fakeTenantCredentialService{}
 	validator := &fakeChannelValidator{}
@@ -851,6 +919,7 @@ func TestCreateRoute_OllamaAllowsEmptyAPIKey(t *testing.T) {
 }
 
 func TestCreateRoute_OllamaUpsertsCustomProviderAndModels(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	repo := &fakeTenantRouteRepo{}
 	credSvc := &fakeTenantCredentialService{}
 	validator := &fakeChannelValidator{}
@@ -888,6 +957,7 @@ func TestCreateRoute_OllamaUpsertsCustomProviderAndModels(t *testing.T) {
 }
 
 func TestCreateRoute_OllamaExactBaseURLUpsertsChatModelWithoutDiscovery(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	repo := &fakeTenantRouteRepo{}
 	credSvc := &fakeTenantCredentialService{}
 	validator := &fakeChannelValidator{}
@@ -921,6 +991,7 @@ func TestCreateRoute_OllamaExactBaseURLUpsertsChatModelWithoutDiscovery(t *testi
 }
 
 func TestCreateRoute_OllamaExactBaseURLUpsertsEmbeddingModelWithoutDiscovery(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	repo := &fakeTenantRouteRepo{}
 	credSvc := &fakeTenantCredentialService{}
 	validator := &fakeChannelValidator{}
@@ -952,6 +1023,7 @@ func TestCreateRoute_OllamaExactBaseURLUpsertsEmbeddingModelWithoutDiscovery(t *
 }
 
 func TestCreateRoute_OllamaExactBaseURLRejectsMixedUseCases(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	svc := &channelService{
 		tenantRouteRepo:   &fakeTenantRouteRepo{},
 		tenantCredService: &fakeTenantCredentialService{},
@@ -982,6 +1054,7 @@ func TestCreateRoute_OllamaExactBaseURLRejectsMixedUseCases(t *testing.T) {
 }
 
 func TestCreateRoute_OllamaExactBaseURLRejectsUnknownModelWithoutDiscovery(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	svc := &channelService{
 		tenantRouteRepo:    &fakeTenantRouteRepo{},
 		tenantCredService:  &fakeTenantCredentialService{},
@@ -1007,6 +1080,7 @@ func TestCreateRoute_OllamaExactBaseURLRejectsUnknownModelWithoutDiscovery(t *te
 }
 
 func TestCreateRoute_OllamaRejectsUnsupportedRerankModel(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	svc := &channelService{
 		tenantRouteRepo:    &fakeTenantRouteRepo{},
 		tenantCredService:  &fakeTenantCredentialService{},
@@ -1032,6 +1106,7 @@ func TestCreateRoute_OllamaRejectsUnsupportedRerankModel(t *testing.T) {
 }
 
 func TestDiscoverOllamaModels_MapsUseCases(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	svc := &channelService{
 		ollamaModelLister: func(context.Context, string, string) ([]adapter.Model, error) {
 			return []adapter.Model{
@@ -1059,7 +1134,7 @@ func TestDiscoverDraftChannelModels_ReturnsUnsupportedWhenListingIsUnsupported(t
 	result, err := svc.DiscoverDraftChannelModels(context.Background(), &channeldto.DiscoverDraftChannelModelsRequest{
 		ChannelProvider: "openai-compatible",
 		APIKey:          "sk-test",
-		APIBaseURL:      "http://localhost:8080/v1/chat/completions#",
+		APIBaseURL:      "https://proxy.example.com/v1/chat/completions#",
 	})
 
 	require.NoError(t, err)
@@ -1120,6 +1195,7 @@ func TestDraftTestChannelModel_UsesValidatorAndReturnsNormalizedResult(t *testin
 }
 
 func TestDraftTestChannelModel_OllamaAllowsEmptyAPIKey(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	validator := &fakeChannelValidator{}
 	svc := &channelService{
 		tenantRouteRepo:   &fakeTenantRouteRepo{},
@@ -1140,7 +1216,71 @@ func TestDraftTestChannelModel_OllamaAllowsEmptyAPIKey(t *testing.T) {
 	require.Equal(t, "", validator.lastTestAPIKey)
 }
 
+func TestDraftTestChannelModel_RejectsPrivateBaseURLBeforeValidation(t *testing.T) {
+	validator := &fakeChannelValidator{}
+	svc := &channelService{
+		tenantRouteRepo:   &fakeTenantRouteRepo{},
+		tenantCredService: &fakeTenantCredentialService{},
+		validator:         validator,
+		modelRepo:         &fakeModelRepo{},
+	}
+
+	result, err := svc.TestDraftChannelModel(context.Background(), uuid.New(), &channeldto.DraftTestChannelModelRequest{
+		ChannelProvider: "openai-compatible",
+		APIKey:          "test-key",
+		APIBaseURL:      "http://127.0.0.1:8080/v1",
+		Model:           "gpt-4o",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Success)
+	require.Contains(t, result.Message, "api_base_url")
+	require.Empty(t, validator.lastTestProvider)
+}
+
+func TestUpdateRoute_RejectsPrivateBaseURLBeforeMutation(t *testing.T) {
+	credID := uuid.New()
+	orgID := uuid.New()
+	routeID := uuid.New()
+	privateBaseURL := "http://127.0.0.1:8080/v1"
+	repo := &fakeTenantRouteRepo{
+		routeByID: &channelmodel.LLMRoute{
+			ID:              routeID,
+			OrganizationID:  orgID,
+			Type:            "PRIVATE",
+			CredentialID:    &credID,
+			Name:            "Existing Route",
+			ChannelProvider: "openai-compatible",
+			APIBaseURL:      "https://api.example.com/v1",
+			Models:          []string{"gpt-4o"},
+			IsEnabled:       true,
+		},
+	}
+	credSvc := &fakeTenantCredentialService{
+		cred: &credentialmodel.TenantCredential{ID: credID, ChannelProvider: "openai-compatible"},
+	}
+	validator := &fakeChannelValidator{}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: credSvc,
+		validator:         validator,
+		modelRepo:         &fakeModelRepo{},
+	}
+
+	_, err := svc.UpdateRoute(context.Background(), orgID, routeID, &channeldto.UpdateRouteRequest{
+		APIBaseURL: &privateBaseURL,
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "api_base_url")
+	require.Equal(t, 0, validator.createCalls)
+	require.Nil(t, repo.updated)
+	require.Nil(t, credSvc.updatedReq)
+}
+
 func TestUpdateRoute_OllamaCanClearAPIKey(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	credID := uuid.New()
 	orgID := uuid.New()
 	repo := &fakeTenantRouteRepo{

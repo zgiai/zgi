@@ -40,7 +40,7 @@ func NewAliyunAdapter(config *adapter.AdapterConfig) (*AliyunAdapter, error) {
 
 	return &AliyunAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClientWithAuthHook(timeout, 3, config.AuthHook),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, 3),
 		baseURL:    baseURL,
 	}, nil
 }

@@ -51,7 +51,7 @@ func NewZGICloudAdapter(config *adapter.AdapterConfig) (*ZGICloudAdapter, error)
 
 	return &ZGICloudAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClientWithAuthHook(timeout, maxRetries, config.AuthHook),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, maxRetries),
 		baseURL:    config.BaseURL,
 	}, nil
 }

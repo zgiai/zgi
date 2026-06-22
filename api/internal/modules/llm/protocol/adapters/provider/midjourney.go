@@ -31,7 +31,7 @@ func NewMidjourneyAdapter(config *adapter.AdapterConfig) (*MidjourneyAdapter, er
 
 	return &MidjourneyAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClientWithAuthHook(timeout, config.MaxRetries, config.AuthHook),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, config.MaxRetries),
 		baseURL:    baseURL,
 	}, nil
 }

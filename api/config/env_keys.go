@@ -591,6 +591,8 @@ const (
 	envOfficialModelSyncStrictMode = "OFFICIAL_MODEL_SYNC_STRICT_MODE"
 	// envLLMEncryptionKey sets the AES key used for LLM provider credentials. Default: empty.
 	envLLMEncryptionKey = "LLM_ENCRYPTION_KEY"
+	// envLLMAllowPrivateBaseURL allows Ollama to target private or localhost base URLs. Default: false.
+	envLLMAllowPrivateBaseURL = "LLM_ALLOW_PRIVATE_BASE_URL"
 
 	// Automation dispatch behavior.
 	// envAutomationDispatchEnabled controls whether this API instance registers automation due-task dispatch. Default: true.

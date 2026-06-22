@@ -67,7 +67,7 @@ func NewVolcengineAdapter(config *adapter.AdapterConfig) (*VolcengineAdapter, er
 
 	return &VolcengineAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClientWithAuthHook(timeout, config.MaxRetries, config.AuthHook),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, config.MaxRetries),
 		baseURL:    baseURL,
 		ak:         ak,
 		sk:         sk,
