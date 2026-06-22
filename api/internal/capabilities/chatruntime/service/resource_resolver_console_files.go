@@ -5,37 +5,6 @@ import (
 	"strings"
 )
 
-func resolveConsoleFileIDsFromActionDecision(parts *chatRequestParts, decision AIChatActionDecision) []string {
-	refGroups := make([][]PlannerResourceRef, 0, 3)
-	if refs := plannerResourceRefsFromActionDecision(decision); len(refs) > 0 {
-		refGroups = append(refGroups, refs)
-	}
-	if refs := plannerResourceRefsFromConsoleFilesQuery(parts); len(refs) > 0 {
-		refGroups = append(refGroups, refs)
-	}
-	refGroups = append(refGroups, []PlannerResourceRef{{Type: resourceTypeFile}})
-
-	for _, refs := range refGroups {
-		result := resolveChatResourceRefs(parts, refs)
-		if allResourceRefsResolved(result.Results) {
-			return result.FileIDs
-		}
-	}
-	return nil
-}
-
-func plannerResourceRefsFromActionDecision(decision AIChatActionDecision) []PlannerResourceRef {
-	if len(decision.ResourceRefs) == 0 {
-		return nil
-	}
-	refs := make([]PlannerResourceRef, 0, len(decision.ResourceRefs))
-	for _, ref := range decision.ResourceRefs {
-		ref.Metadata = copyStringAnyMap(ref.Metadata)
-		refs = append(refs, PlannerResourceRef(ref))
-	}
-	return refs
-}
-
 func resolveConsoleFileIDsFromQuery(parts *chatRequestParts) []string {
 	refs := plannerResourceRefsFromConsoleFilesQuery(parts)
 	if len(refs) == 0 {

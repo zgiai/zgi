@@ -35,13 +35,6 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 		return nil, ErrMessageStopped
 	}
-	if result, handled, err := s.runConsoleFilesActionIfMatched(persistCtx, prepared, onChunk); handled {
-		if err != nil {
-			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
-			return nil, newFinalizedStreamError(err)
-		}
-		return result, nil
-	}
 	if err := s.prepareLLMRequestForRun(runCtx, prepared, eventCallback); err != nil {
 		if s.isStoppedContext(runCtx, prepared.Message.ID) {
 			_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)

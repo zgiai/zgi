@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	actionservice "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -221,7 +220,6 @@ type service struct {
 	contentExtractor   ContentExtractionService
 	workspacePerms     WorkspacePermissionService
 	skillRuntime       *skills.Runtime
-	actionRuntime      actionservice.Service
 	memoryService      UserMemoryService
 	agentMemoryService AgentMemoryContextService
 	customSkillStorage customSkillStorage
@@ -269,16 +267,11 @@ func NewServiceWithSkillRuntime(
 	optionalServices ...interface{},
 ) Service {
 	var agentMemoryService AgentMemoryContextService
-	var actionRuntime actionservice.Service
 	for _, item := range optionalServices {
 		switch typed := item.(type) {
 		case AgentMemoryContextService:
 			if agentMemoryService == nil {
 				agentMemoryService = typed
-			}
-		case actionservice.Service:
-			if actionRuntime == nil {
-				actionRuntime = typed
 			}
 		}
 	}
@@ -294,7 +287,6 @@ func NewServiceWithSkillRuntime(
 		contentExtractor:   contentExtractor,
 		workspacePerms:     workspacePerms,
 		skillRuntime:       skillRuntime,
-		actionRuntime:      actionRuntime,
 		memoryService:      memoryService,
 		agentMemoryService: agentMemoryService,
 		customSkillStorage: newFilesystemCustomSkillStorage(customSkillStorageRoot),

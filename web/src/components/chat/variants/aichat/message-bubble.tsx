@@ -42,8 +42,6 @@ import { isOriginalPreviewImage } from '@/utils/file-helpers';
 import { API_URL } from '@/lib/config';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
-import { ActionPlanCard, ActionRunPanel } from '@/components/aichat/action-runtime';
-import { resolveAIChatActionRuntimeMessagePanels } from '@/components/aichat/action-runtime/message-metadata';
 import {
   getAIChatMessageErrorInput,
   resolveAIChatErrorMessage,
@@ -581,10 +579,6 @@ export function AIChatMessageBubble({
     () => generatedImagePreviewFiles(displayAnswer, visibleGeneratedFiles, !isSensitiveBlocked),
     [displayAnswer, visibleGeneratedFiles, isSensitiveBlocked]
   );
-  const actionRuntimePanels = useMemo(
-    () => resolveAIChatActionRuntimeMessagePanels(message.metadata),
-    [message.metadata]
-  );
   const hasGeneratedImagePreviews = generatedImagePreviewFilesForDisplay.length > 0;
   const answer = displayAnswer.trim();
   const waitingMessage =
@@ -840,30 +834,6 @@ export function AIChatMessageBubble({
               {visibleGeneratedFiles.map(file => (
                 <AIChatGeneratedFileCard key={file.file_id} file={file} />
               ))}
-            </div>
-          ) : null}
-
-          {actionRuntimePanels.length > 0 ? (
-            <div className="mt-3 space-y-3">
-              {actionRuntimePanels.map(panel =>
-                panel.run ? (
-                  <ActionRunPanel
-                    key={`action-run-${panel.id}`}
-                    run={panel.run}
-                    plan={panel.plan}
-                    confirmations={panel.confirmations}
-                    compact
-                  />
-                ) : panel.plan ? (
-                  <ActionPlanCard
-                    key={`action-plan-${panel.id}`}
-                    plan={panel.plan}
-                    capabilities={panel.capabilities}
-                    confirmations={panel.confirmations}
-                    compact
-                  />
-                ) : null
-              )}
             </div>
           ) : null}
 

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"unicode"
 
-	actiondto "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/dto"
 	"github.com/zgiai/zgi/api/internal/capabilities/assetresolver"
 )
 
@@ -83,13 +82,23 @@ type ResourceCandidate struct {
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// ResourceRef is a grounded asset reference used by chat runtime planning and
+// tool governance context.
+type ResourceRef struct {
+	Type     string                 `json:"type,omitempty"`
+	ID       string                 `json:"id,omitempty"`
+	Name     string                 `json:"name,omitempty"`
+	Source   string                 `json:"source,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
 // ResourceResolution is the per-reference grounding result returned to the
 // chat runtime coordinator.
 type ResourceResolution struct {
 	Ref        PlannerResourceRef       `json:"ref,omitempty"`
 	Status     ResourceResolutionStatus `json:"status"`
 	Reason     string                   `json:"reason,omitempty"`
-	Resources  []actiondto.ResourceRef  `json:"resources,omitempty"`
+	Resources  []ResourceRef            `json:"resources,omitempty"`
 	FileIDs    []string                 `json:"file_ids,omitempty"`
 	Candidates []ResourceCandidate      `json:"candidates,omitempty"`
 }
@@ -97,9 +106,9 @@ type ResourceResolution struct {
 // ResourceResolverResult contains all per-reference results and the flattened
 // resolved action resources/file IDs.
 type ResourceResolverResult struct {
-	Results   []ResourceResolution    `json:"results"`
-	Resources []actiondto.ResourceRef `json:"resources,omitempty"`
-	FileIDs   []string                `json:"file_ids,omitempty"`
+	Results   []ResourceResolution `json:"results"`
+	Resources []ResourceRef        `json:"resources,omitempty"`
+	FileIDs   []string             `json:"file_ids,omitempty"`
 }
 
 // ResourceResolver grounds planner resource references against chat/page context.
@@ -140,7 +149,7 @@ func assetResolverRequestFromInput(input ResourceResolverInput, refs []PlannerRe
 func resourceResolverResultFromAssets(resolved assetresolver.Result) ResourceResolverResult {
 	result := ResourceResolverResult{Results: make([]ResourceResolution, 0, len(resolved.Resolutions))}
 	fileIDs := newUniqueStringCollector()
-	resources := make([]actiondto.ResourceRef, 0, len(resolved.Assets))
+	resources := make([]ResourceRef, 0, len(resolved.Assets))
 	for _, resolution := range resolved.Resolutions {
 		converted := resourceResolutionFromAssetResolution(resolution)
 		result.Results = append(result.Results, converted)
@@ -286,7 +295,7 @@ func resourceStatusFromAssetStatus(status assetresolver.Status) ResourceResoluti
 	}
 }
 
-func actionResourceRefFromAsset(asset assetresolver.Asset) actiondto.ResourceRef {
+func actionResourceRefFromAsset(asset assetresolver.Asset) ResourceRef {
 	metadata := copyStringAnyMap(asset.Metadata)
 	if asset.WorkspaceID != "" {
 		if metadata == nil {
@@ -294,7 +303,7 @@ func actionResourceRefFromAsset(asset assetresolver.Asset) actiondto.ResourceRef
 		}
 		metadata["workspace_id"] = asset.WorkspaceID
 	}
-	return actiondto.ResourceRef{
+	return ResourceRef{
 		Type:     firstNonEmptyString(asset.Type, resourceTypeFile),
 		ID:       asset.ID,
 		Name:     asset.Name,
@@ -405,7 +414,7 @@ func resourceResolutionResolved(ref PlannerResourceRef, candidate ResourceCandid
 		Ref:       ref,
 		Status:    ResourceResolutionStatusResolved,
 		Reason:    reason,
-		Resources: []actiondto.ResourceRef{resource},
+		Resources: []ResourceRef{resource},
 		FileIDs:   []string{resource.ID},
 	}
 }
@@ -428,7 +437,7 @@ func resourceResolutionNotFound(ref PlannerResourceRef, reason string, candidate
 	}
 }
 
-func actionResourceRefFromCandidate(candidate ResourceCandidate) actiondto.ResourceRef {
+func actionResourceRefFromCandidate(candidate ResourceCandidate) ResourceRef {
 	metadata := map[string]interface{}{}
 	if candidate.Title != "" {
 		metadata["title"] = candidate.Title
@@ -454,7 +463,7 @@ func actionResourceRefFromCandidate(candidate ResourceCandidate) actiondto.Resou
 	if len(metadata) == 0 {
 		metadata = nil
 	}
-	return actiondto.ResourceRef{
+	return ResourceRef{
 		Type:     resourceTypeFile,
 		ID:       candidate.ID,
 		Name:     firstNonEmptyString(candidate.Title, candidate.Name),

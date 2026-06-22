@@ -4,8 +4,6 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
-	actionrepo "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/repository"
-	actionservice "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -20,9 +18,8 @@ import (
 )
 
 type Module struct {
-	Handler       *handler.Handler
-	Service       service.Service
-	ActionService actionservice.Service
+	Handler *handler.Handler
+	Service service.Service
 }
 
 func NewModule(db *gorm.DB, llmClient llmclient.LLMClient, defaultModelSvc llmdefaultservice.DefaultModelService) *Module {
@@ -54,14 +51,6 @@ func NewModuleWithDependencies(
 			logger.Error("failed to validate aichat skill catalog", err)
 		}
 	}
-	actionOptions := []actionservice.Option{}
-	if fileService != nil {
-		actionOptions = append(actionOptions, actionservice.WithExecutor(
-			"file.read",
-			actionservice.NewFileReadExecutor(fileService, contentExtractor, workspacePerms),
-		))
-	}
-	actionSvc := actionservice.NewService(actionrepo.NewRepository(db), actionservice.NewDefaultRegistry(), actionOptions...)
 	svc := service.NewServiceWithSkillRuntime(
 		repos,
 		llmClient,
@@ -73,7 +62,6 @@ func NewModuleWithDependencies(
 		skillRuntime,
 		memoryService,
 		agentMemoryService,
-		actionSvc,
 	)
 	if _, err := svc.CleanupStaleActiveMessages(context.Background()); err != nil {
 		logger.Warn("failed to cleanup stale aichat messages", err)
@@ -82,9 +70,8 @@ func NewModuleWithDependencies(
 		logger.Warn("failed to cleanup expired aichat skill import previews", err)
 	}
 	return &Module{
-		Handler:       handler.NewHandler(svc, actionSvc),
-		Service:       svc,
-		ActionService: actionSvc,
+		Handler: handler.NewHandler(svc),
+		Service: svc,
 	}
 }
 

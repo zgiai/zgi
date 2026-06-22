@@ -3,7 +3,6 @@ package service
 import (
 	"strings"
 
-	actiondto "github.com/zgiai/zgi/api/internal/capabilities/actionruntime/dto"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -175,7 +174,7 @@ func isLegacyFileReaderDeleteGrant(grant map[string]interface{}) bool {
 	return effect == "" || effect == string(toolgovernance.EffectDelete)
 }
 
-func toolGovernanceAssetMapsFromResources(resources []actiondto.ResourceRef) []map[string]interface{} {
+func toolGovernanceAssetMapsFromResources(resources []ResourceRef) []map[string]interface{} {
 	if len(resources) == 0 {
 		return nil
 	}
