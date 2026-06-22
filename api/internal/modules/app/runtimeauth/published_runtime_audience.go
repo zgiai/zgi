@@ -3,12 +3,13 @@ package runtimeauth
 import "github.com/google/uuid"
 
 // RuntimeAudience describes the caller that wants to use a published runtime
-// surface. DepartmentIDs are optional and should be supplied only when a
-// department-scoped grant needs to be evaluated.
+// surface. DepartmentIDs and WorkspaceIDs are optional and should be supplied
+// only when matching scoped grants needs to be evaluated.
 type RuntimeAudience struct {
 	OrganizationID uuid.UUID
 	AccountID      uuid.UUID
 	DepartmentIDs  []uuid.UUID
+	WorkspaceIDs   []uuid.UUID
 	Internal       bool
 }
 
@@ -22,6 +23,7 @@ const (
 	RuntimeAccessAllowedOrganizationGrant RuntimeAccessDecisionReason = "allowed_organization_grant"
 	RuntimeAccessAllowedAccountGrant      RuntimeAccessDecisionReason = "allowed_account_grant"
 	RuntimeAccessAllowedDepartmentGrant   RuntimeAccessDecisionReason = "allowed_department_grant"
+	RuntimeAccessAllowedWorkspaceGrant    RuntimeAccessDecisionReason = "allowed_workspace_grant"
 	RuntimeAccessAllowedInternalGrant     RuntimeAccessDecisionReason = "allowed_internal_grant"
 	RuntimeAccessDeniedMissingSurface     RuntimeAccessDecisionReason = "denied_missing_surface"
 	RuntimeAccessDeniedDisabledSurface    RuntimeAccessDecisionReason = "denied_disabled_surface"
@@ -123,6 +125,16 @@ func grantMatchesAudience(grant SurfaceGrant, audience RuntimeAudience) bool {
 			}
 		}
 		return false
+	case PublishedRuntimeSubjectWorkspace:
+		if grant.SubjectID == nil {
+			return false
+		}
+		for _, workspaceID := range audience.WorkspaceIDs {
+			if workspaceID == *grant.SubjectID {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -142,6 +154,8 @@ func runtimeAccessDecisionForGrant(grant SurfaceGrant) RuntimeAccessDecision {
 		decision.Reason = RuntimeAccessAllowedAccountGrant
 	case PublishedRuntimeSubjectDepartment:
 		decision.Reason = RuntimeAccessAllowedDepartmentGrant
+	case PublishedRuntimeSubjectWorkspace:
+		decision.Reason = RuntimeAccessAllowedWorkspaceGrant
 	case PublishedRuntimeSubjectInternal:
 		decision.Reason = RuntimeAccessAllowedInternalGrant
 	default:

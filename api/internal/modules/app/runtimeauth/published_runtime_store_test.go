@@ -27,6 +27,9 @@ func TestPublishedRuntimeStoreFallsBackToLegacyAgentPolicy(t *testing.T) {
 	if !policy.Allows(PublishedRuntimeSurfaceAPI) {
 		t.Fatal("api should stay enabled from legacy fallback")
 	}
+	if policy.Allows(PublishedRuntimeSurfaceAppCenter) {
+		t.Fatal("app center should stay disabled from legacy fallback")
+	}
 	if policy.Allows(PublishedRuntimeSurfaceBuiltinApp) {
 		t.Fatal("builtin app should stay disabled while the legacy webapp is inactive")
 	}
@@ -35,7 +38,7 @@ func TestPublishedRuntimeStoreFallsBackToLegacyAgentPolicy(t *testing.T) {
 	}
 }
 
-func TestPublishedRuntimeStoreOverlaysPersistedSurfacesAndBuiltinAudience(t *testing.T) {
+func TestPublishedRuntimeStoreOverlaysPersistedAgentSurfaces(t *testing.T) {
 	ctx := context.Background()
 	db, mock, cleanup := openPublishedRuntimeAuthMockDB(t)
 	defer cleanup()
@@ -43,22 +46,18 @@ func TestPublishedRuntimeStoreOverlaysPersistedSurfacesAndBuiltinAudience(t *tes
 	resourceID := uuid.New()
 	organizationID := uuid.New()
 	workspaceID := uuid.New()
-	accountID := uuid.New()
-	departmentID := uuid.New()
 	internalSurfaceID := uuid.New()
-	builtinSurfaceID := uuid.New()
 	apiSurfaceID := uuid.New()
+	appCenterSurfaceID := uuid.New()
 	webappSurfaceID := uuid.New()
 
-	expectPublishedRuntimeSurfaceLookup(mock, resourceID, organizationID, workspaceID, []runtimeSurfaceExpectation{
+	expectPublishedRuntimeSurfaceLookup(mock, PublishedRuntimeResourceAgent, resourceID, organizationID, workspaceID, []runtimeSurfaceExpectation{
+		{id: appCenterSurfaceID, surface: PublishedRuntimeSurfaceAppCenter, enabled: true},
 		{id: apiSurfaceID, surface: PublishedRuntimeSurfaceAPI, enabled: true},
-		{id: builtinSurfaceID, surface: PublishedRuntimeSurfaceBuiltinApp, enabled: true},
 		{id: internalSurfaceID, surface: PublishedRuntimeSurfaceInternal, enabled: true},
 		{id: webappSurfaceID, surface: PublishedRuntimeSurfaceWebApp, enabled: false},
 	})
 	expectPublishedRuntimeGrantLookup(mock, []runtimeGrantExpectation{
-		{surfaceID: builtinSurfaceID, subjectType: PublishedRuntimeSubjectAccount, subjectID: &accountID, enabled: true},
-		{surfaceID: builtinSurfaceID, subjectType: PublishedRuntimeSubjectDepartment, subjectID: &departmentID, enabled: true},
 		{surfaceID: internalSurfaceID, subjectType: PublishedRuntimeSubjectInternal, enabled: true},
 	})
 
@@ -86,21 +85,18 @@ func TestPublishedRuntimeStoreOverlaysPersistedSurfacesAndBuiltinAudience(t *tes
 	if !policy.Allows(PublishedRuntimeSurfaceAPI) {
 		t.Fatal("persisted api true should override disabled legacy api")
 	}
-	if !policy.Allows(PublishedRuntimeSurfaceBuiltinApp) {
-		t.Fatal("persisted builtin true should enable builtin app")
+	if !policy.Allows(PublishedRuntimeSurfaceAppCenter) {
+		t.Fatal("persisted app center true should allow app center")
+	}
+	if policy.Allows(PublishedRuntimeSurfaceBuiltinApp) {
+		t.Fatal("ordinary agent authorization should not expose builtin app")
 	}
 	if !policy.Allows(PublishedRuntimeSurfaceInternal) {
 		t.Fatal("persisted internal true should keep internal invocation enabled")
 	}
-	if got, want := policy.AllowedBuiltinAccountIDs, []string{accountID.String()}; len(got) != 1 || got[0] != want[0] {
-		t.Fatalf("allowed builtin accounts = %v, want %v", got, want)
-	}
-	if got, want := policy.AllowedBuiltinDeptIDs, []string{departmentID.String()}; len(got) != 1 || got[0] != want[0] {
-		t.Fatalf("allowed builtin departments = %v, want %v", got, want)
-	}
 }
 
-func TestPublishedRuntimeStoreTreatsLegacyBuiltinSeedAsActiveWebAppCompatibility(t *testing.T) {
+func TestPublishedRuntimeStoreOverlaysBuiltinWorkflowBuiltinAudience(t *testing.T) {
 	ctx := context.Background()
 	db, mock, cleanup := openPublishedRuntimeAuthMockDB(t)
 	defer cleanup()
@@ -108,17 +104,22 @@ func TestPublishedRuntimeStoreTreatsLegacyBuiltinSeedAsActiveWebAppCompatibility
 	resourceID := uuid.New()
 	organizationID := uuid.New()
 	workspaceID := uuid.New()
+	accountID := uuid.New()
+	departmentID := uuid.New()
 	builtinSurfaceID := uuid.New()
 
-	expectPublishedRuntimeSurfaceLookup(mock, resourceID, organizationID, workspaceID, []runtimeSurfaceExpectation{{
+	expectPublishedRuntimeSurfaceLookup(mock, PublishedRuntimeResourceBuiltinWorkflow, resourceID, organizationID, workspaceID, []runtimeSurfaceExpectation{{
 		id:      builtinSurfaceID,
 		surface: PublishedRuntimeSurfaceBuiltinApp,
-		enabled: false,
-		source:  PublishedRuntimeSourceLegacyAgentFields,
+		enabled: true,
+		source:  PublishedRuntimeSourceGrant,
 	}})
-	expectPublishedRuntimeGrantLookup(mock, nil)
+	expectPublishedRuntimeGrantLookup(mock, []runtimeGrantExpectation{
+		{surfaceID: builtinSurfaceID, subjectType: PublishedRuntimeSubjectAccount, subjectID: &accountID, enabled: true},
+		{surfaceID: builtinSurfaceID, subjectType: PublishedRuntimeSubjectDepartment, subjectID: &departmentID, enabled: true},
+	})
 
-	auth, err := NewStore(db).GetResourceAuthorization(ctx, PublishedRuntimeResourceAgent, resourceID, PolicyFromAgentFields(WebAppStatusActive, false))
+	auth, err := NewStore(db).GetResourceAuthorization(ctx, PublishedRuntimeResourceBuiltinWorkflow, resourceID, PublishedRuntimePolicy{BuiltinAppEnabled: true, InternalInvocation: true})
 	if err != nil {
 		t.Fatalf("GetResourceAuthorization error = %v", err)
 	}
@@ -130,7 +131,17 @@ func TestPublishedRuntimeStoreTreatsLegacyBuiltinSeedAsActiveWebAppCompatibility
 		t.Fatalf("builtin app surface missing")
 	}
 	if !surface.Enabled {
-		t.Fatalf("legacy builtin seed should be enabled for active webapp compatibility")
+		t.Fatalf("builtin workflow builtin app should stay enabled")
+	}
+	policy := PolicyFromAuthorization(PublishedRuntimePolicy{BuiltinAppEnabled: true, InternalInvocation: true}, auth)
+	if !policy.Allows(PublishedRuntimeSurfaceBuiltinApp) {
+		t.Fatal("builtin workflow should allow builtin app")
+	}
+	if got, want := policy.AllowedBuiltinAccountIDs, []string{accountID.String()}; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("allowed builtin accounts = %v, want %v", got, want)
+	}
+	if got, want := policy.AllowedBuiltinDeptIDs, []string{departmentID.String()}; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("allowed builtin departments = %v, want %v", got, want)
 	}
 }
 
@@ -146,7 +157,7 @@ func TestPublishedRuntimeStoreSaveResourceAuthorizationCreatesSurfaceAndGrants(t
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surfaces" WHERE resource_type = $1 AND resource_id = $2 AND surface = $3 AND deleted_at IS NULL LIMIT $4`)).
-		WithArgs(string(PublishedRuntimeResourceAgent), resourceID, string(PublishedRuntimeSurfaceBuiltinApp), 1).
+		WithArgs(string(PublishedRuntimeResourceAgent), resourceID, string(PublishedRuntimeSurfaceWebApp), 1).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id",
 			"resource_type",
@@ -174,7 +185,7 @@ func TestPublishedRuntimeStoreSaveResourceAuthorizationCreatesSurfaceAndGrants(t
 		OrganizationID: organizationID,
 		WorkspaceID:    &workspaceID,
 		Surfaces: []SurfaceAuthorization{{
-			Surface:             PublishedRuntimeSurfaceBuiltinApp,
+			Surface:             PublishedRuntimeSurfaceWebApp,
 			Enabled:             true,
 			CompatibilitySource: PublishedRuntimeSourceGrant,
 			Grants: []SurfaceGrant{{
@@ -202,34 +213,53 @@ func TestPublishedRuntimeStoreRejectsUnsupportedSurfaceGrantSubjectsBeforeSQL(t 
 	accountID := uuid.New()
 
 	tests := []struct {
-		name    string
-		surface PublishedRuntimeSurface
-		subject PublishedRuntimeSubjectType
-		want    string
+		name         string
+		resourceType PublishedRuntimeResourceType
+		surface      PublishedRuntimeSurface
+		subject      PublishedRuntimeSubjectType
+		want         string
 	}{
 		{
-			name:    "webapp rejects internal grant",
-			surface: PublishedRuntimeSurfaceWebApp,
-			subject: PublishedRuntimeSubjectInternal,
-			want:    "webapp runtime grants must target public, organization, account, or department",
+			name:         "webapp rejects internal grant",
+			resourceType: PublishedRuntimeResourceAgent,
+			surface:      PublishedRuntimeSurfaceWebApp,
+			subject:      PublishedRuntimeSubjectInternal,
+			want:         "webapp runtime grants must target public, organization, account, department, or workspace",
 		},
 		{
-			name:    "api rejects organization grant",
-			surface: PublishedRuntimeSurfaceAPI,
-			subject: PublishedRuntimeSubjectOrganization,
-			want:    "api runtime grants must use public subject",
+			name:         "api rejects organization grant",
+			resourceType: PublishedRuntimeResourceAgent,
+			surface:      PublishedRuntimeSurfaceAPI,
+			subject:      PublishedRuntimeSubjectOrganization,
+			want:         "api runtime grants must use public subject",
 		},
 		{
-			name:    "internal rejects public grant",
-			surface: PublishedRuntimeSurfaceInternal,
-			subject: PublishedRuntimeSubjectPublic,
-			want:    "internal runtime grants must use internal subject",
+			name:         "app center rejects public grant",
+			resourceType: PublishedRuntimeResourceAgent,
+			surface:      PublishedRuntimeSurfaceAppCenter,
+			subject:      PublishedRuntimeSubjectPublic,
+			want:         "app center grants must target organization, account, department, or workspace",
 		},
 		{
-			name:    "builtin rejects public grant",
-			surface: PublishedRuntimeSurfaceBuiltinApp,
-			subject: PublishedRuntimeSubjectPublic,
-			want:    "builtin app grants must target organization, account, or department",
+			name:         "internal rejects public grant",
+			resourceType: PublishedRuntimeResourceAgent,
+			surface:      PublishedRuntimeSurfaceInternal,
+			subject:      PublishedRuntimeSubjectPublic,
+			want:         "internal runtime grants must use internal subject",
+		},
+		{
+			name:         "agent rejects builtin app surface",
+			resourceType: PublishedRuntimeResourceAgent,
+			surface:      PublishedRuntimeSurfaceBuiltinApp,
+			subject:      PublishedRuntimeSubjectAccount,
+			want:         `runtime surface "builtin_app" is not supported for resource type "agent"`,
+		},
+		{
+			name:         "builtin workflow rejects public grant",
+			resourceType: PublishedRuntimeResourceBuiltinWorkflow,
+			surface:      PublishedRuntimeSurfaceBuiltinApp,
+			subject:      PublishedRuntimeSubjectPublic,
+			want:         "builtin app grants must target organization, account, department, or workspace",
 		},
 	}
 
@@ -237,7 +267,7 @@ func TestPublishedRuntimeStoreRejectsUnsupportedSurfaceGrantSubjectsBeforeSQL(t 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := store.SaveResourceAuthorization(ctx, ResourceAuthorization{
-				ResourceType:   PublishedRuntimeResourceAgent,
+				ResourceType:   tt.resourceType,
 				ResourceID:     resourceID,
 				OrganizationID: organizationID,
 				Surfaces: []SurfaceAuthorization{{
@@ -300,14 +330,14 @@ func TestPublishedRuntimeStoreListAuthorizedResourceIDsEvaluatesAudienceGrants(t
 		"updated_at",
 		"deleted_at",
 	}).
-		AddRow(openSurfaceID.String(), string(PublishedRuntimeResourceAgent), openResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
-		AddRow(organizationSurfaceID.String(), string(PublishedRuntimeResourceAgent), organizationResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
-		AddRow(accountSurfaceID.String(), string(PublishedRuntimeResourceAgent), accountResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
-		AddRow(departmentSurfaceID.String(), string(PublishedRuntimeResourceAgent), departmentResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
-		AddRow(otherAccountSurfaceID.String(), string(PublishedRuntimeResourceAgent), otherAccountResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
-		AddRow(disabledGrantSurfaceID.String(), string(PublishedRuntimeResourceAgent), disabledGrantResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil)
+		AddRow(openSurfaceID.String(), string(PublishedRuntimeResourceBuiltinWorkflow), openResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
+		AddRow(organizationSurfaceID.String(), string(PublishedRuntimeResourceBuiltinWorkflow), organizationResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
+		AddRow(accountSurfaceID.String(), string(PublishedRuntimeResourceBuiltinWorkflow), accountResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
+		AddRow(departmentSurfaceID.String(), string(PublishedRuntimeResourceBuiltinWorkflow), departmentResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
+		AddRow(otherAccountSurfaceID.String(), string(PublishedRuntimeResourceBuiltinWorkflow), otherAccountResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
+		AddRow(disabledGrantSurfaceID.String(), string(PublishedRuntimeResourceBuiltinWorkflow), disabledGrantResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil)
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surfaces" WHERE resource_type = $1 AND surface = $2 AND organization_id = $3 AND enabled = $4 AND deleted_at IS NULL ORDER BY resource_id ASC`)).
-		WithArgs(string(PublishedRuntimeResourceAgent), string(PublishedRuntimeSurfaceBuiltinApp), organizationID, true).
+		WithArgs(string(PublishedRuntimeResourceBuiltinWorkflow), string(PublishedRuntimeSurfaceBuiltinApp), organizationID, true).
 		WillReturnRows(surfaceRows)
 
 	grantRows := sqlmock.NewRows([]string{
@@ -329,7 +359,7 @@ func TestPublishedRuntimeStoreListAuthorizedResourceIDsEvaluatesAudienceGrants(t
 		WithArgs(openSurfaceID, organizationSurfaceID, accountSurfaceID, departmentSurfaceID, otherAccountSurfaceID, disabledGrantSurfaceID).
 		WillReturnRows(grantRows)
 
-	got, err := NewStore(db).ListAuthorizedResourceIDs(ctx, PublishedRuntimeResourceAgent, PublishedRuntimeSurfaceBuiltinApp, organizationID, RuntimeAudience{
+	got, err := NewStore(db).ListAuthorizedResourceIDs(ctx, PublishedRuntimeResourceBuiltinWorkflow, PublishedRuntimeSurfaceBuiltinApp, organizationID, RuntimeAudience{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
 		DepartmentIDs:  []uuid.UUID{departmentID},
@@ -390,14 +420,14 @@ func TestPublishedRuntimeStoreFilterAuthorizedResourceIDsAppliesFallbackAndPersi
 		"updated_at",
 		"deleted_at",
 	}).
-		AddRow(disabledSurfaceID.String(), string(PublishedRuntimeResourceAgent), persistedDisabledResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), false, PublishedRuntimeSourceGrant, now, now, nil).
-		AddRow(accountSurfaceID.String(), string(PublishedRuntimeResourceAgent), accountResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
-		AddRow(otherAccountSurfaceID.String(), string(PublishedRuntimeResourceAgent), otherAccountResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), true, PublishedRuntimeSourceGrant, now, now, nil).
-		AddRow(legacySeedSurfaceID.String(), string(PublishedRuntimeResourceAgent), legacySeedResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceBuiltinApp), false, PublishedRuntimeSourceLegacyAgentFields, now, now, nil)
+		AddRow(disabledSurfaceID.String(), string(PublishedRuntimeResourceAgent), persistedDisabledResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceWebApp), false, PublishedRuntimeSourceGrant, now, now, nil).
+		AddRow(accountSurfaceID.String(), string(PublishedRuntimeResourceAgent), accountResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceWebApp), true, PublishedRuntimeSourceGrant, now, now, nil).
+		AddRow(otherAccountSurfaceID.String(), string(PublishedRuntimeResourceAgent), otherAccountResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceWebApp), true, PublishedRuntimeSourceGrant, now, now, nil).
+		AddRow(legacySeedSurfaceID.String(), string(PublishedRuntimeResourceAgent), legacySeedResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceWebApp), false, PublishedRuntimeSourceLegacyAgentFields, now, now, nil)
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surfaces" WHERE resource_type = $1 AND surface = $2 AND organization_id = $3 AND resource_id IN ($4,$5,$6,$7,$8,$9) AND deleted_at IS NULL ORDER BY resource_id ASC`)).
 		WithArgs(
 			string(PublishedRuntimeResourceAgent),
-			string(PublishedRuntimeSurfaceBuiltinApp),
+			string(PublishedRuntimeSurfaceWebApp),
 			organizationID,
 			legacyOpenResourceID,
 			persistedDisabledResourceID,
@@ -424,14 +454,14 @@ func TestPublishedRuntimeStoreFilterAuthorizedResourceIDsAppliesFallbackAndPersi
 		WithArgs(disabledSurfaceID, accountSurfaceID, otherAccountSurfaceID, legacySeedSurfaceID).
 		WillReturnRows(grantRows)
 
-	got, err := NewStore(db).FilterAuthorizedResourceIDs(ctx, PublishedRuntimeResourceAgent, PublishedRuntimeSurfaceBuiltinApp, organizationID, candidates, RuntimeAudience{
+	got, err := NewStore(db).FilterAuthorizedResourceIDs(ctx, PublishedRuntimeResourceAgent, PublishedRuntimeSurfaceWebApp, organizationID, candidates, RuntimeAudience{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
 	})
 	if err != nil {
 		t.Fatalf("FilterAuthorizedResourceIDs error = %v", err)
 	}
-	assertUUIDSequence(t, got, []uuid.UUID{legacyOpenResourceID, accountResourceID, legacySeedResourceID})
+	assertUUIDSequence(t, got, []uuid.UUID{legacyOpenResourceID, accountResourceID})
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
 	}
@@ -475,7 +505,7 @@ func openPublishedRuntimeAuthMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, fu
 	}
 }
 
-func expectPublishedRuntimeSurfaceLookup(mock sqlmock.Sqlmock, resourceID, organizationID, workspaceID uuid.UUID, surfaces []runtimeSurfaceExpectation) {
+func expectPublishedRuntimeSurfaceLookup(mock sqlmock.Sqlmock, resourceType PublishedRuntimeResourceType, resourceID, organizationID, workspaceID uuid.UUID, surfaces []runtimeSurfaceExpectation) {
 	rows := sqlmock.NewRows([]string{
 		"id",
 		"resource_type",
@@ -493,7 +523,7 @@ func expectPublishedRuntimeSurfaceLookup(mock sqlmock.Sqlmock, resourceID, organ
 	for _, surface := range surfaces {
 		rows.AddRow(
 			surface.id.String(),
-			string(PublishedRuntimeResourceAgent),
+			string(resourceType),
 			resourceID.String(),
 			organizationID.String(),
 			workspaceID.String(),
@@ -506,7 +536,7 @@ func expectPublishedRuntimeSurfaceLookup(mock sqlmock.Sqlmock, resourceID, organ
 		)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surfaces" WHERE resource_type = $1 AND resource_id = $2 AND deleted_at IS NULL ORDER BY surface ASC`)).
-		WithArgs(string(PublishedRuntimeResourceAgent), resourceID).
+		WithArgs(string(resourceType), resourceID).
 		WillReturnRows(rows)
 }
 

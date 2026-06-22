@@ -15,6 +15,9 @@ func TestPublishedRuntimePolicySeparatesExternalSurfacesFromInternalInvocation(t
 	if policy.Allows(PublishedRuntimeSurfaceAPI) {
 		t.Fatalf("api surface should be disabled when enable_api is false")
 	}
+	if policy.Allows(PublishedRuntimeSurfaceAppCenter) {
+		t.Fatalf("app center surface should be disabled when the web app is inactive")
+	}
 	if policy.Allows(PublishedRuntimeSurfaceBuiltinApp) {
 		t.Fatalf("builtin app surface should be disabled when the web app is inactive")
 	}
@@ -35,6 +38,9 @@ func TestPublishedRuntimePolicyNormalizesLegacyWebAppStatus(t *testing.T) {
 	if !policy.Allows(PublishedRuntimeSurfaceAPI) {
 		t.Fatalf("api surface should follow enable_api")
 	}
+	if !policy.Allows(PublishedRuntimeSurfaceAppCenter) {
+		t.Fatalf("app center surface should preserve active webapp compatibility")
+	}
 	if !policy.Allows(PublishedRuntimeSurfaceBuiltinApp) {
 		t.Fatalf("builtin app surface should preserve active webapp compatibility")
 	}
@@ -47,6 +53,8 @@ func TestPublishedRuntimeSurfaceAudienceGrants(t *testing.T) {
 	otherAccountID := uuid.New()
 	departmentID := uuid.New()
 	otherDepartmentID := uuid.New()
+	workspaceID := uuid.New()
+	otherWorkspaceID := uuid.New()
 
 	tests := []struct {
 		name     string
@@ -187,6 +195,34 @@ func TestPublishedRuntimeSurfaceAudienceGrants(t *testing.T) {
 			want:     false,
 		},
 		{
+			name: "workspace grant allows matching workspace",
+			surface: SurfaceAuthorization{
+				Surface: PublishedRuntimeSurfaceBuiltinApp,
+				Enabled: true,
+				Grants: []SurfaceGrant{{
+					SubjectType: PublishedRuntimeSubjectWorkspace,
+					SubjectID:   &workspaceID,
+					Enabled:     true,
+				}},
+			},
+			audience: RuntimeAudience{OrganizationID: organizationID, AccountID: accountID, WorkspaceIDs: []uuid.UUID{otherWorkspaceID, workspaceID}},
+			want:     true,
+		},
+		{
+			name: "workspace grant denies missing workspace",
+			surface: SurfaceAuthorization{
+				Surface: PublishedRuntimeSurfaceBuiltinApp,
+				Enabled: true,
+				Grants: []SurfaceGrant{{
+					SubjectType: PublishedRuntimeSubjectWorkspace,
+					SubjectID:   &workspaceID,
+					Enabled:     true,
+				}},
+			},
+			audience: RuntimeAudience{OrganizationID: organizationID, AccountID: accountID, WorkspaceIDs: []uuid.UUID{otherWorkspaceID}},
+			want:     false,
+		},
+		{
 			name: "internal grant allows internal audience",
 			surface: SurfaceAuthorization{
 				Surface: PublishedRuntimeSurfaceInternal,
@@ -228,6 +264,7 @@ func TestPublishedRuntimeSurfaceAudienceEvaluationReasons(t *testing.T) {
 	accountID := uuid.New()
 	otherAccountID := uuid.New()
 	departmentID := uuid.New()
+	workspaceID := uuid.New()
 
 	tests := []struct {
 		name        string
@@ -313,6 +350,23 @@ func TestPublishedRuntimeSurfaceAudienceEvaluationReasons(t *testing.T) {
 			wantReason:  RuntimeAccessAllowedDepartmentGrant,
 			wantAllowed: true,
 			wantSubject: PublishedRuntimeSubjectDepartment,
+		},
+		{
+			name: "workspace grant",
+			auth: &ResourceAuthorization{Surfaces: []SurfaceAuthorization{{
+				Surface: PublishedRuntimeSurfaceBuiltinApp,
+				Enabled: true,
+				Grants: []SurfaceGrant{{
+					SubjectType: PublishedRuntimeSubjectWorkspace,
+					SubjectID:   &workspaceID,
+					Enabled:     true,
+				}},
+			}}},
+			surface:     PublishedRuntimeSurfaceBuiltinApp,
+			audience:    RuntimeAudience{WorkspaceIDs: []uuid.UUID{workspaceID}},
+			wantReason:  RuntimeAccessAllowedWorkspaceGrant,
+			wantAllowed: true,
+			wantSubject: PublishedRuntimeSubjectWorkspace,
 		},
 		{
 			name: "internal grant",

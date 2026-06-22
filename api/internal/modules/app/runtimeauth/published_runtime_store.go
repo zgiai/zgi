@@ -25,6 +25,7 @@ const (
 	PublishedRuntimeSubjectPublic       PublishedRuntimeSubjectType = "public"
 	PublishedRuntimeSubjectOrganization PublishedRuntimeSubjectType = "organization"
 	PublishedRuntimeSubjectDepartment   PublishedRuntimeSubjectType = "department"
+	PublishedRuntimeSubjectWorkspace    PublishedRuntimeSubjectType = "workspace"
 	PublishedRuntimeSubjectAccount      PublishedRuntimeSubjectType = "account"
 	PublishedRuntimeSubjectInternal     PublishedRuntimeSubjectType = "internal"
 )
@@ -147,7 +148,7 @@ func (s *Store) GetResourceAuthorization(ctx context.Context, resourceType Publi
 	auth := &ResourceAuthorization{
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
-		Surfaces:     defaultSurfaceAuthorizations(fallback),
+		Surfaces:     defaultSurfaceAuthorizations(resourceType, fallback),
 	}
 
 	for _, row := range surfaceRows {
@@ -164,8 +165,6 @@ func (s *Store) GetResourceAuthorization(ctx context.Context, resourceType Publi
 			Grants:              slices.Clone(grantsBySurfaceID[row.ID]),
 		})
 	}
-	applyAgentBuiltinAppLegacyCompatibility(auth, fallback)
-
 	return auth, nil
 }
 
@@ -307,7 +306,7 @@ func (s *Store) SaveResourceAuthorization(ctx context.Context, auth ResourceAuth
 		return fmt.Errorf("at least one published runtime surface is required")
 	}
 	for _, surface := range auth.Surfaces {
-		if err := validateSurfaceAuthorization(surface); err != nil {
+		if err := validateSurfaceAuthorization(auth.ResourceType, surface); err != nil {
 			return err
 		}
 	}
@@ -330,6 +329,9 @@ func PolicyFromAuthorization(fallback PublishedRuntimePolicy, auth *ResourceAuth
 
 	policy.AllowedBuiltinAccountIDs = nil
 	policy.AllowedBuiltinDeptIDs = nil
+	if auth.ResourceType == PublishedRuntimeResourceAgent {
+		policy.BuiltinAppEnabled = false
+	}
 	for _, surface := range auth.Surfaces {
 		switch surface.Surface {
 		case PublishedRuntimeSurfaceWebApp:
@@ -340,7 +342,12 @@ func PolicyFromAuthorization(fallback PublishedRuntimePolicy, auth *ResourceAuth
 			}
 		case PublishedRuntimeSurfaceAPI:
 			policy.APIEnabled = surface.Enabled
+		case PublishedRuntimeSurfaceAppCenter:
+			policy.AppCenterEnabled = surface.Enabled
 		case PublishedRuntimeSurfaceBuiltinApp:
+			if auth.ResourceType == PublishedRuntimeResourceAgent {
+				continue
+			}
 			policy.BuiltinAppEnabled = surface.Enabled
 			if surface.Enabled {
 				policy.AllowedBuiltinAccountIDs, policy.AllowedBuiltinDeptIDs = builtinAudienceIDs(surface.Grants)
@@ -427,7 +434,7 @@ func resourceAuthorizationFromFallback(resourceType PublishedRuntimeResourceType
 	return &ResourceAuthorization{
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
-		Surfaces:     defaultSurfaceAuthorizations(fallback),
+		Surfaces:     defaultSurfaceAuthorizations(resourceType, fallback),
 	}
 }
 
@@ -454,7 +461,6 @@ func filterAuthorizedCandidates(resourceType PublishedRuntimeResourceType, surfa
 		if overlay, ok := overlays[candidate.ResourceID]; ok {
 			setSurfaceAuthorization(auth.Surfaces, overlay)
 		}
-		applyAgentBuiltinAppLegacyCompatibility(auth, candidate.Fallback)
 		if auth.Allows(surface, audience) {
 			out = append(out, candidate.ResourceID)
 		}
@@ -462,28 +468,44 @@ func filterAuthorizedCandidates(resourceType PublishedRuntimeResourceType, surfa
 	return out
 }
 
-func defaultSurfaceAuthorizations(policy PublishedRuntimePolicy) []SurfaceAuthorization {
-	return []SurfaceAuthorization{
-		{
-			Surface:             PublishedRuntimeSurfaceWebApp,
-			Enabled:             policy.Allows(PublishedRuntimeSurfaceWebApp),
-			CompatibilitySource: PublishedRuntimeSourceLegacyAgentFields,
-		},
-		{
-			Surface:             PublishedRuntimeSurfaceAPI,
-			Enabled:             policy.Allows(PublishedRuntimeSurfaceAPI),
-			CompatibilitySource: PublishedRuntimeSourceLegacyAgentFields,
-		},
-		{
-			Surface:             PublishedRuntimeSurfaceBuiltinApp,
-			Enabled:             policy.Allows(PublishedRuntimeSurfaceBuiltinApp),
-			CompatibilitySource: PublishedRuntimeSourceSystemDefault,
-		},
-		{
-			Surface:             PublishedRuntimeSurfaceInternal,
-			Enabled:             policy.Allows(PublishedRuntimeSurfaceInternal),
-			CompatibilitySource: PublishedRuntimeSourceLegacyAgentFields,
-		},
+func defaultSurfaceAuthorizations(resourceType PublishedRuntimeResourceType, policy PublishedRuntimePolicy) []SurfaceAuthorization {
+	switch resourceType {
+	case PublishedRuntimeResourceBuiltinWorkflow:
+		return []SurfaceAuthorization{
+			{
+				Surface:             PublishedRuntimeSurfaceBuiltinApp,
+				Enabled:             policy.Allows(PublishedRuntimeSurfaceBuiltinApp),
+				CompatibilitySource: PublishedRuntimeSourceSystemDefault,
+			},
+			{
+				Surface:             PublishedRuntimeSurfaceInternal,
+				Enabled:             policy.Allows(PublishedRuntimeSurfaceInternal),
+				CompatibilitySource: PublishedRuntimeSourceLegacyAgentFields,
+			},
+		}
+	default:
+		return []SurfaceAuthorization{
+			{
+				Surface:             PublishedRuntimeSurfaceWebApp,
+				Enabled:             policy.Allows(PublishedRuntimeSurfaceWebApp),
+				CompatibilitySource: PublishedRuntimeSourceLegacyAgentFields,
+			},
+			{
+				Surface:             PublishedRuntimeSurfaceAPI,
+				Enabled:             policy.Allows(PublishedRuntimeSurfaceAPI),
+				CompatibilitySource: PublishedRuntimeSourceLegacyAgentFields,
+			},
+			{
+				Surface:             PublishedRuntimeSurfaceAppCenter,
+				Enabled:             policy.Allows(PublishedRuntimeSurfaceAppCenter),
+				CompatibilitySource: PublishedRuntimeSourceLegacyAgentFields,
+			},
+			{
+				Surface:             PublishedRuntimeSurfaceInternal,
+				Enabled:             policy.Allows(PublishedRuntimeSurfaceInternal),
+				CompatibilitySource: PublishedRuntimeSourceLegacyAgentFields,
+			},
+		}
 	}
 }
 
@@ -491,6 +513,7 @@ func IsKnownSurface(surface PublishedRuntimeSurface) bool {
 	switch surface {
 	case PublishedRuntimeSurfaceWebApp,
 		PublishedRuntimeSurfaceAPI,
+		PublishedRuntimeSurfaceAppCenter,
 		PublishedRuntimeSurfaceBuiltinApp,
 		PublishedRuntimeSurfaceInternal:
 		return true
@@ -504,6 +527,7 @@ func IsKnownSubjectType(subjectType PublishedRuntimeSubjectType) bool {
 	case PublishedRuntimeSubjectPublic,
 		PublishedRuntimeSubjectOrganization,
 		PublishedRuntimeSubjectDepartment,
+		PublishedRuntimeSubjectWorkspace,
 		PublishedRuntimeSubjectAccount,
 		PublishedRuntimeSubjectInternal:
 		return true
@@ -512,9 +536,12 @@ func IsKnownSubjectType(subjectType PublishedRuntimeSubjectType) bool {
 	}
 }
 
-func validateSurfaceAuthorization(surface SurfaceAuthorization) error {
+func validateSurfaceAuthorization(resourceType PublishedRuntimeResourceType, surface SurfaceAuthorization) error {
 	if !IsKnownSurface(surface.Surface) {
 		return fmt.Errorf("unknown published runtime surface %q", surface.Surface)
+	}
+	if !surfaceSupportedForResource(resourceType, surface.Surface) {
+		return fmt.Errorf("runtime surface %q is not supported for resource type %q", surface.Surface, resourceType)
 	}
 	for _, grant := range surface.Grants {
 		if !IsKnownSubjectType(grant.SubjectType) {
@@ -527,6 +554,18 @@ func validateSurfaceAuthorization(surface SurfaceAuthorization) error {
 	return nil
 }
 
+func surfaceSupportedForResource(resourceType PublishedRuntimeResourceType, surface PublishedRuntimeSurface) bool {
+	switch resourceType {
+	case PublishedRuntimeResourceBuiltinWorkflow:
+		return surface == PublishedRuntimeSurfaceBuiltinApp || surface == PublishedRuntimeSurfaceInternal
+	default:
+		return surface == PublishedRuntimeSurfaceWebApp ||
+			surface == PublishedRuntimeSurfaceAPI ||
+			surface == PublishedRuntimeSurfaceAppCenter ||
+			surface == PublishedRuntimeSurfaceInternal
+	}
+}
+
 func validateSurfaceGrantSubject(surface PublishedRuntimeSurface, subjectType PublishedRuntimeSubjectType) error {
 	switch surface {
 	case PublishedRuntimeSurfaceWebApp:
@@ -534,14 +573,25 @@ func validateSurfaceGrantSubject(surface PublishedRuntimeSurface, subjectType Pu
 		case PublishedRuntimeSubjectPublic,
 			PublishedRuntimeSubjectOrganization,
 			PublishedRuntimeSubjectAccount,
-			PublishedRuntimeSubjectDepartment:
+			PublishedRuntimeSubjectDepartment,
+			PublishedRuntimeSubjectWorkspace:
 			return nil
 		default:
-			return fmt.Errorf("webapp runtime grants must target public, organization, account, or department")
+			return fmt.Errorf("webapp runtime grants must target public, organization, account, department, or workspace")
 		}
 	case PublishedRuntimeSurfaceAPI:
 		if subjectType != PublishedRuntimeSubjectPublic {
 			return fmt.Errorf("api runtime grants must use public subject")
+		}
+	case PublishedRuntimeSurfaceAppCenter:
+		switch subjectType {
+		case PublishedRuntimeSubjectOrganization,
+			PublishedRuntimeSubjectAccount,
+			PublishedRuntimeSubjectDepartment,
+			PublishedRuntimeSubjectWorkspace:
+			return nil
+		default:
+			return fmt.Errorf("app center grants must target organization, account, department, or workspace")
 		}
 	case PublishedRuntimeSurfaceInternal:
 		if subjectType != PublishedRuntimeSubjectInternal {
@@ -551,10 +601,11 @@ func validateSurfaceGrantSubject(surface PublishedRuntimeSurface, subjectType Pu
 		switch subjectType {
 		case PublishedRuntimeSubjectOrganization,
 			PublishedRuntimeSubjectAccount,
-			PublishedRuntimeSubjectDepartment:
+			PublishedRuntimeSubjectDepartment,
+			PublishedRuntimeSubjectWorkspace:
 			return nil
 		default:
-			return fmt.Errorf("builtin app grants must target organization, account, or department")
+			return fmt.Errorf("builtin app grants must target organization, account, department, or workspace")
 		}
 	}
 	return nil
@@ -607,20 +658,4 @@ func copyUUIDPtr(value *uuid.UUID) *uuid.UUID {
 
 func NormalizeSubjectType(subjectType string) PublishedRuntimeSubjectType {
 	return PublishedRuntimeSubjectType(strings.TrimSpace(subjectType))
-}
-
-func applyAgentBuiltinAppLegacyCompatibility(auth *ResourceAuthorization, fallback PublishedRuntimePolicy) {
-	if auth == nil || auth.ResourceType != PublishedRuntimeResourceAgent || !fallback.Allows(PublishedRuntimeSurfaceBuiltinApp) {
-		return
-	}
-	for i := range auth.Surfaces {
-		surface := &auth.Surfaces[i]
-		if surface.Surface != PublishedRuntimeSurfaceBuiltinApp {
-			continue
-		}
-		if surface.CompatibilitySource == PublishedRuntimeSourceLegacyAgentFields && !surface.Enabled && len(surface.Grants) == 0 {
-			surface.Enabled = true
-		}
-		return
-	}
 }

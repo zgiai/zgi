@@ -5,6 +5,7 @@ type PublishedRuntimeSurface string
 const (
 	PublishedRuntimeSurfaceWebApp     PublishedRuntimeSurface = "webapp"
 	PublishedRuntimeSurfaceAPI        PublishedRuntimeSurface = "api"
+	PublishedRuntimeSurfaceAppCenter  PublishedRuntimeSurface = "app_center"
 	PublishedRuntimeSurfaceBuiltinApp PublishedRuntimeSurface = "builtin_app"
 	PublishedRuntimeSurfaceInternal   PublishedRuntimeSurface = "internal"
 )
@@ -17,6 +18,7 @@ const (
 type PublishedRuntimePolicy struct {
 	WebAppStatus             string
 	APIEnabled               bool
+	AppCenterEnabled         bool
 	BuiltinAppEnabled        bool
 	InternalInvocation       bool
 	AllowedBuiltinAccountIDs []string
@@ -28,6 +30,7 @@ func PolicyFromAgentFields(webAppStatus string, apiEnabled bool) PublishedRuntim
 	return PublishedRuntimePolicy{
 		WebAppStatus:             normalizedWebAppStatus,
 		APIEnabled:               apiEnabled,
+		AppCenterEnabled:         normalizedWebAppStatus == WebAppStatusActive,
 		InternalInvocation:       true,
 		BuiltinAppEnabled:        normalizedWebAppStatus == WebAppStatusActive,
 		AllowedBuiltinDeptIDs:    nil,
@@ -48,6 +51,8 @@ func (p PublishedRuntimePolicy) Allows(surface PublishedRuntimeSurface) bool {
 		return NormalizeWebAppStatus(p.WebAppStatus) == WebAppStatusActive
 	case PublishedRuntimeSurfaceAPI:
 		return p.APIEnabled
+	case PublishedRuntimeSurfaceAppCenter:
+		return p.AppCenterEnabled
 	case PublishedRuntimeSurfaceBuiltinApp:
 		return p.BuiltinAppEnabled
 	case PublishedRuntimeSurfaceInternal:

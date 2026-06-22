@@ -184,22 +184,28 @@ func TestAccountHandlerGetAccountCapabilitiesReturnsContract(t *testing.T) {
 				OrganizationID: &organizationID,
 				SubjectTypes:   []string{"organization", "account"},
 				DepartmentIDs:  []string{},
+				WorkspaceIDs:   []string{},
 			},
 			RuntimeSurfaces: map[string]shared_dto.AccountRuntimeSurfaceCapability{
 				"webapp": {
 					Enabled:           true,
 					Mode:              "published_resource",
-					GrantSubjectTypes: []string{"public"},
+					GrantSubjectTypes: []string{"public", "organization", "department", "workspace", "account"},
 				},
 				"api": {
 					Enabled:           true,
 					Mode:              "api_key",
 					GrantSubjectTypes: []string{"public"},
 				},
+				"app_center": {
+					Enabled:           true,
+					Mode:              "runtime_grant",
+					GrantSubjectTypes: []string{"organization", "department", "workspace", "account"},
+				},
 				"builtin_app": {
 					Enabled:           true,
 					Mode:              "runtime_grant",
-					GrantSubjectTypes: []string{"organization", "department", "account"},
+					GrantSubjectTypes: []string{"organization", "department", "workspace", "account"},
 				},
 				"internal": {
 					Enabled:           true,
@@ -211,7 +217,7 @@ func TestAccountHandlerGetAccountCapabilitiesReturnsContract(t *testing.T) {
 				"app_center": {
 					Enabled:      true,
 					ResourceType: "agent",
-					Surface:      "builtin_app",
+					Surface:      "app_center",
 					Mode:         "runtimeauth_candidate_filter",
 					Endpoint:     "/console/api/agents/runnable-webapps",
 				},
@@ -271,6 +277,7 @@ func TestAccountHandlerGetAccountCapabilitiesReturnsContract(t *testing.T) {
 				OrganizationID *string  `json:"organization_id"`
 				SubjectTypes   []string `json:"subject_types"`
 				DepartmentIDs  []string `json:"department_ids"`
+				WorkspaceIDs   []string `json:"workspace_ids"`
 			} `json:"runtime_audience"`
 			RuntimeSurfaces map[string]struct {
 				Enabled           bool     `json:"enabled"`
@@ -314,23 +321,27 @@ func TestAccountHandlerGetAccountCapabilitiesReturnsContract(t *testing.T) {
 	require.Equal(t, organizationID, *payload.Data.RuntimeAudience.OrganizationID)
 	require.ElementsMatch(t, []string{"organization", "account"}, payload.Data.RuntimeAudience.SubjectTypes)
 	require.Empty(t, payload.Data.RuntimeAudience.DepartmentIDs)
-	require.Len(t, payload.Data.RuntimeSurfaces, 4)
+	require.Empty(t, payload.Data.RuntimeAudience.WorkspaceIDs)
+	require.Len(t, payload.Data.RuntimeSurfaces, 5)
 	require.True(t, payload.Data.RuntimeSurfaces["webapp"].Enabled)
 	require.Equal(t, "published_resource", payload.Data.RuntimeSurfaces["webapp"].Mode)
-	require.Equal(t, []string{"public"}, payload.Data.RuntimeSurfaces["webapp"].GrantSubjectTypes)
+	require.ElementsMatch(t, []string{"public", "organization", "department", "workspace", "account"}, payload.Data.RuntimeSurfaces["webapp"].GrantSubjectTypes)
 	require.True(t, payload.Data.RuntimeSurfaces["api"].Enabled)
 	require.Equal(t, "api_key", payload.Data.RuntimeSurfaces["api"].Mode)
 	require.Equal(t, []string{"public"}, payload.Data.RuntimeSurfaces["api"].GrantSubjectTypes)
+	require.True(t, payload.Data.RuntimeSurfaces["app_center"].Enabled)
+	require.Equal(t, "runtime_grant", payload.Data.RuntimeSurfaces["app_center"].Mode)
+	require.ElementsMatch(t, []string{"organization", "department", "workspace", "account"}, payload.Data.RuntimeSurfaces["app_center"].GrantSubjectTypes)
 	require.True(t, payload.Data.RuntimeSurfaces["builtin_app"].Enabled)
 	require.Equal(t, "runtime_grant", payload.Data.RuntimeSurfaces["builtin_app"].Mode)
-	require.ElementsMatch(t, []string{"organization", "department", "account"}, payload.Data.RuntimeSurfaces["builtin_app"].GrantSubjectTypes)
+	require.ElementsMatch(t, []string{"organization", "department", "workspace", "account"}, payload.Data.RuntimeSurfaces["builtin_app"].GrantSubjectTypes)
 	require.True(t, payload.Data.RuntimeSurfaces["internal"].Enabled)
 	require.Equal(t, "internal_runtime", payload.Data.RuntimeSurfaces["internal"].Mode)
 	require.Equal(t, []string{"internal"}, payload.Data.RuntimeSurfaces["internal"].GrantSubjectTypes)
 	require.Len(t, payload.Data.RuntimeResourceLists, 2)
 	require.True(t, payload.Data.RuntimeResourceLists["app_center"].Enabled)
 	require.Equal(t, "agent", payload.Data.RuntimeResourceLists["app_center"].ResourceType)
-	require.Equal(t, "builtin_app", payload.Data.RuntimeResourceLists["app_center"].Surface)
+	require.Equal(t, "app_center", payload.Data.RuntimeResourceLists["app_center"].Surface)
 	require.Equal(t, "runtimeauth_candidate_filter", payload.Data.RuntimeResourceLists["app_center"].Mode)
 	require.Equal(t, "/console/api/agents/runnable-webapps", payload.Data.RuntimeResourceLists["app_center"].Endpoint)
 	require.True(t, payload.Data.RuntimeResourceLists["built_in_workflows"].Enabled)

@@ -402,6 +402,7 @@ func TestGetAccountCapabilitiesOrganizationModeAllowsProductSurfacesOnly(t *test
 	require.Equal(t, "acc-1", capabilities.RuntimeAudience.AccountID)
 	require.Equal(t, &organizationID, capabilities.RuntimeAudience.OrganizationID)
 	require.ElementsMatch(t, []string{"organization", "account"}, capabilities.RuntimeAudience.SubjectTypes)
+	require.Empty(t, capabilities.RuntimeAudience.WorkspaceIDs)
 	assertAccountRuntimeSurfaceContract(t, capabilities.RuntimeSurfaces, true)
 	assertAccountRuntimeResourceListContract(t, capabilities.RuntimeResourceLists, true)
 }
@@ -449,6 +450,11 @@ func TestGetAccountCapabilitiesRuntimeAudienceIncludesActiveDepartments(t *testi
 		WillReturnRows(sqlmock.NewRows([]string{"department_id"}).
 			AddRow("dept-1").
 			AddRow("dept-2"))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT workspace_members.workspace_id FROM "workspace_members" JOIN workspaces ON workspaces.id = workspace_members.workspace_id WHERE workspace_members.account_id = $1 AND workspaces.organization_id = $2 AND workspaces.status = $3`)).
+		WithArgs("acc-1", organizationID, string(workspace_model.WorkspaceStatusNormal)).
+		WillReturnRows(sqlmock.NewRows([]string{"workspace_id"}).
+			AddRow("ws-1").
+			AddRow("ws-2"))
 
 	svc := &AccountService{
 		accountRepo:                repo,
@@ -459,8 +465,9 @@ func TestGetAccountCapabilitiesRuntimeAudienceIncludesActiveDepartments(t *testi
 
 	capabilities, err := svc.GetAccountCapabilities(context.Background(), "acc-1")
 	require.NoError(t, err)
-	require.ElementsMatch(t, []string{"organization", "account", "department"}, capabilities.RuntimeAudience.SubjectTypes)
+	require.ElementsMatch(t, []string{"organization", "account", "department", "workspace"}, capabilities.RuntimeAudience.SubjectTypes)
 	require.ElementsMatch(t, []string{"dept-1", "dept-2"}, capabilities.RuntimeAudience.DepartmentIDs)
+	require.ElementsMatch(t, []string{"ws-1", "ws-2"}, capabilities.RuntimeAudience.WorkspaceIDs)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -800,7 +807,7 @@ func openAccountContextMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 func assertAccountRuntimeSurfaceContract(t *testing.T, surfaces map[string]shared_dto.AccountRuntimeSurfaceCapability, enabled bool) {
 	t.Helper()
 
-	require.Len(t, surfaces, 4)
+	require.Len(t, surfaces, 5)
 	tests := []struct {
 		surface           string
 		mode              string
@@ -809,7 +816,7 @@ func assertAccountRuntimeSurfaceContract(t *testing.T, surfaces map[string]share
 		{
 			surface:           "webapp",
 			mode:              "published_resource",
-			grantSubjectTypes: []string{"public"},
+			grantSubjectTypes: []string{"public", "organization", "department", "workspace", "account"},
 		},
 		{
 			surface:           "api",
@@ -817,9 +824,14 @@ func assertAccountRuntimeSurfaceContract(t *testing.T, surfaces map[string]share
 			grantSubjectTypes: []string{"public"},
 		},
 		{
+			surface:           "app_center",
+			mode:              "runtime_grant",
+			grantSubjectTypes: []string{"organization", "department", "workspace", "account"},
+		},
+		{
 			surface:           "builtin_app",
 			mode:              "runtime_grant",
-			grantSubjectTypes: []string{"organization", "department", "account"},
+			grantSubjectTypes: []string{"organization", "department", "workspace", "account"},
 		},
 		{
 			surface:           "internal",
@@ -851,7 +863,7 @@ func assertAccountRuntimeResourceListContract(t *testing.T, lists map[string]sha
 		{
 			key:          "app_center",
 			resourceType: "agent",
-			surface:      "builtin_app",
+			surface:      "app_center",
 			mode:         "runtimeauth_candidate_filter",
 			endpoint:     "/console/api/agents/runnable-webapps",
 		},

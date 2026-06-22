@@ -2472,17 +2472,22 @@ func accountRuntimeSurfaceCapabilities(enabled bool) map[string]dto.AccountRunti
 		"webapp": {
 			Enabled:           enabled,
 			Mode:              "published_resource",
-			GrantSubjectTypes: []string{"public"},
+			GrantSubjectTypes: []string{"public", "organization", "department", "workspace", "account"},
 		},
 		"api": {
 			Enabled:           enabled,
 			Mode:              "api_key",
 			GrantSubjectTypes: []string{"public"},
 		},
+		"app_center": {
+			Enabled:           enabled,
+			Mode:              "runtime_grant",
+			GrantSubjectTypes: []string{"organization", "department", "workspace", "account"},
+		},
 		"builtin_app": {
 			Enabled:           enabled,
 			Mode:              "runtime_grant",
-			GrantSubjectTypes: []string{"organization", "department", "account"},
+			GrantSubjectTypes: []string{"organization", "department", "workspace", "account"},
 		},
 		"internal": {
 			Enabled:           enabled,
@@ -2497,7 +2502,7 @@ func accountRuntimeResourceListCapabilities(enabled bool) map[string]dto.Account
 		"app_center": {
 			Enabled:      enabled,
 			ResourceType: "agent",
-			Surface:      "builtin_app",
+			Surface:      "app_center",
 			Mode:         accountRuntimeResourceListModeCandidateFilter,
 			Endpoint:     "/console/api/agents/runnable-webapps",
 		},
@@ -2517,6 +2522,7 @@ func (s *AccountService) accountRuntimeAudienceCapabilities(ctx context.Context,
 		OrganizationID: &organizationID,
 		SubjectTypes:   []string{"organization", "account"},
 		DepartmentIDs:  []string{},
+		WorkspaceIDs:   []string{},
 	}
 
 	departmentIDs, err := s.accountRuntimeAudienceDepartmentIDs(ctx, organizationID, accountID)
@@ -2526,6 +2532,14 @@ func (s *AccountService) accountRuntimeAudienceCapabilities(ctx context.Context,
 	if len(departmentIDs) > 0 {
 		audience.SubjectTypes = append(audience.SubjectTypes, "department")
 		audience.DepartmentIDs = departmentIDs
+	}
+	workspaceIDs, err := s.accountRuntimeAudienceWorkspaceIDs(ctx, organizationID, accountID)
+	if err != nil {
+		return dto.AccountRuntimeAudienceCapability{}, err
+	}
+	if len(workspaceIDs) > 0 {
+		audience.SubjectTypes = append(audience.SubjectTypes, "workspace")
+		audience.WorkspaceIDs = workspaceIDs
 	}
 	return audience, nil
 }
@@ -2545,6 +2559,23 @@ func (s *AccountService) accountRuntimeAudienceDepartmentIDs(ctx context.Context
 		return nil, fmt.Errorf("failed to load account runtime audience departments: %w", err)
 	}
 	return departmentIDs, nil
+}
+
+func (s *AccountService) accountRuntimeAudienceWorkspaceIDs(ctx context.Context, organizationID, accountID string) ([]string, error) {
+	if s == nil || s.db == nil || organizationID == "" || accountID == "" {
+		return nil, nil
+	}
+
+	var workspaceIDs []string
+	if err := s.db.WithContext(ctx).
+		Table("workspace_members").
+		Select("workspace_members.workspace_id").
+		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
+		Where("workspace_members.account_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?", accountID, organizationID, workspace_model.WorkspaceStatusNormal).
+		Scan(&workspaceIDs).Error; err != nil {
+		return nil, fmt.Errorf("failed to load account runtime audience workspaces: %w", err)
+	}
+	return workspaceIDs, nil
 }
 
 func hasAccountCapabilityPermission(permissions []string, target string) bool {

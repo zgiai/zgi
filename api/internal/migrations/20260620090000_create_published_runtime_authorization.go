@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS public.published_runtime_surfaces (
 	updated_at timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	deleted_at timestamptz,
 	CONSTRAINT published_runtime_surfaces_resource_type_check CHECK (resource_type IN ('agent', 'builtin_workflow')),
-	CONSTRAINT published_runtime_surfaces_surface_check CHECK (surface IN ('webapp', 'api', 'builtin_app', 'internal')),
+	CONSTRAINT published_runtime_surfaces_surface_check CHECK (surface IN ('webapp', 'api', 'app_center', 'builtin_app', 'internal')),
 	CONSTRAINT published_runtime_surfaces_source_check CHECK (compatibility_source IN ('legacy_agent_fields', 'grant', 'system_default'))
 )
 `
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS public.published_runtime_surface_grants (
 	created_at timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	updated_at timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	deleted_at timestamptz,
-	CONSTRAINT published_runtime_surface_grants_subject_check CHECK (subject_type IN ('public', 'organization', 'department', 'account', 'internal'))
+	CONSTRAINT published_runtime_surface_grants_subject_check CHECK (subject_type IN ('public', 'organization', 'department', 'workspace', 'account', 'internal'))
 )
 `
 
@@ -86,7 +86,7 @@ SELECT
 	jsonb_build_object('seeded_from', 'agents')
 FROM public.agents
 LEFT JOIN public.workspaces ON workspaces.id = agents.tenant_id
-CROSS JOIN (VALUES ('webapp'), ('api'), ('builtin_app'), ('internal')) AS surfaces(surface)
+CROSS JOIN (VALUES ('webapp'), ('api'), ('app_center'), ('internal')) AS surfaces(surface)
 WHERE agents.deleted_at IS NULL
 ON CONFLICT DO NOTHING
 `
@@ -102,18 +102,18 @@ SELECT
 	surfaces.id,
 	CASE surfaces.surface
 		WHEN 'internal' THEN 'internal'
-		WHEN 'api' THEN 'public'
-		ELSE 'organization'
+		WHEN 'app_center' THEN 'workspace'
+		ELSE 'public'
 	END,
-	CASE surfaces.surface
-		WHEN 'webapp' THEN surfaces.organization_id
-		WHEN 'builtin_app' THEN surfaces.organization_id
+	CASE
+		WHEN surfaces.surface = 'app_center' THEN surfaces.workspace_id
 		ELSE NULL
 	END,
 	surfaces.enabled
 FROM public.published_runtime_surfaces surfaces
 WHERE surfaces.resource_type = 'agent'
-  AND surfaces.surface IN ('webapp', 'api', 'builtin_app', 'internal')
+  AND surfaces.surface IN ('webapp', 'api', 'app_center', 'internal')
+  AND (surfaces.surface <> 'app_center' OR surfaces.workspace_id IS NOT NULL)
   AND surfaces.deleted_at IS NULL
 ON CONFLICT DO NOTHING
 `

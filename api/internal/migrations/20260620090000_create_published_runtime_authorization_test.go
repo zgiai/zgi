@@ -14,10 +14,10 @@ func TestPublishedRuntimeAuthorizationMigrationDefinesSurfacesAndGrants(t *testi
 		"workspace_id uuid",
 		"surface varchar(32) NOT NULL",
 		"CHECK (resource_type IN ('agent', 'builtin_workflow'))",
-		"CHECK (surface IN ('webapp', 'api', 'builtin_app', 'internal'))",
+		"CHECK (surface IN ('webapp', 'api', 'app_center', 'builtin_app', 'internal'))",
 		"CREATE TABLE IF NOT EXISTS public.published_runtime_surface_grants",
 		"surface_id uuid NOT NULL REFERENCES public.published_runtime_surfaces(id) ON DELETE CASCADE",
-		"CHECK (subject_type IN ('public', 'organization', 'department', 'account', 'internal'))",
+		"CHECK (subject_type IN ('public', 'organization', 'department', 'workspace', 'account', 'internal'))",
 	} {
 		if !strings.Contains(tableSQL, want) {
 			t.Fatalf("published runtime authorization table SQL missing %q: %s", want, tableSQL)
@@ -51,18 +51,27 @@ func TestPublishedRuntimeAuthorizationMigrationSeedsLegacyAgentSemantics(t *test
 	for _, want := range []string{
 		"FROM public.agents",
 		"LEFT JOIN public.workspaces ON workspaces.id = agents.tenant_id",
-		"CROSS JOIN (VALUES ('webapp'), ('api'), ('builtin_app'), ('internal')) AS surfaces(surface)",
+		"CROSS JOIN (VALUES ('webapp'), ('api'), ('app_center'), ('internal')) AS surfaces(surface)",
 		"surfaces.surface, true, 'legacy_agent_fields'",
 		"WHEN 'internal' THEN 'internal'",
-		"WHEN 'api' THEN 'public'",
-		"ELSE 'organization'",
-		"WHEN 'webapp' THEN surfaces.organization_id",
-		"WHEN 'builtin_app' THEN surfaces.organization_id",
-		"surfaces.surface IN ('webapp', 'api', 'builtin_app', 'internal')",
+		"WHEN 'app_center' THEN 'workspace'",
+		"ELSE 'public'",
+		"WHEN surfaces.surface = 'app_center' THEN surfaces.workspace_id",
+		"surfaces.surface IN ('webapp', 'api', 'app_center', 'internal')",
+		"surfaces.surface <> 'app_center' OR surfaces.workspace_id IS NOT NULL",
 		"ON CONFLICT DO NOTHING",
 	} {
 		if !strings.Contains(seedSQL, want) {
 			t.Fatalf("published runtime authorization seed SQL missing %q: %s", want, seedSQL)
+		}
+	}
+	for _, notWant := range []string{
+		"('builtin_app')",
+		"WHEN 'builtin_app'",
+		"surfaces.surface IN ('webapp', 'api', 'builtin_app', 'internal')",
+	} {
+		if strings.Contains(seedSQL, notWant) {
+			t.Fatalf("published runtime authorization seed SQL unexpectedly contains %q: %s", notWant, seedSQL)
 		}
 	}
 }

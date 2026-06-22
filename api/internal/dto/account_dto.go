@@ -136,6 +136,7 @@ type AccountRuntimeAudienceCapability struct {
 	OrganizationID *string  `json:"organization_id"`
 	SubjectTypes   []string `json:"subject_types"`
 	DepartmentIDs  []string `json:"department_ids,omitempty"`
+	WorkspaceIDs   []string `json:"workspace_ids,omitempty"`
 }
 
 // MarshalJSON implements custom JSON marshaling to generate avatar URLs
