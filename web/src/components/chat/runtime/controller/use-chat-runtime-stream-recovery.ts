@@ -160,7 +160,7 @@ export function useChatRuntimeStreamRecovery({
                 message_id: messageId,
                 answer: nextMessage.answer,
                 status: 'streaming',
-                timeline: replayingFromStart ? [] : (previousStreaming?.timeline ?? []),
+                timeline: previousStreaming?.timeline ?? [],
                 last_event_id: afterId,
                 replay_base_answer: shouldDedupeReplay
                   ? preservedAnswer

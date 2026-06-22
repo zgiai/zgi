@@ -22,6 +22,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ShieldAlert } from 'lucide-react';
 import { AgentEmptyElement, AgentEmptySearchResults } from '@/components/agents/empty-element';
+import { AgentsAIChatContextRegistration } from '@/components/agents/aichat-context';
 
 export default function AgentsPage() {
   const t = useT();
@@ -137,6 +138,17 @@ export default function AgentsPage() {
 
   return (
     <>
+      <AgentsAIChatContextRegistration
+        agents={agents}
+        pageSize={PAGE_SIZE}
+        searchKeyword={debouncedSearchKeyword}
+        workspaceId={currentWorkspace?.id}
+        workspaceName={currentWorkspace?.name}
+        canView={canView}
+        canManage={canManage}
+        isLoading={isLoading}
+        hasNextPage={hasNextPage}
+      />
       <div className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 lg:space-y-9 flex flex-col h-full overflow-y-auto">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

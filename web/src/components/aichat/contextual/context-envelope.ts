@@ -995,7 +995,8 @@ export function createContextualAIChatTransport(
 ): AIChatRuntimeTransport {
   const base = aichatTransport;
   return {
-    listConversations: base.listConversations.bind(base),
+    listConversations: params =>
+      base.listConversations({ ...params, surface: 'contextual_sidebar' }),
     getConversation: base.getConversation.bind(base),
     listMessages: base.listMessages.bind(base),
     refreshConversation: base.refreshConversation.bind(base),
@@ -1103,6 +1104,7 @@ export function createContextualAIChatTransport(
         actionId,
         {
           ...payload,
+          surface: 'contextual_sidebar',
           runtime_context: envelope || payload.runtime_context,
           operation_context: mergedOperationContext,
         },

@@ -23,6 +23,7 @@ import type {
   AIChatIntermediateAnswerEventData,
   AIChatUserInputRequestedEventData,
   AIChatRegenerateMessageRequest,
+  AIChatRuntimeSurface,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
   AIChatSkillCallStartEventData,
@@ -142,7 +143,11 @@ export interface AIChatWorkflowApprovalContinuationPayload {
 }
 
 export interface AIChatRuntimeTransport {
-  listConversations(params: { page: number; limit: number }): Promise<AIChatConversationListResult>;
+  listConversations(params: {
+    page: number;
+    limit: number;
+    surface?: AIChatRuntimeSurface;
+  }): Promise<AIChatConversationListResult>;
   getConversation(conversationId: string): Promise<AIChatConversationDetail>;
   listMessages(
     conversationId: string,
@@ -405,6 +410,7 @@ export class AIChatTransport implements AIChatRuntimeTransport {
   async listConversations(params: {
     page: number;
     limit: number;
+    surface?: AIChatRuntimeSurface;
   }): Promise<AIChatConversationListResult> {
     const response = await aichatService.listConversations(params);
 

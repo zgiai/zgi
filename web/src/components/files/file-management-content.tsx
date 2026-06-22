@@ -579,6 +579,17 @@ const FileManagementContent = ({
     }
   }, [selectionMode, selectedFiles, onSelectionChange, files]);
 
+  useEffect(() => {
+    if (!enableAIChatContext || selectionMode || isLoading || selectedFiles.length === 0) return;
+
+    const visibleFileIds = new Set(files.map(file => file.id));
+    const nextSelectedFiles = selectedFiles.filter(id => visibleFileIds.has(id));
+    if (nextSelectedFiles.length === selectedFiles.length) return;
+
+    setSelectedFiles(nextSelectedFiles);
+    prevInternalRef.current = nextSelectedFiles;
+  }, [enableAIChatContext, files, isLoading, selectedFiles, selectionMode]);
+
   const isRefreshPending = isRefreshing || isFetching;
 
   const handleRefresh = async () => {

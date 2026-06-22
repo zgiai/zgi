@@ -39,6 +39,7 @@ import {
 import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
 import { MarkdownImage } from '@/components/common/markdown-image';
 import { isOriginalPreviewImage } from '@/utils/file-helpers';
+import { API_URL } from '@/lib/config';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
 import { ActionPlanCard, ActionRunPanel } from '@/components/aichat/action-runtime';
@@ -49,7 +50,10 @@ import {
 } from '@/components/chat/variants/aichat/error-utils';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
-import { timelineFromAIChatMessage } from '@/components/chat/controllers/aichat/selectors';
+import {
+  dedupeTimelineItems,
+  timelineFromAIChatMessage,
+} from '@/components/chat/controllers/aichat/selectors';
 import { MAX_AICHAT_BRANCHES } from '@/components/chat/variants/aichat/types';
 
 interface AIChatMessageBubbleProps {
@@ -114,12 +118,100 @@ function formatGeneratedFileExtension(file: AIChatGeneratedFile): string {
   return extension.replace(/^\./, '').toUpperCase();
 }
 
+function apiAbsoluteUrl(pathOrUrl: string | undefined): string {
+  const value = pathOrUrl?.trim() ?? '';
+  if (!value) return '';
+  const base = API_URL.trim().replace(/\/+$/, '');
+  if (/^https?:/i.test(value)) {
+    return value;
+  }
+  if (/^(?:data:|blob:)/i.test(value)) return value;
+  if (!value.startsWith('/')) return value;
+  return base ? `${base}${value}` : value;
+}
+
+function apiReachableUrl(pathOrUrl: string | undefined): string {
+  const absolute = apiAbsoluteUrl(pathOrUrl);
+  const base = API_URL.trim().replace(/\/+$/, '');
+  if (!absolute || !base || !/^https?:/i.test(absolute)) {
+    return absolute;
+  }
+
+  try {
+    const parsed = new URL(absolute);
+    if (!parsed.pathname.startsWith('/console/api/files/')) {
+      return absolute;
+    }
+    return `${base}${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return absolute;
+  }
+}
+
+function appendQueryFlag(rawUrl: string, key: string, value: string): string {
+  const url = rawUrl.trim();
+  if (!url) return '';
+  try {
+    const parsed = new URL(url, window.location.origin);
+    parsed.searchParams.set(key, value);
+    if (url.startsWith('/')) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+    return parsed.toString();
+  } catch {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+  }
+}
+
+function isManagedGeneratedFile(file: AIChatGeneratedFile): boolean {
+  return file.target === 'managed_file' || Boolean(file.upload_file_id);
+}
+
+function managedGeneratedFileId(file: AIChatGeneratedFile): string {
+  if (!isManagedGeneratedFile(file)) return '';
+  return file.upload_file_id || file.file_id || '';
+}
+
+function managedGeneratedFilePreviewUrl(file: AIChatGeneratedFile): string {
+  const fileId = managedGeneratedFileId(file);
+  return fileId
+    ? apiReachableUrl(`/console/api/files/${encodeURIComponent(fileId)}/file-preview`)
+    : '';
+}
+
+function managedGeneratedFileDownloadUrl(file: AIChatGeneratedFile): string {
+  const fileId = managedGeneratedFileId(file);
+  if (file.download_url) {
+    return apiReachableUrl(file.download_url);
+  }
+  if (file.url) {
+    return appendQueryFlag(apiReachableUrl(file.url), 'as_attachment', 'true');
+  }
+  return apiReachableUrl(
+    fileId ? `/console/api/files/${encodeURIComponent(fileId)}/download` : ''
+  );
+}
+
 function generatedFilePreviewUrl(file: AIChatGeneratedFile): string {
-  return file.url || '';
+  if (file.url) {
+    return apiReachableUrl(file.url);
+  }
+  if (isManagedGeneratedFile(file)) {
+    return managedGeneratedFilePreviewUrl(file);
+  }
+  return '';
+}
+
+function generatedFileDownloadUrl(file: AIChatGeneratedFile): string {
+  if (isManagedGeneratedFile(file)) {
+    return managedGeneratedFileDownloadUrl(file);
+  }
+  return apiReachableUrl(file.download_url || file.url);
 }
 
 function generatedImagePreviewFiles(
-  answer: string,
+  _answer: string,
   generatedFiles: AIChatGeneratedFile[],
   shouldShow: boolean
 ): AIChatGeneratedFile[] {
@@ -131,10 +223,33 @@ function generatedImagePreviewFiles(
     const previewUrl = generatedFilePreviewUrl(file);
     if (!previewUrl) return false;
     if (!isOriginalPreviewImage(file.extension, file.mime_type)) return false;
-    if (answer.includes(previewUrl)) return false;
-    if (file.download_url && answer.includes(file.download_url)) return false;
     return true;
   });
+}
+
+function generatedFileDisplayRank(file: AIChatGeneratedFile): number {
+  if (isManagedGeneratedFile(file)) return 30;
+  if (file.url || file.download_url) return 20;
+  return 10;
+}
+
+function dedupeGeneratedFilesForDisplay(files: AIChatGeneratedFile[]): AIChatGeneratedFile[] {
+  if (files.length <= 1) return files;
+  const indexByName = new Map<string, number>();
+  const out: AIChatGeneratedFile[] = [];
+  files.forEach(file => {
+    const key = (file.filename || file.file_id).trim().toLowerCase();
+    const existingIndex = indexByName.get(key);
+    if (existingIndex === undefined) {
+      indexByName.set(key, out.length);
+      out.push(file);
+      return;
+    }
+    if (generatedFileDisplayRank(file) >= generatedFileDisplayRank(out[existingIndex])) {
+      out[existingIndex] = file;
+    }
+  });
+  return out;
 }
 
 interface AIChatHistoryImagePreviewProps {
@@ -237,8 +352,13 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   const t = useT('webapp');
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const extension = formatGeneratedFileExtension(file);
-  const downloadUrl = file.download_url || file.url;
-  const previewUrl = file.url || downloadUrl;
+  const downloadUrl = generatedFileDownloadUrl(file);
+  const previewUrl = generatedFilePreviewUrl(file) || downloadUrl;
+  const canPreview = Boolean(previewUrl);
+  const canDownload = Boolean(downloadUrl);
+  const lifecycleLabel = isManagedGeneratedFile(file)
+    ? t('consoleChat.attachments.managedGeneratedFile')
+    : t('consoleChat.attachments.temporaryGeneratedFile');
 
   return (
     <>
@@ -252,7 +372,7 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium text-foreground">{file.filename}</div>
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <span>{t('consoleChat.attachments.generatedFile')}</span>
+            <span>{lifecycleLabel}</span>
             {extension ? <span>{extension}</span> : null}
             <span>{formatFileSize(file.size)}</span>
           </div>
@@ -264,23 +384,42 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
           className="size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
           aria-label={t('consoleChat.attachments.previewGeneratedFile')}
           title={t('consoleChat.attachments.previewGeneratedFile')}
-          onClick={() => setIsPreviewOpen(true)}
+          disabled={!canPreview}
+          onClick={() => {
+            if (canPreview) {
+              setIsPreviewOpen(true);
+            }
+          }}
         >
           <Eye className="size-4" />
         </Button>
-        <Button
-          asChild
-          type="button"
-          isIcon
-          variant="ghost"
-          className="size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-          aria-label={t('consoleChat.attachments.downloadGeneratedFile')}
-          title={t('consoleChat.attachments.downloadGeneratedFile')}
-        >
-          <a href={downloadUrl} download={file.filename}>
+        {canDownload ? (
+          <Button
+            asChild
+            type="button"
+            isIcon
+            variant="ghost"
+            className="size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+            aria-label={t('consoleChat.attachments.downloadGeneratedFile')}
+            title={t('consoleChat.attachments.downloadGeneratedFile')}
+          >
+            <a href={downloadUrl} download={file.filename}>
+              <Download className="size-4" />
+            </a>
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            isIcon
+            variant="ghost"
+            disabled
+            className="size-8 shrink-0 rounded-full text-muted-foreground"
+            aria-label={t('consoleChat.attachments.downloadGeneratedFile')}
+            title={t('consoleChat.attachments.downloadGeneratedFile')}
+          >
             <Download className="size-4" />
-          </a>
-        </Button>
+          </Button>
+        )}
       </div>
       <UniversalFilePreviewDialog
         open={isPreviewOpen}
@@ -315,8 +454,8 @@ function AIChatGeneratedImagePreviews({ files }: AIChatGeneratedImagePreviewsPro
           key={file.file_id || generatedFilePreviewUrl(file)}
           src={generatedFilePreviewUrl(file)}
           alt={file.filename}
-          className="block max-w-full"
-          imageClassName="max-w-full"
+          frameClassName="max-w-full"
+          imageClassName="min-w-32 max-w-full"
         />
       ))}
     </div>
@@ -434,9 +573,13 @@ export function AIChatMessageBubble({
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
   const files = message.metadata?.files ?? EMPTY_MESSAGE_FILES;
   const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
+  const visibleGeneratedFiles = useMemo(
+    () => dedupeGeneratedFilesForDisplay(generatedFiles),
+    [generatedFiles]
+  );
   const generatedImagePreviewFilesForDisplay = useMemo(
-    () => generatedImagePreviewFiles(displayAnswer, generatedFiles, !isSensitiveBlocked),
-    [displayAnswer, generatedFiles, isSensitiveBlocked]
+    () => generatedImagePreviewFiles(displayAnswer, visibleGeneratedFiles, !isSensitiveBlocked),
+    [displayAnswer, visibleGeneratedFiles, isSensitiveBlocked]
   );
   const actionRuntimePanels = useMemo(
     () => resolveAIChatActionRuntimeMessagePanels(message.metadata),
@@ -457,13 +600,17 @@ export function AIChatMessageBubble({
     () => timelineFromAIChatMessage(message),
     [message]
   );
-  const displayTimeline = timeline.length > 0 ? timeline : historicalTimeline;
+  const displayTimeline = useMemo(
+    () => dedupeTimelineItems(timeline.length > 0 ? timeline : historicalTimeline),
+    [historicalTimeline, timeline]
+  );
   const hasTimeline = displayTimeline.length > 0;
   const shouldOpenTimelineByDefault =
     isActiveMessage ||
     displayTimeline.some(
       item =>
         (item.type === 'skill_event' &&
+          item.invocation.kind !== 'guardrail' &&
           (item.invocation.status === 'error' || item.invocation.status === 'blocked')) ||
         (item.type === 'tool_governance_decision' &&
           ['approved', 'rejected'].includes(
@@ -688,9 +835,9 @@ export function AIChatMessageBubble({
 
           <AIChatGeneratedImagePreviews files={generatedImagePreviewFilesForDisplay} />
 
-          {generatedFiles.length > 0 ? (
+          {visibleGeneratedFiles.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-2">
-              {generatedFiles.map(file => (
+              {visibleGeneratedFiles.map(file => (
                 <AIChatGeneratedFileCard key={file.file_id} file={file} />
               ))}
             </div>

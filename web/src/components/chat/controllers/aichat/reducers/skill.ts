@@ -51,6 +51,25 @@ function upsertSkillInvocation(
     return next;
   }
 
+  if (incoming.kind === 'guardrail') {
+    const index = invocations.findIndex(
+      invocation =>
+        invocation.kind === 'guardrail' &&
+        invocation.skill_id === incoming.skill_id &&
+        (invocation.tool_name ?? '') === (incoming.tool_name ?? '') &&
+        (invocation.message ?? invocation.error ?? '') ===
+          (incoming.message ?? incoming.error ?? '')
+    );
+    if (index >= 0) {
+      const next = invocations.slice();
+      next[index] = {
+        ...next[index],
+        ...incoming,
+      };
+      return next;
+    }
+  }
+
   const next = invocations.slice();
   const incomingKind = incoming.kind ?? 'tool_call';
   const incomingToolName = incoming.tool_name ?? '';
@@ -91,6 +110,17 @@ function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
 }
 
 function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
+  const status = String(invocation.status ?? '').toLowerCase();
+  if (invocation.kind === 'client_action' && invocation.action_type === 'route_navigation') {
+    return false;
+  }
+  if (
+    invocation.kind === 'client_action' &&
+    invocation.action_type === 'asset_observation' &&
+    (status === 'success' || status === 'succeeded')
+  ) {
+    return false;
+  }
   return invocation.kind !== 'metadata_exposed' && invocation.kind !== 'memory_planner';
 }
 
@@ -301,9 +331,13 @@ function upsertSkillTimelineItem(
   const reverseIndex = [...next].reverse().findIndex(item => {
     if (item.type !== 'skill_event') return false;
     const invocation = item.invocation;
+    const status = String(invocation.status ?? '').toLowerCase();
     return (
       getSkillInvocationIdentity(invocation) === incomingIdentity &&
-      (invocation.status === 'loading' || invocation.status === 'running')
+      (status === 'loading' ||
+        status === 'running' ||
+        status === 'needs_approval' ||
+        status === 'waiting_client_action')
     );
   });
 
@@ -575,7 +609,8 @@ function toolGovernanceDecisionEventFromSkillCall(
     duration_ms: payload.duration_ms,
     created_at: payload.created_at,
     execution_status: payload.status ?? (payload.message ? 'error' : 'success'),
-    execution_error: 'message' in payload && payload.status === 'error' ? payload.message : undefined,
+    execution_error:
+      'message' in payload && payload.status === 'error' ? payload.message : undefined,
     execution_message: payload.message,
     execution_duration_ms: payload.duration_ms,
     execution_result: 'result' in payload ? payload.result : undefined,
@@ -670,10 +705,10 @@ export function applySkillCallErrorState(
       runtime_id: payload.runtime_id,
       skill_id: payload.skill_id,
       tool_name: payload.tool_name ?? '',
-      status: 'error',
+      status: payload.status ?? 'error',
       duration_ms: payload.duration_ms,
       message: payload.message,
-      error: payload.message,
+      error: payload.status === 'blocked' ? undefined : payload.message,
       governance: payload.governance,
       created_at: payload.created_at,
     }

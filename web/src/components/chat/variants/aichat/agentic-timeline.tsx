@@ -176,6 +176,7 @@ interface ToolGovernanceDecisionViewModel {
 
 function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
+  if (invocation.kind === 'guardrail') return 'success';
   if (invocation.status === 'error' || invocation.status === 'blocked') return 'error';
   return 'success';
 }
@@ -303,6 +304,10 @@ function buildSkillTitle(
       skill: skill.label,
       path: invocation.path || t('consoleChat.skills.trace.unknownReference'),
     });
+  }
+
+  if (invocation.kind === 'guardrail') {
+    return t('consoleChat.skills.agentic.strategyAdjusted');
   }
 
   if (tone === 'running') {
@@ -1062,6 +1067,8 @@ function governanceActionSentence(
 ): string {
   const effect = governanceEventString(item, ['effect'])?.toLowerCase();
   const assetType = governanceEventString(item, ['asset_type'])?.toLowerCase();
+  const skillId = governanceEventString(item, ['skill_id'])?.toLowerCase();
+  const toolName = governanceEventString(item, ['tool_name', 'tool_id'])?.toLowerCase();
   const count = Math.max(assetCount, assets.length, 1);
   const singleAssetName = assets.length === 1 ? governanceAssetSpecificDisplayName(assets[0]) : null;
 
@@ -1080,6 +1087,14 @@ function governanceActionSentence(
   }
 
   if (effect && assetType && singleAssetName) {
+    if (
+      effect === 'create' &&
+      assetType === 'file' &&
+      skillId === 'file-manager' &&
+      toolName === 'save_file_to_management'
+    ) {
+      return t('consoleChat.governance.approvalPanel.fileSaveOne', { name: singleAssetName });
+    }
     return t('consoleChat.governance.approvalPanel.genericOne', {
       effect: governanceEffectLabel(effect, t),
       assetType: governanceAssetTypeLabel(assetType, t),

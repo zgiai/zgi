@@ -51,15 +51,16 @@ const fileCreateCapability: AIChatCapabilityDescriptor = {
   id: 'file.create',
   title: 'Create file',
   description:
-    'Create or save a generated file into File Management when the user explicitly asks for the current files page, File Management, or a workspace folder. Use file-generator with target=managed_file; otherwise generated files should remain temporary artifacts.',
+    'Create or save a file into File Management only when the user explicitly asks for the current files page or File Management. Generate temporary artifacts with file-generator first, then save them with file-manager/save_file_to_management.',
   risk: 'medium',
   requiresConfirmation: true,
   status: 'available',
   permissions: ['file.upload_create'],
   metadata: {
-    target: 'managed_file',
+    target: 'file_management',
     default_without_explicit_target: 'temporary_artifact',
-    preferred_skill_id: 'file-generator',
+    preferred_skill_ids: 'file-generator,file-manager',
+    final_tool: 'file-manager/save_file_to_management',
   },
 };
 
@@ -207,7 +208,7 @@ function buildFilesPageContextDescription(
   const ordinalScope =
     'Ordinal references such as fourth file use visible_index; typed ordinal references such as second Excel and last PDF use file_type_rank or extension_rank among visible files of that type. ';
   const createScope = canUpload
-    ? 'When the user explicitly asks to create, save, upload, or write a generated file into File Management or the current files page, use file.create via file-generator target=managed_file. Otherwise generated files remain temporary artifacts. '
+    ? 'When the user explicitly asks to create, save, upload, import, or write a file into File Management or the current files page, first generate a temporary artifact when needed, then use file-manager/save_file_to_management. Otherwise generated files remain temporary artifacts. '
     : '';
 
   return compactAIChatContextText(

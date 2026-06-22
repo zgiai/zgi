@@ -143,8 +143,8 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
       zh_Hans: '文件生成器',
     },
     description: {
-      en_US: 'Creates downloadable TXT, Markdown, HTML, JSON, CSV, DOCX, XLSX, PDF, and PPTX files.',
-      zh_Hans: '创建可下载的 TXT、Markdown、HTML、JSON、CSV、DOCX、XLSX、PDF 和 PPTX 文件。',
+      en_US: 'Creates downloadable TXT, Markdown, HTML, JSON, CSV, SVG, DOCX, XLSX, PDF, and PPTX files.',
+      zh_Hans: '创建可下载的 TXT、Markdown、HTML、JSON、CSV、SVG、DOCX、XLSX、PDF 和 PPTX 文件。',
     },
     whenToUse: {
       en_US: 'Use when the answer should be delivered as a generated file.',
@@ -422,6 +422,10 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
     delete_file: {
       en_US: 'Delete file',
       zh_Hans: '删除文件',
+    },
+    save_file_to_management: {
+      en_US: 'Save to File Management',
+      zh_Hans: '保存到文件管理',
     },
   },
   'file-generator': {

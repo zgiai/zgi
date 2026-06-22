@@ -23,6 +23,7 @@ import type {
   AIChatMessage,
   AIChatMessageListResponse,
   AIChatRegenerateMessageRequest,
+  AIChatRuntimeSurface,
   AIChatSkillConfigResponse,
   AIChatSkillDetailResponse,
   AIChatSkillListResponse,
@@ -238,7 +239,9 @@ export const aichatService = {
     );
   },
 
-  listConversations(params: { page?: number; limit?: number } = {}) {
+  listConversations(
+    params: { page?: number; limit?: number; surface?: AIChatRuntimeSurface } = {}
+  ) {
     return http.get<AIChatConversationListResponse>(`${AICHAT_BASE_PATH}/conversations`, {
       params,
     });

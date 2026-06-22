@@ -43,7 +43,6 @@ import {
   normalizeZGIConsoleNavigationHref,
   type ContextualAIChatAssetOperation,
   type ContextualAIChatClientActionRequest,
-  type ContextualAIChatPageNavigationRequest,
 } from './context-envelope';
 import { useContextualAIChat } from './contextual-ai-chat-context';
 import type { AIChatClientActionResultRequest } from '@/services/types/aichat';
@@ -64,6 +63,7 @@ const ASSET_OPERATION_REFRESH_DEDUPE_MS = 1800;
 const CLIENT_ACTION_ROUTE_TIMEOUT_MS = 10_000;
 const CLIENT_ACTION_ROUTE_CONTEXT_SETTLE_MS = 140;
 const CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS = 460;
+const CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS = 120;
 const CLIENT_ACTION_OBSERVATION_SETTLE_MS = 900;
 
 interface PendingClientActionContinuation {
@@ -304,12 +304,56 @@ function routeHrefFromContextItem(item: AIChatContextItem) {
   return '';
 }
 
+function routeSpecificReadyContextItem(items: AIChatContextItem[], href: string) {
+  if (href === '/console/files') {
+    return items.find(item => {
+      const metadataPage = metadataText(item, 'page');
+      const metadataRoute = normalizeZGIConsoleNavigationHref(metadataText(item, 'route'));
+      return (
+        item.id === 'console.files' ||
+        metadataPage === 'console.files' ||
+        (metadataRoute === href &&
+          item.hints?.handledAssetTypes?.some(assetType => normalizeHintToken(assetType) === 'file'))
+      );
+    });
+  }
+
+  if (href === '/console/agents') {
+    return items.find(item => {
+      const metadataPage = metadataText(item, 'page');
+      const metadataRoute = normalizeZGIConsoleNavigationHref(metadataText(item, 'route'));
+      return (
+        item.id === 'console.agents' ||
+        metadataPage === 'console.agents' ||
+        (metadataRoute === href &&
+          item.hints?.handledAssetTypes?.some(assetType => normalizeHintToken(assetType) === 'agent'))
+      );
+    });
+  }
+
+  if (/^\/console\/agents\/[A-Za-z0-9_-]+\/agent$/.test(href)) {
+    return items.find(
+      item =>
+        item.type === 'agent' &&
+        routeHrefFromContextItem(item) === href &&
+        item.hints?.handledAssetTypes?.some(assetType => normalizeHintToken(assetType) === 'agent')
+    );
+  }
+
+  return items.find(item => routeHrefFromContextItem(item) === href && !isGenericRoutePageItem(item));
+}
+
 function routeContextObservation(items: AIChatContextItem[], href: string) {
   const matchedItem = items.find(item => routeHrefFromContextItem(item) === href);
+  const readyItem = routeRequiresPageContextReady(href)
+    ? routeSpecificReadyContextItem(items, href)
+    : matchedItem;
   return {
-    page_context_ready: Boolean(matchedItem),
+    page_context_ready: Boolean(readyItem),
     matched_context_item_id: matchedItem ? `${matchedItem.type}:${matchedItem.id}` : undefined,
     matched_context_title: matchedItem?.title,
+    ready_context_item_id: readyItem ? `${readyItem.type}:${readyItem.id}` : undefined,
+    ready_context_title: readyItem?.title,
     context_item_count: items.length,
     context_items: items.slice(0, 6).map(item => ({
       id: item.id,
@@ -318,6 +362,14 @@ function routeContextObservation(items: AIChatContextItem[], href: string) {
       href: item.href,
     })),
   };
+}
+
+function routeRequiresPageContextReady(href: string) {
+  return (
+    href === '/console/files' ||
+    href === '/console/agents' ||
+    /^\/console\/agents\/[A-Za-z0-9_-]+\/agent$/.test(href)
+  );
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
@@ -741,19 +793,6 @@ export function ContextualAIChatDock() {
     [invalidateQueries]
   );
 
-  const handlePageNavigationRequested = useCallback(
-    (request: ContextualAIChatPageNavigationRequest) => {
-      const href = normalizeZGIConsoleNavigationHref(request.href);
-      if (!href) return;
-
-      const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
-      if (currentHref === href) return;
-
-      router.push(href);
-    },
-    [pathname, router]
-  );
-
   const handleClientActionRequired = useCallback(
     (request: ContextualAIChatClientActionRequest) => {
       const existing = pendingClientActionRef.current;
@@ -865,10 +904,9 @@ export function ContextualAIChatDock() {
     () =>
       createContextualAIChatTransport(() => itemsRef.current, {
         onAssetOperationSuccess: handleAssetOperationSuccess,
-        onPageNavigationRequested: handlePageNavigationRequested,
         onClientActionRequired: handleClientActionRequired,
       }),
-    [handleAssetOperationSuccess, handleClientActionRequired, handlePageNavigationRequested]
+    [handleAssetOperationSuccess, handleClientActionRequired]
   );
   const controller = useAIChatController({ transport });
   const { init: initController } = controller;
@@ -891,6 +929,14 @@ export function ContextualAIChatDock() {
     if (currentHref !== href) return;
 
     const observation = routeContextObservation(itemsRef.current, href);
+    if (routeRequiresPageContextReady(href) && !observation.page_context_ready) {
+      const pollTimer = window.setTimeout(() => {
+        setPendingClientActionVersion(version => version + 1);
+      }, CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS);
+
+      return () => window.clearTimeout(pollTimer);
+    }
+
     const delay = observation.page_context_ready
       ? CLIENT_ACTION_ROUTE_CONTEXT_SETTLE_MS
       : CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS;

@@ -43,6 +43,17 @@ function normalizeSkillInvocation(invocation: AIChatSkillInvocation): AIChatSkil
 }
 
 function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
+  const status = String(invocation.status ?? '').toLowerCase();
+  if (invocation.kind === 'client_action' && invocation.action_type === 'route_navigation') {
+    return false;
+  }
+  if (
+    invocation.kind === 'client_action' &&
+    invocation.action_type === 'asset_observation' &&
+    (status === 'success' || status === 'succeeded')
+  ) {
+    return false;
+  }
   return (
     invocation.kind !== 'metadata_exposed' &&
     invocation.kind !== 'memory_planner' &&
@@ -68,7 +79,8 @@ function toolGovernanceEventFromInvocation(
     duration_ms: invocation.duration_ms,
     created_at: invocation.created_at,
     execution_status: invocation.status,
-    execution_error: invocation.status === 'error' ? invocation.error ?? invocation.message : undefined,
+    execution_error:
+      invocation.status === 'error' ? (invocation.error ?? invocation.message) : undefined,
     execution_message: invocation.message,
     execution_duration_ms: invocation.duration_ms,
     execution_result: invocation.result,
@@ -391,11 +403,188 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     };
   });
 
-  return [...skillTimeline, ...workflowTimelineFromMessage(message)].sort((left, right) => {
-    const leftAt = left.created_at ?? Number.MAX_SAFE_INTEGER;
-    const rightAt = right.created_at ?? Number.MAX_SAFE_INTEGER;
-    return leftAt - rightAt || left.id.localeCompare(right.id);
+  return dedupeTimelineItems([...skillTimeline, ...workflowTimelineFromMessage(message)]).sort(
+    (left, right) => {
+      const leftAt = left.created_at ?? Number.MAX_SAFE_INTEGER;
+      const rightAt = right.created_at ?? Number.MAX_SAFE_INTEGER;
+      return leftAt - rightAt || left.id.localeCompare(right.id);
+    }
+  );
+}
+
+function stableTimelineValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value !== 'object') return String(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(stableTimelineValue).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map(key => `${key}:${stableTimelineValue(record[key])}`)
+    .join(',')}}`;
+}
+
+function timelineString(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
+}
+
+function governanceCorrelationId(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  const record = value as Record<string, unknown>;
+  const governance =
+    record.governance && typeof record.governance === 'object' && !Array.isArray(record.governance)
+      ? (record.governance as Record<string, unknown>)
+      : undefined;
+  const approvalEvent =
+    record.approval_event &&
+    typeof record.approval_event === 'object' &&
+    !Array.isArray(record.approval_event)
+      ? (record.approval_event as Record<string, unknown>)
+      : undefined;
+  const audit =
+    record.asset_operation_audit &&
+    typeof record.asset_operation_audit === 'object' &&
+    !Array.isArray(record.asset_operation_audit)
+      ? (record.asset_operation_audit as Record<string, unknown>)
+      : undefined;
+  return (
+    timelineString(record.correlation_id) ||
+    timelineString(governance?.correlation_id) ||
+    timelineString(approvalEvent?.correlation_id) ||
+    timelineString(audit?.correlation_id)
+  );
+}
+
+function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
+  if (invocation.kind === 'client_action' && invocation.action_id) {
+    return `skill:client_action:${invocation.action_id}`;
+  }
+  if (invocation.kind === 'tool_governance') {
+    const correlationId = governanceCorrelationId(invocation);
+    if (correlationId) return `skill:tool_governance:${correlationId}`;
+  }
+
+  const argumentsKey = stableTimelineValue(invocation.arguments ?? {});
+  return [
+    'skill',
+    invocation.kind ?? 'tool_call',
+    invocation.skill_id ?? '',
+    invocation.tool_name ?? '',
+    invocation.path ?? '',
+    invocation.answer_id ?? '',
+    argumentsKey,
+  ].join(':');
+}
+
+function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
+  switch (item.type) {
+    case 'progress_text':
+      return [
+        'progress',
+        item.phase ?? '',
+        item.skill_id ?? '',
+        item.tool_name ?? '',
+        item.content.trim().replace(/\s+/g, ' '),
+      ].join(':');
+    case 'skill_event': {
+      return timelineSkillInvocationIdentity(item.invocation);
+    }
+    case 'intermediate_answer':
+      return ['intermediate', item.answer_id ?? item.id].join(':');
+    case 'memory_event':
+      return ['memory', item.event_id ?? item.id].join(':');
+    case 'tool_governance_decision':
+      return ['governance', governanceCorrelationId(item.event) || item.id].join(':');
+    case 'workflow_run':
+      return ['workflow', item.workflowRunId].join(':');
+  }
+}
+
+function timelineItemRank(item: AIChatAgenticTimelineItem): number {
+  if (item.type === 'skill_event') {
+    const status = String(item.invocation.status ?? '').toLowerCase();
+    if (status === 'error' || status === 'blocked' || status === 'denied') return 40;
+    if (status === 'success' || status === 'succeeded' || status === 'allowed') return 30;
+    if (status === 'needs_approval' || status === 'waiting_client_action') return 20;
+    if (status === 'running' || status === 'loading') return 10;
+  }
+  if (item.type === 'tool_governance_decision') {
+    const status = String(
+      item.event.approval_status ?? item.event.status ?? item.event.decision ?? ''
+    ).toLowerCase();
+    if (status === 'rejected' || status === 'denied' || status === 'error') return 40;
+    if (status === 'approved' || status === 'success' || status === 'allowed') return 30;
+    if (status === 'needs_approval') return 20;
+  }
+  if (item.type === 'intermediate_answer' && item.status === 'success') return 30;
+  return item.event_id ? 5 : 0;
+}
+
+function preferTimelineItem(
+  existing: AIChatAgenticTimelineItem,
+  incoming: AIChatAgenticTimelineItem
+): AIChatAgenticTimelineItem {
+  const existingRank = timelineItemRank(existing);
+  const incomingRank = timelineItemRank(incoming);
+  if (incomingRank > existingRank) return incoming;
+  if (incomingRank < existingRank) return existing;
+  if ((incoming.created_at ?? 0) >= (existing.created_at ?? 0)) return incoming;
+  return existing;
+}
+
+export function dedupeTimelineItems(
+  timeline: AIChatAgenticTimelineItem[] | undefined
+): AIChatAgenticTimelineItem[] {
+  const items = timeline ?? [];
+  if (items.length <= 1) return items;
+
+  const indexByIdentity = new Map<string, number>();
+  const out: AIChatAgenticTimelineItem[] = [];
+  for (const item of items) {
+    const identity = timelineItemIdentity(item);
+    const existingIndex = indexByIdentity.get(identity);
+    if (existingIndex === undefined) {
+      indexByIdentity.set(identity, out.length);
+      out.push(item);
+      continue;
+    }
+    out[existingIndex] = preferTimelineItem(out[existingIndex], item);
+  }
+  return out;
+}
+
+export function mergeRuntimeTimelineWithMessageTimeline(
+  messageTimeline: AIChatAgenticTimelineItem[],
+  runtimeTimeline?: AIChatAgenticTimelineItem[]
+): AIChatAgenticTimelineItem[] {
+  if (!runtimeTimeline?.length) {
+    return messageTimeline;
+  }
+  if (!messageTimeline.length) {
+    return runtimeTimeline;
+  }
+
+  const messageByIdentity = new Map(
+    messageTimeline.map(item => [timelineItemIdentity(item), item] as const)
+  );
+  const seen = new Set<string>();
+  const merged = runtimeTimeline.map(item => {
+    const identity = timelineItemIdentity(item);
+    seen.add(identity);
+    return item.type === 'progress_text' ? item : (messageByIdentity.get(identity) ?? item);
   });
+
+  messageTimeline.forEach(item => {
+    const identity = timelineItemIdentity(item);
+    if (!seen.has(identity)) {
+      merged.push(item);
+    }
+  });
+
+  return dedupeTimelineItems(merged);
 }
 
 export function seedStreamingTimelineFromMessages(
@@ -417,7 +606,13 @@ export function seedStreamingTimelineFromMessages(
   }
   const previous = streamingByMessageId[messageId];
   if (previous?.timeline?.length) {
-    return streamingByMessageId;
+    return {
+      ...streamingByMessageId,
+      [messageId]: {
+        ...previous,
+        timeline: mergeRuntimeTimelineWithMessageTimeline(timeline, previous.timeline),
+      },
+    };
   }
 
   return {

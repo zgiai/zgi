@@ -41,6 +41,7 @@ export type AIChatSkillInvocationKind =
   | 'reference_read'
   | 'tool_call'
   | 'tool_governance'
+  | 'guardrail'
   | 'client_action'
   | 'intermediate_answer'
   | 'user_input_request'
@@ -149,6 +150,9 @@ export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;
   runtime_id?: string;
   answer_id?: string;
+  action_id?: string;
+  action_type?: string;
+  href?: string;
   skill_id: string;
   tool_name?: string;
   title?: string;
@@ -260,10 +264,14 @@ export interface AIChatGeneratedFile {
   skill_id: string;
   tool_name: string;
   file_id: string;
+  tool_file_id?: string;
+  upload_file_id?: string;
+  source_file_id?: string;
   filename: string;
   extension: string;
   mime_type: string;
   size: number;
+  target?: 'temporary_artifact' | 'managed_file' | (string & {});
   url: string;
   download_url?: string;
   transfer_method: string;
@@ -526,7 +534,7 @@ export interface AIChatSkillCallErrorEventData {
   skill_id: string;
   tool_name?: string;
   duration_ms?: number;
-  status: 'error';
+  status?: AIChatSkillActivityStatus;
   message?: string;
   governance?: AIChatToolGovernanceDecision | null;
   asset_operation_audit?: AIChatAssetOperationAudit;
@@ -536,10 +544,14 @@ export interface AIChatSkillCallErrorEventData {
 export interface AIChatSkillArtifactFile {
   artifact_type?: 'file';
   file_id: string;
+  tool_file_id?: string;
+  upload_file_id?: string;
+  source_file_id?: string;
   filename: string;
   extension: string;
   mime_type: string;
   size: number;
+  target?: 'temporary_artifact' | 'managed_file' | (string & {});
   url: string;
   download_url?: string;
   transfer_method?: string;
@@ -581,14 +593,14 @@ export interface AIChatClientActionRequiredEventData extends Record<string, unkn
 
 export interface AIChatClientActionResultRequest {
   status: AIChatClientActionResultStatus;
+  surface?: string;
   runtime_context?: string;
   operation_context?: unknown;
   result?: Record<string, unknown>;
   error?: string;
 }
 
-export interface AIChatClientActionResultEventData
-  extends AIChatClientActionRequiredEventData {
+export interface AIChatClientActionResultEventData extends AIChatClientActionRequiredEventData {
   error?: string;
   resolved_at?: string;
 }
@@ -804,8 +816,8 @@ export interface AIChatToolGovernanceDecisionResponse {
 }
 
 export interface AIChatAgentProgressEventData {
-	conversation_id: string;
-	message_id: string;
+  conversation_id: string;
+  message_id: string;
   content?: string;
   phase?: 'planning' | 'tool_planning';
   meta_tool_name?: string;

@@ -117,12 +117,17 @@ function normalizeSkillArtifactFile(
   payload: AIChatSkillArtifactCreatedEventData
 ): AIChatGeneratedFile | null {
   const file = payload.file;
-  const fileId = file?.file_id ?? payload.file_id;
+  const toolFileId = file?.tool_file_id ?? payload.tool_file_id;
+  const uploadFileId = file?.upload_file_id ?? payload.upload_file_id;
+  const sourceFileId = file?.source_file_id ?? payload.source_file_id;
+  const fileId = file?.file_id ?? payload.file_id ?? uploadFileId ?? toolFileId;
   const filename = file?.filename ?? payload.filename;
   const extension = file?.extension ?? payload.extension;
   const mimeType = file?.mime_type ?? payload.mime_type;
   const size = file?.size ?? payload.size;
-  const url = file?.url ?? payload.url;
+  const target = file?.target ?? payload.target;
+  const url = file?.url ?? payload.url ?? '';
+  const isManagedFile = target === 'managed_file' || Boolean(uploadFileId);
 
   if (
     !payload.skill_id ||
@@ -132,7 +137,7 @@ function normalizeSkillArtifactFile(
     !extension ||
     !mimeType ||
     typeof size !== 'number' ||
-    !url
+    (!url && !isManagedFile)
   ) {
     return null;
   }
@@ -142,12 +147,16 @@ function normalizeSkillArtifactFile(
     skill_id: payload.skill_id,
     tool_name: payload.tool_name,
     file_id: fileId,
+    tool_file_id: toolFileId,
+    upload_file_id: uploadFileId,
+    source_file_id: sourceFileId,
     filename,
     extension,
     mime_type: mimeType,
     size,
     url,
     download_url: file?.download_url ?? payload.download_url,
+    target,
     transfer_method: file?.transfer_method ?? payload.transfer_method ?? 'tool_file',
     file_type: file?.file_type ?? payload.file_type,
     operation_id: file?.operation_id ?? payload.operation_id,

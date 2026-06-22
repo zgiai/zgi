@@ -8,6 +8,7 @@ import type {
 } from '@/services/types/aichat';
 import {
   getNextActiveSendingState,
+  mergeRuntimeTimelineWithMessageTimeline,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
 import type {
@@ -108,7 +109,10 @@ export function useWorkflowContinuationActions({
         : null;
       const sourceMessage = persistedSourceMessage ?? fallbackSourceMessage;
       const sourceTimeline = persistedSourceMessage
-        ? timelineFromAIChatMessage(persistedSourceMessage)
+        ? mergeRuntimeTimelineWithMessageTimeline(
+            timelineFromAIChatMessage(persistedSourceMessage),
+            previousStreaming?.timeline
+          )
         : (previousStreaming?.timeline ?? []);
       const streamingStatus = previousStreaming?.status;
       const waitingForContinuation =
