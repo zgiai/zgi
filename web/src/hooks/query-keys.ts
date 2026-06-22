@@ -176,8 +176,8 @@ export const AICHAT_KEYS = {
     [...AICHAT_KEYS.all, 'conversations', conversationId, 'asset-operation-audits', params] as const,
   agentSkillVariables: (agentId: string, skillId: string) =>
     [...AICHAT_KEYS.all, 'agents', agentId, 'skills', skillId, 'variables'] as const,
-  search: (query: string, limit: number) =>
-    [...AICHAT_KEYS.all, 'search', query.trim(), limit] as const,
+  search: (query: string, limit: number, surface?: string) =>
+    [...AICHAT_KEYS.all, 'search', surface ?? 'all', query.trim(), limit] as const,
 } as const;
 
 export const MEMORY_KEYS = {

@@ -165,7 +165,11 @@ export interface AIChatRuntimeTransport {
     }
   ): Promise<AIChatConversation>;
   removeConversation(conversationId: string): Promise<void>;
-  searchConversations?(query: string, limit: number): Promise<ConversationSearchResult[]>;
+  searchConversations?(
+    query: string,
+    limit: number,
+    options?: { surface?: AIChatRuntimeSurface }
+  ): Promise<ConversationSearchResult[]>;
   stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData>;
   streamChat(
     payload: AIChatChatRequest,
@@ -496,8 +500,12 @@ export class AIChatTransport implements AIChatRuntimeTransport {
     await aichatService.deleteConversation(conversationId);
   }
 
-  async searchConversations(query: string, limit: number): Promise<ConversationSearchResult[]> {
-    const response = await aichatService.search(query, limit);
+  async searchConversations(
+    query: string,
+    limit: number,
+    options?: { surface?: AIChatRuntimeSurface }
+  ): Promise<ConversationSearchResult[]> {
+    const response = await aichatService.search(query, limit, { surface: options?.surface });
     return (response.data ?? []).map(mapAIChatSearchResult);
   }
 

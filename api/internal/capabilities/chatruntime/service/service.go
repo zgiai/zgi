@@ -155,6 +155,7 @@ type Service interface {
 	ListConversationsByCaller(ctx context.Context, scope Scope, caller Caller, page, limit int) ([]*runtimemodel.Conversation, int64, error)
 	ListConversationsBySurface(ctx context.Context, scope Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error)
 	Search(ctx context.Context, scope Scope, query string, limit int) ([]*SearchResult, error)
+	SearchBySurface(ctx context.Context, scope Scope, surface string, query string, limit int) ([]*SearchResult, error)
 	SearchByCaller(ctx context.Context, scope Scope, caller Caller, query string, limit int) ([]*SearchResult, error)
 	GetConversation(ctx context.Context, scope Scope, id uuid.UUID) (*runtimemodel.Conversation, error)
 	GetConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Conversation, error)

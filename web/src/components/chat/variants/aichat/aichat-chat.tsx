@@ -20,7 +20,10 @@ import type {
   ModelSelectorValue,
 } from '@/components/common/model-selector';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
-import type { ConversationSummary } from '@/components/chat/controllers/types';
+import type {
+  ConversationSearchFn,
+  ConversationSummary,
+} from '@/components/chat/controllers/types';
 import {
   selectActiveConversation,
   selectActiveMessagePagination,
@@ -551,12 +554,17 @@ export function AIChatShell({
     () =>
       [
         'aichat-runtime',
-        surface,
+        runtimeSurface,
         uploadScope?.type === 'webapp' ? uploadScope.webAppId : 'console',
         'conversations',
         'search',
       ] as const,
-    [surface, uploadScope]
+    [runtimeSurface, uploadScope]
+  );
+  const searchConversations = useCallback<ConversationSearchFn>(
+    (query, limit) =>
+      controller.search?.(query, limit, { surface: runtimeSurface }) ?? Promise.resolve([]),
+    [controller.search, runtimeSurface]
   );
 
   const suggestions = useMemo<AIChatSuggestion[]>(() => {
@@ -1013,7 +1021,7 @@ export function AIChatShell({
             onDelete={handleDeleteConversation}
             onRename={handleRenameConversation}
             backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
-            search={controller.search}
+            search={searchConversations}
             searchKey={conversationSearchKey}
           />
         </div>
@@ -1167,7 +1175,7 @@ export function AIChatShell({
               onRename={handleRenameConversation}
               backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
               onClose={() => setMobileSidebarOpen(false)}
-              search={controller.search}
+              search={searchConversations}
               searchKey={conversationSearchKey}
             />
           </SheetContent>

@@ -1003,6 +1003,9 @@ export function createContextualAIChatTransport(
     updateConversation: base.updateConversation.bind(base),
     removeConversation: base.removeConversation.bind(base),
     stopConversation: base.stopConversation.bind(base),
+    searchConversations: (query, limit) =>
+      base.searchConversations?.(query, limit, { surface: 'contextual_sidebar' }) ??
+      Promise.resolve([]),
     streamChat(
       payload: AIChatChatRequest,
       callbacks: AIChatStreamCallbacks,

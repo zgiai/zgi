@@ -253,7 +253,11 @@ export interface AIChatController {
     payload: AIChatClientActionResultRequest
   ) => Promise<void>;
   switchBranch: (messageId: string) => void;
-  search?: (query: string, limit: number) => Promise<ConversationSearchResult[]>;
+  search?: (
+    query: string,
+    limit: number,
+    options?: { surface?: AIChatRuntimeSurface }
+  ) => Promise<ConversationSearchResult[]>;
 }
 
 export type AIChatSetControllerState = (

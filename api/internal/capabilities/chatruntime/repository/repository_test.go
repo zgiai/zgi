@@ -94,7 +94,7 @@ func TestSearchByCallerScopedMapsResults(t *testing.T) {
 		).
 		WillReturnRows(rows)
 
-	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "", nil, "release", 20)
+	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "", nil, "", "release", 20)
 	if err != nil {
 		t.Fatalf("SearchByCallerScoped: %v", err)
 	}
@@ -109,6 +109,53 @@ func TestSearchByCallerScopedMapsResults(t *testing.T) {
 	}
 	if results[0].MatchText != "Generate release notes" {
 		t.Fatalf("match text = %q", results[0].MatchText)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestSearchByCallerScopedAppliesSurfaceFilter(t *testing.T) {
+	db, mock := newConversationRepositoryMockDB(t)
+	repo := NewConversationRepository(db)
+	organizationID := uuid.New()
+	accountID := uuid.New()
+
+	rows := sqlmock.NewRows([]string{
+		"type",
+		"conversation_id",
+		"conversation_title",
+		"message_id",
+		"match_text",
+		"updated_at",
+		"rank",
+	})
+	mock.ExpectQuery(`(?s).*c\.metadata->>'surface'.*m_surface\.metadata->>'surface'.*ORDER BY rank ASC, updated_at DESC.*LIMIT.*`).
+		WithArgs(
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAIChat,
+			"contextual_sidebar",
+			"contextual_sidebar",
+			"%asset%",
+			"%asset%",
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAIChat,
+			"contextual_sidebar",
+			"contextual_sidebar",
+			"%asset%",
+			"%asset%",
+			10,
+		).
+		WillReturnRows(rows)
+
+	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, "", nil, "contextual_sidebar", "asset", 10)
+	if err != nil {
+		t.Fatalf("SearchByCallerScoped: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected no results, got %d", len(results))
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)

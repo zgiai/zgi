@@ -254,10 +254,18 @@ func (s *service) ListConversationsBySurface(ctx context.Context, scope Scope, s
 }
 
 func (s *service) Search(ctx context.Context, scope Scope, query string, limit int) ([]*SearchResult, error) {
-	return s.SearchByCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, query, limit)
+	return s.searchByCallerSurface(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, "", query, limit)
+}
+
+func (s *service) SearchBySurface(ctx context.Context, scope Scope, surface string, query string, limit int) ([]*SearchResult, error) {
+	return s.searchByCallerSurface(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, normalizeAIChatSurface(surface), query, limit)
 }
 
 func (s *service) SearchByCaller(ctx context.Context, scope Scope, caller Caller, query string, limit int) ([]*SearchResult, error) {
+	return s.searchByCallerSurface(ctx, scope, caller, "", query, limit)
+}
+
+func (s *service) searchByCallerSurface(ctx context.Context, scope Scope, caller Caller, surface string, query string, limit int) ([]*SearchResult, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -274,6 +282,7 @@ func (s *service) SearchByCaller(ctx context.Context, scope Scope, caller Caller
 		normalizeCallerID(caller.ID),
 		strings.TrimSpace(caller.Source),
 		normalizeCallerID(caller.SourceWebAppID),
+		strings.TrimSpace(surface),
 		query,
 		limit,
 	)

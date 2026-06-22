@@ -248,9 +248,9 @@ export const aichatService = {
     });
   },
 
-  search(query: string, limit = 20) {
+  search(query: string, limit = 20, params: { surface?: AIChatRuntimeSurface } = {}) {
     return http.get<AIChatSearchResponse>(`${AICHAT_BASE_PATH}/search`, {
-      params: { query, limit },
+      params: { query, limit, ...params },
     });
   },
 

@@ -1053,6 +1053,10 @@ func (s *fakeRuntimeHistoryService) Search(ctx context.Context, scope runtimeser
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (s *fakeRuntimeHistoryService) SearchBySurface(ctx context.Context, scope runtimeservice.Scope, surface string, query string, limit int) ([]*runtimeservice.SearchResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (s *fakeRuntimeHistoryService) SearchByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, query string, limit int) ([]*runtimeservice.SearchResult, error) {
 	return nil, fmt.Errorf("not implemented")
 }

@@ -288,7 +288,7 @@ func (h *Handler) Search(c *gin.Context) {
 	if limit > maxSearchLimit {
 		limit = maxSearchLimit
 	}
-	results, err := h.service.Search(c.Request.Context(), scope, c.Query("query"), limit)
+	results, err := h.service.SearchBySurface(c.Request.Context(), scope, c.Query("surface"), c.Query("query"), limit)
 	if err != nil {
 		h.fail(c, err)
 		return

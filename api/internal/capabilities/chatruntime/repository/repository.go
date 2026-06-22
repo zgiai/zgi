@@ -23,7 +23,7 @@ type ConversationRepository interface {
 	ListScoped(ctx context.Context, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerSurfaceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, surface string, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, queryText string, limit int) ([]*SearchResult, error)
+	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error)
 	UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	DeleteScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) error
@@ -248,7 +248,7 @@ func (r *conversationRepository) ListByCallerSurfaceScoped(ctx context.Context, 
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, queryText string, limit int) ([]*SearchResult, error) {
+func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error) {
 	keyword := strings.TrimSpace(queryText)
 	if keyword == "" || limit <= 0 {
 		return []*SearchResult{}, nil
@@ -284,14 +284,17 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 			sourceArgs = append(sourceArgs, *sourceWebAppID)
 		}
 	}
+	surfaceFilter, surfaceArgs := searchConversationSurfaceFilter(surface)
 	args := []interface{}{organizationID, accountID, callerType}
 	args = append(args, callerArgs...)
 	args = append(args, sourceArgs...)
+	args = append(args, surfaceArgs...)
 	args = append(args, pattern)
 	args = append(args, pattern)
 	args = append(args, organizationID, accountID, callerType)
 	args = append(args, callerArgs...)
 	args = append(args, sourceArgs...)
+	args = append(args, surfaceArgs...)
 	args = append(args, pattern, pattern)
 	args = append(args, limit)
 
@@ -313,6 +316,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 				AND c.caller_type = ?
 				AND %s
 				AND c.deleted_at IS NULL
+				%s
 				%s
 				AND LOWER(COALESCE(c.title, '')) LIKE ? ESCAPE '\'
 			UNION ALL
@@ -336,6 +340,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 				AND c.deleted_at IS NULL
 				AND m.deleted_at IS NULL
 				%s
+				%s
 				AND (
 					LOWER(COALESCE(m.query, '')) LIKE ? ESCAPE '\'
 					OR LOWER(COALESCE(m.answer, '')) LIKE ? ESCAPE '\'
@@ -343,7 +348,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 		) AS matches
 		ORDER BY rank ASC, updated_at DESC
 		LIMIT ?
-	`, callerFilter, sourceFilter, callerFilter, sourceFilter)
+	`, callerFilter, sourceFilter, surfaceFilter, callerFilter, sourceFilter, surfaceFilter)
 
 	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("failed to search chat runtime conversations: %w", err)
@@ -360,6 +365,41 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 		})
 	}
 	return results, nil
+}
+
+func searchConversationSurfaceFilter(surface string) (string, []interface{}) {
+	surface = strings.TrimSpace(surface)
+	if surface == "" {
+		return "", nil
+	}
+	if surface == "work_chat" {
+		return ` AND (
+			c.metadata->>'surface' = ?
+			OR (
+				(c.metadata->>'surface' IS NULL OR c.metadata->>'surface' = '')
+				AND NOT EXISTS (
+					SELECT 1 FROM chat_runtime_messages AS m_surface
+					WHERE m_surface.conversation_id = c.id
+						AND m_surface.deleted_at IS NULL
+						AND m_surface.metadata->>'surface' IS NOT NULL
+						AND m_surface.metadata->>'surface' <> ''
+						AND m_surface.metadata->>'surface' <> ?
+				)
+			)
+		)`, []interface{}{surface, surface}
+	}
+	return ` AND (
+		c.metadata->>'surface' = ?
+		OR (
+			(c.metadata->>'surface' IS NULL OR c.metadata->>'surface' = '')
+			AND EXISTS (
+				SELECT 1 FROM chat_runtime_messages AS m_surface
+				WHERE m_surface.conversation_id = c.id
+					AND m_surface.deleted_at IS NULL
+					AND m_surface.metadata->>'surface' = ?
+			)
+		)
+	)`, []interface{}{surface, surface}
 }
 
 func applyCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID) *gorm.DB {
