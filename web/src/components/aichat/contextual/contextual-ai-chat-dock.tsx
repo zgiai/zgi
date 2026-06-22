@@ -79,6 +79,7 @@ interface PendingClientActionContinuation {
   assets?: Array<Record<string, unknown>>;
   requestedAt: number;
   completed: boolean;
+  resuming?: boolean;
 }
 
 function useIsDesktopPanelViewport() {
@@ -707,21 +708,34 @@ export function ContextualAIChatDock() {
         return;
       }
 
-      pending.completed = true;
-      pendingClientActionRef.current = null;
-      clearClientActionRouteTimeout();
+      if (pending.resuming) return;
+      pending.resuming = true;
+      setPendingClientActionVersion(version => version + 1);
 
       const continueClientAction = clientActionContinuationRef.current;
-      if (!continueClientAction) return;
+      if (!continueClientAction) {
+        pending.resuming = false;
+        return;
+      }
 
       void continueClientAction(
         pending.conversationId,
         pending.messageId,
         pending.actionId,
         payload
-      ).catch(error => {
-        console.error('AIChat client action continuation failed', error);
-      });
+      )
+        .then(() => {
+          if (pendingClientActionRef.current?.actionId !== pending.actionId) return;
+          pending.completed = true;
+          pendingClientActionRef.current = null;
+          clearClientActionRouteTimeout();
+          setPendingClientActionVersion(version => version + 1);
+        })
+        .catch(error => {
+          pending.resuming = false;
+          setPendingClientActionVersion(version => version + 1);
+          console.error('AIChat client action continuation failed', error);
+        });
     },
     [clearClientActionRouteTimeout]
   );
@@ -913,6 +927,10 @@ export function ContextualAIChatDock() {
 
   useEffect(() => {
     clientActionContinuationRef.current = controller.continueClientAction ?? null;
+    const pending = pendingClientActionRef.current;
+    if (pending && !pending.completed && !pending.resuming && controller.continueClientAction) {
+      setPendingClientActionVersion(version => version + 1);
+    }
   }, [controller.continueClientAction]);
 
   useEffect(() => {

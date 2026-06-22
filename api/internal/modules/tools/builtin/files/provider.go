@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -36,6 +38,7 @@ const (
 	maxReadFileMaxChars     = 12000
 	maxSaveFileBytes        = 25 * 1024 * 1024
 	saveFileHTTPTimeout     = 30 * time.Second
+	maxSaveFileRedirects    = 5
 
 	governedFileDeleteSkillID       = "file-manager"
 	legacyGovernedFileDeleteSkillID = "file-reader"
@@ -502,6 +505,19 @@ func (t *saveFileTool) Invoke(ctx context.Context, userID string, params map[str
 	if workspaceID == "" {
 		return nil, fmt.Errorf("workspace_id is required to save a file into File Management")
 	}
+	if err := t.ensureFileCreatable(ctx, scope, workspaceID); err != nil {
+		return nil, err
+	}
+	sourceType := normalizedSaveFileSourceType(params)
+	if isURLSaveFileSourceType(sourceType) {
+		asset, err := saveFileAssetFromURLParams(params, workspaceID)
+		if err != nil {
+			return nil, err
+		}
+		if err := t.ensureGovernedSaveAllowed(scope, asset, conversationID); err != nil {
+			return nil, err
+		}
+	}
 	source, err := t.resolveSource(ctx, scope, params, conversationID)
 	if err != nil {
 		return nil, err
@@ -513,20 +529,10 @@ func (t *saveFileTool) Invoke(ctx context.Context, userID string, params map[str
 	if len(source.Data) == 0 {
 		return nil, fmt.Errorf("source file is empty")
 	}
-	if err := t.ensureFileCreatable(ctx, scope, workspaceID); err != nil {
-		return nil, err
-	}
-	asset := toolgovernance.AssetRef{
-		Type:        "file",
-		Name:        source.Filename,
-		WorkspaceID: workspaceID,
-		Source:      "tool_arguments",
-		Metadata: map[string]interface{}{
-			"source_type": source.SourceType,
-		},
-	}
-	if err := t.ensureGovernedSaveAllowed(scope, asset, conversationID); err != nil {
-		return nil, err
+	if !isURLSaveFileSourceType(source.SourceType) {
+		if err := t.ensureGovernedSaveAllowed(scope, saveFileAsset(source.Filename, workspaceID, source.SourceType), conversationID); err != nil {
+			return nil, err
+		}
 	}
 
 	uploadFile, err := t.fileService.UploadFile(
@@ -629,14 +635,7 @@ func (t *deleteFileTool) governedDeleteApprovedWithSkill(scope fileScope, file *
 }
 
 func (t *saveFileTool) resolveSource(ctx context.Context, scope fileScope, params map[string]interface{}, conversationID *string) (saveFileSource, error) {
-	sourceType := strings.ToLower(strings.TrimSpace(stringValue(params, "source_type")))
-	if sourceType == "" {
-		if stringValue(params, "url") != "" {
-			sourceType = "url"
-		} else {
-			sourceType = "tool_file"
-		}
-	}
+	sourceType := normalizedSaveFileSourceType(params)
 	switch sourceType {
 	case "tool_file", "generated_file", "artifact":
 		return t.resolveToolFileSource(ctx, scope, params, conversationID)
@@ -644,6 +643,46 @@ func (t *saveFileTool) resolveSource(ctx context.Context, scope fileScope, param
 		return resolveURLFileSource(ctx, params)
 	default:
 		return saveFileSource{}, fmt.Errorf("unsupported source_type: %s", sourceType)
+	}
+}
+
+func normalizedSaveFileSourceType(params map[string]interface{}) string {
+	sourceType := strings.ToLower(strings.TrimSpace(stringValue(params, "source_type")))
+	if sourceType != "" {
+		return sourceType
+	}
+	if stringValue(params, "url") != "" {
+		return "url"
+	}
+	return "tool_file"
+}
+
+func isURLSaveFileSourceType(sourceType string) bool {
+	sourceType = strings.ToLower(strings.TrimSpace(sourceType))
+	return sourceType == "url" || sourceType == "external_url"
+}
+
+func saveFileAssetFromURLParams(params map[string]interface{}, workspaceID string) (toolgovernance.AssetRef, error) {
+	rawURL := strings.TrimSpace(stringValue(params, "url"))
+	if rawURL == "" {
+		return toolgovernance.AssetRef{}, fmt.Errorf("url is required when source_type is url")
+	}
+	if _, err := inspectPublicSaveFileURL(rawURL); err != nil {
+		return toolgovernance.AssetRef{}, err
+	}
+	filename := finalizeFileManagementFilename(stringValue(params, "filename"), filenameFromURL(rawURL), "")
+	return saveFileAsset(filename, workspaceID, "url"), nil
+}
+
+func saveFileAsset(filename string, workspaceID string, sourceType string) toolgovernance.AssetRef {
+	return toolgovernance.AssetRef{
+		Type:        "file",
+		Name:        filename,
+		WorkspaceID: workspaceID,
+		Source:      "tool_arguments",
+		Metadata: map[string]interface{}{
+			"source_type": sourceType,
+		},
 	}
 }
 
@@ -695,49 +734,147 @@ func resolveURLFileSource(ctx context.Context, params map[string]interface{}) (s
 	if rawURL == "" {
 		return saveFileSource{}, fmt.Errorf("url is required when source_type is url")
 	}
-	info, err := workflowfile.InspectExternalURL(rawURL)
+	data, mimeType, finalURL, err := downloadPublicSaveFileURL(ctx, rawURL)
 	if err != nil {
 		return saveFileSource{}, err
 	}
-	if !info.IsPublic && !workflowfile.IsDevelopmentEnvironment() {
-		return saveFileSource{}, fmt.Errorf("file URL must be publicly reachable")
-	}
-
-	client := &http.Client{Timeout: saveFileHTTPTimeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return saveFileSource{}, fmt.Errorf("failed to create file download request: %w", err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return saveFileSource{}, fmt.Errorf("failed to download file URL: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return saveFileSource{}, fmt.Errorf("failed to download file URL: status %d", resp.StatusCode)
-	}
-	reader := io.LimitReader(resp.Body, maxSaveFileBytes+1)
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return saveFileSource{}, fmt.Errorf("failed to read downloaded file: %w", err)
-	}
-	if len(data) > maxSaveFileBytes {
-		return saveFileSource{}, fmt.Errorf("downloaded file exceeds %d bytes", maxSaveFileBytes)
-	}
-	mimeType := normalizeMimeType(resp.Header.Get("Content-Type"))
-	if shouldPreferDetectedFileMimeType(mimeType, http.DetectContentType(data)) {
-		mimeType = http.DetectContentType(data)
-	}
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
 	return saveFileSource{
 		Data:       data,
-		Filename:   filenameFromURL(rawURL),
+		Filename:   filenameFromURL(finalURL),
 		MimeType:   mimeType,
 		SourceType: "url",
 		SourceURL:  rawURL,
 	}, nil
+}
+
+func downloadPublicSaveFileURL(ctx context.Context, rawURL string) ([]byte, string, string, error) {
+	client := publicSaveFileHTTPClient()
+	currentURL := rawURL
+	for redirects := 0; redirects <= maxSaveFileRedirects; redirects++ {
+		parsed, err := inspectPublicSaveFileURL(currentURL)
+		if err != nil {
+			return nil, "", "", err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("failed to create file download request: %w", err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("failed to download file URL: %w", err)
+		}
+		if isSaveFileRedirectStatus(resp.StatusCode) {
+			nextURL, redirectErr := publicSaveFileRedirectURL(parsed, resp.Header.Get("Location"))
+			resp.Body.Close()
+			if redirectErr != nil {
+				return nil, "", "", redirectErr
+			}
+			currentURL = nextURL
+			continue
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return nil, "", "", fmt.Errorf("failed to download file URL: status %d", resp.StatusCode)
+		}
+		reader := io.LimitReader(resp.Body, maxSaveFileBytes+1)
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("failed to read downloaded file: %w", err)
+		}
+		if len(data) > maxSaveFileBytes {
+			return nil, "", "", fmt.Errorf("downloaded file exceeds %d bytes", maxSaveFileBytes)
+		}
+		mimeType := normalizeMimeType(resp.Header.Get("Content-Type"))
+		if shouldPreferDetectedFileMimeType(mimeType, http.DetectContentType(data)) {
+			mimeType = http.DetectContentType(data)
+		}
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		return data, mimeType, parsed.String(), nil
+	}
+	return nil, "", "", fmt.Errorf("file URL exceeded %d redirects", maxSaveFileRedirects)
+}
+
+func publicSaveFileHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialContext = publicSaveFileDialContext
+	return &http.Client{
+		Timeout: saveFileHTTPTimeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: transport,
+	}
+}
+
+func publicSaveFileDialContext(ctx context.Context, network string, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve file URL host: %w", err)
+	}
+	dialer := &net.Dialer{}
+	for _, ip := range ips {
+		addr, ok := netip.AddrFromSlice(ip.IP)
+		if !ok || !isPublicSaveFileAddr(addr) {
+			continue
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+	}
+	return nil, fmt.Errorf("file URL host resolved to a non-public address")
+}
+
+func inspectPublicSaveFileURL(rawURL string) (*url.URL, error) {
+	info, err := workflowfile.InspectExternalURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsPublic {
+		return nil, fmt.Errorf("file URL must be publicly reachable")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("file URL is invalid: %w", err)
+	}
+	return parsed, nil
+}
+
+func publicSaveFileRedirectURL(current *url.URL, location string) (string, error) {
+	location = strings.TrimSpace(location)
+	if location == "" {
+		return "", fmt.Errorf("file URL redirect missing location")
+	}
+	next, err := current.Parse(location)
+	if err != nil {
+		return "", fmt.Errorf("file URL redirect is invalid: %w", err)
+	}
+	if _, err := inspectPublicSaveFileURL(next.String()); err != nil {
+		return "", err
+	}
+	return next.String(), nil
+}
+
+func isSaveFileRedirectStatus(status int) bool {
+	switch status {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	default:
+		return false
+	}
+}
+
+func isPublicSaveFileAddr(addr netip.Addr) bool {
+	return !addr.IsPrivate() &&
+		!addr.IsLoopback() &&
+		!addr.IsLinkLocalUnicast() &&
+		!addr.IsLinkLocalMulticast() &&
+		!addr.IsMulticast() &&
+		!addr.IsUnspecified()
 }
 
 func (t *saveFileTool) ensureFileCreatable(ctx context.Context, scope fileScope, workspaceID string) error {

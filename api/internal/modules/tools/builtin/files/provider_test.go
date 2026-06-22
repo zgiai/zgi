@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"errors"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -654,6 +655,67 @@ func TestSaveFileToolRequiresGovernanceApprovalOnBasicPermission(t *testing.T) {
 	}
 	if len(fileService.uploads) != 0 {
 		t.Fatalf("uploads = %#v, want no upload before approval", fileService.uploads)
+	}
+}
+
+func TestSaveFileToolURLChecksPermissionBeforeInspectingSource(t *testing.T) {
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	conversationID := uuid.NewString()
+	fileService := &fakeFileService{files: map[string]*dto.UploadFile{}}
+	provider := NewProvider(fileService, nil, &fakeWorkspacePermissionService{allowed: false})
+	tool := saveFileRuntimeToolFrom(t, provider, organizationID, tools.ToolInvokeFromAIChat, map[string]interface{}{
+		"organization_id": organizationID,
+		"workspace_id":    workspaceID,
+	})
+
+	_, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{
+		"source_type": "url",
+		"url":         "not-a-url",
+		"filename":    "remote.txt",
+	}, &conversationID, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "permission") {
+		t.Fatalf("Invoke() error = %v, want permission error before URL inspection", err)
+	}
+	if len(fileService.uploads) != 0 {
+		t.Fatalf("uploads = %#v, want no upload", fileService.uploads)
+	}
+}
+
+func TestSaveFileToolURLRequiresGovernanceBeforeDownload(t *testing.T) {
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	conversationID := uuid.NewString()
+	fileService := &fakeFileService{files: map[string]*dto.UploadFile{}}
+	provider := NewProvider(fileService, nil, &fakeWorkspacePermissionService{allowed: true})
+	tool := saveFileRuntimeToolFrom(t, provider, organizationID, tools.ToolInvokeFromAIChat, map[string]interface{}{
+		"organization_id": organizationID,
+		"workspace_id":    workspaceID,
+	})
+
+	_, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{
+		"source_type": "url",
+		"url":         "https://example.com/remote.txt",
+		"filename":    "remote.txt",
+	}, &conversationID, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "tool governance approval") {
+		t.Fatalf("Invoke() error = %v, want governance approval before download", err)
+	}
+	if len(fileService.uploads) != 0 {
+		t.Fatalf("uploads = %#v, want no upload", fileService.uploads)
+	}
+}
+
+func TestSaveFileURLRedirectRejectsPrivateTarget(t *testing.T) {
+	current, err := url.Parse("https://example.com/source.txt")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+
+	if next, err := publicSaveFileRedirectURL(current, "http://127.0.0.1/private.txt"); err == nil {
+		t.Fatalf("publicSaveFileRedirectURL() = %q, want private target error", next)
 	}
 }
 
