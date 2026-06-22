@@ -272,6 +272,61 @@ func TestRefreshLimitIsIsolatedByScope(t *testing.T) {
 	}
 }
 
+func TestRefreshBatchConsumesLimitOnlyForExecutedScopes(t *testing.T) {
+	reg := New(Options{
+		ModuleRefreshInterval: time.Minute,
+		RateLimiter:           NewMemoryRateLimiter(),
+	})
+	models := &fakeRefresher{prefix: "llm.models"}
+	if err := reg.Register(models); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	orgA := uuid.MustParse("00000000-0000-0000-0000-00000000000a")
+	orgB := uuid.MustParse("00000000-0000-0000-0000-00000000000b")
+
+	if err := reg.Refresh(context.Background(), "llm.models", Scope{OrganizationID: &orgB}, "actor-a"); err != nil {
+		t.Fatalf("precondition Refresh() org B error = %v", err)
+	}
+
+	err := reg.RefreshBatch(context.Background(), "llm.models", []Scope{
+		{OrganizationID: &orgA},
+		{OrganizationID: &orgB},
+	}, "actor-a")
+	var rateErr *RateLimitedError
+	if !errors.As(err, &rateErr) {
+		t.Fatalf("RefreshBatch() error = %v, want *RateLimitedError", err)
+	}
+	if models.refreshed != 2 {
+		t.Fatalf("refreshed = %d, want precondition org B plus executed org A", models.refreshed)
+	}
+	if err := reg.Refresh(context.Background(), "llm.models", Scope{OrganizationID: &orgA}, "actor-a"); err == nil {
+		t.Fatal("Refresh() org A after executed batch error = nil, want rate limit")
+	}
+}
+
+func TestRefreshParentPrefixLimitsActualChildModule(t *testing.T) {
+	reg := New(Options{
+		ModuleRefreshInterval: time.Minute,
+		RateLimiter:           NewMemoryRateLimiter(),
+	})
+	models := &fakeRefresher{prefix: "llm.models"}
+	if err := reg.Register(models); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	if err := reg.Refresh(context.Background(), "llm", Scope{}, "actor-a"); err != nil {
+		t.Fatalf("Refresh() parent prefix error = %v", err)
+	}
+	err := reg.Refresh(context.Background(), "llm.models", Scope{}, "actor-a")
+	var rateErr *RateLimitedError
+	if !errors.As(err, &rateErr) {
+		t.Fatalf("Refresh() child prefix error = %v, want *RateLimitedError", err)
+	}
+	if models.refreshed != 1 {
+		t.Fatalf("refreshed = %d, want only parent-prefix refresh", models.refreshed)
+	}
+}
+
 func TestInternalRefreshBypassesLimit(t *testing.T) {
 	reg := New(Options{
 		ModuleRefreshInterval: time.Minute,
@@ -344,6 +399,38 @@ func TestBatchRefreshUsesEveryScope(t *testing.T) {
 	}
 	if !slices.Equal(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestRefreshAllBatchConsumesLimitOnlyForExecutedScopes(t *testing.T) {
+	reg := New(Options{
+		GlobalRefreshInterval: time.Minute,
+		RateLimiter:           NewMemoryRateLimiter(),
+	})
+	models := &fakeRefresher{prefix: "llm.models"}
+	if err := reg.Register(models); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	orgA := uuid.MustParse("00000000-0000-0000-0000-00000000000a")
+	orgB := uuid.MustParse("00000000-0000-0000-0000-00000000000b")
+
+	if err := reg.RefreshAll(context.Background(), Scope{OrganizationID: &orgB}, "actor-a"); err != nil {
+		t.Fatalf("precondition RefreshAll() org B error = %v", err)
+	}
+
+	err := reg.RefreshAllBatch(context.Background(), []Scope{
+		{OrganizationID: &orgA},
+		{OrganizationID: &orgB},
+	}, "actor-a")
+	var rateErr *RateLimitedError
+	if !errors.As(err, &rateErr) {
+		t.Fatalf("RefreshAllBatch() error = %v, want *RateLimitedError", err)
+	}
+	if models.refreshed != 2 {
+		t.Fatalf("refreshed = %d, want precondition org B plus executed org A", models.refreshed)
+	}
+	if err := reg.RefreshAll(context.Background(), Scope{OrganizationID: &orgA}, "actor-a"); err == nil {
+		t.Fatal("RefreshAll() org A after executed batch error = nil, want rate limit")
 	}
 }
 

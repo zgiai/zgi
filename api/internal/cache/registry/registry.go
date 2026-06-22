@@ -144,12 +144,14 @@ func (r *Registry) RefreshBatch(ctx context.Context, modulePrefix string, scopes
 	}
 
 	scopes = normalizeScopes(scopes)
-	for _, scope := range scopes {
-		if err := r.checkLimit(ctx, "module:"+prefix+":"+scope.Key(), r.module); err != nil {
+	return r.runBatch(ctx, refs, scopes, func(refresher Refresher, scope Scope) error {
+		refPrefix, err := parseModulePrefix(refresher.Prefix())
+		if err != nil {
 			return err
 		}
-	}
-	return r.runBatch(ctx, refs, scopes, func(refresher Refresher, scope Scope) error {
+		if err := r.checkLimit(ctx, "module:"+refPrefix+":"+scope.Key(), r.module); err != nil {
+			return err
+		}
 		return refresher.Refresh(ctx, scope)
 	})
 }
@@ -175,14 +177,20 @@ func (r *Registry) RefreshAll(ctx context.Context, scope Scope, actorID string) 
 func (r *Registry) RefreshAllBatch(ctx context.Context, scopes []Scope, actorID string) error {
 	_ = actorID
 	scopes = normalizeScopes(scopes)
+	refs := r.matchAll()
+	var errs []error
 	for _, scope := range scopes {
 		if err := r.checkLimit(ctx, "global:"+scope.Key(), r.global); err != nil {
-			return err
+			errs = append(errs, err)
+			continue
+		}
+		if err := r.runBatch(ctx, refs, []Scope{scope}, func(refresher Refresher, scope Scope) error {
+			return refresher.Refresh(ctx, scope)
+		}); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return r.runBatch(ctx, r.matchAll(), scopes, func(refresher Refresher, scope Scope) error {
-		return refresher.Refresh(ctx, scope)
-	})
+	return errors.Join(errs...)
 }
 
 func (r *Registry) RefreshAllInternal(ctx context.Context, scope Scope) error {

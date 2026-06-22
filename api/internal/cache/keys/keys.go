@@ -16,7 +16,7 @@ type Builder struct {
 }
 
 func NewBuilder(globalPrefix string) Builder {
-	globalPrefix = normalizePart(globalPrefix)
+	globalPrefix = normalizePrefixPart(globalPrefix)
 	if globalPrefix == "" || globalPrefix == EmptyPart {
 		globalPrefix = DefaultGlobalPrefix
 	}
@@ -41,7 +41,7 @@ func (b Builder) Build(modulePrefix string, parts ...string) string {
 		segments = append(segments, strings.Split(module, ":")...)
 	}
 	for _, part := range parts {
-		segments = append(segments, normalizePart(part))
+		segments = append(segments, normalizeKeyPart(part))
 	}
 	return strings.Join(segments, ":")
 }
@@ -63,7 +63,7 @@ func NormalizeModulePrefix(prefix string) string {
 
 	parts := make([]string, 0, len(rawParts))
 	for _, part := range rawParts {
-		part = normalizePart(part)
+		part = normalizePrefixPart(part)
 		if part == "" || part == EmptyPart {
 			continue
 		}
@@ -76,9 +76,16 @@ func CanonicalModulePrefix(prefix string) string {
 	return strings.ReplaceAll(NormalizeModulePrefix(prefix), ":", ".")
 }
 
-func normalizePart(part string) string {
+func normalizePrefixPart(part string) string {
 	part = strings.TrimSpace(part)
 	part = strings.Trim(part, ":")
+	if part == "" {
+		return EmptyPart
+	}
+	return url.QueryEscape(part)
+}
+
+func normalizeKeyPart(part string) string {
 	if part == "" {
 		return EmptyPart
 	}

@@ -65,3 +65,25 @@ func TestBuilderEscapesArbitraryPartsToAvoidDelimiterCollisions(t *testing.T) {
 		t.Fatalf("Build() = %q, want %q", got, want)
 	}
 }
+
+func TestBuilderEscapesRawKeyPartsWithoutTrimming(t *testing.T) {
+	builder := DefaultBuilder()
+
+	withColon := builder.Build("m", ":abc")
+	withoutColon := builder.Build("m", "abc")
+	if withColon == withoutColon {
+		t.Fatalf("Build() collision: %q == %q", withColon, withoutColon)
+	}
+	if want := "zgi_cache:m:%3Aabc"; withColon != want {
+		t.Fatalf("Build() with colon = %q, want %q", withColon, want)
+	}
+
+	withSpace := builder.Build("m", " abc ")
+	withoutSpace := builder.Build("m", "abc")
+	if withSpace == withoutSpace {
+		t.Fatalf("Build() collision: %q == %q", withSpace, withoutSpace)
+	}
+	if want := "zgi_cache:m:+abc+"; withSpace != want {
+		t.Fatalf("Build() with spaces = %q, want %q", withSpace, want)
+	}
+}
