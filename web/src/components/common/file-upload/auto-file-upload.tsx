@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
   useEffect,
+  useLayoutEffect,
   forwardRef,
   useImperativeHandle,
 } from 'react';
@@ -100,6 +101,13 @@ interface UploadItem {
 
 const genId = () => generateClientId('upload');
 
+function getSuccessfulUploadFiles(items: UploadItem[]): UploadedFile[] {
+  return items
+    .filter(it => it.status === 'success' && it.serverFile)
+    .map(it => it.serverFile)
+    .filter((file): file is UploadedFile => file !== undefined);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Component                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -132,6 +140,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     const isAuthenticated = useAuthStore.use.isAuthenticated();
 
     const [items, setItems] = useState<UploadItem[]>([]);
+    const itemsRef = useRef(items);
     const isFull = items.length >= maxCount;
     const [isSystemSelectOpen, setIsSystemSelectOpen] = useState(false);
     const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
@@ -176,22 +185,32 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           return;
         }
 
-        setItems(prev => [...prev, ...uniqueNewItems]);
+        setItems(prev => {
+          const next = [...prev, ...uniqueNewItems];
+          itemsRef.current = next;
+          latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
+          return next;
+        });
       },
       [items, t]
     );
 
     // Keep latest onChange in ref to avoid effect dependency loop
     const onChangeRef = useRef<typeof onChange>();
-    useEffect(() => {
+    useLayoutEffect(() => {
       onChangeRef.current = onChange;
     }, [onChange]);
     const valueRef = useRef(value);
+    const latestSuccessFilesRef = useRef(value);
     const controlledRef = useRef(controlled);
-    useEffect(() => {
+    useLayoutEffect(() => {
       valueRef.current = value;
       controlledRef.current = controlled;
     }, [controlled, value]);
+    useLayoutEffect(() => {
+      itemsRef.current = items;
+      latestSuccessFilesRef.current = getSuccessfulUploadFiles(items);
+    }, [items]);
 
     // Expose methods to parent via ref
     useImperativeHandle(
@@ -203,19 +222,22 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           return [];
         },
         getPendingFiles: () => {
-          return items.filter(it => it.status === 'pending').map(it => it.file);
+          return itemsRef.current.filter(it => it.status === 'pending').map(it => it.file);
         },
         getUploadedFiles: () => {
-          return items
-            .filter(it => it.status === 'success' && it.serverFile)
-            .map(it => it.serverFile)
-            .filter((file): file is UploadedFile => file !== undefined);
+          const latestSuccessFiles = latestSuccessFilesRef.current;
+          if (latestSuccessFiles.length > 0) {
+            return latestSuccessFiles;
+          }
+          return getSuccessfulUploadFiles(itemsRef.current);
         },
         clearAll: () => {
+          itemsRef.current = [];
+          latestSuccessFilesRef.current = [];
           setItems([]);
         },
       }),
-      [items]
+      []
     );
 
     // Initialize/sync items from external value in controlled mode without dropping in-flight uploads
@@ -269,18 +291,21 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             );
           });
 
+        if (!isSame) {
+          itemsRef.current = next;
+          latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
+        }
+
         return isSame ? prev : next;
       });
     }, [controlled, value]);
 
     // Notify parent after items change
-    useEffect(() => {
+    useLayoutEffect(() => {
       if (!onChangeRef.current) return;
 
-      const successFiles = items
-        .filter(it => it.status === 'success' && it.serverFile)
-        .map(it => it.serverFile)
-        .filter((file): file is UploadedFile => file !== undefined);
+      const successFiles = getSuccessfulUploadFiles(items);
+      latestSuccessFilesRef.current = successFiles;
 
       // In controlled mode, compare against refs so external value reference changes do not
       // re-run this notification effect.
@@ -342,7 +367,14 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     /* ------------------------------- uploading ------------------------------- */
 
     const startUpload = useCallback((item: UploadItem) => {
-      setItems(prev => prev.map(it => (it.id === item.id ? { ...it, status: 'uploading' } : it)));
+      setItems(prev => {
+        const next: UploadItem[] = prev.map(it =>
+          it.id === item.id ? { ...it, status: 'uploading' as const } : it
+        );
+        itemsRef.current = next;
+        latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
+        return next;
+      });
 
       uploadService
         .uploadSingle(item.file, {
@@ -350,7 +382,12 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           workspace_id: workspaceId,
           is_temporary: isTemporary,
           onProgress: p =>
-            setItems(prev => prev.map(it => (it.id === item.id ? { ...it, progress: p } : it))),
+            setItems(prev => {
+              const next = prev.map(it => (it.id === item.id ? { ...it, progress: p } : it));
+              itemsRef.current = next;
+              latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
+              return next;
+            }),
         })
         .then(response => {
           const uploaded: UploadedFile = {
@@ -365,23 +402,40 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             url: response.url || '',
           };
 
+          if (onChangeRef.current) {
+            const existingFiles = controlledRef.current
+              ? latestSuccessFilesRef.current
+              : getSuccessfulUploadFiles(itemsRef.current);
+            const nextFiles = [
+              ...existingFiles.filter(file => file.id !== uploaded.id),
+              uploaded,
+            ];
+            latestSuccessFilesRef.current = nextFiles;
+            onChangeRef.current(nextFiles);
+          }
+
           setItems(prev => {
             const next: UploadItem[] = prev.map(it =>
               it.id === item.id
                 ? ({ ...it, progress: 100, status: 'success', serverFile: uploaded } as UploadItem)
                 : it
             );
+            itemsRef.current = next;
+            latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
             return next;
           });
         })
         .catch((err: Error) => {
-          setItems(prev =>
-            prev.map(it =>
+          setItems(prev => {
+            const next: UploadItem[] = prev.map(it =>
               it.id === item.id
-                ? { ...it, progress: 100, status: 'error', errorMsg: err.message }
+                ? { ...it, progress: 100, status: 'error' as const, errorMsg: err.message }
                 : it
-            )
-          );
+            );
+            itemsRef.current = next;
+            latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
+            return next;
+          });
         });
     }, [folderId, isTemporary, workspaceId]);
 
@@ -450,7 +504,12 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           return;
         }
 
-        setItems(prev => [...prev, ...newItems]);
+        setItems(prev => {
+          const next = [...prev, ...newItems];
+          itemsRef.current = next;
+          latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
+          return next;
+        });
 
         // Only start upload for valid files
         newItems.filter(item => item.status === 'pending').forEach(startUpload);
@@ -461,6 +520,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     const removeItem = (id: string) => {
       setItems(prev => {
         const next = prev.filter(it => it.id !== id);
+        itemsRef.current = next;
+        latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
         return next as UploadItem[];
       });
     };
@@ -480,9 +541,14 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             })
           );
           // Update with new validation error
-          setItems(prev =>
-            prev.map(it => (it.id === id ? { ...it, status: 'error', errorMsg } : it))
-          );
+          setItems(prev => {
+            const next: UploadItem[] = prev.map(it =>
+              it.id === id ? { ...it, status: 'error' as const, errorMsg } : it
+            );
+            itemsRef.current = next;
+            latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
+            return next;
+          });
           return;
         }
 

@@ -315,7 +315,7 @@ func NewGLMAdapter(config *adapter.AdapterConfig) (*GLMAdapter, error) {
 
 	return &GLMAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClientWithAuthHook(timeout, maxRetries, config.AuthHook),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, maxRetries),
 		baseURL:    baseURL,
 		openAI:     openAICompatible,
 	}, nil

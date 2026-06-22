@@ -13,17 +13,19 @@ import (
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 	"go.uber.org/zap"
 )
 
 type externalClient struct {
-	baseURL    string
-	httpClient *http.Client
-	apiKey     string
-	recorder   audit.Recorder
+	baseURL        string
+	httpClient     *http.Client
+	apiKey         string
+	recorder       audit.Recorder
+	policyProvider GuardPolicyProvider
 }
 
-func NewExternalClient(recorder audit.Recorder) (SQLBase, error) {
+func NewExternalClient(recorder audit.Recorder, policyProvider GuardPolicyProvider) (SQLBase, error) {
 	sqlBaseCfg := appconfig.Current().SQLBase
 	baseURL := sqlBaseCfg.ExternalURL
 	if baseURL == "" {
@@ -33,10 +35,11 @@ func NewExternalClient(recorder audit.Recorder) (SQLBase, error) {
 	apiKey := sqlBaseCfg.ExternalAPIKey
 
 	return &externalClient{
-		baseURL:    baseURL,
-		httpClient: observability.HTTPClient(&http.Client{}),
-		apiKey:     apiKey,
-		recorder:   recorder,
+		baseURL:        baseURL,
+		httpClient:     observability.HTTPClient(&http.Client{}),
+		apiKey:         apiKey,
+		recorder:       recorder,
+		policyProvider: policyProvider,
 	}, nil
 }
 
@@ -1033,9 +1036,16 @@ func (c *externalClient) ListTypes(ctx context.Context) ([]Type, error) {
 // Query operations
 func (c *externalClient) ExecuteSQL(ctx context.Context, query string, params []interface{}, auditCtx *audit.Context) (*QueryResult, error) {
 	start := time.Now()
-	result, err := c.executeSQL(ctx, query, params)
+	guardResult, guarded, guardErr := checkSQLGuard(ctx, query, auditCtx, c.policyProvider)
+	var result *QueryResult
+	var err error
+	if guardErr != nil {
+		err = guardErr
+	} else {
+		result, err = c.executeSQL(ctx, query, params)
+	}
 	end := time.Now()
-	c.recordAudit(ctx, auditCtx, query, params, result, err, start, end)
+	c.recordAudit(ctx, auditCtx, query, params, result, err, start, end, guardResult, guarded)
 	return result, err
 }
 
@@ -1148,7 +1158,7 @@ func (c *externalClient) executeSQL(ctx context.Context, query string, params []
 	return &result, nil
 }
 
-func (c *externalClient) recordAudit(ctx context.Context, auditCtx *audit.Context, query string, params []interface{}, result *QueryResult, execErr error, start, end time.Time) {
+func (c *externalClient) recordAudit(ctx context.Context, auditCtx *audit.Context, query string, params []interface{}, result *QueryResult, execErr error, start, end time.Time, guardResult guard.Result, guarded bool) {
 	if c.recorder == nil || auditCtx == nil {
 		return
 	}
@@ -1163,6 +1173,7 @@ func (c *externalClient) recordAudit(ctx context.Context, auditCtx *audit.Contex
 		EndTime:      end,
 		ExecutedAt:   start,
 	}
+	applyGuardAudit(&record, guardResult, guarded)
 	if record.ClientType == "" {
 		record.ClientType = audit.ClientTypeUnknown
 	}

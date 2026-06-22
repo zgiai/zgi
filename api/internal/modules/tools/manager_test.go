@@ -14,6 +14,7 @@ import (
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/chartgenerator"
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
+	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/intentrouter"
 	_ "github.com/zgiai/zgi/api/internal/modules/tools/builtin/time"
 )
 
@@ -101,6 +102,7 @@ func TestToolManager_ListBuiltinProviders(t *testing.T) {
 	assert.True(t, hasProvider(providers, "calculator"))
 	assert.True(t, hasProvider(providers, "chart_generator"))
 	assert.True(t, hasProvider(providers, "file_generator"))
+	assert.True(t, hasProvider(providers, "intent_router"))
 }
 
 func TestToolManager_RunnerProviderTypeAlias(t *testing.T) {

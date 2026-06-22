@@ -121,7 +121,7 @@ func NewGoogleAdapter(config *adapter.AdapterConfig) (*GoogleAdapter, error) {
 
 	return &GoogleAdapter{
 		config:        config,
-		httpClient:    adapter.NewHTTPClientWithAuthHook(timeout, config.MaxRetries, config.AuthHook),
+		httpClient:    adapter.NewHTTPClientFromConfig(config, timeout, config.MaxRetries),
 		geminiBaseURL: geminiBaseURL,
 		imageBaseURL:  imageBaseURL,
 		geminiEnabled: geminiEnabled,

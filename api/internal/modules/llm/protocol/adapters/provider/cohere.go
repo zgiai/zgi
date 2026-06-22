@@ -43,7 +43,7 @@ func NewCohereAdapter(config *adapter.AdapterConfig) (*CohereAdapter, error) {
 
 	return &CohereAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClient(timeout, maxRetries),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, maxRetries),
 		baseURL:    baseURL,
 	}, nil
 }

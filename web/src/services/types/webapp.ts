@@ -185,6 +185,20 @@ export interface WebAppConversationList {
   total: number;
 }
 
+export type WebAppConversationSearchResultType = 'conversation' | 'message';
+
+export interface WebAppConversationSearchResult {
+  type: WebAppConversationSearchResultType;
+  conversation_id: string;
+  conversation_title: string;
+  message_id?: string;
+  snippet: string;
+  updated_at: number;
+}
+
+export type WebAppConversationSearchResponse =
+  WebAppApiResponseData<WebAppConversationSearchResult[]>;
+
 // Conversation detail types
 export interface WebAppConversationHistoryItem {
   content: string;

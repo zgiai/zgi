@@ -48,7 +48,7 @@ func NewClaudeAdapter(config *adapter.AdapterConfig) (*ClaudeAdapter, error) {
 
 	return &ClaudeAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClient(timeout, maxRetries),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, maxRetries),
 		baseURL:    baseURL,
 	}, nil
 }
@@ -583,6 +583,9 @@ func (a *ClaudeAdapter) anthropicClientOptions(headers map[string]string) []anth
 		anthropicoption.WithBaseURL(a.anthropicSDKBaseURL()),
 		anthropicoption.WithMaxRetries(a.config.MaxRetries),
 		anthropicoption.WithRequestTimeout(a.config.Timeout),
+	}
+	if client := a.httpClient.StandardClient(); client != nil {
+		opts = append(opts, anthropicoption.WithHTTPClient(client))
 	}
 	for k, v := range a.config.Headers {
 		opts = append(opts, anthropicoption.WithHeader(k, v))

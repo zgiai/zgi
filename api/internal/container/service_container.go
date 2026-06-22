@@ -69,6 +69,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
+	imagegenerator_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/imagegenerator"
 	knowledge_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/knowledge"
 	workflow_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
 	helper "github.com/zgiai/zgi/api/internal/util"
@@ -78,6 +79,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/scheduler"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
 	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
 )
@@ -671,7 +673,21 @@ func (c *ServiceContainer) CloseDataSourceSQLAuditRecorder(ctx context.Context) 
 
 func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
 	if c.sqlBase == nil {
-		client, err := sql_base.NewSQLBaseClient(sql_base.WithAuditRecorder(c.GetSQLAuditRecorder()))
+		dataSourceRepo := repository.NewPostgresDataSourceRepository(c.db)
+		client, err := sql_base.NewSQLBaseClient(
+			sql_base.WithAuditRecorder(c.GetSQLAuditRecorder()),
+			sql_base.WithGuardPolicyProvider(func(ctx context.Context, dataSourceID string) (*guard.Policy, error) {
+				dataSource, err := dataSourceRepo.FindByID(ctx, dataSourceID)
+				if err != nil || dataSource == nil {
+					return nil, err
+				}
+				policy, err := guard.ParsePolicyJSON([]byte(dataSource.GuardPolicy))
+				if err != nil {
+					return nil, err
+				}
+				return &policy, nil
+			}),
+		)
 		if err != nil {
 			panic("failed to create sql base client: " + err.Error())
 		}
@@ -875,6 +891,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
 		_ = c.toolManager.RegisterProvider(database_tools.NewProvider(c.GetDataSourceService(), c.GetOrganizationService()))
 		_ = c.toolManager.RegisterProvider(workflow_tools.NewProvider(c.GetAutomationWorkflowRunner))
+		_ = c.toolManager.RegisterProvider(imagegenerator_tools.NewProvider(c.GetFileService(), c.GetLLMClient(), c.GetDefaultModelService()))
 
 		logger.Info("ToolManager initialized with builtin providers")
 	}

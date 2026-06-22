@@ -6,6 +6,7 @@ import type {
   WebAppRunSseCallbacks,
   WebAppConversationList,
   WebAppConversationDetail,
+  WebAppConversationSearchResponse,
   WebAppPrecheckResult,
   WebAppRuntimeCapability,
 } from './types/webapp';
@@ -123,6 +124,16 @@ export class WebAppService {
   ): Promise<WebAppApiResponseData<WebAppConversationList>> {
     return webappHttp.get<WebAppApiResponseData<WebAppConversationList>>(
       `/console/api/workflows/${versionUuid}/conversations`,
+      { params }
+    );
+  }
+
+  static async searchConversations(
+    versionUuid: string,
+    params: { query: string; limit?: number }
+  ): Promise<WebAppConversationSearchResponse> {
+    return webappHttp.get<WebAppConversationSearchResponse>(
+      `/console/api/workflows/${versionUuid}/search`,
       { params }
     );
   }

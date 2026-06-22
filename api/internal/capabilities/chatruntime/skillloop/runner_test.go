@@ -255,6 +255,104 @@ Use the workflow tool.
 	}
 }
 
+func TestRunnerBlocksProfessionalToolWithoutPromptProfessionalizer(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillChartGenerator, `---
+name: chart-generator
+description: Generate charts.
+when_to_use: Use for charts.
+provider_type: builtin
+provider_id: chart_generator
+runtime_type: tool
+tools:
+  - generate_chart
+---
+
+# Chart Generator
+
+Use the chart tool.
+`)
+	writeRunnerTestSkill(t, catalogDir, skills.SkillPromptProfessionalizer, `---
+name: prompt-professionalizer
+description: Optimize prompts.
+when_to_use: Use before professional tools.
+runtime_type: prompt
+---
+
+# Prompt Professionalizer
+
+Prepare professional prompts.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load_chart",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"chart-generator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_chart", skills.SkillChartGenerator, "generate_chart", map[string]interface{}{
+								"chart_type": "bar",
+								"data":       map[string]interface{}{"categories": []string{"A"}, "series": []map[string]interface{}{{"name": "score", "values": []int{1}}}},
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "blocked and replanned"},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillChartGenerator})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	if _, ok := resolved.Get(skills.SkillPromptProfessionalizer); !ok {
+		t.Fatalf("prompt professionalizer should be auto-included")
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "generate a chart"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "blocked and replanned" {
+		t.Fatalf("answer = %q, want replanned answer", answer)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want 3", fakeLLM.appChatCalls)
+	}
+}
+
 func writeRunnerTestSkill(t *testing.T, catalogDir string, skillID string, content string) {
 	t.Helper()
 

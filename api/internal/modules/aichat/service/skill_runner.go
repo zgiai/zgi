@@ -702,6 +702,12 @@ func (s *service) handleProgressiveSkillCall(
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), toolName, "skill must be loaded before calling its tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)
 		}
+		if skills.RequiresPromptProfessionalizerPreflight(skillID, toolName) {
+			if _, ok := loadedSkills[skills.SkillPromptProfessionalizer]; !ok {
+				trace := blockedSkillGuardrailTrace(skillID, toolName, "prompt-professionalizer must be loaded before calling this professional generation tool")
+				return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)
+			}
+		}
 		if doc, ok := resolved.Get(skillID); ok && len(doc.Tools) == 0 {
 			trace := blockedSkillGuardrailTrace(skillID, toolName, "skill does not provide callable tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false)
@@ -1085,6 +1091,7 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 			"Do not call submit_intermediate_answer merely to repeat content that was already visible in an earlier assistant answer. For requests like exporting, saving, converting, or generating a file from existing content, pass the existing content directly to the file/tool call.",
 			"Do not skip submit_intermediate_answer by postponing or summarizing a new deliverable if the user explicitly asked for it as an intermediate phase.",
 			"When required information is missing or ambiguity blocks reliable progress, call request_user_input with a brief user-visible message plus a questions array containing one to five concise questions, then stop. The message should explain what you checked, why input is needed, and what you will do next. Prefer one to three questions. Do not call any other tools in the same turn after request_user_input.",
+			"If a loaded skill says a generic or ambiguous request must trigger request_user_input, you must call request_user_input and must not replace it with normal assistant text, Markdown bullets, or numbered questions.",
 			"When calling request_user_input, put the user-visible explanation only in the request_user_input message field. Do not also repeat that explanation in assistant text outside the tool call.",
 			"Each request_user_input question should ask one decision point. Include options only when each option is a concrete, directly usable answer. Do not include vague options such as free choice, freestyle, not sure, depends, any, or other; omit options for open-ended questions because the user can type freely.",
 			"Do not use request_user_input for information already confirmed in the conversation.",

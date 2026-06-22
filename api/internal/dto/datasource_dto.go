@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
 	shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
 	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 )
 
 // CreateDataSourceRequest represents the request to create a new data source
@@ -31,6 +32,23 @@ type UpdateDataSourceRequest struct {
 	IconType       *string `json:"icon_type"`
 	Icon           *string `json:"icon"`
 	IconBackground *string `json:"icon_background"`
+}
+
+type GuardPolicyResponse struct {
+	Policy guard.Policy `json:"policy"`
+}
+
+type UpdateGuardPolicyRequest struct {
+	Policy guard.Policy `json:"policy" binding:"required"`
+}
+
+type PreviewGuardRequest struct {
+	SQL    string        `json:"sql" binding:"required"`
+	Policy *guard.Policy `json:"policy,omitempty"`
+}
+
+type PreviewGuardResponse struct {
+	Result guard.Result `json:"result"`
 }
 
 // CreateTableRequest represents the request to create a new table
@@ -378,6 +396,8 @@ type SQLOperationResponse struct {
 	StartTime      time.Time `json:"start_time"`
 	EndTime        time.Time `json:"end_time"`
 	Status         string    `json:"status"`
+	GuardVerdict   *string   `json:"guard_verdict,omitempty"`
+	GuardAction    *string   `json:"guard_action,omitempty"`
 	CreatedBy      string    `json:"created_by"`
 	CreatedByName  *string   `json:"created_by_name,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -448,6 +468,8 @@ type SQLAuditListItem struct {
 	Status         string     `json:"status"`
 	RowCount       *int64     `json:"row_count"`
 	DurationMS     *int64     `json:"duration_ms"`
+	GuardVerdict   *string    `json:"guard_verdict,omitempty"`
+	GuardAction    *string    `json:"guard_action,omitempty"`
 	CreatedBy      string     `json:"created_by"`
 	ExecutedAt     *time.Time `json:"executed_at"`
 	CreatedAt      time.Time  `json:"created_at"`
@@ -457,6 +479,8 @@ type SQLAuditDetailResponse struct {
 	SQLAuditListItem
 	SQLStatement string          `json:"sql_statement"`
 	ParamsJSON   json.RawMessage `json:"params_json,omitempty"`
+	GuardReasons json.RawMessage `json:"guard_reasons,omitempty"`
+	GuardPolicy  json.RawMessage `json:"guard_policy,omitempty"`
 	ErrorCode    *string         `json:"error_code,omitempty"`
 	ErrorMessage *string         `json:"error_message,omitempty"`
 	RequestID    *string         `json:"request_id,omitempty"`
@@ -495,6 +519,8 @@ func ConvertSQLOperationModelToResponse(op *model.DataSourceSQLOperation) *SQLOp
 		StartTime:      op.StartTime,
 		EndTime:        op.EndTime,
 		Status:         op.Status,
+		GuardVerdict:   op.GuardVerdict,
+		GuardAction:    op.GuardAction,
 		CreatedBy:      op.CreatedBy,
 		CreatedAt:      op.CreatedAt,
 	}
@@ -516,6 +542,8 @@ func ConvertSQLOperationModelToAuditListItem(op *model.DataSourceSQLOperation) S
 		Status:         op.Status,
 		RowCount:       op.RowCount,
 		DurationMS:     op.DurationMS,
+		GuardVerdict:   op.GuardVerdict,
+		GuardAction:    op.GuardAction,
 		CreatedBy:      op.CreatedBy,
 		ExecutedAt:     op.ExecutedAt,
 		CreatedAt:      op.CreatedAt,
@@ -527,6 +555,8 @@ func ConvertSQLOperationModelToAuditDetail(op *model.DataSourceSQLOperation) SQL
 		SQLAuditListItem: ConvertSQLOperationModelToAuditListItem(op),
 		SQLStatement:     op.SqlStatement,
 		ParamsJSON:       json.RawMessage(op.ParamsJSON),
+		GuardReasons:     json.RawMessage(op.GuardReasons),
+		GuardPolicy:      json.RawMessage(op.GuardPolicy),
 		ErrorCode:        op.ErrorCode,
 		ErrorMessage:     op.ErrorMessage,
 		RequestID:        op.RequestID,

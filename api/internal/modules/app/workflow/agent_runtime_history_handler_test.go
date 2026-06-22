@@ -1107,6 +1107,7 @@ func (r *fakeRuntimeAgentRepo) GetByID(ctx context.Context, id string) (*agentsp
 }
 
 type fakeRuntimeHistoryService struct {
+	runtimeservice.Service
 	conversations               map[uuid.UUID]*runtimemodel.Conversation
 	messages                    []*runtimemodel.Message
 	listRuntimeLogFiltersCalled bool
@@ -1336,6 +1337,14 @@ func (s *fakeRuntimeHistoryService) ListConversationsByCaller(ctx context.Contex
 		end = len(filtered)
 	}
 	return filtered[start:end], total, nil
+}
+
+func (s *fakeRuntimeHistoryService) Search(ctx context.Context, scope runtimeservice.Scope, query string, limit int) ([]*runtimeservice.SearchResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *fakeRuntimeHistoryService) SearchByCaller(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, query string, limit int) ([]*runtimeservice.SearchResult, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 func (s *fakeRuntimeHistoryService) GetConversation(ctx context.Context, scope runtimeservice.Scope, id uuid.UUID) (*runtimemodel.Conversation, error) {
