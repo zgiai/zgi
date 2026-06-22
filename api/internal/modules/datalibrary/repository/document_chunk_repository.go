@@ -52,6 +52,8 @@ type documentChunkRepository struct {
 	db *gorm.DB
 }
 
+const documentChunkCreateBatchSize = 500
+
 func NewDocumentChunkRepository(db *gorm.DB) DocumentChunkRepository {
 	return &documentChunkRepository{db: db}
 }
@@ -64,7 +66,7 @@ func (r *documentChunkRepository) CreateBatch(ctx context.Context, items []*mode
 	if len(items) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Create(&items).Error
+	return r.db.WithContext(ctx).CreateInBatches(items, documentChunkCreateBatchSize).Error
 }
 
 func (r *documentChunkRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.DocumentChunk, error) {
