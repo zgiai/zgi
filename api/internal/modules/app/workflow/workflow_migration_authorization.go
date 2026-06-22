@@ -151,10 +151,15 @@ func webAppRuntimeAudienceForAccount(ctx context.Context, db *gorm.DB, organizat
 	if err != nil {
 		return runtimeauth.RuntimeAudience{}, err
 	}
+	workspaceIDs, err := webAppRuntimeWorkspaceIDsForAccount(ctx, db, organizationID, accountID)
+	if err != nil {
+		return runtimeauth.RuntimeAudience{}, err
+	}
 	return runtimeauth.RuntimeAudience{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
 		DepartmentIDs:  departmentIDs,
+		WorkspaceIDs:   workspaceIDs,
 	}, nil
 }
 
@@ -178,4 +183,26 @@ func webAppRuntimeDepartmentIDsForAccount(ctx context.Context, db *gorm.DB, orga
 		departmentIDs = append(departmentIDs, departmentID)
 	}
 	return departmentIDs, nil
+}
+
+func webAppRuntimeWorkspaceIDsForAccount(ctx context.Context, db *gorm.DB, organizationID, accountID uuid.UUID) ([]uuid.UUID, error) {
+	var rawWorkspaceIDs []string
+	if err := db.WithContext(ctx).
+		Table("workspace_members").
+		Select("workspace_members.workspace_id").
+		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
+		Where("workspace_members.account_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?", accountID, organizationID, workspacemodel.WorkspaceStatusNormal).
+		Scan(&rawWorkspaceIDs).Error; err != nil {
+		return nil, fmt.Errorf("failed to load webapp migration audience workspaces: %w", err)
+	}
+
+	workspaceIDs := make([]uuid.UUID, 0, len(rawWorkspaceIDs))
+	for _, rawWorkspaceID := range rawWorkspaceIDs {
+		workspaceID, err := uuid.Parse(strings.TrimSpace(rawWorkspaceID))
+		if err != nil {
+			return nil, fmt.Errorf("invalid webapp migration audience workspace id: %w", err)
+		}
+		workspaceIDs = append(workspaceIDs, workspaceID)
+	}
+	return workspaceIDs, nil
 }

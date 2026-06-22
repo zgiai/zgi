@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	apiKeyModule "github.com/zgiai/zgi/api/internal/modules/api_key"
-	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
@@ -136,14 +134,6 @@ func validateAgentAPISurface(db *gorm.DB, agentID, tenantID uuid.UUID) error {
 			return fmt.Errorf("agent not found for API key")
 		}
 		return fmt.Errorf("failed to validate agent API surface: %w", err)
-	}
-	fallback := runtimeauth.PolicyFromAgentFields(surface.WebAppStatus, surface.EnableAPI)
-	auth, err := runtimeauth.NewStore(db).GetResourceAuthorization(context.Background(), runtimeauth.PublishedRuntimeResourceAgent, surface.ID, fallback)
-	if err != nil {
-		return fmt.Errorf("failed to validate agent API surface authorization: %w", err)
-	}
-	if !auth.Evaluate(runtimeauth.PublishedRuntimeSurfaceAPI, runtimeauth.RuntimeAudience{}).Allowed {
-		return fmt.Errorf("agent API service is disabled")
 	}
 	return nil
 }

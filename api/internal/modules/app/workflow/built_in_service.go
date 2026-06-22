@@ -231,6 +231,13 @@ func (s *builtInWorkflowService) filterAuthorizedBuiltInWorkflows(ctx context.Co
 		}
 		audience.DepartmentIDs = departmentIDs
 	}
+	if len(audience.WorkspaceIDs) == 0 {
+		workspaceIDs, err := s.workspaceIDsForAudience(ctx, audience)
+		if err != nil {
+			return nil, err
+		}
+		audience.WorkspaceIDs = workspaceIDs
+	}
 
 	candidates := make([]runtimeauth.ResourceAuthorizationCandidate, 0, len(workflows))
 	for _, workflow := range workflows {
@@ -290,6 +297,13 @@ func (s *builtInWorkflowService) allowsBuiltInWorkflow(ctx context.Context, agen
 			return false, err
 		}
 		audience.DepartmentIDs = departmentIDs
+	}
+	if auth.HasGrantType(runtimeauth.PublishedRuntimeSurfaceBuiltinApp, runtimeauth.PublishedRuntimeSubjectWorkspace) && len(audience.WorkspaceIDs) == 0 {
+		workspaceIDs, err := s.workspaceIDsForAudience(ctx, audience)
+		if err != nil {
+			return false, err
+		}
+		audience.WorkspaceIDs = workspaceIDs
 	}
 	return auth.Allows(runtimeauth.PublishedRuntimeSurfaceBuiltinApp, audience), nil
 }
@@ -380,6 +394,14 @@ func (s *builtInWorkflowService) validateBuiltInRuntimeGrantSubjects(ctx context
 				if !ok {
 					return fmt.Errorf("runtime grant department is not in organization")
 				}
+			case runtimeauth.PublishedRuntimeSubjectWorkspace:
+				ok, err := s.builtInRuntimeGrantWorkspaceInOrganization(ctx, organizationID, *grant.SubjectID)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return fmt.Errorf("runtime grant workspace is not in organization")
+				}
 			}
 		}
 	}
@@ -404,6 +426,17 @@ func (s *builtInWorkflowService) builtInRuntimeGrantDepartmentInOrganization(ctx
 		Where("group_id = ? AND id = ? AND status = ?", organizationID.String(), departmentID.String(), workspacemodel.DepartmentStatusActive).
 		Count(&count).Error; err != nil {
 		return false, fmt.Errorf("failed to validate runtime grant department: %w", err)
+	}
+	return count > 0, nil
+}
+
+func (s *builtInWorkflowService) builtInRuntimeGrantWorkspaceInOrganization(ctx context.Context, organizationID, workspaceID uuid.UUID) (bool, error) {
+	var count int64
+	if err := s.db.WithContext(ctx).
+		Model(&workspacemodel.Workspace{}).
+		Where("organization_id = ? AND id = ? AND status = ?", organizationID.String(), workspaceID.String(), workspacemodel.WorkspaceStatusNormal).
+		Count(&count).Error; err != nil {
+		return false, fmt.Errorf("failed to validate runtime grant workspace: %w", err)
 	}
 	return count > 0, nil
 }
@@ -440,9 +473,10 @@ func builtInRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntime
 		switch subjectType {
 		case runtimeauth.PublishedRuntimeSubjectOrganization,
 			runtimeauth.PublishedRuntimeSubjectAccount,
-			runtimeauth.PublishedRuntimeSubjectDepartment:
+			runtimeauth.PublishedRuntimeSubjectDepartment,
+			runtimeauth.PublishedRuntimeSubjectWorkspace:
 		default:
-			return nil, fmt.Errorf("builtin app grants must target organization, account, or department")
+			return nil, fmt.Errorf("builtin app grants must target organization, account, department, or workspace")
 		}
 
 		subjectID, err := builtInRuntimeGrantSubjectID(subjectType, item.SubjectID, organizationID)
@@ -468,7 +502,7 @@ func builtInRuntimeGrantSubjectID(subjectType runtimeauth.PublishedRuntimeSubjec
 		if rawID == nil || strings.TrimSpace(*rawID) == "" {
 			return copyBuiltInRuntimeUUIDPtr(organizationID), nil
 		}
-	case runtimeauth.PublishedRuntimeSubjectAccount, runtimeauth.PublishedRuntimeSubjectDepartment:
+	case runtimeauth.PublishedRuntimeSubjectAccount, runtimeauth.PublishedRuntimeSubjectDepartment, runtimeauth.PublishedRuntimeSubjectWorkspace:
 		if rawID == nil || strings.TrimSpace(*rawID) == "" {
 			return nil, fmt.Errorf("runtime grant subject id is required")
 		}
@@ -545,6 +579,32 @@ func (s *builtInWorkflowService) departmentIDsForAudience(ctx context.Context, a
 		departmentIDs = append(departmentIDs, departmentID)
 	}
 	return departmentIDs, nil
+}
+
+func (s *builtInWorkflowService) workspaceIDsForAudience(ctx context.Context, audience runtimeauth.RuntimeAudience) ([]uuid.UUID, error) {
+	if s.db == nil || audience.OrganizationID == uuid.Nil || audience.AccountID == uuid.Nil {
+		return nil, nil
+	}
+
+	var rawWorkspaceIDs []string
+	if err := s.db.WithContext(ctx).
+		Table("workspace_members").
+		Select("workspace_members.workspace_id").
+		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
+		Where("workspace_members.account_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?", audience.AccountID, audience.OrganizationID, workspacemodel.WorkspaceStatusNormal).
+		Scan(&rawWorkspaceIDs).Error; err != nil {
+		return nil, fmt.Errorf("failed to load audience workspaces: %w", err)
+	}
+
+	workspaceIDs := make([]uuid.UUID, 0, len(rawWorkspaceIDs))
+	for _, rawWorkspaceID := range rawWorkspaceIDs {
+		workspaceID, err := uuid.Parse(strings.TrimSpace(rawWorkspaceID))
+		if err != nil {
+			return nil, fmt.Errorf("invalid audience workspace id: %w", err)
+		}
+		workspaceIDs = append(workspaceIDs, workspaceID)
+	}
+	return workspaceIDs, nil
 }
 
 // validateScenarioName validates the scenario name format

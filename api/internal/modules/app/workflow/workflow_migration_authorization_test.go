@@ -207,4 +207,8 @@ func expectWorkflowMigrationAudience(mock sqlmock.Sqlmock, accountID, organizati
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT department_members.department_id FROM "department_members" JOIN departments ON departments.id = department_members.department_id WHERE department_members.account_id = $1 AND departments.group_id = $2 AND departments.status = $3`)).
 		WithArgs(accountID, organizationID, workspacemodel.DepartmentStatusActive).
 		WillReturnRows(rows)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT workspace_members.workspace_id FROM "workspace_members" JOIN workspaces ON workspaces.id = workspace_members.workspace_id WHERE workspace_members.account_id = $1 AND workspaces.organization_id = $2 AND workspaces.status = $3`)).
+		WithArgs(accountID, organizationID, workspacemodel.WorkspaceStatusNormal).
+		WillReturnRows(sqlmock.NewRows([]string{"workspace_id"}))
 }

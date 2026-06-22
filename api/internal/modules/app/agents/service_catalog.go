@@ -80,7 +80,7 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 	if err != nil {
 		return nil, fmt.Errorf("failed to list runnable web apps: %w", err)
 	}
-	items, err = s.filterRunnableWebAppsByRuntimeAuthorization(ctx, items, currentOrganization.OrganizationID, accountID)
+	items, err = s.filterRunnableWebAppsByAppCenterAuthorization(ctx, currentOrganization, items)
 	if err != nil {
 		return nil, err
 	}
@@ -123,73 +123,151 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 	return resp, nil
 }
 
-func (s *agentsService) runnableWebAppWorkspaceIDs(ctx context.Context, currentOrganization *model.OrganizationMember) ([]string, error) {
-	workspaces, err := s.enterpriseService.GetOrganizationWorkspacesList(ctx, currentOrganization.OrganizationID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get organization workspaces: %w", err)
-	}
-	return normalWorkspaceIDs(workspaces, currentOrganization.OrganizationID), nil
+type runnableWebAppAuthorizationCandidate struct {
+	item        runnableWebAppItem
+	resourceID  uuid.UUID
+	workspaceID uuid.UUID
 }
 
-func (s *agentsService) filterRunnableWebAppsByRuntimeAuthorization(ctx context.Context, items []runnableWebAppItem, organizationID, accountID string) ([]runnableWebAppItem, error) {
+func (s *agentsService) filterRunnableWebAppsByAppCenterAuthorization(ctx context.Context, currentOrganization *model.OrganizationMember, items []runnableWebAppItem) ([]runnableWebAppItem, error) {
 	if len(items) == 0 || s.db == nil {
 		return items, nil
 	}
-
-	organizationUUID, err := uuid.Parse(strings.TrimSpace(organizationID))
-	if err != nil {
-		return nil, fmt.Errorf("invalid organization id for runnable web app authorization: %w", err)
-	}
-	accountUUID, err := uuid.Parse(strings.TrimSpace(accountID))
-	if err != nil {
-		return nil, fmt.Errorf("invalid account id for runnable web app authorization: %w", err)
+	if currentOrganization == nil {
+		return nil, errCurrentOrganizationNotFound
 	}
 
-	store := runtimeauth.NewStore(s.db)
+	organizationID, err := uuid.Parse(strings.TrimSpace(currentOrganization.OrganizationID))
+	if err != nil {
+		return nil, fmt.Errorf("invalid app center organization id: %w", err)
+	}
+	accountID, err := uuid.Parse(strings.TrimSpace(currentOrganization.AccountID))
+	if err != nil {
+		return nil, fmt.Errorf("invalid app center account id: %w", err)
+	}
+
+	parsedCandidates := make([]runnableWebAppAuthorizationCandidate, 0, len(items))
+	candidates := make([]runtimeauth.ResourceAuthorizationCandidate, 0, len(items))
+	resourceIDs := make([]uuid.UUID, 0, len(items))
+	for _, item := range items {
+		resourceID, err := uuid.Parse(strings.TrimSpace(item.AgentID))
+		if err != nil {
+			return nil, fmt.Errorf("invalid runnable web app agent id: %w", err)
+		}
+		workspaceID, err := uuid.Parse(strings.TrimSpace(item.WorkspaceID))
+		if err != nil {
+			return nil, fmt.Errorf("invalid runnable web app workspace id: %w", err)
+		}
+		parsedCandidates = append(parsedCandidates, runnableWebAppAuthorizationCandidate{
+			item:        item,
+			resourceID:  resourceID,
+			workspaceID: workspaceID,
+		})
+		candidates = append(candidates, runtimeauth.ResourceAuthorizationCandidate{
+			ResourceID: resourceID,
+			Fallback:   runtimeauth.PublishedRuntimePolicy{},
+		})
+		resourceIDs = append(resourceIDs, resourceID)
+	}
+
 	audience := runtimeauth.RuntimeAudience{
-		OrganizationID: organizationUUID,
-		AccountID:      accountUUID,
+		OrganizationID: organizationID,
+		AccountID:      accountID,
 	}
 	departmentIDs, err := s.runnableWebAppDepartmentIDsForAudience(ctx, audience)
 	if err != nil {
 		return nil, err
 	}
-	audience.DepartmentIDs = departmentIDs
-
-	candidates := make([]runtimeauth.ResourceAuthorizationCandidate, 0, len(items))
-	for _, item := range items {
-		agentID, err := uuid.Parse(strings.TrimSpace(item.AgentID))
-		if err != nil {
-			return nil, fmt.Errorf("invalid agent id for runnable web app authorization: %w", err)
-		}
-
-		candidates = append(candidates, runtimeauth.ResourceAuthorizationCandidate{
-			ResourceID: agentID,
-			Fallback:   runtimeauth.PolicyFromAgentFields(item.WebAppStatus, false),
-		})
-	}
-
-	allowedAgentIDs, err := store.FilterAuthorizedResourceIDs(ctx, runtimeauth.PublishedRuntimeResourceAgent, runtimeauth.PublishedRuntimeSurfaceBuiltinApp, organizationUUID, candidates, audience)
+	workspaceIDs, err := s.runnableWebAppWorkspaceIDsForAudience(ctx, audience)
 	if err != nil {
-		return nil, fmt.Errorf("failed to filter runnable web app authorization: %w", err)
+		return nil, err
 	}
-	allowedAgentIDSet := make(map[uuid.UUID]struct{}, len(allowedAgentIDs))
-	for _, agentID := range allowedAgentIDs {
-		allowedAgentIDSet[agentID] = struct{}{}
+	audience.DepartmentIDs = departmentIDs
+	audience.WorkspaceIDs = workspaceIDs
+
+	persistedSurfaceIDs, err := s.persistedAppCenterSurfaceResourceIDs(ctx, organizationID, resourceIDs)
+	if err != nil {
+		return nil, err
+	}
+	authorizedIDs, err := runtimeauth.NewStore(s.db).FilterAuthorizedResourceIDs(
+		ctx,
+		runtimeauth.PublishedRuntimeResourceAgent,
+		runtimeauth.PublishedRuntimeSurfaceAppCenter,
+		organizationID,
+		candidates,
+		audience,
+	)
+	if err != nil {
+		return nil, err
+	}
+	authorizedSet := make(map[uuid.UUID]struct{}, len(authorizedIDs))
+	for _, id := range authorizedIDs {
+		authorizedSet[id] = struct{}{}
+	}
+	audienceWorkspaceSet := make(map[uuid.UUID]struct{}, len(audience.WorkspaceIDs))
+	for _, workspaceID := range audience.WorkspaceIDs {
+		audienceWorkspaceSet[workspaceID] = struct{}{}
 	}
 
-	filtered := make([]runnableWebAppItem, 0, len(items))
-	for _, item := range items {
-		agentID, err := uuid.Parse(strings.TrimSpace(item.AgentID))
-		if err != nil {
-			return nil, fmt.Errorf("invalid agent id for runnable web app authorization: %w", err)
+	out := make([]runnableWebAppItem, 0, len(items))
+	for _, candidate := range parsedCandidates {
+		if _, ok := authorizedSet[candidate.resourceID]; ok {
+			out = append(out, candidate.item)
+			continue
 		}
-		if _, ok := allowedAgentIDSet[agentID]; ok {
-			filtered = append(filtered, item)
+		if _, hasPersistedSurface := persistedSurfaceIDs[candidate.resourceID]; hasPersistedSurface {
+			continue
+		}
+		if _, workspaceVisible := audienceWorkspaceSet[candidate.workspaceID]; workspaceVisible {
+			out = append(out, candidate.item)
 		}
 	}
+	return out, nil
+}
 
-	return filtered, nil
+func (s *agentsService) persistedAppCenterSurfaceResourceIDs(ctx context.Context, organizationID uuid.UUID, resourceIDs []uuid.UUID) (map[uuid.UUID]struct{}, error) {
+	out := make(map[uuid.UUID]struct{})
+	if s.db == nil || organizationID == uuid.Nil || len(resourceIDs) == 0 {
+		return out, nil
+	}
+
+	type row struct {
+		ResourceID uuid.UUID `gorm:"column:resource_id"`
+	}
+	var rows []row
+	if err := s.db.WithContext(ctx).
+		Table("published_runtime_surfaces").
+		Select("resource_id").
+		Where("resource_type = ? AND surface = ? AND organization_id = ? AND resource_id IN ? AND deleted_at IS NULL",
+			string(runtimeauth.PublishedRuntimeResourceAgent),
+			string(runtimeauth.PublishedRuntimeSurfaceAppCenter),
+			organizationID,
+			resourceIDs,
+		).
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("failed to load app center runtime surfaces: %w", err)
+	}
+
+	for _, row := range rows {
+		out[row.ResourceID] = struct{}{}
+	}
+	return out, nil
+}
+
+func (s *agentsService) runnableWebAppWorkspaceIDs(ctx context.Context, currentOrganization *model.OrganizationMember) ([]string, error) {
+	if currentOrganization == nil || strings.TrimSpace(currentOrganization.OrganizationID) == "" || strings.TrimSpace(currentOrganization.AccountID) == "" {
+		return nil, nil
+	}
+	workspaceIDs, err := s.enterpriseService.ListWorkspaceIDsByPermission(
+		ctx,
+		currentOrganization.OrganizationID,
+		currentOrganization.AccountID,
+		model.WorkspacePermissionWorkspaceView,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list app center workspaces: %w", err)
+	}
+	return workspaceIDs, nil
 }
 
 func (s *agentsService) runnableWebAppDepartmentIDsForAudience(ctx context.Context, audience runtimeauth.RuntimeAudience) ([]uuid.UUID, error) {
@@ -216,6 +294,45 @@ func (s *agentsService) runnableWebAppDepartmentIDsForAudience(ctx context.Conte
 		departmentIDs = append(departmentIDs, departmentID)
 	}
 	return departmentIDs, nil
+}
+
+func (s *agentsService) runnableWebAppWorkspaceIDsForAudience(ctx context.Context, audience runtimeauth.RuntimeAudience) ([]uuid.UUID, error) {
+	if s.db == nil || audience.OrganizationID == uuid.Nil || audience.AccountID == uuid.Nil {
+		return nil, nil
+	}
+
+	if s.enterpriseService != nil {
+		rawWorkspaceIDs, err := s.enterpriseService.ListWorkspaceIDsByPermission(
+			ctx,
+			audience.OrganizationID.String(),
+			audience.AccountID.String(),
+			model.WorkspacePermissionWorkspaceView,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load runnable web app audience workspaces: %w", err)
+		}
+		return parseUUIDStrings(rawWorkspaceIDs, "runnable web app audience workspace id")
+	}
+
+	var rawWorkspaceIDs []string
+	if err := s.db.WithContext(ctx).
+		Table("workspace_members").
+		Select("workspace_members.workspace_id").
+		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
+		Where("workspace_members.account_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?", audience.AccountID, audience.OrganizationID, model.WorkspaceStatusNormal).
+		Scan(&rawWorkspaceIDs).Error; err != nil {
+		return nil, fmt.Errorf("failed to load runnable web app audience workspaces: %w", err)
+	}
+
+	workspaceIDs := make([]uuid.UUID, 0, len(rawWorkspaceIDs))
+	for _, rawWorkspaceID := range rawWorkspaceIDs {
+		workspaceID, err := uuid.Parse(strings.TrimSpace(rawWorkspaceID))
+		if err != nil {
+			return nil, fmt.Errorf("invalid runnable web app audience workspace id: %w", err)
+		}
+		workspaceIDs = append(workspaceIDs, workspaceID)
+	}
+	return workspaceIDs, nil
 }
 
 func normalWorkspaceIDs(workspaces []*model.Workspace, organizationID string) []string {

@@ -141,6 +141,7 @@ func (s *agentsService) GetWebAppRuntimeCapability(ctx context.Context, webAppID
 			string(runtimeauth.PublishedRuntimeSubjectPublic),
 			string(runtimeauth.PublishedRuntimeSubjectOrganization),
 			string(runtimeauth.PublishedRuntimeSubjectDepartment),
+			string(runtimeauth.PublishedRuntimeSubjectWorkspace),
 			string(runtimeauth.PublishedRuntimeSubjectAccount),
 		},
 		VersionUUID: version.VersionUUID.String(),
@@ -162,7 +163,8 @@ func webAppSurfaceHasPrivateAudience(surface runtimeauth.SurfaceAuthorization) b
 		switch grant.SubjectType {
 		case runtimeauth.PublishedRuntimeSubjectOrganization,
 			runtimeauth.PublishedRuntimeSubjectAccount,
-			runtimeauth.PublishedRuntimeSubjectDepartment:
+			runtimeauth.PublishedRuntimeSubjectDepartment,
+			runtimeauth.PublishedRuntimeSubjectWorkspace:
 			return true
 		}
 	}
@@ -197,6 +199,12 @@ func (s *agentsService) webAppRuntimeAudienceForAccount(ctx context.Context, org
 		return runtimeauth.RuntimeAudience{}, err
 	}
 	audience.DepartmentIDs = departmentIDs
+
+	workspaceIDs, err := s.runnableWebAppWorkspaceIDsForAudience(ctx, audience)
+	if err != nil {
+		return runtimeauth.RuntimeAudience{}, err
+	}
+	audience.WorkspaceIDs = workspaceIDs
 	return audience, nil
 }
 

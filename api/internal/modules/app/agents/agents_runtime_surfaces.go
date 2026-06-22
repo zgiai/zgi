@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -43,6 +44,7 @@ func (s *agentsService) GetAgentRuntimeSurfaces(ctx context.Context, agentID, ac
 	if err != nil {
 		return nil, err
 	}
+	auth.Surfaces = agentRuntimeSupportedSurfaces(auth.Surfaces, ag.TenantID)
 
 	workspaceID := ag.TenantID.String()
 	if auth.WorkspaceID != nil && *auth.WorkspaceID != uuid.Nil {
@@ -104,7 +106,7 @@ func (s *agentsService) UpdateAgentRuntimeSurfaces(ctx context.Context, agentID,
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateAgentRuntimeGrantSubjects(ctx, organizationID, auth.Surfaces); err != nil {
+	if err := s.validateAgentRuntimeGrantSubjects(ctx, organizationID, accountID, auth.Surfaces); err != nil {
 		return nil, err
 	}
 
@@ -208,6 +210,9 @@ func agentRuntimeAuthorizationFromUpdateRequest(agentID, workspaceID, organizati
 		if !runtimeauth.IsKnownSurface(surface) {
 			return runtimeauth.ResourceAuthorization{}, agentRuntimeLegacyUpdates{}, fmt.Errorf("%w: unknown runtime surface", runtimeservice.ErrInvalidInput)
 		}
+		if surface == runtimeauth.PublishedRuntimeSurfaceBuiltinApp {
+			continue
+		}
 		if _, exists := seen[surface]; exists {
 			return runtimeauth.ResourceAuthorization{}, agentRuntimeLegacyUpdates{}, fmt.Errorf("%w: duplicate runtime surface", runtimeservice.ErrInvalidInput)
 		}
@@ -217,7 +222,7 @@ func agentRuntimeAuthorizationFromUpdateRequest(agentID, workspaceID, organizati
 			return runtimeauth.ResourceAuthorization{}, agentRuntimeLegacyUpdates{}, fmt.Errorf("%w: internal runtime surface cannot be disabled", runtimeservice.ErrInvalidInput)
 		}
 
-		grants, err := agentRuntimeSurfaceGrantsFromRequest(surface, organizationID, item.Enabled, item.Grants)
+		grants, err := agentRuntimeSurfaceGrantsFromRequest(surface, organizationID, workspaceID, item.Enabled, item.Grants)
 		if err != nil {
 			return runtimeauth.ResourceAuthorization{}, agentRuntimeLegacyUpdates{}, err
 		}
@@ -241,6 +246,10 @@ func agentRuntimeAuthorizationFromUpdateRequest(agentID, workspaceID, organizati
 		}
 	}
 
+	if len(surfaces) == 0 {
+		return runtimeauth.ResourceAuthorization{}, agentRuntimeLegacyUpdates{}, fmt.Errorf("%w: no supported agent runtime surface provided", runtimeservice.ErrInvalidInput)
+	}
+
 	workspaceIDCopy := workspaceID
 	return runtimeauth.ResourceAuthorization{
 		ResourceType:   runtimeauth.PublishedRuntimeResourceAgent,
@@ -251,7 +260,22 @@ func agentRuntimeAuthorizationFromUpdateRequest(agentID, workspaceID, organizati
 	}, legacyUpdates, nil
 }
 
-func (s *agentsService) validateAgentRuntimeGrantSubjects(ctx context.Context, organizationID uuid.UUID, surfaces []runtimeauth.SurfaceAuthorization) error {
+func (s *agentsService) validateAgentRuntimeGrantSubjects(ctx context.Context, organizationID uuid.UUID, accountID string, surfaces []runtimeauth.SurfaceAuthorization) error {
+	isOrganizationAdmin := false
+	isOrganizationAdminLoaded := false
+	loadOrganizationAdmin := func() (bool, error) {
+		if isOrganizationAdminLoaded {
+			return isOrganizationAdmin, nil
+		}
+		ok, err := s.runtimeGrantOperatorIsOrganizationAdmin(ctx, organizationID, accountID)
+		if err != nil {
+			return false, err
+		}
+		isOrganizationAdmin = ok
+		isOrganizationAdminLoaded = true
+		return isOrganizationAdmin, nil
+	}
+
 	for _, surface := range surfaces {
 		for _, grant := range surface.Grants {
 			if grant.SubjectID == nil {
@@ -262,6 +286,13 @@ func (s *agentsService) validateAgentRuntimeGrantSubjects(ctx context.Context, o
 				if *grant.SubjectID != organizationID {
 					return fmt.Errorf("%w: runtime grant organization is not current organization", runtimeservice.ErrInvalidInput)
 				}
+				isOrganizationAdmin, err := loadOrganizationAdmin()
+				if err != nil {
+					return err
+				}
+				if !isOrganizationAdmin {
+					return fmt.Errorf("%w: only organization owners or admins can grant organization-wide access", runtimeservice.ErrPermissionDenied)
+				}
 			case runtimeauth.PublishedRuntimeSubjectAccount:
 				ok, err := s.runtimeGrantAccountInOrganization(ctx, organizationID, *grant.SubjectID)
 				if err != nil {
@@ -269,6 +300,19 @@ func (s *agentsService) validateAgentRuntimeGrantSubjects(ctx context.Context, o
 				}
 				if !ok {
 					return fmt.Errorf("%w: runtime grant account is not in organization", runtimeservice.ErrInvalidInput)
+				}
+				isOrganizationAdmin, err := loadOrganizationAdmin()
+				if err != nil {
+					return err
+				}
+				if !isOrganizationAdmin {
+					ok, err = s.runtimeGrantAccountVisibleToOperator(ctx, organizationID, accountID, *grant.SubjectID)
+					if err != nil {
+						return err
+					}
+					if !ok {
+						return fmt.Errorf("%w: runtime grant account is not visible to current operator", runtimeservice.ErrPermissionDenied)
+					}
 				}
 			case runtimeauth.PublishedRuntimeSubjectDepartment:
 				ok, err := s.runtimeGrantDepartmentInOrganization(ctx, organizationID, *grant.SubjectID)
@@ -278,10 +322,67 @@ func (s *agentsService) validateAgentRuntimeGrantSubjects(ctx context.Context, o
 				if !ok {
 					return fmt.Errorf("%w: runtime grant department is not in organization", runtimeservice.ErrInvalidInput)
 				}
+				isOrganizationAdmin, err := loadOrganizationAdmin()
+				if err != nil {
+					return err
+				}
+				if !isOrganizationAdmin {
+					ok, err = s.runtimeGrantDepartmentVisibleToOperator(ctx, organizationID, accountID, *grant.SubjectID)
+					if err != nil {
+						return err
+					}
+					if !ok {
+						return fmt.Errorf("%w: runtime grant department is not visible to current operator", runtimeservice.ErrPermissionDenied)
+					}
+				}
+			case runtimeauth.PublishedRuntimeSubjectWorkspace:
+				ok, err := s.runtimeGrantWorkspaceInOrganization(ctx, organizationID, *grant.SubjectID)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return fmt.Errorf("%w: runtime grant workspace is not in organization", runtimeservice.ErrInvalidInput)
+				}
+				isOrganizationAdmin, err := loadOrganizationAdmin()
+				if err != nil {
+					return err
+				}
+				if !isOrganizationAdmin {
+					ok, err = s.runtimeGrantWorkspaceVisibleToOperator(ctx, organizationID, accountID, *grant.SubjectID)
+					if err != nil {
+						return err
+					}
+					if !ok {
+						return fmt.Errorf("%w: runtime grant workspace is not visible to current operator", runtimeservice.ErrPermissionDenied)
+					}
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func (s *agentsService) runtimeGrantOperatorIsOrganizationAdmin(ctx context.Context, organizationID uuid.UUID, accountID string) (bool, error) {
+	if s.db == nil {
+		return false, fmt.Errorf("database is required")
+	}
+	accountID = strings.TrimSpace(accountID)
+	if organizationID == uuid.Nil || accountID == "" {
+		return false, runtimeservice.ErrUnauthorized
+	}
+
+	var member workspacemodel.OrganizationMember
+	err := s.db.WithContext(ctx).
+		Model(&workspacemodel.OrganizationMember{}).
+		Where("organization_id = ? AND account_id = ? AND status = ?", organizationID.String(), accountID, workspacemodel.OrganizationMemberStatusActive).
+		Take(&member).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, fmt.Errorf("%w: runtime grant operator is not in organization", runtimeservice.ErrPermissionDenied)
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to load runtime grant operator organization role: %w", err)
+	}
+	return member.Role == workspacemodel.OrganizationRoleOwner || member.Role == workspacemodel.OrganizationRoleAdmin, nil
 }
 
 func (s *agentsService) runtimeGrantAccountInOrganization(ctx context.Context, organizationID, accountID uuid.UUID) (bool, error) {
@@ -291,6 +392,49 @@ func (s *agentsService) runtimeGrantAccountInOrganization(ctx context.Context, o
 		Where("organization_id = ? AND account_id = ? AND status = ?", organizationID.String(), accountID.String(), workspacemodel.OrganizationMemberStatusActive).
 		Count(&count).Error; err != nil {
 		return false, fmt.Errorf("failed to validate runtime grant account: %w", err)
+	}
+	return count > 0, nil
+}
+
+func (s *agentsService) runtimeGrantAccountVisibleToOperator(ctx context.Context, organizationID uuid.UUID, operatorAccountID string, targetAccountID uuid.UUID) (bool, error) {
+	if strings.EqualFold(strings.TrimSpace(operatorAccountID), targetAccountID.String()) {
+		return true, nil
+	}
+
+	departmentIDs, err := s.runtimeGrantVisibleDepartmentIDs(ctx, organizationID, operatorAccountID)
+	if err != nil {
+		return false, err
+	}
+	if len(departmentIDs) > 0 {
+		var count int64
+		if err := s.db.WithContext(ctx).
+			Model(&workspacemodel.DepartmentMember{}).
+			Where("account_id = ? AND department_id IN ?", targetAccountID.String(), uuidStrings(departmentIDs)).
+			Count(&count).Error; err != nil {
+			return false, fmt.Errorf("failed to validate runtime grant account department visibility: %w", err)
+		}
+		if count > 0 {
+			return true, nil
+		}
+	}
+
+	workspaceIDs, err := s.runtimeGrantVisibleWorkspaceIDs(ctx, organizationID, operatorAccountID)
+	if err != nil {
+		return false, err
+	}
+	if len(workspaceIDs) == 0 {
+		return false, nil
+	}
+
+	var count int64
+	if err := s.db.WithContext(ctx).
+		Table("workspace_members").
+		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
+		Where("workspace_members.account_id = ?", targetAccountID.String()).
+		Where("workspace_members.workspace_id IN ?", uuidStrings(workspaceIDs)).
+		Where("workspaces.organization_id = ? AND workspaces.status = ?", organizationID.String(), workspacemodel.WorkspaceStatusNormal).
+		Count(&count).Error; err != nil {
+		return false, fmt.Errorf("failed to validate runtime grant account workspace visibility: %w", err)
 	}
 	return count > 0, nil
 }
@@ -306,18 +450,198 @@ func (s *agentsService) runtimeGrantDepartmentInOrganization(ctx context.Context
 	return count > 0, nil
 }
 
-func agentRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntimeSurface, organizationID uuid.UUID, surfaceEnabled bool, grants []dto.UpdateAgentRuntimeSurfaceGrant) ([]runtimeauth.SurfaceGrant, error) {
+func (s *agentsService) runtimeGrantDepartmentVisibleToOperator(ctx context.Context, organizationID uuid.UUID, accountID string, departmentID uuid.UUID) (bool, error) {
+	departmentIDs, err := s.runtimeGrantVisibleDepartmentIDs(ctx, organizationID, accountID)
+	if err != nil {
+		return false, err
+	}
+	for _, visibleDepartmentID := range departmentIDs {
+		if visibleDepartmentID == departmentID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *agentsService) runtimeGrantWorkspaceInOrganization(ctx context.Context, organizationID, workspaceID uuid.UUID) (bool, error) {
+	var count int64
+	if err := s.db.WithContext(ctx).
+		Model(&workspacemodel.Workspace{}).
+		Where("organization_id = ? AND id = ? AND status = ?", organizationID.String(), workspaceID.String(), workspacemodel.WorkspaceStatusNormal).
+		Count(&count).Error; err != nil {
+		return false, fmt.Errorf("failed to validate runtime grant workspace: %w", err)
+	}
+	return count > 0, nil
+}
+
+func (s *agentsService) runtimeGrantWorkspaceVisibleToOperator(ctx context.Context, organizationID uuid.UUID, accountID string, workspaceID uuid.UUID) (bool, error) {
+	workspaceIDs, err := s.runtimeGrantVisibleWorkspaceIDs(ctx, organizationID, accountID)
+	if err != nil {
+		return false, err
+	}
+	for _, visibleWorkspaceID := range workspaceIDs {
+		if visibleWorkspaceID == workspaceID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *agentsService) runtimeGrantVisibleDepartmentIDs(ctx context.Context, organizationID uuid.UUID, accountID string) ([]uuid.UUID, error) {
+	var rawDepartmentIDs []string
+	if err := s.db.WithContext(ctx).Raw(`
+WITH RECURSIVE visible_departments AS (
+	SELECT departments.id
+	FROM department_members
+	JOIN departments ON departments.id = department_members.department_id
+	WHERE department_members.account_id = ?
+	  AND departments.group_id = ?
+	  AND departments.status = ?
+	UNION
+	SELECT child.id
+	FROM departments child
+	JOIN visible_departments parent ON child.parent_id = parent.id
+	WHERE child.group_id = ?
+	  AND child.status = ?
+)
+SELECT id FROM visible_departments
+`, strings.TrimSpace(accountID), organizationID.String(), workspacemodel.DepartmentStatusActive, organizationID.String(), workspacemodel.DepartmentStatusActive).
+		Scan(&rawDepartmentIDs).Error; err != nil {
+		return nil, fmt.Errorf("failed to load runtime grant visible departments: %w", err)
+	}
+	return parseUUIDStrings(rawDepartmentIDs, "runtime grant visible department id")
+}
+
+func (s *agentsService) runtimeGrantVisibleWorkspaceIDs(ctx context.Context, organizationID uuid.UUID, accountID string) ([]uuid.UUID, error) {
+	type workspacePermissionRow struct {
+		WorkspaceID string
+		Role        workspacemodel.WorkspaceMemberRole
+		RoleID      *string
+	}
+
+	var rows []workspacePermissionRow
+	if err := s.db.WithContext(ctx).
+		Table("workspace_members").
+		Select("workspace_members.workspace_id, workspace_members.role, workspace_members.role_id").
+		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
+		Where("workspace_members.account_id = ?", strings.TrimSpace(accountID)).
+		Where("workspaces.organization_id = ? AND workspaces.status = ?", organizationID.String(), workspacemodel.WorkspaceStatusNormal).
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("failed to load runtime grant visible workspaces: %w", err)
+	}
+
+	customRoleIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.RoleID == nil {
+			continue
+		}
+		roleID := strings.TrimSpace(*row.RoleID)
+		if roleID == "" || workspacemodel.IsBuiltinRole(roleID) {
+			continue
+		}
+		customRoleIDs = append(customRoleIDs, roleID)
+	}
+	customRolePermissions, err := s.runtimeGrantCustomRolePermissions(ctx, organizationID, customRoleIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	workspaceIDs := make([]uuid.UUID, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if !runtimeGrantWorkspaceRoleAllowsPermission(row.Role, row.RoleID, customRolePermissions, workspacemodel.WorkspacePermissionWorkspaceView) {
+			continue
+		}
+		if _, ok := seen[row.WorkspaceID]; ok {
+			continue
+		}
+		seen[row.WorkspaceID] = struct{}{}
+		workspaceID, err := uuid.Parse(strings.TrimSpace(row.WorkspaceID))
+		if err != nil {
+			return nil, fmt.Errorf("invalid runtime grant visible workspace id: %w", err)
+		}
+		workspaceIDs = append(workspaceIDs, workspaceID)
+	}
+	return workspaceIDs, nil
+}
+
+func (s *agentsService) runtimeGrantCustomRolePermissions(ctx context.Context, organizationID uuid.UUID, roleIDs []string) (map[string][]string, error) {
+	out := make(map[string][]string)
+	if len(roleIDs) == 0 {
+		return out, nil
+	}
+
+	uniqueRoleIDs := make([]string, 0, len(roleIDs))
+	seen := make(map[string]struct{}, len(roleIDs))
+	for _, roleID := range roleIDs {
+		roleID = strings.TrimSpace(roleID)
+		if roleID == "" {
+			continue
+		}
+		if _, ok := seen[roleID]; ok {
+			continue
+		}
+		seen[roleID] = struct{}{}
+		uniqueRoleIDs = append(uniqueRoleIDs, roleID)
+	}
+	if len(uniqueRoleIDs) == 0 {
+		return out, nil
+	}
+
+	var roles []workspacemodel.WorkspaceCustomRole
+	if err := s.db.WithContext(ctx).
+		Model(&workspacemodel.WorkspaceCustomRole{}).
+		Where("group_id = ? AND id IN ? AND status = ?", organizationID.String(), uniqueRoleIDs, workspacemodel.WorkspaceCustomRoleStatusActive).
+		Find(&roles).Error; err != nil {
+		return nil, fmt.Errorf("failed to load runtime grant custom role permissions: %w", err)
+	}
+	for _, role := range roles {
+		out[role.ID] = append([]string(nil), role.Permissions...)
+	}
+	return out, nil
+}
+
+func runtimeGrantWorkspaceRoleAllowsPermission(role workspacemodel.WorkspaceMemberRole, roleID *string, customRolePermissions map[string][]string, permission workspacemodel.WorkspacePermissionCode) bool {
+	roleIDValue := ""
+	if roleID != nil {
+		roleIDValue = strings.TrimSpace(*roleID)
+	}
+	if roleIDValue != "" && !workspacemodel.IsBuiltinRole(roleIDValue) {
+		for _, granted := range customRolePermissions[roleIDValue] {
+			if workspacemodel.WorkspacePermissionCode(granted) == permission {
+				return true
+			}
+		}
+		return false
+	}
+	if roleIDValue == "" {
+		roleIDValue = workspacemodel.DefaultWorkspaceRoleID(role)
+	}
+	for _, granted := range workspacemodel.GetBuiltinGroupRolePermissionsByID(roleIDValue) {
+		if granted == permission {
+			return true
+		}
+	}
+	return false
+}
+
+func agentRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntimeSurface, organizationID, workspaceID uuid.UUID, surfaceEnabled bool, grants []dto.UpdateAgentRuntimeSurfaceGrant) ([]runtimeauth.SurfaceGrant, error) {
 	if len(grants) == 0 {
 		switch surface {
 		case runtimeauth.PublishedRuntimeSurfaceWebApp:
 			return []runtimeauth.SurfaceGrant{{
-				SubjectType: runtimeauth.PublishedRuntimeSubjectOrganization,
-				SubjectID:   copyRuntimeUUIDPtr(organizationID),
+				SubjectType: runtimeauth.PublishedRuntimeSubjectPublic,
 				Enabled:     surfaceEnabled,
 			}}, nil
 		case runtimeauth.PublishedRuntimeSurfaceAPI:
 			return []runtimeauth.SurfaceGrant{{
 				SubjectType: runtimeauth.PublishedRuntimeSubjectPublic,
+				Enabled:     surfaceEnabled,
+			}}, nil
+		case runtimeauth.PublishedRuntimeSurfaceAppCenter:
+			return []runtimeauth.SurfaceGrant{{
+				SubjectType: runtimeauth.PublishedRuntimeSubjectWorkspace,
+				SubjectID:   copyRuntimeUUIDPtr(workspaceID),
 				Enabled:     surfaceEnabled,
 			}}, nil
 		case runtimeauth.PublishedRuntimeSurfaceInternal:
@@ -326,10 +650,7 @@ func agentRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntimeSu
 				Enabled:     true,
 			}}, nil
 		case runtimeauth.PublishedRuntimeSurfaceBuiltinApp:
-			if surfaceEnabled {
-				return nil, fmt.Errorf("%w: builtin app surface requires at least one grant", runtimeservice.ErrInvalidInput)
-			}
-			return nil, nil
+			return nil, fmt.Errorf("%w: builtin app is not an agent runtime surface", runtimeservice.ErrInvalidInput)
 		}
 	}
 
@@ -345,13 +666,23 @@ func agentRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntimeSu
 			case runtimeauth.PublishedRuntimeSubjectPublic,
 				runtimeauth.PublishedRuntimeSubjectOrganization,
 				runtimeauth.PublishedRuntimeSubjectAccount,
-				runtimeauth.PublishedRuntimeSubjectDepartment:
+				runtimeauth.PublishedRuntimeSubjectDepartment,
+				runtimeauth.PublishedRuntimeSubjectWorkspace:
 			default:
-				return nil, fmt.Errorf("%w: webapp runtime grants must target public, organization, account, or department", runtimeservice.ErrInvalidInput)
+				return nil, fmt.Errorf("%w: webapp runtime grants must target public, organization, account, department, or workspace", runtimeservice.ErrInvalidInput)
 			}
 		case runtimeauth.PublishedRuntimeSurfaceAPI:
 			if subjectType != runtimeauth.PublishedRuntimeSubjectPublic {
 				return nil, fmt.Errorf("%w: api runtime grants must use public subject", runtimeservice.ErrInvalidInput)
+			}
+		case runtimeauth.PublishedRuntimeSurfaceAppCenter:
+			switch subjectType {
+			case runtimeauth.PublishedRuntimeSubjectOrganization,
+				runtimeauth.PublishedRuntimeSubjectAccount,
+				runtimeauth.PublishedRuntimeSubjectDepartment,
+				runtimeauth.PublishedRuntimeSubjectWorkspace:
+			default:
+				return nil, fmt.Errorf("%w: app center grants must target organization, account, department, or workspace", runtimeservice.ErrInvalidInput)
 			}
 		case runtimeauth.PublishedRuntimeSurfaceInternal:
 			if subjectType != runtimeauth.PublishedRuntimeSubjectInternal {
@@ -361,13 +692,7 @@ func agentRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntimeSu
 				return nil, fmt.Errorf("%w: internal runtime surface cannot be disabled", runtimeservice.ErrInvalidInput)
 			}
 		case runtimeauth.PublishedRuntimeSurfaceBuiltinApp:
-			switch subjectType {
-			case runtimeauth.PublishedRuntimeSubjectOrganization,
-				runtimeauth.PublishedRuntimeSubjectAccount,
-				runtimeauth.PublishedRuntimeSubjectDepartment:
-			default:
-				return nil, fmt.Errorf("%w: builtin app grants must target organization, account, or department", runtimeservice.ErrInvalidInput)
-			}
+			return nil, fmt.Errorf("%w: builtin app is not an agent runtime surface", runtimeservice.ErrInvalidInput)
 		}
 		subjectID, err := runtimeGrantSubjectID(subjectType, item.SubjectID, organizationID)
 		if err != nil {
@@ -386,6 +711,26 @@ func agentRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntimeSu
 	return out, nil
 }
 
+func parseUUIDStrings(rawIDs []string, label string) ([]uuid.UUID, error) {
+	ids := make([]uuid.UUID, 0, len(rawIDs))
+	for _, rawID := range rawIDs {
+		id, err := uuid.Parse(strings.TrimSpace(rawID))
+		if err != nil {
+			return nil, fmt.Errorf("invalid %s: %w", label, err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func uuidStrings(ids []uuid.UUID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
+}
+
 func runtimeGrantSubjectID(subjectType runtimeauth.PublishedRuntimeSubjectType, rawID *string, organizationID uuid.UUID) (*uuid.UUID, error) {
 	switch subjectType {
 	case runtimeauth.PublishedRuntimeSubjectPublic, runtimeauth.PublishedRuntimeSubjectInternal:
@@ -394,7 +739,7 @@ func runtimeGrantSubjectID(subjectType runtimeauth.PublishedRuntimeSubjectType, 
 		if rawID == nil || strings.TrimSpace(*rawID) == "" {
 			return copyRuntimeUUIDPtr(organizationID), nil
 		}
-	case runtimeauth.PublishedRuntimeSubjectAccount, runtimeauth.PublishedRuntimeSubjectDepartment:
+	case runtimeauth.PublishedRuntimeSubjectAccount, runtimeauth.PublishedRuntimeSubjectDepartment, runtimeauth.PublishedRuntimeSubjectWorkspace:
 		if rawID == nil || strings.TrimSpace(*rawID) == "" {
 			return nil, fmt.Errorf("%w: runtime grant subject id is required", runtimeservice.ErrInvalidInput)
 		}
@@ -507,8 +852,7 @@ func (s *agentsService) updateAgentWebAppStatusAndRuntimeSurface(ctx context.Con
 				Enabled:             surfaceEnabled,
 				CompatibilitySource: runtimeauth.PublishedRuntimeSourceGrant,
 				Grants: []runtimeauth.SurfaceGrant{{
-					SubjectType: runtimeauth.PublishedRuntimeSubjectOrganization,
-					SubjectID:   copyRuntimeUUIDPtr(organizationID),
+					SubjectType: runtimeauth.PublishedRuntimeSubjectPublic,
 					Enabled:     surfaceEnabled,
 				}},
 			}},
@@ -528,6 +872,27 @@ func (s *agentsService) organizationUUIDForAgentWorkspace(ctx context.Context, w
 		return uuid.Nil, fmt.Errorf("%w: invalid organization id", runtimeservice.ErrInvalidInput)
 	}
 	return parsed, nil
+}
+
+func agentRuntimeSupportedSurfaces(surfaces []runtimeauth.SurfaceAuthorization, workspaceID uuid.UUID) []runtimeauth.SurfaceAuthorization {
+	out := make([]runtimeauth.SurfaceAuthorization, 0, len(surfaces))
+	for _, surface := range surfaces {
+		switch surface.Surface {
+		case runtimeauth.PublishedRuntimeSurfaceWebApp,
+			runtimeauth.PublishedRuntimeSurfaceAPI,
+			runtimeauth.PublishedRuntimeSurfaceAppCenter,
+			runtimeauth.PublishedRuntimeSurfaceInternal:
+			if surface.Surface == runtimeauth.PublishedRuntimeSurfaceAppCenter && len(surface.Grants) == 0 && workspaceID != uuid.Nil {
+				surface.Grants = []runtimeauth.SurfaceGrant{{
+					SubjectType: runtimeauth.PublishedRuntimeSubjectWorkspace,
+					SubjectID:   copyRuntimeUUIDPtr(workspaceID),
+					Enabled:     surface.Enabled,
+				}}
+			}
+			out = append(out, surface)
+		}
+	}
+	return out
 }
 
 func agentRuntimeSurfaceAuthorizationDTOs(surfaces []runtimeauth.SurfaceAuthorization) []dto.AgentRuntimeSurfaceAuthorization {

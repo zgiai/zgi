@@ -496,7 +496,7 @@ func TestAgentsHandler_GetWebAppRuntimeCapability_ReturnsAuthorizationContract(t
 			Reason:                 "allowed_organization_grant",
 			PublicOnly:             false,
 			PrivateAudienceEnabled: true,
-			SupportedSubjectTypes:  []string{"public", "organization", "department", "account"},
+			SupportedSubjectTypes:  []string{"public", "organization", "department", "workspace", "account"},
 			VersionUUID:            "44444444-4444-4444-4444-444444444444",
 		},
 	}
@@ -549,7 +549,7 @@ func TestAgentsHandler_GetWebAppRuntimeCapability_ReturnsAuthorizationContract(t
 	require.Equal(t, "authenticated", body.Data.AuthMode)
 	require.False(t, body.Data.PublicOnly)
 	require.True(t, body.Data.PrivateAudienceEnabled)
-	require.Equal(t, []string{"public", "organization", "department", "account"}, body.Data.SupportedSubjectTypes)
+	require.Equal(t, []string{"public", "organization", "department", "workspace", "account"}, body.Data.SupportedSubjectTypes)
 	require.Equal(t, "44444444-4444-4444-4444-444444444444", body.Data.VersionUUID)
 }
 

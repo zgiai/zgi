@@ -257,7 +257,7 @@ func TestAgentsService_GetWebAppRuntimeCapability_LoginRequiredForPrivateOrganiz
 	require.Equal(t, agentWebAppCapabilityReasonLoginRequired, got.Reason)
 	require.False(t, got.PublicOnly)
 	require.True(t, got.PrivateAudienceEnabled)
-	require.Equal(t, []string{"public", "organization", "department", "account"}, got.SupportedSubjectTypes)
+	require.Equal(t, []string{"public", "organization", "department", "workspace", "account"}, got.SupportedSubjectTypes)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -527,10 +527,17 @@ func TestAgentsService_GetAgentRuntimeSurfaces_UsesWorkspaceViewAndLegacyFallbac
 	require.Equal(t, workspace_model.WorkspacePermissionAgentView, orgService.lastPermission)
 
 	surfaces := runtimeSurfaceTestMap(resp.Surfaces)
+	require.Len(t, surfaces, 4)
 	require.False(t, surfaces["webapp"].Enabled)
+	require.False(t, surfaces["app_center"].Enabled)
+	require.Len(t, surfaces["app_center"].Grants, 1)
+	require.Equal(t, "workspace", surfaces["app_center"].Grants[0].SubjectType)
+	require.NotNil(t, surfaces["app_center"].Grants[0].SubjectID)
+	require.Equal(t, workspaceID.String(), *surfaces["app_center"].Grants[0].SubjectID)
 	require.True(t, surfaces["api"].Enabled)
-	require.False(t, surfaces["builtin_app"].Enabled)
 	require.True(t, surfaces["internal"].Enabled)
+	_, hasBuiltinApp := surfaces["builtin_app"]
+	require.False(t, hasBuiltinApp)
 }
 
 func TestAgentsService_GetAgentRuntimeSurfaces_RejectsMissingWorkspaceViewPermission(t *testing.T) {
@@ -580,7 +587,7 @@ func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsInternalDisable(t *test
 	require.Contains(t, err.Error(), "internal runtime surface cannot be disabled")
 }
 
-func TestAgentsService_UpdateAgentRuntimeSurfaces_RequiresBuiltinGrantWhenEnabled(t *testing.T) {
+func TestAgentsService_UpdateAgentRuntimeSurfaces_IgnoresLegacyBuiltinSurfaceInput(t *testing.T) {
 	db, cleanup := openAgentRuntimeSurfacesMockDB(t)
 	defer cleanup()
 
@@ -606,7 +613,7 @@ func TestAgentsService_UpdateAgentRuntimeSurfaces_RequiresBuiltinGrantWhenEnable
 		}},
 	})
 	require.ErrorIs(t, err, runtimeservice.ErrInvalidInput)
-	require.Contains(t, err.Error(), "builtin app surface requires at least one grant")
+	require.Contains(t, err.Error(), "no supported agent runtime surface provided")
 }
 
 func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsNonPublicAPIGrantsBeforeSQL(t *testing.T) {
@@ -708,7 +715,7 @@ func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsWebAppAccountGrantOutsi
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsAccountGrantOutsideOrganization(t *testing.T) {
+func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsOrganizationGrantForNormalMember(t *testing.T) {
 	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
 	defer cleanup()
 
@@ -716,7 +723,7 @@ func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsAccountGrantOutsideOrga
 	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	organizationID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
-	accountGrantID := uuid.MustParse("99999999-9999-9999-9999-999999999998")
+	operatorID := "99999999-9999-9999-9999-999999999999"
 	repo := &stubWebAppStatusRepository{
 		agent: &Agent{
 			ID:       agentID,
@@ -729,23 +736,23 @@ func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsAccountGrantOutsideOrga
 		enterpriseService: &stubWebAppStatusOrganizationService{allowed: true, organizationID: organizationID.String()},
 		db:                db,
 	}
-	mock.ExpectQuery(`SELECT count\(\*\) FROM "members" WHERE organization_id = \$1 AND account_id = \$2 AND status = \$3`).
-		WithArgs(organizationID.String(), accountGrantID.String(), workspace_model.OrganizationMemberStatusActive).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT \* FROM "members" WHERE organization_id = \$1 AND account_id = \$2 AND status = \$3 LIMIT \$4`).
+		WithArgs(organizationID.String(), operatorID, workspace_model.OrganizationMemberStatusActive, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"organization_id", "account_id", "role", "name", "status", "created_at", "updated_at"}).
+			AddRow(organizationID.String(), operatorID, workspace_model.OrganizationRoleNormal, nil, workspace_model.OrganizationMemberStatusActive, time.Now(), time.Now()))
 
-	_, err := service.UpdateAgentRuntimeSurfaces(ctx, agentID.String(), "99999999-9999-9999-9999-999999999999", dto.UpdateAgentRuntimeSurfacesRequest{
+	_, err := service.UpdateAgentRuntimeSurfaces(ctx, agentID.String(), operatorID, dto.UpdateAgentRuntimeSurfacesRequest{
 		Surfaces: []dto.UpdateAgentRuntimeSurfaceAuthorization{{
-			Surface: "builtin_app",
+			Surface: "webapp",
 			Enabled: true,
 			Grants: []dto.UpdateAgentRuntimeSurfaceGrant{{
-				SubjectType: "account",
-				SubjectID:   stringPtr(accountGrantID.String()),
+				SubjectType: "organization",
 			}},
 		}},
 	})
 
-	require.ErrorIs(t, err, runtimeservice.ErrInvalidInput)
-	require.Contains(t, err.Error(), "runtime grant account is not in organization")
+	require.ErrorIs(t, err, runtimeservice.ErrPermissionDenied)
+	require.Contains(t, err.Error(), "only organization owners or admins can grant organization-wide access")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -776,7 +783,7 @@ func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsDepartmentGrantOutsideO
 
 	_, err := service.UpdateAgentRuntimeSurfaces(ctx, agentID.String(), "99999999-9999-9999-9999-999999999999", dto.UpdateAgentRuntimeSurfacesRequest{
 		Surfaces: []dto.UpdateAgentRuntimeSurfaceAuthorization{{
-			Surface: "builtin_app",
+			Surface: "webapp",
 			Enabled: true,
 			Grants: []dto.UpdateAgentRuntimeSurfaceGrant{{
 				SubjectType: "department",
@@ -821,7 +828,7 @@ func TestAgentRuntimeAuthorizationFromUpdateRequest_AllowsWebAppAudienceGrants(t
 	require.Equal(t, departmentID, grants[2].SubjectID.String())
 }
 
-func TestAgentRuntimeAuthorizationFromUpdateRequest_DefaultsEnabledWebAppToOrganizationGrant(t *testing.T) {
+func TestAgentRuntimeAuthorizationFromUpdateRequest_DefaultsEnabledWebAppToPublicGrant(t *testing.T) {
 	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	organizationID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
@@ -836,9 +843,29 @@ func TestAgentRuntimeAuthorizationFromUpdateRequest_DefaultsEnabledWebAppToOrgan
 	require.Len(t, auth.Surfaces, 1)
 	require.Len(t, auth.Surfaces[0].Grants, 1)
 	grant := auth.Surfaces[0].Grants[0]
-	require.Equal(t, runtimeauth.PublishedRuntimeSubjectOrganization, grant.SubjectType)
+	require.Equal(t, runtimeauth.PublishedRuntimeSubjectPublic, grant.SubjectType)
+	require.Nil(t, grant.SubjectID)
+	require.True(t, grant.Enabled)
+}
+
+func TestAgentRuntimeAuthorizationFromUpdateRequest_DefaultsEnabledAppCenterToOwningWorkspaceGrant(t *testing.T) {
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	organizationID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+
+	auth, _, err := agentRuntimeAuthorizationFromUpdateRequest(agentID, workspaceID, organizationID, dto.UpdateAgentRuntimeSurfacesRequest{
+		Surfaces: []dto.UpdateAgentRuntimeSurfaceAuthorization{{
+			Surface: "app_center",
+			Enabled: true,
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, auth.Surfaces, 1)
+	require.Len(t, auth.Surfaces[0].Grants, 1)
+	grant := auth.Surfaces[0].Grants[0]
+	require.Equal(t, runtimeauth.PublishedRuntimeSubjectWorkspace, grant.SubjectType)
 	require.NotNil(t, grant.SubjectID)
-	require.Equal(t, organizationID, *grant.SubjectID)
+	require.Equal(t, workspaceID, *grant.SubjectID)
 	require.True(t, grant.Enabled)
 }
 
@@ -846,7 +873,6 @@ func TestAgentRuntimeAuthorizationFromUpdateRequest_RejectsInvalidSurfaceGrantSu
 	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	organizationID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
-	otherOrganizationID := "77777777-7777-7777-7777-777777777777"
 
 	tests := []struct {
 		name      string
@@ -860,7 +886,7 @@ func TestAgentRuntimeAuthorizationFromUpdateRequest_RejectsInvalidSurfaceGrantSu
 			surface:   "webapp",
 			subject:   "internal",
 			subjectID: nil,
-			want:      "webapp runtime grants must target public, organization, account, or department",
+			want:      "webapp runtime grants must target public, organization, account, department, or workspace",
 		},
 		{
 			name:    "api rejects organization grant",
@@ -869,18 +895,17 @@ func TestAgentRuntimeAuthorizationFromUpdateRequest_RejectsInvalidSurfaceGrantSu
 			want:    "api runtime grants must use public subject",
 		},
 		{
-			name:      "builtin rejects public grant",
+			name:    "app center rejects public grant",
+			surface: "app_center",
+			subject: "public",
+			want:    "app center grants must target organization, account, department, or workspace",
+		},
+		{
+			name:      "builtin surface is ignored as unsupported for ordinary agent",
 			surface:   "builtin_app",
 			subject:   "public",
 			subjectID: nil,
-			want:      "builtin app grants must target organization, account, or department",
-		},
-		{
-			name:      "organization grant rejects another organization id",
-			surface:   "builtin_app",
-			subject:   "organization",
-			subjectID: &otherOrganizationID,
-			want:      "runtime grant organization is not current organization",
+			want:      "no supported agent runtime surface provided",
 		},
 		{
 			name:    "internal rejects public grant",
@@ -1065,6 +1090,10 @@ func expectWebAppRuntimeAudience(mock sqlmock.Sqlmock, accountID, organizationID
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT department_members.department_id FROM "department_members" JOIN departments ON departments.id = department_members.department_id WHERE department_members.account_id = $1 AND departments.group_id = $2 AND departments.status = $3`)).
 		WithArgs(accountID, organizationID, workspace_model.DepartmentStatusActive).
 		WillReturnRows(rows)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT workspace_members.workspace_id FROM "workspace_members" JOIN workspaces ON workspaces.id = workspace_members.workspace_id WHERE workspace_members.account_id = $1 AND workspaces.organization_id = $2 AND workspaces.status = $3`)).
+		WithArgs(accountID, organizationID, workspace_model.WorkspaceStatusNormal).
+		WillReturnRows(sqlmock.NewRows([]string{"workspace_id"}))
 }
 
 func runtimeSurfaceTestMap(surfaces []dto.AgentRuntimeSurfaceAuthorization) map[string]dto.AgentRuntimeSurfaceAuthorization {
