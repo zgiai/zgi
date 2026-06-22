@@ -69,11 +69,9 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       });
     }
 
-    if (routeAccess.canShowRuntimeAccess) {
+    if (routeAccess.canShowApiKeys) {
       items.push({
-        title: routeAccess.canShowApiKeys
-          ? t('agents.apiKeys.navTitle')
-          : t('agents.runtimeAccess.navTitle'),
+        title: t('agents.apiKeys.navTitle'),
         href: `/console/agents/${agentId}/api`,
         icon: KeyRound,
       });

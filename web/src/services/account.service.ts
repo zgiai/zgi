@@ -7,9 +7,15 @@ const ACCOUNT_EX_BASE_URL = '/console/api/account';
 const WORKSPACE_URL = '/console/api/workspaces';
 
 export type AccountContextMode = 'none' | 'organization' | 'workspace';
-export type RuntimeSurface = 'webapp' | 'api' | 'builtin_app' | 'internal';
+export type RuntimeSurface = 'webapp' | 'api' | 'app_center' | 'builtin_app' | 'internal';
 export type RuntimeResourceList = 'app_center' | 'built_in_workflows';
-export type RuntimeGrantSubject = 'public' | 'organization' | 'department' | 'account' | 'internal';
+export type RuntimeGrantSubject =
+  | 'public'
+  | 'organization'
+  | 'department'
+  | 'workspace'
+  | 'account'
+  | 'internal';
 
 export interface AccountContextResponse {
   account_id: string;
@@ -58,19 +64,26 @@ export interface AccountCapabilitiesResponse {
     organization_id: string | null;
     subject_types: RuntimeGrantSubject[];
     department_ids?: string[];
+    workspace_ids?: string[];
   };
-  runtime_surfaces: Record<RuntimeSurface, {
-    enabled: boolean;
-    mode: string;
-    grant_subject_types: RuntimeGrantSubject[];
-  }>;
-  runtime_resource_lists: Record<RuntimeResourceList, {
-    enabled: boolean;
-    resource_type: string;
-    surface: RuntimeSurface;
-    mode: string;
-    endpoint: string;
-  }>;
+  runtime_surfaces: Record<
+    RuntimeSurface,
+    {
+      enabled: boolean;
+      mode: string;
+      grant_subject_types: RuntimeGrantSubject[];
+    }
+  >;
+  runtime_resource_lists: Record<
+    RuntimeResourceList,
+    {
+      enabled: boolean;
+      resource_type: string;
+      surface: RuntimeSurface;
+      mode: string;
+      endpoint: string;
+    }
+  >;
 }
 
 // Account service with enhanced error handling
@@ -90,8 +103,7 @@ export const accountService = {
     mode?: AccountContextMode;
     current_workspace_id?: string | null;
     current_organization_id?: string | null;
-  }) =>
-    http.put<ApiResponseData<AccountContextResponse>>(`${BASE_URL}/context`, data),
+  }) => http.put<ApiResponseData<AccountContextResponse>>(`${BASE_URL}/context`, data),
 
   getCapabilities: async () => {
     const res = await http.get<ApiResponseData<AccountCapabilitiesResponse>>(

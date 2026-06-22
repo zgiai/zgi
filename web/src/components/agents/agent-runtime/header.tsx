@@ -12,6 +12,7 @@ import {
   Loader2,
   Play,
   Save,
+  SlidersHorizontal,
   UploadCloud,
   X,
 } from 'lucide-react';
@@ -30,6 +31,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
@@ -40,6 +43,7 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { WebAppStatus } from '@/services/types/agent';
 import type { AgentRuntimeAgent, AgentRuntimeSaveState } from './types';
+import { PublishSettingsDialog } from './publish-settings-dialog';
 import { pickAgentInitials } from './utils';
 
 const WEB_APP_OFFLINE_REASON_MAX_LENGTH = 500;
@@ -84,6 +88,7 @@ export function AgentRuntimeHeader({
   const t = useT('agents.agentRuntime');
   const webAppStatusMutation = useUpdateWebAppStatus();
   const [webAppStatusDialogOpen, setWebAppStatusDialogOpen] = useState(false);
+  const [publishSettingsOpen, setPublishSettingsOpen] = useState(false);
   const [offlineReason, setOfflineReason] = useState('');
   const saveDotClassName =
     saveState === 'error'
@@ -275,24 +280,24 @@ export function AgentRuntimeHeader({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <div className="px-2 py-1">
-                <Button
-                  className="w-full rounded-md border border-primary/25 bg-primary/10 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15"
-                  onClick={onPublish}
-                  disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
-                >
-                  {isPublishing ? (
-                    <Loader2 className="size-5 animate-spin" />
-                  ) : (
-                    <UploadCloud className="size-5" />
-                  )}
-                  {isPublishing ? publishingLabel : publishLabel}
-                </Button>
-              </div>
+              <DropdownMenuItem
+                disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
+                onSelect={event => {
+                  event.preventDefault();
+                  onPublish();
+                }}
+              >
+                {isPublishing ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <UploadCloud className="size-4" />
+                )}
+                {isPublishing ? publishingLabel : publishLabel}
+              </DropdownMenuItem>
               {isPublished ? (
                 <>
-                  <div className="my-1 h-px w-full bg-border" />
-                  <div className="flex items-center justify-between gap-3 px-2 py-1.5 text-xs text-muted-foreground">
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
                     <span>{t('header.webAppStatus')}</span>
                     <Badge
                       variant="outline"
@@ -304,7 +309,7 @@ export function AgentRuntimeHeader({
                     >
                       {isWebAppOnline ? t('header.online') : t('header.offline')}
                     </Badge>
-                  </div>
+                  </DropdownMenuLabel>
                 </>
               ) : null}
               {isPublished ? (
@@ -318,6 +323,13 @@ export function AgentRuntimeHeader({
                   {webAppStatusActionLabel}
                 </DropdownMenuItem>
               ) : null}
+              <DropdownMenuItem
+                disabled={disablePrimaryActions}
+                onSelect={() => setPublishSettingsOpen(true)}
+              >
+                <SlidersHorizontal className="size-4" />
+                {t('header.publishSettings')}
+              </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={!webAppUrl || isWebAppOffline}
                 onSelect={event => {
@@ -403,6 +415,12 @@ export function AgentRuntimeHeader({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <PublishSettingsDialog
+        agentId={agentId}
+        open={publishSettingsOpen}
+        canManage={!disablePrimaryActions}
+        onOpenChange={setPublishSettingsOpen}
+      />
     </>
   );
 }

@@ -399,12 +399,19 @@ export interface AgentApiKeyList {
   total: number;
 }
 
-export type AgentRuntimeSurface = 'webapp' | 'api' | 'builtin_app' | 'internal' | string;
+export type AgentRuntimeSurface =
+  | 'webapp'
+  | 'api'
+  | 'app_center'
+  | 'builtin_app'
+  | 'internal'
+  | string;
 
 export type AgentRuntimeGrantSubject =
   | 'public'
   | 'organization'
   | 'department'
+  | 'workspace'
   | 'account'
   | 'internal'
   | string;

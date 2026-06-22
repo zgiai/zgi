@@ -43,13 +43,20 @@ const webAppMigrationHookPath = path.join(
 );
 const webAppLayoutPath = path.join(rootDir, 'src', 'app', 'webapp', '[version_uuid]', 'layout.tsx');
 const teamSwitcherPath = path.join(rootDir, 'src', 'components', 'console', 'team-switcher.tsx');
-const runtimeAccessTabPath = path.join(
+const publishSettingsDialogPath = path.join(
   rootDir,
   'src',
   'components',
   'agents',
-  'api',
-  'runtime-access-tab.tsx'
+  'agent-runtime',
+  'publish-settings-dialog.tsx'
+);
+const runtimeAudiencePickerPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'runtime-auth',
+  'runtime-audience-picker-dialog.tsx'
 );
 const runtimeGrantSubjectRowPath = path.join(
   rootDir,
@@ -57,6 +64,25 @@ const runtimeGrantSubjectRowPath = path.join(
   'components',
   'runtime-auth',
   'runtime-grant-subject-row.tsx'
+);
+const agentRuntimeHeaderPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'agents',
+  'agent-runtime',
+  'header.tsx'
+);
+const agentSidebarPath = path.join(rootDir, 'src', 'components', 'agents', 'agent-sidebar.tsx');
+const agentApiPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'api',
+  'page.tsx'
 );
 const enterOrganizationModeHookPath = path.join(
   rootDir,
@@ -273,7 +299,13 @@ assert.deepEqual(
 
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_CONSOLE_ROUTES],
-  ['/console/settings', '/console/work', '/console/work/chat', '/console/work/image', '/console/work/app'],
+  [
+    '/console/settings',
+    '/console/work',
+    '/console/work/chat',
+    '/console/work/image',
+    '/console/work/app',
+  ],
   'console organization-scoped exact route metadata should include settings and product routes'
 );
 assert.deepEqual(
@@ -471,8 +503,12 @@ const runnableWebAppsHookSource = fs.readFileSync(runnableWebAppsHookPath, 'utf8
 const builtInWorkflowsHookSource = fs.readFileSync(builtInWorkflowsHookPath, 'utf8');
 const teamSwitcherSource = fs.readFileSync(teamSwitcherPath, 'utf8');
 const enterOrganizationModeHookSource = fs.readFileSync(enterOrganizationModeHookPath, 'utf8');
-const runtimeAccessTabSource = fs.readFileSync(runtimeAccessTabPath, 'utf8');
+const publishSettingsDialogSource = fs.readFileSync(publishSettingsDialogPath, 'utf8');
+const runtimeAudiencePickerSource = fs.readFileSync(runtimeAudiencePickerPath, 'utf8');
 const runtimeGrantSubjectRowSource = fs.readFileSync(runtimeGrantSubjectRowPath, 'utf8');
+const agentRuntimeHeaderSource = fs.readFileSync(agentRuntimeHeaderPath, 'utf8');
+const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
+const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
 assert.match(
   accountServiceSource,
   /export type RuntimeResourceList = 'app_center' \| 'built_in_workflows';/,
@@ -480,7 +516,12 @@ assert.match(
 );
 assert.match(
   accountServiceSource,
-  /runtime_resource_lists:\s*Record<RuntimeResourceList,/,
+  /export type RuntimeSurface = 'webapp' \| 'api' \| 'app_center' \| 'builtin_app' \| 'internal';/,
+  'account capabilities runtime surface type should include app_center separately from builtin_app'
+);
+assert.match(
+  accountServiceSource,
+  /runtime_resource_lists:\s*Record<\s*RuntimeResourceList,/,
   'account capabilities response should expose runtime resource-list metadata'
 );
 assert.match(
@@ -649,49 +690,149 @@ assert.match(
   'runtime grant subject row should show an inline warning for incomplete, failed, or stale grants'
 );
 assert.match(
-  runtimeAccessTabSource,
-  /t\('policyNote'\)/,
-  'agent publication access should explain the current WebApp, built-in app, and API audience policy'
+  publishSettingsDialogSource,
+  /RuntimeAudiencePickerDialog/,
+  'agent publication settings should edit scoped audiences in a second-level dialog'
 );
 assert.match(
-  runtimeAccessTabSource,
+  publishSettingsDialogSource,
+  /RuntimeAudienceChipList/,
+  'agent publication settings should show selected audiences as removable chips'
+);
+assert.match(
+  publishSettingsDialogSource,
+  /EDITABLE_AUDIENCE_SUBJECTS\s*=\s*\['organization', 'department', 'workspace', 'account'\]/,
+  'agent publication settings should support workspace scoped runtime grants'
+);
+assert.match(
+  publishSettingsDialogSource,
   /type WebAppAudienceMode = 'public' \| 'scoped'/,
   'agent publication access should let WebApp switch between public and scoped audiences'
 );
 assert.match(
-  runtimeAccessTabSource,
+  publishSettingsDialogSource,
   /const buildWebAppGrants = \(\): UpdateAgentRuntimeSurfaceGrant\[\] \| null => \{[\s\S]*?webAppAudienceMode === 'public'[\s\S]*?subject_type:\s*'public'[\s\S]*?buildEditableAudienceGrants\(webAppGrants/,
   'agent publication access should build either public or editable scoped WebApp grants'
 );
 assert.match(
-  runtimeAccessTabSource,
+  publishSettingsDialogSource,
   /surface:\s*'webapp',[\s\S]*?enabled:\s*webAppEnabled,[\s\S]*?grants:\s*webApp/,
   'agent publication access should send the selected WebApp audience grants'
 );
 assert.match(
-  runtimeAccessTabSource,
+  publishSettingsDialogSource,
   /surface:\s*'api',[\s\S]*?enabled:\s*apiEnabled,[\s\S]*?grants:\s*\[\{\s*subject_type:\s*'public',\s*enabled:\s*apiEnabled\s*\}\]/,
   'agent publication access should keep API grants public-only while API audience policy is out of scope'
 );
 assert.match(
-  runtimeAccessTabSource,
-  /surface:\s*'builtin_app',[\s\S]*?enabled:\s*builtinEnabled,[\s\S]*?grants:\s*builtin/,
-  'agent publication access should send editable audience grants for builtin_app'
+  publishSettingsDialogSource,
+  /surface:\s*'app_center',[\s\S]*?enabled:\s*appCenterEnabled,[\s\S]*?grants:\s*appCenter/,
+  'agent publication access should send editable audience grants for app_center'
+);
+assert.doesNotMatch(
+  publishSettingsDialogSource,
+  /surface:\s*'builtin_app'/,
+  'ordinary agent publication access should not send builtin_app'
 );
 assert.match(
-  runtimeAccessTabSource,
+  publishSettingsDialogSource,
   /surface:\s*'internal',[\s\S]*?enabled:\s*true,[\s\S]*?grants:\s*\[\{\s*subject_type:\s*'internal',\s*enabled:\s*true\s*\}\]/,
   'agent publication access should preserve the internal runtime grant contract'
 );
+assert.match(
+  publishSettingsDialogSource,
+  /wholeOrganizationConfirm/,
+  'agent publication access should confirm before replacing scoped audiences with whole-organization access'
+);
+assert.match(
+  publishSettingsDialogSource,
+  /closeGuard/,
+  'agent publication settings should guard closing the primary dialog with unsaved changes'
+);
+assert.match(
+  publishSettingsDialogSource,
+  /hasUnsavedChanges/,
+  'agent publication settings should detect unsaved changes before closing'
+);
 assert.doesNotMatch(
-  runtimeAccessTabSource,
+  publishSettingsDialogSource,
   /\b(setApiGrants|apiGrants)\b/,
   'agent publication access should not expose editable API audience grant state while API private access is out of scope'
 );
-assert.equal(
-  (runtimeAccessTabSource.match(/<RuntimeGrantSubjectRow\b/g) ?? []).length,
-  2,
-  'agent publication access should render editable subject rows for WebApp and builtin_app grant lists'
+assert.match(
+  runtimeAudiencePickerSource,
+  /Checkbox/,
+  'runtime audience picker should use checkbox selection for mixed audiences'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /useDepartments/,
+  'runtime audience picker should list departments from the organization tree'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /useWorkspaces/,
+  'runtime audience picker should list workspaces from the organization'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /useCurrentOrganizationMembers/,
+  'runtime audience picker should list organization members'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /subject_type:\s*'department'/,
+  'runtime audience picker should support department grants'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /subject_type:\s*'workspace'/,
+  'runtime audience picker should support workspace grants'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /subject_type:\s*'account'/,
+  'runtime audience picker should support account grants'
+);
+assert.doesNotMatch(
+  runtimeAudiencePickerSource,
+  /\$\{name\}\s*\(\$\{member\.email\}\)/,
+  'runtime audience picker should not append email to member display names'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /useCurrentOrganizationMember/,
+  'runtime audience chips should hydrate saved account grants when possible'
+);
+assert.match(
+  agentRuntimeHeaderSource,
+  /PublishSettingsDialog/,
+  'agent runtime header should expose publication settings from the publish dropdown'
+);
+assert.match(
+  agentRuntimeHeaderSource,
+  /publishSettingsOpen/,
+  'agent runtime header should control the publication settings dialog locally'
+);
+assert.match(
+  agentSidebarSource,
+  /routeAccess\.canShowApiKeys/,
+  'agent sidebar API entry should now be tied to workflow API key visibility'
+);
+assert.doesNotMatch(
+  agentSidebarSource,
+  /runtimeAccess\.navTitle/,
+  'agent sidebar should no longer show a standalone publication access navigation item'
+);
+assert.doesNotMatch(
+  agentApiPageSource,
+  /RuntimeAccessTab/,
+  'agent API page should no longer render the publication access tab'
+);
+assert.match(
+  agentApiPageSource,
+  /defaultValue="api-keys"/,
+  'agent API page should default to workflow API keys after publication access moved to the publish dialog'
 );
 
 for (const appCenterPath of appCenterPaths) {

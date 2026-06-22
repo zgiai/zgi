@@ -734,12 +734,19 @@ export interface BuiltInWorkflow {
 // Built-in workflows list
 export type BuiltInWorkflowList = BuiltInWorkflow[];
 
-export type PublishedRuntimeSurface = 'webapp' | 'api' | 'builtin_app' | 'internal' | string;
+export type PublishedRuntimeSurface =
+  | 'webapp'
+  | 'api'
+  | 'app_center'
+  | 'builtin_app'
+  | 'internal'
+  | string;
 
 export type PublishedRuntimeGrantSubject =
   | 'public'
   | 'organization'
   | 'department'
+  | 'workspace'
   | 'account'
   | 'internal'
   | string;

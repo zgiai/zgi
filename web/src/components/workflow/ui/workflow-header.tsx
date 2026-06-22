@@ -13,6 +13,7 @@ import {
   Play,
   SaveIcon,
   Settings2,
+  SlidersHorizontal,
   UploadCloud,
   KeySquare,
   MessageCircleCode,
@@ -29,6 +30,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useLatestWorkflowVersion } from '@/hooks/workflow/use-workflow';
@@ -54,6 +57,7 @@ import { Badge } from '@/components/ui/badge';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { ICON_BG, ICON_TEXT, WORKFLOW_AUTOSAVE_INTERVAL_MS } from '@/lib/config';
 import type { IconType } from '@/utils/icon-helpers';
+import { PublishSettingsDialog } from '@/components/agents/agent-runtime/publish-settings-dialog';
 
 interface WorkflowHeaderProps {
   // Basic info
@@ -129,6 +133,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
   const { errors } = useWorkflowValidation();
   const [runWarnOpen, setRunWarnOpen] = React.useState(false);
   const [webAppStatusDialogOpen, setWebAppStatusDialogOpen] = React.useState(false);
+  const [publishSettingsOpen, setPublishSettingsOpen] = React.useState(false);
   const [offlineReason, setOfflineReason] = React.useState('');
   const [dontWarnAgain, setDontWarnAgain] = React.useState(false);
   const setOpenValidationIssues = useWorkflowStore.use.setOpenValidationIssues();
@@ -575,34 +580,32 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
-                  <div className="w-full">
-                    <div className="px-2 py-1">
-                      <Button
-                        onClick={handlePublishClick}
-                        disabled={Boolean(isPublishing) || isSaving}
-                        title={canPublish === false ? t('workflow.fixErrorsBeforePublishing') : ''}
-                        className="w-full rounded-md border border-primary/25 bg-primary/10 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15"
-                      >
-                        {isPublishing ? (
-                          <Loader2 size={20} className="animate-spin" />
-                        ) : (
-                          <UploadCloud size={20} />
-                        )}
-                        {hasPubilshed
-                          ? isPublishing
-                            ? t('workflow.updating')
-                            : t('workflow.update')
-                          : isPublishing
-                            ? t('workflow.publishing')
-                            : t('workflow.publish')}
-                      </Button>
-                    </div>
-                  </div>
+                  <DropdownMenuItem
+                    disabled={Boolean(isPublishing) || isSaving}
+                    title={canPublish === false ? t('workflow.fixErrorsBeforePublishing') : ''}
+                    onSelect={event => {
+                      event.preventDefault();
+                      handlePublishClick();
+                    }}
+                  >
+                    {isPublishing ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <UploadCloud className="size-4" />
+                    )}
+                    {hasPubilshed
+                      ? isPublishing
+                        ? t('workflow.updating')
+                        : t('workflow.update')
+                      : isPublishing
+                        ? t('workflow.publishing')
+                        : t('workflow.publish')}
+                  </DropdownMenuItem>
 
                   {hasPubilshed && (
                     <>
-                      <div className="w-full h-px bg-border my-1" />
-                      <div className="flex items-center justify-between gap-3 px-2 py-1.5 text-xs text-muted-foreground">
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
                         <span>{t('workflow.webappStatus.label')}</span>
                         <Badge
                           variant="outline"
@@ -614,7 +617,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                         >
                           {webAppStatusLabel}
                         </Badge>
-                      </div>
+                      </DropdownMenuLabel>
                       <DropdownMenuItem
                         onSelect={() => {
                           setWebAppStatusDialogOpen(true);
@@ -645,6 +648,11 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                       </DropdownMenuItem>
                     </>
                   )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setPublishSettingsOpen(true)}>
+                    <SlidersHorizontal className="size-4" />
+                    {t('agentRuntime.header.publishSettings')}
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               <Dialog open={webAppStatusDialogOpen} onOpenChange={setWebAppStatusDialogOpen}>
@@ -714,6 +722,12 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
+              <PublishSettingsDialog
+                agentId={agentId}
+                open={publishSettingsOpen}
+                canManage={!isReadOnly && !isPermissionReadOnly}
+                onOpenChange={setPublishSettingsOpen}
+              />
             </div>
           </>
         )}
