@@ -1014,9 +1014,11 @@ func loadGraphFlowConfig(cfg *Config, source *envSource) {
 
 func loadLLMConfig(cfg *Config, source *envSource) {
 	officialModelStrictSync, _ := source.bool(false, envOfficialModelSyncStrictMode)
+	allowPrivateBaseURL, _ := source.bool(false, envLLMAllowPrivateBaseURL)
 	cfg.LLM = LLMConfig{
 		EncryptionKey:           source.string("", envLLMEncryptionKey),
 		OfficialModelStrictSync: officialModelStrictSync,
+		AllowPrivateBaseURL:     allowPrivateBaseURL,
 	}
 }
 

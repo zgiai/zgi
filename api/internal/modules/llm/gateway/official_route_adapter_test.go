@@ -40,6 +40,12 @@ func TestCreateAdapterConfig_OfficialRouteUsesZGICloudTransport(t *testing.T) {
 	if cfg.AuthHook == nil {
 		t.Fatal("AuthHook = nil, want HMAC auth hook for official transport")
 	}
+	if !cfg.GuardOutboundURL {
+		t.Fatal("GuardOutboundURL = false, want official transport guarded")
+	}
+	if !cfg.AllowPrivateBaseURL {
+		t.Fatal("AllowPrivateBaseURL = false, want official transport to allow console-api")
+	}
 }
 
 func TestCreateAdapterConfig_OfficialImageRouteUsesZGICloudTransport(t *testing.T) {
@@ -72,6 +78,9 @@ func TestCreateAdapterConfig_OfficialImageRouteUsesZGICloudTransport(t *testing.
 	}
 	if cfg.AuthHook == nil {
 		t.Fatal("AuthHook = nil, want HMAC auth hook for official image transport")
+	}
+	if !cfg.GuardOutboundURL || !cfg.AllowPrivateBaseURL {
+		t.Fatal("official image transport should be guarded and allow console-api")
 	}
 }
 
@@ -127,5 +136,11 @@ func TestCreateAdapterConfig_PrivateImageRouteDoesNotInferAdapterFromModelName(t
 
 	if cfg.ProviderName != "agicto" {
 		t.Fatalf("ProviderName = %q, want adapter resolved from channel_provider only", cfg.ProviderName)
+	}
+	if !cfg.GuardOutboundURL {
+		t.Fatal("GuardOutboundURL = false, want private transport guarded")
+	}
+	if cfg.AllowPrivateBaseURL {
+		t.Fatal("AllowPrivateBaseURL = true, want private transport public-only by default")
 	}
 }

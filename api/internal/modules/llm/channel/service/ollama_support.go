@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
+	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	adapterprovider "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters/provider"
@@ -25,6 +26,9 @@ func (s *channelService) DiscoverOllamaModels(ctx context.Context, req *dto.Disc
 	}
 	if isOllamaExactBaseURL(req.APIBaseURL) {
 		return nil, fmt.Errorf("ollama api_base_url ending with # does not support auto-discover models; enter model names manually")
+	}
+	if _, err := channelprovider.ValidateConnectionFields(ollamaChannelProvider, req.APIBaseURL); err != nil {
+		return nil, err
 	}
 	lister := listOllamaModels
 	if s != nil && s.ollamaModelLister != nil {
@@ -357,9 +361,11 @@ func (s *channelService) ensureOllamaCustomModel(ctx context.Context, organizati
 
 func listOllamaModels(ctx context.Context, apiBaseURL, apiKey string) ([]adapter.Model, error) {
 	ollama, err := adapterprovider.NewOllamaAdapter(&adapter.AdapterConfig{
-		ProviderName: ollamaChannelProvider,
-		BaseURL:      apiBaseURL,
-		APIKey:       apiKey,
+		ProviderName:        ollamaChannelProvider,
+		BaseURL:             apiBaseURL,
+		APIKey:              apiKey,
+		GuardOutboundURL:    true,
+		AllowPrivateBaseURL: channelprovider.AllowsPrivateBaseURL(ollamaChannelProvider),
 	})
 	if err != nil {
 		return nil, err

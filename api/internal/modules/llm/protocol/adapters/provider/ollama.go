@@ -137,7 +137,7 @@ func NewOllamaAdapter(config *adapter.AdapterConfig) (*OllamaAdapter, error) {
 
 	return &OllamaAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClientWithAuthHook(timeout, maxRetries, config.AuthHook),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, maxRetries),
 		baseURLs:   baseURLs,
 	}, nil
 }

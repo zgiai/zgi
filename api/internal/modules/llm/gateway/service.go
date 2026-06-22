@@ -764,11 +764,13 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 	}
 
 	config := &adapter.AdapterConfig{
-		ProviderName: adapterProvider,
-		ProviderID:   selection.Provider.ID.String(),
-		BaseURL:      selection.Provider.APIBaseURL,
-		Timeout:      500 * time.Second,
-		MaxRetries:   3,
+		ProviderName:        adapterProvider,
+		ProviderID:          selection.Provider.ID.String(),
+		BaseURL:             selection.Provider.APIBaseURL,
+		Timeout:             500 * time.Second,
+		MaxRetries:          3,
+		GuardOutboundURL:    true,
+		AllowPrivateBaseURL: selection.UseSystemProvider || channelprovider.AllowsPrivateBaseURL(selection.ChannelProvider),
 	}
 
 	// In V2 architecture, API key is already decrypted and passed through ProviderSelection

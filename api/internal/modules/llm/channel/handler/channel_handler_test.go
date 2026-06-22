@@ -10,8 +10,24 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
 )
+
+func setLLMAllowPrivateBaseURL(t *testing.T, allow bool) {
+	t.Helper()
+	previous := appconfig.GlobalConfig
+	next := &appconfig.Config{}
+	if previous != nil {
+		copied := *previous
+		next = &copied
+	}
+	next.LLM.AllowPrivateBaseURL = allow
+	appconfig.GlobalConfig = next
+	t.Cleanup(func() {
+		appconfig.GlobalConfig = previous
+	})
+}
 
 func TestParsePlatformUpdateChannelRequestRejectsIsActive(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -178,6 +194,7 @@ func TestParseCreateRouteRequestRejectsOpenAICompatibleWithoutAPIKey(t *testing.
 }
 
 func TestParseCreateRouteRequestAcceptsOllamaWithoutAPIKey(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	gin.SetMode(gin.TestMode)
 
 	body := `{"name":"local ollama","channel_provider":"ollama","api_base_url":"http://localhost:11434","models":["qwen3.5:4b"]}`
@@ -262,6 +279,7 @@ func TestParseDraftTestChannelModelRequestAcceptsValidPayload(t *testing.T) {
 }
 
 func TestParseDraftTestChannelModelRequestAcceptsOllamaWithoutAPIKey(t *testing.T) {
+	setLLMAllowPrivateBaseURL(t, true)
 	gin.SetMode(gin.TestMode)
 
 	body := `{"channel_provider":"ollama","api_base_url":"http://localhost:11434","model":"qwen3.5:4b","test_method":"chat"}`

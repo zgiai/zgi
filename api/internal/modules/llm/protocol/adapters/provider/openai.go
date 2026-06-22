@@ -51,7 +51,7 @@ func NewOpenAIAdapter(config *adapter.AdapterConfig) (*OpenAIAdapter, error) {
 
 	return &OpenAIAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClientWithAuthHook(timeout, maxRetries, config.AuthHook),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, maxRetries),
 		baseURL:    baseURL,
 		exactURL:   exactURL,
 	}, nil
@@ -749,6 +749,9 @@ func (a *OpenAIAdapter) openAIClientOptions() []openaioption.RequestOption {
 		openaioption.WithBaseURL(baseURL),
 		openaioption.WithMaxRetries(a.config.MaxRetries),
 		openaioption.WithRequestTimeout(a.config.Timeout),
+	}
+	if client := a.httpClient.StandardClient(); client != nil {
+		opts = append(opts, openaioption.WithHTTPClient(client))
 	}
 	if a.config.Organization != "" {
 		opts = append(opts, openaioption.WithOrganization(a.config.Organization))

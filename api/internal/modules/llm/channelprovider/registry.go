@@ -1,8 +1,12 @@
 package channelprovider
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/llm/internal/urlguard"
 )
 
 // Spec defines the canonical behavior for a channel_provider.
@@ -109,6 +113,19 @@ func ValidateConnectionSpec(spec Spec, apiBaseURL string) error {
 	if spec.RequiresBaseURL && strings.TrimSpace(apiBaseURL) == "" {
 		return fmt.Errorf("api_base_url is required for channel_provider %q", spec.Name)
 	}
+	if err := ValidateBaseURLForSpec(spec, "api_base_url", apiBaseURL); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ValidateBaseURLForSpec(spec Spec, fieldName, raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	if err := urlguard.ValidateBaseURL(context.Background(), raw, URLGuardPolicy(spec)); err != nil {
+		return fmt.Errorf("invalid %s for channel_provider %q: %w", fieldName, spec.Name, err)
+	}
 	return nil
 }
 
@@ -133,6 +150,18 @@ func ValidateConnectionFields(rawProvider, apiBaseURL string) (Spec, error) {
 		return Spec{}, err
 	}
 	return spec, nil
+}
+
+func URLGuardPolicy(spec Spec) urlguard.Policy {
+	return urlguard.Policy{AllowPrivate: AllowsPrivateBaseURL(spec.Name)}
+}
+
+func AllowsPrivateBaseURL(rawProvider string) bool {
+	spec, err := Resolve(rawProvider)
+	if err != nil {
+		return false
+	}
+	return spec.Name == "ollama" && appconfig.Current().LLM.AllowPrivateBaseURL
 }
 
 // SupportsOpenAIResponses reports whether the channel provider supports native OpenAI Responses.

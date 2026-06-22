@@ -175,6 +175,9 @@ func (s *channelService) CreateRoute(ctx context.Context, organizationID uuid.UU
 		return nil, err
 	}
 	channelProvider := spec.Name
+	if err := validateNativeProtocolBaseURLs(spec, req.NativeProtocols); err != nil {
+		return nil, err
+	}
 
 	if err := s.ensureOllamaCustomModels(ctx, organizationID, channelProvider, req.APIBaseURL, req.APIKey, req.Models); err != nil {
 		return nil, err
@@ -502,6 +505,13 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 
 	spec, err := channelprovider.ValidateConnectionFields(newChannelProvider, newAPIBaseURL)
 	if err != nil {
+		return nil, err
+	}
+	effectiveNativeProtocols := route.NativeProtocols
+	if req.NativeProtocols != nil {
+		effectiveNativeProtocols = *req.NativeProtocols
+	}
+	if err := validateNativeProtocolBaseURLs(spec, effectiveNativeProtocols); err != nil {
 		return nil, err
 	}
 	if req.APIKey != nil {
@@ -1148,6 +1158,16 @@ func isUniqueConstraintViolation(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "duplicate key")
 }
 
+func validateNativeProtocolBaseURLs(spec channelprovider.Spec, protocols model.NativeProtocolConfig) error {
+	if err := channelprovider.ValidateBaseURLForSpec(spec, "native_protocols.openai_responses.base_url", protocols.OpenAIResponses.BaseURL); err != nil {
+		return err
+	}
+	if err := channelprovider.ValidateBaseURLForSpec(spec, "native_protocols.anthropic_messages.base_url", protocols.AnthropicMessages.BaseURL); err != nil {
+		return err
+	}
+	return nil
+}
+
 // TestChannelModel tests a specific model on a channel
 func (s *channelService) TestDraftChannelModel(ctx context.Context, organizationID uuid.UUID, req *dto.DraftTestChannelModelRequest) (*dto.ChannelModelTestResult, error) {
 	spec, err := channelprovider.ValidateConnectionFields(req.ChannelProvider, req.APIBaseURL)
@@ -1195,11 +1215,13 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 	}
 
 	adapterInstance, err := adapter.NewAdapter(&adapter.AdapterConfig{
-		ProviderName: spec.AdapterKey,
-		APIKey:       req.APIKey,
-		BaseURL:      req.APIBaseURL,
-		Timeout:      30 * time.Second,
-		MaxRetries:   1,
+		ProviderName:        spec.AdapterKey,
+		APIKey:              req.APIKey,
+		BaseURL:             req.APIBaseURL,
+		Timeout:             30 * time.Second,
+		MaxRetries:          1,
+		GuardOutboundURL:    true,
+		AllowPrivateBaseURL: channelprovider.AllowsPrivateBaseURL(spec.Name),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create %s adapter: %w", spec.Name, err)

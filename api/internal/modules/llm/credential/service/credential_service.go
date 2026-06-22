@@ -41,10 +41,11 @@ func NewTenantCredentialService(repo repository.TenantCredentialRepository, cryp
 }
 
 func (s *tenantCredentialService) Create(ctx context.Context, organizationID uuid.UUID, req *dto.CreateTenantCredentialRequest) (*model.TenantCredential, error) {
-	normalizedProvider, err := channelprovider.Normalize(req.ChannelProvider)
+	spec, err := channelprovider.ValidateConnectionFields(req.ChannelProvider, req.APIBaseURL)
 	if err != nil {
 		return nil, err
 	}
+	normalizedProvider := spec.Name
 
 	hash := hashAPIKey(req.APIKey)
 
@@ -81,10 +82,11 @@ func (s *tenantCredentialService) Create(ctx context.Context, organizationID uui
 // GetOrCreateByAPIKey gets an existing credential by API key hash, or creates a new one if not exists.
 // Returns (credential, created, error) where created is true if a new credential was created.
 func (s *tenantCredentialService) GetOrCreateByAPIKey(ctx context.Context, organizationID uuid.UUID, req *dto.CreateTenantCredentialRequest) (*model.TenantCredential, bool, error) {
-	normalizedProvider, err := channelprovider.Normalize(req.ChannelProvider)
+	spec, err := channelprovider.ValidateConnectionFields(req.ChannelProvider, req.APIBaseURL)
 	if err != nil {
 		return nil, false, err
 	}
+	normalizedProvider := spec.Name
 
 	hash := hashAPIKey(req.APIKey)
 
@@ -134,18 +136,27 @@ func (s *tenantCredentialService) Update(ctx context.Context, organizationID, id
 		return nil, ErrCredentialNotFound
 	}
 
+	newChannelProvider := credential.ChannelProvider
+	if req.ChannelProvider != nil {
+		newChannelProvider = *req.ChannelProvider
+	}
+	newAPIBaseURL := credential.APIBaseURL
+	if req.APIBaseURL != nil {
+		newAPIBaseURL = *req.APIBaseURL
+	}
+	spec, err := channelprovider.ValidateConnectionFields(newChannelProvider, newAPIBaseURL)
+	if err != nil {
+		return nil, err
+	}
+
 	if req.Name != nil {
 		credential.Name = *req.Name
 	}
 	if req.ChannelProvider != nil {
-		normalizedProvider, err := channelprovider.Normalize(*req.ChannelProvider)
-		if err != nil {
-			return nil, err
-		}
-		credential.ChannelProvider = normalizedProvider
+		credential.ChannelProvider = spec.Name
 	}
 	if req.APIBaseURL != nil {
-		credential.APIBaseURL = *req.APIBaseURL
+		credential.APIBaseURL = newAPIBaseURL
 	}
 	if req.IsActive != nil {
 		credential.IsActive = *req.IsActive
@@ -230,6 +241,12 @@ func (s *tenantCredentialService) TestCredential(ctx context.Context, organizati
 	baseURL := credential.APIBaseURL
 	if apiBaseURL != "" {
 		baseURL = apiBaseURL
+	}
+	if _, err := channelprovider.ValidateConnectionFields(credential.ChannelProvider, baseURL); err != nil {
+		return &dto.TestCredentialResult{
+			Success: false,
+			Message: err.Error(),
+		}, nil
 	}
 
 	return testCredentialWithChannelProvider(ctx, credential.ChannelProvider, baseURL, apiKey, modelName)
