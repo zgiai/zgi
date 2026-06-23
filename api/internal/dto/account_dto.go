@@ -87,11 +87,13 @@ type AccountCapabilityContext struct {
 }
 
 type AccountOrganizationCapabilities struct {
-	ID              *string                           `json:"id"`
-	Role            string                            `json:"role"`
-	IsMember        bool                              `json:"is_member"`
-	IsAdmin         bool                              `json:"is_admin"`
-	ProductSurfaces AccountProductSurfaceCapabilities `json:"product_surfaces"`
+	ID                   *string                           `json:"id"`
+	Role                 string                            `json:"role"`
+	IsMember             bool                              `json:"is_member"`
+	IsAdmin              bool                              `json:"is_admin"`
+	CanAccessDashboard   bool                              `json:"can_access_dashboard"`
+	CanManageModelConfig bool                              `json:"can_manage_model_config"`
+	ProductSurfaces      AccountProductSurfaceCapabilities `json:"product_surfaces"`
 }
 
 type AccountProductSurfaceCapabilities struct {

@@ -1935,10 +1935,12 @@ func (s *AccountService) GetAccountCapabilities(ctx context.Context, accountID s
 	}
 	isAdmin := role == workspace_model.OrganizationRoleOwner || role == workspace_model.OrganizationRoleAdmin
 	response.Organization = dto.AccountOrganizationCapabilities{
-		ID:       ctxModel.CurrentOrganizationID,
-		Role:     string(role),
-		IsMember: true,
-		IsAdmin:  isAdmin,
+		ID:                   ctxModel.CurrentOrganizationID,
+		Role:                 string(role),
+		IsMember:             true,
+		IsAdmin:              isAdmin,
+		CanAccessDashboard:   isAdmin,
+		CanManageModelConfig: isAdmin,
 		ProductSurfaces: dto.AccountProductSurfaceCapabilities{
 			Chat:     true,
 			Image:    true,

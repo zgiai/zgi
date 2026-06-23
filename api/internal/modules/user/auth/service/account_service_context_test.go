@@ -394,6 +394,8 @@ func TestGetAccountCapabilitiesOrganizationModeAllowsProductSurfacesOnly(t *test
 	require.True(t, capabilities.Organization.ProductSurfaces.Image)
 	require.True(t, capabilities.Organization.ProductSurfaces.App)
 	require.True(t, capabilities.Organization.ProductSurfaces.Settings)
+	require.False(t, capabilities.Organization.CanAccessDashboard)
+	require.False(t, capabilities.Organization.CanManageModelConfig)
 	require.True(t, capabilities.Routes.OrganizationScopeAllowed)
 	require.False(t, capabilities.Routes.WorkspaceScopeAllowed)
 	require.True(t, capabilities.Routes.WorkspaceRequired)
@@ -405,6 +407,34 @@ func TestGetAccountCapabilitiesOrganizationModeAllowsProductSurfacesOnly(t *test
 	require.Empty(t, capabilities.RuntimeAudience.WorkspaceIDs)
 	assertAccountRuntimeSurfaceContract(t, capabilities.RuntimeSurfaces, true)
 	assertAccountRuntimeResourceListContract(t, capabilities.RuntimeResourceLists, true)
+}
+
+func TestGetAccountCapabilitiesOrganizationAdminCanManageModelConfig(t *testing.T) {
+	organizationID := "org-1"
+	repo := &fakeAccountContextRepository{
+		ctxModel: &auth_model.AccountContext{
+			AccountID:             "acc-1",
+			CurrentOrganizationID: &organizationID,
+		},
+	}
+	organizationService := &fakeOrganizationContextService{
+		members: map[string]bool{organizationID: true},
+		roles: map[string]workspace_model.OrganizationRole{
+			organizationID: workspace_model.OrganizationRoleAdmin,
+		},
+	}
+
+	svc := &AccountService{
+		accountRepo:                repo,
+		workspaceManagementService: &fakeWorkspaceContextService{},
+		organizationService:        organizationService,
+	}
+
+	capabilities, err := svc.GetAccountCapabilities(context.Background(), "acc-1")
+	require.NoError(t, err)
+	require.True(t, capabilities.Organization.IsAdmin)
+	require.True(t, capabilities.Organization.CanAccessDashboard)
+	require.True(t, capabilities.Organization.CanManageModelConfig)
 }
 
 func TestGetAccountCapabilitiesWithoutOrganizationKeepsRuntimeSurfaceContractDisabled(t *testing.T) {

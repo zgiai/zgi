@@ -160,9 +160,11 @@ func TestAccountHandlerGetAccountCapabilitiesReturnsContract(t *testing.T) {
 				CurrentOrganizationID: &organizationID,
 			},
 			Organization: shared_dto.AccountOrganizationCapabilities{
-				ID:       &organizationID,
-				Role:     "normal",
-				IsMember: true,
+				ID:                   &organizationID,
+				Role:                 "normal",
+				IsMember:             true,
+				CanAccessDashboard:   false,
+				CanManageModelConfig: false,
 				ProductSurfaces: shared_dto.AccountProductSurfaceCapabilities{
 					Chat:     true,
 					Image:    true,
@@ -250,10 +252,12 @@ func TestAccountHandlerGetAccountCapabilitiesReturnsContract(t *testing.T) {
 				CurrentWorkspaceID    *string `json:"current_workspace_id"`
 			} `json:"context"`
 			Organization struct {
-				ID              *string `json:"id"`
-				Role            string  `json:"role"`
-				IsMember        bool    `json:"is_member"`
-				ProductSurfaces struct {
+				ID                   *string `json:"id"`
+				Role                 string  `json:"role"`
+				IsMember             bool    `json:"is_member"`
+				CanAccessDashboard   bool    `json:"can_access_dashboard"`
+				CanManageModelConfig bool    `json:"can_manage_model_config"`
+				ProductSurfaces      struct {
 					Chat     bool `json:"chat"`
 					Image    bool `json:"image"`
 					App      bool `json:"app"`
@@ -304,6 +308,8 @@ func TestAccountHandlerGetAccountCapabilitiesReturnsContract(t *testing.T) {
 	require.Equal(t, organizationID, *payload.Data.Organization.ID)
 	require.Equal(t, "normal", payload.Data.Organization.Role)
 	require.True(t, payload.Data.Organization.IsMember)
+	require.False(t, payload.Data.Organization.CanAccessDashboard)
+	require.False(t, payload.Data.Organization.CanManageModelConfig)
 	require.True(t, payload.Data.Organization.ProductSurfaces.Chat)
 	require.True(t, payload.Data.Organization.ProductSurfaces.Image)
 	require.True(t, payload.Data.Organization.ProductSurfaces.App)

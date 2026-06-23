@@ -21,6 +21,7 @@ export function useAccountCapabilities() {
   });
 
   const capabilities = query.data ?? null;
+  const isOrganizationAdmin = capabilities?.organization.is_admin ?? false;
 
   return {
     capabilities,
@@ -31,6 +32,10 @@ export function useAccountCapabilities() {
     canUseOrganizationScope: capabilities?.routes.organization_scope_allowed ?? false,
     canUseWorkspaceScope: capabilities?.routes.workspace_scope_allowed ?? false,
     isWorkspaceRequired: capabilities?.routes.workspace_required ?? true,
+    canAccessOrganizationDashboard:
+      capabilities?.organization.can_access_dashboard ?? isOrganizationAdmin,
+    canManageModelConfig:
+      capabilities?.organization.can_manage_model_config ?? isOrganizationAdmin,
     runtimeResourceLists: capabilities?.runtime_resource_lists ?? null,
     canUseRuntimeResourceList: (key: RuntimeResourceList) =>
       capabilities?.runtime_resource_lists[key]?.enabled ?? false,

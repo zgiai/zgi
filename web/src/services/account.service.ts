@@ -38,6 +38,8 @@ export interface AccountCapabilitiesResponse {
     role: string;
     is_member: boolean;
     is_admin: boolean;
+    can_access_dashboard?: boolean;
+    can_manage_model_config?: boolean;
     product_surfaces: {
       chat: boolean;
       image: boolean;
