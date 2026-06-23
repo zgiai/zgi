@@ -183,7 +183,7 @@ func (r *workspaceRepository) GetWorkspaceStatistics(ctx context.Context, worksp
 	var datasetsCount int64
 	err = r.db.WithContext(ctx).
 		Model(&dataset_model.Dataset{}).
-		Where("tenant_id = ?", workspaceID).
+		Where("workspace_id = ?", workspaceID).
 		Count(&datasetsCount).Error
 	if err != nil {
 		return 0, 0, 0, 0, err
