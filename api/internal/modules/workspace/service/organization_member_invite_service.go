@@ -50,7 +50,7 @@ func (s *organizationService) InviteCurrentOrganizationMember(ctx context.Contex
 	departmentID := trimOptionalInviteString(req.DepartmentID)
 	email := normalizeAccountEmail(req.Email)
 	name := strings.TrimSpace(req.Name)
-	if organizationID == "" || operatorAccountID == "" || workspaceID == "" || email == "" || name == "" {
+	if organizationID == "" || operatorAccountID == "" || email == "" || name == "" {
 		return nil, fmt.Errorf("invalid invite request")
 	}
 
@@ -69,9 +69,12 @@ func (s *organizationService) InviteCurrentOrganizationMember(ctx context.Contex
 			return ErrOrganizationInvitePermissionDenied
 		}
 
-		workspace, err := getInviteWorkspaceTx(ctx, tx, organizationID, workspaceID)
-		if err != nil {
-			return err
+		var workspace *model.Workspace
+		if workspaceID != "" {
+			workspace, err = getInviteWorkspaceTx(ctx, tx, organizationID, workspaceID)
+			if err != nil {
+				return err
+			}
 		}
 
 		var department *model.Department
@@ -104,29 +107,35 @@ func (s *organizationService) InviteCurrentOrganizationMember(ctx context.Contex
 			}
 		}
 
-		alreadyWorkspaceMember, err := workspaceMemberExistsTx(ctx, tx, workspaceID, account.ID)
-		if err != nil {
-			return err
-		}
-		if !alreadyWorkspaceMember {
-			if s.workspaceManagementService == nil {
-				return fmt.Errorf("workspace management service is required to add workspace member")
+		if workspace != nil {
+			alreadyWorkspaceMember, err := workspaceMemberExistsTx(ctx, tx, workspaceID, account.ID)
+			if err != nil {
+				return err
 			}
-			if err := s.workspaceManagementService.WithTx(tx).AddMember(ctx, &interfaces.AddMemberRequest{
-				WorkspaceID: workspaceID,
-				AccountID:   account.ID,
-				Role:        model.WorkspaceRoleNormal,
-			}); err != nil && !strings.Contains(err.Error(), "already a member") {
-				return fmt.Errorf("failed to add workspace member: %w", err)
+			if !alreadyWorkspaceMember {
+				if s.workspaceManagementService == nil {
+					return fmt.Errorf("workspace management service is required to add workspace member")
+				}
+				if err := s.workspaceManagementService.WithTx(tx).AddMember(ctx, &interfaces.AddMemberRequest{
+					WorkspaceID: workspaceID,
+					AccountID:   account.ID,
+					Role:        model.WorkspaceRoleNormal,
+				}); err != nil && !strings.Contains(err.Error(), "already a member") {
+					return fmt.Errorf("failed to add workspace member: %w", err)
+				}
 			}
-		}
 
-		targetWorkspaceSelected, err := ensureInviteAccountContextTx(ctx, tx, account.ID, organizationID, workspaceID)
-		if err != nil {
-			return err
-		}
-		if targetWorkspaceSelected {
-			if err := setInviteCurrentWorkspaceTx(ctx, tx, account.ID, workspaceID); err != nil {
+			targetWorkspaceSelected, err := ensureInviteAccountContextTx(ctx, tx, account.ID, organizationID, workspaceID)
+			if err != nil {
+				return err
+			}
+			if targetWorkspaceSelected {
+				if err := setInviteCurrentWorkspaceTx(ctx, tx, account.ID, workspaceID); err != nil {
+					return err
+				}
+			}
+		} else {
+			if err := ensureInviteOrganizationContextTx(ctx, tx, account.ID, organizationID); err != nil {
 				return err
 			}
 		}
@@ -146,10 +155,12 @@ func (s *organizationService) InviteCurrentOrganizationMember(ctx context.Contex
 			CreatedAccount:  createdAccount,
 			AlreadyMember:   alreadyMember,
 			PasswordApplied: createdAccount,
-			Workspace: &shared_dto.MemberWorkspaceInfo{
+		}
+		if workspace != nil {
+			resp.Workspace = &shared_dto.MemberWorkspaceInfo{
 				ID:   workspace.ID,
 				Name: workspace.Name,
-			},
+			}
 		}
 		if department != nil {
 			resp.Department = &shared_dto.MemberDepartmentInfo{
@@ -177,7 +188,7 @@ func (s *organizationService) DirectAddOrganizationMember(ctx context.Context, r
 	departmentID := trimOptionalInviteString(req.DepartmentID)
 	email := normalizeAccountEmail(req.Email)
 	name := strings.TrimSpace(req.Name)
-	if organizationID == "" || operatorAccountID == "" || workspaceID == "" || email == "" || name == "" {
+	if organizationID == "" || operatorAccountID == "" || email == "" || name == "" {
 		return nil, fmt.Errorf("invalid direct add member request")
 	}
 
@@ -197,9 +208,12 @@ func (s *organizationService) DirectAddOrganizationMember(ctx context.Context, r
 			return ErrOrganizationInvitePermissionDenied
 		}
 
-		workspace, err := getDirectAddWorkspaceTx(ctx, tx, organizationID, workspaceID)
-		if err != nil {
-			return err
+		var workspace *model.Workspace
+		if workspaceID != "" {
+			workspace, err = getDirectAddWorkspaceTx(ctx, tx, organizationID, workspaceID)
+			if err != nil {
+				return err
+			}
 		}
 
 		var department *model.Department
@@ -246,29 +260,35 @@ func (s *organizationService) DirectAddOrganizationMember(ctx context.Context, r
 			}
 		}
 
-		alreadyWorkspaceMember, err := workspaceMemberExistsTx(ctx, tx, workspaceID, account.ID)
-		if err != nil {
-			return err
-		}
-		if !alreadyWorkspaceMember {
-			if s.workspaceManagementService == nil {
-				return fmt.Errorf("workspace management service is required to add workspace member")
+		if workspace != nil {
+			alreadyWorkspaceMember, err := workspaceMemberExistsTx(ctx, tx, workspaceID, account.ID)
+			if err != nil {
+				return err
 			}
-			if err := s.workspaceManagementService.WithTx(tx).AddMember(ctx, &interfaces.AddMemberRequest{
-				WorkspaceID: workspaceID,
-				AccountID:   account.ID,
-				Role:        model.WorkspaceRoleNormal,
-			}); err != nil && !strings.Contains(err.Error(), "already a member") {
-				return fmt.Errorf("failed to add workspace member: %w", err)
+			if !alreadyWorkspaceMember {
+				if s.workspaceManagementService == nil {
+					return fmt.Errorf("workspace management service is required to add workspace member")
+				}
+				if err := s.workspaceManagementService.WithTx(tx).AddMember(ctx, &interfaces.AddMemberRequest{
+					WorkspaceID: workspaceID,
+					AccountID:   account.ID,
+					Role:        model.WorkspaceRoleNormal,
+				}); err != nil && !strings.Contains(err.Error(), "already a member") {
+					return fmt.Errorf("failed to add workspace member: %w", err)
+				}
 			}
-		}
 
-		targetWorkspaceSelected, err := ensureInviteAccountContextTx(ctx, tx, account.ID, organizationID, workspaceID)
-		if err != nil {
-			return err
-		}
-		if targetWorkspaceSelected {
-			if err := setInviteCurrentWorkspaceTx(ctx, tx, account.ID, workspaceID); err != nil {
+			targetWorkspaceSelected, err := ensureInviteAccountContextTx(ctx, tx, account.ID, organizationID, workspaceID)
+			if err != nil {
+				return err
+			}
+			if targetWorkspaceSelected {
+				if err := setInviteCurrentWorkspaceTx(ctx, tx, account.ID, workspaceID); err != nil {
+					return err
+				}
+			}
+		} else {
+			if err := ensureInviteOrganizationContextTx(ctx, tx, account.ID, organizationID); err != nil {
 				return err
 			}
 		}
@@ -280,10 +300,12 @@ func (s *organizationService) DirectAddOrganizationMember(ctx context.Context, r
 			OrganizationID: organizationID,
 			CreatedAccount: createdAccount,
 			AlreadyMember:  alreadyMember,
-			Workspace: &shared_dto.MemberWorkspaceInfo{
+		}
+		if workspace != nil {
+			resp.Workspace = &shared_dto.MemberWorkspaceInfo{
 				ID:   workspace.ID,
 				Name: workspace.Name,
-			},
+			}
 		}
 		if department != nil {
 			resp.Department = &shared_dto.MemberDepartmentInfo{
@@ -614,13 +636,51 @@ func newInviteWorkspaceMemberJoin(workspaceID, accountID string, current bool) *
 
 func newInviteAccountContext(accountID, organizationID, workspaceID string) *auth_model.AccountContext {
 	now := time.Now()
-	return &auth_model.AccountContext{
-		AccountID:             accountID,
-		CurrentOrganizationID: &organizationID,
-		CurrentWorkspaceID:    &workspaceID,
-		CreatedAt:             now,
-		UpdatedAt:             now,
+	ctxModel := &auth_model.AccountContext{
+		AccountID: accountID,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
+
+	organizationID = strings.TrimSpace(organizationID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	if organizationID != "" {
+		ctxModel.CurrentOrganizationID = &organizationID
+	}
+	if workspaceID != "" {
+		ctxModel.CurrentWorkspaceID = &workspaceID
+	}
+
+	return ctxModel
+}
+
+func ensureInviteOrganizationContextTx(ctx context.Context, tx *gorm.DB, accountID, organizationID string) error {
+	var ctxModel auth_model.AccountContext
+	err := tx.WithContext(ctx).Where("account_id = ?", accountID).First(&ctxModel).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return createAccountContextTx(ctx, tx, accountID, organizationID, "")
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get account context: %w", err)
+	}
+
+	currentOrganizationID := trimOptionalInviteString(ctxModel.CurrentOrganizationID)
+	if currentOrganizationID != "" {
+		valid, err := organizationMemberExistsTx(ctx, tx, currentOrganizationID, accountID)
+		if err != nil {
+			return err
+		}
+		if valid {
+			return nil
+		}
+	}
+
+	ctxModel.CurrentOrganizationID = &organizationID
+	ctxModel.CurrentWorkspaceID = nil
+	if err := tx.WithContext(ctx).Save(&ctxModel).Error; err != nil {
+		return fmt.Errorf("failed to update account context organization: %w", err)
+	}
+	return nil
 }
 
 func ensureInviteAccountContextTx(ctx context.Context, tx *gorm.DB, accountID, organizationID, workspaceID string) (bool, error) {

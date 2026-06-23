@@ -78,6 +78,34 @@ func (h *MembersHandler) requireWorkspacePermission(
 	return true
 }
 
+func (h *MembersHandler) requireAccountInWorkspaceOrganization(c *gin.Context, workspaceID, accountID string) bool {
+	if h.enterpriseService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+
+	organization, err := h.enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if organization == nil {
+		return true
+	}
+
+	isMember, err := h.enterpriseService.IsOrganizationMember(c.Request.Context(), organization.ID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if !isMember {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+
+	return true
+}
+
 func (h *MembersHandler) GetCurrentOrganizationMemberDetail(c *gin.Context) {
 	memberID := c.Param("member_id")
 	if memberID == "" {
@@ -328,6 +356,9 @@ func (h *MembersHandler) UpdateMemberRole(c *gin.Context) {
 	}
 
 	currentWorkspace := workspaces[0]
+	if !h.requireWorkspacePermission(c, currentWorkspace.ID, model.WorkspacePermissionWorkspaceManage) {
+		return
+	}
 
 	updateReq := &interfaces.UpdateMemberRoleRequest{
 		WorkspaceID: currentWorkspace.ID,
@@ -1154,6 +1185,9 @@ func (h *MembersHandler) InviteWorkspaceMemberByAccountId(c *gin.Context) {
 		response.Fail(c, response.ErrWorkspaceNotFound)
 		return
 	}
+	if !h.requireAccountInWorkspaceOrganization(c, workspaceID, req.AccountID) {
+		return
+	}
 
 	targetAccount, err := h.accountService.GetAccountByID(c.Request.Context(), req.AccountID)
 	if err != nil {
@@ -1276,6 +1310,12 @@ func (h *MembersHandler) BatchInviteWorkspaceMembers(c *gin.Context) {
 		return
 	}
 
+	targetOrganization, err := h.enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
 	results := make([]map[string]interface{}, 0)
 
 	for _, accountID := range req.AccountIDs {
@@ -1286,6 +1326,22 @@ func (h *MembersHandler) BatchInviteWorkspaceMembers(c *gin.Context) {
 			result["message"] = "\"organization admin\" cannot invite themselves to the workspace"
 			results = append(results, result)
 			continue
+		}
+
+		if targetOrganization != nil {
+			isOrganizationMember, err := h.enterpriseService.IsOrganizationMember(c.Request.Context(), targetOrganization.ID, accountID)
+			if err != nil {
+				result["status"] = "failed"
+				result["message"] = "Failed to check organization membership"
+				results = append(results, result)
+				continue
+			}
+			if !isOrganizationMember {
+				result["status"] = "failed"
+				result["message"] = "Account is not a member of the workspace organization"
+				results = append(results, result)
+				continue
+			}
 		}
 
 		targetAccount, err := h.accountService.GetAccountByID(c.Request.Context(), accountID)

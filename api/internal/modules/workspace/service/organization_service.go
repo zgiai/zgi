@@ -36,6 +36,7 @@ import (
 
 var ErrCannotUpdateBuiltinRole = errors.New("cannot update built-in role")
 var ErrRoleNameExists = errors.New("role name already exists")
+var ErrWorkspaceRoleInUse = errors.New("workspace role is assigned to members")
 var ErrMemberNameExists = errors.New("member name already exists")
 var ErrOrganizationNotFound = errors.New("organization not found")
 var ErrOrganizationNameExists = errors.New("organization name already exists")
@@ -683,7 +684,7 @@ func (s *organizationService) ListWorkspaceRoles(ctx context.Context, organizati
 
 		if builtinRole != "" {
 			countQuery = countQuery.Where(
-				"(workspace_members.role_id = ? OR workspace_members.role = ?)",
+				"(workspace_members.role_id IS NULL OR workspace_members.role_id = ?) AND workspace_members.role = ?",
 				role.ID,
 				builtinRole,
 			)
@@ -1145,6 +1146,20 @@ func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, org
 
 	if role.Status == model.WorkspaceCustomRoleStatusDeleted {
 		return nil
+	}
+
+	tenantSubquery := db.WithContext(ctx).Table("workspaces").
+		Select("id").
+		Where("organization_id = ?", organizationID)
+
+	var assignedCount int64
+	if err := db.WithContext(ctx).Table("workspace_members").
+		Where("workspace_id IN (?) AND role_id = ?", tenantSubquery, roleID).
+		Count(&assignedCount).Error; err != nil {
+		return fmt.Errorf("failed to count role assignments: %w", err)
+	}
+	if assignedCount > 0 {
+		return fmt.Errorf("%w: %d member assignments still reference this role", ErrWorkspaceRoleInUse, assignedCount)
 	}
 
 	role.Status = model.WorkspaceCustomRoleStatusDeleted
@@ -2074,7 +2089,8 @@ func (s *organizationService) UpdateMemberStatus(ctx context.Context, req *share
 	}
 
 	// Cannot disable the admin/owner
-	if join.Role == model.OrganizationRoleAdmin && req.Status == model.OrganizationMemberStatusInactive {
+	if (join.Role == model.OrganizationRoleAdmin || join.Role == model.OrganizationRoleOwner) &&
+		req.Status == model.OrganizationMemberStatusInactive {
 		return errors.New("cannot disable the admin/owner of the organization")
 	}
 
@@ -3653,14 +3669,15 @@ func (s *organizationService) GetOrganizationMembersPaginated(ctx context.Contex
 	db := s.organizationRepo.GetDB()
 
 	var accounts []struct {
-		Account          auth_model.Account     `gorm:"embedded"`
-		OrganizationRole model.OrganizationRole `gorm:"column:organization_role"`
-		MemberName       *string                `gorm:"column:member_name"`
+		Account          auth_model.Account             `gorm:"embedded"`
+		OrganizationRole model.OrganizationRole         `gorm:"column:organization_role"`
+		MemberStatus     model.OrganizationMemberStatus `gorm:"column:member_status"`
+		MemberName       *string                        `gorm:"column:member_name"`
 	}
 	var total int64
 
 	baseQuery := db.WithContext(ctx).Unscoped().Table("members").
-		Select("accounts.*, members.role as organization_role, members.name as member_name").
+		Select("accounts.*, members.role as organization_role, members.status as member_status, members.name as member_name").
 		Joins("JOIN accounts ON members.account_id = accounts.id").
 		Where("members.organization_id = ?", organizationID)
 
@@ -3729,7 +3746,7 @@ func (s *organizationService) GetOrganizationMembersPaginated(ctx context.Contex
 			LastLoginAt:      lastLoginAt,
 			LastActiveAt:     lastActiveAt,
 			CreatedAt:        account.CreatedAt.Unix(),
-			Status:           string(account.Status),
+			Status:           string(accountData.MemberStatus),
 			OrganizationRole: accountData.OrganizationRole,
 			AccountRole:      accountRole,
 			Extension:        extension,
@@ -3752,13 +3769,14 @@ func (s *organizationService) GetOrganizationMemberByAccountID(ctx context.Conte
 	db := s.organizationRepo.GetDB()
 
 	var accountData struct {
-		Account          auth_model.Account     `gorm:"embedded"`
-		OrganizationRole model.OrganizationRole `gorm:"column:organization_role"`
-		MemberName       *string                `gorm:"column:member_name"`
+		Account          auth_model.Account             `gorm:"embedded"`
+		OrganizationRole model.OrganizationRole         `gorm:"column:organization_role"`
+		MemberStatus     model.OrganizationMemberStatus `gorm:"column:member_status"`
+		MemberName       *string                        `gorm:"column:member_name"`
 	}
 
 	err := db.WithContext(ctx).Unscoped().Table("members").
-		Select("accounts.*, members.role as organization_role, members.name as member_name").
+		Select("accounts.*, members.role as organization_role, members.status as member_status, members.name as member_name").
 		Joins("JOIN accounts ON members.account_id = accounts.id").
 		Where("members.organization_id = ?", organizationID).
 		Where("members.account_id = ?", accountID).
@@ -3814,7 +3832,7 @@ func (s *organizationService) GetOrganizationMemberByAccountID(ctx context.Conte
 		LastLoginAt:      lastLoginAt,
 		LastActiveAt:     lastActiveAt,
 		CreatedAt:        account.CreatedAt.Unix(),
-		Status:           string(account.Status),
+		Status:           string(accountData.MemberStatus),
 		OrganizationRole: accountData.OrganizationRole,
 		AccountRole:      accountRole,
 		Extension:        extension,
