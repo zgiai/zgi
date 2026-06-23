@@ -17,10 +17,30 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
-func TestDashboardRecentWorkRequiresCurrentWorkspaceBeforeServiceCall(t *testing.T) {
-	recorder, c := newDashboardRecentWorkContext("org-1", "acc-1")
-	dashboardSvc := &dashboardHandlerService{}
-	permissionSvc := &dashboardHandlerWorkspacePermissionService{allowed: true}
+func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T) {
+	recorder, c := newDashboardRecentWorkContext("org-1", "acc-1", "")
+	dashboardSvc := &dashboardHandlerService{
+		recentWork: &systemmodel.RecentWorkResponse{
+			Items: []systemmodel.RecentWorkItem{{
+				ID:            "agent:agent-1",
+				Type:          "agent",
+				ResourceID:    "agent-1",
+				Title:         "Agent One",
+				WorkspaceID:   "ws-agent",
+				WorkspaceName: "Agent Space",
+				UpdatedAt:     1710000000,
+			}},
+		},
+	}
+	permissionSvc := &dashboardHandlerWorkspacePermissionService{
+		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
+			workspacemodel.WorkspacePermissionWorkspaceView:     {"ws-1", "ws-2"},
+			workspacemodel.WorkspacePermissionAgentView:         {"ws-agent"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseView: {"ws-knowledge"},
+			workspacemodel.WorkspacePermissionDatabaseView:      {"ws-db"},
+			workspacemodel.WorkspacePermissionFileView:          {"ws-file"},
+		},
+	}
 	accountSvc := &dashboardHandlerAccountContextService{
 		accountContext: &authmodel.AccountContext{AccountID: "acc-1"},
 	}
@@ -32,27 +52,25 @@ func TestDashboardRecentWorkRequiresCurrentWorkspaceBeforeServiceCall(t *testing
 
 	h.GetRecentWork(c)
 
-	require.Equal(t, http.StatusNotFound, recorder.Code)
-	require.Equal(t, "205016", decodeDashboardHandlerResponseCode(t, recorder))
-	require.False(t, permissionSvc.called, "workspace permission check should not run without a current workspace")
-	require.False(t, dashboardSvc.recentWorkCalled, "recent-work service should not run without a current workspace")
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.False(t, permissionSvc.called, "overview recent-work should not require current workspace")
+	require.True(t, dashboardSvc.recentWorkCalled)
+	require.Equal(t, "org-1", dashboardSvc.recentWorkReq.OrganizationID)
+	require.Equal(t, "acc-1", dashboardSvc.recentWorkReq.AccountID)
+	require.Equal(t, []string{"ws-1", "ws-2"}, dashboardSvc.recentWorkReq.WorkspaceIDs)
+	require.Equal(t, []string{"ws-agent"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
+	require.Equal(t, []string{"ws-knowledge"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
+	require.Equal(t, []string{"ws-db"}, dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
 }
 
-func TestDashboardRecentWorkRequiresWorkspaceViewBeforeServiceCall(t *testing.T) {
-	recorder, c := newDashboardRecentWorkContext("org-1", "acc-1")
-	workspaceID := "ws-1"
+func TestDashboardRecentWorkWorkspaceScopeRequiresWorkspaceViewBeforeServiceCall(t *testing.T) {
+	recorder, c := newDashboardRecentWorkContext("org-1", "acc-1", "?scope=workspace&workspace_id=ws-1")
 	dashboardSvc := &dashboardHandlerService{}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{allowed: false}
-	accountSvc := &dashboardHandlerAccountContextService{
-		accountContext: &authmodel.AccountContext{
-			AccountID:          "acc-1",
-			CurrentWorkspaceID: &workspaceID,
-		},
-	}
 	h := &DashboardHandler{
 		dashboardService:  dashboardSvc,
 		enterpriseService: permissionSvc,
-		accountService:    accountSvc,
+		accountService:    &dashboardHandlerAccountContextService{},
 	}
 
 	h.GetRecentWork(c)
@@ -61,22 +79,16 @@ func TestDashboardRecentWorkRequiresWorkspaceViewBeforeServiceCall(t *testing.T)
 	require.Equal(t, "403001", decodeDashboardHandlerResponseCode(t, recorder))
 	require.True(t, permissionSvc.called)
 	require.Equal(t, "org-1", permissionSvc.organizationID)
-	require.Equal(t, workspaceID, permissionSvc.workspaceID)
+	require.Equal(t, "ws-1", permissionSvc.workspaceID)
 	require.Equal(t, "acc-1", permissionSvc.accountID)
 	require.Equal(t, workspacemodel.WorkspacePermissionWorkspaceView, permissionSvc.permissionCode)
 	require.False(t, dashboardSvc.recentWorkCalled, "recent-work service should not run before workspace.view passes")
 }
 
-func TestDashboardRecentWorkUsesCurrentWorkspaceScope(t *testing.T) {
-	recorder, c := newDashboardRecentWorkContext("org-1", "acc-1")
+func TestDashboardRecentWorkWorkspaceScopeFallsBackToCurrentWorkspace(t *testing.T) {
+	recorder, c := newDashboardRecentWorkContext("org-1", "acc-1", "?scope=workspace")
 	workspaceID := "ws-1"
-	dashboardSvc := &dashboardHandlerService{
-		recentWork: &systemmodel.RecentWorkResponse{
-			Items: []systemmodel.RecentWorkItem{
-				{ID: "agent:agent-1", Type: "agent", ResourceID: "agent-1", Title: "Agent One", UpdatedAt: 1710000000},
-			},
-		},
-	}
+	dashboardSvc := &dashboardHandlerService{}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{allowed: true}
 	accountSvc := &dashboardHandlerAccountContextService{
 		accountContext: &authmodel.AccountContext{
@@ -94,17 +106,84 @@ func TestDashboardRecentWorkUsesCurrentWorkspaceScope(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.True(t, dashboardSvc.recentWorkCalled)
-	require.Equal(t, "org-1", dashboardSvc.organizationID)
-	require.Equal(t, workspaceID, dashboardSvc.workspaceID)
-	require.Equal(t, "acc-1", dashboardSvc.accountID)
-	require.Equal(t, 10, dashboardSvc.limit)
+	require.Equal(t, "org-1", dashboardSvc.recentWorkReq.OrganizationID)
+	require.Equal(t, "acc-1", dashboardSvc.recentWorkReq.AccountID)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.WorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
+	require.Equal(t, 10, dashboardSvc.recentWorkReq.Limit)
 }
 
-func newDashboardRecentWorkContext(organizationID string, accountID string) (*httptest.ResponseRecorder, *gin.Context) {
+func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
+	recorder, c := newDashboardStatsContext("org-1", "acc-1")
+	dashboardSvc := &dashboardHandlerService{
+		stats: &systemmodel.DashboardStatsResponse{
+			Models: systemmodel.ModelsStats{
+				Total:     1,
+				ByUseCase: map[string]int64{"text-chat": 1},
+			},
+			Resources: systemmodel.ResourceStats{
+				Workspaces:  2,
+				Agents:      9,
+				Datasets:    8,
+				DataSources: 7,
+			},
+		},
+	}
+	permissionSvc := &dashboardHandlerWorkspacePermissionService{
+		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
+			workspacemodel.WorkspacePermissionWorkspaceView:     {"ws-1", "ws-2"},
+			workspacemodel.WorkspacePermissionAgentView:         {"ws-agent"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseView: {"ws-knowledge"},
+			workspacemodel.WorkspacePermissionDatabaseView:      {"ws-db"},
+			workspacemodel.WorkspacePermissionFileView:          {"ws-file"},
+		},
+	}
+	h := &DashboardHandler{
+		dashboardService:  dashboardSvc,
+		enterpriseService: permissionSvc,
+		accountService:    &dashboardHandlerAccountContextService{},
+	}
+
+	h.GetDashboardStats(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.True(t, dashboardSvc.statsCalled)
+	require.Equal(t, "org-1", dashboardSvc.statsOrganizationID)
+	require.Equal(t, "acc-1", dashboardSvc.statsAccountID)
+	require.Equal(t, []string{"ws-1", "ws-2"}, dashboardSvc.statsScopes.WorkspaceIDs)
+	require.Equal(t, []string{"ws-agent"}, dashboardSvc.statsScopes.AgentWorkspaceIDs)
+	require.Equal(t, []string{"ws-knowledge"}, dashboardSvc.statsScopes.DatasetWorkspaceIDs)
+	require.Equal(t, []string{"ws-db"}, dashboardSvc.statsScopes.DataSourceWorkspaceIDs)
+	require.Equal(t, []string{"ws-file"}, dashboardSvc.statsScopes.FileWorkspaceIDs)
+
+	var payload struct {
+		Data systemmodel.DashboardStatsResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Equal(t, int64(1), payload.Data.Models.ByUseCase["text-chat"])
+	require.Equal(t, int64(2), payload.Data.Resources.Workspaces)
+	require.Equal(t, int64(9), payload.Data.Resources.Agents)
+	require.Equal(t, int64(8), payload.Data.Resources.Datasets)
+	require.Equal(t, int64(7), payload.Data.Resources.DataSources)
+}
+
+func newDashboardStatsContext(organizationID string, accountID string) (*httptest.ResponseRecorder, *gin.Context) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodGet, "/console/api/dashboard/recent-work", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/console/api/dashboard/stats", nil)
+	util.SetOrganizationID(c, organizationID)
+	c.Set("account_id", accountID)
+	return recorder, c
+}
+
+func newDashboardRecentWorkContext(organizationID string, accountID string, query string) (*httptest.ResponseRecorder, *gin.Context) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/console/api/dashboard/recent-work"+query, nil)
 	util.SetOrganizationID(c, organizationID)
 	c.Set("account_id", accountID)
 	return recorder, c
@@ -119,24 +198,32 @@ func decodeDashboardHandlerResponseCode(t *testing.T, recorder *httptest.Respons
 }
 
 type dashboardHandlerService struct {
-	recentWork       *systemmodel.RecentWorkResponse
+	stats      *systemmodel.DashboardStatsResponse
+	recentWork *systemmodel.RecentWorkResponse
+
+	statsCalled         bool
+	statsOrganizationID string
+	statsAccountID      string
+	statsScopes         systemmodel.DashboardWorkspaceScopes
+
 	recentWorkCalled bool
-	organizationID   string
-	workspaceID      string
-	accountID        string
-	limit            int
+	recentWorkReq    systemmodel.RecentWorkRequest
 }
 
-func (s *dashboardHandlerService) GetDashboardStats(context.Context, string) (*systemmodel.DashboardStatsResponse, error) {
+func (s *dashboardHandlerService) GetDashboardStats(_ context.Context, organizationID string, accountID string, scopes systemmodel.DashboardWorkspaceScopes) (*systemmodel.DashboardStatsResponse, error) {
+	s.statsCalled = true
+	s.statsOrganizationID = organizationID
+	s.statsAccountID = accountID
+	s.statsScopes = scopes
+	if s.stats != nil {
+		return s.stats, nil
+	}
 	return &systemmodel.DashboardStatsResponse{}, nil
 }
 
-func (s *dashboardHandlerService) GetRecentWork(_ context.Context, organizationID string, workspaceID string, accountID string, limit int) (*systemmodel.RecentWorkResponse, error) {
+func (s *dashboardHandlerService) GetRecentWork(_ context.Context, req systemmodel.RecentWorkRequest) (*systemmodel.RecentWorkResponse, error) {
 	s.recentWorkCalled = true
-	s.organizationID = organizationID
-	s.workspaceID = workspaceID
-	s.accountID = accountID
-	s.limit = limit
+	s.recentWorkReq = req
 	if s.recentWork != nil {
 		return s.recentWork, nil
 	}
@@ -152,12 +239,15 @@ func (s *dashboardHandlerAccountContextService) GetAccountContext(context.Contex
 }
 
 type dashboardHandlerWorkspacePermissionService struct {
-	allowed        bool
-	called         bool
-	organizationID string
-	workspaceID    string
-	accountID      string
-	permissionCode workspacemodel.WorkspacePermissionCode
+	allowed                  bool
+	called                   bool
+	organizationAdmin        bool
+	adminCheckCalled         bool
+	workspaceIDsByPermission map[workspacemodel.WorkspacePermissionCode][]string
+	organizationID           string
+	workspaceID              string
+	accountID                string
+	permissionCode           workspacemodel.WorkspacePermissionCode
 }
 
 func (s *dashboardHandlerWorkspacePermissionService) CheckWorkspacePermission(_ context.Context, organizationID string, workspaceID string, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error) {
@@ -167,4 +257,20 @@ func (s *dashboardHandlerWorkspacePermissionService) CheckWorkspacePermission(_ 
 	s.accountID = accountID
 	s.permissionCode = permissionCode
 	return s.allowed, nil
+}
+
+func (s *dashboardHandlerWorkspacePermissionService) IsOrganizationAdminOrOwner(_ context.Context, organizationID, accountID string) (bool, error) {
+	s.adminCheckCalled = true
+	s.organizationID = organizationID
+	s.accountID = accountID
+	return s.organizationAdmin, nil
+}
+
+func (s *dashboardHandlerWorkspacePermissionService) ListWorkspaceIDsByPermission(_ context.Context, organizationID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) ([]string, error) {
+	s.organizationID = organizationID
+	s.accountID = accountID
+	if s.workspaceIDsByPermission == nil {
+		return []string{}, nil
+	}
+	return s.workspaceIDsByPermission[permissionCode], nil
 }

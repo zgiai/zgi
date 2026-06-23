@@ -332,6 +332,8 @@ export const CHANNEL_KEYS = {
 export const DASHBOARD_KEYS = {
   all: ['dashboard'] as const,
   stats: () => [...DASHBOARD_KEYS.all, 'stats'] as const,
+  recentWork: (scope: 'overview' | 'workspace', workspaceId?: string | null) =>
+    [...DASHBOARD_KEYS.all, 'recent-work', scope, workspaceId || 'all'] as const,
 } as const;
 
 // 18. Payment Related

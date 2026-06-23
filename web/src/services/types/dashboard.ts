@@ -17,13 +17,23 @@ export interface DashboardStats {
     };
   };
   resources: {
+    workspaces: number;
     agents: number;
     datasets: number;
     data_sources: number;
+    files: number;
   };
 }
 
 export type DashboardRecentWorkType = 'conversation' | 'agent' | 'dataset' | 'database';
+
+export type DashboardRecentWorkScope = 'overview' | 'workspace';
+
+export interface DashboardRecentWorkParams {
+  scope?: DashboardRecentWorkScope;
+  workspace_id?: string;
+  limit?: number;
+}
 
 export interface DashboardRecentWorkItem {
   id: string;
@@ -31,6 +41,8 @@ export interface DashboardRecentWorkItem {
   title: string;
   resource_id: string;
   parent_id?: string;
+  workspace_id?: string;
+  workspace_name?: string;
   updated_at: number;
 }
 

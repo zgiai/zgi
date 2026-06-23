@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	systemmodel "github.com/zgiai/zgi/api/internal/modules/system/model"
 	"github.com/zgiai/zgi/api/internal/modules/system/service"
 	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -18,14 +20,16 @@ type accountContextReader interface {
 	GetAccountContext(ctx context.Context, accountID string) (*authmodel.AccountContext, error)
 }
 
-type workspacePermissionChecker interface {
+type organizationAccessChecker interface {
 	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error)
+	IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error)
+	ListWorkspaceIDsByPermission(ctx context.Context, organizationID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) ([]string, error)
 }
 
 // DashboardHandler handles dashboard related requests
 type DashboardHandler struct {
 	dashboardService  service.DashboardService
-	enterpriseService workspacePermissionChecker
+	enterpriseService organizationAccessChecker
 	accountService    accountContextReader
 }
 
@@ -57,7 +61,18 @@ func (h *DashboardHandler) GetDashboardStats(c *gin.Context) {
 		return
 	}
 
-	stats, _ := h.dashboardService.GetDashboardStats(ctx, organizationID)
+	accountID := util.GetAccountID(c)
+	scopes, err := h.buildDashboardWorkspaceScopes(ctx, organizationID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	stats, err := h.dashboardService.GetDashboardStats(ctx, organizationID, accountID, scopes)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
 
 	response.Success(c, stats)
 }
@@ -82,16 +97,53 @@ func (h *DashboardHandler) GetRecentWork(c *gin.Context) {
 	}
 
 	accountID := util.GetAccountID(c)
-	accountContext, err := h.accountService.GetAccountContext(ctx, accountID)
-	if err != nil || accountContext == nil || accountContext.CurrentWorkspaceID == nil {
-		response.Fail(c, response.ErrWorkspaceJoinedNotFound)
+	limit := dashboardQueryLimit(c)
+	scope := strings.TrimSpace(c.DefaultQuery("scope", "overview"))
+	if scope == "workspace" {
+		recentWork, ok := h.getWorkspaceRecentWork(c, organizationID, accountID, limit)
+		if !ok {
+			return
+		}
+		response.Success(c, recentWork)
 		return
 	}
 
-	workspaceID := strings.TrimSpace(*accountContext.CurrentWorkspaceID)
+	scopes, err := h.buildDashboardWorkspaceScopes(ctx, organizationID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	recentWork, err := h.dashboardService.GetRecentWork(ctx, systemmodel.RecentWorkRequest{
+		OrganizationID:         organizationID,
+		AccountID:              accountID,
+		Limit:                  limit,
+		WorkspaceIDs:           scopes.WorkspaceIDs,
+		AgentWorkspaceIDs:      scopes.AgentWorkspaceIDs,
+		DatasetWorkspaceIDs:    scopes.DatasetWorkspaceIDs,
+		DataSourceWorkspaceIDs: scopes.DataSourceWorkspaceIDs,
+	})
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	response.Success(c, recentWork)
+}
+
+func (h *DashboardHandler) getWorkspaceRecentWork(c *gin.Context, organizationID string, accountID string, limit int) (*systemmodel.RecentWorkResponse, bool) {
+	ctx := c.Request.Context()
+	workspaceID := strings.TrimSpace(c.Query("workspace_id"))
+	if workspaceID == "" {
+		accountContext, err := h.accountService.GetAccountContext(ctx, accountID)
+		if err != nil || accountContext == nil || accountContext.CurrentWorkspaceID == nil {
+			response.Fail(c, response.ErrWorkspaceJoinedNotFound)
+			return nil, false
+		}
+		workspaceID = strings.TrimSpace(*accountContext.CurrentWorkspaceID)
+	}
 	if workspaceID == "" {
 		response.Fail(c, response.ErrWorkspaceJoinedNotFound)
-		return
+		return nil, false
 	}
 
 	hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
@@ -103,10 +155,64 @@ func (h *DashboardHandler) GetRecentWork(c *gin.Context) {
 	)
 	if err != nil || !hasPermission {
 		response.Fail(c, response.ErrPermissionDenied)
-		return
+		return nil, false
 	}
 
-	recentWork, _ := h.dashboardService.GetRecentWork(ctx, organizationID, workspaceID, accountID, 10)
+	recentWork, err := h.dashboardService.GetRecentWork(ctx, systemmodel.RecentWorkRequest{
+		OrganizationID:         organizationID,
+		AccountID:              accountID,
+		Limit:                  limit,
+		WorkspaceIDs:           []string{workspaceID},
+		AgentWorkspaceIDs:      []string{workspaceID},
+		DatasetWorkspaceIDs:    []string{workspaceID},
+		DataSourceWorkspaceIDs: []string{workspaceID},
+	})
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return nil, false
+	}
+	return recentWork, true
+}
 
-	response.Success(c, recentWork)
+func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, organizationID string, accountID string) (systemmodel.DashboardWorkspaceScopes, error) {
+	if h.enterpriseService == nil || organizationID == "" || accountID == "" {
+		return systemmodel.DashboardWorkspaceScopes{}, nil
+	}
+
+	workspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionWorkspaceView)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
+	agentWorkspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionAgentView)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
+	datasetWorkspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionKnowledgeBaseView)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
+	dataSourceWorkspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionDatabaseView)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
+	fileWorkspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionFileView)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
+
+	return systemmodel.DashboardWorkspaceScopes{
+		WorkspaceIDs:           workspaceIDs,
+		AgentWorkspaceIDs:      agentWorkspaceIDs,
+		DatasetWorkspaceIDs:    datasetWorkspaceIDs,
+		DataSourceWorkspaceIDs: dataSourceWorkspaceIDs,
+		FileWorkspaceIDs:       fileWorkspaceIDs,
+	}, nil
+}
+
+func dashboardQueryLimit(c *gin.Context) int {
+	limit, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "10")))
+	if err != nil || limit <= 0 || limit > 20 {
+		return 10
+	}
+	return limit
 }
