@@ -31,7 +31,7 @@ const messages = {
   defaultWorkspace: 'Default Workspace',
   workspaceManagement: 'Workspace',
   switchWorkspace: 'Switch Workspace',
-  personalSpace: 'Organization View',
+  personalSpace: 'Personal workbench',
   work: 'Work',
   app: 'App',
   task: 'Tasks',

@@ -194,7 +194,7 @@ const messages = {
     badge: 'Empty State',
     title: 'No files are currently available',
     description:
-      'There are no selectable files in Organization View right now. To upload files, choose an owning workspace first.',
+      'There are no selectable files in the personal workbench right now. To upload files, choose an owning workspace first.',
     noticeTitle: 'Upload requires a workspace',
     noticeDescription:
       'System file uploads are stored under a workspace. Choose a workspace before uploading.',

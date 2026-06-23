@@ -12,10 +12,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 const accessPath = path.join(rootDir, 'src', 'routes', 'access.ts');
 const agentDetailRoutesPath = path.join(rootDir, 'src', 'utils', 'agent-detail-routes.ts');
+const consoleRecentWorkPath = path.join(rootDir, 'src', 'utils', 'console-recent-work.ts');
 const consolePagePath = path.join(rootDir, 'src', 'app', 'console', 'page.tsx');
 const workspaceStorePath = path.join(rootDir, 'src', 'store', 'workspace-store.ts');
 const workLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'work', 'layout.tsx');
 const workspaceLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'workspace', 'layout.tsx');
+const workspacePagePath = path.join(rootDir, 'src', 'app', 'console', 'workspace', 'page.tsx');
 const defaultCustomerPath = path.join(rootDir, 'src', 'customer', 'default.tsx');
 const accountServicePath = path.join(rootDir, 'src', 'services', 'account.service.ts');
 const webAppServicePath = path.join(rootDir, 'src', 'services', 'webapp.service.ts');
@@ -43,6 +45,7 @@ const webAppMigrationHookPath = path.join(
 );
 const webAppLayoutPath = path.join(rootDir, 'src', 'app', 'webapp', '[version_uuid]', 'layout.tsx');
 const teamSwitcherPath = path.join(rootDir, 'src', 'components', 'console', 'team-switcher.tsx');
+const userMenuPath = path.join(rootDir, 'src', 'components', 'console', 'user-menu.tsx');
 const publishSettingsDialogPath = path.join(
   rootDir,
   'src',
@@ -82,6 +85,16 @@ const agentApiPagePath = path.join(
   'agents',
   '[agentId]',
   'api',
+  'page.tsx'
+);
+const agentLogsPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'logs',
   'page.tsx'
 );
 const enterOrganizationModeHookPath = path.join(
@@ -188,6 +201,7 @@ const { canShowAgentApiKeys, canShowAgentRuntimeAccess, getAgentDetailRouteAcces
   agentRouteSandbox.module.exports;
 
 const organizationRoutes = [
+  '/console',
   '/console/settings',
   '/console/work',
   '/console/work/chat',
@@ -199,6 +213,7 @@ const organizationRoutes = [
 const workRouteRoot = path.join(rootDir, 'src', 'app', 'console', 'work');
 const consoleRouteRoot = path.join(rootDir, 'src', 'app', 'console');
 const expectedOrganizationConsolePageRoutes = [
+  '/console',
   '/console/settings',
   '/console/work',
   '/console/work/app',
@@ -207,8 +222,8 @@ const expectedOrganizationConsolePageRoutes = [
   '/console/work/image',
 ];
 const expectedWorkspaceConsolePageRoutes = [
-  '/console',
   '/console/agents',
+  '/console/agents/:agentId',
   '/console/agents/:agentId/agent',
   '/console/agents/:agentId/api',
   '/console/agents/:agentId/batch-test',
@@ -261,7 +276,7 @@ assert.deepEqual(
 assert.deepEqual(
   actualConsolePageRoutes.filter(route => isOrganizationScopedConsoleRoute(route)).sort(),
   expectedOrganizationConsolePageRoutes,
-  'console organization routes should remain limited to settings and product work surfaces'
+  'console organization routes should include the personal workbench, settings, and product work surfaces'
 );
 assert.deepEqual(
   actualConsolePageRoutes.filter(route => !isOrganizationScopedConsoleRoute(route)).sort(),
@@ -300,13 +315,14 @@ assert.deepEqual(
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_CONSOLE_ROUTES],
   [
+    '/console',
     '/console/settings',
     '/console/work',
     '/console/work/chat',
     '/console/work/image',
     '/console/work/app',
   ],
-  'console organization-scoped exact route metadata should include settings and product routes'
+  'console organization-scoped exact route metadata should include the personal workbench, settings, and product routes'
 );
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_CONSOLE_ROUTE_PREFIXES],
@@ -406,6 +422,9 @@ assert.match(
 );
 
 const workspaceLayoutSource = fs.readFileSync(workspaceLayoutPath, 'utf8');
+const workspacePageSource = fs.readFileSync(workspacePagePath, 'utf8');
+const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
+const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 assert.match(
   workspaceLayoutSource,
   /useAccountCapabilities/,
@@ -445,6 +464,56 @@ assert.doesNotMatch(
   workspaceLayoutSource,
   /contextStatus !== 'ready' \|\| !currentWorkspace \|\| !hasPermission\('workspace\.view'\)/,
   'workspace management layout should not rely only on local workspace store and permission hook state'
+);
+assert.match(
+  workspacePageSource,
+  /useWorkspaceStatistics\(workspaceId,\s*Boolean\(workspaceId\)\)/,
+  'workspace overview should load current workspace statistics through the workspace statistics endpoint'
+);
+assert.match(
+  workspacePageSource,
+  /workspace\.overview\.management/,
+  'workspace overview should render management entry points instead of redirecting'
+);
+assert.match(
+  workspacePageSource,
+  /workspace\.overview\.permissions/,
+  'workspace overview should summarize current workspace permissions'
+);
+assert.doesNotMatch(
+  workspacePageSource,
+  /dashboardService\.getRecentWork|DASHBOARD_KEYS\.recentWork/,
+  'workspace overview should not duplicate the personal workbench recent-work feed'
+);
+assert.doesNotMatch(
+  workspacePageSource,
+  /redirect\(/,
+  'workspace overview should render in place instead of redirecting to members'
+);
+assert.match(
+  consoleRecentWorkSource,
+  /conversation_id=\$\{encodeURIComponent\(resourceId\)\}/,
+  'recent conversation links should include a conversation_id query parameter'
+);
+assert.match(
+  consoleRecentWorkSource,
+  /\/console\/agents\/\$\{parentId\}\/logs\?\$\{query\}/,
+  'recent conversation links should target agent logs when an agent id is available'
+);
+assert.match(
+  consoleRecentWorkSource,
+  /return `\/console\/agents\/\$\{resourceId\}`;/,
+  'recent agent links should use the canonical agent detail entry route'
+);
+assert.match(
+  agentLogsPageSource,
+  /searchParams\.get\('conversation_id'\)/,
+  'agent logs should read recent-work conversation_id deep links'
+);
+assert.match(
+  agentLogsPageSource,
+  /setConversationFilterInput\(nextConversationFilter\)[\s\S]*setConversationFilter\(nextConversationFilter\)/,
+  'agent logs should apply conversation_id deep links to the runtime log filter'
 );
 
 const defaultCustomerSource = fs.readFileSync(defaultCustomerPath, 'utf8');
@@ -502,6 +571,7 @@ const accountServiceSource = fs.readFileSync(accountServicePath, 'utf8');
 const runnableWebAppsHookSource = fs.readFileSync(runnableWebAppsHookPath, 'utf8');
 const builtInWorkflowsHookSource = fs.readFileSync(builtInWorkflowsHookPath, 'utf8');
 const teamSwitcherSource = fs.readFileSync(teamSwitcherPath, 'utf8');
+const userMenuSource = fs.readFileSync(userMenuPath, 'utf8');
 const enterOrganizationModeHookSource = fs.readFileSync(enterOrganizationModeHookPath, 'utf8');
 const publishSettingsDialogSource = fs.readFileSync(publishSettingsDialogPath, 'utf8');
 const runtimeAudiencePickerSource = fs.readFileSync(runtimeAudiencePickerPath, 'utf8');
@@ -523,6 +593,16 @@ assert.match(
   accountServiceSource,
   /runtime_resource_lists:\s*Record<\s*RuntimeResourceList,/,
   'account capabilities response should expose runtime resource-list metadata'
+);
+assert.match(
+  accountServiceSource,
+  /can_access_dashboard\?:\s*boolean/,
+  'account capabilities type should expose organization dashboard access'
+);
+assert.match(
+  accountServiceSource,
+  /can_manage_model_config\?:\s*boolean/,
+  'account capabilities type should expose model configuration access'
 );
 assert.match(
   accountServiceSource,
@@ -581,23 +661,38 @@ assert.match(
 );
 assert.match(
   consolePageSource,
-  /canUseWorkspaceResources\s*=\s*canUseWorkspaceScope\s*&&\s*!!currentWorkspace/,
-  'console home should derive workspace resource visibility from capabilities and current workspace'
+  /canAccessOrganizationDashboard/,
+  'console home should derive dashboard entry visibility from account capabilities'
 );
 assert.match(
   consolePageSource,
-  /enabled:\s*canUseWorkspaceResources/,
-  'console home recent-work query should not run in organization mode'
+  /canManageModelConfig/,
+  'console home should derive model configuration entry visibility from account capabilities'
 );
 assert.match(
   consolePageSource,
-  /resourceRows\s*=\s*canUseWorkspaceResources\s*\?\s*workspaceResourceRows\s*:\s*\[\]/,
-  'console home should hide workspace resource rows in organization mode'
+  /useRunnableWebApps\(\{\s*workspaceId:\s*null\s*\}\)/,
+  'console home should load runnable apps through organization scope instead of the current workspace'
 );
 assert.match(
   consolePageSource,
-  /canUseOrganizationScope\s*&&\s*!canUseWorkspaceResources[\s\S]*href:\s*'\/console\/work\/chat'/,
-  'console home organization-mode next action should stay on an organization product route'
+  /href:\s*'\/console\/work\/chat'/,
+  'console home should keep chat as an organization-scoped product entry'
+);
+assert.match(
+  consolePageSource,
+  /DASHBOARD_KEYS\.recentWork\('overview'\)/,
+  'console home should query the organization overview recent-work feed'
+);
+assert.match(
+  consolePageSource,
+  /dashboardService\.getRecentWork\(\{[\s\S]*scope:\s*'overview'/,
+  'console home recent-work request should use overview scope'
+);
+assert.match(
+  consolePageSource,
+  /handleOpenRecentWork/,
+  'console home should open recent work through the workspace-aware handler'
 );
 assert.match(
   workspaceStoreSource,
@@ -628,6 +723,21 @@ assert.match(
   teamSwitcherSource,
   /useEnterOrganizationMode/,
   'workspace switcher should expose an explicit organization-mode transition'
+);
+assert.match(
+  userMenuSource,
+  /useAccountCapabilities/,
+  'user menu dashboard entry should consume account capabilities'
+);
+assert.match(
+  userMenuSource,
+  /canAccessOrganizationDashboard/,
+  'user menu dashboard entry should use the dashboard access capability'
+);
+assert.doesNotMatch(
+  userMenuSource,
+  /organization_role[\s\S]*href="\/dashboard"/,
+  'user menu dashboard entry should not be gated directly by local organization_role'
 );
 assert.match(
   teamSwitcherSource,

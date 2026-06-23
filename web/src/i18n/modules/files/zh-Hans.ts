@@ -184,7 +184,7 @@ const messages: FilesMessages = {
   selectorEmptyState: {
     badge: '空状态',
     title: '当前无文件可选',
-    description: '组织视图下当前没有可选文件。如需上传文件，请先选择所属工作空间。',
+    description: '个人工作台下当前没有可选文件。如需上传文件，请先选择所属工作空间。',
     noticeTitle: '上传前需要选择工作空间',
     noticeDescription: '系统文件会绑定到工作空间存储，上传前请选择一个工作空间。',
     quickActionTitle: '选择工作空间',

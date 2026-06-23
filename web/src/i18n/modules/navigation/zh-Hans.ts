@@ -33,7 +33,7 @@ const messages: NavigationMessages = {
   defaultWorkspace: '默认工作空间',
   workspaceManagement: '工作空间',
   switchWorkspace: '切换工作空间',
-  personalSpace: '组织视图',
+  personalSpace: '个人工作台',
   work: '工作台',
   app: '应用',
   task: '定时任务',

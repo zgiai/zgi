@@ -139,6 +139,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const searchParams = useSearchParams();
   const focusRunId = searchParams.get('runId');
   const focusTab = searchParams.get('tab');
+  const focusConversationId = searchParams.get('conversation_id');
 
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [selectedMessageRunId, setSelectedMessageRunId] = useState<string | null>(null);
@@ -179,6 +180,15 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const { data: latest } = useLatestWorkflowVersion(
     canAccessRuntimeLogs && isPublished ? agentId : null
   );
+
+  useEffect(() => {
+    const nextConversationFilter = focusConversationId?.trim() ?? '';
+    if (!nextConversationFilter || !UUID_PATTERN.test(nextConversationFilter)) {
+      return;
+    }
+    setConversationFilterInput(nextConversationFilter);
+    setConversationFilter(nextConversationFilter);
+  }, [focusConversationId]);
 
   const {
     pages,

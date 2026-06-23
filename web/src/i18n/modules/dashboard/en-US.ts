@@ -343,15 +343,25 @@ const messages = {
     welcome: 'Welcome back, {name}!',
     console: 'Console',
     refresh: 'Refresh Data',
-    consoleHome: {
-      title: 'Workspace Overview',
-      workspace: 'Default Workspace',
-      intro: 'System readiness, operational resources, and the next action for this workspace.',
+      consoleHome: {
+        title: 'Overview Panel',
+        workspace: 'Default Workspace',
+      intro:
+        'Review product entry points, visible assets, runnable apps, and model readiness across your organization permissions.',
       refresh: 'Refresh',
       systemReadiness: 'System readiness',
       requiredSetup: 'Required setup',
       nextAction: 'Next action',
       continue: 'Continue',
+      personalWorkbench: 'Personal workbench',
+      noWorkspaceName: 'No workspace selected',
+      workspaceContext: 'Workspace context',
+      permissionScope: 'My visible scope',
+      visibleWorkspaceCount: '{count} workspaces',
+      workspaceContextDescription:
+        'The selected workspace is used when opening concrete asset pages. The overview still aggregates everything visible to you.',
+      personalWorkbenchDescription:
+        'You are in the personal workbench. Organization product entry points and app center remain available; asset links switch to their workspace before opening.',
       readyTitle: 'Ready for core workflows',
       incompleteTitle: 'Required setup incomplete',
       readyDescription: 'Chat and knowledge workflows have the required model capabilities.',
@@ -372,10 +382,57 @@ const messages = {
       recommended: 'Recommended',
       resources: 'Resources',
       needsAttention: 'Needs attention',
+      available: 'Available',
+      unavailable: 'Unavailable',
+      modelAvailability: 'Model availability',
+      runnableApps: 'Runnable apps',
+      runnableAppsTitle: 'Available app shortcuts',
+      runnableAppsDescription:
+        'Apps published to the app center are loaded through organization scope and do not require the current workspace.',
+      runnableAppsUnavailableTitle: 'App list is not available',
+      runnableAppsUnavailableDescription:
+        'Your account does not currently have access to the app center list.',
+      runnableAppFallbackDescription: 'Open this app from the app center.',
+      noRunnableAppsTitle: 'No runnable apps yet',
+      noRunnableAppsDescription:
+        'Published apps that are available to you will appear here.',
+      noWorkspaceHint:
+        'Recent work switches to the owning workspace before opening a concrete asset.',
+      workspaceOverview: {
+        eyebrow: 'My visible assets',
+        title: 'Workspace assets aggregated by permission',
+        noWorkspaceTitle: 'No workspace selected',
+        description:
+          'Only workspaces, agents, knowledge bases, databases, and files you can view are counted.',
+        noWorkspaceDescription:
+          'Select a workspace to show workspace assets and recent work on this panel.',
+        accessDeniedTitle: 'Current workspace is not visible',
+        accessDeniedDescription:
+          'Switch to a workspace where you have view access to see assets and recent work.',
+        recentEyebrow: 'Return to work quickly',
+        recentTitle: 'Recent work',
+        recentDescription:
+          'Latest conversations, agents, knowledge bases, and databases visible to you. Opening one switches to its workspace first.',
+        recentCount: '{count} items',
+        emptyRecentTitle: 'No recent work yet',
+        emptyRecentDescription:
+          'Recent conversations, agents, knowledge bases, and databases will appear after activity in your visible workspaces.',
+        unknownWorkspace: 'Unknown workspace',
+        openRecentFailed: 'Failed to open recent work',
+        stats: {
+          workspaces: 'Visible workspaces',
+          agents: 'Agents',
+          datasets: 'Knowledge bases',
+          dataSources: 'Databases',
+          files: 'Files',
+          members: 'Members',
+          admins: 'Admins',
+        },
+      },
       recentWork: 'Recent work',
       noRecentTitle: 'No recent records returned',
       noRecentDescription:
-        'This section only shows records returned by the current workspace APIs. No recent chats, agents, knowledge bases, or databases were returned.',
+        'No recent conversations, agents, knowledge bases, or databases were returned from your visible scope.',
       updatedAt: 'Updated {time}',
       recentTypes: {
         conversation: 'Conversation',
@@ -391,15 +448,25 @@ const messages = {
       },
       noCriticalIssues: 'No critical setup issues are blocking core workflows.',
       missingItem: '{label} is missing',
+      modelConfigManagedByAdmin: 'Model capabilities are managed by organization admins.',
       actions: {
         configureModels: 'Configure models',
         contactAdmin: 'Contact admin',
         createKnowledge: 'Create knowledge base',
         createAgent: 'Create agent',
         openChat: 'Open chat',
+        openAppCenter: 'Open app center',
+        openWorkspaceOverview: 'Open workspace overview',
+        manageWorkspace: 'Manage workspace',
         create: 'Create',
         add: 'Add',
         open: 'Open',
+      },
+      productEntries: {
+        chatDescription: 'Use the organization model stack for direct conversations.',
+        imageDescription: 'Generate and iterate on images from the console image workspace.',
+        appCenterTitle: 'App center',
+        appCenterDescription: 'Browse apps that are published for your account.',
       },
       nextActions: {
         configureRoutingTitle: 'Configure model routing',
@@ -412,7 +479,7 @@ const messages = {
         createAgentDescription:
           'Package model access, knowledge, and workflow behavior into one entry point.',
         startChatTitle: 'Start a new conversation',
-        startChatDescription: 'Use the configured model stack from the console chat workspace.',
+        startChatDescription: 'Use the configured organization model capabilities to start a console conversation.',
       },
       capabilities: {
         textChatDescription: 'Required before conversations and agents can run.',
@@ -829,12 +896,12 @@ const messages = {
             view: {
               name: 'View Workspace',
               description:
-                'Allows access to workspace, view application list, member list, basic overview, and available models.',
+                'Allows entering the workspace and viewing the application list, member list, and basic overview. Organization model capabilities are determined by organization-level configuration.',
             },
             manage: {
               name: 'Manage Workspace',
               description:
-                'Allows inviting/adding new members, removing existing members, and adjusting member roles (e.g., setting as admin). Allows modifying workspace name, description, and avatar. Allows viewing Token consumption quota and configuring available models (e.g., enabling GPT-4/disabling Claude).',
+                'Allows inviting/adding new members, removing existing members, and adjusting member roles (e.g., setting as admin). Allows modifying workspace name, description, and avatar. Allows viewing Token consumption quota; organization model capabilities are managed through organization model configuration permissions.',
             },
             billing_audit: {
               name: 'Finance & Audit',

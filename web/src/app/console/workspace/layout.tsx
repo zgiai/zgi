@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useT } from '@/i18n';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import { Loader2, Settings, ShieldAlert, Users } from 'lucide-react';
+import { LayoutDashboard, Loader2, Settings, ShieldAlert, Users } from 'lucide-react';
 import {
   useCurrentWorkspace,
   useWorkspaceContextStatus,
@@ -34,9 +34,17 @@ function WorkspaceAccessDeniedState() {
   );
 }
 
+function isWorkspaceNavItemActive(pathname: string, href: string) {
+  if (href === '/console/workspace') {
+    return pathname === href;
+  }
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const t = useT();
+  const tWorkspace = useT('workspace');
   const currentWorkspace = useCurrentWorkspace();
   const contextStatus = useWorkspaceContextStatus();
   const hasHydrated = useHasHydrated();
@@ -60,6 +68,13 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   const canViewWorkspace = hasPermission('workspace.view');
 
   const workspaceNavItems: WorkspaceNavItem[] = [
+    {
+      id: 'overview',
+      label: t('workspace.navigation.overview'),
+      desc: t('workspace.navigation.overviewDesc'),
+      icon: LayoutDashboard,
+      href: '/console/workspace',
+    },
     {
       id: 'members',
       label: t('navigation.member'),
@@ -101,7 +116,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           {/* Header */}
           <div className="border-b border-border/60 px-4 py-4">
             <div className="min-w-0">
-              <h1 className="text-sm font-semibold text-foreground">{t.workspace('pageTitle')}</h1>
+              <h1 className="text-sm font-semibold text-foreground">{tWorkspace('pageTitle')}</h1>
               <p className="mt-1 truncate text-xs text-muted-foreground">{currentWorkspace.name}</p>
             </div>
           </div>
@@ -111,7 +126,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
             <div className="space-y-0.5">
               {workspaceNavItems.map(item => {
                 const Icon = item.icon;
-                const isActive = pathname.includes(item.href);
+                const isActive = isWorkspaceNavItemActive(pathname, item.href);
 
                 return (
                   <Link
