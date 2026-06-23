@@ -31,6 +31,9 @@ export function useCurrentOrganizationMembers(options: UseCurrentOrganizationMem
   return {
     members: query.data?.data ?? [],
     total: query.data?.total ?? 0,
+    page: query.data?.page ?? page,
+    limit: query.data?.limit ?? limit,
+    hasMore: query.data?.has_more ?? false,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
     error: query.error,

@@ -36,6 +36,7 @@ export default function RoleConfigPage() {
   const [savedDescription, setSavedDescription] = useState('');
   const [savedPermissions, setSavedPermissions] = useState<Set<string>>(new Set());
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [newRoleInfoPrompted, setNewRoleInfoPrompted] = useState(false);
 
   const { role, isLoading: loading } = useRoleDetail(isNewRole ? null : roleId, !isNewRole);
 
@@ -61,6 +62,13 @@ export default function RoleConfigPage() {
       setSavedPermissions(new Set());
     }
   }, [role, locale, isNewRole]);
+
+  useEffect(() => {
+    if (isNewRole && !newRoleInfoPrompted) {
+      setEditDialogOpen(true);
+      setNewRoleInfoPrompted(true);
+    }
+  }, [isNewRole, newRoleInfoPrompted]);
 
   const hasPermissionChanges = useMemo(() => {
     if (selectedPermissions.size !== savedPermissions.size) return true;
@@ -190,7 +198,7 @@ export default function RoleConfigPage() {
   };
 
   // Check if role is editable
-  const canEdit = isNewRole || (role && !role.builtin);
+  const canEdit = isNewRole || !!(role && !role.builtin);
 
   if (loading) {
     return (
@@ -254,7 +262,7 @@ export default function RoleConfigPage() {
           </Button>
           <Button
             onClick={handleSave}
-            disabled={isSaving || (!isNewRole && !hasUnsavedChanges)}
+            disabled={!canEdit || isSaving || (!isNewRole && !hasUnsavedChanges)}
             className="h-9 rounded-md bg-primary px-6 text-xs font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover hover:text-primary-foreground"
           >
             {isSaving ? (
@@ -285,6 +293,7 @@ export default function RoleConfigPage() {
             <Switch
               checked={isAllEnabled}
               onCheckedChange={handleToggleAll}
+              disabled={!canEdit}
               className="data-[state=checked]:bg-primary"
             />
           </div>
@@ -311,6 +320,7 @@ export default function RoleConfigPage() {
                     <Switch
                       checked={isModuleAllEnabled(module)}
                       onCheckedChange={checked => handleToggleModule(module, checked)}
+                      disabled={!canEdit}
                       className="data-[state=checked]:bg-primary"
                     />
                   </div>
@@ -322,6 +332,7 @@ export default function RoleConfigPage() {
                       htmlFor={permission.code + 'switch'}
                       className={cn(
                         'group flex cursor-pointer items-start justify-between rounded-lg border p-4 transition-colors',
+                        !canEdit && 'cursor-not-allowed opacity-70',
                         selectedPermissions.has(permission.code)
                           ? 'border-primary/25 bg-primary/5'
                           : 'border-border bg-background hover:border-border/80 hover:bg-bg-canvas/60'
@@ -355,6 +366,7 @@ export default function RoleConfigPage() {
                           id={permission.code + 'switch'}
                           checked={selectedPermissions.has(permission.code)}
                           onCheckedChange={() => handlePermissionToggle(permission.code)}
+                          disabled={!canEdit}
                           className="data-[state=checked]:bg-primary"
                         />
                       </div>

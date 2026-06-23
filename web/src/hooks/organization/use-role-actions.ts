@@ -8,6 +8,7 @@ import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
+import { invalidateOrganizationMemberGraph } from '@/hooks/organization/invalidate-organization-member-graph';
 import type {
   CreateRoleRequest,
   UpdateRolePermissionsRequest,
@@ -33,13 +34,10 @@ export function useRoleActions() {
     },
     onSuccess: response => {
       toast.success(t('organization.permissions.config.createSuccess'));
-      // Invalidate roles list to trigger refetch
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.roles(currentOrganization?.id || ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
       // Navigate to the newly created role detail page
-      if (response?.role?.id) {
-        router.push(`/dashboard/organization/permissions/${response.role.id}`);
+      if (response?.id) {
+        router.push(`/dashboard/organization/permissions/${response.id}`);
       } else {
         router.push('/dashboard/organization/permissions');
       }
@@ -65,10 +63,7 @@ export function useRoleActions() {
     },
     onSuccess: (_, variables) => {
       toast.success(t('organization.permissions.config.updateSuccess'));
-      // Invalidate roles list and role detail to trigger refetch
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.roles(currentOrganization?.id || ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
       queryClient.invalidateQueries({
         queryKey: ORGANIZATION_KEYS.roleDetail(currentOrganization?.id || '', variables.roleId),
       });
@@ -93,9 +88,7 @@ export function useRoleActions() {
       queryClient.invalidateQueries({
         queryKey: ORGANIZATION_KEYS.roleDetail(currentOrganization?.id || '', variables.roleId),
       });
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.roles(currentOrganization?.id || ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('organization.permissions.config.saveError'));
@@ -110,11 +103,14 @@ export function useRoleActions() {
       }
       return await organizationService.deleteRole(currentOrganization.id, roleId);
     },
-    onSuccess: () => {
+    onSuccess: (_, roleId) => {
       toast.success(t('organization.permissions.config.deleteSuccess'));
-      // Invalidate roles list to trigger refetch
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.roles(currentOrganization?.id || ''),
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
+      queryClient.removeQueries({
+        queryKey: ORGANIZATION_KEYS.roleDetail(currentOrganization?.id || '', roleId),
+      });
+      queryClient.removeQueries({
+        queryKey: ORGANIZATION_KEYS.roleMembers(currentOrganization?.id || '', roleId),
       });
     },
     onError: error => {

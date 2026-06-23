@@ -22,7 +22,6 @@ import { useRoleActions } from '@/hooks/organization/use-role-actions';
 import { EditRoleInfoDialog } from '@/components/dashboard/organization/edit-role-info-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { Role } from '@/services/types/organization';
-import { BuiltInWorkflowRuntimeSection } from '@/components/dashboard/organization/built-in-workflow-runtime-section';
 
 export default function PermissionsPage() {
   const t = useT('dashboard.organization.permissions');
@@ -78,7 +77,7 @@ export default function PermissionsPage() {
         roleId: roleToEdit.id,
         data: {
           name,
-          description: description || undefined,
+          description,
         },
       });
     }
@@ -206,9 +205,9 @@ export default function PermissionsPage() {
                   <div className="flex items-center gap-2 text-xs font-bold text-text-secondary mb-5 px-2.5 py-1.5 rounded-lg border border-border/20 w-fit">
                     <Users className="h-3 w-3 text-primary/60" />
                     <span>
-                      {role.member_count > 0
+                      {(role.member_count ?? 0) > 0
                         ? t('memberCount.people', {
-                            count: role.member_count,
+                            count: role.member_count ?? 0,
                           })
                         : t('memberCount.noMembers')}
                     </span>
@@ -260,8 +259,6 @@ export default function PermissionsPage() {
           </Card>
         )}
       </div>
-
-      <BuiltInWorkflowRuntimeSection />
 
       {/* Modals remain functional */}
       <RoleMembersDrawer

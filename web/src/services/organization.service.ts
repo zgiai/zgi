@@ -182,7 +182,7 @@ class OrganizationService extends BaseService {
   async getRoleMembers(
     organizationId: string,
     roleId: string,
-    params?: { page?: number; limit?: number }
+    params?: { page?: number; limit?: number; keyword?: string }
   ) {
     const response = await this.request<ApiResponseData<RoleMemberList>>(
       'get',
@@ -195,7 +195,7 @@ class OrganizationService extends BaseService {
 
   // Create a new role
   async createRole(organizationId: string, data: CreateRoleRequest) {
-    const response = await this.request<ApiResponseData<{ role: Role }>>(
+    const response = await this.request<ApiResponseData<Role>>(
       'post',
       `/organizations/${organizationId}/roles`,
       data

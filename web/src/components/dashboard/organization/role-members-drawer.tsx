@@ -124,21 +124,19 @@ export function RoleMembersDrawer({
                 </div>
 
                 {/* Infinite scroll sentinel */}
-                {!searchKeyword && (
-                  <div ref={sentinelRef} className="py-4 text-center">
-                    {isFetchingNextPage && (
-                      <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        <span className="text-sm">{t('organization.permissions.loadingMore')}</span>
-                      </div>
-                    )}
-                    {!hasNextPage && members.length > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        {t('organization.permissions.allMembersLoaded', { total })}
-                      </p>
-                    )}
-                  </div>
-                )}
+                <div ref={sentinelRef} className="py-4 text-center">
+                  {isFetchingNextPage && (
+                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-sm">{t('organization.permissions.loadingMore')}</span>
+                    </div>
+                  )}
+                  {!hasNextPage && members.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {t('organization.permissions.allMembersLoaded', { total })}
+                    </p>
+                  )}
+                </div>
               </>
             )}
           </div>

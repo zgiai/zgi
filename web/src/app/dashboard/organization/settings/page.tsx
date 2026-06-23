@@ -2,7 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Building2, Search, Save, ShieldCheck, UserPlus, X } from 'lucide-react';
+import {
+  Building2,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  Save,
+  ShieldCheck,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,6 +36,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import type { Member } from '@/services/types/organization';
 
 const ORGANIZATION_NAME_MAX_LENGTH = 30;
+const ADMIN_CANDIDATE_PAGE_LIMIT = 20;
 
 export default function OrganizationSettingsPage() {
   const t = useT('dashboard');
@@ -41,6 +51,7 @@ export default function OrganizationSettingsPage() {
   const [nameError, setNameError] = useState('');
   const [saveFeedbackVisible, setSaveFeedbackVisible] = useState(false);
   const [memberKeyword, setMemberKeyword] = useState('');
+  const [candidatePage, setCandidatePage] = useState(1);
   const [addAdminDialogOpen, setAddAdminDialogOpen] = useState(false);
   const [adminToDemote, setAdminToDemote] = useState<Member | null>(null);
   const saveFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -64,11 +75,14 @@ export default function OrganizationSettingsPage() {
   });
   const {
     members: candidateMemberResults,
+    total: candidateMemberTotal,
+    hasMore: hasMoreCandidateMembers,
     isLoading: isLoadingCandidateMembers,
     isFetching: isFetchingCandidateMembers,
   } = useCurrentOrganizationMembers({
     keyword: debouncedMemberKeyword,
-    limit: 1000,
+    page: candidatePage,
+    limit: ADMIN_CANDIDATE_PAGE_LIMIT,
     enabled: isOwner && addAdminDialogOpen,
   });
 
@@ -82,12 +96,16 @@ export default function OrganizationSettingsPage() {
   );
   const candidateMembers = useMemo(
     () =>
-      candidateMemberResults
-        .filter(member => member.organization_role === 'normal' && member.status === 'active')
-        .slice(0, 8),
+      candidateMemberResults.filter(
+        member => member.organization_role === 'normal' && member.status === 'active'
+      ),
     [candidateMemberResults]
   );
   const isFetchingMembers = isFetchingRoleMembers || (isOwner && isFetchingCandidateMembers);
+  const candidateTotalPages = Math.max(
+    1,
+    Math.ceil(candidateMemberTotal / ADMIN_CANDIDATE_PAGE_LIMIT)
+  );
 
   useEffect(() => {
     setName(currentOrganization?.name ?? '');
@@ -101,6 +119,10 @@ export default function OrganizationSettingsPage() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    setCandidatePage(1);
+  }, [debouncedMemberKeyword, addAdminDialogOpen]);
 
   const trimmedName = name.trim();
   const isNameEmpty = trimmedName.length === 0;
@@ -501,6 +523,38 @@ export default function OrganizationSettingsPage() {
                   {t('organization.settings.adminManagement.emptyCandidates')}
                 </div>
               )}
+            </div>
+            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>
+                {t('organization.settings.adminManagement.pageSummary', {
+                  page: candidatePage,
+                  total: candidateTotalPages,
+                })}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-md px-2"
+                  disabled={candidatePage <= 1 || isFetchingCandidateMembers}
+                  onClick={() => setCandidatePage(page => Math.max(1, page - 1))}
+                  aria-label={t('organization.settings.adminManagement.previousPage')}
+                >
+                  <ChevronLeft className="size-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-md px-2"
+                  disabled={!hasMoreCandidateMembers || isFetchingCandidateMembers}
+                  onClick={() => setCandidatePage(page => page + 1)}
+                  aria-label={t('organization.settings.adminManagement.nextPage')}
+                >
+                  <ChevronRight className="size-3.5" />
+                </Button>
+              </div>
             </div>
           </DialogBody>
         </DialogContent>

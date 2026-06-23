@@ -243,21 +243,25 @@ export function WorkspaceDialog({
           const hasLeaderChanged = leaderId !== originalLeaderId;
           const hasApiKeyChanged = apiKeyId !== (resolvedInitialData?.api_key_id || '');
 
-          const hasAnyChange =
-            hasNameChanged || hasDepartmentChanged || hasLeaderChanged || hasApiKeyChanged;
+          const payload: UpdateWorkspaceRequest = {};
+          if (hasNameChanged) {
+            payload.name = name;
+          }
+          if (hasDepartmentChanged && departmentId) {
+            payload.department_id = departmentId;
+          }
+          if (hasLeaderChanged && leaderId) {
+            payload.leader_id = leaderId;
+          }
+          if (hasApiKeyChanged && apiKeyId) {
+            payload.api_key_id = apiKeyId;
+          }
 
-          // Skip API call if nothing changed
-          if (!hasAnyChange) {
+          // Skip API call if nothing changed or hidden optional fields only became empty locally
+          if (Object.keys(payload).length === 0) {
             onOpenChange(false);
             return;
           }
-
-          const payload: UpdateWorkspaceRequest = {
-            name,
-            department_id: departmentId || '',
-            leader_id: leaderId || '',
-            api_key_id: apiKeyId || '',
-          };
           await onUpdate(payload);
         } else {
           const payload: CreateWorkspaceRequest = {
