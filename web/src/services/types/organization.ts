@@ -13,9 +13,8 @@ export interface OrganizationCreateRequest {
 }
 
 export interface OrganizationUpdateRequest {
-  name?: string;
+  name: string;
   short_name?: string;
-  status?: 'active' | 'inactive';
 }
 
 export type OrganizationMemberRole = 'owner' | 'admin' | 'normal';
@@ -45,7 +44,7 @@ export interface Member {
   last_login_at: number | null;
   last_login_ip: string | null;
   created_at: number;
-  status: 'active' | 'pending' | 'banned';
+  status: 'active' | 'inactive' | 'pending' | 'banned';
   organization_role?: OrganizationMemberRole;
   account_role: {
     role_type: 'system_admin' | 'normal';
@@ -83,7 +82,7 @@ export interface Role {
   editable: boolean;
   status: 'active' | 'inactive';
   permissions: string[];
-  member_count: number;
+  member_count?: number;
 }
 
 export interface RoleMember {
@@ -123,16 +122,15 @@ export interface UpdateRoleInfoRequest {
 export interface DirectAddMemberRequest {
   name: string;
   email: string;
-  workspace_id: string;
+  workspace_id?: string;
   department_id: string;
   send_email: boolean;
-  member_name?: string;
 }
 
 export interface AdminRegisterMemberRequest {
   name: string;
   email: string;
-  workspace_id: string;
+  workspace_id?: string;
   password?: string;
   department_id?: string;
 }

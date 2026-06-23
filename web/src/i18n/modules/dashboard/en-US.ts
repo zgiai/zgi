@@ -343,9 +343,9 @@ const messages = {
     welcome: 'Welcome back, {name}!',
     console: 'Console',
     refresh: 'Refresh Data',
-      consoleHome: {
-        title: 'Overview Panel',
-        workspace: 'Default Workspace',
+    consoleHome: {
+      title: 'Overview Panel',
+      workspace: 'Default Workspace',
       intro:
         'Review product entry points, visible assets, runnable apps, and model readiness across your organization permissions.',
       refresh: 'Refresh',
@@ -394,8 +394,7 @@ const messages = {
         'Your account does not currently have access to the app center list.',
       runnableAppFallbackDescription: 'Open this app from the app center.',
       noRunnableAppsTitle: 'No runnable apps yet',
-      noRunnableAppsDescription:
-        'Published apps that are available to you will appear here.',
+      noRunnableAppsDescription: 'Published apps that are available to you will appear here.',
       noWorkspaceHint:
         'Recent work switches to the owning workspace before opening a concrete asset.',
       workspaceOverview: {
@@ -479,7 +478,8 @@ const messages = {
         createAgentDescription:
           'Package model access, knowledge, and workflow behavior into one entry point.',
         startChatTitle: 'Start a new conversation',
-        startChatDescription: 'Use the configured organization model capabilities to start a console conversation.',
+        startChatDescription:
+          'Use the configured organization model capabilities to start a console conversation.',
       },
       capabilities: {
         textChatDescription: 'Required before conversations and agents can run.',
@@ -610,6 +610,9 @@ const messages = {
         searchPlaceholder: 'Search active members by name or email',
         promote: 'Set as admin',
         emptyCandidates: 'No active standard members match this search.',
+        pageSummary: 'Page {page} / {total}',
+        previousPage: 'Previous page',
+        nextPage: 'Next page',
         promoteSuccess: 'Administrator added',
         demoteSuccess: 'Administrator removed',
         updateRoleError: 'Failed to update administrator role',
@@ -1039,6 +1042,22 @@ const messages = {
       unassignedWorkspaceHint:
         'This member is in the organization but has not joined any workspace, so they cannot use the workbench yet.',
       assignWorkspace: 'Assign workspace',
+      assignWorkspaceDialog: {
+        title: 'Assign workspace',
+        description: 'Choose a workspace and role for {member}.',
+        descriptionFallback: 'Choose a workspace and role.',
+        searchPlaceholder: 'Search workspaces',
+        rolePlaceholder: 'Select role',
+        noLeader: 'No owner',
+        memberCount: '{count} people',
+        emptyTitle: 'No assignable workspaces',
+        emptyDescription:
+          'This member may already be in the visible workspaces, or you do not have manageable workspaces.',
+        resultSuccess: 'Added {member} to {workspace}',
+        resultWarning: 'Assignment result: {added} added, {skipped} skipped, {failed} failed',
+        cancel: 'Cancel',
+        confirm: 'Assign',
+      },
       status: 'Status',
       actions: 'Actions',
       active: 'Active',
@@ -1114,6 +1133,11 @@ const messages = {
         defaultPasswordHint: 'If left blank, the system default password will be used.',
         memberDepartment: 'Department',
         memberDepartmentOptional: 'Department (optional)',
+        memberWorkspaceOptional: 'Workspace (optional)',
+        workspaceOptionalPlaceholder: 'Select a workspace or leave unassigned',
+        workspaceOptionalHint:
+          'If left unassigned, the member will only join the organization. You can assign a workspace later from Contacts.',
+        clearWorkspace: 'Leave workspace unassigned',
         selectDepartment: 'Select department',
         sendNotification: 'Send email notification immediately after adding',
         cancel: 'Cancel',

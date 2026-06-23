@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import Link from 'next/link';
 import { useT } from '@/i18n';
 import { Switch } from '@/components/ui/switch';
 import { Search, Plus, Users, Pencil, Trash2, KeyRound, UserPlus } from 'lucide-react';
@@ -14,6 +13,7 @@ import { EditMemberDialog } from '@/components/dashboard/organization/edit-membe
 import { ResetMemberPasswordDialog } from '@/components/dashboard/organization/reset-member-password-dialog';
 import { CreateDepartmentDialog } from '@/components/dashboard/organization/create-department-dialog';
 import { EditDepartmentDialog } from '@/components/dashboard/organization/edit-department-dialog';
+import { AssignWorkspaceDialog } from '@/components/dashboard/organization/assign-workspace-dialog';
 import { IS_CLOUD } from '@/lib/config';
 import { StickyDataTable } from '@/components/common/sticky-data-table';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -56,6 +56,9 @@ export default function ContactsPage() {
   const [memberToToggle, setMemberToToggle] = useState<DepartmentMember | null>(null);
   const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
   const [memberToResetPassword, setMemberToResetPassword] = useState<DepartmentMember | null>(null);
+  const [assignWorkspaceDialogOpen, setAssignWorkspaceDialogOpen] = useState(false);
+  const [memberToAssignWorkspace, setMemberToAssignWorkspace] =
+    useState<DepartmentMember | null>(null);
 
   // Member actions hook
   const {
@@ -273,8 +276,6 @@ export default function ContactsPage() {
       : t('scopeDepartmentHint')
     : null;
   const hasMemberSearch = debouncedMemberSearchKeyword.trim().length > 0;
-  const getAssignWorkspaceHref = (member: DepartmentMember) =>
-    `/dashboard/organization/workspaces?assignMember=${encodeURIComponent(member.account_email)}`;
 
   // Handle toggle member status
   const handleToggleStatus = (member: DepartmentMember) => {
@@ -328,6 +329,11 @@ export default function ContactsPage() {
   const handleResetPasswordClick = (member: DepartmentMember) => {
     setMemberToResetPassword(member);
     setResetPasswordDialogOpen(true);
+  };
+
+  const handleAssignWorkspaceClick = (member: DepartmentMember) => {
+    setMemberToAssignWorkspace(member);
+    setAssignWorkspaceDialogOpen(true);
   };
 
   const handleResetPassword = async (email: string, password?: string) => {
@@ -701,15 +707,13 @@ export default function ContactsPage() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
-                              asChild
                               variant="ghost"
                               size="xs"
                               isIcon
+                              onClick={() => handleAssignWorkspaceClick(member)}
                               className="h-6 w-6 rounded-md text-primary"
                             >
-                              <Link href={getAssignWorkspaceHref(member)}>
-                                <UserPlus className="h-3.5 w-3.5" />
-                              </Link>
+                              <UserPlus className="h-3.5 w-3.5" />
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent className="text-xs">
@@ -874,6 +878,22 @@ export default function ContactsPage() {
           isResetting={isResettingPassword}
         />
       )}
+
+      {memberToAssignWorkspace ? (
+        <AssignWorkspaceDialog
+          open={assignWorkspaceDialogOpen}
+          member={memberToAssignWorkspace}
+          onOpenChange={open => {
+            setAssignWorkspaceDialogOpen(open);
+            if (!open) {
+              setMemberToAssignWorkspace(null);
+            }
+          }}
+          onAssigned={() => {
+            refetchMembers();
+          }}
+        />
+      ) : null}
 
       {/* Create Department Dialog */}
       <CreateDepartmentDialog

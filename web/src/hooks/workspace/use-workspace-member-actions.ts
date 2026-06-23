@@ -7,15 +7,8 @@ import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
-import type { BatchAddMemberRequest, WorkspaceMemberAccount } from '@/services/types/workspace';
-
-interface WorkspaceMembersCache {
-  data: WorkspaceMemberAccount[];
-  total: number;
-  has_more: boolean;
-  page: number;
-  limit: number;
-}
+import { invalidateOrganizationMemberGraph } from '@/hooks/organization/invalidate-organization-member-graph';
+import type { BatchAddMemberRequest } from '@/services/types/workspace';
 
 /**
  * Hook for workspace member actions (add, remove, update role)
@@ -34,6 +27,7 @@ export function useWorkspaceMemberActions() {
       return await workspaceService.removeWorkspaceMember(organizationId, workspaceId, memberId);
     },
     onSuccess: (_, { workspaceId }) => {
+      invalidateOrganizationMemberGraph(queryClient, organizationId);
       queryClient.invalidateQueries({
         queryKey: WORKSPACE_KEYS.members(organizationId, workspaceId),
       });
@@ -55,7 +49,7 @@ export function useWorkspaceMemberActions() {
     },
   });
 
-  // Update workspace member role (with optimistic update)
+  // Update workspace member role
   const updateWorkspaceMemberRoleMutation = useMutation({
     mutationFn: async ({
       workspaceId,
@@ -74,44 +68,14 @@ export function useWorkspaceMemberActions() {
         role_id
       );
     },
-    onMutate: async ({ workspaceId, memberId, role_id }) => {
-      // Cancel any outgoing refetches
-      await queryClient.cancelQueries({
-        queryKey: WORKSPACE_KEYS.members(organizationId, workspaceId),
-      });
-
-      // Snapshot the previous value
-      const previousMembersRes = queryClient.getQueryData<WorkspaceMembersCache>(
-        WORKSPACE_KEYS.members(organizationId, workspaceId)
-      );
-
-      // Optimistically update the member's role_id
-      if (previousMembersRes?.data) {
-        queryClient.setQueryData(WORKSPACE_KEYS.members(organizationId, workspaceId), {
-          ...previousMembersRes,
-          data: previousMembersRes.data.map(member =>
-            member.id === memberId ? { ...member, role_id: role_id } : member
-          ),
-        });
-      }
-
-      return { previousMembersRes };
-    },
     onSuccess: (_, { workspaceId }) => {
       toast.success(t('workspace.messages.memberUpdatedSuccess'));
-      // Invalidate workspace members list to trigger refetch and get latest data
+      invalidateOrganizationMemberGraph(queryClient, organizationId);
       queryClient.invalidateQueries({
         queryKey: WORKSPACE_KEYS.members(organizationId, workspaceId),
       });
     },
-    onError: (error, { workspaceId }, context) => {
-      // Rollback to previous value on error
-      if (context?.previousMembersRes) {
-        queryClient.setQueryData(
-          WORKSPACE_KEYS.members(organizationId, workspaceId),
-          context.previousMembersRes
-        );
-      }
+    onError: error => {
       toast.error(getErrorMessage(error) || t('workspace.messages.memberUpdateError'));
     },
   });
@@ -129,8 +93,15 @@ export function useWorkspaceMemberActions() {
       return await workspaceService.batchAddWorkspaceMembers(organizationId, workspaceId, data);
     },
     onSuccess: (_, { workspaceId }) => {
+      invalidateOrganizationMemberGraph(queryClient, organizationId);
       queryClient.invalidateQueries({
         queryKey: WORKSPACE_KEYS.members(organizationId, workspaceId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: WORKSPACE_KEYS.availableMembers(organizationId, workspaceId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: WORKSPACE_KEYS.detail(organizationId, workspaceId),
       });
       queryClient.invalidateQueries({
         queryKey: WORKSPACE_KEYS.stats(workspaceId),

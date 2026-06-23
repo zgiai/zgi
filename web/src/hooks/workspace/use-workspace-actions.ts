@@ -8,6 +8,7 @@ import { getErrorMessage } from '@/utils/error-notifications';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
+import { invalidateOrganizationMemberGraph } from '@/hooks/organization/invalidate-organization-member-graph';
 import type { CreateWorkspaceRequest, UpdateWorkspaceRequest } from '@/services/types/workspace';
 
 /**
@@ -27,6 +28,7 @@ export function useWorkspaceActions() {
       return await workspaceService.createWorkspace(organizationId, data);
     },
     onSuccess: () => {
+      invalidateOrganizationMemberGraph(queryClient, organizationId);
       queryClient.invalidateQueries({
         queryKey: WORKSPACE_KEYS.managed(organizationId),
       });
@@ -53,6 +55,7 @@ export function useWorkspaceActions() {
       return await workspaceService.updateWorkspace(organizationId, workspaceId, data);
     },
     onSuccess: (_, { workspaceId, data }) => {
+      invalidateOrganizationMemberGraph(queryClient, organizationId);
       queryClient.invalidateQueries({
         queryKey: WORKSPACE_KEYS.stats(workspaceId),
       });
@@ -81,6 +84,7 @@ export function useWorkspaceActions() {
       return await workspaceService.deleteWorkspace(organizationId, workspaceId);
     },
     onSuccess: (_, workspaceId) => {
+      invalidateOrganizationMemberGraph(queryClient, organizationId);
       queryClient.invalidateQueries({
         queryKey: WORKSPACE_KEYS.managed(organizationId),
       });
@@ -115,6 +119,7 @@ export function useWorkspaceActions() {
       return await workspaceService.transferOwnership(organizationId, workspaceId, data);
     },
     onSuccess: (_, { workspaceId }) => {
+      invalidateOrganizationMemberGraph(queryClient, organizationId);
       queryClient.invalidateQueries({
         queryKey: WORKSPACE_KEYS.stats(workspaceId),
       });
@@ -144,6 +149,7 @@ export function useWorkspaceActions() {
       return await workspaceService.leaveWorkspace(organizationId, workspaceId);
     },
     onSuccess: (_, workspaceId) => {
+      invalidateOrganizationMemberGraph(queryClient, organizationId);
       queryClient.invalidateQueries({
         queryKey: WORKSPACE_KEYS.all,
       });

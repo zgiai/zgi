@@ -339,9 +339,9 @@ const messages: DashboardMessages = {
     welcome: '欢迎回来，{name}！',
     console: '控制台',
     refresh: '刷新数据',
-      consoleHome: {
-        title: '概览面板',
-        workspace: '默认工作空间',
+    consoleHome: {
+      title: '概览面板',
+      workspace: '默认工作空间',
       intro: '按你的组织与工作空间权限汇总产品入口、可见资产、可运行应用和模型就绪状态。',
       refresh: '刷新',
       systemReadiness: '系统就绪度',
@@ -398,7 +398,8 @@ const messages: DashboardMessages = {
         accessDeniedDescription: '请切换到具备查看权限的工作空间后，再查看资产和最近工作。',
         recentEyebrow: '快速回到工作',
         recentTitle: '最近工作',
-        recentDescription: '展示你可见范围内最近的对话、智能体、知识库和数据库，打开时会先切换到所属工作空间。',
+        recentDescription:
+          '展示你可见范围内最近的对话、智能体、知识库和数据库，打开时会先切换到所属工作空间。',
         recentCount: '{count} 项',
         emptyRecentTitle: '暂无最近工作',
         emptyRecentDescription:
@@ -417,8 +418,7 @@ const messages: DashboardMessages = {
       },
       recentWork: '最近工作',
       noRecentTitle: '接口暂无最近记录',
-      noRecentDescription:
-        '当前没有返回你可见范围内最近的对话、智能体、知识库或数据库。',
+      noRecentDescription: '当前没有返回你可见范围内最近的对话、智能体、知识库或数据库。',
       updatedAt: '{time} 更新',
       recentTypes: {
         conversation: '对话',
@@ -587,6 +587,9 @@ const messages: DashboardMessages = {
         searchPlaceholder: '按姓名或邮箱搜索活跃成员',
         promote: '设为管理员',
         emptyCandidates: '没有匹配的活跃普通成员。',
+        pageSummary: '第 {page} / {total} 页',
+        previousPage: '上一页',
+        nextPage: '下一页',
         promoteSuccess: '已添加管理员',
         demoteSuccess: '已移除管理员',
         updateRoleError: '管理员角色更新失败',
@@ -858,7 +861,8 @@ const messages: DashboardMessages = {
           workspace: {
             view: {
               name: '查看工作空间',
-              description: '允许进入工作空间，查看应用列表、成员列表及基础概况。组织模型能力由组织级配置决定。',
+              description:
+                '允许进入工作空间，查看应用列表、成员列表及基础概况。组织模型能力由组织级配置决定。',
             },
             manage: {
               name: '管理工作空间',
@@ -993,6 +997,21 @@ const messages: DashboardMessages = {
       unassignedWorkspace: '未分配工作空间',
       unassignedWorkspaceHint: '该成员已在组织中，但没有加入任何工作空间，暂时无法使用工作台功能。',
       assignWorkspace: '分配工作空间',
+      assignWorkspaceDialog: {
+        title: '分配工作空间',
+        description: '为 {member} 选择要加入的工作空间和角色。',
+        descriptionFallback: '选择要加入的工作空间和角色。',
+        searchPlaceholder: '搜索工作空间',
+        rolePlaceholder: '选择角色',
+        noLeader: '暂无负责人',
+        memberCount: '{count} 人',
+        emptyTitle: '暂无可分配工作空间',
+        emptyDescription: '该成员可能已加入当前可见的工作空间，或你没有可管理的工作空间。',
+        resultSuccess: '已将 {member} 加入 {workspace}',
+        resultWarning: '分配结果：成功 {added}，跳过 {skipped}，失败 {failed}',
+        cancel: '取消',
+        confirm: '分配',
+      },
       status: '状态',
       actions: '操作',
       active: '正常',
@@ -1067,6 +1086,10 @@ const messages: DashboardMessages = {
         defaultPasswordHint: '不填写密码时，将使用系统默认密码。',
         memberDepartment: '所属部门',
         memberDepartmentOptional: '所属部门（可选）',
+        memberWorkspaceOptional: '所属工作空间（可选）',
+        workspaceOptionalPlaceholder: '选择工作空间，或暂不分配',
+        workspaceOptionalHint: '不分配时，成员仅加入组织。后续可在通讯录中继续分配工作空间。',
+        clearWorkspace: '暂不分配工作空间',
         selectDepartment: '请选择部门',
         sendNotification: '添加后立即发送邮件通知',
         cancel: '取消',
