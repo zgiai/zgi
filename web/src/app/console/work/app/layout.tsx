@@ -47,7 +47,7 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
   const t = useT('webapp');
   const tNav = useT('navigation');
   const pathname = usePathname();
-  const { items, isLoading } = useRunnableWebApps();
+  const { items, isLoading } = useRunnableWebApps({ workspaceId: null });
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => getSidebarCollapsed('app', false));
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 

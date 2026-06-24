@@ -17,7 +17,7 @@ const RECENT_WEBAPP_STORAGE_KEY = 'zgi:webapp:recent';
 
 export default function ConsoleWorkAppHomePage() {
   const t = useT('webapp');
-  const { items, isLoading } = useRunnableWebApps();
+  const { items, isLoading } = useRunnableWebApps({ workspaceId: null });
   const [search, setSearch] = useState('');
   const [recentIds, setRecentIds] = useState<string[]>([]);
 

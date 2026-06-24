@@ -24,7 +24,7 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
   const t = useT('webapp');
   const resolvedParams = use(params);
   const webAppId = resolvedParams.web_app_id;
-  const { items, isLoading: isListLoading } = useRunnableWebApps();
+  const { items, isLoading: isListLoading } = useRunnableWebApps({ workspaceId: null });
 
   const isRunnable = useMemo(
     () => items.some(item => item.web_app_id === webAppId),
