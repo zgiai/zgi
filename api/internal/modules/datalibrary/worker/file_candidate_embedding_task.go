@@ -15,11 +15,12 @@ import (
 const TypeDataLibraryFileCandidateEmbedding = "data_library:file_candidate_embedding"
 
 type FileCandidateEmbeddingPayload struct {
-	OrganizationID string  `json:"organization_id"`
-	WorkspaceID    *string `json:"workspace_id,omitempty"`
-	DatasetID      string  `json:"dataset_id"`
-	AssetID        string  `json:"asset_id"`
-	RequestedBy    string  `json:"requested_by,omitempty"`
+	OrganizationID      string  `json:"organization_id"`
+	WorkspaceID         *string `json:"workspace_id,omitempty"`
+	DatasetID           string  `json:"dataset_id"`
+	AssetID             string  `json:"asset_id"`
+	RequestedBy         string  `json:"requested_by,omitempty"`
+	ProcessingRequestID string  `json:"processing_request_id,omitempty"`
 }
 
 type fileCandidateEmbeddingRunner interface {
@@ -48,13 +49,17 @@ func NewFileCandidateEmbeddingTask(req datalibraryservice.KnowledgeBaseFileCandi
 	if req.AssetID == uuid.Nil {
 		return nil, fmt.Errorf("asset_id is required")
 	}
-	payload, err := json.Marshal(FileCandidateEmbeddingPayload{
+	payload := FileCandidateEmbeddingPayload{
 		OrganizationID: req.OrganizationID,
 		WorkspaceID:    req.WorkspaceID,
 		DatasetID:      req.DatasetID,
 		AssetID:        req.AssetID.String(),
 		RequestedBy:    req.RequestedBy,
-	})
+	}
+	if req.ProcessingRequestID != uuid.Nil {
+		payload.ProcessingRequestID = req.ProcessingRequestID.String()
+	}
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +67,7 @@ func NewFileCandidateEmbeddingTask(req datalibraryservice.KnowledgeBaseFileCandi
 	if taskManager != nil {
 		taskType = taskManager.GetTaskTypeWithPrefix(taskType)
 	}
-	return asynq.NewTask(taskType, payload, asynq.Queue("chunking"), asynq.MaxRetry(0), asynq.Timeout(60*time.Minute)), nil
+	return asynq.NewTask(taskType, data, asynq.Queue("chunking"), asynq.MaxRetry(0), asynq.Timeout(60*time.Minute)), nil
 }
 
 func RegisterFileCandidateEmbeddingTaskHandler(registry TaskHandlerRegistry, runner fileCandidateEmbeddingRunner, taskManager *queue.TaskManager) {
@@ -92,12 +97,20 @@ func NewFileCandidateEmbeddingTaskHandler(runner fileCandidateEmbeddingRunner) f
 		if payload.OrganizationID == "" || payload.DatasetID == "" {
 			return fmt.Errorf("missing file candidate embedding payload scope: %w", asynq.SkipRetry)
 		}
+		var processingRequestID uuid.UUID
+		if payload.ProcessingRequestID != "" {
+			processingRequestID, err = uuid.Parse(payload.ProcessingRequestID)
+			if err != nil || processingRequestID == uuid.Nil {
+				return fmt.Errorf("invalid processing_request_id %q: %w", payload.ProcessingRequestID, asynq.SkipRetry)
+			}
+		}
 		return runner.Run(ctx, datalibraryservice.KnowledgeBaseFileCandidateEmbeddingRequest{
-			OrganizationID: payload.OrganizationID,
-			WorkspaceID:    payload.WorkspaceID,
-			DatasetID:      payload.DatasetID,
-			AssetID:        assetID,
-			RequestedBy:    payload.RequestedBy,
+			OrganizationID:      payload.OrganizationID,
+			WorkspaceID:         payload.WorkspaceID,
+			DatasetID:           payload.DatasetID,
+			AssetID:             assetID,
+			RequestedBy:         payload.RequestedBy,
+			ProcessingRequestID: processingRequestID,
 		})
 	}
 }

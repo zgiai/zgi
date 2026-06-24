@@ -96,6 +96,8 @@ export const DATASET_KEYS = {
     [...DATASET_KEYS.documents(datasetId), params] as const,
   fileCandidates: (datasetId: string, params: unknown) =>
     [...DATASET_KEYS.all, 'file-candidates', datasetId, params] as const,
+  fileCandidateEmbeddingTask: (datasetId: string, assetId: string, requestId: string) =>
+    [...DATASET_KEYS.all, 'file-candidate-embedding-task', datasetId, assetId, requestId] as const,
   fileRefs: (datasetId: string, params?: unknown) =>
     params === undefined
       ? ([...DATASET_KEYS.all, 'file-refs', datasetId] as const)

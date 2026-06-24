@@ -42,6 +42,7 @@ import type {
   DatasetFileRefView,
 } from './types/dataset';
 import type { ApiResponseData } from './types/common';
+import type { FileProcessingRequestView } from './types/file';
 
 /**
  * DatasetService
@@ -189,6 +190,21 @@ class DatasetService extends BaseService {
     assetId: string
   ): Promise<ApiResponseData<DatasetFileCandidateEmbeddingResult>> {
     return this.request('post', `/datasets/${datasetId}/file-candidates/${assetId}/embeddings`);
+  }
+
+  /**
+   * Get a candidate embedding generation task.
+   * GET /console/api/datasets/{dataset_id}/file-candidates/{asset_id}/embedding-tasks/{request_id}
+   */
+  getDatasetFileCandidateEmbeddingTask(
+    datasetId: string,
+    assetId: string,
+    requestId: string
+  ): Promise<ApiResponseData<FileProcessingRequestView>> {
+    return this.request(
+      'get',
+      `/datasets/${datasetId}/file-candidates/${assetId}/embedding-tasks/${requestId}`
+    );
   }
 
   /**

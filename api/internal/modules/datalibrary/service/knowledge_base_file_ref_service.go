@@ -69,6 +69,10 @@ type knowledgeBaseFileDocumentReader interface {
 	GetDocumentsByIDs(ctx context.Context, ids []string) ([]*datasetModel.Document, error)
 }
 
+type knowledgeBaseFileProcessingProgressUpdater interface {
+	UpdateRequestExecutionMetadata(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*ProcessingRequestView, error)
+}
+
 type KnowledgeBaseFileRefService interface {
 	ListCandidates(ctx context.Context, req KnowledgeBaseFileCandidateRequest) (*KnowledgeBaseFileCandidateResult, error)
 	ListRefs(ctx context.Context, req KnowledgeBaseFileRefListRequest) (*KnowledgeBaseFileRefListResult, error)
@@ -127,24 +131,26 @@ type KnowledgeBaseFileRefCreateRequest struct {
 }
 
 type KnowledgeBaseFileCandidateEmbeddingRequest struct {
-	OrganizationID string
-	WorkspaceID    *string
-	DatasetID      string
-	AssetID        uuid.UUID
-	RequestedBy    string
+	OrganizationID      string
+	WorkspaceID         *string
+	DatasetID           string
+	AssetID             uuid.UUID
+	RequestedBy         string
+	ProcessingRequestID uuid.UUID
 }
 
 type KnowledgeBaseFileCandidateEmbeddingResult struct {
-	AssetID              uuid.UUID `json:"asset_id"`
-	Accepted             bool      `json:"accepted,omitempty"`
-	GenerationNo         int64     `json:"generation_no"`
-	EmbeddingProvider    string    `json:"embedding_provider,omitempty"`
-	EmbeddingModel       string    `json:"embedding_model,omitempty"`
-	EmbeddingCount       int64     `json:"embedding_count"`
-	TargetEmbeddingCount int64     `json:"target_embedding_count"`
-	ChunkCount           int64     `json:"chunk_count"`
-	Addable              bool      `json:"addable"`
-	Reason               string    `json:"reason,omitempty"`
+	AssetID              uuid.UUID              `json:"asset_id"`
+	Accepted             bool                   `json:"accepted,omitempty"`
+	ProcessingRequest    *ProcessingRequestView `json:"processing_request,omitempty"`
+	GenerationNo         int64                  `json:"generation_no"`
+	EmbeddingProvider    string                 `json:"embedding_provider,omitempty"`
+	EmbeddingModel       string                 `json:"embedding_model,omitempty"`
+	EmbeddingCount       int64                  `json:"embedding_count"`
+	TargetEmbeddingCount int64                  `json:"target_embedding_count"`
+	ChunkCount           int64                  `json:"chunk_count"`
+	Addable              bool                   `json:"addable"`
+	Reason               string                 `json:"reason,omitempty"`
 }
 
 type KnowledgeBaseFileRefListRequest struct {
@@ -231,6 +237,7 @@ type knowledgeBaseFileRefService struct {
 	datasets            knowledgeBaseFileDatasetReader
 	documents           knowledgeBaseFileDocumentReader
 	embeddingGeneration DocumentChunkEmbeddingService
+	processingProgress  knowledgeBaseFileProcessingProgressUpdater
 }
 
 func NewKnowledgeBaseFileRefService(
@@ -244,12 +251,15 @@ func NewKnowledgeBaseFileRefService(
 ) KnowledgeBaseFileRefService {
 	var documentReader knowledgeBaseFileDocumentReader
 	var embeddingGeneration DocumentChunkEmbeddingService
+	var processingProgress knowledgeBaseFileProcessingProgressUpdater
 	for _, dep := range optionalDeps {
 		switch typed := dep.(type) {
 		case knowledgeBaseFileDocumentReader:
 			documentReader = typed
 		case DocumentChunkEmbeddingService:
 			embeddingGeneration = typed
+		case knowledgeBaseFileProcessingProgressUpdater:
+			processingProgress = typed
 		}
 	}
 	return &knowledgeBaseFileRefService{
@@ -261,6 +271,7 @@ func NewKnowledgeBaseFileRefService(
 		datasets:            datasets,
 		documents:           documentReader,
 		embeddingGeneration: embeddingGeneration,
+		processingProgress:  processingProgress,
 	}
 }
 
@@ -539,6 +550,7 @@ func (s *knowledgeBaseFileRefService) GenerateCandidateEmbeddings(ctx context.Co
 			Reason:       FileCandidateReasonMissingChunks,
 		}, nil
 	}
+	s.updateCandidateEmbeddingProgress(ctx, req, asset, targetProvider, targetModel, 0, int(chunkCount))
 	embeddingResult, err := s.embeddingGeneration.GenerateAdditionalEmbeddings(ctx, GenerateDocumentChunkEmbeddingsInput{
 		OrganizationID:    req.OrganizationID,
 		AssetID:           asset.ID,
@@ -548,6 +560,9 @@ func (s *knowledgeBaseFileRefService) GenerateCandidateEmbeddings(ctx context.Co
 		EmbeddingModel:    targetModel,
 		RequestedBy:       req.RequestedBy,
 		Chunks:            chunks,
+		OnProgress: func(snapshot GenerateDocumentChunkEmbeddingsProgress) {
+			s.updateCandidateEmbeddingProgress(ctx, req, asset, targetProvider, targetModel, snapshot.Completed, snapshot.Total)
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -572,6 +587,35 @@ func (s *knowledgeBaseFileRefService) GenerateCandidateEmbeddings(ctx context.Co
 		Addable:              reason == "",
 		Reason:               reason,
 	}, nil
+}
+
+func (s *knowledgeBaseFileRefService) updateCandidateEmbeddingProgress(ctx context.Context, req KnowledgeBaseFileCandidateEmbeddingRequest, asset *datalibModel.DocumentAsset, provider string, modelName string, completed int, total int) {
+	if s == nil || s.processingProgress == nil || req.ProcessingRequestID == uuid.Nil || asset == nil {
+		return
+	}
+	_, _ = s.processingProgress.UpdateRequestExecutionMetadata(ctx, req.OrganizationID, req.ProcessingRequestID, map[string]any{
+		"task_type":           "file_candidate_embedding",
+		"dataset_id":          req.DatasetID,
+		"asset_id":            asset.ID.String(),
+		"generation_no":       asset.GenerationNo,
+		"embedding_provider":  provider,
+		"embedding_model":     modelName,
+		"chunk_count":         int64(total),
+		"progress_completed":  int64(completed),
+		"progress_total":      int64(total),
+		"progress_stage":      "embedding",
+		"progress_percentage": candidateEmbeddingProgressPercentage(completed, total),
+	})
+}
+
+func candidateEmbeddingProgressPercentage(completed int, total int) int {
+	if total <= 0 || completed <= 0 {
+		return 0
+	}
+	if completed >= total {
+		return 100
+	}
+	return completed * 100 / total
 }
 
 func (s *knowledgeBaseFileRefService) RetryRef(ctx context.Context, req KnowledgeBaseFileRefRetryRequest) (*KnowledgeBaseFileRefCreateItem, error) {

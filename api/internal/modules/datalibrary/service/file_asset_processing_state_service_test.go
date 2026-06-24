@@ -366,6 +366,14 @@ func (r *fileAssetStateProcessingRequestRepo) QueueSummary(ctx context.Context, 
 	return nil, nil
 }
 
+func (r *fileAssetStateProcessingRequestRepo) UpdateExecutionMetadata(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*model.ProcessingRequest, error) {
+	if r.created == nil || r.created.ID != id || r.created.OrganizationID != organizationID {
+		return nil, nil
+	}
+	r.created.ExecutionMetadata = metadata
+	return r.created, nil
+}
+
 func (r *fileAssetStateProcessingRequestRepo) TransitionStatus(ctx context.Context, id uuid.UUID, patch repository.ProcessingRequestStatusPatch) (*model.ProcessingRequest, error) {
 	return r.created, nil
 }

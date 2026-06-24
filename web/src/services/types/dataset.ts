@@ -1,4 +1,5 @@
 import type { IconType } from '@/utils/icon-helpers';
+import type { FileProcessingRequestView } from './file';
 export type { IconType };
 
 // Reranking weights configuration
@@ -168,6 +169,7 @@ export interface DatasetFileRefCreateResult {
 export interface DatasetFileCandidateEmbeddingResult {
   asset_id: string;
   accepted?: boolean;
+  processing_request?: FileProcessingRequestView;
   generation_no?: number;
   embedding_provider?: string;
   embedding_model?: string;

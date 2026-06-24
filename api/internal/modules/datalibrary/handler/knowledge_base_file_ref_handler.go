@@ -2,10 +2,12 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	datalibModel "github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	datalibService "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	datasetModel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -22,7 +24,10 @@ type KnowledgeBaseFileRefHandler struct {
 	documents      datasetFileRefDocumentManager
 	datasets       datasetFileRefDatasetReader
 	organization   datasetFileRefPermissionChecker
+	processing     knowledgeBaseFileRefProcessingRequestService
 }
+
+const fileCandidateEmbeddingTaskType = "file_candidate_embedding"
 
 type datasetFileRefDocumentManager interface {
 	DeleteDocuments(ctx context.Context, datasetID string, documentIDs []string) error
@@ -41,7 +46,18 @@ type datasetFileRefSyncEnqueuer interface {
 	EnqueueFileCandidateEmbedding(ctx context.Context, req datalibService.KnowledgeBaseFileCandidateEmbeddingRequest) error
 }
 
-func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, dispatcher datasetFileRefSyncEnqueuer, accountService interfaces.AccountService, documents datasetFileRefDocumentManager, datasets datasetFileRefDatasetReader, organization datasetFileRefPermissionChecker) *KnowledgeBaseFileRefHandler {
+type knowledgeBaseFileRefProcessingRequestService interface {
+	CreatePlannedRequest(ctx context.Context, req datalibService.ProcessingRequest) (*datalibService.ProcessingRequestView, error)
+	GetRequest(ctx context.Context, organizationID string, id uuid.UUID) (*datalibService.ProcessingRequestView, error)
+	QueueRequest(ctx context.Context, organizationID string, id uuid.UUID) (*datalibService.ProcessingRequestView, error)
+	FailRequest(ctx context.Context, organizationID string, id uuid.UUID, errorCode string, errorMessage string, metadata map[string]any) (*datalibService.ProcessingRequestView, error)
+}
+
+func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, dispatcher datasetFileRefSyncEnqueuer, accountService interfaces.AccountService, documents datasetFileRefDocumentManager, datasets datasetFileRefDatasetReader, organization datasetFileRefPermissionChecker, processing ...knowledgeBaseFileRefProcessingRequestService) *KnowledgeBaseFileRefHandler {
+	var processingService knowledgeBaseFileRefProcessingRequestService
+	if len(processing) > 0 {
+		processingService = processing[0]
+	}
 	return &KnowledgeBaseFileRefHandler{
 		service:        service,
 		dispatcher:     dispatcher,
@@ -49,6 +65,7 @@ func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefS
 		documents:      documents,
 		datasets:       datasets,
 		organization:   organization,
+		processing:     processingService,
 	}
 }
 
@@ -57,6 +74,7 @@ func (h *KnowledgeBaseFileRefHandler) RegisterDatasetRoutes(router *gin.RouterGr
 	group := auth.Group("/datasets/:dataset_id")
 	group.GET("/file-candidates", h.ListFileCandidates)
 	group.POST("/file-candidates/:asset_id/embeddings", h.GenerateFileCandidateEmbeddings)
+	group.GET("/file-candidates/:asset_id/embedding-tasks/:request_id", h.GetFileCandidateEmbeddingTask)
 	group.GET("/file-refs", h.ListFileRefs)
 	group.POST("/file-refs", h.CreateFileRefs)
 	group.DELETE("/file-refs/:ref_id", h.RemoveFileRef)
@@ -105,20 +123,88 @@ func (h *KnowledgeBaseFileRefHandler) GenerateFileCandidateEmbeddings(c *gin.Con
 		response.FailWithMessage(c, response.ErrSystemError, "file candidate embedding dispatcher is not configured")
 		return
 	}
-	if err := h.dispatcher.EnqueueFileCandidateEmbedding(c.Request.Context(), datalibService.KnowledgeBaseFileCandidateEmbeddingRequest{
+	if h.processing == nil {
+		response.FailWithMessage(c, response.ErrSystemError, "data library processing request service is not configured")
+		return
+	}
+	processingRequest, err := h.processing.CreatePlannedRequest(c.Request.Context(), datalibService.ProcessingRequest{
 		OrganizationID: organizationID,
 		WorkspaceID:    optionalString(util.GetWorkspaceID(c)),
-		DatasetID:      c.Param("dataset_id"),
 		AssetID:        assetID,
+		TargetLevel:    datalibModel.DocumentProcessingLevelVectorize,
 		RequestedBy:    util.GetAccountID(c),
-	}); err != nil {
+		RequestMetadata: map[string]any{
+			"task_type":  fileCandidateEmbeddingTaskType,
+			"dataset_id": c.Param("dataset_id"),
+		},
+	})
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	queuedRequest, err := h.processing.QueueRequest(c.Request.Context(), organizationID, processingRequest.ID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	embeddingReq := datalibService.KnowledgeBaseFileCandidateEmbeddingRequest{
+		OrganizationID:      organizationID,
+		WorkspaceID:         optionalString(util.GetWorkspaceID(c)),
+		DatasetID:           c.Param("dataset_id"),
+		AssetID:             assetID,
+		RequestedBy:         util.GetAccountID(c),
+		ProcessingRequestID: queuedRequest.ID,
+	}
+	if err := h.dispatcher.EnqueueFileCandidateEmbedding(c.Request.Context(), embeddingReq); err != nil {
+		_, _ = h.processing.FailRequest(c.Request.Context(), organizationID, queuedRequest.ID, "enqueue_failed", err.Error(), map[string]any{
+			"task_type":  fileCandidateEmbeddingTaskType,
+			"dataset_id": c.Param("dataset_id"),
+			"asset_id":   assetID.String(),
+		})
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
 	response.Success(c, datalibService.KnowledgeBaseFileCandidateEmbeddingResult{
-		AssetID:  assetID,
-		Accepted: true,
+		AssetID:           assetID,
+		Accepted:          true,
+		ProcessingRequest: queuedRequest,
 	})
+}
+
+func (h *KnowledgeBaseFileRefHandler) GetFileCandidateEmbeddingTask(c *gin.Context) {
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if h.processing == nil {
+		response.FailWithMessage(c, response.ErrSystemError, "data library processing request service is not configured")
+		return
+	}
+	assetID, err := uuid.Parse(c.Param("asset_id"))
+	if err != nil || assetID == uuid.Nil {
+		response.Fail(c, response.ErrInvalidParams)
+		return
+	}
+	requestID, err := uuid.Parse(c.Param("request_id"))
+	if err != nil || requestID == uuid.Nil {
+		response.Fail(c, response.ErrInvalidParams)
+		return
+	}
+	item, err := h.processing.GetRequest(c.Request.Context(), organizationID, requestID)
+	if err != nil {
+		if errors.Is(err, datalibService.ErrProcessingRequestNotFound) {
+			response.Fail(c, response.ErrNotFound)
+			return
+		}
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	if item == nil || item.AssetID != assetID || item.TargetLevel != datalibModel.DocumentProcessingLevelVectorize {
+		response.Fail(c, response.ErrNotFound)
+		return
+	}
+	response.Success(c, item)
 }
 
 func (h *KnowledgeBaseFileRefHandler) ListFileRefs(c *gin.Context) {

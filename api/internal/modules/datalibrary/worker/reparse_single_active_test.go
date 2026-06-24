@@ -361,6 +361,14 @@ func (r *singleActiveProcessingRequestRepo) QueueSummary(ctx context.Context, fi
 	return nil, nil
 }
 
+func (r *singleActiveProcessingRequestRepo) UpdateExecutionMetadata(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*model.ProcessingRequest, error) {
+	if r.request == nil || r.request.ID != id || r.request.OrganizationID != organizationID {
+		return nil, nil
+	}
+	r.request.ExecutionMetadata = metadata
+	return r.request, nil
+}
+
 func (r *singleActiveProcessingRequestRepo) TransitionStatus(ctx context.Context, id uuid.UUID, patch repository.ProcessingRequestStatusPatch) (*model.ProcessingRequest, error) {
 	if r.request == nil || r.request.ID != id || r.request.OrganizationID != patch.OrganizationID {
 		return nil, nil

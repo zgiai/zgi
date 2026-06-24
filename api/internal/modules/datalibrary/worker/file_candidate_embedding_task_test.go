@@ -16,11 +16,12 @@ func TestNewFileCandidateEmbeddingTaskBuildsPayload(t *testing.T) {
 	workspaceID := "workspace-1"
 
 	task, err := NewFileCandidateEmbeddingTask(datalibraryservice.KnowledgeBaseFileCandidateEmbeddingRequest{
-		OrganizationID: "org-1",
-		WorkspaceID:    &workspaceID,
-		DatasetID:      "dataset-1",
-		AssetID:        assetID,
-		RequestedBy:    "account-1",
+		OrganizationID:      "org-1",
+		WorkspaceID:         &workspaceID,
+		DatasetID:           "dataset-1",
+		AssetID:             assetID,
+		RequestedBy:         "account-1",
+		ProcessingRequestID: uuid.MustParse("00000000-0000-0000-0000-000000000123"),
 	}, nil)
 	if err != nil {
 		t.Fatalf("NewFileCandidateEmbeddingTask: %v", err)
@@ -38,7 +39,8 @@ func TestNewFileCandidateEmbeddingTaskBuildsPayload(t *testing.T) {
 		*payload.WorkspaceID != "workspace-1" ||
 		payload.DatasetID != "dataset-1" ||
 		payload.AssetID != assetID.String() ||
-		payload.RequestedBy != "account-1" {
+		payload.RequestedBy != "account-1" ||
+		payload.ProcessingRequestID != "00000000-0000-0000-0000-000000000123" {
 		t.Fatalf("payload=%+v", payload)
 	}
 }
@@ -65,10 +67,11 @@ func TestNewFileCandidateEmbeddingTaskRequiresFields(t *testing.T) {
 func TestFileCandidateEmbeddingTaskHandlerCallsRunner(t *testing.T) {
 	assetID := uuid.New()
 	payload, err := json.Marshal(FileCandidateEmbeddingPayload{
-		OrganizationID: "org-1",
-		DatasetID:      "dataset-1",
-		AssetID:        assetID.String(),
-		RequestedBy:    "account-1",
+		OrganizationID:      "org-1",
+		DatasetID:           "dataset-1",
+		AssetID:             assetID.String(),
+		RequestedBy:         "account-1",
+		ProcessingRequestID: "00000000-0000-0000-0000-000000000123",
 	})
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
@@ -82,7 +85,8 @@ func TestFileCandidateEmbeddingTaskHandlerCallsRunner(t *testing.T) {
 	if runner.req.OrganizationID != "org-1" ||
 		runner.req.DatasetID != "dataset-1" ||
 		runner.req.AssetID != assetID ||
-		runner.req.RequestedBy != "account-1" {
+		runner.req.RequestedBy != "account-1" ||
+		runner.req.ProcessingRequestID.String() != "00000000-0000-0000-0000-000000000123" {
 		t.Fatalf("runner req=%+v", runner.req)
 	}
 }

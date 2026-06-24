@@ -30,9 +30,11 @@ import {
 import {
   useCreateDatasetFileRefs,
   useDatasetFileCandidates,
+  useDatasetFileCandidateEmbeddingTasks,
   useGenerateDatasetFileCandidateEmbeddings,
 } from '@/hooks/dataset/use-dataset-file-refs';
 import type { DatasetFileCandidate } from '@/services/types/dataset';
+import type { FileProcessingRequestView } from '@/services/types/file';
 import { cn } from '@/lib/utils';
 import { formatDate, formatFileSize } from '@/utils/format';
 
@@ -46,6 +48,7 @@ interface DatasetFileAssetDialogProps {
 type CandidateFilter = 'addable' | 'added' | 'blocked';
 
 const FILTERS: CandidateFilter[] = ['addable', 'added', 'blocked'];
+const TERMINAL_EMBEDDING_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 function candidateReasonKey(reason?: string) {
   switch (reason) {
@@ -99,6 +102,43 @@ function processingStatusLabel(t: ReturnType<typeof useT<'datasets'>>, status: s
   }
 }
 
+function numberFromMetadata(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function embeddingTaskProgress(request?: FileProcessingRequestView) {
+  const metadata = request?.execution_metadata ?? {};
+  const completed = numberFromMetadata(metadata.progress_completed);
+  const total = numberFromMetadata(metadata.progress_total);
+  if (completed === undefined || total === undefined || total <= 0) {
+    return undefined;
+  }
+  return {
+    completed: Math.min(completed, total),
+    total,
+  };
+}
+
+function embeddingTaskLabel(
+  t: ReturnType<typeof useT<'datasets'>>,
+  request?: FileProcessingRequestView
+) {
+  if (!request) return t('documents.fileAssets.generateDatasetEmbeddingQueued');
+  if (request.status === 'failed' || request.status === 'cancelled') {
+    return t('documents.fileAssets.generateDatasetEmbeddingFailed');
+  }
+  const progress = embeddingTaskProgress(request);
+  if (progress) {
+    return t('documents.fileAssets.generateDatasetEmbeddingProgress', progress);
+  }
+  return t('documents.fileAssets.generateDatasetEmbeddingQueued');
+}
+
 export function DatasetFileAssetDialog({
   datasetId,
   open,
@@ -111,14 +151,14 @@ export function DatasetFileAssetDialog({
   const [batchGeneratingAssetIds, setBatchGeneratingAssetIds] = useState<Set<string>>(
     () => new Set()
   );
-  const [queuedEmbeddingAssetIds, setQueuedEmbeddingAssetIds] = useState<Set<string>>(
-    () => new Set()
+  const [queuedEmbeddingTasks, setQueuedEmbeddingTasks] = useState<Map<string, string>>(
+    () => new Map()
   );
   const hasQueuedEmbeddingGeneration =
-    queuedEmbeddingAssetIds.size > 0 || batchGeneratingAssetIds.size > 0;
+    queuedEmbeddingTasks.size > 0 || batchGeneratingAssetIds.size > 0;
   const createRefsMutation = useCreateDatasetFileRefs(datasetId);
   const generateEmbeddingsMutation = useGenerateDatasetFileCandidateEmbeddings(datasetId);
-  const { candidates, total, keyword, setKeyword, isLoading, isFetching } =
+  const { candidates, total, keyword, setKeyword, isLoading, isFetching, refetch } =
     useDatasetFileCandidates(
       datasetId,
       { filter: 'all', limit: 100 },
@@ -128,6 +168,22 @@ export function DatasetFileAssetDialog({
         refetchInterval: hasQueuedEmbeddingGeneration ? 3000 : false,
       }
     );
+  const embeddingTaskRefs = useMemo(
+    () =>
+      Array.from(queuedEmbeddingTasks.entries()).map(([assetId, requestId]) => ({
+        assetId,
+        requestId,
+      })),
+    [queuedEmbeddingTasks]
+  );
+  const embeddingTasksByAssetId = useDatasetFileCandidateEmbeddingTasks(
+    datasetId,
+    embeddingTaskRefs,
+    {
+      enabled: open && embeddingTaskRefs.length > 0,
+      refetchInterval: 2000,
+    }
+  );
 
   useEffect(() => {
     if (!open) {
@@ -135,31 +191,43 @@ export function DatasetFileAssetDialog({
       setKeyword('');
       setActiveFilter('addable');
       setBatchGeneratingAssetIds(new Set());
-      setQueuedEmbeddingAssetIds(new Set());
+      setQueuedEmbeddingTasks(new Map());
     }
   }, [open, setKeyword]);
 
   useEffect(() => {
-    if (queuedEmbeddingAssetIds.size === 0) return;
+    if (queuedEmbeddingTasks.size === 0) return;
 
-    const nextQueued = new Set<string>();
-    for (const candidate of candidates) {
-      if (
-        queuedEmbeddingAssetIds.has(candidate.asset_id) &&
-        candidate.requires_embedding_generation === true
-      ) {
-        nextQueued.add(candidate.asset_id);
+    const candidatesByAssetId = new Map(candidates.map(candidate => [candidate.asset_id, candidate]));
+    const nextQueued = new Map(queuedEmbeddingTasks);
+    let changed = false;
+    queuedEmbeddingTasks.forEach((requestId, assetId) => {
+      const candidate = candidatesByAssetId.get(assetId);
+      const task = embeddingTasksByAssetId.get(assetId);
+      const taskDone = task && TERMINAL_EMBEDDING_TASK_STATUSES.has(String(task.status));
+      if (taskDone || (candidate && candidate.requires_embedding_generation !== true)) {
+        nextQueued.delete(assetId);
+        changed = true;
       }
-    }
-
-    const changed =
-      nextQueued.size !== queuedEmbeddingAssetIds.size ||
-      Array.from(nextQueued).some(assetId => !queuedEmbeddingAssetIds.has(assetId));
+      if (!requestId) {
+        nextQueued.delete(assetId);
+        changed = true;
+      }
+    });
 
     if (changed) {
-      setQueuedEmbeddingAssetIds(nextQueued);
+      setQueuedEmbeddingTasks(nextQueued);
     }
-  }, [candidates, queuedEmbeddingAssetIds]);
+  }, [candidates, embeddingTasksByAssetId, queuedEmbeddingTasks]);
+
+  useEffect(() => {
+    const hasTerminalTask = Array.from(embeddingTasksByAssetId.values()).some(task =>
+      TERMINAL_EMBEDDING_TASK_STATUSES.has(String(task.status))
+    );
+    if (hasTerminalTask) {
+      void refetch();
+    }
+  }, [embeddingTasksByAssetId, refetch]);
 
   const summary = useMemo(
     () =>
@@ -240,22 +308,17 @@ export function DatasetFileAssetDialog({
 
   const handleGenerateEmbeddings = useCallback(
     async (candidate: DatasetFileCandidate) => {
-      setQueuedEmbeddingAssetIds(prev => new Set(prev).add(candidate.asset_id));
       try {
         const response = await generateEmbeddingsMutation.mutateAsync(candidate.asset_id);
-        if (!response.data?.accepted) {
-          setQueuedEmbeddingAssetIds(prev => {
-            const next = new Set(prev);
-            next.delete(candidate.asset_id);
+        const requestID = response.data?.processing_request?.id;
+        if (response.data?.accepted && requestID) {
+          setQueuedEmbeddingTasks(prev => {
+            const next = new Map(prev);
+            next.set(candidate.asset_id, requestID);
             return next;
           });
         }
       } catch {
-        setQueuedEmbeddingAssetIds(prev => {
-          const next = new Set(prev);
-          next.delete(candidate.asset_id);
-          return next;
-        });
         // The mutation hook already shows the API error toast.
       }
     },
@@ -279,7 +342,14 @@ export function DatasetFileAssetDialog({
             silent: true,
           });
           if (response.data?.accepted) {
-            setQueuedEmbeddingAssetIds(prev => new Set(prev).add(assetId));
+            const requestID = response.data.processing_request?.id;
+            if (requestID) {
+              setQueuedEmbeddingTasks(prev => {
+                const next = new Map(prev);
+                next.set(assetId, requestID);
+                return next;
+              });
+            }
             successCount += 1;
           } else if (response.data?.addable) {
             successCount += 1;
@@ -460,10 +530,12 @@ export function DatasetFileAssetDialog({
                         candidate.processing_status !== 'ready';
                       const ext = fileExtension(candidate);
                       const isGenerating =
-                        queuedEmbeddingAssetIds.has(candidate.asset_id) ||
+                        queuedEmbeddingTasks.has(candidate.asset_id) ||
                         batchGeneratingAssetIds.has(candidate.asset_id) ||
                         (generateEmbeddingsMutation.isPending &&
                           activeEmbeddingAssetId === candidate.asset_id);
+                      const embeddingTask = embeddingTasksByAssetId.get(candidate.asset_id);
+                      const embeddingProgressLabel = embeddingTaskLabel(t, embeddingTask);
                       return (
                         <TableRow
                           key={candidate.asset_id}
@@ -558,19 +630,25 @@ export function DatasetFileAssetDialog({
                                       }
                                     )}
                                   >
-                                    <span>
-                                      {t(
-                                        'documents.fileAssets.reasons.missingDatasetEmbeddingDetailPrefix',
-                                        {
-                                          model: candidate.target_embedding_model || '-',
-                                        }
-                                      )}
-                                    </span>
-                                    <span className="font-semibold">
-                                      {t(
-                                        'documents.fileAssets.reasons.missingDatasetEmbeddingAction'
-                                      )}
-                                    </span>
+                                    {isGenerating ? (
+                                      <span className="font-semibold">{embeddingProgressLabel}</span>
+                                    ) : (
+                                      <>
+                                        <span>
+                                          {t(
+                                            'documents.fileAssets.reasons.missingDatasetEmbeddingDetailPrefix',
+                                            {
+                                              model: candidate.target_embedding_model || '-',
+                                            }
+                                          )}
+                                        </span>
+                                        <span className="font-semibold">
+                                          {t(
+                                            'documents.fileAssets.reasons.missingDatasetEmbeddingAction'
+                                          )}
+                                        </span>
+                                      </>
+                                    )}
                                   </div>
                                 ) : null}
                               </div>
@@ -610,7 +688,9 @@ export function DatasetFileAssetDialog({
                                 }
                                 onClick={() => handleGenerateEmbeddings(candidate)}
                               >
-                                {t('documents.fileAssets.generateDatasetEmbedding')}
+                                {isGenerating
+                                  ? embeddingProgressLabel
+                                  : t('documents.fileAssets.generateDatasetEmbedding')}
                               </Button>
                             ) : needsFileManagement ? (
                               <Button

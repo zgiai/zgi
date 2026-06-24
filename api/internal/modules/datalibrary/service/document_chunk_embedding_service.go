@@ -41,6 +41,12 @@ type GenerateDocumentChunkEmbeddingsInput struct {
 	EmbeddingModel    string
 	RequestedBy       string
 	Chunks            []*model.DocumentChunk
+	OnProgress        func(GenerateDocumentChunkEmbeddingsProgress)
+}
+
+type GenerateDocumentChunkEmbeddingsProgress struct {
+	Completed int
+	Total     int
 }
 
 type GenerateDocumentChunkEmbeddingsResult struct {
@@ -192,7 +198,7 @@ func (s *documentChunkEmbeddingService) generateEmbeddings(ctx context.Context, 
 	for _, chunk := range leafChunks {
 		texts = append(texts, chunk.Content)
 	}
-	vectors, err := embedDocumentChunkTexts(ctx, embeddingSvc, texts)
+	vectors, err := embedDocumentChunkTexts(ctx, embeddingSvc, texts, input.OnProgress)
 	if err != nil {
 		return nil, fmt.Errorf("embed document chunks: %w", err)
 	}
@@ -330,7 +336,7 @@ func shouldIndexDocumentChunkEmbeddingsForFileQA(clearExisting bool, asset *mode
 	return strings.TrimSpace(*asset.EmbeddingProvider) == strings.TrimSpace(provider)
 }
 
-func embedDocumentChunkTexts(ctx context.Context, embeddingSvc embedding.EmbeddingService, texts []string) ([][]float64, error) {
+func embedDocumentChunkTexts(ctx context.Context, embeddingSvc embedding.EmbeddingService, texts []string, onProgress func(GenerateDocumentChunkEmbeddingsProgress)) ([][]float64, error) {
 	vectors := make([][]float64, 0, len(texts))
 	for start := 0; start < len(texts); start += documentChunkEmbeddingBatchSize {
 		end := start + documentChunkEmbeddingBatchSize
@@ -342,6 +348,12 @@ func embedDocumentChunkTexts(ctx context.Context, embeddingSvc embedding.Embeddi
 			return nil, err
 		}
 		vectors = append(vectors, batchVectors...)
+		if onProgress != nil {
+			onProgress(GenerateDocumentChunkEmbeddingsProgress{
+				Completed: len(vectors),
+				Total:     len(texts),
+			})
+		}
 	}
 	return vectors, nil
 }

@@ -1407,6 +1407,10 @@ func (s *fakeProcessingRequestService) CreatePlannedRequest(ctx context.Context,
 	return s.view, s.err
 }
 
+func (s *fakeProcessingRequestService) GetRequest(ctx context.Context, organizationID string, id uuid.UUID) (*service.ProcessingRequestView, error) {
+	return s.view, s.err
+}
+
 func (s *fakeProcessingRequestService) ListRequests(ctx context.Context, filter repository.ProcessingRequestListFilter) ([]*service.ProcessingRequestView, int64, error) {
 	s.lastFilter = filter
 	return s.views, s.total, s.err
@@ -1458,6 +1462,13 @@ func (s *fakeProcessingRequestService) StartRequest(ctx context.Context, organiz
 	s.lastStartOrganizationID = organizationID
 	s.lastStartID = id
 	s.lastStartExecutorKey = executorKey
+	return s.view, s.err
+}
+
+func (s *fakeProcessingRequestService) UpdateRequestExecutionMetadata(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*service.ProcessingRequestView, error) {
+	s.lastCompleteOrganizationID = organizationID
+	s.lastCompleteID = id
+	s.lastCompleteMetadata = metadata
 	return s.view, s.err
 }
 

@@ -128,6 +128,8 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	dataLibraryChunkRepo := datalibRepo.NewDocumentChunkRepository(deps.DB)
 	dataLibraryEmbeddingRepo := datalibRepo.NewDocumentChunkEmbeddingRepository(deps.DB)
 	dataLibraryKBRefRepo := datalibRepo.NewKnowledgeBaseAssetRefRepository(deps.DB)
+	dataLibraryProcessingRequestRepo := datalibRepo.NewProcessingRequestRepository(deps.DB)
+	dataLibraryProcessingRequestService := datalibService.NewProcessingRequestService(dataLibraryProcessingRequestRepo)
 	dataLibraryFileRefEmbeddingService := datalibService.NewDocumentChunkEmbeddingService(
 		dataLibraryAssetRepo,
 		dataLibraryEmbeddingRepo,
@@ -143,10 +145,11 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		datasetRepoObj,
 		documentRepoObj,
 		dataLibraryFileRefEmbeddingService,
+		dataLibraryProcessingRequestService,
 	)
 	dataLibraryTaskDispatcher := datalibWorker.NewFileProcessTaskDispatcher(deps.TaskManager)
-	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, dataLibraryTaskDispatcher, deps.AccountService, documentServiceObj, datasetServiceObj, deps.OrganizationService)
-	dataLibraryFileCandidateEmbeddingRunner := datalibWorker.NewFileCandidateEmbeddingRunner(dataLibraryFileRefService)
+	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, dataLibraryTaskDispatcher, deps.AccountService, documentServiceObj, datasetServiceObj, deps.OrganizationService, dataLibraryProcessingRequestService)
+	dataLibraryFileCandidateEmbeddingRunner := datalibWorker.NewFileCandidateEmbeddingRunner(dataLibraryFileRefService, dataLibraryProcessingRequestService)
 	dataLibraryDatasetRefSyncRunner := datalibWorker.NewDatasetRefSyncRunner(datalibWorker.DatasetRefSyncRunnerDeps{
 		Refs:       dataLibraryKBRefRepo,
 		Assets:     dataLibraryAssetRepo,

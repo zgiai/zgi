@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	datalibModel "github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	datasetModel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	workspaceModel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -95,8 +96,13 @@ func TestKnowledgeBaseFileRefHandlerEnqueuesCandidateEmbeddingGeneration(t *test
 	var body struct {
 		Code string `json:"code"`
 		Data struct {
-			AssetID  string `json:"asset_id"`
-			Accepted bool   `json:"accepted"`
+			AssetID           string `json:"asset_id"`
+			Accepted          bool   `json:"accepted"`
+			ProcessingRequest struct {
+				ID          string `json:"id"`
+				TargetLevel string `json:"target_level"`
+				Status      string `json:"status"`
+			} `json:"processing_request"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
@@ -104,6 +110,11 @@ func TestKnowledgeBaseFileRefHandlerEnqueuesCandidateEmbeddingGeneration(t *test
 	}
 	if body.Code != "0" || body.Data.AssetID != assetID.String() || !body.Data.Accepted {
 		t.Fatalf("unexpected body=%s", resp.Body.String())
+	}
+	if body.Data.ProcessingRequest.ID == "" ||
+		body.Data.ProcessingRequest.TargetLevel != datalibModel.DocumentProcessingLevelVectorize ||
+		body.Data.ProcessingRequest.Status != datalibModel.ProcessingRequestStatusQueued {
+		t.Fatalf("processing_request=%+v", body.Data.ProcessingRequest)
 	}
 	if refSvc.generateCalled {
 		t.Fatal("GenerateCandidateEmbeddings should not run in the request handler")
@@ -113,7 +124,8 @@ func TestKnowledgeBaseFileRefHandlerEnqueuesCandidateEmbeddingGeneration(t *test
 		enqueuer.embedding.WorkspaceID == nil ||
 		*enqueuer.embedding.WorkspaceID != "workspace-1" ||
 		enqueuer.embedding.DatasetID != "dataset-1" ||
-		enqueuer.embedding.RequestedBy != "account-1" {
+		enqueuer.embedding.RequestedBy != "account-1" ||
+		enqueuer.embedding.ProcessingRequestID.String() != body.Data.ProcessingRequest.ID {
 		t.Fatalf("embedding enqueue=%+v", enqueuer.embedding)
 	}
 }
@@ -127,6 +139,7 @@ func newKnowledgeBaseFileRefTestRouter(refSvc service.KnowledgeBaseFileRefServic
 		nil,
 		&fakeKnowledgeBaseFileRefDatasetReader{workspaceID: workspaceID},
 		&fakeKnowledgeBaseFileRefOrganizationService{allow: allowManage},
+		&fakeKnowledgeBaseFileRefProcessingService{},
 	)
 	router.Use(func(c *gin.Context) {
 		if organizationID != "" {
@@ -207,6 +220,55 @@ func (e *fakeDatasetRefSyncEnqueuer) EnqueueDatasetRefSync(ctx context.Context, 
 func (e *fakeDatasetRefSyncEnqueuer) EnqueueFileCandidateEmbedding(ctx context.Context, req service.KnowledgeBaseFileCandidateEmbeddingRequest) error {
 	e.embedding = req
 	return e.err
+}
+
+type fakeKnowledgeBaseFileRefProcessingService struct {
+	created service.ProcessingRequest
+	failed  uuid.UUID
+}
+
+func (s *fakeKnowledgeBaseFileRefProcessingService) CreatePlannedRequest(ctx context.Context, req service.ProcessingRequest) (*service.ProcessingRequestView, error) {
+	s.created = req
+	return &service.ProcessingRequestView{
+		ID:              uuid.New(),
+		OrganizationID:  req.OrganizationID,
+		WorkspaceID:     req.WorkspaceID,
+		AssetID:         req.AssetID,
+		TargetLevel:     req.TargetLevel,
+		Status:          datalibModel.ProcessingRequestStatusPlanned,
+		RequestedBy:     req.RequestedBy,
+		Force:           req.Force,
+		RequestMetadata: req.RequestMetadata,
+	}, nil
+}
+
+func (s *fakeKnowledgeBaseFileRefProcessingService) GetRequest(ctx context.Context, organizationID string, id uuid.UUID) (*service.ProcessingRequestView, error) {
+	return &service.ProcessingRequestView{
+		ID:             id,
+		OrganizationID: organizationID,
+		TargetLevel:    datalibModel.DocumentProcessingLevelVectorize,
+		Status:         datalibModel.ProcessingRequestStatusRunning,
+	}, nil
+}
+
+func (s *fakeKnowledgeBaseFileRefProcessingService) QueueRequest(ctx context.Context, organizationID string, id uuid.UUID) (*service.ProcessingRequestView, error) {
+	return &service.ProcessingRequestView{
+		ID:             id,
+		OrganizationID: organizationID,
+		TargetLevel:    datalibModel.DocumentProcessingLevelVectorize,
+		Status:         datalibModel.ProcessingRequestStatusQueued,
+	}, nil
+}
+
+func (s *fakeKnowledgeBaseFileRefProcessingService) FailRequest(ctx context.Context, organizationID string, id uuid.UUID, errorCode string, errorMessage string, metadata map[string]any) (*service.ProcessingRequestView, error) {
+	s.failed = id
+	return &service.ProcessingRequestView{
+		ID:             id,
+		OrganizationID: organizationID,
+		Status:         datalibModel.ProcessingRequestStatusFailed,
+		ErrorCode:      errorCode,
+		ErrorMessage:   errorMessage,
+	}, nil
 }
 
 type fakeKnowledgeBaseFileRefDatasetReader struct {

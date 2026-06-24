@@ -1,7 +1,13 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { datasetService } from '@/services';
@@ -11,6 +17,7 @@ import type {
   DatasetFileRef,
 } from '@/services/types/dataset';
 import type { ApiResponseData } from '@/services/types/common';
+import type { FileProcessingRequestView } from '@/services/types/file';
 import { DATASET_KEYS } from '@/hooks/query-keys';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 
@@ -20,6 +27,13 @@ type GenerateDatasetFileCandidateEmbeddingVariables =
       assetId: string;
       silent?: boolean;
     };
+
+interface DatasetFileCandidateEmbeddingTaskRef {
+  assetId: string;
+  requestId: string;
+}
+
+const TERMINAL_PROCESSING_REQUEST_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 function getEmbeddingAssetId(variables: GenerateDatasetFileCandidateEmbeddingVariables) {
   return typeof variables === 'string' ? variables : variables.assetId;
@@ -126,6 +140,52 @@ export function useDatasetFileRefs(
     refs,
     total: query.data?.data?.total ?? 0,
   };
+}
+
+export function useDatasetFileCandidateEmbeddingTasks(
+  datasetId: string | undefined,
+  tasks: DatasetFileCandidateEmbeddingTaskRef[],
+  options: { enabled?: boolean; refetchInterval?: number } = {}
+) {
+  const queries = useQueries({
+    queries: tasks.map(task => ({
+      queryKey:
+        datasetId && task.assetId && task.requestId
+          ? DATASET_KEYS.fileCandidateEmbeddingTask(datasetId, task.assetId, task.requestId)
+          : DATASET_KEYS.fileCandidateEmbeddingTask('undefined', task.assetId, task.requestId),
+      queryFn: () => {
+        if (!datasetId) {
+          throw new Error('datasetId is required');
+        }
+        return datasetService.getDatasetFileCandidateEmbeddingTask(
+          datasetId,
+          task.assetId,
+          task.requestId
+        );
+      },
+      enabled: Boolean(datasetId) && Boolean(task.assetId) && Boolean(task.requestId) && (options.enabled ?? true),
+      refetchInterval: (query: { state: { data?: unknown } }) => {
+        const request = (query.state.data as ApiResponseData<FileProcessingRequestView> | undefined)
+          ?.data;
+        if (request && TERMINAL_PROCESSING_REQUEST_STATUSES.has(String(request.status))) {
+          return false;
+        }
+        return options.refetchInterval ?? 2000;
+      },
+      retry: false,
+    })),
+  });
+
+  return useMemo(() => {
+    const byAssetId = new Map<string, FileProcessingRequestView>();
+    queries.forEach((query, index) => {
+      const request = query.data?.data;
+      if (request) {
+        byAssetId.set(tasks[index].assetId, request);
+      }
+    });
+    return byAssetId;
+  }, [queries, tasks]);
 }
 
 function invalidateDatasetFileRefQueries(queryClient: QueryClient, datasetId: string) {

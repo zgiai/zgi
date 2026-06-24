@@ -159,6 +159,9 @@ const messages = {
       noReference: 'No links',
       openFile: 'Handle in file management',
       generateDatasetEmbedding: 'Generate dataset vectors',
+      generateDatasetEmbeddingQueued: 'Queued',
+      generateDatasetEmbeddingProgress: 'Generating {completed}/{total}',
+      generateDatasetEmbeddingFailed: 'Generation failed',
       batchGenerateDatasetEmbedding: 'Generate dataset vectors ({count})',
       embeddingGenerationNotice:
         '{count} files are missing vector results for the current knowledge base model. Generate dataset vectors to make them addable.',

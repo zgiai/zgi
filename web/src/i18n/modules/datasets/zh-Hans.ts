@@ -159,6 +159,9 @@ const messages: DatasetMessages = {
       noReference: '暂无关联',
       openFile: '去文件管理处理',
       generateDatasetEmbedding: '生成知识库向量',
+      generateDatasetEmbeddingQueued: '排队中',
+      generateDatasetEmbeddingProgress: '生成中 {completed}/{total}',
+      generateDatasetEmbeddingFailed: '生成失败',
       batchGenerateDatasetEmbedding: '批量生成知识库向量（{count}）',
       embeddingGenerationNotice:
         '当前有 {count} 个文件缺少该知识库模型对应的向量结果。生成知识库向量后即可正常添加。',

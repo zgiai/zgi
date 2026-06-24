@@ -194,6 +194,74 @@ func TestDocumentChunkEmbeddingServiceBatchesTextsByEight(t *testing.T) {
 	}
 }
 
+func TestDocumentChunkEmbeddingServiceReportsBatchProgress(t *testing.T) {
+	assetID := uuid.New()
+	runID := uuid.New()
+	assetRepo := &fileAssetStateAssetRepo{
+		asset: &model.DocumentAsset{
+			ID:              assetID,
+			OrganizationID:  "org-1",
+			SourceFileID:    "file-1",
+			ProductStatus:   model.DocumentAssetProductStatusGenerating,
+			ProcessingRunID: &runID,
+			GenerationNo:    6,
+		},
+	}
+	chunks := make([]*model.DocumentChunk, 0, 20)
+	vectors := make([][]float64, 0, 20)
+	for i := 0; i < 20; i++ {
+		content := "child text"
+		chunks = append(chunks, &model.DocumentChunk{
+			ID:              uuid.New(),
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    6,
+			ChunkType:       model.DocumentChunkTypeChild,
+			Content:         content,
+			ContentHash:     documentChunkContentHash(content),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
+		})
+		vectors = append(vectors, []float64{float64(i), float64(i + 1)})
+	}
+	embeddingSvc := &documentChunkEmbeddingFakeEmbeddingService{vectors: vectors}
+	svc := NewDocumentChunkEmbeddingService(
+		assetRepo,
+		&documentChunkEmbeddingRepo{},
+		nil,
+		nil,
+		WithDocumentChunkEmbeddingFactory(func(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput, asset *model.DocumentAsset, provider string, modelName string) (embedding.EmbeddingService, error) {
+			return embeddingSvc, nil
+		}),
+	)
+
+	var progress []GenerateDocumentChunkEmbeddingsProgress
+	_, err := svc.GenerateEmbeddings(context.Background(), GenerateDocumentChunkEmbeddingsInput{
+		OrganizationID:    "org-1",
+		AssetID:           assetID,
+		ProcessingRunID:   runID,
+		GenerationNo:      6,
+		EmbeddingProvider: "provider-1",
+		EmbeddingModel:    "model-1",
+		Chunks:            chunks,
+		OnProgress: func(snapshot GenerateDocumentChunkEmbeddingsProgress) {
+			progress = append(progress, snapshot)
+		},
+	})
+	if err != nil {
+		t.Fatalf("GenerateEmbeddings: %v", err)
+	}
+	got := make([][2]int, 0, len(progress))
+	for _, snapshot := range progress {
+		got = append(got, [2]int{snapshot.Completed, snapshot.Total})
+	}
+	want := [][2]int{{8, 20}, {16, 20}, {20, 20}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("progress=%v want %v", got, want)
+	}
+}
+
 func TestDocumentChunkEmbeddingServiceAdditionalEmbeddingsDoNotIndexFileQACollection(t *testing.T) {
 	assetID := uuid.New()
 	runID := uuid.New()
