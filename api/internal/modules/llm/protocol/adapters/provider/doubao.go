@@ -71,7 +71,7 @@ func NewDoubaoAdapter(config *adapter.AdapterConfig) (*DoubaoAdapter, error) {
 
 	return &DoubaoAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClientWithAuthHook(timeout, maxRetries, config.AuthHook),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, maxRetries),
 		baseURL:    baseURL,
 		openAI:     openAIAdapter,
 	}, nil

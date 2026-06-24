@@ -391,6 +391,7 @@ type ContentParseConfig struct {
 type LLMConfig struct {
 	EncryptionKey           string `json:"-"`
 	OfficialModelStrictSync bool   `json:"official_model_strict_sync"`
+	AllowPrivateBaseURL     bool   `json:"allow_private_base_url"`
 }
 
 type AutomationConfig struct {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Plus, RefreshCw, Loader2, Search, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -13,16 +13,27 @@ import AgentCard from '@/components/agents/agent-card';
 import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { ApiResponseData } from '@/services/types/common';
 import type { AgentList } from '@/services/types/agent';
+import { AGENT_KEYS } from '@/hooks/query-keys';
 import AgentDialog from '@/components/agents/agent-dialog';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import ImportAgentDialog from '@/components/agents/import-agent-dialog';
 import { TemplateGalleryDialog } from '@/components/agents/templates';
+import {
+  consumeAgentListRestoreIntent,
+  markAgentListDetailEntry,
+  readAgentListInitialKeyword,
+  readAgentListNavigationState,
+  writeAgentListNavigationState,
+  type AgentListNavigationState,
+} from '@/utils/agent-list-state';
 
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ShieldAlert } from 'lucide-react';
 import { AgentEmptyElement, AgentEmptySearchResults } from '@/components/agents/empty-element';
 import { AgentsAIChatContextRegistration } from '@/components/agents/aichat-context';
+
+const PAGE_SIZE = 20;
 
 export default function AgentsPage() {
   const t = useT();
@@ -34,21 +45,80 @@ export default function AgentsPage() {
   const canView = hasPermission('agent.view');
   const canManage = hasPermission('agent.manage');
 
-  const PAGE_SIZE = 20;
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [searchKeyword, setSearchKeyword] = useState('');
+  const [searchKeyword, setSearchKeyword] = useState(readAgentListInitialKeyword);
+  const [queryKeywordOverride, setQueryKeywordOverride] = useState<string | null>(null);
+  const [isRestoreChecked, setIsRestoreChecked] = useState(false);
   const [reloading, setReloading] = useState(false);
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const pendingRestoreRef = useRef<AgentListNavigationState | null>(null);
+  const hasRestoredScrollRef = useRef(false);
+  const hasRefreshedRestoredPagesRef = useRef(false);
+  const scrollSaveFrameRef = useRef<number | null>(null);
   const debouncedSearchKeyword = useDebouncedValue(searchKeyword, 500);
+  const effectiveSearchKeyword = queryKeywordOverride ?? debouncedSearchKeyword;
   const templateFromQuery = searchParams.get('template');
+  const agentListParams = useMemo(
+    () => ({
+      limit: PAGE_SIZE,
+      keyword: effectiveSearchKeyword || undefined,
+      workspace_id: currentWorkspace?.id,
+    }),
+    [effectiveSearchKeyword, currentWorkspace?.id]
+  );
+  const agentListQueryKey = useMemo(() => AGENT_KEYS.list(agentListParams), [agentListParams]);
 
   useEffect(() => {
     if (templateFromQuery) {
       setTemplateOpen(true);
     }
   }, [templateFromQuery]);
+
+  useEffect(() => {
+    if (!currentWorkspace?.id) {
+      setIsRestoreChecked(true);
+      return;
+    }
+
+    const shouldRestore = consumeAgentListRestoreIntent();
+    const savedState = shouldRestore ? readAgentListNavigationState() : null;
+    if (!savedState || savedState.workspaceId !== currentWorkspace.id) {
+      pendingRestoreRef.current = null;
+      hasRestoredScrollRef.current = false;
+      hasRefreshedRestoredPagesRef.current = false;
+      setSearchKeyword('');
+      setQueryKeywordOverride('');
+      setIsRestoreChecked(true);
+      return;
+    }
+
+    setSearchKeyword(savedState.keyword);
+    setQueryKeywordOverride(savedState.keyword);
+    pendingRestoreRef.current = savedState;
+
+    const restoredParams = {
+      limit: PAGE_SIZE,
+      keyword: savedState.keyword || undefined,
+      workspace_id: currentWorkspace.id,
+    };
+    const restoredQueryKey = AGENT_KEYS.list(restoredParams);
+    const existingCachedPages =
+      queryClient.getQueryData<InfiniteData<ApiResponseData<AgentList>, number>>(
+        restoredQueryKey
+      )?.pages;
+
+    if (savedState.pages?.length && !existingCachedPages?.length) {
+      queryClient.setQueryData<InfiniteData<ApiResponseData<AgentList>, number>>(restoredQueryKey, {
+        pages: savedState.pages,
+        pageParams: savedState.pages.map((_, index) => index + 1),
+      });
+    }
+
+    setIsRestoreChecked(true);
+  }, [currentWorkspace?.id, queryClient]);
 
   const {
     pages,
@@ -58,14 +128,9 @@ export default function AgentsPage() {
     isLoading: isAgentsLoading,
     isFetching,
     refetchFromPageAndAfter,
-  } = useAgents(
-    {
-      limit: PAGE_SIZE,
-      keyword: debouncedSearchKeyword || undefined,
-      workspace_id: currentWorkspace?.id,
-    },
-    { enabled: canView }
-  );
+  } = useAgents(agentListParams, {
+    enabled: canView && isRestoreChecked && Boolean(currentWorkspace?.id),
+  });
 
   const isLoading = isAgentsLoading || isPermissionsLoading;
 
@@ -74,6 +139,111 @@ export default function AgentsPage() {
 
   // Infinite scroll trigger
   const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  const persistNavigationState = (nextScrollTop?: number, includePages = false) => {
+    if (!isRestoreChecked || !currentWorkspace?.id) return;
+
+    const cached = includePages
+      ? queryClient.getQueryData<InfiniteData<ApiResponseData<AgentList>, number>>(
+          agentListQueryKey
+        )
+      : undefined;
+    writeAgentListNavigationState(
+      {
+        keyword: effectiveSearchKeyword,
+        loadedPageCount: pages.length,
+        scrollTop: nextScrollTop ?? listScrollRef.current?.scrollTop ?? 0,
+        workspaceId: currentWorkspace.id,
+        pages: cached?.pages,
+        updatedAt: Date.now(),
+      },
+      { includePages }
+    );
+  };
+
+  const handleListScroll = () => {
+    if (scrollSaveFrameRef.current !== null) return;
+
+    scrollSaveFrameRef.current = window.requestAnimationFrame(() => {
+      scrollSaveFrameRef.current = null;
+      persistNavigationState(listScrollRef.current?.scrollTop ?? 0);
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (scrollSaveFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollSaveFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isRestoreChecked || !currentWorkspace?.id) return;
+
+    persistNavigationState(undefined, true);
+    // React Query updates cached pages after this render, so run once more on the next frame.
+    const frame = window.requestAnimationFrame(() => persistNavigationState(undefined, true));
+    return () => window.cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentListQueryKey, currentWorkspace?.id, effectiveSearchKeyword, isRestoreChecked, pages]);
+
+  useEffect(() => {
+    const pendingRestore = pendingRestoreRef.current;
+    if (!pendingRestore || !isRestoreChecked || !canView) return;
+    if (pendingRestore.keyword !== effectiveSearchKeyword) return;
+    if (pages.length >= pendingRestore.loadedPageCount || !hasNextPage || isFetchingNextPage) {
+      return;
+    }
+
+    void fetchNextPage();
+  }, [
+    canView,
+    effectiveSearchKeyword,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isRestoreChecked,
+    pages.length,
+  ]);
+
+  useEffect(() => {
+    const pendingRestore = pendingRestoreRef.current;
+    if (!pendingRestore || hasRestoredScrollRef.current || !isRestoreChecked) return;
+    if (pendingRestore.keyword !== effectiveSearchKeyword) return;
+    if (pages.length < pendingRestore.loadedPageCount && hasNextPage) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      const scrollContainer = listScrollRef.current;
+      if (!scrollContainer) return;
+
+      scrollContainer.scrollTop = pendingRestore.scrollTop;
+      hasRestoredScrollRef.current = true;
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [effectiveSearchKeyword, hasNextPage, isRestoreChecked, pages.length]);
+
+  useEffect(() => {
+    const pendingRestore = pendingRestoreRef.current;
+    if (!pendingRestore || hasRefreshedRestoredPagesRef.current || !isRestoreChecked) return;
+    if (pendingRestore.keyword !== effectiveSearchKeyword) return;
+    if (pages.length === 0) return;
+
+    hasRefreshedRestoredPagesRef.current = true;
+    void refetchFromPageAndAfter(0);
+  }, [effectiveSearchKeyword, isRestoreChecked, pages.length, refetchFromPageAndAfter]);
+
+  const handleSearchChange = (value: string) => {
+    pendingRestoreRef.current = null;
+    hasRestoredScrollRef.current = false;
+    hasRefreshedRestoredPagesRef.current = false;
+    if (listScrollRef.current) {
+      listScrollRef.current.scrollTop = 0;
+    }
+    setQueryKeywordOverride(null);
+    setSearchKeyword(value);
+  };
 
   // Auto-fetch next page when load more trigger comes into view
   useEffect(() => {
@@ -149,7 +319,11 @@ export default function AgentsPage() {
         isLoading={isLoading}
         hasNextPage={hasNextPage}
       />
-      <div className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 lg:space-y-9 flex flex-col h-full overflow-y-auto">
+      <div
+        ref={listScrollRef}
+        onScroll={handleListScroll}
+        className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 lg:space-y-9 flex flex-col h-full overflow-y-auto"
+      >
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
@@ -175,7 +349,7 @@ export default function AgentsPage() {
               <Input
                 placeholder={t('agents.searchPlaceholder')}
                 value={searchKeyword}
-                onChange={e => setSearchKeyword(e.target.value)}
+                onChange={e => handleSearchChange(e.target.value)}
                 className="pl-9 bg-background rounded-lg text-sm w-full"
               />
             </div>
@@ -209,10 +383,10 @@ export default function AgentsPage() {
 
         {!isLoading &&
           agents.length === 0 &&
-          (debouncedSearchKeyword ? (
+          (effectiveSearchKeyword ? (
             <AgentEmptySearchResults
-              query={debouncedSearchKeyword}
-              onClearSearch={() => setSearchKeyword('')}
+              query={effectiveSearchKeyword}
+              onClearSearch={() => handleSearchChange('')}
             />
           ) : (
             <AgentEmptyElement
@@ -243,6 +417,7 @@ export default function AgentsPage() {
                 key={agent.id}
                 agent={agent}
                 pageIndex={pIndex}
+                onNavigate={() => markAgentListDetailEntry(agent.id)}
                 onDeleted={(deletedId, pageIndex) => {
                   // Optimistically remove from cache for instantaneous UI update
                   queryClient.setQueriesData<InfiniteData<ApiResponseData<AgentList>>>(

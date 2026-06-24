@@ -766,11 +766,13 @@ func newUnregisteredModelError(modelName string) error {
 
 func (v *Validator) newAdapterForProvider(adapterKey, baseURL, apiKey string) (adapter.LLMProviderAdapter, error) {
 	return v.newAdapter(&adapter.AdapterConfig{
-		ProviderName: adapterKey,
-		APIKey:       apiKey,
-		BaseURL:      baseURL,
-		Timeout:      defaultTimeout,
-		MaxRetries:   defaultMaxRetries,
+		ProviderName:        adapterKey,
+		APIKey:              apiKey,
+		BaseURL:             baseURL,
+		Timeout:             defaultTimeout,
+		MaxRetries:          defaultMaxRetries,
+		GuardOutboundURL:    true,
+		AllowPrivateBaseURL: AllowsPrivateBaseURL(adapterKey),
 	})
 }
 

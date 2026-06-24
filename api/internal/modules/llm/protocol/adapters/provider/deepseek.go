@@ -42,7 +42,7 @@ func NewDeepSeekAdapter(config *adapter.AdapterConfig) (*DeepSeekAdapter, error)
 
 	return &DeepSeekAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClient(timeout, maxRetries),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, maxRetries),
 		baseURL:    baseURL,
 	}, nil
 }

@@ -45,6 +45,7 @@ interface ResourceSidebarHeaderProps {
   showIdentity?: boolean;
   backHref?: string;
   backLabel?: string;
+  onBackClick?: () => void;
   iconActionLabel?: string;
   onIconClick?: () => void;
 }
@@ -197,6 +198,7 @@ export function ResourceSidebarHeader({
   showIdentity = true,
   backHref,
   backLabel,
+  onBackClick,
   iconActionLabel,
   onIconClick,
 }: ResourceSidebarHeaderProps) {
@@ -256,6 +258,7 @@ export function ResourceSidebarHeader({
                 href={backHref}
                 aria-label={backLabel}
                 title={backLabel}
+                onClick={onBackClick}
                 className="flex h-7 min-w-0 items-center gap-1 rounded-[4px] px-1.5 text-xs text-muted-foreground transition-colors hover:bg-primary/5 hover:text-primary"
               >
                 <ArrowLeft size={14} className="shrink-0" />
@@ -317,6 +320,7 @@ export function ResourceSidebarHeader({
               href={backHref}
               aria-label={backLabel}
               title={backLabel}
+              onClick={onBackClick}
               className="flex h-7 w-7 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-primary/5 hover:text-primary"
             >
               <ArrowLeft className="h-4 w-4" />
