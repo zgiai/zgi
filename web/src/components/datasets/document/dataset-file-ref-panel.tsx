@@ -2,10 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { CheckCircle2, ExternalLink, FileText, HelpCircle, RefreshCcw, Trash2 } from 'lucide-react';
+import { CheckCircle2, ExternalLink, HelpCircle, RefreshCcw, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { FileTypeIcon } from '@/components/files/file-type-icon';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -182,7 +183,7 @@ export function DatasetFileRefPanel({
               <TableRow key={ref.id} className="h-16 hover:bg-muted/30">
                 <TableCell className="max-w-0">
                   <div className="flex min-w-0 items-center gap-3">
-                    <FileText className="h-5 w-5 shrink-0 text-destructive" />
+                    <FileTypeIcon extension={ext} className="h-5 w-5 shrink-0" />
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium" title={ref.file_name}>
                         {ref.file_name}

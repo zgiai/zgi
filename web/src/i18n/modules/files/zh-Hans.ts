@@ -437,6 +437,9 @@ const messages: FilesMessages = {
       emptyDescription: '输入问题后，系统会先召回相关二级切片，再使用对应一级切片作为回答依据。',
       question: '问题',
       answer: '回答',
+      answerModel: '回答模型',
+      defaultAnswerModel: '默认模型',
+      noAvailableAnswerModels: '暂无可用聊天模型',
       placeholder: '输入关于这篇文档的问题...',
       send: '发送',
       generating: '生成中...',
@@ -445,7 +448,7 @@ const messages: FilesMessages = {
       noSources: '未在文档中找到相关引用。',
       sources: '引用来源（{count}）',
       similarityRank: '相似度排名 {rank}',
-      locateSource: '找回切片',
+      locateSource: '跳转至切块',
     },
     reparse: {
       action: '重新解析',
@@ -633,6 +636,9 @@ const messages: FilesMessages = {
     removeInvalidBeforeUpload: '请先移除无法上传的文件，再继续上传。',
     cannotUpload: '无法上传',
     confirmUpload: '确认上传',
+    cancelUpload: '取消上传',
+    uploadInProgressCloseHint:
+      '文件上传过程中无法关闭窗口。请点击取消上传，清空所有正在上传的文件，以关闭上传窗口。',
   },
 
   // Documents section (for compatibility)

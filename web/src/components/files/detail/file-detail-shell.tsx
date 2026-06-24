@@ -949,33 +949,42 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       ) : null}
 
       <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
-        {activeView === 'preview' ? (
-          <section className="flex h-full min-h-0 flex-col">
-            <FilePreviewChunksWorkbench
-              file={file}
-              chunksEnabled={chunksEnabled}
-              chunkQueryVersion={chunkQueryVersion}
-              locateTarget={chunkLocateTarget}
-            />
-          </section>
-        ) : (
-          <section className="h-full min-h-0 overflow-y-auto bg-bg-canvas p-4 sm:p-6">
-            <FileQAPanel
-              fileId={file.id}
-              artifactState={artifactState}
-              processing={processing}
-              vectorStatus={vectorStatus}
-              enabled={qaEnabled}
-              onLocateSource={(source: FileQuestionAnswerSource) => {
-                setChunkLocateTarget({
-                  chunkId: source.primary_chunk_id,
-                  requestId: Date.now(),
-                });
-                setActiveView('preview');
-              }}
-            />
-          </section>
-        )}
+        <section
+          className={cn(
+            'h-full min-h-0 flex-col',
+            activeView === 'preview' ? 'flex' : 'hidden'
+          )}
+          aria-hidden={activeView !== 'preview'}
+        >
+          <FilePreviewChunksWorkbench
+            file={file}
+            chunksEnabled={chunksEnabled}
+            chunkQueryVersion={chunkQueryVersion}
+            locateTarget={chunkLocateTarget}
+          />
+        </section>
+        <section
+          className={cn(
+            'h-full min-h-0 overflow-y-auto bg-bg-canvas p-4 sm:p-6',
+            activeView === 'qa' ? 'block' : 'hidden'
+          )}
+          aria-hidden={activeView !== 'qa'}
+        >
+          <FileQAPanel
+            fileId={file.id}
+            artifactState={artifactState}
+            processing={processing}
+            vectorStatus={vectorStatus}
+            enabled={qaEnabled}
+            onLocateSource={(source: FileQuestionAnswerSource) => {
+              setChunkLocateTarget({
+                chunkId: source.primary_chunk_id,
+                requestId: Date.now(),
+              });
+              setActiveView('preview');
+            }}
+          />
+        </section>
       </main>
 
       <ReparseDialog

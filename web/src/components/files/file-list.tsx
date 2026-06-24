@@ -1,16 +1,8 @@
-import { memo, useState, type ComponentType, type KeyboardEvent } from 'react';
+import { memo, useState, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import {
   MoreHorizontal,
   FileIcon,
-  FileText,
-  FileSpreadsheet,
-  Image as ImageIcon,
-  Video,
-  FileArchive,
-  FileCode,
-  FileMusic,
-  FileAudio,
   Download,
   Eye,
   Trash2,
@@ -66,6 +58,7 @@ import type { FileUploadProcessingMode } from '@/services/types/file';
 import { getFileDetailKey } from '@/hooks/file/use-file-detail';
 import { FILE_PARSE_PREVIEW_QUERY_KEY } from '@/hooks/file/use-file-parse-preview';
 import { FILE_CHUNKS_QUERY_KEY } from '@/hooks/file/use-file-chunks';
+import { FileTypeIcon } from './file-type-icon';
 
 function getProcessingStatus(file: FileItem): string {
   return file.processing_status || 'stored_only';
@@ -220,55 +213,6 @@ function formatFileSize(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return Math.round((bytes / Math.pow(k, i)) * 10) / 10 + ' ' + sizes[i];
-}
-
-/**
- * Get file type icon component and color
- */
-function getFileTypeConfig(extension: string): {
-  Icon: ComponentType<{ className?: string }>;
-  color: string;
-} {
-  const ext = extension.toLowerCase();
-
-  const configs: Record<string, { Icon: ComponentType<{ className?: string }>; color: string }> = {
-    // Documents
-    pdf: { Icon: FileText, color: 'text-muted-foreground' },
-    doc: { Icon: FileText, color: 'text-muted-foreground' },
-    docx: { Icon: FileText, color: 'text-muted-foreground' },
-    txt: { Icon: FileText, color: 'text-muted-foreground' },
-    // Spreadsheets
-    xls: { Icon: FileSpreadsheet, color: 'text-muted-foreground' },
-    xlsx: { Icon: FileSpreadsheet, color: 'text-muted-foreground' },
-    csv: { Icon: FileSpreadsheet, color: 'text-muted-foreground' },
-    // Images
-    jpg: { Icon: ImageIcon, color: 'text-warning' },
-    jpeg: { Icon: ImageIcon, color: 'text-warning' },
-    png: { Icon: ImageIcon, color: 'text-warning' },
-    gif: { Icon: ImageIcon, color: 'text-warning' },
-    webp: { Icon: ImageIcon, color: 'text-warning' },
-    svg: { Icon: ImageIcon, color: 'text-warning' },
-    // Video
-    mp4: { Icon: Video, color: 'text-muted-foreground' },
-    avi: { Icon: Video, color: 'text-muted-foreground' },
-    mov: { Icon: Video, color: 'text-muted-foreground' },
-    wmv: { Icon: Video, color: 'text-muted-foreground' },
-    // Audio
-    mp3: { Icon: FileMusic, color: 'text-muted-foreground' },
-    wav: { Icon: FileAudio, color: 'text-muted-foreground' },
-    // Archives
-    zip: { Icon: FileArchive, color: 'text-muted-foreground' },
-    rar: { Icon: FileArchive, color: 'text-muted-foreground' },
-    '7z': { Icon: FileArchive, color: 'text-muted-foreground' },
-    // Code
-    js: { Icon: FileCode, color: 'text-muted-foreground' },
-    ts: { Icon: FileCode, color: 'text-muted-foreground' },
-    jsx: { Icon: FileCode, color: 'text-muted-foreground' },
-    tsx: { Icon: FileCode, color: 'text-muted-foreground' },
-    json: { Icon: FileCode, color: 'text-muted-foreground' },
-  };
-
-  return configs[ext] || { Icon: FileIcon, color: 'text-muted-foreground' };
 }
 
 function FileListBase({
@@ -643,7 +587,6 @@ function FileListBase({
             <div className="space-y-3">
               {files.map(file => {
                 const isSelected = selectedFiles.includes(file.id);
-                const { Icon, color } = getFileTypeConfig(file.extension);
                 const processingStatus = getEffectiveProcessingStatus(file);
                 const canStartParse = processingStatus === 'stored_only' && canRequestProcessing;
                 const canOpenFileDetail = canViewDetail && processingStatus !== 'stored_only';
@@ -667,7 +610,7 @@ function FileListBase({
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-start gap-3">
                         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-muted">
-                          <Icon className={cn('h-5 w-5', color)} />
+                          <FileTypeIcon extension={file.extension} className="h-5 w-5" />
                         </div>
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold text-foreground">
@@ -1069,10 +1012,7 @@ function FileListBase({
                   </TableCell>
                   <TableCell className="max-w-0 font-medium">
                     <div className="flex min-w-0 items-center gap-3">
-                      {(() => {
-                        const { Icon, color } = getFileTypeConfig(file.extension);
-                        return <Icon className={cn('h-4 w-4 flex-shrink-0', color)} />;
-                      })()}
+                      <FileTypeIcon extension={file.extension} className="h-4 w-4 flex-shrink-0" />
                       {canOpenFileDetail ? (
                         <Link
                           href={`/console/files/${file.id}`}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import {
   AlertCircle,
@@ -18,13 +18,15 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
+import { useAvailableModels } from '@/hooks/model/use-model';
 import { useT } from '@/i18n';
 import { fileManageService } from '@/services/file-manage.service';
 import type {
   AskFileQuestionResponse,
   FileAssetArtifactState,
-  FileAssetVectorStatus,
   FileDetailProcessing,
   FileQuestionAnswerSource,
   FileQuestionStreamEvent,
@@ -38,6 +40,8 @@ interface FileQAPanelProps {
   enabled: boolean;
   onLocateSource?: (source: FileQuestionAnswerSource) => void;
 }
+
+const DEFAULT_ANSWER_MODEL_VALUE = '__default_answer_model__';
 
 interface FileQAExchange {
   id: string;
@@ -54,25 +58,12 @@ function isComposingEnterEvent(event: KeyboardEvent<HTMLTextAreaElement>): boole
   return nativeEvent.isComposing === true || event.keyCode === 229;
 }
 
-function getVectorBadgeVariant(status?: string) {
-  switch (status) {
-    case 'ready':
-      return 'success' as const;
-    case 'indexing':
-      return 'info' as const;
-    case 'failed':
-      return 'destructive' as const;
-    case 'none':
-    default:
-      return 'subtle' as const;
-  }
+function answerModelValue(provider: string, model: string): string {
+  return `${encodeURIComponent(provider)}::${encodeURIComponent(model)}`;
 }
 
 export function FileQAPanel({
   fileId,
-  artifactState,
-  processing,
-  vectorStatus,
   enabled,
   onLocateSource,
 }: FileQAPanelProps) {
@@ -81,25 +72,54 @@ export function FileQAPanel({
   const [exchanges, setExchanges] = useState<FileQAExchange[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [qaError, setQaError] = useState<string | null>(null);
+  const [answerModelSelection, setAnswerModelSelection] = useState(DEFAULT_ANSWER_MODEL_VALUE);
   const isComposingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
-  const resolvedVectorStatus = vectorStatus || artifactState?.vector_status || 'none';
-  const vectorStatusLabel = (() => {
-    switch (resolvedVectorStatus as FileAssetVectorStatus | string | undefined) {
-      case 'indexing':
-        return t('detail.vectorStatus.indexing');
-      case 'ready':
-        return t('detail.vectorStatus.ready');
-      case 'failed':
-        return t('detail.vectorStatus.failed');
-      case 'none':
-      default:
-        return t('detail.vectorStatus.none');
-    }
-  })();
-  const embeddingCount = processing?.embedding_count ?? 0;
-  const chunkCount = processing?.chunk_count ?? artifactState?.chunk_count ?? 0;
+  const { value: defaultAnswerModel } = useDefaultModelByUseCase('text-chat');
+  const {
+    models: availableAnswerModels,
+    isLoading: isLoadingAnswerModels,
+    isFetching: isFetchingAnswerModels,
+  } = useAvailableModels({
+    use_case: 'text-chat',
+  });
+  const answerModels = useMemo(
+    () => availableAnswerModels.filter(model => model.model),
+    [availableAnswerModels]
+  );
+  const selectedAnswerModel = useMemo(
+    () =>
+      answerModels.find(model => answerModelValue(model.provider, model.model) === answerModelSelection),
+    [answerModelSelection, answerModels]
+  );
+  const resolvedDefaultAnswerModel = useMemo(
+    () =>
+      defaultAnswerModel
+        ? answerModels.find(
+            model =>
+              model.provider === defaultAnswerModel.provider && model.model === defaultAnswerModel.model
+          )
+        : undefined,
+    [answerModels, defaultAnswerModel]
+  );
+  const defaultAnswerModelLabel =
+    resolvedDefaultAnswerModel?.model_name ||
+    resolvedDefaultAnswerModel?.model ||
+    defaultAnswerModel?.model ||
+    t('detail.qa.defaultAnswerModel');
+  const selectedAnswerModelLabel =
+    selectedAnswerModel?.model_name || selectedAnswerModel?.model || defaultAnswerModelLabel;
+  const selectableAnswerModels = useMemo(
+    () =>
+      answerModels.filter(
+        model =>
+          !defaultAnswerModel ||
+          model.provider !== defaultAnswerModel.provider ||
+          model.model !== defaultAnswerModel.model
+      ),
+    [answerModels, defaultAnswerModel]
+  );
   const canSubmit = enabled && question.trim().length > 0 && !isStreaming;
 
   useEffect(() => {
@@ -108,6 +128,17 @@ export function FileQAPanel({
       abortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      answerModelSelection !== DEFAULT_ANSWER_MODEL_VALUE &&
+      !isLoadingAnswerModels &&
+      answerModels.length > 0 &&
+      !selectedAnswerModel
+    ) {
+      setAnswerModelSelection(DEFAULT_ANSWER_MODEL_VALUE);
+    }
+  }, [answerModelSelection, answerModels.length, isLoadingAnswerModels, selectedAnswerModel]);
 
   const updateExchange = (id: string, updater: (exchange: FileQAExchange) => FileQAExchange) => {
     setExchanges(prev => prev.map(exchange => (exchange.id === id ? updater(exchange) : exchange)));
@@ -194,7 +225,16 @@ export function FileQAPanel({
     try {
       const stream = await fileManageService.streamFileQuestion(
         fileId,
-        { question: trimmed, top_k: 6 },
+        {
+          question: trimmed,
+          top_k: 6,
+          ...(selectedAnswerModel
+            ? {
+                answer_model_provider: selectedAnswerModel.provider,
+                answer_model: selectedAnswerModel.model,
+              }
+            : {}),
+        },
         {
           abortSignal: controller.signal,
           onEvent: handleStreamEvent,
@@ -245,10 +285,43 @@ export function FileQAPanel({
           <h2 className="text-base font-semibold text-foreground">{t('detail.qa.title')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t('detail.qa.description')}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={getVectorBadgeVariant(resolvedVectorStatus)}>{vectorStatusLabel}</Badge>
-          <Badge variant="outline">{t('detail.qa.chunkSummary', { count: chunkCount })}</Badge>
-          <Badge variant="outline">{t('detail.qa.vectorSummary', { count: embeddingCount })}</Badge>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-sm text-muted-foreground">{t('detail.qa.answerModel')}</span>
+          <Select
+            value={answerModelSelection}
+            onValueChange={setAnswerModelSelection}
+            disabled={isStreaming || isLoadingAnswerModels}
+          >
+            <SelectTrigger
+              className="h-9 w-[220px] bg-background"
+              isLoading={isLoadingAnswerModels || isFetchingAnswerModels}
+              aria-label={t('detail.qa.answerModel')}
+            >
+              <span className="truncate">
+                {answerModelSelection === DEFAULT_ANSWER_MODEL_VALUE
+                  ? defaultAnswerModelLabel
+                  : selectedAnswerModelLabel}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={DEFAULT_ANSWER_MODEL_VALUE}>
+                <span className="truncate">{defaultAnswerModelLabel}</span>
+              </SelectItem>
+              {selectableAnswerModels.map(model => (
+                <SelectItem
+                  key={`${model.provider}:${model.model}`}
+                  value={answerModelValue(model.provider, model.model)}
+                >
+                  <span className="truncate">{model.model_name || model.model}</span>
+                </SelectItem>
+              ))}
+              {!isLoadingAnswerModels && answerModels.length === 0 ? (
+                <SelectItem value="__no_available_answer_models__" disabled>
+                  {t('detail.qa.noAvailableAnswerModels')}
+                </SelectItem>
+              ) : null}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 

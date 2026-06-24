@@ -31,6 +31,20 @@ export interface MultipleUploadResponse {
   failed: number;
 }
 
+function isUploadCanceledError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const maybeError = error as { code?: string; name?: string; message?: string };
+  return (
+    maybeError.code === 'ERR_CANCELED' ||
+    maybeError.name === 'CanceledError' ||
+    maybeError.name === 'AbortError' ||
+    maybeError.message === 'canceled'
+  );
+}
+
 // Upload service using the new BaseService architecture
 export class UploadService extends BaseService {
   constructor() {
@@ -53,6 +67,7 @@ export class UploadService extends BaseService {
       processing_mode?: FileUploadProcessingMode;
       parse_provider?: FileParseProviderKey;
       onProgress?: (progress: number) => void;
+      signal?: AbortSignal;
     } = {}
   ): Promise<UploadResponse> {
     try {
@@ -69,6 +84,7 @@ export class UploadService extends BaseService {
           ...(options.processing_mode && { processing_mode: options.processing_mode }),
           ...(options.parse_provider && { parse_provider: options.parse_provider }),
         },
+        signal: options.signal,
       });
 
       // Handle the new API response format: { code, message, data }
@@ -80,7 +96,9 @@ export class UploadService extends BaseService {
       // If response doesn't match expected format, try to use it directly
       return response as unknown as UploadResponse;
     } catch (error) {
-      console.error('File upload failed:', error);
+      if (!isUploadCanceledError(error)) {
+        console.error('File upload failed:', error);
+      }
       throw error;
     }
   }

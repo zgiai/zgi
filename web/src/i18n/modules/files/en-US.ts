@@ -456,6 +456,9 @@ const messages = {
         'After you ask, the system retrieves related secondary chunks and uses their primary chunks as context.',
       question: 'Question',
       answer: 'Answer',
+      answerModel: 'Answer model',
+      defaultAnswerModel: 'Default model',
+      noAvailableAnswerModels: 'No available chat models',
       placeholder: 'Ask a question about this document...',
       send: 'Send',
       generating: 'Generating...',
@@ -464,7 +467,7 @@ const messages = {
       noSources: 'No related source was found in this document.',
       sources: 'Sources ({count})',
       similarityRank: 'Similarity rank {rank}',
-      locateSource: 'Show chunk',
+      locateSource: 'Go to chunk',
     },
     reparse: {
       action: 'Reparse',
@@ -666,6 +669,9 @@ const messages = {
     removeInvalidBeforeUpload: 'Remove files that cannot upload before continuing.',
     cannotUpload: 'Cannot upload',
     confirmUpload: 'Confirm Upload',
+    cancelUpload: 'Cancel Upload',
+    uploadInProgressCloseHint:
+      'You cannot close this window while files are uploading. Click Cancel Upload to clear all uploading files and close the upload window.',
   },
 
   // Documents section (for compatibility)

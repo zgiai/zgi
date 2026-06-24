@@ -83,6 +83,8 @@ export interface ManualFileUploadRef {
   getUploadedFiles: () => UploadedFile[];
   /** Clear all files */
   clearAll: () => void;
+  /** Abort all in-flight uploads and remove them from the queue */
+  cancelUploading: () => void;
   /** Check if upload is in progress */
   getIsUploading: () => boolean;
 }
@@ -129,6 +131,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
 
     const [items, setItems] = useState<UploadItem[]>([]);
     const [isUploading, setIsUploading] = useState(false);
+    const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
     const isFull = items.length >= maxCount;
     const inputAccept = buildFileInputAcceptAttribute(acceptExt);
 
@@ -180,6 +183,8 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             // Start upload for all pending items
             const uploadPromises = pendingItems.map(item => {
               return new Promise<UploadedFile | null>(resolve => {
+                const controller = new AbortController();
+                uploadControllersRef.current.set(item.id, controller);
                 setItems(prev =>
                   prev.map(it => (it.id === item.id ? { ...it, status: 'uploading' as const } : it))
                 );
@@ -190,6 +195,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
                     workspace_id: workspaceId,
                     processing_mode: processingMode,
                     parse_provider: parseProvider,
+                    signal: controller.signal,
                     onProgress: p =>
                       setItems(prev =>
                         prev.map(it => (it.id === item.id ? { ...it, progress: p } : it))
@@ -224,6 +230,11 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
                     resolve(uploaded);
                   })
                   .catch((err: Error) => {
+                    if (controller.signal.aborted) {
+                      resolve(null);
+                      return;
+                    }
+
                     setItems(prev =>
                       prev.map(it =>
                         it.id === item.id
@@ -232,6 +243,9 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
                       )
                     );
                     resolve(null);
+                  })
+                  .finally(() => {
+                    uploadControllersRef.current.delete(item.id);
                   });
               });
             });
@@ -266,7 +280,15 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
         },
 
         clearAll: () => {
+          uploadControllersRef.current.forEach(controller => controller.abort());
+          uploadControllersRef.current.clear();
           setItems([]);
+        },
+
+        cancelUploading: () => {
+          uploadControllersRef.current.forEach(controller => controller.abort());
+          uploadControllersRef.current.clear();
+          setItems(prev => prev.filter(it => it.status !== 'uploading'));
         },
 
         getIsUploading: () => {
@@ -386,6 +408,8 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
     );
 
     const removeItem = (id: string) => {
+      uploadControllersRef.current.get(id)?.abort();
+      uploadControllersRef.current.delete(id);
       setItems(prev => {
         const next = prev.filter(it => it.id !== id);
         return next as UploadItem[];

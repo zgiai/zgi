@@ -52,6 +52,10 @@ export interface AutoFileUploadProps {
   maxSizeMB?: number;
   /** Allowed extensions like ['.jpg', '.png'] (case-insensitive) */
   acceptExt?: string[];
+  /** Whether to show the allowed extensions hint below the upload button */
+  showAllowedTypesHint?: boolean;
+  /** Whether to set the native file input accept attribute */
+  useNativeAccept?: boolean;
   /** Additional class for outer container */
   containerClassName?: string;
   /** Additional class for table wrapper */
@@ -91,6 +95,8 @@ export interface AutoFileUploadRef {
   getUploadedFiles: () => UploadedFile[];
   /** Clear all files */
   clearAll: () => void;
+  /** Abort all in-flight uploads and remove them from the queue */
+  cancelUploading: () => void;
 }
 
 interface UploadItem {
@@ -123,6 +129,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
       maxCount = 5,
       maxSizeMB = 15,
       acceptExt = [],
+      showAllowedTypesHint = true,
+      useNativeAccept = true,
       containerClassName,
       tableWrapperClassName,
       dropZoneClassName,
@@ -147,11 +155,12 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     const isAuthenticated = useAuthStore.use.isAuthenticated();
 
     const [items, setItems] = useState<UploadItem[]>([]);
+    const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
     const itemsRef = useRef(items);
     const isFull = items.length >= maxCount;
     const [isSystemSelectOpen, setIsSystemSelectOpen] = useState(false);
     const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
-    const inputAccept = buildFileInputAcceptAttribute(acceptExt);
+    const inputAccept = useNativeAccept ? buildFileInputAcceptAttribute(acceptExt) : undefined;
 
     const handleSystemSelectConfirm = useCallback(
       (files: FileItem[]) => {
@@ -239,9 +248,21 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           return getSuccessfulUploadFiles(itemsRef.current);
         },
         clearAll: () => {
+          uploadControllersRef.current.forEach(controller => controller.abort());
+          uploadControllersRef.current.clear();
           itemsRef.current = [];
           latestSuccessFilesRef.current = [];
           setItems([]);
+        },
+        cancelUploading: () => {
+          uploadControllersRef.current.forEach(controller => controller.abort());
+          uploadControllersRef.current.clear();
+          setItems(prev => {
+            const next = prev.filter(it => it.status !== 'uploading');
+            itemsRef.current = next;
+            latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
+            return next;
+          });
         },
       }),
       []
@@ -374,6 +395,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     /* ------------------------------- uploading ------------------------------- */
 
     const startUpload = useCallback((item: UploadItem) => {
+      const controller = new AbortController();
+      uploadControllersRef.current.set(item.id, controller);
       setItems(prev => {
         const next: UploadItem[] = prev.map(it =>
           it.id === item.id ? { ...it, status: 'uploading' as const } : it
@@ -390,6 +413,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           is_temporary: isTemporary,
           processing_mode: processingMode,
           parse_provider: parseProvider,
+          signal: controller.signal,
           onProgress: p =>
             setItems(prev => {
               const next = prev.map(it => (it.id === item.id ? { ...it, progress: p } : it));
@@ -435,6 +459,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           });
         })
         .catch((err: Error) => {
+          if (controller.signal.aborted) return;
+
           setItems(prev => {
             const next: UploadItem[] = prev.map(it =>
               it.id === item.id
@@ -445,6 +471,9 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
             return next;
           });
+        })
+        .finally(() => {
+          uploadControllersRef.current.delete(item.id);
         });
     }, [folderId, isTemporary, processingMode, parseProvider, workspaceId]);
 
@@ -527,6 +556,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     );
 
     const removeItem = (id: string) => {
+      uploadControllersRef.current.get(id)?.abort();
+      uploadControllersRef.current.delete(id);
       setItems(prev => {
         const next = prev.filter(it => it.id !== id);
         itemsRef.current = next;
@@ -664,7 +695,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
               >
                 {t('fileUpload.clickUpload')}
               </Button>
-              {acceptExt.length > 0 && (
+              {showAllowedTypesHint && acceptExt.length > 0 && (
                 <p className="text-xs text-muted-foreground mt-1">
                   {t('fileUpload.allowedTypesLabel')}
                   <span className="font-semibold text-primary">

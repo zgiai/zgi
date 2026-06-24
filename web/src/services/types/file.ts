@@ -643,6 +643,8 @@ export interface BatchUpdateFileChunksResponse {
 export interface AskFileQuestionRequest {
   question: string;
   top_k?: number;
+  answer_model_provider?: string;
+  answer_model?: string;
 }
 
 export interface FileQuestionAnswerChildSource {
@@ -670,6 +672,7 @@ export interface FileQuestionAnswerRetrieval {
   primary_hit_count: number;
   embedding_provider?: string;
   embedding_model?: string;
+  answer_model_provider?: string;
   answer_model?: string;
 }
 

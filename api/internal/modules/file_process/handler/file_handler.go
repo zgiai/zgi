@@ -136,8 +136,10 @@ type fileChunkBatchUpdateRequest struct {
 }
 
 type fileQARequest struct {
-	Question string `json:"question"`
-	TopK     int    `json:"top_k"`
+	Question            string `json:"question"`
+	TopK                int    `json:"top_k"`
+	AnswerModelProvider string `json:"answer_model_provider"`
+	AnswerModel         string `json:"answer_model"`
 }
 
 type queuedFileProcessingRequest struct {
@@ -966,11 +968,13 @@ func (h *FileHandler) AskFileQuestion(c *gin.Context) {
 		return
 	}
 	result, err := h.fileAssetQAService.AskCurrentFile(c.Request.Context(), datalibraryservice.FileAssetQAInput{
-		OrganizationID: organizationID,
-		SourceFileID:   uploadFile.ID,
-		Question:       req.Question,
-		TopK:           req.TopK,
-		AccountID:      c.GetString("account_id"),
+		OrganizationID:      organizationID,
+		SourceFileID:        uploadFile.ID,
+		Question:            req.Question,
+		TopK:                req.TopK,
+		AccountID:           c.GetString("account_id"),
+		AnswerModelProvider: req.AnswerModelProvider,
+		AnswerModel:         req.AnswerModel,
 	})
 	if err != nil {
 		h.handleFileAssetQAError(c, err)
@@ -996,11 +1000,13 @@ func (h *FileHandler) StreamFileQuestion(c *gin.Context) {
 		return
 	}
 	events, err := h.fileAssetQAService.StreamCurrentFile(c.Request.Context(), datalibraryservice.FileAssetQAInput{
-		OrganizationID: organizationID,
-		SourceFileID:   uploadFile.ID,
-		Question:       req.Question,
-		TopK:           req.TopK,
-		AccountID:      c.GetString("account_id"),
+		OrganizationID:      organizationID,
+		SourceFileID:        uploadFile.ID,
+		Question:            req.Question,
+		TopK:                req.TopK,
+		AccountID:           c.GetString("account_id"),
+		AnswerModelProvider: req.AnswerModelProvider,
+		AnswerModel:         req.AnswerModel,
 	})
 	if err != nil {
 		h.handleFileAssetQAError(c, err)
