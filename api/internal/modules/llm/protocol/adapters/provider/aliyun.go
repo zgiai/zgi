@@ -109,6 +109,7 @@ func (a *AliyunAdapter) compatibleRerankBaseURL() string {
 	}
 	return baseURL
 }
+
 func (a *AliyunAdapter) openAICompatibleAdapter() (*OpenAIAdapter, error) {
 	return newOpenAIAdapterWithOverrides(a.config, a.openAICompatibleBaseURL())
 }

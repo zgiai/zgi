@@ -124,3 +124,49 @@ func TestHTTPClientRejectsRedirectToMetadataIP(t *testing.T) {
 		t.Fatalf("CheckRedirect error = %q, want unsafe target rejection", err.Error())
 	}
 }
+
+func TestParseSSEAcceptsDataLineWithoutSpace(t *testing.T) {
+	dataChan := make(chan string, 2)
+	errChan := make(chan error, 1)
+
+	ParseSSE(strings.NewReader("data:{\"output\":{\"text\":\"ok\"}}\n\n"), dataChan, errChan)
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			t.Fatalf("ParseSSE() error = %v", err)
+		}
+	default:
+	}
+
+	got, ok := <-dataChan
+	if !ok {
+		t.Fatal("data channel closed without parsed event")
+	}
+	if got != "{\"output\":{\"text\":\"ok\"}}" {
+		t.Fatalf("data = %q, want output text JSON", got)
+	}
+}
+
+func TestParseSSEAcceptsDataLineWithSpace(t *testing.T) {
+	dataChan := make(chan string, 2)
+	errChan := make(chan error, 1)
+
+	ParseSSE(strings.NewReader("data: {\"output\":{\"text\":\"ok\"}}\n\n"), dataChan, errChan)
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			t.Fatalf("ParseSSE() error = %v", err)
+		}
+	default:
+	}
+
+	got, ok := <-dataChan
+	if !ok {
+		t.Fatal("data channel closed without parsed event")
+	}
+	if got != "{\"output\":{\"text\":\"ok\"}}" {
+		t.Fatalf("data = %q, want output text JSON", got)
+	}
+}

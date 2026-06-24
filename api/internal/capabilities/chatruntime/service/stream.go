@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -393,6 +395,7 @@ func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedCha
 func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onEvent func(StreamEvent) error, onChunk func(string) error) (string, *adapter.Usage, error) {
 	var builder strings.Builder
 	var usage *adapter.Usage
+	serviceChunkIndex := 0
 	eventBuffer := newStreamMessageEventBuffer(s.events, prepared.Conversation.ID, prepared.Message.ID)
 	for {
 		select {
@@ -406,6 +409,19 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			_ = s.repos.Message.UpdateError(context.WithoutCancel(ctx), prepared.Message.ID, ctx.Err().Error())
 			return "", nil, ctx.Err()
 		case chunk, ok := <-stream:
+			serviceChunkIndex++
+			if qwenRuntimeStreamDebugEnabled() {
+				logger.InfoContext(ctx, "aichat runtime stream chunk",
+					zap.String("model", prepared.Message.ModelName),
+					zap.String("message_id", prepared.Message.ID.String()),
+					zap.Int("chunk_index", serviceChunkIndex),
+					zap.Int("choices", len(chunk.Choices)),
+					zap.Int("text_len", runtimeStreamResponseTextLen(chunk)),
+					zap.Bool("done", chunk.Done),
+					zap.Bool("has_usage", chunk.Usage != nil),
+					zap.Bool("has_error", chunk.Error != nil),
+				)
+			}
 			if !ok {
 				answer := builder.String()
 				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
@@ -734,4 +750,19 @@ func streamChunkText(resp adapter.StreamResponse) string {
 	default:
 		return ""
 	}
+}
+
+func modelStreamChunkCallback(eventCallback func(StreamEvent) error, onChunk func(string) error) func(string) error {
+	if eventCallback != nil {
+		return nil
+	}
+	return onChunk
+}
+
+func qwenRuntimeStreamDebugEnabled() bool {
+	return strings.TrimSpace(os.Getenv("ZGI_DEBUG_ALIYUN_STREAM")) == "1"
+}
+
+func runtimeStreamResponseTextLen(resp adapter.StreamResponse) int {
+	return len(streamChunkText(resp))
 }

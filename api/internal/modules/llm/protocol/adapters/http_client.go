@@ -370,6 +370,7 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 // It also handles non-SSE JSON error responses from upstream providers
 func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(nil, bufio.MaxScanTokenSize<<9)
 	var dataBuffer strings.Builder
 
 	lineCount := 0
@@ -395,13 +396,8 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 			continue
 		}
 
-		// Parse SSE format
-		name, data, ok := strings.Cut(line, ":")
-		if ok && name == "data" {
-			if strings.HasPrefix(data, " ") {
-				data = strings.TrimPrefix(data, " ")
-			}
-
+		// Parse SSE format. The space after the colon is optional by spec.
+		if data, ok := parseSSEDataLine(line); ok {
 			// [DONE] indicates stream end
 			if data == "[DONE]" {
 				close(dataChan)
@@ -428,6 +424,17 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 	}
 
 	close(dataChan)
+}
+
+func parseSSEDataLine(line string) (string, bool) {
+	if !strings.HasPrefix(line, "data:") {
+		return "", false
+	}
+	data := strings.TrimPrefix(line, "data:")
+	if strings.HasPrefix(data, " ") {
+		data = strings.TrimPrefix(data, " ")
+	}
+	return data, true
 }
 
 // ParseSSEEvents parses Server-Sent Events while preserving event names and raw data.

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -414,7 +415,21 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		routeID = routeIDString(channelID)
 	}
 
+	chunkIndex := 0
 	for response := range inputChan {
+		chunkIndex++
+		if qwenStreamDebugEnabled() {
+			logger.InfoContext(ctx, "llm gateway stream chunk",
+				zap.String("provider", billingCtx.ProviderName),
+				zap.String("model", billingCtx.ModelName),
+				zap.Int("chunk_index", chunkIndex),
+				zap.Int("choices", len(response.Choices)),
+				zap.Int("text_len", streamResponseTextLen(response)),
+				zap.Bool("done", response.Done),
+				zap.Bool("has_usage", response.Usage != nil),
+				zap.Bool("has_error", response.Error != nil),
+			)
+		}
 		// Extract token usage from response (usually in the last chunk with Done=true)
 		if response.Usage != nil {
 			if hasBillableTokenUsage(response.Usage) {
@@ -471,61 +486,67 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		}
 	} else {
 		if !sawUsage && settlement == nil {
-			modelName := ""
-			if llmModel != nil {
-				modelName = llmModel.Model
-			}
-			missingUsageErr := missingTokenUsageError("", modelName)
-			billingCtx.Status = billingContextStatusError
-			if !useSystemProvider {
-				billingCtx.Status = billingContextStatusPartial
-			}
-			billingCtx.ErrorMessage = missingUsageErr.Error()
-			billingCtx.PromptTokens = 0
-			billingCtx.CompletionTokens = 0
-			billingCtx.TotalTokens = 0
-			billingCtx.ActualCredits = 0
-			billingCtx.InputUSD = decimal.Zero
-			billingCtx.OutputUSD = decimal.Zero
-			billingCtx.TotalUSD = decimal.Zero
-			billingCtx.InputCost = decimal.Zero
-			billingCtx.OutputCost = decimal.Zero
-			billingCtx.TotalCost = decimal.Zero
-			billingCtx.ResponseTime = responseTime
+			if !allowsEstimatedStreamUsage(billingCtx.ProviderName) {
+				modelName := ""
+				if llmModel != nil {
+					modelName = llmModel.Model
+				}
+				missingUsageErr := missingTokenUsageError("", modelName)
+				billingCtx.Status = billingContextStatusError
+				if !useSystemProvider {
+					billingCtx.Status = billingContextStatusPartial
+				}
+				billingCtx.ErrorMessage = missingUsageErr.Error()
+				billingCtx.PromptTokens = 0
+				billingCtx.CompletionTokens = 0
+				billingCtx.TotalTokens = 0
+				billingCtx.ActualCredits = 0
+				billingCtx.InputUSD = decimal.Zero
+				billingCtx.OutputUSD = decimal.Zero
+				billingCtx.TotalUSD = decimal.Zero
+				billingCtx.InputCost = decimal.Zero
+				billingCtx.OutputCost = decimal.Zero
+				billingCtx.TotalCost = decimal.Zero
+				billingCtx.ResponseTime = responseTime
 
-			if channelID != nil {
-				autoBan := billingCtx.ChannelID != nil
-				s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
-			}
+				if channelID != nil {
+					autoBan := billingCtx.ChannelID != nil
+					s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
+				}
 
-			if err := s.billingProviderForDecision(decision).Settle(ctx, billingCtx); err != nil {
-				wrappedErr := wrapBillingSettleError(err, billingCtx, useSystemProvider, routeID)
+				if err := s.billingProviderForDecision(decision).Settle(ctx, billingCtx); err != nil {
+					wrappedErr := wrapBillingSettleError(err, billingCtx, useSystemProvider, routeID)
+					logBillingEvent(
+						billingCode("BILLING_SETTLE_FAILED", useSystemProvider),
+						billingCtx,
+						routeID,
+						useSystemProvider,
+						"settle",
+						"error",
+						err,
+					)
+					outputChan <- adapter.StreamResponse{Error: wrappedErr}
+					return
+				}
 				logBillingEvent(
-					billingCode("BILLING_SETTLE_FAILED", useSystemProvider),
+					billingCode("BILLING_SETTLE_OK", useSystemProvider),
 					billingCtx,
 					routeID,
 					useSystemProvider,
 					"settle",
-					"error",
-					err,
+					"ok",
+					nil,
 				)
-				outputChan <- adapter.StreamResponse{Error: wrappedErr}
+
+				endTime := time.Now()
+				s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, endTime, billingCtx, 0, 0, missingUsageErr)
+				outputChan <- adapter.StreamResponse{Error: missingUsageErr}
 				return
 			}
-			logBillingEvent(
-				billingCode("BILLING_SETTLE_OK", useSystemProvider),
-				billingCtx,
-				routeID,
-				useSystemProvider,
-				"settle",
-				"ok",
-				nil,
+			logger.WarnContext(ctx, "qwen stream returned no token usage; settling with estimated usage",
+				"model", billingCtx.ModelName,
+				"provider", billingCtx.ProviderName,
 			)
-
-			endTime := time.Now()
-			s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, endTime, billingCtx, 0, 0, missingUsageErr)
-			outputChan <- adapter.StreamResponse{Error: missingUsageErr}
-			return
 		}
 
 		// Use estimated tokens (already set from billingCtx)
@@ -593,6 +614,27 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 	if lastError == nil && doneResponse != nil {
 		outputChan <- *doneResponse
 	}
+}
+
+func allowsEstimatedStreamUsage(providerName string) bool {
+	switch strings.ToLower(strings.TrimSpace(providerName)) {
+	case "qwen", "dashscope", "aliyun", "alibaba":
+		return true
+	default:
+		return false
+	}
+}
+
+func qwenStreamDebugEnabled() bool {
+	return strings.TrimSpace(os.Getenv("ZGI_DEBUG_ALIYUN_STREAM")) == "1"
+}
+
+func streamResponseTextLen(resp adapter.StreamResponse) int {
+	if len(resp.Choices) == 0 {
+		return 0
+	}
+	text, _ := resp.Choices[0].Delta.Content.(string)
+	return len(text)
 }
 
 // ListAvailableModels lists available models for the API key

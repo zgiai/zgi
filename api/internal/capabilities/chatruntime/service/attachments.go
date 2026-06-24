@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -35,6 +38,7 @@ type FileLookupService interface {
 	GetUploadConfig() *interfaces.FileUploadConfigResponse
 	GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error)
 	GetFileURL(ctx context.Context, fileID string) (string, error)
+	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
 }
 
 type ContentExtractionService interface {
@@ -115,7 +119,7 @@ func (s *service) extractPreparedAttachments(ctx context.Context, prepared *Prep
 				s.emitPreparedEvent(ctx, prepared, streamEventFileParseEnd, fileParseEndPayload(prepared, *file, index, total), onEvent)
 				continue
 			}
-			imageURL, err := s.fileService.GetFileURL(ctx, file.ID)
+			imageURL, err := s.prepareVisionImageURL(ctx, file)
 			if err != nil {
 				s.emitPreparedEvent(ctx, prepared, streamEventFileParseError, fileParseErrorPayload(prepared, *file, index, total, err.Error()), onEvent)
 				return fmt.Errorf("%w: failed to prepare image input: %w", ErrInvalidInput, err)
@@ -356,6 +360,47 @@ func (b *attachmentBundle) imageParts() []adapter.MessageContentPart {
 	return parts
 }
 
+func (s *service) prepareVisionImageURL(ctx context.Context, file *attachmentFile) (string, error) {
+	if file == nil {
+		return "", fmt.Errorf("image file is required")
+	}
+	imageURL, err := s.fileService.GetFileURL(ctx, file.ID)
+	if err != nil {
+		return "", err
+	}
+	if isPublicHTTPURL(imageURL) || strings.HasPrefix(strings.TrimSpace(imageURL), "data:image/") {
+		return imageURL, nil
+	}
+	content, err := s.fileService.DownloadFile(ctx, file.ID)
+	if err != nil {
+		return "", err
+	}
+	mimeType := strings.TrimSpace(file.MimeType)
+	if mimeType == "" {
+		mimeType = "image/" + strings.TrimPrefix(strings.ToLower(strings.TrimSpace(file.Extension)), ".")
+	}
+	if !strings.HasPrefix(mimeType, "image/") || mimeType == "image/" {
+		mimeType = "image/png"
+	}
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(content), nil
+}
+
+func isPublicHTTPURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return true
+	}
+	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified())
+}
+
 func attachmentBundleFromMessageMetadata(metadata map[string]interface{}) *attachmentBundle {
 	files := metadataFiles(metadata)
 	if len(files) == 0 {
@@ -415,7 +460,7 @@ func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBu
 		if !file.isImage() || file.ContentStatus == attachmentContentStatusFiltered {
 			continue
 		}
-		imageURL, err := s.fileService.GetFileURL(ctx, file.ID)
+		imageURL, err := s.prepareVisionImageURL(ctx, &file)
 		if err != nil {
 			continue
 		}
