@@ -29,7 +29,7 @@ const messages: UiMessages = {
     remove: '移除',
     retry: '重试',
     tooLarge: '文件大小超过 {max} MB',
-    invalidExt: '文件类型不支持',
+    invalidExt: '不允许上传该类型文件',
     exceedCount: '最多只能上传 {max} 个文件',
     allowedTypes: '允许类型：{types}',
     maxSize: '单文件大小上限：{size} MB',

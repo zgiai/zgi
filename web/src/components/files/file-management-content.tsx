@@ -89,6 +89,7 @@ import {
   loadFileFolderOptions,
   type FileFolderOption,
 } from './file-folder-levels';
+import { FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT } from './file-upload-policy';
 
 export interface FileManagementContentProps {
   /** Enable file selection mode */
@@ -757,6 +758,8 @@ const FileManagementContent = ({
   // Convert acceptExt array to extension string format (comma-separated, lowercase, no leading dots)
   const extensionParam =
     acceptExt.length > 0 ? filterLowercaseExtensions(acceptExt).join(',') : undefined;
+  const uploadAcceptExt =
+    acceptExt.length > 0 ? acceptExt : [...FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT];
 
   const { files, currentPage, totalPages, total, isLoading, isFetching, error, goToPage, reload } =
     useFiles('20', {
@@ -1519,7 +1522,7 @@ const FileManagementContent = ({
         onOpenChange={setCreateLocalFileDialogOpen}
         folderId={selectedFolderId}
         workspaceId={selectedUploadWorkspaceId || workspaceId}
-        acceptExt={acceptExt}
+        acceptExt={uploadAcceptExt}
         onUploadComplete={handleFileUploadComplete}
       />
       <RenameFolderDialog

@@ -41,6 +41,10 @@ export interface ManualFileUploadProps {
   maxSizeMB?: number;
   /** Allowed extensions like ['.jpg', '.png'] (case-insensitive) */
   acceptExt?: string[];
+  /** Whether to show the allowed extensions hint below the upload button */
+  showAllowedTypesHint?: boolean;
+  /** Whether to set the native file input accept attribute */
+  useNativeAccept?: boolean;
   /** Additional class for outer container */
   containerClassName?: string;
   /** Additional class for table wrapper */
@@ -111,6 +115,8 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
       maxCount = 5,
       maxSizeMB = 15,
       acceptExt = [],
+      showAllowedTypesHint = true,
+      useNativeAccept = true,
       containerClassName,
       tableWrapperClassName,
       dropZoneClassName,
@@ -133,7 +139,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
     const [isUploading, setIsUploading] = useState(false);
     const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
     const isFull = items.length >= maxCount;
-    const inputAccept = buildFileInputAcceptAttribute(acceptExt);
+    const inputAccept = useNativeAccept ? buildFileInputAcceptAttribute(acceptExt) : undefined;
 
     // Keep latest callbacks in ref to avoid effect dependency loop
     const onFilesChangeRef = useRef<typeof onFilesChange>();
@@ -523,7 +529,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
               >
                 {t('fileUpload.clickUpload')}
               </Button>
-              {acceptExt.length > 0 && (
+              {showAllowedTypesHint && acceptExt.length > 0 && (
                 <p className="text-sm text-muted-foreground mt-1">
                   {t('fileUpload.allowedTypesLabel')}
                   <span className="font-semibold text-primary">

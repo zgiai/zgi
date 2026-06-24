@@ -53,14 +53,21 @@ func (s *fileAssetVectorIndexService) EnsureAssetIndexed(ctx context.Context, as
 	}
 	offset := 0
 	for {
-		items, _, err := s.embeddings.List(ctx, repository.DocumentChunkEmbeddingListFilter{
+		filter := repository.DocumentChunkEmbeddingListFilter{
 			OrganizationID: asset.OrganizationID,
 			AssetID:        asset.ID,
 			GenerationNo:   &generationNo,
 			Status:         model.DocumentChunkEmbeddingStatusReady,
 			Limit:          fileAssetVectorIndexPageSize,
 			Offset:         offset,
-		})
+		}
+		if asset.EmbeddingProvider != nil {
+			filter.EmbeddingProvider = strings.TrimSpace(*asset.EmbeddingProvider)
+		}
+		if asset.EmbeddingModel != nil {
+			filter.EmbeddingModel = strings.TrimSpace(*asset.EmbeddingModel)
+		}
+		items, _, err := s.embeddings.List(ctx, filter)
 		if err != nil {
 			return err
 		}

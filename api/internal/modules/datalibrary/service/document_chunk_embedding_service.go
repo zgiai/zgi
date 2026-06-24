@@ -109,11 +109,11 @@ func WithDocumentChunkVectorIndex(vectorIndex FileAssetVectorIndexService) Docum
 }
 
 func (s *documentChunkEmbeddingService) GenerateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error) {
-	return s.generateEmbeddings(ctx, input, true)
+	return s.generateEmbeddings(ctx, input, true, true)
 }
 
 func (s *documentChunkEmbeddingService) GenerateAdditionalEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error) {
-	return s.generateEmbeddings(ctx, input, false)
+	return s.generateEmbeddings(ctx, input, false, false)
 }
 
 func (s *documentChunkEmbeddingService) GenerateChunkEmbedding(ctx context.Context, input GenerateDocumentChunkEmbeddingInput) (*model.DocumentChunkEmbedding, error) {
@@ -129,7 +129,7 @@ func (s *documentChunkEmbeddingService) GenerateChunkEmbedding(ctx context.Conte
 		EmbeddingModel:    input.EmbeddingModel,
 		RequestedBy:       input.RequestedBy,
 		Chunks:            []*model.DocumentChunk{input.Chunk},
-	}, false)
+	}, false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (s *documentChunkEmbeddingService) GenerateChunkEmbedding(ctx context.Conte
 	return result.Embeddings[0], nil
 }
 
-func (s *documentChunkEmbeddingService) generateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput, clearExisting bool) (*GenerateDocumentChunkEmbeddingsResult, error) {
+func (s *documentChunkEmbeddingService) generateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput, clearExisting bool, indexFileVector bool) (*GenerateDocumentChunkEmbeddingsResult, error) {
 	if input.OrganizationID == "" {
 		return nil, ErrOrganizationIDRequired
 	}
@@ -235,7 +235,7 @@ func (s *documentChunkEmbeddingService) generateEmbeddings(ctx context.Context, 
 		}
 		items = append(items, item)
 	}
-	if s.vectorIndex != nil {
+	if s.vectorIndex != nil && indexFileVector && shouldIndexDocumentChunkEmbeddingsForFileQA(clearExisting, asset, resolvedProvider, resolvedModel) {
 		if err := s.vectorIndex.IndexChunkEmbeddings(ctx, asset, leafChunks, items, clearExisting); err != nil {
 			return nil, fmt.Errorf("index document chunk vectors: %w", err)
 		}
@@ -312,6 +312,22 @@ func leafDocumentChunks(chunks []*model.DocumentChunk) []*model.DocumentChunk {
 		}
 	}
 	return out
+}
+
+func shouldIndexDocumentChunkEmbeddingsForFileQA(clearExisting bool, asset *model.DocumentAsset, provider string, modelName string) bool {
+	if clearExisting {
+		return true
+	}
+	if asset == nil || asset.EmbeddingModel == nil {
+		return false
+	}
+	if strings.TrimSpace(*asset.EmbeddingModel) != strings.TrimSpace(modelName) {
+		return false
+	}
+	if asset.EmbeddingProvider == nil {
+		return strings.TrimSpace(provider) == ""
+	}
+	return strings.TrimSpace(*asset.EmbeddingProvider) == strings.TrimSpace(provider)
 }
 
 func embedDocumentChunkTexts(ctx context.Context, embeddingSvc embedding.EmbeddingService, texts []string) ([][]float64, error) {

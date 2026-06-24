@@ -194,6 +194,67 @@ func TestDocumentChunkEmbeddingServiceBatchesTextsByEight(t *testing.T) {
 	}
 }
 
+func TestDocumentChunkEmbeddingServiceAdditionalEmbeddingsDoNotIndexFileQACollection(t *testing.T) {
+	assetID := uuid.New()
+	runID := uuid.New()
+	assetRepo := &fileAssetStateAssetRepo{
+		asset: &model.DocumentAsset{
+			ID:              assetID,
+			OrganizationID:  "org-1",
+			SourceFileID:    "file-1",
+			ProductStatus:   model.DocumentAssetProductStatusReady,
+			ProcessingRunID: &runID,
+			GenerationNo:    7,
+		},
+	}
+	embeddingRepo := &documentChunkEmbeddingRepo{}
+	embeddingSvc := &documentChunkEmbeddingFakeEmbeddingService{
+		vectors: [][]float64{{1, 2, 3}},
+	}
+	vectorIndex := &documentChunkEmbeddingFakeVectorIndex{}
+	svc := NewDocumentChunkEmbeddingService(
+		assetRepo,
+		embeddingRepo,
+		nil,
+		nil,
+		WithDocumentChunkEmbeddingFactory(func(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput, asset *model.DocumentAsset, provider string, modelName string) (embedding.EmbeddingService, error) {
+			return embeddingSvc, nil
+		}),
+		WithDocumentChunkVectorIndex(vectorIndex),
+	)
+	chunk := &model.DocumentChunk{
+		ID:              uuid.New(),
+		OrganizationID:  "org-1",
+		AssetID:         assetID,
+		ProcessingRunID: runID,
+		GenerationNo:    7,
+		ChunkType:       model.DocumentChunkTypeChild,
+		Content:         "child text",
+		ContentHash:     documentChunkContentHash("child text"),
+		Enabled:         true,
+		Status:          model.DocumentChunkStatusReady,
+	}
+
+	_, err := svc.GenerateAdditionalEmbeddings(context.Background(), GenerateDocumentChunkEmbeddingsInput{
+		OrganizationID:    "org-1",
+		AssetID:           assetID,
+		ProcessingRunID:   runID,
+		GenerationNo:      7,
+		EmbeddingProvider: "kb-provider",
+		EmbeddingModel:    "kb-model",
+		Chunks:            []*model.DocumentChunk{chunk},
+	})
+	if err != nil {
+		t.Fatalf("GenerateAdditionalEmbeddings: %v", err)
+	}
+	if vectorIndex.indexCalls != 0 {
+		t.Fatalf("additional embeddings indexed file QA collection %d times", vectorIndex.indexCalls)
+	}
+	if vectorIndex.deleteCalls != 0 {
+		t.Fatalf("additional embeddings deleted file QA collection %d times", vectorIndex.deleteCalls)
+	}
+}
+
 func TestDocumentChunkEmbeddingServiceRegeneratesSingleChunkWithoutClearingGeneration(t *testing.T) {
 	assetID := uuid.New()
 	runID := uuid.New()
@@ -434,3 +495,36 @@ func (r *documentChunkEmbeddingRepo) DeleteByAssetGeneration(ctx context.Context
 }
 
 var _ repository.DocumentChunkEmbeddingRepository = (*documentChunkEmbeddingRepo)(nil)
+
+type documentChunkEmbeddingFakeVectorIndex struct {
+	indexCalls  int
+	deleteCalls int
+}
+
+func (f *documentChunkEmbeddingFakeVectorIndex) EnsureAssetIndexed(ctx context.Context, asset *model.DocumentAsset) error {
+	return nil
+}
+
+func (f *documentChunkEmbeddingFakeVectorIndex) IndexChunkEmbeddings(ctx context.Context, asset *model.DocumentAsset, chunks []*model.DocumentChunk, embeddings []*model.DocumentChunkEmbedding, resetAsset bool) error {
+	f.indexCalls++
+	return nil
+}
+
+func (f *documentChunkEmbeddingFakeVectorIndex) DeleteAssetIndex(ctx context.Context, asset *model.DocumentAsset) error {
+	f.deleteCalls++
+	return nil
+}
+
+func (f *documentChunkEmbeddingFakeVectorIndex) DeleteChunkVector(ctx context.Context, asset *model.DocumentAsset, chunkID uuid.UUID) error {
+	return nil
+}
+
+func (f *documentChunkEmbeddingFakeVectorIndex) DeleteChildVectorsByParent(ctx context.Context, asset *model.DocumentAsset, parentChunkID uuid.UUID) error {
+	return nil
+}
+
+func (f *documentChunkEmbeddingFakeVectorIndex) Search(ctx context.Context, asset *model.DocumentAsset, queryVector []float64, limit int) ([]map[string]interface{}, error) {
+	return nil, nil
+}
+
+var _ FileAssetVectorIndexService = (*documentChunkEmbeddingFakeVectorIndex)(nil)

@@ -27,7 +27,7 @@ const messages = {
     remove: 'Remove',
     retry: 'Retry',
     tooLarge: 'File size exceeds {max} MB',
-    invalidExt: 'Invalid file type',
+    invalidExt: 'This file type is not allowed',
     exceedCount: 'You can upload up to {max} files in total',
     allowedTypes: 'Allowed: {types}',
     maxSize: 'Max: {size} MB',
