@@ -173,6 +173,29 @@ func (r *documentChunkRepository) CountByAssetGenerationAndTypes(ctx context.Con
 	return count, err
 }
 
+func (r *documentChunkRepository) CountByAssetGenerationAndTypesFiltered(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, chunkTypes []string, enabled *bool, status string) (int64, error) {
+	if organizationID == "" || assetID == uuid.Nil {
+		return 0, nil
+	}
+	query := r.db.WithContext(ctx).Model(&model.DocumentChunk{}).
+		Where("organization_id = ?", organizationID).
+		Where("asset_id = ?", assetID).
+		Where("generation_no = ?", generationNo).
+		Where("deleted_at IS NULL")
+	if len(chunkTypes) > 0 {
+		query = query.Where("chunk_type IN ?", chunkTypes)
+	}
+	if enabled != nil {
+		query = query.Where("enabled = ?", *enabled)
+	}
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	var count int64
+	err := query.Count(&count).Error
+	return count, err
+}
+
 func (r *documentChunkRepository) DeleteByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) error {
 	if organizationID == "" || assetID == uuid.Nil {
 		return nil

@@ -252,6 +252,75 @@ func TestKnowledgeBaseFileRefServiceRequiresDatasetEmbeddingWhenModelDiffers(t *
 	}
 }
 
+func TestKnowledgeBaseFileRefServiceTreatsEnabledChunkEmbeddingsAsComplete(t *testing.T) {
+	assetID := uuid.New()
+	datasetProvider := "qwen"
+	datasetModelName := "text-embedding-v3"
+	assetProvider := "qwen"
+	assetModelName := "text-embedding-v4"
+	targetEmbeddingCount := int64(129)
+	chunks := make([]*datalibModel.DocumentChunk, 0, 129)
+	for i := 0; i < 129; i++ {
+		chunks = append(chunks, &datalibModel.DocumentChunk{
+			ID:             uuid.New(),
+			OrganizationID: "org-1",
+			AssetID:        assetID,
+			GenerationNo:   1,
+			ChunkType:      datalibModel.DocumentChunkTypeChild,
+			Content:        "enabled child",
+			Enabled:        true,
+			Status:         datalibModel.DocumentChunkStatusReady,
+		})
+	}
+	svc := newKnowledgeBaseFileRefTestService(&fakeKnowledgeBaseFileRefDeps{
+		dataset: &datasetModel.Dataset{
+			ID:                     "dataset-1",
+			OrganizationID:         "org-1",
+			EmbeddingModelProvider: &datasetProvider,
+			EmbeddingModel:         &datasetModelName,
+		},
+		assets: []*datalibModel.DocumentAsset{
+			{
+				ID:                assetID,
+				OrganizationID:    "org-1",
+				SourceFileID:      "file-1",
+				ProductStatus:     datalibModel.DocumentAssetProductStatusReady,
+				VectorStatus:      datalibModel.DocumentAssetVectorStatusReady,
+				GenerationNo:      1,
+				EmbeddingProvider: &assetProvider,
+				EmbeddingModel:    &assetModelName,
+			},
+		},
+		files: map[string]*fileModel.UploadFile{
+			"file-1": {ID: "file-1", Name: "handbook.xlsx"},
+		},
+		chunkCount:           501,
+		embeddingCount:       129,
+		targetEmbeddingCount: &targetEmbeddingCount,
+		chunks:               chunks,
+	})
+
+	result, err := svc.ListCandidates(context.Background(), KnowledgeBaseFileCandidateRequest{
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		Filter:         FileCandidateFilterAll,
+	})
+	if err != nil {
+		t.Fatalf("ListCandidates: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("items=%+v", result.Items)
+	}
+	item := result.Items[0]
+	if !item.Addable ||
+		item.RequiresEmbeddingGeneration ||
+		item.Reason != "" ||
+		item.ChunkCount != 129 ||
+		item.TargetEmbeddingCount != 129 {
+		t.Fatalf("candidate=%+v", item)
+	}
+}
+
 func TestKnowledgeBaseFileRefServiceCreatesPendingRefs(t *testing.T) {
 	assetID := uuid.New()
 	provider := "openai"
@@ -619,7 +688,30 @@ func (f *fakeKnowledgeBaseFileRefDeps) CountByAssetGenerationAndTypes(ctx contex
 }
 
 func (f *fakeKnowledgeBaseFileRefDeps) List(ctx context.Context, filter datalibRepo.DocumentChunkListFilter) ([]*datalibModel.DocumentChunk, int64, error) {
+	if f.chunks == nil && f.chunkCount > 0 {
+		items := make([]*datalibModel.DocumentChunk, 0, f.chunkCount)
+		for i := int64(0); i < f.chunkCount; i++ {
+			items = append(items, &datalibModel.DocumentChunk{
+				ID:             uuid.New(),
+				OrganizationID: filter.OrganizationID,
+				AssetID:        filter.AssetID,
+				GenerationNo:   valueOrZero(filter.GenerationNo),
+				ChunkType:      datalibModel.DocumentChunkTypeChild,
+				Content:        "chunk",
+				Enabled:        true,
+				Status:         datalibModel.DocumentChunkStatusReady,
+			})
+		}
+		return items, int64(len(items)), nil
+	}
 	return f.chunks, int64(len(f.chunks)), nil
+}
+
+func valueOrZero(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func (f *fakeKnowledgeBaseFileRefDeps) CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error) {

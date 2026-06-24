@@ -37,6 +37,10 @@ type knowledgeBaseFileChunkReader interface {
 	CountByAssetGenerationAndTypes(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, chunkTypes []string) (int64, error)
 }
 
+type knowledgeBaseFileCandidateChunkCounter interface {
+	CountByAssetGenerationAndTypesFiltered(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, chunkTypes []string, enabled *bool, status string) (int64, error)
+}
+
 type knowledgeBaseFileEmbeddingReader interface {
 	CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error)
 	CountReadyByAssetGenerationModel(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, provider string, embeddingModel string) (int64, error)
@@ -739,11 +743,7 @@ func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset 
 }
 
 func (s *knowledgeBaseFileRefService) evaluateAssetSyncReadiness(ctx context.Context, dataset *datasetModel.Dataset, asset *datalibModel.DocumentAsset) (string, int64, error) {
-	chunkCount, err := s.chunks.CountByAssetGenerationAndTypes(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo, []string{
-		datalibModel.DocumentChunkTypeChild,
-		datalibModel.DocumentChunkTypeAuto,
-		datalibModel.DocumentChunkTypeManual,
-	})
+	chunkCount, err := s.countCurrentCandidateChunks(ctx, asset)
 	if err != nil {
 		return "", asset.GenerationNo, err
 	}
@@ -757,11 +757,7 @@ func (s *knowledgeBaseFileRefService) evaluateAssetSyncReadiness(ctx context.Con
 }
 
 func (s *knowledgeBaseFileRefService) buildCandidate(ctx context.Context, dataset *datasetModel.Dataset, asset *datalibModel.DocumentAsset, file *fileModel.UploadFile) (*KnowledgeBaseFileCandidate, error) {
-	chunkCount, err := s.chunks.CountByAssetGenerationAndTypes(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo, []string{
-		datalibModel.DocumentChunkTypeChild,
-		datalibModel.DocumentChunkTypeAuto,
-		datalibModel.DocumentChunkTypeManual,
-	})
+	chunkCount, err := s.countCurrentCandidateChunks(ctx, asset)
 	if err != nil {
 		return nil, err
 	}
@@ -902,6 +898,18 @@ func datasetEmbeddingTarget(dataset *datasetModel.Dataset, asset *datalibModel.D
 	return provider, modelName
 }
 
+func (s *knowledgeBaseFileRefService) countCurrentCandidateChunks(ctx context.Context, asset *datalibModel.DocumentAsset) (int64, error) {
+	if asset == nil || asset.GenerationNo <= 0 {
+		return 0, nil
+	}
+	if counter, ok := s.chunks.(knowledgeBaseFileCandidateChunkCounter); ok {
+		enabled := true
+		return counter.CountByAssetGenerationAndTypesFiltered(ctx, asset.OrganizationID, asset.ID, asset.GenerationNo, currentCandidateChunkTypes(), &enabled, datalibModel.DocumentChunkStatusReady)
+	}
+	_, total, err := s.listCurrentCandidateChunks(ctx, asset)
+	return total, err
+}
+
 func (s *knowledgeBaseFileRefService) listCurrentCandidateChunks(ctx context.Context, asset *datalibModel.DocumentAsset) ([]*datalibModel.DocumentChunk, int64, error) {
 	if asset == nil || asset.GenerationNo <= 0 {
 		return nil, 0, nil
@@ -914,15 +922,11 @@ func (s *knowledgeBaseFileRefService) listCurrentCandidateChunks(ctx context.Con
 			OrganizationID: asset.OrganizationID,
 			AssetID:        asset.ID,
 			GenerationNo:   &generationNo,
-			ChunkTypes: []string{
-				datalibModel.DocumentChunkTypeChild,
-				datalibModel.DocumentChunkTypeAuto,
-				datalibModel.DocumentChunkTypeManual,
-			},
-			Enabled: &enabled,
-			Status:  datalibModel.DocumentChunkStatusReady,
-			Limit:   500,
-			Offset:  offset,
+			ChunkTypes:     currentCandidateChunkTypes(),
+			Enabled:        &enabled,
+			Status:         datalibModel.DocumentChunkStatusReady,
+			Limit:          500,
+			Offset:         offset,
 		})
 		if err != nil {
 			return nil, 0, err
@@ -931,6 +935,14 @@ func (s *knowledgeBaseFileRefService) listCurrentCandidateChunks(ctx context.Con
 		if int64(len(out)) >= total || len(items) == 0 {
 			return out, total, nil
 		}
+	}
+}
+
+func currentCandidateChunkTypes() []string {
+	return []string{
+		datalibModel.DocumentChunkTypeChild,
+		datalibModel.DocumentChunkTypeAuto,
+		datalibModel.DocumentChunkTypeManual,
 	}
 }
 
