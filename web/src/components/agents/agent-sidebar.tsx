@@ -16,6 +16,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
 import { getAgentDetailRouteAccess } from '@/utils/agent-detail-routes';
+import { markAgentListRestoreIntentFromDetail } from '@/utils/agent-list-state';
 
 interface AgentSidebarProps {
   /** When true, hide navigation items (workspace mismatch mode) */
@@ -149,6 +150,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
             showIdentity={false}
             backHref="/console/agents"
             backLabel={t('agents.backToAgentList')}
+            onBackClick={() => markAgentListRestoreIntentFromDetail(agentId)}
             iconActionLabel={t('agents.actions.edit')}
             onIconClick={
               canManage && !isMismatch && agentData ? () => setEditOpen(true) : undefined
