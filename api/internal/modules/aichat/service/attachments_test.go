@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -13,12 +14,14 @@ import (
 )
 
 type fakeAttachmentFileService struct {
-	fileURL string
-	content []byte
+	fileURL     string
+	content     []byte
+	downloadErr error
+	imageLimit  int64
 }
 
 func (f *fakeAttachmentFileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
-	return &interfaces.FileUploadConfigResponse{WorkflowFileUploadLimit: 10}
+	return &interfaces.FileUploadConfigResponse{WorkflowFileUploadLimit: 10, ImageFileSizeLimit: f.imageLimit}
 }
 
 func (f *fakeAttachmentFileService) GetFileByID(context.Context, string) (*dto.UploadFile, error) {
@@ -30,6 +33,9 @@ func (f *fakeAttachmentFileService) GetFileURL(context.Context, string) (string,
 }
 
 func (f *fakeAttachmentFileService) DownloadFile(context.Context, string) ([]byte, error) {
+	if f.downloadErr != nil {
+		return nil, f.downloadErr
+	}
 	return f.content, nil
 }
 
@@ -78,5 +84,42 @@ func preparedChatWithImageAttachment() *PreparedChat {
 				VisionDetail:  multimodal.ImageDetailHigh,
 			}}},
 		},
+	}
+}
+
+func TestExtractPreparedAttachments_LocalImageExceedsLimitFails(t *testing.T) {
+	svc := &service{fileService: &fakeAttachmentFileService{
+		fileURL:    "http://localhost:2670/console/api/files/file-1/file-preview?sign=test",
+		content:    []byte("too-large"),
+		imageLimit: 1,
+	}}
+	prepared := preparedChatWithImageAttachment()
+	prepared.parts.Attachments.Files[0].Size = bytesPerMegabyte + 1
+
+	err := svc.extractPreparedAttachments(context.Background(), prepared, nil)
+	if err == nil || !strings.Contains(err.Error(), "image file exceeds size limit") {
+		t.Fatalf("extractPreparedAttachments() error = %v, want image size limit error", err)
+	}
+}
+
+func TestHistoricalUserMessage_ImagePrepareFailureReturnsError(t *testing.T) {
+	svc := &service{fileService: &fakeAttachmentFileService{
+		fileURL:     "http://localhost:2670/console/api/files/file-1/file-preview?sign=test",
+		downloadErr: errors.New("download failed"),
+	}}
+	msg := &aichatmodel.Message{Metadata: map[string]interface{}{
+		"files": []interface{}{map[string]interface{}{
+			"id":             "file-1",
+			"name":           "cat.png",
+			"extension":      ".png",
+			"mime_type":      "image/png",
+			"kind":           attachmentKindImage,
+			"content_status": attachmentContentStatusVision,
+		}},
+	}}
+
+	_, err := svc.historicalUserMessage(context.Background(), msg, true)
+	if err == nil || !strings.Contains(err.Error(), "failed to prepare historical image input") {
+		t.Fatalf("historicalUserMessage() error = %v, want historical image error", err)
 	}
 }

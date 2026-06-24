@@ -486,67 +486,61 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		}
 	} else {
 		if !sawUsage && settlement == nil {
-			if !allowsEstimatedStreamUsage(billingCtx.ProviderName) {
-				modelName := ""
-				if llmModel != nil {
-					modelName = llmModel.Model
-				}
-				missingUsageErr := missingTokenUsageError("", modelName)
-				billingCtx.Status = billingContextStatusError
-				if !useSystemProvider {
-					billingCtx.Status = billingContextStatusPartial
-				}
-				billingCtx.ErrorMessage = missingUsageErr.Error()
-				billingCtx.PromptTokens = 0
-				billingCtx.CompletionTokens = 0
-				billingCtx.TotalTokens = 0
-				billingCtx.ActualCredits = 0
-				billingCtx.InputUSD = decimal.Zero
-				billingCtx.OutputUSD = decimal.Zero
-				billingCtx.TotalUSD = decimal.Zero
-				billingCtx.InputCost = decimal.Zero
-				billingCtx.OutputCost = decimal.Zero
-				billingCtx.TotalCost = decimal.Zero
-				billingCtx.ResponseTime = responseTime
+			modelName := ""
+			if llmModel != nil {
+				modelName = llmModel.Model
+			}
+			missingUsageErr := missingTokenUsageError(billingCtx.ProviderName, modelName)
+			billingCtx.Status = billingContextStatusError
+			if !useSystemProvider {
+				billingCtx.Status = billingContextStatusPartial
+			}
+			billingCtx.ErrorMessage = missingUsageErr.Error()
+			billingCtx.PromptTokens = 0
+			billingCtx.CompletionTokens = 0
+			billingCtx.TotalTokens = 0
+			billingCtx.ActualCredits = 0
+			billingCtx.InputUSD = decimal.Zero
+			billingCtx.OutputUSD = decimal.Zero
+			billingCtx.TotalUSD = decimal.Zero
+			billingCtx.InputCost = decimal.Zero
+			billingCtx.OutputCost = decimal.Zero
+			billingCtx.TotalCost = decimal.Zero
+			billingCtx.ResponseTime = responseTime
 
-				if channelID != nil {
-					autoBan := billingCtx.ChannelID != nil
-					s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
-				}
+			if channelID != nil {
+				autoBan := billingCtx.ChannelID != nil
+				s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
+			}
 
-				if err := s.billingProviderForDecision(decision).Settle(ctx, billingCtx); err != nil {
-					wrappedErr := wrapBillingSettleError(err, billingCtx, useSystemProvider, routeID)
-					logBillingEvent(
-						billingCode("BILLING_SETTLE_FAILED", useSystemProvider),
-						billingCtx,
-						routeID,
-						useSystemProvider,
-						"settle",
-						"error",
-						err,
-					)
-					outputChan <- adapter.StreamResponse{Error: wrappedErr}
-					return
-				}
+			if err := s.billingProviderForDecision(decision).Settle(ctx, billingCtx); err != nil {
+				wrappedErr := wrapBillingSettleError(err, billingCtx, useSystemProvider, routeID)
 				logBillingEvent(
-					billingCode("BILLING_SETTLE_OK", useSystemProvider),
+					billingCode("BILLING_SETTLE_FAILED", useSystemProvider),
 					billingCtx,
 					routeID,
 					useSystemProvider,
 					"settle",
-					"ok",
-					nil,
+					"error",
+					err,
 				)
-
-				endTime := time.Now()
-				s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, endTime, billingCtx, 0, 0, missingUsageErr)
-				outputChan <- adapter.StreamResponse{Error: missingUsageErr}
+				outputChan <- adapter.StreamResponse{Error: wrappedErr}
 				return
 			}
-			logger.WarnContext(ctx, "qwen stream returned no token usage; settling with estimated usage",
-				"model", billingCtx.ModelName,
-				"provider", billingCtx.ProviderName,
+			logBillingEvent(
+				billingCode("BILLING_SETTLE_OK", useSystemProvider),
+				billingCtx,
+				routeID,
+				useSystemProvider,
+				"settle",
+				"ok",
+				nil,
 			)
+
+			endTime := time.Now()
+			s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, endTime, billingCtx, 0, 0, missingUsageErr)
+			outputChan <- adapter.StreamResponse{Error: missingUsageErr}
+			return
 		}
 
 		// Use estimated tokens (already set from billingCtx)
@@ -613,15 +607,6 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 
 	if lastError == nil && doneResponse != nil {
 		outputChan <- *doneResponse
-	}
-}
-
-func allowsEstimatedStreamUsage(providerName string) bool {
-	switch strings.ToLower(strings.TrimSpace(providerName)) {
-	case "qwen", "dashscope", "aliyun", "alibaba":
-		return true
-	default:
-		return false
 	}
 }
 

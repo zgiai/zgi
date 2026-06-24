@@ -32,6 +32,9 @@ const (
 	attachmentKindImage    = "image"
 
 	attachmentFilteredReasonModelWithoutVision = "model_without_vision"
+
+	bytesPerMegabyte              = 1024 * 1024
+	defaultVisionImageSizeLimitMB = 10
 )
 
 type FileLookupService interface {
@@ -371,9 +374,16 @@ func (s *service) prepareVisionImageURL(ctx context.Context, file *attachmentFil
 	if isPublicHTTPURL(imageURL) || strings.HasPrefix(strings.TrimSpace(imageURL), "data:image/") {
 		return imageURL, nil
 	}
+	limitBytes := s.visionImageSizeLimitBytes()
+	if file.Size > 0 && file.Size > limitBytes {
+		return "", fmt.Errorf("image file exceeds size limit")
+	}
 	content, err := s.fileService.DownloadFile(ctx, file.ID)
 	if err != nil {
 		return "", err
+	}
+	if int64(len(content)) > limitBytes {
+		return "", fmt.Errorf("image file exceeds size limit")
 	}
 	mimeType := strings.TrimSpace(file.MimeType)
 	if mimeType == "" {
@@ -383,6 +393,16 @@ func (s *service) prepareVisionImageURL(ctx context.Context, file *attachmentFil
 		mimeType = "image/png"
 	}
 	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(content), nil
+}
+
+func (s *service) visionImageSizeLimitBytes() int64 {
+	limitMB := int64(defaultVisionImageSizeLimitMB)
+	if s != nil && s.fileService != nil {
+		if cfg := s.fileService.GetUploadConfig(); cfg != nil && cfg.ImageFileSizeLimit > 0 {
+			limitMB = cfg.ImageFileSizeLimit
+		}
+	}
+	return limitMB * bytesPerMegabyte
 }
 
 func isPublicHTTPURL(raw string) bool {
@@ -435,24 +455,27 @@ func attachmentBundleFromMessageMetadata(metadata map[string]interface{}) *attac
 	return bundle
 }
 
-func (s *service) historicalUserMessage(ctx context.Context, message *aichatmodel.Message, includeImages bool) *adapter.Message {
+func (s *service) historicalUserMessage(ctx context.Context, message *aichatmodel.Message, includeImages bool) (*adapter.Message, error) {
 	if message == nil {
-		return nil
+		return nil, nil
 	}
 	bundle := attachmentBundleFromMessageMetadata(message.Metadata)
 	sections := bundle.previewContentSections()
 	text := userContentWithAttachments(message.Query, sections)
-	imageParts := s.historicalImageParts(ctx, bundle, includeImages)
+	imageParts, err := s.historicalImageParts(ctx, bundle, includeImages)
+	if err != nil {
+		return nil, err
+	}
 	content := multimodal.BuildUserContent(text, imageParts)
 	if isEmptyAdapterContent(content) {
-		return nil
+		return nil, nil
 	}
-	return &adapter.Message{Role: "user", Content: content}
+	return &adapter.Message{Role: "user", Content: content}, nil
 }
 
-func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBundle, includeImages bool) []adapter.MessageContentPart {
+func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBundle, includeImages bool) ([]adapter.MessageContentPart, error) {
 	if !includeImages || bundle == nil || s.fileService == nil {
-		return nil
+		return nil, nil
 	}
 	parts := make([]adapter.MessageContentPart, 0, len(bundle.Files))
 	for _, file := range bundle.Files {
@@ -461,11 +484,11 @@ func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBu
 		}
 		imageURL, err := s.prepareVisionImageURL(ctx, &file)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("failed to prepare historical image input: %w", err)
 		}
 		parts = append(parts, multimodal.BuildImageURLPart(imageURL, file.VisionDetail))
 	}
-	return parts
+	return parts, nil
 }
 
 func (s *service) currentUserContent(parts *chatRequestParts, text string) interface{} {

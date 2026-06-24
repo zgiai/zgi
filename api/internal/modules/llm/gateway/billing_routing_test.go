@@ -935,6 +935,7 @@ func TestBillingRouting_HandleStreamBilling_MissingUsageMarksPartialAndEmitsErro
 
 	bc := &BillingContext{
 		UseSystemProvider: false,
+		ProviderName:      "dashscope",
 		PromptTokens:      10,
 		CompletionTokens:  20,
 		RequestID:         "req-stream-missing-usage",
@@ -954,8 +955,10 @@ func TestBillingRouting_HandleStreamBilling_MissingUsageMarksPartialAndEmitsErro
 	if got[len(got)-1].Error == nil {
 		t.Fatalf("expected last stream response to be error when usage is missing")
 	}
-	if !strings.Contains(got[len(got)-1].Error.Error(), "provider returned no token usage") {
-		t.Fatalf("error = %v, want missing usage error", got[len(got)-1].Error)
+	if !strings.Contains(got[len(got)-1].Error.Error(), "provider returned no token usage") ||
+		!strings.Contains(got[len(got)-1].Error.Error(), `provider "dashscope"`) ||
+		!strings.Contains(got[len(got)-1].Error.Error(), `model "qwen3.5:4b"`) {
+		t.Fatalf("error = %v, want missing usage error with provider and model", got[len(got)-1].Error)
 	}
 	for i, resp := range got {
 		if resp.Done {
