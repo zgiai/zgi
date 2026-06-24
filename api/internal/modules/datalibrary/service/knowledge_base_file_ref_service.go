@@ -536,15 +536,14 @@ func (s *knowledgeBaseFileRefService) GenerateCandidateEmbeddings(ctx context.Co
 		}, nil
 	}
 	embeddingResult, err := s.embeddingGeneration.GenerateAdditionalEmbeddings(ctx, GenerateDocumentChunkEmbeddingsInput{
-		OrganizationID:        req.OrganizationID,
-		AssetID:               asset.ID,
-		ProcessingRunID:       assetProcessingRunID(asset),
-		GenerationNo:          asset.GenerationNo,
-		EmbeddingProvider:     targetProvider,
-		EmbeddingModel:        targetModel,
-		RequestedBy:           req.RequestedBy,
-		IncludeDisabledChunks: true,
-		Chunks:                chunks,
+		OrganizationID:    req.OrganizationID,
+		AssetID:           asset.ID,
+		ProcessingRunID:   assetProcessingRunID(asset),
+		GenerationNo:      asset.GenerationNo,
+		EmbeddingProvider: targetProvider,
+		EmbeddingModel:    targetModel,
+		RequestedBy:       req.RequestedBy,
+		Chunks:            chunks,
 	})
 	if err != nil {
 		return nil, err
@@ -908,6 +907,7 @@ func (s *knowledgeBaseFileRefService) listCurrentCandidateChunks(ctx context.Con
 		return nil, 0, nil
 	}
 	generationNo := asset.GenerationNo
+	enabled := true
 	out := make([]*datalibModel.DocumentChunk, 0)
 	for offset := 0; ; offset += 500 {
 		items, total, err := s.chunks.List(ctx, datalibRepo.DocumentChunkListFilter{
@@ -919,9 +919,10 @@ func (s *knowledgeBaseFileRefService) listCurrentCandidateChunks(ctx context.Con
 				datalibModel.DocumentChunkTypeAuto,
 				datalibModel.DocumentChunkTypeManual,
 			},
-			Status: datalibModel.DocumentChunkStatusReady,
-			Limit:  500,
-			Offset: offset,
+			Enabled: &enabled,
+			Status:  datalibModel.DocumentChunkStatusReady,
+			Limit:   500,
+			Offset:  offset,
 		})
 		if err != nil {
 			return nil, 0, err

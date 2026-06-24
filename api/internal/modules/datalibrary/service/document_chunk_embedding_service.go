@@ -33,15 +33,14 @@ type DocumentChunkEmbeddingService interface {
 }
 
 type GenerateDocumentChunkEmbeddingsInput struct {
-	OrganizationID        string
-	AssetID               uuid.UUID
-	ProcessingRunID       uuid.UUID
-	GenerationNo          int64
-	EmbeddingProvider     string
-	EmbeddingModel        string
-	RequestedBy           string
-	IncludeDisabledChunks bool
-	Chunks                []*model.DocumentChunk
+	OrganizationID    string
+	AssetID           uuid.UUID
+	ProcessingRunID   uuid.UUID
+	GenerationNo      int64
+	EmbeddingProvider string
+	EmbeddingModel    string
+	RequestedBy       string
+	Chunks            []*model.DocumentChunk
 }
 
 type GenerateDocumentChunkEmbeddingsResult struct {
@@ -150,7 +149,7 @@ func (s *documentChunkEmbeddingService) generateEmbeddings(ctx context.Context, 
 	if input.ProcessingRunID == uuid.Nil || input.GenerationNo <= 0 {
 		return nil, ErrProcessingRunMismatch
 	}
-	leafChunks := leafDocumentChunks(input.Chunks, input.IncludeDisabledChunks)
+	leafChunks := leafDocumentChunks(input.Chunks)
 	if len(leafChunks) == 0 {
 		return nil, ErrDocumentChunkEmbeddingsRequired
 	}
@@ -298,10 +297,10 @@ func (s *documentChunkEmbeddingService) buildEmbeddingService(ctx context.Contex
 	)
 }
 
-func leafDocumentChunks(chunks []*model.DocumentChunk, includeDisabled bool) []*model.DocumentChunk {
+func leafDocumentChunks(chunks []*model.DocumentChunk) []*model.DocumentChunk {
 	out := make([]*model.DocumentChunk, 0, len(chunks))
 	for _, chunk := range chunks {
-		if chunk == nil || (!includeDisabled && !chunk.Enabled) || chunk.Status != model.DocumentChunkStatusReady {
+		if chunk == nil || !chunk.Enabled || chunk.Status != model.DocumentChunkStatusReady {
 			continue
 		}
 		if strings.TrimSpace(chunk.Content) == "" {
