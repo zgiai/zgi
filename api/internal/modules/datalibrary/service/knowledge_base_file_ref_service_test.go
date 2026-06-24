@@ -252,6 +252,83 @@ func TestKnowledgeBaseFileRefServiceRequiresDatasetEmbeddingWhenModelDiffers(t *
 	}
 }
 
+func TestKnowledgeBaseFileRefServiceGeneratesCandidateEmbeddingsForDisabledChunks(t *testing.T) {
+	assetID := uuid.New()
+	runID := uuid.New()
+	datasetProvider := "qwen"
+	datasetModelName := "text-embedding-v3"
+	assetProvider := "qwen"
+	assetModelName := "text-embedding-v4"
+	targetEmbeddingCount := int64(2)
+	deps := &fakeKnowledgeBaseFileRefDeps{
+		dataset: &datasetModel.Dataset{
+			ID:                     "dataset-1",
+			OrganizationID:         "org-1",
+			EmbeddingModelProvider: &datasetProvider,
+			EmbeddingModel:         &datasetModelName,
+		},
+		assets: []*datalibModel.DocumentAsset{
+			{
+				ID:                 assetID,
+				OrganizationID:     "org-1",
+				SourceFileID:       "file-1",
+				ProductStatus:      datalibModel.DocumentAssetProductStatusReady,
+				VectorStatus:       datalibModel.DocumentAssetVectorStatusReady,
+				ProcessingRunID:    &runID,
+				GenerationNo:       1,
+				EmbeddingProvider:  &assetProvider,
+				EmbeddingModel:     &assetModelName,
+				EmbeddingDimension: nil,
+			},
+		},
+		chunks: []*datalibModel.DocumentChunk{
+			{
+				ID:              uuid.New(),
+				OrganizationID:  "org-1",
+				AssetID:         assetID,
+				ProcessingRunID: runID,
+				GenerationNo:    1,
+				ChunkType:       datalibModel.DocumentChunkTypeChild,
+				Content:         "enabled child",
+				Enabled:         true,
+				Status:          datalibModel.DocumentChunkStatusReady,
+			},
+			{
+				ID:              uuid.New(),
+				OrganizationID:  "org-1",
+				AssetID:         assetID,
+				ProcessingRunID: runID,
+				GenerationNo:    1,
+				ChunkType:       datalibModel.DocumentChunkTypeChild,
+				Content:         "disabled child",
+				Enabled:         false,
+				Status:          datalibModel.DocumentChunkStatusReady,
+			},
+		},
+		targetEmbeddingCount: &targetEmbeddingCount,
+	}
+	svc := newKnowledgeBaseFileRefTestService(deps)
+
+	result, err := svc.GenerateCandidateEmbeddings(context.Background(), KnowledgeBaseFileCandidateEmbeddingRequest{
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		AssetID:        assetID,
+		RequestedBy:    "account-1",
+	})
+	if err != nil {
+		t.Fatalf("GenerateCandidateEmbeddings: %v", err)
+	}
+	if result == nil || !result.Addable || result.ChunkCount != 2 || result.TargetEmbeddingCount != 2 {
+		t.Fatalf("result=%+v", result)
+	}
+	if deps.lastChunkListFilter.Enabled != nil {
+		t.Fatalf("candidate embedding chunk query should include disabled chunks: %+v", deps.lastChunkListFilter)
+	}
+	if !deps.lastEmbeddingInput.IncludeDisabledChunks || len(deps.lastEmbeddingInput.Chunks) != 2 {
+		t.Fatalf("embedding input=%+v", deps.lastEmbeddingInput)
+	}
+}
+
 func TestKnowledgeBaseFileRefServiceCreatesPendingRefs(t *testing.T) {
 	assetID := uuid.New()
 	provider := "openai"
@@ -590,6 +667,8 @@ type fakeKnowledgeBaseFileRefDeps struct {
 	chunks               []*datalibModel.DocumentChunk
 	created              *datalibModel.KnowledgeBaseAssetRef
 	lastRefFilter        datalibRepo.KnowledgeBaseAssetRefListFilter
+	lastChunkListFilter  datalibRepo.DocumentChunkListFilter
+	lastEmbeddingInput   GenerateDocumentChunkEmbeddingsInput
 	pendingSyncRunID     uuid.UUID
 	failedSyncRunID      uuid.UUID
 	removedRefID         uuid.UUID
@@ -597,7 +676,7 @@ type fakeKnowledgeBaseFileRefDeps struct {
 }
 
 func newKnowledgeBaseFileRefTestService(deps *fakeKnowledgeBaseFileRefDeps) KnowledgeBaseFileRefService {
-	return NewKnowledgeBaseFileRefService(deps, deps, deps, fakeKnowledgeBaseFileRefStore{deps: deps}, deps, deps, deps)
+	return NewKnowledgeBaseFileRefService(deps, deps, deps, fakeKnowledgeBaseFileRefStore{deps: deps}, deps, deps, deps, fakeKnowledgeBaseFileRefEmbeddingGeneration{deps: deps})
 }
 
 func (f *fakeKnowledgeBaseFileRefDeps) GetAssetByID(ctx context.Context, id uuid.UUID) (*datalibModel.DocumentAsset, error) {
@@ -619,7 +698,46 @@ func (f *fakeKnowledgeBaseFileRefDeps) CountByAssetGenerationAndTypes(ctx contex
 }
 
 func (f *fakeKnowledgeBaseFileRefDeps) List(ctx context.Context, filter datalibRepo.DocumentChunkListFilter) ([]*datalibModel.DocumentChunk, int64, error) {
+	f.lastChunkListFilter = filter
 	return f.chunks, int64(len(f.chunks)), nil
+}
+
+func (f *fakeKnowledgeBaseFileRefDeps) GenerateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error) {
+	f.lastEmbeddingInput = input
+	return &GenerateDocumentChunkEmbeddingsResult{
+		EmbeddingCount:    len(input.Chunks),
+		EmbeddingProvider: input.EmbeddingProvider,
+		EmbeddingModel:    input.EmbeddingModel,
+	}, nil
+}
+
+func (f *fakeKnowledgeBaseFileRefDeps) GenerateAdditionalEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error) {
+	f.lastEmbeddingInput = input
+	return &GenerateDocumentChunkEmbeddingsResult{
+		EmbeddingCount:    len(input.Chunks),
+		EmbeddingProvider: input.EmbeddingProvider,
+		EmbeddingModel:    input.EmbeddingModel,
+	}, nil
+}
+
+func (f *fakeKnowledgeBaseFileRefDeps) GenerateChunkEmbedding(ctx context.Context, input GenerateDocumentChunkEmbeddingInput) (*datalibModel.DocumentChunkEmbedding, error) {
+	return nil, nil
+}
+
+type fakeKnowledgeBaseFileRefEmbeddingGeneration struct {
+	deps *fakeKnowledgeBaseFileRefDeps
+}
+
+func (f fakeKnowledgeBaseFileRefEmbeddingGeneration) GenerateEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error) {
+	return f.deps.GenerateEmbeddings(ctx, input)
+}
+
+func (f fakeKnowledgeBaseFileRefEmbeddingGeneration) GenerateAdditionalEmbeddings(ctx context.Context, input GenerateDocumentChunkEmbeddingsInput) (*GenerateDocumentChunkEmbeddingsResult, error) {
+	return f.deps.GenerateAdditionalEmbeddings(ctx, input)
+}
+
+func (f fakeKnowledgeBaseFileRefEmbeddingGeneration) GenerateChunkEmbedding(ctx context.Context, input GenerateDocumentChunkEmbeddingInput) (*datalibModel.DocumentChunkEmbedding, error) {
+	return f.deps.GenerateChunkEmbedding(ctx, input)
 }
 
 func (f *fakeKnowledgeBaseFileRefDeps) CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error) {
