@@ -62,7 +62,9 @@ func (f *fakeDatabaseIngestionFileService) GetUploadConfig() *sharedinterfaces.F
 func (f *fakeDatabaseIngestionFileService) UploadFile(context.Context, string, []byte, string, string, string, filemodel.CreatedByRole, *sharedinterfaces.FileSource, *string, bool, bool) (*dto.UploadFile, error) {
 	return nil, errors.New("not implemented")
 }
-
+func (f *fakeDatabaseIngestionFileService) ReplaceFileContent(context.Context, string, string, []byte, string, string, string) (*dto.UploadFile, error) {
+	return nil, errors.New("not implemented")
+}
 func (f *fakeDatabaseIngestionFileService) GetFilePreview(context.Context, string) (string, error) {
 	return "", errors.New("not implemented")
 }
