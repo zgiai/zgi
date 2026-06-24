@@ -167,13 +167,14 @@ export interface DatasetFileRefCreateResult {
 
 export interface DatasetFileCandidateEmbeddingResult {
   asset_id: string;
-  generation_no: number;
+  accepted?: boolean;
+  generation_no?: number;
   embedding_provider?: string;
   embedding_model?: string;
-  embedding_count: number;
-  target_embedding_count: number;
-  chunk_count: number;
-  addable: boolean;
+  embedding_count?: number;
+  target_embedding_count?: number;
+  chunk_count?: number;
+  addable?: boolean;
   reason?: DatasetFileCandidateReason | string;
 }
 

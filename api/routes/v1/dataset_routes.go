@@ -146,6 +146,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	)
 	dataLibraryTaskDispatcher := datalibWorker.NewFileProcessTaskDispatcher(deps.TaskManager)
 	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, dataLibraryTaskDispatcher, deps.AccountService, documentServiceObj, datasetServiceObj, deps.OrganizationService)
+	dataLibraryFileCandidateEmbeddingRunner := datalibWorker.NewFileCandidateEmbeddingRunner(dataLibraryFileRefService)
 	dataLibraryDatasetRefSyncRunner := datalibWorker.NewDatasetRefSyncRunner(datalibWorker.DatasetRefSyncRunnerDeps{
 		Refs:       dataLibraryKBRefRepo,
 		Assets:     dataLibraryAssetRepo,
@@ -213,6 +214,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		})
 	}
 	datalibWorker.RegisterDatasetRefSyncTaskHandler(deps.TaskHandlerRegistry, dataLibraryDatasetRefSyncRunner, taskManager)
+	datalibWorker.RegisterFileCandidateEmbeddingTaskHandler(deps.TaskHandlerRegistry, dataLibraryFileCandidateEmbeddingRunner, taskManager)
 
 	// Register Graph API endpoint for knowledge graph visualization
 	router.GET("/datasets/:dataset_id/graph", middleware.JWTWithOrganizationAndService(deps.AccountService), newDatasetGraphHandler(datasetServiceObj, graphFlowServiceObj))

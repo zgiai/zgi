@@ -111,13 +111,22 @@ export function DatasetFileAssetDialog({
   const [batchGeneratingAssetIds, setBatchGeneratingAssetIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [queuedEmbeddingAssetIds, setQueuedEmbeddingAssetIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const hasQueuedEmbeddingGeneration =
+    queuedEmbeddingAssetIds.size > 0 || batchGeneratingAssetIds.size > 0;
   const createRefsMutation = useCreateDatasetFileRefs(datasetId);
   const generateEmbeddingsMutation = useGenerateDatasetFileCandidateEmbeddings(datasetId);
   const { candidates, total, keyword, setKeyword, isLoading, isFetching } =
     useDatasetFileCandidates(
       datasetId,
       { filter: 'all', limit: 100 },
-      { enabled: open, debounceDelay: 300 }
+      {
+        enabled: open,
+        debounceDelay: 300,
+        refetchInterval: hasQueuedEmbeddingGeneration ? 3000 : false,
+      }
     );
 
   useEffect(() => {
@@ -126,8 +135,31 @@ export function DatasetFileAssetDialog({
       setKeyword('');
       setActiveFilter('addable');
       setBatchGeneratingAssetIds(new Set());
+      setQueuedEmbeddingAssetIds(new Set());
     }
   }, [open, setKeyword]);
+
+  useEffect(() => {
+    if (queuedEmbeddingAssetIds.size === 0) return;
+
+    const nextQueued = new Set<string>();
+    for (const candidate of candidates) {
+      if (
+        queuedEmbeddingAssetIds.has(candidate.asset_id) &&
+        candidate.requires_embedding_generation === true
+      ) {
+        nextQueued.add(candidate.asset_id);
+      }
+    }
+
+    const changed =
+      nextQueued.size !== queuedEmbeddingAssetIds.size ||
+      Array.from(nextQueued).some(assetId => !queuedEmbeddingAssetIds.has(assetId));
+
+    if (changed) {
+      setQueuedEmbeddingAssetIds(nextQueued);
+    }
+  }, [candidates, queuedEmbeddingAssetIds]);
 
   const summary = useMemo(
     () =>
@@ -208,9 +240,22 @@ export function DatasetFileAssetDialog({
 
   const handleGenerateEmbeddings = useCallback(
     async (candidate: DatasetFileCandidate) => {
+      setQueuedEmbeddingAssetIds(prev => new Set(prev).add(candidate.asset_id));
       try {
-        await generateEmbeddingsMutation.mutateAsync(candidate.asset_id);
+        const response = await generateEmbeddingsMutation.mutateAsync(candidate.asset_id);
+        if (!response.data?.accepted) {
+          setQueuedEmbeddingAssetIds(prev => {
+            const next = new Set(prev);
+            next.delete(candidate.asset_id);
+            return next;
+          });
+        }
       } catch {
+        setQueuedEmbeddingAssetIds(prev => {
+          const next = new Set(prev);
+          next.delete(candidate.asset_id);
+          return next;
+        });
         // The mutation hook already shows the API error toast.
       }
     },
@@ -218,7 +263,7 @@ export function DatasetFileAssetDialog({
   );
 
   const handleBatchGenerateEmbeddings = useCallback(async () => {
-    if (embeddingGenerationCandidateIds.length === 0 || isBatchGenerating) return;
+    if (embeddingGenerationCandidateIds.length === 0 || hasQueuedEmbeddingGeneration) return;
 
     const assetIds = [...embeddingGenerationCandidateIds];
     setBatchGeneratingAssetIds(new Set(assetIds));
@@ -233,7 +278,10 @@ export function DatasetFileAssetDialog({
             assetId,
             silent: true,
           });
-          if (response.data?.addable) {
+          if (response.data?.accepted) {
+            setQueuedEmbeddingAssetIds(prev => new Set(prev).add(assetId));
+            successCount += 1;
+          } else if (response.data?.addable) {
             successCount += 1;
           } else {
             failedCount += 1;
@@ -259,7 +307,7 @@ export function DatasetFileAssetDialog({
   }, [
     embeddingGenerationCandidateIds,
     generateEmbeddingsMutation,
-    isBatchGenerating,
+    hasQueuedEmbeddingGeneration,
     t,
   ]);
 
@@ -336,7 +384,7 @@ export function DatasetFileAssetDialog({
                   size="sm"
                   className="h-8 whitespace-nowrap border-destructive/30 bg-background text-destructive hover:bg-destructive/10 hover:text-destructive"
                   loading={isBatchGenerating}
-                  disabled={isBatchGenerating || generateEmbeddingsMutation.isPending}
+                  disabled={hasQueuedEmbeddingGeneration || generateEmbeddingsMutation.isPending}
                   onClick={handleBatchGenerateEmbeddings}
                 >
                   {t('documents.fileAssets.batchGenerateDatasetEmbedding', {
@@ -411,7 +459,11 @@ export function DatasetFileAssetDialog({
                         !candidate.already_added &&
                         candidate.processing_status !== 'ready';
                       const ext = fileExtension(candidate);
-                      const isGenerating = activeEmbeddingAssetId === candidate.asset_id;
+                      const isGenerating =
+                        queuedEmbeddingAssetIds.has(candidate.asset_id) ||
+                        batchGeneratingAssetIds.has(candidate.asset_id) ||
+                        (generateEmbeddingsMutation.isPending &&
+                          activeEmbeddingAssetId === candidate.asset_id);
                       return (
                         <TableRow
                           key={candidate.asset_id}
@@ -551,7 +603,11 @@ export function DatasetFileAssetDialog({
                                 size="sm"
                                 className="h-8 px-2 text-xs"
                                 loading={isGenerating}
-                                disabled={isBatchGenerating || generateEmbeddingsMutation.isPending}
+                                disabled={
+                                  isGenerating ||
+                                  isBatchGenerating ||
+                                  generateEmbeddingsMutation.isPending
+                                }
                                 onClick={() => handleGenerateEmbeddings(candidate)}
                               >
                                 {t('documents.fileAssets.generateDatasetEmbedding')}

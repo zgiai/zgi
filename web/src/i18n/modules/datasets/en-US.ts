@@ -915,8 +915,10 @@ const messages = {
     fileRefsCreateSuccess: '{count} file assets queued for sync',
     fileRefsCreatePartialFailed: '{count} file assets could not be added',
     fileCandidateEmbeddingGenerating: 'Generating vectors. Please wait.',
+    fileCandidateEmbeddingQueued: 'Knowledge base vector generation started',
     fileCandidateEmbeddingGenerateSuccess: 'Dataset vector result generated',
-    fileCandidateEmbeddingBatchGenerateSuccess: 'Dataset vectors generated for {count} files',
+    fileCandidateEmbeddingBatchGenerateSuccess:
+      'Knowledge base vector generation started for {count} files',
     fileCandidateEmbeddingBatchGeneratePartialFailed:
       'Failed to generate dataset vectors for {count} files',
     fileRefRetrySuccess: 'File asset sync queued',

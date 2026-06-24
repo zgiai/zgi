@@ -21,6 +21,7 @@
     "test:code-node-validation": "node scripts/test-code-node-validation.mjs",
     "test:model-selector-restrictions": "node scripts/test-model-selector-restrictions.mjs",
     "test:file-management-upload-policy": "node scripts/test-file-management-upload-policy.mjs",
+    "test:dataset-file-candidate-embedding-flow": "node scripts/test-dataset-file-candidate-embedding-flow.mjs",
     "type-check": "node scripts/customer/prepare.mjs && node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && tsc --noEmit",
     "check:i18n-routes": "node scripts/check-i18n-route-modules.mjs",
     "validate:agent-templates": "node scripts/validate-agent-templates.mjs",

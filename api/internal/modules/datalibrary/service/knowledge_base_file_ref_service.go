@@ -132,6 +132,7 @@ type KnowledgeBaseFileCandidateEmbeddingRequest struct {
 
 type KnowledgeBaseFileCandidateEmbeddingResult struct {
 	AssetID              uuid.UUID `json:"asset_id"`
+	Accepted             bool      `json:"accepted,omitempty"`
 	GenerationNo         int64     `json:"generation_no"`
 	EmbeddingProvider    string    `json:"embedding_provider,omitempty"`
 	EmbeddingModel       string    `json:"embedding_model,omitempty"`

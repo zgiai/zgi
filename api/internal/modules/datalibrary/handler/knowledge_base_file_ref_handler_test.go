@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -75,6 +76,48 @@ func TestKnowledgeBaseFileRefHandlerRejectsCreateWithoutManagePermission(t *test
 	}
 }
 
+func TestKnowledgeBaseFileRefHandlerEnqueuesCandidateEmbeddingGeneration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	assetID := uuid.New()
+	refSvc := &fakeKnowledgeBaseFileRefHandlerService{
+		generateErr: errors.New("GenerateCandidateEmbeddings should not be called synchronously"),
+	}
+	enqueuer := &fakeDatasetRefSyncEnqueuer{}
+	router := newKnowledgeBaseFileRefTestRouter(refSvc, enqueuer, "org-1", "workspace-1", "account-1", true)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/datasets/dataset-1/file-candidates/"+assetID.String()+"/embeddings", nil)
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var body struct {
+		Code string `json:"code"`
+		Data struct {
+			AssetID  string `json:"asset_id"`
+			Accepted bool   `json:"accepted"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, resp.Body.String())
+	}
+	if body.Code != "0" || body.Data.AssetID != assetID.String() || !body.Data.Accepted {
+		t.Fatalf("unexpected body=%s", resp.Body.String())
+	}
+	if refSvc.generateCalled {
+		t.Fatal("GenerateCandidateEmbeddings should not run in the request handler")
+	}
+	if enqueuer.embedding.AssetID != assetID ||
+		enqueuer.embedding.OrganizationID != "org-1" ||
+		enqueuer.embedding.WorkspaceID == nil ||
+		*enqueuer.embedding.WorkspaceID != "workspace-1" ||
+		enqueuer.embedding.DatasetID != "dataset-1" ||
+		enqueuer.embedding.RequestedBy != "account-1" {
+		t.Fatalf("embedding enqueue=%+v", enqueuer.embedding)
+	}
+}
+
 func newKnowledgeBaseFileRefTestRouter(refSvc service.KnowledgeBaseFileRefService, enqueuer datasetFileRefSyncEnqueuer, organizationID string, workspaceID string, accountID string, allowManage bool) *gin.Engine {
 	router := gin.New()
 	handler := NewKnowledgeBaseFileRefHandler(
@@ -98,13 +141,16 @@ func newKnowledgeBaseFileRefTestRouter(refSvc service.KnowledgeBaseFileRefServic
 		c.Next()
 	})
 	router.POST("/datasets/:dataset_id/file-refs", handler.CreateFileRefs)
+	router.POST("/datasets/:dataset_id/file-candidates/:asset_id/embeddings", handler.GenerateFileCandidateEmbeddings)
 	return router
 }
 
 type fakeKnowledgeBaseFileRefHandlerService struct {
-	createResult *service.KnowledgeBaseFileRefCreateResult
-	failedReq    service.KnowledgeBaseFileRefSyncFailureRequest
-	createCalled bool
+	createResult   *service.KnowledgeBaseFileRefCreateResult
+	failedReq      service.KnowledgeBaseFileRefSyncFailureRequest
+	createCalled   bool
+	generateErr    error
+	generateCalled bool
 }
 
 func (s *fakeKnowledgeBaseFileRefHandlerService) ListCandidates(ctx context.Context, req service.KnowledgeBaseFileCandidateRequest) (*service.KnowledgeBaseFileCandidateResult, error) {
@@ -121,7 +167,8 @@ func (s *fakeKnowledgeBaseFileRefHandlerService) CreateRefs(ctx context.Context,
 }
 
 func (s *fakeKnowledgeBaseFileRefHandlerService) GenerateCandidateEmbeddings(ctx context.Context, req service.KnowledgeBaseFileCandidateEmbeddingRequest) (*service.KnowledgeBaseFileCandidateEmbeddingResult, error) {
-	return nil, nil
+	s.generateCalled = true
+	return nil, s.generateErr
 }
 
 func (s *fakeKnowledgeBaseFileRefHandlerService) GetRef(ctx context.Context, req service.KnowledgeBaseFileRefGetRequest) (*service.KnowledgeBaseAssetRefView, error) {
@@ -149,10 +196,16 @@ func (s *fakeKnowledgeBaseFileRefHandlerService) RemoveRef(ctx context.Context, 
 }
 
 type fakeDatasetRefSyncEnqueuer struct {
-	err error
+	err       error
+	embedding service.KnowledgeBaseFileCandidateEmbeddingRequest
 }
 
 func (e *fakeDatasetRefSyncEnqueuer) EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error {
+	return e.err
+}
+
+func (e *fakeDatasetRefSyncEnqueuer) EnqueueFileCandidateEmbedding(ctx context.Context, req service.KnowledgeBaseFileCandidateEmbeddingRequest) error {
+	e.embedding = req
 	return e.err
 }
 

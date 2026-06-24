@@ -38,6 +38,7 @@ type datasetFileRefPermissionChecker interface {
 
 type datasetFileRefSyncEnqueuer interface {
 	EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error
+	EnqueueFileCandidateEmbedding(ctx context.Context, req datalibService.KnowledgeBaseFileCandidateEmbeddingRequest) error
 }
 
 func NewKnowledgeBaseFileRefHandler(service datalibService.KnowledgeBaseFileRefService, dispatcher datasetFileRefSyncEnqueuer, accountService interfaces.AccountService, documents datasetFileRefDocumentManager, datasets datasetFileRefDatasetReader, organization datasetFileRefPermissionChecker) *KnowledgeBaseFileRefHandler {
@@ -100,18 +101,24 @@ func (h *KnowledgeBaseFileRefHandler) GenerateFileCandidateEmbeddings(c *gin.Con
 		response.Fail(c, response.ErrInvalidParams)
 		return
 	}
-	result, err := h.service.GenerateCandidateEmbeddings(c.Request.Context(), datalibService.KnowledgeBaseFileCandidateEmbeddingRequest{
+	if h.dispatcher == nil {
+		response.FailWithMessage(c, response.ErrSystemError, "file candidate embedding dispatcher is not configured")
+		return
+	}
+	if err := h.dispatcher.EnqueueFileCandidateEmbedding(c.Request.Context(), datalibService.KnowledgeBaseFileCandidateEmbeddingRequest{
 		OrganizationID: organizationID,
 		WorkspaceID:    optionalString(util.GetWorkspaceID(c)),
 		DatasetID:      c.Param("dataset_id"),
 		AssetID:        assetID,
 		RequestedBy:    util.GetAccountID(c),
-	})
-	if err != nil {
+	}); err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
-	response.Success(c, result)
+	response.Success(c, datalibService.KnowledgeBaseFileCandidateEmbeddingResult{
+		AssetID:  assetID,
+		Accepted: true,
+	})
 }
 
 func (h *KnowledgeBaseFileRefHandler) ListFileRefs(c *gin.Context) {

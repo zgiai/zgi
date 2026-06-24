@@ -37,7 +37,7 @@ export function useDatasetFileCandidates(
     page?: number;
     limit?: number;
   } = {},
-  options: { enabled?: boolean; debounceDelay?: number } = {}
+  options: { enabled?: boolean; debounceDelay?: number; refetchInterval?: number | false } = {}
 ) {
   const [keyword, setKeyword] = useState(params.keyword ?? '');
   const debouncedKeyword = useDebouncedValue(keyword, options.debounceDelay ?? 500);
@@ -64,6 +64,7 @@ export function useDatasetFileCandidates(
     },
     enabled: Boolean(datasetId) && (options.enabled ?? true),
     staleTime: 30 * 1000,
+    refetchInterval: options.refetchInterval ?? false,
     retry: false,
   });
 
@@ -175,7 +176,9 @@ export function useGenerateDatasetFileCandidateEmbeddings(datasetId: string) {
     },
     onSuccess: (response, variables) => {
       if (!isEmbeddingMutationSilent(variables)) {
-        if (response.data?.addable) {
+        if (response.data?.accepted) {
+          toast.success(t('messages.fileCandidateEmbeddingQueued'));
+        } else if (response.data?.addable) {
           toast.success(t('messages.fileCandidateEmbeddingGenerateSuccess'));
         } else {
           toast.error(response.data?.reason || t('messages.actionFailed'));
