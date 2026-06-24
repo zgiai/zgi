@@ -63,7 +63,7 @@ export function useRunnableWebApps({
     retry: false,
   });
 
-  const rawItems = query.data?.data?.items ?? [];
+  const rawItems = useMemo(() => query.data?.data?.items ?? [], [query.data?.data?.items]);
 
   const configQueries = useQueries({
     queries: rawItems.map(item => ({
