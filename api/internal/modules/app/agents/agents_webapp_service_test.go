@@ -158,7 +158,7 @@ func TestAgentsService_GetPublishedAgentWebAppConfig_RejectsPersistedDisabledWeb
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestAgentsService_GetPublishedAgentWebAppConfig_AllowsPersistedEnabledWebAppSurface(t *testing.T) {
+func TestAgentsService_GetPublishedAgentWebAppConfig_RejectsOfflineParentDespitePersistedEnabledWebAppSurface(t *testing.T) {
 	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
 	defer cleanup()
 
@@ -175,14 +175,10 @@ func TestAgentsService_GetPublishedAgentWebAppConfig_AllowsPersistedEnabledWebAp
 			EnableAPI:    true,
 		},
 	}
-	expectAgentRuntimeSurfaceRows(mock, agentID, workspaceID, []agentRuntimeSurfaceExpectation{{
-		surface: "webapp",
-		enabled: true,
-	}})
 	service := &agentsService{agentsRepo: repo, db: db}
 
 	_, err := service.GetPublishedAgentWebAppConfig(context.Background(), webAppID.String())
-	require.ErrorIs(t, err, errAgentWebAppNotPublished)
+	require.ErrorIs(t, err, errAgentWebAppOffline)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -259,6 +255,30 @@ func TestAgentsService_GetWebAppRuntimeCapability_LoginRequiredForPrivateOrganiz
 	require.True(t, got.PrivateAudienceEnabled)
 	require.Equal(t, []string{"public", "organization", "department", "workspace", "account"}, got.SupportedSubjectTypes)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAgentsService_GetWebAppRuntimeCapability_RejectsOfflineParent(t *testing.T) {
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	webAppID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:           agentID,
+			TenantID:     workspaceID,
+			WebAppID:     webAppID,
+			AgentsType:   "AGENT",
+			WebAppStatus: AgentWebAppStatusInactive,
+		},
+	}
+	service := &agentsService{agentsRepo: repo}
+
+	got, err := service.GetWebAppRuntimeCapability(context.Background(), webAppID.String(), uuid.NewString(), false)
+	require.NoError(t, err)
+	require.False(t, got.Allowed)
+	require.Equal(t, string(runtimeauth.RuntimeAccessDeniedDisabledSurface), got.Reason)
+	require.True(t, got.PublicOnly)
+	require.False(t, got.PrivateAudienceEnabled)
+	require.Equal(t, []string{"public", "organization", "department", "workspace", "account"}, got.SupportedSubjectTypes)
 }
 
 func TestAgentsService_GetWebAppRuntimeCapability_AllowsAuthenticatedOrganizationGrant(t *testing.T) {

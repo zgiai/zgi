@@ -85,6 +85,9 @@ func authorizeWebAppRuntimeForAgent(ctx context.Context, store *runtimeauth.Stor
 	if agent == nil {
 		return errWebAppMigrationInvalidRequest
 	}
+	if !agent.IsWebAppActive() {
+		return errWebAppMigrationOffline
+	}
 	fallback := runtimeauth.PolicyFromAgentFields(string(agent.WebAppStatus), agent.EnableAPI)
 	if store == nil {
 		store = runtimeauth.NewStore(db)

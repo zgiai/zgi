@@ -91,6 +91,50 @@ func TestAgentsService_GetRunnableWebApps_OrganizationAdminUsesAllNormalOrganiza
 	}, resp)
 }
 
+func TestAgentsService_GetRunnableWebApps_FiltersOfflineParentStatus(t *testing.T) {
+	ctx := t.Context()
+	repo := &stubAgentsRepository{
+		items: []runnableWebAppItem{
+			{
+				AgentID:      "agent-active",
+				WorkspaceID:  "workspace-1",
+				WebAppID:     "webapp-active",
+				WebAppStatus: string(AgentWebAppStatusActive),
+				AgentName:    "Active",
+				AgentType:    "CONVERSATIONAL_WORKFLOW",
+			},
+			{
+				AgentID:      "agent-inactive",
+				WorkspaceID:  "workspace-1",
+				WebAppID:     "webapp-inactive",
+				WebAppStatus: string(AgentWebAppStatusInactive),
+				AgentName:    "Inactive",
+				AgentType:    "CONVERSATIONAL_WORKFLOW",
+			},
+		},
+	}
+	tenantService := &stubWorkspaceManagementService{
+		currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+			Role:           workspace_model.OrganizationRoleNormal,
+		},
+	}
+	orgService := &stubOrganizationService{
+		permissionWorkspaceIDs: []string{"workspace-1"},
+	}
+	service := &agentsService{
+		agentsRepo:        repo,
+		tenantService:     tenantService,
+		enterpriseService: orgService,
+	}
+
+	resp, err := service.GetRunnableWebApps(ctx, "account-1", dto.GetRunnableWebAppsRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 1)
+	require.Equal(t, "agent-active", resp.Items[0].AgentID)
+}
+
 func TestAgentsService_GetRunnableWebApps_OrganizationMemberWithoutWorkspaceViewReturnsEmpty(t *testing.T) {
 	ctx := t.Context()
 	orgID := "org-1"

@@ -356,6 +356,20 @@ func PolicyFromAuthorization(fallback PublishedRuntimePolicy, auth *ResourceAuth
 			policy.InternalInvocation = surface.Enabled
 		}
 	}
+	if auth.ResourceType == PublishedRuntimeResourceAgent && NormalizeWebAppStatus(fallback.WebAppStatus) != WebAppStatusActive {
+		return disabledAgentPublishedRuntimePolicy(policy)
+	}
+	return policy
+}
+
+func disabledAgentPublishedRuntimePolicy(policy PublishedRuntimePolicy) PublishedRuntimePolicy {
+	policy.WebAppStatus = WebAppStatusInactive
+	policy.APIEnabled = false
+	policy.AppCenterEnabled = false
+	policy.BuiltinAppEnabled = false
+	policy.InternalInvocation = false
+	policy.AllowedBuiltinAccountIDs = nil
+	policy.AllowedBuiltinDeptIDs = nil
 	return policy
 }
 
@@ -457,6 +471,9 @@ func uniqueCandidateResourceIDs(candidates []ResourceAuthorizationCandidate) ([]
 func filterAuthorizedCandidates(resourceType PublishedRuntimeResourceType, surface PublishedRuntimeSurface, candidates []ResourceAuthorizationCandidate, overlays map[uuid.UUID]SurfaceAuthorization, audience RuntimeAudience) []uuid.UUID {
 	out := make([]uuid.UUID, 0, len(candidates))
 	for _, candidate := range candidates {
+		if resourceType == PublishedRuntimeResourceAgent && NormalizeWebAppStatus(candidate.Fallback.WebAppStatus) != WebAppStatusActive {
+			continue
+		}
 		auth := resourceAuthorizationFromFallback(resourceType, candidate.ResourceID, candidate.Fallback)
 		if overlay, ok := overlays[candidate.ResourceID]; ok {
 			setSurfaceAuthorization(auth.Surfaces, overlay)

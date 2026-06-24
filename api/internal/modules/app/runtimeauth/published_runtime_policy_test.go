@@ -22,7 +22,7 @@ func TestPublishedRuntimePolicySeparatesExternalSurfacesFromInternalInvocation(t
 		t.Fatalf("builtin app surface should be disabled when the web app is inactive")
 	}
 	if !policy.Allows(PublishedRuntimeSurfaceInternal) {
-		t.Fatalf("internal invocation should remain enabled for published runtime compatibility")
+		t.Fatalf("internal invocation should remain enabled as a child surface setting")
 	}
 	if policy.Allows(PublishedRuntimeSurface("unknown")) {
 		t.Fatalf("unknown runtime surface should fail closed")

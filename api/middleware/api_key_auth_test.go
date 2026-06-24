@@ -142,6 +142,26 @@ func TestValidateAPIKeyAllowsDisabledLegacyAgentAPISurface(t *testing.T) {
 	}
 }
 
+func TestValidateAgentAPISurfaceRejectsOfflineAgentParentGate(t *testing.T) {
+	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
+	defer cleanup()
+
+	agentID := uuid.New()
+	tenantID := uuid.New()
+	expectAgentAPISurfaceWithStatus(mock, agentID, tenantID, true, "inactive")
+
+	err := validateAgentAPISurface(db, agentID, tenantID)
+	if err == nil {
+		t.Fatalf("validateAgentAPISurface error = nil, want offline agent rejection")
+	}
+	if !strings.Contains(err.Error(), "offline") {
+		t.Fatalf("validateAgentAPISurface error = %v, want offline error", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
 func TestValidateAPIKeyDoesNotQueryPersistedDisabledAgentAPISurface(t *testing.T) {
 	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
 	defer cleanup()
@@ -465,6 +485,10 @@ func hashTestAPIKey(rawKey string) (string, string) {
 }
 
 func expectAgentAPISurface(mock sqlmock.Sqlmock, agentID, tenantID uuid.UUID, enabled bool) {
+	expectAgentAPISurfaceWithStatus(mock, agentID, tenantID, enabled, "active")
+}
+
+func expectAgentAPISurfaceWithStatus(mock sqlmock.Sqlmock, agentID, tenantID uuid.UUID, enabled bool, webAppStatus string) {
 	mock.ExpectQuery(`SELECT .* FROM "agents" WHERE id = \$1 AND tenant_id = \$2 AND deleted_at IS NULL LIMIT \$3`).
 		WithArgs(agentID, tenantID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -477,7 +501,7 @@ func expectAgentAPISurface(mock sqlmock.Sqlmock, agentID, tenantID uuid.UUID, en
 			agentID.String(),
 			tenantID.String(),
 			enabled,
-			"inactive",
+			webAppStatus,
 			nil,
 		))
 }

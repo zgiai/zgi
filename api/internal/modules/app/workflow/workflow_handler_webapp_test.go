@@ -117,13 +117,11 @@ func TestRejectInactiveWebAppReturnsOfflineError(t *testing.T) {
 	}
 }
 
-func TestRejectInactiveWebAppAllowsPersistedEnabledWebAppSurface(t *testing.T) {
+func TestRejectInactiveWebAppRejectsPersistedEnabledWebAppSurface(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	_, mock := setWorkflowWebAppRuntimeMockDB(t)
 
 	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
-	expectWorkflowWebAppRuntimeSurfaceRows(mock, agentID, workspaceID, "webapp", true, nil)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -134,11 +132,11 @@ func TestRejectInactiveWebAppAllowsPersistedEnabledWebAppSurface(t *testing.T) {
 		TenantID:     workspaceID,
 		WebAppStatus: agents.AgentWebAppStatusInactive,
 	}, "web-app-id")
-	if rejected {
-		t.Fatalf("rejectInactiveWebApp returned true, want persisted enabled webapp surface to stay public-compatible")
+	if !rejected {
+		t.Fatalf("rejectInactiveWebApp returned false for inactive web app")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("sql expectations not met: %v", err)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
 	}
 }
 

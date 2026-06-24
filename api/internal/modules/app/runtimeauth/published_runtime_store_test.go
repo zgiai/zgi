@@ -24,8 +24,8 @@ func TestPublishedRuntimeStoreFallsBackToLegacyAgentPolicy(t *testing.T) {
 	if policy.Allows(PublishedRuntimeSurfaceWebApp) {
 		t.Fatal("webapp should stay disabled from legacy fallback")
 	}
-	if !policy.Allows(PublishedRuntimeSurfaceAPI) {
-		t.Fatal("api should stay enabled from legacy fallback")
+	if policy.Allows(PublishedRuntimeSurfaceAPI) {
+		t.Fatal("api should stay disabled while the legacy webapp is inactive")
 	}
 	if policy.Allows(PublishedRuntimeSurfaceAppCenter) {
 		t.Fatal("app center should stay disabled from legacy fallback")
@@ -33,8 +33,47 @@ func TestPublishedRuntimeStoreFallsBackToLegacyAgentPolicy(t *testing.T) {
 	if policy.Allows(PublishedRuntimeSurfaceBuiltinApp) {
 		t.Fatal("builtin app should stay disabled while the legacy webapp is inactive")
 	}
-	if !policy.Allows(PublishedRuntimeSurfaceInternal) {
-		t.Fatal("internal invocation should stay enabled from legacy fallback")
+	if policy.Allows(PublishedRuntimeSurfaceInternal) {
+		t.Fatal("internal invocation should stay disabled while the legacy webapp is inactive")
+	}
+}
+
+func TestPublishedRuntimeStoreOfflineAgentFallbackOverridesPersistedSurfaces(t *testing.T) {
+	ctx := context.Background()
+	db, mock, cleanup := openPublishedRuntimeAuthMockDB(t)
+	defer cleanup()
+
+	resourceID := uuid.New()
+	organizationID := uuid.New()
+	workspaceID := uuid.New()
+	webappSurfaceID := uuid.New()
+	apiSurfaceID := uuid.New()
+	appCenterSurfaceID := uuid.New()
+	internalSurfaceID := uuid.New()
+
+	expectPublishedRuntimeSurfaceLookup(mock, PublishedRuntimeResourceAgent, resourceID, organizationID, workspaceID, []runtimeSurfaceExpectation{
+		{id: webappSurfaceID, surface: PublishedRuntimeSurfaceWebApp, enabled: true},
+		{id: apiSurfaceID, surface: PublishedRuntimeSurfaceAPI, enabled: true},
+		{id: appCenterSurfaceID, surface: PublishedRuntimeSurfaceAppCenter, enabled: true},
+		{id: internalSurfaceID, surface: PublishedRuntimeSurfaceInternal, enabled: true},
+	})
+	expectPublishedRuntimeGrantLookup(mock, nil)
+
+	auth, err := NewStore(db).GetResourceAuthorization(ctx, PublishedRuntimeResourceAgent, resourceID, PolicyFromAgentFields(WebAppStatusInactive, true))
+	if err != nil {
+		t.Fatalf("GetResourceAuthorization error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+
+	policy := PolicyFromAuthorization(PolicyFromAgentFields(WebAppStatusInactive, true), auth)
+	if policy.Allows(PublishedRuntimeSurfaceWebApp) ||
+		policy.Allows(PublishedRuntimeSurfaceAPI) ||
+		policy.Allows(PublishedRuntimeSurfaceAppCenter) ||
+		policy.Allows(PublishedRuntimeSurfaceBuiltinApp) ||
+		policy.Allows(PublishedRuntimeSurfaceInternal) {
+		t.Fatalf("persisted surfaces should not re-enable inactive agent policy: %#v", policy)
 	}
 }
 
@@ -394,6 +433,7 @@ func TestPublishedRuntimeStoreFilterAuthorizedResourceIDsAppliesFallbackAndPersi
 	accountSurfaceID := uuid.MustParse("40000000-0000-0000-0000-000000000003")
 	otherAccountSurfaceID := uuid.MustParse("40000000-0000-0000-0000-000000000004")
 	legacySeedSurfaceID := uuid.MustParse("40000000-0000-0000-0000-000000000005")
+	inactiveOverlaySurfaceID := uuid.MustParse("40000000-0000-0000-0000-000000000006")
 
 	activeFallback := PolicyFromAgentFields(WebAppStatusActive, false)
 	inactiveFallback := PolicyFromAgentFields(WebAppStatusInactive, false)
@@ -423,7 +463,8 @@ func TestPublishedRuntimeStoreFilterAuthorizedResourceIDsAppliesFallbackAndPersi
 		AddRow(disabledSurfaceID.String(), string(PublishedRuntimeResourceAgent), persistedDisabledResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceWebApp), false, PublishedRuntimeSourceGrant, now, now, nil).
 		AddRow(accountSurfaceID.String(), string(PublishedRuntimeResourceAgent), accountResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceWebApp), true, PublishedRuntimeSourceGrant, now, now, nil).
 		AddRow(otherAccountSurfaceID.String(), string(PublishedRuntimeResourceAgent), otherAccountResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceWebApp), true, PublishedRuntimeSourceGrant, now, now, nil).
-		AddRow(legacySeedSurfaceID.String(), string(PublishedRuntimeResourceAgent), legacySeedResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceWebApp), false, PublishedRuntimeSourceLegacyAgentFields, now, now, nil)
+		AddRow(legacySeedSurfaceID.String(), string(PublishedRuntimeResourceAgent), legacySeedResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceWebApp), false, PublishedRuntimeSourceLegacyAgentFields, now, now, nil).
+		AddRow(inactiveOverlaySurfaceID.String(), string(PublishedRuntimeResourceAgent), inactiveFallbackResourceID.String(), organizationID.String(), nil, string(PublishedRuntimeSurfaceWebApp), true, PublishedRuntimeSourceGrant, now, now, nil)
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surfaces" WHERE resource_type = $1 AND surface = $2 AND organization_id = $3 AND resource_id IN ($4,$5,$6,$7,$8,$9) AND deleted_at IS NULL ORDER BY resource_id ASC`)).
 		WithArgs(
 			string(PublishedRuntimeResourceAgent),
@@ -450,8 +491,8 @@ func TestPublishedRuntimeStoreFilterAuthorizedResourceIDsAppliesFallbackAndPersi
 	}).
 		AddRow(uuid.New().String(), accountSurfaceID.String(), string(PublishedRuntimeSubjectAccount), accountID.String(), true, now, now, nil).
 		AddRow(uuid.New().String(), otherAccountSurfaceID.String(), string(PublishedRuntimeSubjectAccount), otherAccountID.String(), true, now, now, nil)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surface_grants" WHERE surface_id IN ($1,$2,$3,$4) AND deleted_at IS NULL ORDER BY subject_type ASC, subject_id ASC, created_at ASC`)).
-		WithArgs(disabledSurfaceID, accountSurfaceID, otherAccountSurfaceID, legacySeedSurfaceID).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surface_grants" WHERE surface_id IN ($1,$2,$3,$4,$5) AND deleted_at IS NULL ORDER BY subject_type ASC, subject_id ASC, created_at ASC`)).
+		WithArgs(disabledSurfaceID, accountSurfaceID, otherAccountSurfaceID, legacySeedSurfaceID, inactiveOverlaySurfaceID).
 		WillReturnRows(grantRows)
 
 	got, err := NewStore(db).FilterAuthorizedResourceIDs(ctx, PublishedRuntimeResourceAgent, PublishedRuntimeSurfaceWebApp, organizationID, candidates, RuntimeAudience{

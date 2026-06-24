@@ -130,6 +130,7 @@ type runnableWebAppAuthorizationCandidate struct {
 }
 
 func (s *agentsService) filterRunnableWebAppsByAppCenterAuthorization(ctx context.Context, currentOrganization *model.OrganizationMember, items []runnableWebAppItem) ([]runnableWebAppItem, error) {
+	items = activeRunnableWebAppItems(items)
 	if len(items) == 0 || s.db == nil {
 		return items, nil
 	}
@@ -168,6 +169,9 @@ func (s *agentsService) filterRunnableWebAppsByAppCenterAuthorization(ctx contex
 			Fallback:   runtimeauth.PublishedRuntimePolicy{},
 		})
 		resourceIDs = append(resourceIDs, resourceID)
+	}
+	if len(parsedCandidates) == 0 {
+		return []runnableWebAppItem{}, nil
 	}
 
 	audience := runtimeauth.RuntimeAudience{
@@ -223,6 +227,19 @@ func (s *agentsService) filterRunnableWebAppsByAppCenterAuthorization(ctx contex
 		}
 	}
 	return out, nil
+}
+
+func activeRunnableWebAppItems(items []runnableWebAppItem) []runnableWebAppItem {
+	if len(items) == 0 {
+		return items
+	}
+	out := make([]runnableWebAppItem, 0, len(items))
+	for _, item := range items {
+		if NormalizeAgentWebAppStatus(AgentWebAppStatus(item.WebAppStatus)) == AgentWebAppStatusActive {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func (s *agentsService) persistedAppCenterSurfaceResourceIDs(ctx context.Context, organizationID uuid.UUID, resourceIDs []uuid.UUID) (map[uuid.UUID]struct{}, error) {

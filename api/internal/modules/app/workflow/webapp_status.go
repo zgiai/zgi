@@ -59,6 +59,9 @@ func publicCompatibleWebAppRuntimeAllowed(ctx context.Context, agent *agents.Age
 	if agent == nil {
 		return false, fmt.Errorf("agent is required")
 	}
+	if !agent.IsWebAppActive() {
+		return false, nil
+	}
 	fallback := runtimeauth.PolicyFromAgentFields(string(agent.WebAppStatus), agent.EnableAPI)
 	auth, err := runtimeauth.NewStore(database.GetDB()).GetResourceAuthorization(
 		ctx,

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	apiKeyModule "github.com/zgiai/zgi/api/internal/modules/api_key"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
@@ -134,6 +135,9 @@ func validateAgentAPISurface(db *gorm.DB, agentID, tenantID uuid.UUID) error {
 			return fmt.Errorf("agent not found for API key")
 		}
 		return fmt.Errorf("failed to validate agent API surface: %w", err)
+	}
+	if runtimeauth.NormalizeWebAppStatus(surface.WebAppStatus) != runtimeauth.WebAppStatusActive {
+		return fmt.Errorf("agent is offline for API key")
 	}
 	return nil
 }
