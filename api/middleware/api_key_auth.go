@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -138,6 +139,20 @@ func validateAgentAPISurface(db *gorm.DB, agentID, tenantID uuid.UUID) error {
 	}
 	if runtimeauth.NormalizeWebAppStatus(surface.WebAppStatus) != runtimeauth.WebAppStatusActive {
 		return fmt.Errorf("agent is offline for API key")
+	}
+	fallback := runtimeauth.PolicyFromAgentFields(surface.WebAppStatus, surface.EnableAPI)
+	auth, err := runtimeauth.NewStore(db).GetResourceAuthorization(
+		context.Background(),
+		runtimeauth.PublishedRuntimeResourceAgent,
+		agentID,
+		fallback,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to validate agent api surface: %w", err)
+	}
+	policy := runtimeauth.PolicyFromAuthorization(fallback, auth)
+	if !policy.Allows(runtimeauth.PublishedRuntimeSurfaceAPI) {
+		return fmt.Errorf("agent api surface is disabled")
 	}
 	return nil
 }

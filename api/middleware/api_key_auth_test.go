@@ -62,6 +62,7 @@ func TestValidateAPIKeyWithoutRetiredQuotaColumns(t *testing.T) {
 		WithArgs(keyHash, sqlmock.AnyArg(), 1).
 		WillReturnRows(rows)
 	expectAgentAPISurface(mock, agentID, tenantID, true)
+	expectAgentAPIRuntimeSurfaceLookup(mock, agentID, nil)
 
 	info, err := validateAPIKey(db, rawKey)
 	if err != nil {
@@ -86,7 +87,7 @@ func TestValidateAPIKeyWithoutRetiredQuotaColumns(t *testing.T) {
 	}
 }
 
-func TestValidateAPIKeyAllowsDisabledLegacyAgentAPISurface(t *testing.T) {
+func TestValidateAPIKeyRejectsDisabledLegacyAgentAPISurface(t *testing.T) {
 	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
 	defer cleanup()
 
@@ -128,13 +129,14 @@ func TestValidateAPIKeyAllowsDisabledLegacyAgentAPISurface(t *testing.T) {
 		WithArgs(keyHash, sqlmock.AnyArg(), 1).
 		WillReturnRows(rows)
 	expectAgentAPISurface(mock, agentID, tenantID, false)
+	expectAgentAPIRuntimeSurfaceLookup(mock, agentID, nil)
 
-	info, err := validateAPIKey(db, rawKey)
-	if err != nil {
-		t.Fatalf("validateAPIKey error = %v, want legacy API flag to be ignored", err)
+	_, err := validateAPIKey(db, rawKey)
+	if err == nil {
+		t.Fatalf("validateAPIKey error = nil, want disabled api surface rejection")
 	}
-	if info == nil {
-		t.Fatalf("validateAPIKey info = nil, want API key info")
+	if !strings.Contains(err.Error(), "api surface is disabled") {
+		t.Fatalf("validateAPIKey error = %v, want disabled api surface error", err)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -162,7 +164,7 @@ func TestValidateAgentAPISurfaceRejectsOfflineAgentParentGate(t *testing.T) {
 	}
 }
 
-func TestValidateAPIKeyDoesNotQueryPersistedDisabledAgentAPISurface(t *testing.T) {
+func TestValidateAPIKeyRejectsPersistedDisabledAgentAPISurface(t *testing.T) {
 	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
 	defer cleanup()
 
@@ -204,13 +206,21 @@ func TestValidateAPIKeyDoesNotQueryPersistedDisabledAgentAPISurface(t *testing.T
 		WithArgs(keyHash, sqlmock.AnyArg(), 1).
 		WillReturnRows(rows)
 	expectAgentAPISurface(mock, agentID, tenantID, true)
+	expectAgentAPIRuntimeSurfaceLookup(mock, agentID, []agentAPIRuntimeSurfaceExpectation{{
+		id:           uuid.New(),
+		tenantID:     tenantID,
+		surface:      "api",
+		enabled:      false,
+		source:       "grant",
+		expectGrants: true,
+	}})
 
-	info, err := validateAPIKey(db, rawKey)
-	if err != nil {
-		t.Fatalf("validateAPIKey error = %v, want persisted API runtime surface to be ignored", err)
+	_, err := validateAPIKey(db, rawKey)
+	if err == nil {
+		t.Fatalf("validateAPIKey error = nil, want persisted disabled api surface rejection")
 	}
-	if info == nil {
-		t.Fatalf("validateAPIKey info = nil, want API key info")
+	if !strings.Contains(err.Error(), "api surface is disabled") {
+		t.Fatalf("validateAPIKey error = %v, want disabled api surface error", err)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -218,7 +228,7 @@ func TestValidateAPIKeyDoesNotQueryPersistedDisabledAgentAPISurface(t *testing.T
 	}
 }
 
-func TestValidateAPIKeyAllowsAgentWithoutRuntimeAuthorizationLookup(t *testing.T) {
+func TestValidateAPIKeyAllowsPersistedEnabledAgentAPISurface(t *testing.T) {
 	db, mock, cleanup := openAgentAPIKeyRuntimeMockDB(t)
 	defer cleanup()
 
@@ -260,6 +270,14 @@ func TestValidateAPIKeyAllowsAgentWithoutRuntimeAuthorizationLookup(t *testing.T
 		WithArgs(keyHash, sqlmock.AnyArg(), 1).
 		WillReturnRows(rows)
 	expectAgentAPISurface(mock, agentID, tenantID, false)
+	expectAgentAPIRuntimeSurfaceLookup(mock, agentID, []agentAPIRuntimeSurfaceExpectation{{
+		id:           uuid.New(),
+		tenantID:     tenantID,
+		surface:      "api",
+		enabled:      true,
+		source:       "grant",
+		expectGrants: true,
+	}})
 
 	info, err := validateAPIKey(db, rawKey)
 	if err != nil {
@@ -316,6 +334,19 @@ func TestValidateAPIKeyIgnoresPersistedNonPublicAgentAPISurfaceGrant(t *testing.
 		WithArgs(keyHash, sqlmock.AnyArg(), 1).
 		WillReturnRows(rows)
 	expectAgentAPISurface(mock, agentID, tenantID, true)
+	accountGrantID := uuid.New()
+	expectAgentAPIRuntimeSurfaceLookup(mock, agentID, []agentAPIRuntimeSurfaceExpectation{{
+		id:       uuid.New(),
+		tenantID: tenantID,
+		surface:  "api",
+		enabled:  true,
+		source:   "grant",
+		grants: []agentAPIRuntimeGrantExpectation{{
+			subjectType: "account",
+			subjectID:   &accountGrantID,
+			enabled:     true,
+		}},
+	}})
 
 	info, err := validateAPIKey(db, rawKey)
 	if err != nil {
@@ -421,6 +452,7 @@ func TestAPIKeyAuthMiddlewareDoesNotLogSensitiveAPIKeyOnSuccess(t *testing.T) {
 		WithArgs(keyHash, sqlmock.AnyArg(), 1).
 		WillReturnRows(rows)
 	expectAgentAPISurface(mock, agentID, tenantID, true)
+	expectAgentAPIRuntimeSurfaceLookup(mock, agentID, nil)
 	mock.ExpectExec(`UPDATE "agent_api_keys" SET ("last_used_at"=\$1,"usage_count"=usage_count \+ 1,"updated_at"=\$2|"last_used_at"=\$1,"updated_at"=\$2,"usage_count"=usage_count \+ 1) WHERE id = \$3`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -504,6 +536,105 @@ func expectAgentAPISurfaceWithStatus(mock sqlmock.Sqlmock, agentID, tenantID uui
 			webAppStatus,
 			nil,
 		))
+}
+
+type agentAPIRuntimeSurfaceExpectation struct {
+	id             uuid.UUID
+	organizationID uuid.UUID
+	tenantID       uuid.UUID
+	surface        string
+	enabled        bool
+	source         string
+	expectGrants   bool
+	grants         []agentAPIRuntimeGrantExpectation
+}
+
+type agentAPIRuntimeGrantExpectation struct {
+	subjectType string
+	subjectID   *uuid.UUID
+	enabled     bool
+}
+
+func expectAgentAPIRuntimeSurfaceLookup(mock sqlmock.Sqlmock, agentID uuid.UUID, surfaces []agentAPIRuntimeSurfaceExpectation) {
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"resource_type",
+		"resource_id",
+		"organization_id",
+		"workspace_id",
+		"surface",
+		"enabled",
+		"compatibility_source",
+		"created_at",
+		"updated_at",
+		"deleted_at",
+	})
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, surface := range surfaces {
+		organizationID := surface.organizationID
+		if organizationID == uuid.Nil {
+			organizationID = uuid.New()
+		}
+		workspaceID := surface.tenantID
+		if workspaceID == uuid.Nil {
+			workspaceID = uuid.New()
+		}
+		source := surface.source
+		if source == "" {
+			source = "grant"
+		}
+		rows.AddRow(
+			surface.id.String(),
+			"agent",
+			agentID.String(),
+			organizationID.String(),
+			workspaceID.String(),
+			surface.surface,
+			surface.enabled,
+			source,
+			now,
+			now,
+			nil,
+		)
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surfaces" WHERE resource_type = $1 AND resource_id = $2 AND deleted_at IS NULL ORDER BY surface ASC`)).
+		WithArgs("agent", agentID).
+		WillReturnRows(rows)
+	if len(surfaces) == 0 {
+		return
+	}
+
+	grantRows := sqlmock.NewRows([]string{
+		"id",
+		"surface_id",
+		"subject_type",
+		"subject_id",
+		"enabled",
+		"created_at",
+		"updated_at",
+		"deleted_at",
+	})
+	for _, surface := range surfaces {
+		for _, grant := range surface.grants {
+			var subjectID interface{}
+			if grant.subjectID != nil {
+				subjectID = grant.subjectID.String()
+			}
+			grantRows.AddRow(
+				uuid.New().String(),
+				surface.id.String(),
+				grant.subjectType,
+				subjectID,
+				grant.enabled,
+				now,
+				now,
+				nil,
+			)
+		}
+	}
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surface_grants" WHERE surface_id IN \(.+\) AND deleted_at IS NULL ORDER BY subject_type ASC, subject_id ASC, created_at ASC`).
+		WillReturnRows(grantRows)
 }
 
 func captureProcessOutput(t *testing.T, fn func()) string {

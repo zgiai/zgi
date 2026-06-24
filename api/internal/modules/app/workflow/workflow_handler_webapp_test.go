@@ -172,6 +172,38 @@ func TestRejectInactiveWebAppRejectsPersistedNonPublicWebAppGrant(t *testing.T) 
 	}
 }
 
+func TestRejectInactiveWebAppRejectsOrganizationGrantForPublicCompatiblePath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, mock := setWorkflowWebAppRuntimeMockDB(t)
+
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	workspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	organizationID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+	expectWorkflowWebAppRuntimeSurfaceRows(mock, agentID, workspaceID, "webapp", true, &workflowWebAppRuntimeGrantExpectation{
+		subjectType: "organization",
+		subjectID:   organizationID,
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/workflows/web-app-id/run", nil)
+
+	rejected := rejectInactiveWebApp(ctx, &agents.Agent{
+		ID:           agentID,
+		TenantID:     workspaceID,
+		WebAppStatus: agents.AgentWebAppStatusActive,
+	}, "web-app-id")
+	if !rejected {
+		t.Fatalf("rejectInactiveWebApp returned false, want organization grant to require authenticated authorization")
+	}
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
 func TestRejectUnauthorizedWebAppRuntimeRequiresLoginForPrivateGrant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	_, mock := setWorkflowWebAppRuntimeMockDB(t)

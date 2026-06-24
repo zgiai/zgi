@@ -72,5 +72,5 @@ func publicCompatibleWebAppRuntimeAllowed(ctx context.Context, agent *agents.Age
 	if err != nil {
 		return false, err
 	}
-	return auth.Evaluate(runtimeauth.PublishedRuntimeSurfaceWebApp, runtimeauth.RuntimeAudience{OrganizationID: auth.OrganizationID}).Allowed, nil
+	return auth.Evaluate(runtimeauth.PublishedRuntimeSurfaceWebApp, runtimeauth.RuntimeAudience{}).Allowed, nil
 }
