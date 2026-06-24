@@ -159,6 +159,9 @@ const messages: DatasetMessages = {
       noReference: '暂无关联',
       openFile: '去文件管理处理',
       generateDatasetEmbedding: '生成知识库向量',
+      batchGenerateDatasetEmbedding: '批量生成知识库向量（{count}）',
+      embeddingGenerationNotice:
+        '当前有 {count} 个文件缺少该知识库模型对应的向量结果。生成知识库向量后即可正常添加。',
       resultSummary: '显示 {count} / {total} 个文件资产',
       addSelected: '添加 {count} 个文件',
       filters: {
@@ -183,6 +186,8 @@ const messages: DatasetMessages = {
         missingDatasetEmbedding: '缺少知识库向量',
         missingDatasetEmbeddingDetail:
           '当前没有与该知识库模型 {model} 对应的向量结果，请点击操作中的生成知识库向量。',
+        missingDatasetEmbeddingDetailPrefix: '当前没有与该知识库模型 {model} 对应的向量结果，',
+        missingDatasetEmbeddingAction: '请点击操作中的生成知识库向量。',
         datasetEmbeddingModelMissing: '知识库未配置嵌入模型',
         unavailable: '不可添加',
       },
@@ -198,9 +203,12 @@ const messages: DatasetMessages = {
       empty: '当前知识库还没有文件。点击添加文件，从文件管理中选择已就绪文件。',
       fileName: '文件名称',
       fileStatus: '文件状态',
-      enabled: '是否启用',
-      enabledTooltip: '这个功能只会影响本知识库中是否使用该文档，不会删除原文档。',
+      enabled: '启用状态',
+      enabledTooltip:
+        '用于控制该文档是否参与当前知识库的检索和问答。关闭后，文档不会被知识库使用，但原文件不会被删除。',
       chunks: '切片数',
+      chunksTooltip:
+        '文档解析后生成的内容片段数量。知识库检索和问答时，会以这些内容片段为单位进行匹配。',
       actions: '操作',
       syncStatus: '同步状态',
       documentState: '文档状态',
@@ -767,8 +775,14 @@ const messages: DatasetMessages = {
       fullTextSearch: '全文搜索',
       hybridSearch: '混合搜索',
       topK: 'Top K',
+      topKHelp:
+        '控制每次检索最多返回多少条候选内容。数值调高会召回更多内容，覆盖面更广，但可能带入不相关信息；数值调低结果更聚焦，但可能漏掉有用内容。',
       scoreThreshold: '置信阈值',
+      scoreThresholdHelp:
+        '控制结果需要达到的最低相关度。阈值调高会过滤掉更多低相关内容，答案更谨慎；阈值调低会保留更多结果，召回更充分，但噪声也可能增加。',
       enableReranking: '启用重排序',
+      rerankingHelp:
+        '开启后会用重排序模型对初步召回的内容重新排序，让更相关的内容排在前面。通常能提升答案质量，但会增加一点响应时间和模型调用成本。',
       rerankingDescription: '使用重排序模型来提升检索结果的质量',
       rerankModel: '重排序模型',
       selectRerankModel: '选择重排序模型',
@@ -891,6 +905,8 @@ const messages: DatasetMessages = {
     fileRefsCreatePartialFailed: '{count} 个文件资产未能添加',
     fileCandidateEmbeddingGenerating: '向量生成中，请稍等',
     fileCandidateEmbeddingGenerateSuccess: '已生成知识库对应的向量结果',
+    fileCandidateEmbeddingBatchGenerateSuccess: '已生成 {count} 个文件的知识库向量',
+    fileCandidateEmbeddingBatchGeneratePartialFailed: '{count} 个文件的知识库向量生成失败',
     fileRefRetrySuccess: '文件资产同步任务已投递',
     deleteSuccess: '文档删除成功',
     deleteFailed: '文档删除失败',
@@ -995,7 +1011,7 @@ const messages: DatasetMessages = {
 
   // Search and filter
   search: {
-    placeholder: '搜索文件夹与文档...',
+    placeholder: '搜索知识库...',
     filter: '筛选',
     all: '全部',
     byStatus: '按状态筛选',

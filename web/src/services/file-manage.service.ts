@@ -37,6 +37,8 @@ import type {
   ListFileChunksResponse,
   UpdateFileChunkRequest,
   UpdateFileChunkResponse,
+  BatchUpdateFileChunksRequest,
+  BatchUpdateFileChunksResponse,
   AskFileQuestionRequest,
   AskFileQuestionResponse,
   FileQuestionStreamEvent,
@@ -204,6 +206,13 @@ class FileManageService extends BaseService {
     data: UpdateFileChunkRequest
   ): Promise<ApiResponseData<UpdateFileChunkResponse>> {
     return this.request('patch', `/console/api/files/${fileId}/chunks/${chunkId}`, data);
+  }
+
+  async batchUpdateFileChunks(
+    fileId: string,
+    data: BatchUpdateFileChunksRequest
+  ): Promise<ApiResponseData<BatchUpdateFileChunksResponse>> {
+    return this.request('patch', `/console/api/files/${fileId}/chunks/batch`, data);
   }
 
   async askFileQuestion(

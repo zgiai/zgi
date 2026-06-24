@@ -159,6 +159,9 @@ const messages = {
       noReference: 'No links',
       openFile: 'Handle in file management',
       generateDatasetEmbedding: 'Generate dataset vectors',
+      batchGenerateDatasetEmbedding: 'Generate dataset vectors ({count})',
+      embeddingGenerationNotice:
+        '{count} files are missing vector results for the current knowledge base model. Generate dataset vectors to make them addable.',
       resultSummary: 'Showing {count} of {total} file assets',
       addSelected: 'Add {count} files',
       filters: {
@@ -183,6 +186,9 @@ const messages = {
         missingDatasetEmbedding: 'Missing dataset vectors',
         missingDatasetEmbeddingDetail:
           'This file has no vector result for the dataset model {model}. Use Generate dataset vectors in Actions.',
+        missingDatasetEmbeddingDetailPrefix:
+          'This file has no vector result for the dataset model {model}. ',
+        missingDatasetEmbeddingAction: 'Use Generate dataset vectors in Actions.',
         datasetEmbeddingModelMissing: 'Dataset embedding model is not configured',
         unavailable: 'Unavailable',
       },
@@ -198,10 +204,12 @@ const messages = {
       empty: 'This dataset has no files yet. Add ready files from file management.',
       fileName: 'File name',
       fileStatus: 'File status',
-      enabled: 'Enabled',
+      enabled: 'Enabled status',
       enabledTooltip:
-        'This only controls whether the document is used in this dataset. It will not delete the original document.',
+        'Controls whether this document participates in retrieval and Q&A for the current dataset. When disabled, the dataset will not use this document, but the original file will not be deleted.',
       chunks: 'Chunks',
+      chunksTooltip:
+        'The number of content chunks generated after document parsing. Dataset retrieval and Q&A match against these chunks.',
       actions: 'Actions',
       syncStatus: 'Sync status',
       documentState: 'Document state',
@@ -777,8 +785,14 @@ const messages = {
       fullTextSearch: 'Full-text Search',
       hybridSearch: 'Hybrid Search',
       topK: 'Top K',
+      topKHelp:
+        'Controls the maximum number of candidate chunks returned for each retrieval. A higher value broadens coverage but may include less relevant content; a lower value keeps results focused but may miss useful context.',
       scoreThreshold: 'Score Threshold',
+      scoreThresholdHelp:
+        'Sets the minimum relevance score a result must meet. Raising it filters more low-relevance content and makes answers more conservative; lowering it keeps more results but may add noise.',
       enableReranking: 'Enable Reranking',
+      rerankingHelp:
+        'Uses a reranking model to reorder initially retrieved content so the most relevant chunks appear first. This usually improves answer quality, with some added latency and model cost.',
       rerankingDescription: 'Use reranking model to improve result quality',
       rerankModel: 'Rerank Model',
       selectRerankModel: 'Select rerank model',
@@ -902,6 +916,9 @@ const messages = {
     fileRefsCreatePartialFailed: '{count} file assets could not be added',
     fileCandidateEmbeddingGenerating: 'Generating vectors. Please wait.',
     fileCandidateEmbeddingGenerateSuccess: 'Dataset vector result generated',
+    fileCandidateEmbeddingBatchGenerateSuccess: 'Dataset vectors generated for {count} files',
+    fileCandidateEmbeddingBatchGeneratePartialFailed:
+      'Failed to generate dataset vectors for {count} files',
     fileRefRetrySuccess: 'File asset sync queued',
     deleteSuccess: 'Document deleted successfully',
     deleteFailed: 'Document deletion failed',
@@ -1010,7 +1027,7 @@ const messages = {
 
   // Search and filter
   search: {
-    placeholder: 'Search documents...',
+    placeholder: 'Search knowledge bases...',
     filter: 'Filter',
     all: 'All',
     byStatus: 'Filter by status',

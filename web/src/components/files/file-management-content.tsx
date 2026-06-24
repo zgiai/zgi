@@ -79,6 +79,7 @@ import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-workspace';
 import { fileManageService } from '@/services/file-manage.service';
+import { toast } from 'sonner';
 import type { Organization } from '@/services/types/organization';
 import type { Workspace } from '@/store/workspace-store';
 import {
@@ -107,6 +108,31 @@ export interface FileManagementContentProps {
 }
 
 const SYSTEM_FILE_CATEGORIES = new Set(['all', 'needs_action', 'uploaded', 'default']);
+
+function normalizeFolderName(name: string) {
+  return name.trim().toLocaleLowerCase();
+}
+
+function normalizeFolderParentId(parentId: string | null | undefined) {
+  return parentId || '';
+}
+
+function hasSiblingFolderName(
+  folders: FileFolder[],
+  name: string,
+  parentId: string | null | undefined,
+  excludeFolderId?: string
+) {
+  const normalizedName = normalizeFolderName(name);
+  const normalizedParentId = normalizeFolderParentId(parentId);
+
+  return folders.some(
+    folder =>
+      folder.id !== excludeFolderId &&
+      normalizeFolderName(folder.name) === normalizedName &&
+      normalizeFolderParentId(folder.parent_id) === normalizedParentId
+  );
+}
 
 type FileProcessingStatusFilter = 'all' | 'needs_action' | 'ready' | 'stored_only';
 
@@ -611,7 +637,7 @@ function MoveFolderDialog({
           </DialogDescription>
         </DialogHeader>
         <form
-          className="space-y-4"
+          className="px-6 pb-6"
           onSubmit={event => {
             event.preventDefault();
             if (!isSameTarget) {
@@ -619,7 +645,7 @@ function MoveFolderDialog({
             }
           }}
         >
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             <Label htmlFor="move-folder-target">{t('files.folder.targetFolder')}</Label>
             <Select
               value={targetId}
@@ -641,7 +667,7 @@ function MoveFolderDialog({
               </SelectContent>
             </Select>
           </div>
-          <DialogFooter>
+          <DialogFooter className="px-0 pb-0 pt-8">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               {t('common.cancel')}
             </Button>
@@ -925,6 +951,11 @@ const FileManagementContent = ({
 
   const handleCreateFolderConfirm = useCallback(
     async (data: CreateFolderData) => {
+      if (hasSiblingFolderName(folders, data.name, data.parent_id)) {
+        toast.error(t('files.folder.duplicateName'));
+        return;
+      }
+
       const createdFolder = await createFolder({
         name: data.name,
         parent_id: data.parent_id,
@@ -936,7 +967,7 @@ const FileManagementContent = ({
       reload();
       goToPage(1);
     },
-    [createFolder, goToPage, reload]
+    [createFolder, folders, goToPage, reload, t]
   );
 
   const handleUpload = () => {
@@ -994,13 +1025,18 @@ const FileManagementContent = ({
     async (name: string) => {
       if (!folderToRename) return;
 
+      if (hasSiblingFolderName(folders, name, folderToRename.parent_id, folderToRename.id)) {
+        toast.error(t('files.folder.duplicateName'));
+        return;
+      }
+
       await updateFolder(folderToRename.id, {
         name,
         parent_id: folderToRename.parent_id || '',
       });
       setFolderToRename(null);
     },
-    [folderToRename, updateFolder]
+    [folderToRename, folders, t, updateFolder]
   );
 
   const handleFolderMove = useCallback((folder: FileFolder) => {
@@ -1011,13 +1047,18 @@ const FileManagementContent = ({
     async (targetId: string) => {
       if (!folderToMove) return;
 
+      if (hasSiblingFolderName(folders, folderToMove.name, targetId, folderToMove.id)) {
+        toast.error(t('files.folder.duplicateName'));
+        return;
+      }
+
       await moveFolder({
         folder_id: folderToMove.id,
         target_id: targetId,
       });
       setFolderToMove(null);
     },
-    [folderToMove, moveFolder]
+    [folderToMove, folders, moveFolder, t]
   );
 
   const handleFolderDelete = useCallback((folder: FileFolder) => {
@@ -1401,19 +1442,7 @@ const FileManagementContent = ({
 
             <div className="shrink-0 border-b bg-background">
               <div className="flex min-h-10 items-center gap-2 px-4 py-1.5 lg:px-7">
-                {searchValue.trim() || processingStatusFilter !== 'all' ? (
-                  <Button
-                    variant="ghost"
-                    className="h-9 rounded-md px-3 text-muted-foreground"
-                    onClick={() => {
-                      setSearchValue('');
-                      setProcessingStatusFilter('all');
-                    }}
-                  >
-                    {t('common.clear')}
-                  </Button>
-                ) : null}
-                <span className="mr-1 text-sm font-medium text-muted-foreground">
+                <span className="mr-1 text-sm font-semibold text-foreground">
                   {t('files.filter.processingStatusLabel')}
                 </span>
                 <div

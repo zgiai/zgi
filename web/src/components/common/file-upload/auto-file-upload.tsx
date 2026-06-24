@@ -651,6 +651,19 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             <div className="text-center select-none flex flex-col items-center">
               <UploadCloudIcon className="w-8 h-8 text-primary mb-2" />
               <p className="text-sm text-muted-foreground">{t('fileUpload.dropHere')}</p>
+              <Button
+                type="button"
+                size="sm"
+                className="mt-3 px-5"
+                disabled={isFull}
+                onClick={event => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!isFull) inputRef.current?.click();
+                }}
+              >
+                {t('fileUpload.clickUpload')}
+              </Button>
               {acceptExt.length > 0 && (
                 <p className="text-xs text-muted-foreground mt-1">
                   {t('fileUpload.allowedTypesLabel')}

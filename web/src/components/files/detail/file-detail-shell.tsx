@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertCircle,
@@ -43,13 +43,21 @@ import {
   FileOriginalPreviewPanel,
   type FilePreviewLocator,
 } from '@/components/files/detail/file-original-preview-panel';
-import { FileChunksPanel } from '@/components/files/detail/file-chunks-panel';
+import {
+  FileChunksPanel,
+  type FileChunkLocateTarget,
+} from '@/components/files/detail/file-chunks-panel';
 import { FileQAPanel } from '@/components/files/detail/file-qa-panel';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { contentParseService } from '@/services/content-parse.service';
 import type { ContentParseFileRouteProviderStatus } from '@/services/types/content-parse';
-import type { FileAssetProductStatus, FileItem, FileParseProviderKey } from '@/services/types/file';
+import type {
+  FileAssetProductStatus,
+  FileItem,
+  FileParseProviderKey,
+  FileQuestionAnswerSource,
+} from '@/services/types/file';
 import { useDownloadFile } from '@/hooks/use-files';
 import { useFileDetail } from '@/hooks/file/use-file-detail';
 import { useCreateFileProcessingRequest } from '@/hooks/file/use-file-processing-request';
@@ -78,6 +86,13 @@ function getProcessingBadgeVariant(status: string) {
     default:
       return 'subtle' as const;
   }
+}
+
+function getDatasetReturnTo(value: string | null): string | null {
+  if (!value) return null;
+  if (!value.startsWith('/console/dataset/')) return null;
+  if (value.startsWith('//') || value.includes('://')) return null;
+  return value;
 }
 
 function metadataString(metadata: Record<string, unknown> | undefined, key: string): string {
@@ -456,14 +471,14 @@ function ReparseDialog({
           <p className="text-sm leading-5 text-muted-foreground">
             {t('detail.reparse.confirmDescription')}
           </p>
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             <Label className="text-sm font-semibold">{t('detail.reparse.providerLabel')}</Label>
             <Select
               value={provider}
               onValueChange={handleProviderChange}
               disabled={providersLoading || !hasProviders}
             >
-              <SelectTrigger className="bg-background">
+              <SelectTrigger className="min-h-12 bg-background py-2.5">
                 <SelectValue
                   placeholder={
                     providersLoading
@@ -560,10 +575,12 @@ function FilePreviewChunksWorkbench({
   file,
   chunksEnabled,
   chunkQueryVersion,
+  locateTarget,
 }: {
   file: FileItem;
   chunksEnabled: boolean;
   chunkQueryVersion?: number | string | null;
+  locateTarget?: FileChunkLocateTarget | null;
 }) {
   const t = useT('files');
   const [originalPreviewHidden, setOriginalPreviewHidden] = useState(false);
@@ -614,6 +631,7 @@ function FilePreviewChunksWorkbench({
           queryVersion={chunkQueryVersion}
           className="h-full"
           originalPreviewHidden={originalPreviewHidden}
+          locateTarget={locateTarget}
           onToggleOriginalPreview={() => setOriginalPreviewHidden(current => !current)}
           onLocateIssue={locateIssue}
         />
@@ -624,14 +642,21 @@ function FilePreviewChunksWorkbench({
 
 export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { files: t, common } = useT();
   const { hasPermission } = useAccountPermissions();
   const canDownload = hasPermission('file.download');
   const { downloadFile, isDownloading } = useDownloadFile();
   const [activeView, setActiveView] = useState<'preview' | 'qa'>('preview');
+  const [chunkLocateTarget, setChunkLocateTarget] = useState<FileChunkLocateTarget | null>(null);
   const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
   const [selectedReparseProvider, setSelectedReparseProvider] =
     useState<FileParseProviderKey>('auto');
+  const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
+  const returnToDataset = () => {
+    if (!datasetReturnTo) return;
+    router.push(datasetReturnTo);
+  };
   const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
     pollProcessingStatus: true,
   });
@@ -721,6 +746,10 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   }, [activeView, qaEnabled]);
 
   useEffect(() => {
+    setChunkLocateTarget(null);
+  }, [fileId]);
+
+  useEffect(() => {
     if (!reparseProviders.length) return;
     if (reparseProviders.some(provider => provider.key === selectedReparseProvider)) {
       return;
@@ -735,10 +764,18 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     return (
       <div className="flex h-full min-h-0 flex-col bg-bg-canvas">
         <div className="border-b bg-background px-6 py-4">
-          <Button variant="ghost" className="gap-2" onClick={() => router.push('/console/files')}>
-            <ArrowLeft className="h-4 w-4" />
-            {t('detail.backToFiles')}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {datasetReturnTo ? (
+              <Button variant="outline" className="gap-2" onClick={returnToDataset}>
+                <ArrowLeft className="h-4 w-4" />
+                {t('detail.backToDataset')}
+              </Button>
+            ) : null}
+            <Button variant="ghost" className="gap-2" onClick={() => router.push('/console/files')}>
+              <ArrowLeft className="h-4 w-4" />
+              {t('detail.backToFiles')}
+            </Button>
+          </div>
         </div>
         <div className="flex flex-1 items-center justify-center p-6">
           <Alert variant="destructive" className="max-w-xl">
@@ -781,12 +818,17 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <ReparseButtonWithTooltip
-              latestRequest={processing?.latest_request}
-              canReparse={canReparse}
-              loading={createProcessingRequest.isPending}
-              onReparse={() => setReparseConfirmOpen(true)}
-            />
+            {datasetReturnTo ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 gap-2 rounded-md px-3 text-sm"
+                onClick={returnToDataset}
+              >
+                <ArrowLeft className="h-4 w-4" />
+                {t('detail.backToDataset')}
+              </Button>
+            ) : null}
             <div className="flex h-9 items-center rounded-md border border-border bg-muted/30 p-0.5">
               <Button
                 type="button"
@@ -834,6 +876,12 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
                 {common('refresh')}
               </Button>
             ) : null}
+            <ReparseButtonWithTooltip
+              latestRequest={processing?.latest_request}
+              canReparse={canReparse}
+              loading={createProcessingRequest.isPending}
+              onReparse={() => setReparseConfirmOpen(true)}
+            />
             {canDownload ? (
               <Button
                 variant="outline"
@@ -907,6 +955,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
               file={file}
               chunksEnabled={chunksEnabled}
               chunkQueryVersion={chunkQueryVersion}
+              locateTarget={chunkLocateTarget}
             />
           </section>
         ) : (
@@ -917,6 +966,13 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
               processing={processing}
               vectorStatus={vectorStatus}
               enabled={qaEnabled}
+              onLocateSource={(source: FileQuestionAnswerSource) => {
+                setChunkLocateTarget({
+                  chunkId: source.primary_chunk_id,
+                  requestId: Date.now(),
+                });
+                setActiveView('preview');
+              }}
             />
           </section>
         )}

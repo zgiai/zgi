@@ -130,6 +130,11 @@ type fileChunkUpdateRequest struct {
 	Enabled *bool   `json:"enabled"`
 }
 
+type fileChunkBatchUpdateRequest struct {
+	ChunkIDs []string `json:"chunk_ids"`
+	Enabled  *bool    `json:"enabled"`
+}
+
 type fileQARequest struct {
 	Question string `json:"question"`
 	TopK     int    `json:"top_k"`
@@ -1097,6 +1102,54 @@ func (h *FileHandler) UpdateFileChunk(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// BatchUpdateFileChunks enables/disables multiple current generation chunks.
+// PATCH /files/:file_id/chunks/batch
+func (h *FileHandler) BatchUpdateFileChunks(c *gin.Context) {
+	if h.fileAssetChunkEditService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset chunk edit service is not available")
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		h.businessError(c, response.ErrUnauthorized)
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeManageDocumentFile(c)
+	if !ok {
+		return
+	}
+	var req fileChunkBatchUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	if req.Enabled == nil || len(req.ChunkIDs) == 0 {
+		h.businessError(c, response.ErrInvalidParams)
+		return
+	}
+	chunkIDs := make([]uuid.UUID, 0, len(req.ChunkIDs))
+	for _, rawID := range req.ChunkIDs {
+		chunkID, err := uuid.Parse(rawID)
+		if err != nil || chunkID == uuid.Nil {
+			h.businessError(c, response.ErrInvalidParams)
+			return
+		}
+		chunkIDs = append(chunkIDs, chunkID)
+	}
+	result, err := h.fileAssetChunkEditService.BatchUpdateCurrentFileChunks(c.Request.Context(), datalibraryservice.FileAssetChunkBatchEditInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+		ChunkIDs:       chunkIDs,
+		Enabled:        *req.Enabled,
+		UpdatedBy:      accountID,
+	})
+	if err != nil {
+		h.handleFileAssetChunkEditError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *FileHandler) handleFileAssetChunkEditError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, datalibraryservice.ErrDocumentAssetNotFound):
@@ -1104,6 +1157,7 @@ func (h *FileHandler) handleFileAssetChunkEditError(c *gin.Context, err error) {
 	case errors.Is(err, datalibraryservice.ErrOrganizationIDRequired),
 		errors.Is(err, datalibraryservice.ErrSourceFileIDRequired),
 		errors.Is(err, datalibraryservice.ErrAssetIDRequired),
+		errors.Is(err, datalibraryservice.ErrFileChunkIDsRequired),
 		errors.Is(err, datalibraryservice.ErrProcessingRunMismatch),
 		errors.Is(err, datalibraryservice.ErrFileChunkEditNotAllowed),
 		errors.Is(err, datalibraryservice.ErrDocumentChunkEmbeddingsRequired):

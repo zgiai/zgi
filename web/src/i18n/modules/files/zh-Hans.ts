@@ -12,6 +12,7 @@ const messages: FilesMessages = {
     uploadFile: '上传文件',
     viewsTitle: '视图',
     fileSpaceTitle: '文件空间',
+    folderLevelHint: '自建文件夹层级最多支持三级目录结构。',
     allFiles: '全部文件',
     needsActionFiles: '需处理',
     uploadedFiles: '最近上传',
@@ -124,7 +125,8 @@ const messages: FilesMessages = {
     unsupportedDescription:
       '当前支持图片、PDF、HTML、轻量文本类文件、DOCX、XLSX 和 XLS 原文件预览。',
     unsupportedFormatTitle: '{format} 文件暂不支持预览',
-    unsupportedFormatDescription: '当前暂不支持预览 {format} 格式文件。请下载文件后在本地查看。',
+    unsupportedFormatDescription:
+      '当前暂不支持预览 {format} 格式文件，同时也不支持上下滑动。请下载文件后在本地查看。',
     openInNewTab: '新窗口打开',
     unavailableTitle: '无法预览该文件',
     downloadOnlyDescription: '请下载文件后在本地查看。',
@@ -179,6 +181,7 @@ const messages: FilesMessages = {
 
   detail: {
     backToFiles: '返回文件列表',
+    backToDataset: '返回知识库',
     fileBreadcrumb: '文件',
     previewOriginal: '预览原文件',
     downloadOriginal: '下载原文件',
@@ -413,6 +416,7 @@ const messages: FilesMessages = {
       save: '保存',
       toasts: {
         updated: '切片已更新',
+        batchUpdated: '已批量更新 {count} 个切片',
         updateFailed: '切片更新失败',
       },
     },
@@ -440,7 +444,8 @@ const messages: FilesMessages = {
       askFailed: '问题提交失败',
       noSources: '未在文档中找到相关引用。',
       sources: '引用来源（{count}）',
-      distance: '距离 {value}',
+      similarityRank: '相似度排名 {rank}',
+      locateSource: '找回切片',
     },
     reparse: {
       action: '重新解析',
@@ -643,6 +648,7 @@ const messages: FilesMessages = {
     workspaceLabel: '所属工作空间',
     workspacePlaceholder: '请选择所属工作空间',
     workspaceRequired: '请选择所属工作空间',
+    duplicateName: '同一级目录下已存在同名文件夹，请更换名称。',
     parentFolder: '父文件夹',
     selectParentFolder: '选择父文件夹',
     folderLabel: '文件夹：',

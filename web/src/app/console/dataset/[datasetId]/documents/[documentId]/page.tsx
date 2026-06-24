@@ -29,9 +29,10 @@ export default function DocumentDetailRedirectPage() {
 
   useEffect(() => {
     if (sourceFileId) {
-      router.replace(`/console/files/${sourceFileId}`);
+      const returnTo = `/console/dataset/${datasetId}/documents`;
+      router.replace(`/console/files/${sourceFileId}?returnTo=${encodeURIComponent(returnTo)}`);
     }
-  }, [router, sourceFileId]);
+  }, [datasetId, router, sourceFileId]);
 
   if (isLoading && !documentError) {
     return (

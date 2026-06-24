@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	datasetrepo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
+	file_model "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	file_repo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -56,6 +59,45 @@ func TestFileResourceServiceRelatedDatasetCountsUseActiveAssetRefs(t *testing.T)
 	}
 }
 
+func TestFileResourceServiceRejectsDuplicateSiblingFolderNames(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	createFileResourceFolderTables(t, db)
+
+	execFileResourceSQL(t, db, `INSERT INTO file_folders (id, organization_id, workspace_id, name, parent_id, created_by, created_at, updated_at, position, permission) VALUES (?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)`, "existing-root", "org-1", "workspace-1", "Reports", "account-1", 0, "only_me")
+	execFileResourceSQL(t, db, `INSERT INTO file_folders (id, organization_id, workspace_id, name, parent_id, created_by, created_at, updated_at, position, permission) VALUES (?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)`, "rename-target", "org-1", "workspace-1", "Draft", "account-1", 0, "only_me")
+	execFileResourceSQL(t, db, `INSERT INTO file_folders (id, organization_id, workspace_id, name, parent_id, created_by, created_at, updated_at, position, permission) VALUES (?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)`, "target-parent", "org-1", "workspace-1", "Target", "account-1", 0, "only_me")
+	execFileResourceSQL(t, db, `INSERT INTO file_folders (id, organization_id, workspace_id, name, parent_id, created_by, created_at, updated_at, position, permission) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)`, "existing-child", "org-1", "workspace-1", "Reports", "target-parent", "account-1", 0, "only_me")
+	execFileResourceSQL(t, db, `INSERT INTO file_folders (id, organization_id, workspace_id, name, parent_id, created_by, created_at, updated_at, position, permission) VALUES (?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)`, "moving-folder", "org-1", "workspace-1", "Reports", "account-1", 0, "only_me")
+
+	workspaceID := "workspace-1"
+	svc := &fileResourceService{fileFolderRepo: file_repo.NewFileFolderRepository(db)}
+
+	_, err = svc.CreateFolder(context.Background(), &file_model.FileFolder{
+		ID:             "new-duplicate",
+		OrganizationID: "org-1",
+		WorkspaceID:    &workspaceID,
+		Name:           "reports",
+		CreatedBy:      "account-1",
+		Permission:     "only_me",
+	})
+	if !errors.Is(err, ErrFolderNameConflict) {
+		t.Fatalf("CreateFolder error = %v, want ErrFolderNameConflict", err)
+	}
+
+	_, err = svc.UpdateFolder(context.Background(), "rename-target", map[string]interface{}{"name": "Reports"})
+	if !errors.Is(err, ErrFolderNameConflict) {
+		t.Fatalf("UpdateFolder error = %v, want ErrFolderNameConflict", err)
+	}
+
+	err = svc.MoveFolderToFolder(context.Background(), "moving-folder", "target-parent", "account-1", "org-1")
+	if !errors.Is(err, ErrFolderNameConflict) {
+		t.Fatalf("MoveFolderToFolder error = %v, want ErrFolderNameConflict", err)
+	}
+}
+
 func createFileResourceRelationTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	statements := []string{
@@ -66,6 +108,31 @@ func createFileResourceRelationTables(t *testing.T, db *gorm.DB) {
 	for _, statement := range statements {
 		execFileResourceSQL(t, db, statement)
 	}
+}
+
+func createFileResourceFolderTables(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	execFileResourceSQL(
+		t,
+		db,
+		`CREATE TABLE file_folders (
+			id text primary key,
+			organization_id text,
+			workspace_id text,
+			name text,
+			description text,
+			parent_id text,
+			created_by text,
+			created_at datetime,
+			updated_by text,
+			updated_at datetime,
+			icon_type text,
+			icon text,
+			icon_background text,
+			position integer,
+			permission text
+		)`,
+	)
 }
 
 func execFileResourceSQL(t *testing.T, db *gorm.DB, sql string, args ...any) {

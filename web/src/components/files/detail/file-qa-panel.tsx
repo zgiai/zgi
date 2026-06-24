@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+import type { FormEvent, KeyboardEvent } from 'react';
 import {
   AlertCircle,
   Bot,
   ChevronDown,
   ChevronRight,
   Layers3,
+  LocateFixed,
   Loader2,
   MessageSquareText,
   Send,
@@ -25,6 +26,7 @@ import type {
   FileAssetArtifactState,
   FileAssetVectorStatus,
   FileDetailProcessing,
+  FileQuestionAnswerSource,
   FileQuestionStreamEvent,
 } from '@/services/types/file';
 
@@ -34,6 +36,7 @@ interface FileQAPanelProps {
   processing?: FileDetailProcessing;
   vectorStatus?: string;
   enabled: boolean;
+  onLocateSource?: (source: FileQuestionAnswerSource) => void;
 }
 
 interface FileQAExchange {
@@ -41,6 +44,14 @@ interface FileQAExchange {
   question: string;
   result: AskFileQuestionResponse;
   streaming?: boolean;
+}
+
+function isComposingEnterEvent(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
+  const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent & {
+    isComposing?: boolean;
+  };
+
+  return nativeEvent.isComposing === true || event.keyCode === 229;
 }
 
 function getVectorBadgeVariant(status?: string) {
@@ -63,12 +74,14 @@ export function FileQAPanel({
   processing,
   vectorStatus,
   enabled,
+  onLocateSource,
 }: FileQAPanelProps) {
   const t = useT('files');
   const [question, setQuestion] = useState('');
   const [exchanges, setExchanges] = useState<FileQAExchange[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [qaError, setQaError] = useState<string | null>(null);
+  const isComposingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
   const resolvedVectorStatus = vectorStatus || artifactState?.vector_status || 'none';
@@ -206,6 +219,15 @@ export function FileQAPanel({
     }
   };
 
+  const handleQuestionKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    if (isComposingRef.current || isComposingEnterEvent(event)) return;
+
+    event.preventDefault();
+    if (!canSubmit) return;
+    event.currentTarget.form?.requestSubmit();
+  };
+
   if (!enabled) {
     return (
       <Alert>
@@ -224,9 +246,7 @@ export function FileQAPanel({
           <p className="mt-1 text-sm text-muted-foreground">{t('detail.qa.description')}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={getVectorBadgeVariant(resolvedVectorStatus)}>
-            {vectorStatusLabel}
-          </Badge>
+          <Badge variant={getVectorBadgeVariant(resolvedVectorStatus)}>{vectorStatusLabel}</Badge>
           <Badge variant="outline">{t('detail.qa.chunkSummary', { count: chunkCount })}</Badge>
           <Badge variant="outline">{t('detail.qa.vectorSummary', { count: embeddingCount })}</Badge>
         </div>
@@ -277,7 +297,7 @@ export function FileQAPanel({
                     t('detail.qa.askFailed')
                   )}
                 </div>
-                <SourceList result={exchange.result} />
+                <SourceList result={exchange.result} onLocateSource={onLocateSource} />
               </div>
             </div>
           ))
@@ -294,9 +314,16 @@ export function FileQAPanel({
       <form onSubmit={handleSubmit} className="border-t border-border bg-background p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <Textarea
-            className="min-h-[84px] flex-1 resize-none"
+            className="min-h-[84px] flex-1 resize-none placeholder:font-medium placeholder:text-primary/60"
             value={question}
             onChange={event => setQuestion(event.target.value)}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+            }}
+            onKeyDown={handleQuestionKeyDown}
             placeholder={t('detail.qa.placeholder')}
             disabled={isStreaming}
           />
@@ -314,7 +341,13 @@ export function FileQAPanel({
   );
 }
 
-function SourceList({ result }: { result: AskFileQuestionResponse }) {
+function SourceList({
+  result,
+  onLocateSource,
+}: {
+  result: AskFileQuestionResponse;
+  onLocateSource?: (source: FileQuestionAnswerSource) => void;
+}) {
   const t = useT('files');
   const [open, setOpen] = useState(false);
   if (!result.sources.length) {
@@ -343,7 +376,7 @@ function SourceList({ result }: { result: AskFileQuestionResponse }) {
         </Button>
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-2">
-        {result.sources.map(source => (
+        {result.sources.map((source, index) => (
           <div
             key={source.primary_chunk_id}
             className="rounded-md border border-border bg-muted/20 p-3"
@@ -351,10 +384,19 @@ function SourceList({ result }: { result: AskFileQuestionResponse }) {
             <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
               <span>#{source.position + 1}</span>
               <Badge variant="subtle">{t('detail.chunks.primary')}</Badge>
-              {typeof source.distance === 'number' ? (
-                <span className="text-xs text-muted-foreground">
-                  {t('detail.qa.distance', { value: source.distance.toFixed(3) })}
-                </span>
+              <span className="text-xs text-muted-foreground">
+                {t('detail.qa.similarityRank', { rank: index + 1 })}
+              </span>
+              {onLocateSource ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  className="ml-auto h-auto gap-1 p-0 text-xs font-medium text-primary"
+                  onClick={() => onLocateSource(source)}
+                >
+                  <LocateFixed className="h-3.5 w-3.5" />
+                  {t('detail.qa.locateSource')}
+                </Button>
               ) : null}
             </div>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{source.snippet}</p>

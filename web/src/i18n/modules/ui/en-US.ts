@@ -39,6 +39,7 @@ const messages = {
     disallowedBySettings: 'Some files are not allowed by current settings',
     selectFromSystem: 'Select from System',
     selectLocalFiles: 'Choose local files',
+    clickUpload: 'Click to upload',
     uploadFilesLabel: 'Upload Files',
     selectedFilesTitle: '{count} file(s) selected',
     selectedFilesPendingSummary: '{count} file(s) selected, waiting to upload.',

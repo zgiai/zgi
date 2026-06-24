@@ -178,6 +178,108 @@ func TestFileAssetChunkEditServiceEnqueuesDatasetRefSyncAfterEdit(t *testing.T) 
 	}
 }
 
+func TestFileAssetChunkEditServiceBatchUpdatesChunksAndEnqueuesDatasetRefSyncOnce(t *testing.T) {
+	assetID := uuid.New()
+	runID := uuid.New()
+	firstChunkID := uuid.New()
+	secondChunkID := uuid.New()
+	refID := uuid.New()
+	documentID := uuid.New()
+	assetRepo := &fileAssetStateAssetRepo{
+		asset: &model.DocumentAsset{
+			ID:              assetID,
+			OrganizationID:  "org-1",
+			SourceFileID:    "file-1",
+			ProductStatus:   model.DocumentAssetProductStatusReady,
+			ProcessingRunID: &runID,
+			GenerationNo:    5,
+		},
+	}
+	chunkRepo := newFileAssetChunkEditChunkRepo([]*model.DocumentChunk{
+		{
+			ID:              firstChunkID,
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    5,
+			ChunkType:       model.DocumentChunkTypeChild,
+			Content:         "first",
+			ContentHash:     documentChunkContentHash("first"),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
+		},
+		{
+			ID:              secondChunkID,
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    5,
+			ChunkType:       model.DocumentChunkTypeChild,
+			Content:         "second",
+			ContentHash:     documentChunkContentHash("second"),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
+		},
+	})
+	refStore := &fileAssetStateRefStore{refs: []*model.KnowledgeBaseAssetRef{
+		{
+			ID:                refID,
+			OrganizationID:    "org-1",
+			DatasetID:         "dataset-1",
+			AssetID:           assetID,
+			DatasetDocumentID: &documentID,
+			SyncStatus:        model.KnowledgeBaseAssetRefSyncStatusSynced,
+		},
+	}}
+	documentStore := &fileAssetStateDocumentStore{}
+	enqueuer := &fileAssetChunkEditDatasetRefSyncEnqueuer{}
+	svc := NewFileAssetChunkEditServiceWithDatasetRefs(
+		assetRepo,
+		chunkRepo,
+		nil,
+		&fileAssetChunkEditEmbeddingService{},
+		nil,
+		refStore,
+		documentStore,
+		enqueuer,
+	)
+
+	result, err := svc.BatchUpdateCurrentFileChunks(context.Background(), FileAssetChunkBatchEditInput{
+		OrganizationID: "org-1",
+		SourceFileID:   "file-1",
+		ChunkIDs:       []uuid.UUID{firstChunkID, secondChunkID, firstChunkID},
+		Enabled:        false,
+		UpdatedBy:      "user-1",
+	})
+	if err != nil {
+		t.Fatalf("BatchUpdateCurrentFileChunks: %v", err)
+	}
+	if result.UpdatedCount != 2 || len(result.Chunks) != 2 {
+		t.Fatalf("result=%+v", result)
+	}
+	if chunkRepo.updateCalls != 2 {
+		t.Fatalf("updateCalls=%d want 2", chunkRepo.updateCalls)
+	}
+	for _, chunkID := range []uuid.UUID{firstChunkID, secondChunkID} {
+		chunk, err := chunkRepo.GetByID(context.Background(), chunkID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		if chunk == nil || chunk.Enabled {
+			t.Fatalf("chunk %s enabled=%v", chunkID, chunk != nil && chunk.Enabled)
+		}
+	}
+	if len(documentStore.disabledIDs) != 1 || documentStore.disabledIDs[0] != documentID.String() || documentStore.disabledBy != "user-1" {
+		t.Fatalf("disabled_ids=%v disabled_by=%s", documentStore.disabledIDs, documentStore.disabledBy)
+	}
+	if refStore.pendingRefID != refID || refStore.pendingSyncRunID == uuid.Nil {
+		t.Fatalf("pending_ref=%s sync_run=%s", refStore.pendingRefID, refStore.pendingSyncRunID)
+	}
+	if len(enqueuer.items) != 1 {
+		t.Fatalf("enqueued=%d want 1", len(enqueuer.items))
+	}
+}
+
 func TestFileAssetChunkEditServiceUpdatesParentChunkAndRegeneratesChildren(t *testing.T) {
 	assetID := uuid.New()
 	runID := uuid.New()

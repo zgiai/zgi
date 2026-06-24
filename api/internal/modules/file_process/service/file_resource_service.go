@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -20,6 +22,8 @@ const (
 	// RecentFilesLimit is the maximum number of recent files to return
 	RecentFilesLimit = 20
 )
+
+var ErrFolderNameConflict = errors.New("folder name already exists in the same directory")
 
 // FileFolderService defines the interface for file folder operations
 type FileFolderService interface {
@@ -109,10 +113,64 @@ func (s *fileResourceService) CreateFolder(ctx context.Context, folder *file_mod
 		return nil, fmt.Errorf("invalid folder permission: %s", folder.Permission)
 	}
 
+	folder.Name = strings.TrimSpace(folder.Name)
+	if err := s.ensureSiblingFolderNameAvailable(ctx, folder.OrganizationID, folder.WorkspaceID, folder.ParentID, folder.Name, nil); err != nil {
+		return nil, err
+	}
+
 	if err := s.fileFolderRepo.CreateFolder(ctx, folder); err != nil {
 		return nil, fmt.Errorf("failed to create folder: %w", err)
 	}
 	return folder, nil
+}
+
+func needsFolderNameConflictCheck(updates map[string]interface{}) bool {
+	_, hasName := updates["name"]
+	_, hasParentID := updates["parent_id"]
+	_, hasWorkspaceID := updates["workspace_id"]
+	return hasName || hasParentID || hasWorkspaceID
+}
+
+func normalizeFolderIDUpdate(value interface{}) (*string, bool) {
+	switch v := value.(type) {
+	case nil:
+		return nil, true
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return nil, true
+		}
+		return &trimmed, true
+	case *string:
+		if v == nil {
+			return nil, true
+		}
+		trimmed := strings.TrimSpace(*v)
+		if trimmed == "" {
+			return nil, true
+		}
+		return &trimmed, true
+	default:
+		return nil, false
+	}
+}
+
+func folderIDUpdateValue(id *string) interface{} {
+	if id == nil {
+		return nil
+	}
+	return *id
+}
+
+func (s *fileResourceService) ensureSiblingFolderNameAvailable(ctx context.Context, organizationID string, workspaceID *string, parentID *string, name string, excludeFolderID *string) error {
+	exists, err := s.fileFolderRepo.FolderNameExists(ctx, organizationID, workspaceID, parentID, name, excludeFolderID)
+	if err != nil {
+		return fmt.Errorf("failed to check folder name: %w", err)
+	}
+	if exists {
+		return ErrFolderNameConflict
+	}
+	return nil
 }
 
 // GetFolderByID gets a folder by its ID
@@ -229,6 +287,47 @@ func (s *fileResourceService) UpdateFolder(ctx context.Context, id string, updat
 
 		if !file_model.IsValidFileFolderPermission(permissionStr) {
 			return nil, fmt.Errorf("invalid folder permission: %s", permissionStr)
+		}
+	}
+
+	if needsFolderNameConflictCheck(updates) {
+		existingFolder, err := s.fileFolderRepo.GetFolderByID(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get folder: %w", err)
+		}
+
+		nextName := existingFolder.Name
+		if rawName, ok := updates["name"]; ok {
+			name, ok := rawName.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid folder name type: %T", rawName)
+			}
+			nextName = strings.TrimSpace(name)
+			updates["name"] = nextName
+		}
+
+		nextParentID := existingFolder.ParentID
+		if rawParentID, ok := updates["parent_id"]; ok {
+			parentID, ok := normalizeFolderIDUpdate(rawParentID)
+			if !ok {
+				return nil, fmt.Errorf("invalid parent folder type: %T", rawParentID)
+			}
+			nextParentID = parentID
+			updates["parent_id"] = folderIDUpdateValue(parentID)
+		}
+
+		nextWorkspaceID := existingFolder.WorkspaceID
+		if rawWorkspaceID, ok := updates["workspace_id"]; ok {
+			workspaceID, ok := normalizeFolderIDUpdate(rawWorkspaceID)
+			if !ok {
+				return nil, fmt.Errorf("invalid workspace type: %T", rawWorkspaceID)
+			}
+			nextWorkspaceID = workspaceID
+			updates["workspace_id"] = folderIDUpdateValue(workspaceID)
+		}
+
+		if err := s.ensureSiblingFolderNameAvailable(ctx, existingFolder.OrganizationID, nextWorkspaceID, nextParentID, nextName, &existingFolder.ID); err != nil {
+			return nil, err
 		}
 	}
 
@@ -529,6 +628,14 @@ func (s *fileResourceService) MoveFolderToFolder(ctx context.Context, folderID, 
 		if err := s.checkFolderMoveValidity(ctx, folderID, targetID, tenantID); err != nil {
 			return fmt.Errorf("invalid folder move: %w", err)
 		}
+	}
+
+	var targetParentID *string
+	if targetID != "" {
+		targetParentID = &targetID
+	}
+	if err := s.ensureSiblingFolderNameAvailable(ctx, tenantID, folder.WorkspaceID, targetParentID, folder.Name, &folder.ID); err != nil {
+		return err
 	}
 
 	// Update the folder's parent ID

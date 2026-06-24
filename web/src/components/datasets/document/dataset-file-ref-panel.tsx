@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { CheckCircle2, ExternalLink, FileText, HelpCircle, RefreshCcw, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
@@ -93,6 +94,28 @@ function processingStatusLabel(t: ReturnType<typeof useT<'datasets'>>, status: s
   }
 }
 
+function TableHeadWithHelp({ label, tooltip }: { label: string; tooltip: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span>{label}</span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            aria-label={tooltip}
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="start" className="max-w-72 text-sm leading-6">
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 export function DatasetFileRefPanel({
   refs,
   canEdit = true,
@@ -104,6 +127,10 @@ export function DatasetFileRefPanel({
   onToggleEnabled,
 }: DatasetFileRefPanelProps) {
   const t = useT('datasets');
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentSearch = searchParams.toString();
+  const returnTo = `${pathname}${currentSearch ? `?${currentSearch}` : ''}`;
 
   return (
     <div className="overflow-hidden rounded-xl border bg-background">
@@ -121,25 +148,17 @@ export function DatasetFileRefPanel({
             <TableHead className="text-sm">{t('documents.fileRefs.fileName')}</TableHead>
             <TableHead className="text-sm">{t('documents.fileRefs.fileStatus')}</TableHead>
             <TableHead className="text-sm">
-              <div className="flex items-center gap-1.5">
-                <span>{t('documents.fileRefs.enabled')}</span>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                      aria-label={t('documents.fileRefs.enabledTooltip')}
-                    >
-                      <HelpCircle className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" align="start" className="max-w-72 text-sm leading-6">
-                    {t('documents.fileRefs.enabledTooltip')}
-                  </TooltipContent>
-                </Tooltip>
-              </div>
+              <TableHeadWithHelp
+                label={t('documents.fileRefs.enabled')}
+                tooltip={t('documents.fileRefs.enabledTooltip')}
+              />
             </TableHead>
-            <TableHead className="text-sm">{t('documents.fileRefs.chunks')}</TableHead>
+            <TableHead className="text-sm">
+              <TableHeadWithHelp
+                label={t('documents.fileRefs.chunks')}
+                tooltip={t('documents.fileRefs.chunksTooltip')}
+              />
+            </TableHead>
             <TableHead className="text-sm">{t('documents.fileRefs.lastSyncedAt')}</TableHead>
             <TableHead className="text-right text-sm">{t('documents.fileRefs.actions')}</TableHead>
           </TableRow>
@@ -168,9 +187,7 @@ export function DatasetFileRefPanel({
                       <div className="truncate text-sm font-medium" title={ref.file_name}>
                         {ref.file_name}
                       </div>
-                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {ext}
-                      </div>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">{ext}</div>
                       {isFailed && ref.sync_error_message ? (
                         <div className="mt-1 truncate text-xs text-destructive">
                           {ref.sync_error_message}
@@ -181,7 +198,9 @@ export function DatasetFileRefPanel({
                 </TableCell>
                 <TableCell>
                   <Badge variant={processingStatusBadgeVariant(ref.processing_status)}>
-                    {ref.processing_status === 'ready' ? <CheckCircle2 className="h-3 w-3" /> : null}
+                    {ref.processing_status === 'ready' ? (
+                      <CheckCircle2 className="h-3 w-3" />
+                    ) : null}
                     {processingStatusLabel(t, ref.processing_status)}
                   </Badge>
                 </TableCell>
@@ -207,7 +226,9 @@ export function DatasetFileRefPanel({
                 <TableCell>
                   <div className="flex justify-end gap-1">
                     <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
-                      <Link href={`/console/files/${ref.file_id}`}>
+                      <Link
+                        href={`/console/files/${ref.file_id}?returnTo=${encodeURIComponent(returnTo)}`}
+                      >
                         <ExternalLink className="h-3.5 w-3.5" />
                         {t('documents.fileRefs.openFile')}
                       </Link>

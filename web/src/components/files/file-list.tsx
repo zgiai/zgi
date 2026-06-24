@@ -948,7 +948,9 @@ function FileListBase({
             <TableHead className="text-[13px]">{t('fileList.relatedStatus')}</TableHead>
             <TableHead className="text-[13px]">{t('fileList.uploadDate')}</TableHead>
             {hasAnyAction && (
-              <TableHead className="text-right text-[13px]">{t('fileList.actions')}</TableHead>
+              <TableHead className="pr-8 text-right text-[13px]">
+                {t('fileList.actions')}
+              </TableHead>
             )}
           </TableRow>
         </TableHeader>
@@ -997,7 +999,7 @@ function FileListBase({
                 </TableCell>
                 {/* Actions button */}
                 {hasAnyAction && (
-                  <TableCell className="text-right">
+                  <TableCell className="pr-8 text-right">
                     <div className="h-8 w-8 bg-muted animate-pulse rounded-md ml-auto" />
                   </TableCell>
                 )}
@@ -1110,7 +1112,7 @@ function FileListBase({
                     {formatDate(new Date(file.created_at).getTime() - 8 * 60 * 60 * 1000)}
                   </TableCell>
                   {hasAnyAction && (
-                    <TableCell className="text-right">
+                    <TableCell className="pr-8 text-right">
                       <div className="flex min-w-0 items-center justify-end gap-1.5">
                         {canOpenFileDetail && processingStatus === 'confirming' ? (
                           <Button

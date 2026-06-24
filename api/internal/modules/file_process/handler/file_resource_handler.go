@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,6 +21,8 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 	"go.uber.org/zap"
 )
+
+const folderDuplicateNameMessage = "同一级目录下已存在同名文件夹，请更换名称。"
 
 // FileResourceHandler handles file and file resource-related HTTP requests
 type FileResourceHandler struct {
@@ -231,6 +234,10 @@ func (h *FileResourceHandler) PostFolder(c *gin.Context) {
 
 	createdFolder, err := h.fileFolderService.CreateFolder(c.Request.Context(), folder)
 	if err != nil {
+		if errors.Is(err, service.ErrFolderNameConflict) {
+			response.FailWithMessage(c, response.ErrFileFolderExists, folderDuplicateNameMessage)
+			return
+		}
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
@@ -398,6 +405,10 @@ func (h *FileResourceHandler) PatchFolder(c *gin.Context) {
 
 	updatedFolder, err := h.fileFolderService.UpdateFolder(c.Request.Context(), folderID, updateData)
 	if err != nil {
+		if errors.Is(err, service.ErrFolderNameConflict) {
+			response.FailWithMessage(c, response.ErrFileFolderExists, folderDuplicateNameMessage)
+			return
+		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
@@ -759,6 +770,10 @@ func (h *FileResourceHandler) MoveFolderToFolder(c *gin.Context) {
 	// Move folder to target folder
 	err = h.fileFolderService.MoveFolderToFolder(c.Request.Context(), req.FolderID, req.TargetID, accountID, organizationID)
 	if err != nil {
+		if errors.Is(err, service.ErrFolderNameConflict) {
+			response.FailWithMessage(c, response.ErrFileFolderExists, folderDuplicateNameMessage)
+			return
+		}
 		// Check for specific error messages
 		if strings.Contains(err.Error(), "cannot move folder to itself") {
 			response.FailWithMessage(c, response.ErrInvalidParam, "Cannot move folder to itself")

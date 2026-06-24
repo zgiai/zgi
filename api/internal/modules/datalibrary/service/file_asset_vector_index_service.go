@@ -196,6 +196,16 @@ func (s *fileAssetVectorIndexService) DeleteChildVectorsByParent(ctx context.Con
 	if err := s.ensureConfigured(); err != nil {
 		return err
 	}
+	className := FileAssetVectorCollectionName(asset.ID)
+	if deleter, ok := s.vectorDB.(vectordb.FieldDeleteVectorDB); ok {
+		if err := deleter.DeleteObjectsByField(ctx, className, "document_id", parentChunkID.String()); err == nil {
+			return nil
+		}
+	}
+	return s.deleteChildVectorsByParentIndividually(ctx, asset, parentChunkID)
+}
+
+func (s *fileAssetVectorIndexService) deleteChildVectorsByParentIndividually(ctx context.Context, asset *model.DocumentAsset, parentChunkID uuid.UUID) error {
 	generationNo := asset.GenerationNo
 	children, _, err := s.chunks.List(ctx, repository.DocumentChunkListFilter{
 		OrganizationID: asset.OrganizationID,

@@ -41,6 +41,7 @@ const messages: UiMessages = {
     disallowedBySettings: '部分文件不符合当前设置',
     selectFromSystem: '从系统选择',
     selectLocalFiles: '选择本地文件',
+    clickUpload: '点击上传',
     uploadFilesLabel: '上传文件',
     selectedFilesTitle: '已选择 {count} 个文件',
     selectedFilesPendingSummary: '已选择 {count} 个文件，等待上传。',

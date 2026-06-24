@@ -11,6 +11,7 @@ const messages = {
     uploadFile: 'Upload File',
     viewsTitle: 'Views',
     fileSpaceTitle: 'File Space',
+    folderLevelHint: 'Custom folders support a maximum three-level hierarchy.',
     allFiles: 'All Files',
     needsActionFiles: 'Needs Action',
     uploadedFiles: 'Recently Uploaded',
@@ -188,6 +189,7 @@ const messages = {
 
   detail: {
     backToFiles: 'Back to Files',
+    backToDataset: 'Back to Knowledge Base',
     fileBreadcrumb: 'Files',
     previewOriginal: 'Preview Original',
     downloadOriginal: 'Download Original',
@@ -371,8 +373,7 @@ const messages = {
     chunks: {
       title: 'Content Chunks',
       notReadyTitle: 'Chunks are not ready',
-      notReadyDescription:
-        'Chunks become available after parsing and vector generation finish.',
+      notReadyDescription: 'Chunks become available after parsing and vector generation finish.',
       loadErrorTitle: 'Failed to load chunks',
       loadErrorDescription: 'The chunk result may not be ready yet.',
       total: '{count} chunks',
@@ -430,6 +431,7 @@ const messages = {
       save: 'Save',
       toasts: {
         updated: 'Chunk updated',
+        batchUpdated: '{count} chunks updated',
         updateFailed: 'Failed to update chunk',
       },
     },
@@ -461,7 +463,8 @@ const messages = {
       askFailed: 'Failed to submit question',
       noSources: 'No related source was found in this document.',
       sources: 'Sources ({count})',
-      distance: 'Distance {value}',
+      similarityRank: 'Similarity rank {rank}',
+      locateSource: 'Show chunk',
     },
     reparse: {
       action: 'Reparse',
@@ -678,6 +681,7 @@ const messages = {
     workspaceLabel: 'Owning Workspace',
     workspacePlaceholder: 'Select an owning workspace',
     workspaceRequired: 'Please select an owning workspace',
+    duplicateName: 'A folder with this name already exists in the same directory. Use a different name.',
     parentFolder: 'Parent Folder',
     selectParentFolder: 'Select parent folder',
     folderLabel: 'Folder:',

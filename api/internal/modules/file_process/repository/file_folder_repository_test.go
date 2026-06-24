@@ -103,6 +103,56 @@ func TestApplyCurrentAssetProductStatusFilterUsesTextComparisonForPostgres(t *te
 	}
 }
 
+func TestFileFolderRepositoryFolderNameExistsScopesToSiblingDirectory(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	createFileFolderRepositoryTables(t, db)
+
+	insertFileFolder(t, db, "root-a", "org-1", "workspace-1", "", "Reports")
+	insertFileFolder(t, db, "root-b", "org-1", "workspace-1", "", "Archive")
+	insertFileFolder(t, db, "child-a", "org-1", "workspace-1", "root-b", "Reports")
+
+	repo := NewFileFolderRepository(db)
+	workspaceID := "workspace-1"
+
+	exists, err := repo.FolderNameExists(context.Background(), "org-1", &workspaceID, nil, "reports", nil)
+	if err != nil {
+		t.Fatalf("check root duplicate: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected case-insensitive duplicate in same root directory")
+	}
+
+	parentID := "root-b"
+	exists, err = repo.FolderNameExists(context.Background(), "org-1", &workspaceID, &parentID, "Reports", nil)
+	if err != nil {
+		t.Fatalf("check child duplicate: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected duplicate under same parent")
+	}
+
+	otherParentID := "root-a"
+	exists, err = repo.FolderNameExists(context.Background(), "org-1", &workspaceID, &otherParentID, "Reports", nil)
+	if err != nil {
+		t.Fatalf("check different parent: %v", err)
+	}
+	if exists {
+		t.Fatalf("did not expect duplicate across different parent directories")
+	}
+
+	excludeID := "root-a"
+	exists, err = repo.FolderNameExists(context.Background(), "org-1", &workspaceID, nil, "Reports", &excludeID)
+	if err != nil {
+		t.Fatalf("check self exclusion: %v", err)
+	}
+	if exists {
+		t.Fatalf("did not expect self to count as duplicate")
+	}
+}
+
 func openFileFolderPostgresMockDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -152,6 +202,23 @@ func createFileFolderRepositoryTables(t *testing.T, db *gorm.DB) {
 			product_status text,
 			updated_at datetime,
 			deleted_at datetime
+		)`,
+		`CREATE TABLE file_folders (
+			id text primary key,
+			organization_id text,
+			workspace_id text,
+			name text,
+			description text,
+			parent_id text,
+			created_by text,
+			created_at datetime,
+			updated_by text,
+			updated_at datetime,
+			icon_type text,
+			icon text,
+			icon_background text,
+			position integer,
+			permission text
 		)`,
 	}
 	for _, statement := range statements {
@@ -205,6 +272,29 @@ func insertDocumentAsset(t *testing.T, db *gorm.DB, id string, sourceFileID stri
 		sourceFileID,
 		status,
 		parsedUpdatedAt,
+	)
+}
+
+func insertFileFolder(t *testing.T, db *gorm.DB, id string, organizationID string, workspaceID string, parentID string, name string) {
+	t.Helper()
+	var parentValue any
+	if parentID != "" {
+		parentValue = parentID
+	}
+
+	execFileFolderRepositorySQL(
+		t,
+		db,
+		`INSERT INTO file_folders (id, organization_id, workspace_id, name, parent_id, created_by, created_at, updated_at, position, permission)
+		 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)`,
+		id,
+		organizationID,
+		workspaceID,
+		name,
+		parentValue,
+		"account-1",
+		0,
+		"only_me",
 	)
 }
 

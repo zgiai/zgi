@@ -14,6 +14,21 @@ import type { ApiResponseData } from '@/services/types/common';
 import { DATASET_KEYS } from '@/hooks/query-keys';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 
+type GenerateDatasetFileCandidateEmbeddingVariables =
+  | string
+  | {
+      assetId: string;
+      silent?: boolean;
+    };
+
+function getEmbeddingAssetId(variables: GenerateDatasetFileCandidateEmbeddingVariables) {
+  return typeof variables === 'string' ? variables : variables.assetId;
+}
+
+function isEmbeddingMutationSilent(variables: GenerateDatasetFileCandidateEmbeddingVariables) {
+  return typeof variables === 'string' ? false : variables.silent === true;
+}
+
 export function useDatasetFileCandidates(
   datasetId: string | undefined,
   params: {
@@ -151,22 +166,28 @@ export function useGenerateDatasetFileCandidateEmbeddings(datasetId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (assetId: string) =>
-      datasetService.generateDatasetFileCandidateEmbeddings(datasetId, assetId),
-    onMutate: () => {
-      toast.info(t('messages.fileCandidateEmbeddingGenerating'));
+    mutationFn: (variables: GenerateDatasetFileCandidateEmbeddingVariables) =>
+      datasetService.generateDatasetFileCandidateEmbeddings(datasetId, getEmbeddingAssetId(variables)),
+    onMutate: variables => {
+      if (!isEmbeddingMutationSilent(variables)) {
+        toast.info(t('messages.fileCandidateEmbeddingGenerating'));
+      }
     },
-    onSuccess: response => {
-      if (response.data?.addable) {
-        toast.success(t('messages.fileCandidateEmbeddingGenerateSuccess'));
-      } else {
-        toast.error(response.data?.reason || t('messages.actionFailed'));
+    onSuccess: (response, variables) => {
+      if (!isEmbeddingMutationSilent(variables)) {
+        if (response.data?.addable) {
+          toast.success(t('messages.fileCandidateEmbeddingGenerateSuccess'));
+        } else {
+          toast.error(response.data?.reason || t('messages.actionFailed'));
+        }
       }
       invalidateDatasetFileRefQueries(queryClient, datasetId);
     },
-    onError: (error: unknown) => {
-      const message = (error as { message?: string }).message ?? t('messages.actionFailed');
-      toast.error(message);
+    onError: (error: unknown, variables) => {
+      if (!isEmbeddingMutationSilent(variables)) {
+        const message = (error as { message?: string }).message ?? t('messages.actionFailed');
+        toast.error(message);
+      }
     },
   });
 }

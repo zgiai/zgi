@@ -22,6 +22,7 @@ import {
 } from '@/utils/file-helpers';
 import { generateClientId } from '@/utils/client-id';
 import { FileList } from '@/components/common/file-upload/file-list';
+import { Button } from '@/components/ui/button';
 import {
   calculateFileHash,
   getExistingFileKeys,
@@ -486,6 +487,18 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             <div className="text-center select-none flex flex-col items-center">
               <UploadCloudIcon className="w-9 h-9 text-primary mb-2" />
               <p className="text-base text-muted-foreground">{t('fileUpload.dropHere')}</p>
+              <Button
+                type="button"
+                className="mt-3 px-6"
+                disabled={isFull}
+                onClick={event => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!isFull) inputRef.current?.click();
+                }}
+              >
+                {t('fileUpload.clickUpload')}
+              </Button>
               {acceptExt.length > 0 && (
                 <p className="text-sm text-muted-foreground mt-1">
                   {t('fileUpload.allowedTypesLabel')}

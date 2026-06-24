@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -25,9 +25,18 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useT } from '@/i18n';
 import type { FileDocumentChunk } from '@/services/types/file';
-import { useFileChunks, useUpdateFileChunk } from '@/hooks/file/use-file-chunks';
+import {
+  useBatchUpdateFileChunks,
+  useFileChunks,
+  useUpdateFileChunk,
+} from '@/hooks/file/use-file-chunks';
 import { cn } from '@/lib/utils';
 import type { FilePreviewLocator } from './file-original-preview-panel';
+
+export interface FileChunkLocateTarget {
+  chunkId: string;
+  requestId: number;
+}
 
 interface FileChunksPanelProps {
   fileId: string;
@@ -35,12 +44,14 @@ interface FileChunksPanelProps {
   queryVersion?: number | string | null;
   className?: string;
   originalPreviewHidden?: boolean;
+  locateTarget?: FileChunkLocateTarget | null;
   onToggleOriginalPreview?: () => void;
   onLocateIssue?: (locator: FilePreviewLocator) => void;
 }
 
 type ChunkFilter = 'all' | 'issues' | 'enabled' | 'disabled';
 const SHOW_CHUNK_QUALITY_ISSUES = false;
+const ENABLE_CHUNK_BATCH_SELECTION = false;
 
 interface ChunkQualityIssue {
   id?: string;
@@ -76,6 +87,7 @@ export function FileChunksPanel({
   queryVersion,
   className,
   originalPreviewHidden = false,
+  locateTarget,
   onToggleOriginalPreview,
   onLocateIssue,
 }: FileChunksPanelProps) {
@@ -86,8 +98,15 @@ export function FileChunksPanel({
   const [selectedChunkIds, setSelectedChunkIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<ChunkFilter>('all');
-  const { data, isLoading, error } = useFileChunks(fileId, { limit: 500 }, { enabled, queryVersion });
+  const [highlightedChunkId, setHighlightedChunkId] = useState<string | null>(null);
+  const chunkCardRefs = useRef(new Map<string, HTMLDivElement>());
+  const { data, isLoading, error } = useFileChunks(
+    fileId,
+    { limit: 500 },
+    { enabled, queryVersion }
+  );
   const updateChunk = useUpdateFileChunk(fileId);
+  const batchUpdateChunks = useBatchUpdateFileChunks(fileId);
   const response = data?.data;
   const primaryChunks = useMemo(() => response?.items ?? [], [response?.items]);
   const total = response?.primary_chunk_count ?? response?.total ?? primaryChunks.length;
@@ -97,7 +116,9 @@ export function FileChunksPanel({
     return primaryChunks.filter(chunk => {
       if (filter === 'enabled' && !chunk.enabled) return false;
       if (filter === 'disabled' && chunk.enabled) return false;
-      if (SHOW_CHUNK_QUALITY_ISSUES && filter === 'issues' && !hasChunkQualityIssues(chunk)) return false;
+      if (SHOW_CHUNK_QUALITY_ISSUES && filter === 'issues' && !hasChunkQualityIssues(chunk)) {
+        return false;
+      }
       if (!keyword) return true;
       return (
         chunk.content.toLowerCase().includes(keyword) ||
@@ -106,7 +127,8 @@ export function FileChunksPanel({
     });
   }, [filter, primaryChunks, search]);
 
-  const allExpanded = visibleChunks.length > 0 && visibleChunks.every(chunk => expandedIds[chunk.id] ?? false);
+  const allExpanded =
+    visibleChunks.length > 0 && visibleChunks.every(chunk => expandedIds[chunk.id] ?? false);
   const visibleChunkIds = useMemo(() => visibleChunks.map(chunk => chunk.id), [visibleChunks]);
   const selectedVisibleIds = useMemo(
     () => selectedChunkIds.filter(id => visibleChunkIds.includes(id)),
@@ -129,6 +151,41 @@ export function FileChunksPanel({
       setFilter('all');
     }
   }, [filter]);
+
+  useEffect(() => {
+    if (!locateTarget?.chunkId) return;
+    setSearch('');
+    setFilter('all');
+  }, [locateTarget?.chunkId, locateTarget?.requestId]);
+
+  useEffect(() => {
+    if (!locateTarget?.chunkId || isLoading || error || !response) return;
+    if (!visibleChunks.some(chunk => chunk.id === locateTarget.chunkId)) return;
+
+    setHighlightedChunkId(locateTarget.chunkId);
+    const scrollTimer = window.setTimeout(() => {
+      chunkCardRefs.current.get(locateTarget.chunkId)?.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
+    }, 80);
+    const highlightTimer = window.setTimeout(() => {
+      setHighlightedChunkId(current => (current === locateTarget.chunkId ? null : current));
+    }, 2600);
+
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(highlightTimer);
+    };
+  }, [error, isLoading, locateTarget?.chunkId, locateTarget?.requestId, response, visibleChunks]);
+
+  const setChunkCardRef = (chunkId: string) => (node: HTMLDivElement | null) => {
+    if (node) {
+      chunkCardRefs.current.set(chunkId, node);
+      return;
+    }
+    chunkCardRefs.current.delete(chunkId);
+  };
 
   const startEditPrimary = (chunk: FileDocumentChunk) => {
     setEditingPrimaryChunkId(chunk.id);
@@ -166,11 +223,13 @@ export function FileChunksPanel({
   };
 
   const batchSetSelectedEnabled = async (checked: boolean) => {
-    await Promise.all(
-      selectedChunks
-        .filter(chunk => chunk.enabled !== checked)
-        .map(chunk => updateChunk.mutateAsync({ chunkId: chunk.id, data: { enabled: checked } }))
-    );
+    const chunksToUpdate = selectedChunks.filter(chunk => chunk.enabled !== checked);
+    if (chunksToUpdate.length === 0) return;
+
+    await batchUpdateChunks.mutateAsync({
+      chunk_ids: chunksToUpdate.map(chunk => chunk.id),
+      enabled: checked,
+    });
   };
 
   const toggleExpanded = (chunkId: string) => {
@@ -218,7 +277,9 @@ export function FileChunksPanel({
       <div className="shrink-0 border-b bg-background px-4 py-2.5 sm:px-5">
         <div className="flex flex-wrap items-center gap-2">
           <div className="mr-auto flex min-w-[160px] items-center gap-2">
-            <h2 className="text-lg font-semibold leading-tight text-foreground">{t('detail.chunks.title')}</h2>
+            <h2 className="text-lg font-semibold leading-tight text-foreground">
+              {t('detail.chunks.title')}
+            </h2>
             <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-xs">
               {t('detail.chunks.total', { count: total })}
             </Badge>
@@ -258,52 +319,62 @@ export function FileChunksPanel({
             <option value="enabled">{t('detail.chunks.filters.enabled')}</option>
             <option value="disabled">{t('detail.chunks.filters.disabled')}</option>
           </select>
-          <Button variant="outline" className="h-8 gap-1.5 rounded-md px-2.5 text-sm" onClick={() => setAllExpanded(!allExpanded)}>
+          <Button
+            variant="outline"
+            className="h-8 gap-1.5 rounded-md px-2.5 text-sm"
+            onClick={() => setAllExpanded(!allExpanded)}
+          >
             {allExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             {allExpanded ? t('detail.chunks.collapseAll') : t('detail.chunks.expandAll')}
           </Button>
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
-          <label className="flex items-center gap-2">
-            <Checkbox
-              checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
-              onCheckedChange={checked => toggleAllVisibleSelected(checked === true)}
-              disabled={visibleChunks.length === 0 || updateChunk.isPending}
-              className="h-4 w-4 rounded-full"
-              aria-label={t('detail.chunks.selectAll', { count: visibleChunks.length })}
-            />
-            <span>{t('detail.chunks.selectAll', { count: visibleChunks.length })}</span>
-          </label>
-          {selectedCount > 0 ? (
-            <>
-              <span className="text-border">|</span>
-              <span className="font-medium text-foreground">
-                {t('detail.chunks.selectedCount', { count: selectedCount })}
-              </span>
-            </>
-          ) : null}
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-md px-2.5"
-              disabled={selectedCount === 0 || updateChunk.isPending}
-              onClick={() => void batchSetSelectedEnabled(true)}
-            >
-              {t('detail.chunks.batchEnable')}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-md px-2.5"
-              disabled={selectedCount === 0 || updateChunk.isPending}
-              onClick={() => void batchSetSelectedEnabled(false)}
-            >
-              {t('detail.chunks.batchDisable')}
-            </Button>
+        {ENABLE_CHUNK_BATCH_SELECTION ? (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
+            <label className="flex items-center gap-2">
+              <Checkbox
+                checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
+                onCheckedChange={checked => toggleAllVisibleSelected(checked === true)}
+                disabled={
+                  visibleChunks.length === 0 || updateChunk.isPending || batchUpdateChunks.isPending
+                }
+                className="h-4 w-4 rounded-full"
+                aria-label={t('detail.chunks.selectAll', { count: visibleChunks.length })}
+              />
+              <span>{t('detail.chunks.selectAll', { count: visibleChunks.length })}</span>
+            </label>
+            {selectedCount > 0 ? (
+              <>
+                <span className="text-border">|</span>
+                <span className="font-medium text-foreground">
+                  {t('detail.chunks.selectedCount', { count: selectedCount })}
+                </span>
+              </>
+            ) : null}
+            {selectedCount > 0 ? (
+              <div className="ml-auto flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-md px-2.5"
+                  disabled={updateChunk.isPending || batchUpdateChunks.isPending}
+                  onClick={() => void batchSetSelectedEnabled(true)}
+                >
+                  {t('detail.chunks.batchEnable')}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-md px-2.5"
+                  disabled={updateChunk.isPending || batchUpdateChunks.isPending}
+                  onClick={() => void batchSetSelectedEnabled(false)}
+                >
+                  {t('detail.chunks.batchDisable')}
+                </Button>
+              </div>
+            ) : null}
           </div>
-        </div>
+        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
@@ -322,25 +393,27 @@ export function FileChunksPanel({
         ) : (
           <div className="space-y-4">
             {visibleChunks.map(chunk => (
-              <PrimaryChunkCard
-                key={chunk.id}
-                chunk={chunk}
-                fileId={fileId}
-                queryVersion={queryVersion}
-                expanded={expandedIds[chunk.id] ?? false}
-                selected={selectedVisibleIds.includes(chunk.id)}
-                editing={editingPrimaryChunkId === chunk.id}
-                draft={editingPrimaryChunkId === chunk.id ? primaryDraft : chunk.content}
-                disabled={updateChunk.isPending}
-                onEditPrimary={startEditPrimary}
-                onCancelEdit={cancelEditPrimary}
-                onDraftChange={setPrimaryDraft}
-                onSavePrimary={savePrimaryChunkContent}
-                onSelect={toggleChunkSelected}
-                onToggleEnabled={toggleChunkEnabled}
-                onToggleExpanded={toggleExpanded}
-                onLocateIssue={onLocateIssue}
-              />
+              <div key={chunk.id} ref={setChunkCardRef(chunk.id)}>
+                <PrimaryChunkCard
+                  chunk={chunk}
+                  fileId={fileId}
+                  queryVersion={queryVersion}
+                  expanded={expandedIds[chunk.id] ?? false}
+                  selected={ENABLE_CHUNK_BATCH_SELECTION && selectedVisibleIds.includes(chunk.id)}
+                  highlighted={highlightedChunkId === chunk.id}
+                  editing={editingPrimaryChunkId === chunk.id}
+                  draft={editingPrimaryChunkId === chunk.id ? primaryDraft : chunk.content}
+                  disabled={updateChunk.isPending || batchUpdateChunks.isPending}
+                  onEditPrimary={startEditPrimary}
+                  onCancelEdit={cancelEditPrimary}
+                  onDraftChange={setPrimaryDraft}
+                  onSavePrimary={savePrimaryChunkContent}
+                  onSelect={toggleChunkSelected}
+                  onToggleEnabled={toggleChunkEnabled}
+                  onToggleExpanded={toggleExpanded}
+                  onLocateIssue={onLocateIssue}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -355,6 +428,7 @@ function PrimaryChunkCard({
   queryVersion,
   expanded,
   selected,
+  highlighted,
   editing,
   draft,
   disabled,
@@ -372,6 +446,7 @@ function PrimaryChunkCard({
   queryVersion?: number | string | null;
   expanded: boolean;
   selected: boolean;
+  highlighted: boolean;
   editing: boolean;
   draft: string;
   disabled: boolean;
@@ -391,19 +466,22 @@ function PrimaryChunkCard({
     <article
       className={cn(
         'rounded-lg border bg-background p-5 shadow-sm transition-colors focus-within:border-primary/70',
-        selected ? 'border-primary ring-1 ring-primary' : 'border-border'
+        selected || highlighted ? 'border-primary ring-1 ring-primary' : 'border-border',
+        highlighted && 'bg-primary/5 ring-2 ring-primary/20'
       )}
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <Checkbox
-              checked={selected}
-              onCheckedChange={checked => onSelect(chunk.id, checked === true)}
-              disabled={disabled}
-              className="h-5 w-5 rounded-full"
-              aria-label={t('detail.chunks.selectChunk', { position: chunk.position + 1 })}
-            />
+            {ENABLE_CHUNK_BATCH_SELECTION ? (
+              <Checkbox
+                checked={selected}
+                onCheckedChange={checked => onSelect(chunk.id, checked === true)}
+                disabled={disabled}
+                className="h-5 w-5 rounded-full"
+                aria-label={t('detail.chunks.selectChunk', { position: chunk.position + 1 })}
+              />
+            ) : null}
             <h3 className="text-lg font-semibold text-primary">#{chunk.position + 1}</h3>
             <Badge variant="info" className="rounded-full px-3">
               <Layers3 className="mr-1 h-3.5 w-3.5" />
@@ -415,9 +493,6 @@ function PrimaryChunkCard({
                 {t('detail.chunks.issues.badge', { count: qualityIssues.length })}
               </Badge>
             ) : null}
-            <span className={cn('text-sm font-medium', chunk.enabled ? 'text-success' : 'text-muted-foreground')}>
-              {chunk.enabled ? t('detail.chunks.enabled') : t('detail.chunks.disabled')}
-            </span>
             <Badge variant="subtle">{chunk.status}</Badge>
           </div>
         </div>
@@ -444,7 +519,12 @@ function PrimaryChunkCard({
             <Trash2 className="h-4 w-4" />
           </Button>
           */}
-          <Button variant="ghost" size="sm" className="h-9 w-9 p-0" onClick={() => onToggleExpanded(chunk.id)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 w-9 p-0"
+            onClick={() => onToggleExpanded(chunk.id)}
+          >
             {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </Button>
         </div>
@@ -498,7 +578,11 @@ function PrimaryChunkCard({
         </div>
       ) : qualityIssues.length > 0 ? (
         <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-foreground">
-          <HighlightedChunkContent content={chunk.content} issues={qualityIssues} onLocateIssue={onLocateIssue} />
+          <HighlightedChunkContent
+            content={chunk.content}
+            issues={qualityIssues}
+            onLocateIssue={onLocateIssue}
+          />
         </div>
       ) : (
         <MarkdownViewer
@@ -552,7 +636,8 @@ function SecondaryChunkControls({
   );
   const response = data?.data;
   const children = response ? response.items : fallbackChildren;
-  const count = response?.total ?? (fallbackChildren.length > 0 ? fallbackChildren.length : undefined);
+  const count =
+    response?.total ?? (fallbackChildren.length > 0 ? fallbackChildren.length : undefined);
 
   return (
     <>
@@ -561,7 +646,11 @@ function SecondaryChunkControls({
           ? t('detail.chunks.secondaryCount', { count })
           : t('detail.chunks.secondary')}
       </Badge>
-      <Button variant="link" className="h-auto p-0 text-primary" onClick={() => onToggleExpanded(chunk.id)}>
+      <Button
+        variant="link"
+        className="h-auto p-0 text-primary"
+        onClick={() => onToggleExpanded(chunk.id)}
+      >
         {expanded ? t('detail.chunks.collapseSecondary') : t('detail.chunks.viewSecondary')}
       </Button>
       <span className="text-muted-foreground">
@@ -571,24 +660,32 @@ function SecondaryChunkControls({
         <div className="basis-full pt-1">
           {isLoading ? (
             <div className="rounded-lg border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
-              {optionalFileText(t as FilesTranslator, 'detail.chunks.secondaryLoading', 'detail.preview.loading')}
+              {optionalFileText(
+                t as FilesTranslator,
+                'detail.chunks.secondaryLoading',
+                'detail.preview.loading'
+              )}
             </div>
           ) : error ? (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-              {optionalFileText(t as FilesTranslator, 'detail.chunks.secondaryLoadError', 'detail.chunks.loadErrorDescription')}
+              {optionalFileText(
+                t as FilesTranslator,
+                'detail.chunks.secondaryLoadError',
+                'detail.chunks.loadErrorDescription'
+              )}
             </div>
           ) : children.length === 0 ? (
             <div className="rounded-lg border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
-              {optionalFileText(t as FilesTranslator, 'detail.chunks.secondaryEmpty', 'detail.chunks.emptyDescription')}
+              {optionalFileText(
+                t as FilesTranslator,
+                'detail.chunks.secondaryEmpty',
+                'detail.chunks.emptyDescription'
+              )}
             </div>
           ) : (
             <div className="space-y-3">
               {children.map((child, index) => (
-                <SecondaryChunkRow
-                  key={child.id}
-                  chunk={child}
-                  index={index}
-                />
+                <SecondaryChunkRow key={child.id} chunk={child} index={index} />
               ))}
             </div>
           )}
@@ -615,14 +712,18 @@ function chunkQualityIssues(chunk: FileDocumentChunk): ChunkQualityIssue[] {
     return [];
   }
   return raw
-    .filter((item): item is Record<string, unknown> => item !== null && typeof item === 'object' && !Array.isArray(item))
+    .filter(
+      (item): item is Record<string, unknown> =>
+        item !== null && typeof item === 'object' && !Array.isArray(item)
+    )
     .map(item => ({
       id: typeof item.id === 'string' ? item.id : undefined,
       type: typeof item.type === 'string' ? item.type : undefined,
       reason: typeof item.reason === 'string' ? item.reason : undefined,
       status: typeof item.status === 'string' ? item.status : undefined,
       confidence: typeof item.confidence === 'number' ? item.confidence : undefined,
-      originalContent: typeof item.original_content === 'string' ? item.original_content : undefined,
+      originalContent:
+        typeof item.original_content === 'string' ? item.original_content : undefined,
       contentExcerpt: typeof item.content_excerpt === 'string' ? item.content_excerpt : undefined,
       sourceLocator: parseIssueSourceLocator(item),
     }));
@@ -660,7 +761,9 @@ function ChunkIssueRow({
             {t('detail.chunks.issues.locate')}
           </Button>
         ) : (
-          <span className="text-xs text-warning/80">{t('detail.chunks.issues.impreciseLocation')}</span>
+          <span className="text-xs text-warning/80">
+            {t('detail.chunks.issues.impreciseLocation')}
+          </span>
         )}
       </div>
       {excerpt ? (
@@ -691,7 +794,11 @@ function HighlightedChunkContent({
     if (range.start > cursor) {
       parts.push({ text: content.slice(cursor, range.start), highlighted: false });
     }
-    parts.push({ text: content.slice(range.start, range.end), highlighted: true, locator: range.locator });
+    parts.push({
+      text: content.slice(range.start, range.end),
+      highlighted: true,
+      locator: range.locator,
+    });
     cursor = range.end;
   }
   if (cursor < content.length) {
@@ -853,13 +960,7 @@ function qualityIssueReasonText(reason: string, t: FilesTranslator) {
   }
 }
 
-function SecondaryChunkRow({
-  chunk,
-  index,
-}: {
-  chunk: FileDocumentChunk;
-  index: number;
-}) {
+function SecondaryChunkRow({ chunk, index }: { chunk: FileDocumentChunk; index: number }) {
   const t = useT('files');
 
   return (

@@ -17,6 +17,7 @@ type FileFolderRepository interface {
 	CreateFolder(ctx context.Context, folder *file_model.FileFolder) error
 	GetFolderByID(ctx context.Context, id string) (*file_model.FileFolder, error)
 	GetFolderByIDAndTenant(ctx context.Context, id, tenantID string) (*file_model.FileFolder, error)
+	FolderNameExists(ctx context.Context, organizationID string, workspaceID *string, parentID *string, name string, excludeFolderID *string) (bool, error)
 	UpdateFolder(ctx context.Context, id string, updates map[string]interface{}) (*file_model.FileFolder, error)
 	DeleteFolder(ctx context.Context, id string) error
 	ListFolders(ctx context.Context, tenantID string, parentID *string, page, limit int, keyword, sort string, workspaceIDs []string) ([]*file_model.FileFolder, int64, error)
@@ -169,6 +170,38 @@ func (r *fileFolderRepository) GetFolderByIDAndTenant(ctx context.Context, id, o
 		return nil, err
 	}
 	return &folder, nil
+}
+
+// FolderNameExists checks whether a sibling folder already uses the same name.
+func (r *fileFolderRepository) FolderNameExists(ctx context.Context, organizationID string, workspaceID *string, parentID *string, name string, excludeFolderID *string) (bool, error) {
+	var count int64
+	normalizedName := strings.TrimSpace(name)
+	query := r.db.WithContext(ctx).
+		Model(&file_model.FileFolder{}).
+		Where("organization_id = ?", organizationID).
+		Where("LOWER(name) = LOWER(?)", normalizedName)
+
+	if workspaceID == nil || strings.TrimSpace(*workspaceID) == "" {
+		query = query.Where("workspace_id IS NULL")
+	} else {
+		query = query.Where("workspace_id = ?", strings.TrimSpace(*workspaceID))
+	}
+
+	if parentID == nil || strings.TrimSpace(*parentID) == "" {
+		query = query.Where("parent_id IS NULL")
+	} else {
+		query = query.Where("parent_id = ?", strings.TrimSpace(*parentID))
+	}
+
+	if excludeFolderID != nil && strings.TrimSpace(*excludeFolderID) != "" {
+		query = query.Where("id <> ?", strings.TrimSpace(*excludeFolderID))
+	}
+
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
 }
 
 // UpdateFolder updates a folder with the given updates

@@ -602,6 +602,11 @@ export interface UpdateFileChunkRequest {
   enabled?: boolean;
 }
 
+export interface BatchUpdateFileChunksRequest {
+  chunk_ids: string[];
+  enabled: boolean;
+}
+
 export interface FileDocumentChunkEmbedding {
   id: string;
   organization_id: string;
@@ -625,6 +630,13 @@ export interface UpdateFileChunkResponse {
   asset: FileDocumentAsset;
   chunk: FileDocumentChunk;
   embedding?: FileDocumentChunkEmbedding;
+  embedding_ready: boolean;
+}
+
+export interface BatchUpdateFileChunksResponse {
+  asset: FileDocumentAsset;
+  chunks: FileDocumentChunk[];
+  updated_count: number;
   embedding_ready: boolean;
 }
 

@@ -14,10 +14,12 @@ import (
 
 var (
 	ErrFileChunkEditNotAllowed = errors.New("file chunk edit is not allowed")
+	ErrFileChunkIDsRequired    = errors.New("file chunk ids are required")
 )
 
 type FileAssetChunkEditService interface {
 	UpdateCurrentFileChunk(ctx context.Context, input FileAssetChunkEditInput) (*FileAssetChunkEditResult, error)
+	BatchUpdateCurrentFileChunks(ctx context.Context, input FileAssetChunkBatchEditInput) (*FileAssetChunkBatchEditResult, error)
 	SetDatasetRefSyncEnqueuer(enqueuer FileAssetChunkEditDatasetRefSyncEnqueuer)
 }
 
@@ -32,11 +34,28 @@ type FileAssetChunkEditInput struct {
 	EmbeddingModel    string
 }
 
+type FileAssetChunkBatchEditInput struct {
+	OrganizationID    string
+	SourceFileID      string
+	ChunkIDs          []uuid.UUID
+	Enabled           bool
+	UpdatedBy         string
+	EmbeddingProvider string
+	EmbeddingModel    string
+}
+
 type FileAssetChunkEditResult struct {
 	Asset          *model.DocumentAsset          `json:"asset"`
 	Chunk          *model.DocumentChunk          `json:"chunk"`
 	Embedding      *model.DocumentChunkEmbedding `json:"embedding,omitempty"`
 	EmbeddingReady bool                          `json:"embedding_ready"`
+}
+
+type FileAssetChunkBatchEditResult struct {
+	Asset          *model.DocumentAsset   `json:"asset"`
+	Chunks         []*model.DocumentChunk `json:"chunks"`
+	UpdatedCount   int                    `json:"updated_count"`
+	EmbeddingReady bool                   `json:"embedding_ready"`
 }
 
 type fileAssetChunkEditService struct {
@@ -164,7 +183,10 @@ func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, 
 	if !isEditableChunkUpdateAllowed(chunk, input) {
 		return nil, ErrFileChunkEditNotAllowed
 	}
+	return s.updateCurrentFileChunkWithAsset(ctx, asset, chunk, input, true)
+}
 
+func (s *fileAssetChunkEditService) updateCurrentFileChunkWithAsset(ctx context.Context, asset *model.DocumentAsset, chunk *model.DocumentChunk, input FileAssetChunkEditInput, enqueueDatasetSync bool) (*FileAssetChunkEditResult, error) {
 	patch := repository.DocumentChunkPatch{
 		OrganizationID: input.OrganizationID,
 		UpdatedBy:      input.UpdatedBy,
@@ -186,8 +208,10 @@ func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.enqueueDatasetRefSyncsForAssetEdit(ctx, asset, input.UpdatedBy); err != nil {
-		return nil, err
+	if enqueueDatasetSync {
+		if err := s.enqueueDatasetRefSyncsForAssetEdit(ctx, asset, input.UpdatedBy); err != nil {
+			return nil, err
+		}
 	}
 	return &FileAssetChunkEditResult{
 		Asset:          asset,
@@ -195,6 +219,98 @@ func (s *fileAssetChunkEditService) UpdateCurrentFileChunk(ctx context.Context, 
 		Embedding:      embeddingResult,
 		EmbeddingReady: embeddingReady,
 	}, nil
+}
+
+func (s *fileAssetChunkEditService) BatchUpdateCurrentFileChunks(ctx context.Context, input FileAssetChunkBatchEditInput) (*FileAssetChunkBatchEditResult, error) {
+	if input.OrganizationID == "" {
+		return nil, ErrOrganizationIDRequired
+	}
+	if input.SourceFileID == "" {
+		return nil, ErrSourceFileIDRequired
+	}
+	chunkIDs := uniqueNonNilChunkIDs(input.ChunkIDs)
+	if len(chunkIDs) == 0 {
+		return nil, ErrFileChunkIDsRequired
+	}
+	asset, err := s.assets.FindAssetBySourceFileID(ctx, input.OrganizationID, input.SourceFileID)
+	if err != nil {
+		return nil, err
+	}
+	if asset == nil {
+		return nil, ErrDocumentAssetNotFound
+	}
+	if asset.GenerationNo <= 0 || asset.ProcessingRunID == nil {
+		return nil, ErrProcessingRunMismatch
+	}
+
+	enabled := input.Enabled
+	updatedChunks := make([]*model.DocumentChunk, 0, len(chunkIDs))
+	embeddingReady := false
+	for _, chunkID := range chunkIDs {
+		chunk, err := s.chunks.GetByID(ctx, chunkID)
+		if err != nil {
+			return nil, err
+		}
+		if chunk == nil || chunk.OrganizationID != input.OrganizationID || chunk.AssetID != asset.ID {
+			return nil, ErrDocumentAssetNotFound
+		}
+		if chunk.GenerationNo != asset.GenerationNo {
+			return nil, ErrProcessingRunMismatch
+		}
+		editInput := FileAssetChunkEditInput{
+			OrganizationID:    input.OrganizationID,
+			SourceFileID:      input.SourceFileID,
+			ChunkID:           chunkID,
+			Enabled:           &enabled,
+			UpdatedBy:         input.UpdatedBy,
+			EmbeddingProvider: input.EmbeddingProvider,
+			EmbeddingModel:    input.EmbeddingModel,
+		}
+		if !isEditableChunkUpdateAllowed(chunk, editInput) {
+			return nil, ErrFileChunkEditNotAllowed
+		}
+		if chunk.Enabled == enabled {
+			continue
+		}
+		result, err := s.updateCurrentFileChunkWithAsset(ctx, asset, chunk, editInput, false)
+		if err != nil {
+			return nil, err
+		}
+		if result != nil && result.Chunk != nil {
+			updatedChunks = append(updatedChunks, result.Chunk)
+			embeddingReady = embeddingReady || result.EmbeddingReady
+		}
+	}
+	if len(updatedChunks) > 0 {
+		if err := s.enqueueDatasetRefSyncsForAssetEdit(ctx, asset, input.UpdatedBy); err != nil {
+			return nil, err
+		}
+	}
+	return &FileAssetChunkBatchEditResult{
+		Asset:          asset,
+		Chunks:         updatedChunks,
+		UpdatedCount:   len(updatedChunks),
+		EmbeddingReady: embeddingReady,
+	}, nil
+}
+
+func uniqueNonNilChunkIDs(ids []uuid.UUID) []uuid.UUID {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func (s *fileAssetChunkEditService) syncEditedChunkEmbedding(ctx context.Context, asset *model.DocumentAsset, originalChunk *model.DocumentChunk, updatedChunk *model.DocumentChunk, input FileAssetChunkEditInput) (*model.DocumentChunkEmbedding, bool, error) {
