@@ -314,11 +314,6 @@ func (h *DatasetFolderHandler) GetFolders(c *gin.Context) {
 		if !exists {
 			canEdit = false
 		}
-		if !canEdit && !datasetFolderVisibleToAccount(folderModel, accountID, &interfaces.WorkspaceScope{
-			OrganizationScope: interfaces.OrganizationScope{IsAdmin: isOrgAdmin},
-		}) {
-			continue
-		}
 		detailResponse.CanEdit = canEdit
 
 		folderDetailResponses = append(folderDetailResponses, detailResponse)

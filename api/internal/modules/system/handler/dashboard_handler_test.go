@@ -34,11 +34,13 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 	}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
-			workspacemodel.WorkspacePermissionWorkspaceView:     {"ws-1", "ws-2"},
-			workspacemodel.WorkspacePermissionAgentView:         {"ws-agent"},
-			workspacemodel.WorkspacePermissionKnowledgeBaseView: {"ws-knowledge"},
-			workspacemodel.WorkspacePermissionDatabaseView:      {"ws-db"},
-			workspacemodel.WorkspacePermissionFileView:          {"ws-file"},
+			workspacemodel.WorkspacePermissionWorkspaceView:             {"ws-1", "ws-2"},
+			workspacemodel.WorkspacePermissionAgentView:                 {"ws-agent"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseView:         {"ws-knowledge-view", "ws-knowledge-shared"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseManage:       {"ws-knowledge-manage"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage: {"ws-knowledge-shared", "ws-knowledge-folder"},
+			workspacemodel.WorkspacePermissionDatabaseView:              {"ws-db"},
+			workspacemodel.WorkspacePermissionFileView:                  {"ws-file"},
 		},
 	}
 	accountSvc := &dashboardHandlerAccountContextService{
@@ -59,14 +61,25 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 	require.Equal(t, "acc-1", dashboardSvc.recentWorkReq.AccountID)
 	require.Equal(t, []string{"ws-1", "ws-2"}, dashboardSvc.recentWorkReq.WorkspaceIDs)
 	require.Equal(t, []string{"ws-agent"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
-	require.Equal(t, []string{"ws-knowledge"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
+	require.Equal(t, []string{"ws-knowledge-view", "ws-knowledge-shared", "ws-knowledge-manage", "ws-knowledge-folder"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
 	require.Equal(t, []string{"ws-db"}, dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
+	require.Equal(t, []string{"ws-file"}, dashboardSvc.recentWorkReq.FileWorkspaceIDs)
 }
 
-func TestDashboardRecentWorkWorkspaceScopeRequiresWorkspaceViewBeforeServiceCall(t *testing.T) {
+func TestDashboardRecentWorkWorkspaceScopeUsesResourcePermissions(t *testing.T) {
 	recorder, c := newDashboardRecentWorkContext("org-1", "acc-1", "?scope=workspace&workspace_id=ws-1")
 	dashboardSvc := &dashboardHandlerService{}
-	permissionSvc := &dashboardHandlerWorkspacePermissionService{allowed: false}
+	permissionSvc := &dashboardHandlerWorkspacePermissionService{
+		allowedByPermission: map[workspacemodel.WorkspacePermissionCode]bool{
+			workspacemodel.WorkspacePermissionWorkspaceView:             false,
+			workspacemodel.WorkspacePermissionAgentView:                 true,
+			workspacemodel.WorkspacePermissionKnowledgeBaseView:         false,
+			workspacemodel.WorkspacePermissionKnowledgeBaseManage:       true,
+			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage: false,
+			workspacemodel.WorkspacePermissionDatabaseView:              false,
+			workspacemodel.WorkspacePermissionFileView:                  true,
+		},
+	}
 	h := &DashboardHandler{
 		dashboardService:  dashboardSvc,
 		enterpriseService: permissionSvc,
@@ -75,14 +88,17 @@ func TestDashboardRecentWorkWorkspaceScopeRequiresWorkspaceViewBeforeServiceCall
 
 	h.GetRecentWork(c)
 
-	require.Equal(t, http.StatusForbidden, recorder.Code)
-	require.Equal(t, "403001", decodeDashboardHandlerResponseCode(t, recorder))
+	require.Equal(t, http.StatusOK, recorder.Code)
 	require.True(t, permissionSvc.called)
 	require.Equal(t, "org-1", permissionSvc.organizationID)
 	require.Equal(t, "ws-1", permissionSvc.workspaceID)
 	require.Equal(t, "acc-1", permissionSvc.accountID)
-	require.Equal(t, workspacemodel.WorkspacePermissionWorkspaceView, permissionSvc.permissionCode)
-	require.False(t, dashboardSvc.recentWorkCalled, "recent-work service should not run before workspace.view passes")
+	require.True(t, dashboardSvc.recentWorkCalled)
+	require.Equal(t, []string(nil), dashboardSvc.recentWorkReq.WorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
+	require.Equal(t, []string(nil), dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.FileWorkspaceIDs)
 }
 
 func TestDashboardRecentWorkWorkspaceScopeFallsBackToCurrentWorkspace(t *testing.T) {
@@ -112,6 +128,7 @@ func TestDashboardRecentWorkWorkspaceScopeFallsBackToCurrentWorkspace(t *testing
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.FileWorkspaceIDs)
 	require.Equal(t, 10, dashboardSvc.recentWorkReq.Limit)
 }
 
@@ -133,11 +150,13 @@ func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
 	}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
-			workspacemodel.WorkspacePermissionWorkspaceView:     {"ws-1", "ws-2"},
-			workspacemodel.WorkspacePermissionAgentView:         {"ws-agent"},
-			workspacemodel.WorkspacePermissionKnowledgeBaseView: {"ws-knowledge"},
-			workspacemodel.WorkspacePermissionDatabaseView:      {"ws-db"},
-			workspacemodel.WorkspacePermissionFileView:          {"ws-file"},
+			workspacemodel.WorkspacePermissionWorkspaceView:             {"ws-1", "ws-2"},
+			workspacemodel.WorkspacePermissionAgentView:                 {"ws-agent"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseView:         {"ws-knowledge"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseManage:       {"ws-knowledge-manage"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage: {"ws-knowledge-folder"},
+			workspacemodel.WorkspacePermissionDatabaseView:              {"ws-db"},
+			workspacemodel.WorkspacePermissionFileView:                  {"ws-file"},
 		},
 	}
 	h := &DashboardHandler{
@@ -154,7 +173,7 @@ func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
 	require.Equal(t, "acc-1", dashboardSvc.statsAccountID)
 	require.Equal(t, []string{"ws-1", "ws-2"}, dashboardSvc.statsScopes.WorkspaceIDs)
 	require.Equal(t, []string{"ws-agent"}, dashboardSvc.statsScopes.AgentWorkspaceIDs)
-	require.Equal(t, []string{"ws-knowledge"}, dashboardSvc.statsScopes.DatasetWorkspaceIDs)
+	require.Equal(t, []string{"ws-knowledge", "ws-knowledge-manage", "ws-knowledge-folder"}, dashboardSvc.statsScopes.DatasetWorkspaceIDs)
 	require.Equal(t, []string{"ws-db"}, dashboardSvc.statsScopes.DataSourceWorkspaceIDs)
 	require.Equal(t, []string{"ws-file"}, dashboardSvc.statsScopes.FileWorkspaceIDs)
 
@@ -240,6 +259,7 @@ func (s *dashboardHandlerAccountContextService) GetAccountContext(context.Contex
 
 type dashboardHandlerWorkspacePermissionService struct {
 	allowed                  bool
+	allowedByPermission      map[workspacemodel.WorkspacePermissionCode]bool
 	called                   bool
 	organizationAdmin        bool
 	adminCheckCalled         bool
@@ -256,6 +276,9 @@ func (s *dashboardHandlerWorkspacePermissionService) CheckWorkspacePermission(_ 
 	s.workspaceID = workspaceID
 	s.accountID = accountID
 	s.permissionCode = permissionCode
+	if s.allowedByPermission != nil {
+		return s.allowedByPermission[permissionCode], nil
+	}
 	return s.allowed, nil
 }
 

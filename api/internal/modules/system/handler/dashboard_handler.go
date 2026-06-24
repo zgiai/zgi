@@ -121,6 +121,7 @@ func (h *DashboardHandler) GetRecentWork(c *gin.Context) {
 		AgentWorkspaceIDs:      scopes.AgentWorkspaceIDs,
 		DatasetWorkspaceIDs:    scopes.DatasetWorkspaceIDs,
 		DataSourceWorkspaceIDs: scopes.DataSourceWorkspaceIDs,
+		FileWorkspaceIDs:       scopes.FileWorkspaceIDs,
 	})
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -134,6 +135,10 @@ func (h *DashboardHandler) getWorkspaceRecentWork(c *gin.Context, organizationID
 	ctx := c.Request.Context()
 	workspaceID := strings.TrimSpace(c.Query("workspace_id"))
 	if workspaceID == "" {
+		if h.accountService == nil {
+			response.Fail(c, response.ErrWorkspaceJoinedNotFound)
+			return nil, false
+		}
 		accountContext, err := h.accountService.GetAccountContext(ctx, accountID)
 		if err != nil || accountContext == nil || accountContext.CurrentWorkspaceID == nil {
 			response.Fail(c, response.ErrWorkspaceJoinedNotFound)
@@ -146,15 +151,9 @@ func (h *DashboardHandler) getWorkspaceRecentWork(c *gin.Context, organizationID
 		return nil, false
 	}
 
-	hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-		ctx,
-		organizationID,
-		workspaceID,
-		accountID,
-		workspacemodel.WorkspacePermissionWorkspaceView,
-	)
-	if err != nil || !hasPermission {
-		response.Fail(c, response.ErrPermissionDenied)
+	scopes, err := h.buildSingleWorkspaceRecentWorkScopes(ctx, organizationID, workspaceID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
 		return nil, false
 	}
 
@@ -162,10 +161,11 @@ func (h *DashboardHandler) getWorkspaceRecentWork(c *gin.Context, organizationID
 		OrganizationID:         organizationID,
 		AccountID:              accountID,
 		Limit:                  limit,
-		WorkspaceIDs:           []string{workspaceID},
-		AgentWorkspaceIDs:      []string{workspaceID},
-		DatasetWorkspaceIDs:    []string{workspaceID},
-		DataSourceWorkspaceIDs: []string{workspaceID},
+		WorkspaceIDs:           scopes.WorkspaceIDs,
+		AgentWorkspaceIDs:      scopes.AgentWorkspaceIDs,
+		DatasetWorkspaceIDs:    scopes.DatasetWorkspaceIDs,
+		DataSourceWorkspaceIDs: scopes.DataSourceWorkspaceIDs,
+		FileWorkspaceIDs:       scopes.FileWorkspaceIDs,
 	})
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -187,7 +187,14 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
-	datasetWorkspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionKnowledgeBaseView)
+	datasetWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(
+		ctx,
+		organizationID,
+		accountID,
+		workspacemodel.WorkspacePermissionKnowledgeBaseView,
+		workspacemodel.WorkspacePermissionKnowledgeBaseManage,
+		workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage,
+	)
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
@@ -207,6 +214,81 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 		DataSourceWorkspaceIDs: dataSourceWorkspaceIDs,
 		FileWorkspaceIDs:       fileWorkspaceIDs,
 	}, nil
+}
+
+func (h *DashboardHandler) buildSingleWorkspaceRecentWorkScopes(ctx context.Context, organizationID, workspaceID, accountID string) (systemmodel.DashboardWorkspaceScopes, error) {
+	var scopes systemmodel.DashboardWorkspaceScopes
+	if h.enterpriseService == nil || organizationID == "" || workspaceID == "" || accountID == "" {
+		return scopes, nil
+	}
+
+	if ok, err := h.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionWorkspaceView); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.WorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionAgentView); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.AgentWorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID,
+		workspacemodel.WorkspacePermissionKnowledgeBaseView,
+		workspacemodel.WorkspacePermissionKnowledgeBaseManage,
+		workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage,
+	); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.DatasetWorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseView); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.DataSourceWorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionFileView); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.FileWorkspaceIDs = []string{workspaceID}
+	}
+
+	return scopes, nil
+}
+
+func (h *DashboardHandler) hasAnyWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCodes ...workspacemodel.WorkspacePermissionCode) (bool, error) {
+	for _, permissionCode := range permissionCodes {
+		ok, err := h.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, permissionCode)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (h *DashboardHandler) listWorkspaceIDsByAnyPermission(ctx context.Context, organizationID, accountID string, permissionCodes ...workspacemodel.WorkspacePermissionCode) ([]string, error) {
+	var out []string
+	seen := make(map[string]struct{})
+	for _, permissionCode := range permissionCodes {
+		workspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, permissionCode)
+		if err != nil {
+			return nil, err
+		}
+		for _, workspaceID := range workspaceIDs {
+			workspaceID = strings.TrimSpace(workspaceID)
+			if workspaceID == "" {
+				continue
+			}
+			if _, ok := seen[workspaceID]; ok {
+				continue
+			}
+			seen[workspaceID] = struct{}{}
+			out = append(out, workspaceID)
+		}
+	}
+	return out, nil
 }
 
 func dashboardQueryLimit(c *gin.Context) int {

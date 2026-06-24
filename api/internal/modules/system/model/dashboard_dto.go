@@ -39,6 +39,7 @@ type RecentWorkRequest struct {
 	AgentWorkspaceIDs      []string
 	DatasetWorkspaceIDs    []string
 	DataSourceWorkspaceIDs []string
+	FileWorkspaceIDs       []string
 }
 
 // RecentWorkItem represents one recently updated console work item.

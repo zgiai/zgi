@@ -106,7 +106,10 @@ func (s *dashboardService) GetRecentWork(ctx context.Context, req model.RecentWo
 	if limit <= 0 || limit > 20 {
 		limit = 10
 	}
-	if len(req.WorkspaceIDs) == 0 {
+	if len(req.AgentWorkspaceIDs) == 0 &&
+		len(req.DatasetWorkspaceIDs) == 0 &&
+		len(req.DataSourceWorkspaceIDs) == 0 &&
+		len(req.FileWorkspaceIDs) == 0 {
 		return &model.RecentWorkResponse{Items: []model.RecentWorkItem{}}, nil
 	}
 

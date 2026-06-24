@@ -150,8 +150,8 @@ func TestAuthorizeDatasetFolderViewAccessRejectsCrossOrganizationFolder(t *testi
 	}
 }
 
-func TestAuthorizeDatasetFolderViewAccessRejectsOnlyMeForNonCreator(t *testing.T) {
-	c, recorder := newDatasetAccessTestContext("account-1", "org-1")
+func TestAuthorizeDatasetFolderViewAccessIgnoresLegacyOnlyMeForNonCreator(t *testing.T) {
+	c, _ := newDatasetAccessTestContext("account-1", "org-1")
 	folders := &datasetAccessFolderService{
 		folders: map[string]*dataset_model.DatasetFolder{
 			"folder-1": {
@@ -164,13 +164,13 @@ func TestAuthorizeDatasetFolderViewAccessRejectsOnlyMeForNonCreator(t *testing.T
 		},
 	}
 
-	_, ok := authorizeDatasetFolderViewAccess(c, folders, &datasetAccessAuthorizationService{allow: true}, "folder-1")
+	folder, ok := authorizeDatasetFolderViewAccess(c, folders, &datasetAccessAuthorizationService{allow: true}, "folder-1")
 
-	if ok {
-		t.Fatalf("authorizeDatasetFolderViewAccess ok = true, want false")
+	if !ok {
+		t.Fatalf("authorizeDatasetFolderViewAccess ok = false, want true")
 	}
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	if folder == nil || folder.ID != "folder-1" {
+		t.Fatalf("folder = %#v, want folder-1", folder)
 	}
 }
 

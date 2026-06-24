@@ -188,7 +188,7 @@ func authorizeDatasetFolderAccess(c *gin.Context, folderService datasetAccessFol
 		return nil, false
 	}
 
-	scope, ok := authorizeDatasetWorkspacePermission(c, authService, folder.WorkspaceID, permissions...)
+	_, ok := authorizeDatasetWorkspacePermission(c, authService, folder.WorkspaceID, permissions...)
 	if !ok {
 		return nil, false
 	}
@@ -196,28 +196,7 @@ func authorizeDatasetFolderAccess(c *gin.Context, folderService datasetAccessFol
 		return folder, true
 	}
 
-	if datasetFolderVisibleToAccount(folder, accountID, scope) {
-		return folder, true
-	}
-
-	response.Fail(c, response.ErrDatasetPermissionDenied)
-	return nil, false
-}
-
-func datasetFolderVisibleToAccount(folder *dataset_model.DatasetFolder, accountID string, scope *interfaces.WorkspaceScope) bool {
-	if folder.CreatedBy == accountID {
-		return true
-	}
-	if scope != nil && scope.IsAdmin {
-		return true
-	}
-
-	switch dataset_model.DatasetPermissionType(folder.Permission) {
-	case dataset_model.DatasetPermissionAllTeam, dataset_model.DatasetPermissionAllTeamMembers:
-		return true
-	default:
-		return false
-	}
+	return folder, true
 }
 
 func authorizeDatasetDocumentViewAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, authService datasetAccessAuthorizer, datasetID, documentID string) (*dataset_model.Dataset, *dataset_model.Document, bool) {
