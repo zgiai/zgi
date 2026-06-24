@@ -13,6 +13,7 @@ import (
 	promptdto "github.com/zgiai/zgi/api/internal/modules/prompts/dto"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -99,6 +100,59 @@ func TestPromptBuilderToolsRequireCurrentWorkspaceBeforeBodyBinding(t *testing.T
 	}
 }
 
+func TestPromptBuilderToolsResolveExplicitWorkspaceIDFromBodyBeforeBinding(t *testing.T) {
+	service := &promptPermissionService{}
+	organizationService := &promptPermissionOrganizationService{allowed: false}
+	handler := NewPromptHandler(service, nil, organizationService)
+	ctx, recorder := newPromptPermissionContext(http.MethodPost, "/prompts/optimize", `{"workspace_id":"workspace-body"}`, "")
+
+	handler.OptimizePrompt(ctx)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+	requirePromptResponseCode(t, recorder, response.ErrPermissionDenied)
+	if !organizationService.checked {
+		t.Fatalf("expected workspace permission check")
+	}
+	if organizationService.workspaceID != "workspace-body" {
+		t.Fatalf("workspace checked = %q, want workspace-body", organizationService.workspaceID)
+	}
+	if service.optimizeCalled {
+		t.Fatalf("prompt service should not be called after missing workspace permission")
+	}
+}
+
+func TestPromptBuilderToolsResolveCurrentWorkspaceFromAccountContextBeforeBinding(t *testing.T) {
+	workspaceID := "workspace-from-account"
+	service := &promptPermissionService{}
+	organizationService := &promptPermissionOrganizationService{allowed: true}
+	accountService := &promptPermissionAccountService{
+		context: &authmodel.AccountContext{
+			AccountID:          "account-1",
+			CurrentWorkspaceID: &workspaceID,
+		},
+	}
+	handler := NewPromptHandler(service, accountService, organizationService)
+	ctx, recorder := newPromptPermissionContext(http.MethodPost, "/prompts/optimize", `{"broken":`, "")
+
+	handler.OptimizePrompt(ctx)
+
+	if recorder.Code == http.StatusForbidden {
+		t.Fatalf("current workspace from account context should pass permission guard, body=%s", recorder.Body.String())
+	}
+	if !organizationService.checked {
+		t.Fatalf("expected workspace permission check")
+	}
+	if organizationService.workspaceID != workspaceID {
+		t.Fatalf("workspace checked = %q, want %q", organizationService.workspaceID, workspaceID)
+	}
+	if service.optimizeCalled {
+		t.Fatalf("prompt service should not be called when body binding fails")
+	}
+	requirePromptResponseCode(t, recorder, response.ErrInvalidParam)
+}
+
 func newPromptPermissionContext(method, target, body, workspaceID string) (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -173,4 +227,14 @@ func (s *promptPermissionOrganizationService) CheckWorkspaceOrganizationAnyPermi
 	s.workspaceID = workspaceID
 	s.permissionCodes = append([]workspace_model.WorkspacePermissionCode(nil), permissionCodes...)
 	return s.allowed, nil
+}
+
+type promptPermissionAccountService struct {
+	interfaces.AccountService
+
+	context *authmodel.AccountContext
+}
+
+func (s *promptPermissionAccountService) GetAccountContext(context.Context, string) (*authmodel.AccountContext, error) {
+	return s.context, nil
 }

@@ -48,6 +48,7 @@ type moduleOptions struct {
 	enableSystemVLM    bool
 	systemVLMAvailable bool
 	organization       interfaces.OrganizationService
+	account            interfaces.AccountService
 }
 
 func WithSystemVisionModel(llmClient llmclient.LLMClient, defaultModelSvc llmdefaultservice.DefaultModelService) ModuleOption {
@@ -62,6 +63,12 @@ func WithSystemVisionModel(llmClient llmclient.LLMClient, defaultModelSvc llmdef
 func WithOrganizationService(service interfaces.OrganizationService) ModuleOption {
 	return func(opts *moduleOptions) {
 		opts.organization = service
+	}
+}
+
+func WithAccountService(service interfaces.AccountService) ModuleOption {
+	return func(opts *moduleOptions) {
+		opts.account = service
 	}
 }
 
@@ -102,6 +109,7 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 	if playgroundHandler != nil {
 		playgroundHandler.SetProviderCatalogResolver(providerCatalogs)
 		playgroundHandler.SetOrganizationService(opts.organization)
+		playgroundHandler.SetAccountService(opts.account)
 	}
 
 	return &Module{

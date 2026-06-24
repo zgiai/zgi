@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -317,12 +319,16 @@ func (h *PromptHandler) AdoptOptimizationRun(c *gin.Context) {
 func (h *PromptHandler) requireCurrentPromptWorkspace(c *gin.Context, permissionCodes ...workspace_model.WorkspacePermissionCode) bool {
 	organizationID := util.GetOrganizationIDCompat(c)
 	accountID := c.GetString("account_id")
-	workspaceID := strings.TrimSpace(util.GetWorkspaceID(c))
 	if organizationID == "" || accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return false
 	}
-	if workspaceID == "" || h.organizationService == nil {
+	if h.organizationService == nil {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+	workspaceID := h.resolvePromptWorkspaceID(c, accountID)
+	if workspaceID == "" {
 		response.Fail(c, response.ErrPermissionDenied)
 		return false
 	}
@@ -343,6 +349,47 @@ func (h *PromptHandler) requireCurrentPromptWorkspace(c *gin.Context, permission
 		return false
 	}
 	return true
+}
+
+func (h *PromptHandler) resolvePromptWorkspaceID(c *gin.Context, accountID string) string {
+	workspaceID := strings.TrimSpace(util.GetWorkspaceID(c))
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(c.Query("workspace_id"))
+	}
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(c.GetHeader("X-Workspace-ID"))
+	}
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(promptWorkspaceIDFromBody(c))
+	}
+	if workspaceID == "" && h != nil && h.accountService != nil {
+		accountContext, err := h.accountService.GetAccountContext(c.Request.Context(), accountID)
+		if err == nil && accountContext != nil && accountContext.CurrentWorkspaceID != nil {
+			workspaceID = strings.TrimSpace(*accountContext.CurrentWorkspaceID)
+		}
+	}
+	if workspaceID != "" {
+		util.SetWorkspaceID(c, workspaceID)
+	}
+	return workspaceID
+}
+
+func promptWorkspaceIDFromBody(c *gin.Context) string {
+	if c == nil || c.Request == nil || c.Request.Body == nil {
+		return ""
+	}
+	body, err := io.ReadAll(c.Request.Body)
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || len(body) == 0 {
+		return ""
+	}
+	var payload struct {
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	return payload.WorkspaceID
 }
 
 func (h *PromptHandler) RegisterRoutes(router *gin.RouterGroup) {

@@ -42,6 +42,7 @@ func RegisterContentParseRoutes(v1 *gin.RouterGroup, deps ContentParseRouteDeps)
 
 	contentparsemodule.NewModule(
 		deps.DB,
+		contentparsemodule.WithAccountService(deps.AccountService),
 		contentparsemodule.WithOrganizationService(deps.OrganizationService),
 		contentparsemodule.WithSystemVisionModel(deps.LLMClient, deps.DefaultModelService),
 	).RegisterPlaygroundRoutes(group)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -76,6 +77,59 @@ func TestPlaygroundRoutesRequireCurrentWorkspaceBeforeRequestHandling(t *testing
 	}
 }
 
+func TestPlaygroundRoutesResolveExplicitWorkspaceIDBeforeRequestHandling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	organization := &playgroundPermissionOrganization{allowed: false}
+	router := newPlaygroundPermissionRouter(organization, func(c *gin.Context) {
+		util.SetOrganizationID(c, "org-1")
+		c.Set("account_id", "account-1")
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/content-parse/playground/providers?workspace_id=workspace-query", nil)
+	router.ServeHTTP(recorder, req)
+
+	requirePlaygroundPermissionCode(t, recorder, response.ErrPermissionDenied)
+	if !organization.checked {
+		t.Fatal("expected workspace permission check")
+	}
+	if organization.workspaceID != "workspace-query" {
+		t.Fatalf("workspace checked = %q, want workspace-query", organization.workspaceID)
+	}
+}
+
+func TestPlaygroundRoutesResolveCurrentWorkspaceFromAccountContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	workspaceID := "workspace-from-account"
+	organization := &playgroundPermissionOrganization{allowed: true}
+	account := &playgroundPermissionAccount{
+		context: &authmodel.AccountContext{
+			AccountID:          "account-1",
+			CurrentWorkspaceID: &workspaceID,
+		},
+	}
+	router := newPlaygroundPermissionRouterWithAccount(organization, account, func(c *gin.Context) {
+		util.SetOrganizationID(c, "org-1")
+		c.Set("account_id", "account-1")
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/content-parse/playground/providers", nil)
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code == http.StatusForbidden {
+		t.Fatalf("current workspace from account context should pass permission guard, body=%s", recorder.Body.String())
+	}
+	if !organization.checked {
+		t.Fatal("expected workspace permission check")
+	}
+	if organization.workspaceID != workspaceID {
+		t.Fatalf("workspace checked = %q, want %q", organization.workspaceID, workspaceID)
+	}
+}
+
 func TestInternalPlaygroundRoutesBypassWorkspaceViewGuard(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -100,6 +154,10 @@ func TestInternalPlaygroundRoutesBypassWorkspaceViewGuard(t *testing.T) {
 }
 
 func newPlaygroundPermissionRouter(organization *playgroundPermissionOrganization, scope func(*gin.Context)) *gin.Engine {
+	return newPlaygroundPermissionRouterWithAccount(organization, nil, scope)
+}
+
+func newPlaygroundPermissionRouterWithAccount(organization *playgroundPermissionOrganization, account playgroundAccountContextReader, scope func(*gin.Context)) *gin.Engine {
 	router := gin.New()
 	group := router.Group("/content-parse")
 	group.Use(func(c *gin.Context) {
@@ -108,7 +166,7 @@ func newPlaygroundPermissionRouter(organization *playgroundPermissionOrganizatio
 		}
 		c.Next()
 	})
-	handler := &PlaygroundHandler{organization: organization}
+	handler := &PlaygroundHandler{organization: organization, account: account}
 	handler.RegisterRoutes(group)
 	return router
 }
@@ -142,4 +200,14 @@ func (s *playgroundPermissionOrganization) CheckWorkspacePermission(_ context.Co
 	s.accountID = accountID
 	s.permission = permissionCode
 	return s.allowed, nil
+}
+
+type playgroundPermissionAccount struct {
+	interfaces.AccountService
+
+	context *authmodel.AccountContext
+}
+
+func (s *playgroundPermissionAccount) GetAccountContext(context.Context, string) (*authmodel.AccountContext, error) {
+	return s.context, nil
 }

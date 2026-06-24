@@ -49,6 +49,12 @@ func (h *PlaygroundHandler) SetOrganizationService(service interfaces.Organizati
 	}
 }
 
+func (h *PlaygroundHandler) SetAccountService(service interfaces.AccountService) {
+	if h != nil {
+		h.account = service
+	}
+}
+
 func (h *PlaygroundHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.Use(h.requirePlaygroundWorkspace())
 	rg.GET("/playground/providers", h.ListProviders)
@@ -77,9 +83,14 @@ func (h *PlaygroundHandler) requirePlaygroundWorkspace() gin.HandlerFunc {
 			return
 		}
 		organizationID := strings.TrimSpace(util.GetOrganizationID(c))
-		workspaceID := strings.TrimSpace(util.GetWorkspaceID(c))
 		accountID := strings.TrimSpace(util.GetAccountID(c))
-		if organizationID == "" || workspaceID == "" || accountID == "" {
+		if organizationID == "" || accountID == "" {
+			response.Fail(c, response.ErrPermissionDenied)
+			c.Abort()
+			return
+		}
+		workspaceID, ok := h.resolvePlaygroundWorkspaceID(c, accountID)
+		if !ok {
 			response.Fail(c, response.ErrPermissionDenied)
 			c.Abort()
 			return
@@ -103,6 +114,30 @@ func (h *PlaygroundHandler) requirePlaygroundWorkspace() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func (h *PlaygroundHandler) resolvePlaygroundWorkspaceID(c *gin.Context, accountID string) (string, bool) {
+	workspaceID := strings.TrimSpace(util.GetWorkspaceID(c))
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(c.Query("workspace_id"))
+	}
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(c.PostForm("workspace_id"))
+	}
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(c.GetHeader("X-Workspace-ID"))
+	}
+	if workspaceID == "" && h != nil && h.account != nil {
+		accountContext, err := h.account.GetAccountContext(c.Request.Context(), accountID)
+		if err == nil && accountContext != nil && accountContext.CurrentWorkspaceID != nil {
+			workspaceID = strings.TrimSpace(*accountContext.CurrentWorkspaceID)
+		}
+	}
+	if workspaceID == "" {
+		return "", false
+	}
+	util.SetWorkspaceID(c, workspaceID)
+	return workspaceID, true
 }
 
 func (h *PlaygroundHandler) ListProviders(c *gin.Context) {
