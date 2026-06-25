@@ -2065,16 +2065,14 @@ func (n *Node) processVisionFiles(
 			if err != nil {
 				return nil, false, err
 			}
-			if isLocalWorkflowFile(f.TransferMethod) {
-				if _, err := n.validateLocalVisionFileURL(fileURL); err != nil {
-					return nil, false, err
-				}
-			}
 			filePrompt = PromptMessageContent{
 				Type:     n.getFileContentType(f),
 				URL:      fileURL,
 				MimeType: safeDeref(f.MimeType),
 				Detail:   visionDetail,
+			}
+			if err := n.inlineMediaContentIfNeeded(&filePrompt, f); err != nil {
+				return nil, false, err
 			}
 		case map[string]any:
 			transferMethod := file.FileTransferMethod(getStringFromMap(f, "transfer_method"))
@@ -2085,9 +2083,6 @@ func (n *Node) processVisionFiles(
 			if isLocalWorkflowFile(transferMethod) {
 				fileURL, err = n.resolveFileURLFromMap(f)
 				if err != nil {
-					return nil, false, err
-				}
-				if _, err := n.validateLocalVisionFileURL(fileURL); err != nil {
 					return nil, false, err
 				}
 			} else {
@@ -2105,6 +2100,9 @@ func (n *Node) processVisionFiles(
 				MimeType: getStringFromMap(f, "mime_type"),
 				Base64:   getStringFromMap(f, "base64_data"),
 				Detail:   visionDetail,
+			}
+			if err := n.inlineMediaContentFromMapIfNeeded(&filePrompt, f); err != nil {
+				return nil, false, err
 			}
 		default:
 			filePrompt = PromptMessageContent{
@@ -2232,52 +2230,58 @@ func containsInlinePromptData(promptMessages []PromptMessage) bool {
 	return false
 }
 
-func (n *Node) inlineMediaContentIfNeeded(prompt *PromptMessageContent, workflowFile *file.File) {
+func (n *Node) inlineMediaContentIfNeeded(prompt *PromptMessageContent, workflowFile *file.File) error {
 	if prompt == nil || workflowFile == nil {
-		return
+		return nil
 	}
 	if workflowFile.TransferMethod != file.FileTransferMethodLocalFile {
-		return
+		return nil
 	}
 	fileID := firstNonEmptyString(safeDeref(workflowFile.RelatedID), safeDeref(workflowFile.ID))
-	n.inlineMediaContentByFileID(prompt, fileID)
+	return n.inlineMediaContentByFileID(prompt, fileID)
 }
 
-func (n *Node) inlineMediaContentFromMapIfNeeded(prompt *PromptMessageContent, fileMap map[string]any) {
+func (n *Node) inlineMediaContentFromMapIfNeeded(prompt *PromptMessageContent, fileMap map[string]any) error {
 	if prompt == nil {
-		return
+		return nil
 	}
 	if getStringFromMap(fileMap, "transfer_method") != string(file.FileTransferMethodLocalFile) {
-		return
+		return nil
 	}
 	fileID := firstNonEmptyString(
 		getStringFromMap(fileMap, "upload_file_id"),
 		getStringFromMap(fileMap, "id"),
 		getStringFromMap(fileMap, "related_id"),
 	)
-	n.inlineMediaContentByFileID(prompt, fileID)
+	return n.inlineMediaContentByFileID(prompt, fileID)
 }
 
-func (n *Node) inlineMediaContentByFileID(prompt *PromptMessageContent, fileID string) {
-	if prompt == nil || prompt.Base64 != "" || fileID == "" || n.fileLoader == nil {
-		return
+func (n *Node) inlineMediaContentByFileID(prompt *PromptMessageContent, fileID string) error {
+	if prompt == nil || prompt.Base64 != "" || fileID == "" {
+		return nil
+	}
+	if n.fileLoader == nil {
+		return fmt.Errorf("workflow local media file loader is required")
 	}
 	switch prompt.Type {
 	case PromptMessageContentTypeImage, PromptMessageContentTypeAudio, PromptMessageContentTypeVideo:
 	default:
-		return
+		return nil
 	}
 
 	content, err := n.fileLoader.DownloadFile(context.Background(), fileID)
-	if err != nil || len(content) == 0 {
-		return
+	if err != nil {
+		return fmt.Errorf("failed to download workflow local media file: %w", err)
+	}
+	if len(content) == 0 {
+		return fmt.Errorf("workflow local media file is empty")
 	}
 
 	prompt.Base64 = base64.StdEncoding.EncodeToString(content)
 	prompt.URL = ""
+	return nil
 }
 
-// handleCompletionTemplate handles completion model template
 func (n *Node) handleCompletionTemplate(
 	template NodeCompletionModelPromptTemplate,
 	context string,

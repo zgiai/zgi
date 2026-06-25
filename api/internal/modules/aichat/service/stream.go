@@ -369,6 +369,14 @@ func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedCha
 				_ = eventBuffer.flush(context.WithoutCancel(ctx))
 				return builder.String(), usage, nil
 			}
+			reasoning := streamChunkReasoningContent(chunk)
+			if reasoning != "" {
+				appendPreparedReasoningContent(prepared, reasoning)
+				_ = eventBuffer.flush(ctx)
+				if err := s.appendStreamReasoningEvent(ctx, prepared, reasoning); err != nil && !errors.Is(err, ErrStreamEventsUnavailable) {
+					logger.WarnContext(ctx, "failed to append aichat stream reasoning event", "message_id", prepared.Message.ID.String(), err)
+				}
+			}
 			text := streamChunkText(chunk)
 			if text == "" {
 				continue
@@ -633,6 +641,31 @@ func preparedResultMetadata(source map[string]interface{}, usage *adapter.Usage)
 	return metadata
 }
 
+func appendPreparedReasoningContent(prepared *PreparedChat, reasoning string) {
+	if prepared == nil || prepared.Message == nil || reasoning == "" {
+		return
+	}
+	metadata := copyStringAnyMap(prepared.Message.Metadata)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadata["reasoning_content"] = stringFromAny(metadata["reasoning_content"]) + reasoning
+	prepared.Message.Metadata = metadata
+}
+
+func (s *service) appendStreamReasoningEvent(ctx context.Context, prepared *PreparedChat, reasoning string) error {
+	if s == nil || prepared == nil || prepared.Message == nil || prepared.Conversation == nil || reasoning == "" {
+		return nil
+	}
+	_, err := s.events.append(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessage, map[string]interface{}{
+		"conversation_id":   prepared.Conversation.ID.String(),
+		"message_id":        prepared.Message.ID.String(),
+		"answer":            "",
+		"reasoning_content": reasoning,
+	})
+	return err
+}
+
 func streamChunkText(resp adapter.StreamResponse) string {
 	if len(resp.Choices) == 0 {
 		return ""
@@ -644,6 +677,13 @@ func streamChunkText(resp adapter.StreamResponse) string {
 	default:
 		return ""
 	}
+}
+
+func streamChunkReasoningContent(resp adapter.StreamResponse) string {
+	if len(resp.Choices) == 0 {
+		return ""
+	}
+	return resp.Choices[0].Delta.ReasoningContent
 }
 
 func qwenRuntimeStreamDebugEnabled() bool {

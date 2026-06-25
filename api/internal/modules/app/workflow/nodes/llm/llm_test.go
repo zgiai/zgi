@@ -1120,10 +1120,12 @@ func TestProcessVisionFiles_UsesRemoteURLFromMapInput(t *testing.T) {
 	}
 }
 
-func TestProcessVisionFiles_UsesSignedPreviewURLForLocalImage(t *testing.T) {
+func TestProcessVisionFiles_InlinesLocalImage(t *testing.T) {
 	setTestFileURLConfig(t, "https://api.zgi.im", "release")
 
-	n := &Node{}
+	n := &Node{fileLoader: &stubFileDownloader{downloadFn: func(ctx context.Context, fileID string) ([]byte, error) {
+		return []byte("image-bytes"), nil
+	}}}
 
 	workflowFile := file.NewFile(
 		"tenant-1",
@@ -1151,18 +1153,20 @@ func TestProcessVisionFiles_UsesSignedPreviewURLForLocalImage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected synthesized user content to be multimodal, got %T", processed[1].Content)
 	}
-	if contentList[0].Base64 != "" {
-		t.Fatalf("expected local image to use signed preview URL instead of inline base64")
+	if contentList[0].Base64 == "" {
+		t.Fatalf("expected local image to use inline base64")
 	}
-	if !strings.HasPrefix(contentList[0].URL, "https://api.zgi.im/console/api/files/file-1/file-preview?") {
-		t.Fatalf("expected signed preview URL, got %q", contentList[0].URL)
+	if contentList[0].URL != "" {
+		t.Fatalf("expected local image URL to be cleared, got %q", contentList[0].URL)
 	}
 }
 
-func TestProcessVisionFiles_UsesSignedPreviewURLForLocalImageFromWorkflowFileMap(t *testing.T) {
+func TestProcessVisionFiles_InlinesLocalImageFromWorkflowFileMap(t *testing.T) {
 	setTestFileURLConfig(t, "https://api.zgi.im", "release")
 
-	n := &Node{}
+	n := &Node{fileLoader: &stubFileDownloader{downloadFn: func(ctx context.Context, fileID string) ([]byte, error) {
+		return []byte("image-bytes"), nil
+	}}}
 
 	workflowFile := file.NewFile(
 		"tenant-1",
@@ -1190,18 +1194,20 @@ func TestProcessVisionFiles_UsesSignedPreviewURLForLocalImageFromWorkflowFileMap
 	if !ok {
 		t.Fatalf("expected synthesized user content to be multimodal, got %T", processed[1].Content)
 	}
-	if contentList[0].Base64 != "" {
-		t.Fatalf("expected workflow file map to use signed preview URL instead of inline base64")
+	if contentList[0].Base64 == "" {
+		t.Fatalf("expected workflow file map to use inline base64")
 	}
-	if !strings.HasPrefix(contentList[0].URL, "https://api.zgi.im/console/api/files/file-1/file-preview?") {
-		t.Fatalf("expected signed preview URL from workflow file map, got %q", contentList[0].URL)
+	if contentList[0].URL != "" {
+		t.Fatalf("expected workflow file map URL to be cleared, got %q", contentList[0].URL)
 	}
 }
 
-func TestProcessVisionFiles_RejectsNonPublicSignedPreviewURLForLocalImage(t *testing.T) {
+func TestProcessVisionFiles_InlinesLocalImageWithNonPublicFilesURL(t *testing.T) {
 	setTestFileURLConfig(t, "http://localhost:2679", "release")
 
-	n := &Node{}
+	n := &Node{fileLoader: &stubFileDownloader{downloadFn: func(ctx context.Context, fileID string) ([]byte, error) {
+		return []byte("image-bytes"), nil
+	}}}
 
 	workflowFile := file.NewFile(
 		"tenant-1",
@@ -1212,17 +1218,18 @@ func TestProcessVisionFiles_RejectsNonPublicSignedPreviewURLForLocalImage(t *tes
 		file.WithMimeType("image/jpeg"),
 	)
 
-	_, _, err := n.processVisionFiles(
-		[]PromptMessage{{Role: PromptMessageRoleSystem, Content: "你是诊断助手。"}},
+	processed, _, err := n.processVisionFiles(
+		[]PromptMessage{{Role: PromptMessageRoleSystem, Content: "diagnose"}},
 		[]any{workflowFile},
 		true,
 		ImageDetailHigh,
 	)
-	if err == nil {
-		t.Fatalf("expected processVisionFiles to fail when FILES_URL is not public")
+	if err != nil {
+		t.Fatalf("processVisionFiles returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "FILES_URL") {
-		t.Fatalf("expected FILES_URL configuration error, got %v", err)
+	contentList := processed[1].Content.([]PromptMessageContent)
+	if contentList[0].Base64 == "" || contentList[0].URL != "" {
+		t.Fatalf("local image prompt = %#v, want inline base64 without URL", contentList[0])
 	}
 }
 
@@ -1388,7 +1395,9 @@ func TestProcessVisionFiles_UsesPublicStorageURLForLocalImage(t *testing.T) {
 	db := openWorkflowImageInputTestDB(t)
 	insertWorkflowImageInputFile(t, db, "file-1", "upload_files/org-1/image.png", "image/png", "png", string(storage.StorageTypeQiniu))
 
-	n := &Node{db: db}
+	n := &Node{db: db, fileLoader: &stubFileDownloader{downloadFn: func(ctx context.Context, fileID string) ([]byte, error) {
+		return []byte("image-bytes"), nil
+	}}}
 	workflowFile := file.NewFile(
 		"tenant-1",
 		file.FileTypeImage,
@@ -1416,8 +1425,10 @@ func TestProcessVisionFiles_UsesPublicStorageURLForLocalImage(t *testing.T) {
 		t.Fatalf("expected synthesized user content to be multimodal, got %T", processed[1].Content)
 	}
 
-	want := "https://cdn-qiniu.example.com/workflow/upload_files/org-1/image.png"
-	if contentList[0].URL != want {
-		t.Fatalf("expected image_url %q, got %q", want, contentList[0].URL)
+	if contentList[0].Base64 == "" {
+		t.Fatalf("expected public-storage local image to use inline base64")
+	}
+	if contentList[0].URL != "" {
+		t.Fatalf("expected public-storage local image URL to be cleared, got %q", contentList[0].URL)
 	}
 }

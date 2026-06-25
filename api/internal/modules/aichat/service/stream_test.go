@@ -2245,3 +2245,34 @@ func (f *fakeAgenticLLMClient) AppCreateImage(ctx context.Context, appCtx *llmcl
 func (f *fakeAgenticLLMClient) AppRerank(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.RerankRequest) (*adapter.RerankResponse, error) {
 	return nil, errors.New("not implemented")
 }
+
+func TestCollectStreamAnswerPreservesReasoningContent(t *testing.T) {
+	svc := &service{streams: newStreamRegistry()}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{ID: uuid.New()},
+		Message:      &aichatmodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{"existing": "keep"}},
+	}
+	stream := make(chan adapter.StreamResponse, 3)
+	stream <- adapter.StreamResponse{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Role: "assistant", ReasoningContent: "think"}}}}
+	stream <- adapter.StreamResponse{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Role: "assistant", Content: "answer"}}}}
+	stream <- adapter.StreamResponse{Done: true}
+	close(stream)
+
+	var chunks []string
+	answer, _, err := svc.collectStreamAnswer(context.Background(), prepared, stream, func(text string) error {
+		chunks = append(chunks, text)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("collectStreamAnswer() error = %v", err)
+	}
+	if answer != "answer" {
+		t.Fatalf("answer = %q, want answer", answer)
+	}
+	if got := prepared.Message.Metadata["reasoning_content"]; got != "think" {
+		t.Fatalf("reasoning_content metadata = %#v, want think", got)
+	}
+	if got := strings.Join(chunks, ""); got != "answer" {
+		t.Fatalf("streamed chunks = %q, want answer", got)
+	}
+}
