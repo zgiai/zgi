@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -110,24 +111,51 @@ func (te *TokenEstimator) EstimateTotalTokens(
 
 // EstimateEmbeddingTokens estimates tokens for embedding request
 func (te *TokenEstimator) EstimateEmbeddingTokens(input interface{}, model string) int {
-	totalTokens := 0
-
 	switch v := input.(type) {
 	case string:
-		totalTokens = te.estimateTextTokens(v)
-	case []interface{}:
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				totalTokens += te.estimateTextTokens(s)
-			}
-		}
+		return te.estimateTextTokens(v)
 	case []string:
+		totalTokens := 0
 		for _, s := range v {
 			totalTokens += te.estimateTextTokens(s)
 		}
+		return totalTokens
+	case []int:
+		return len(v)
+	case [][]int:
+		totalTokens := 0
+		for _, tokens := range v {
+			totalTokens += len(tokens)
+		}
+		return totalTokens
+	case []interface{}:
+		totalTokens := 0
+		for _, item := range v {
+			totalTokens += te.estimateEmbeddingItemTokens(item)
+		}
+		return totalTokens
+	default:
+		return 0
 	}
+}
 
-	return totalTokens
+func (te *TokenEstimator) estimateEmbeddingItemTokens(input interface{}) int {
+	switch v := input.(type) {
+	case string:
+		return te.estimateTextTokens(v)
+	case []int:
+		return len(v)
+	case []interface{}:
+		totalTokens := 0
+		for _, item := range v {
+			totalTokens += te.estimateEmbeddingItemTokens(item)
+		}
+		return totalTokens
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // EstimateRerankTokens estimates tokens for rerank request

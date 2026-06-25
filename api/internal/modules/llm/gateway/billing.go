@@ -16,6 +16,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	paymentModel "github.com/zgiai/zgi/api/internal/modules/payment/model"
 	paymentRepo "github.com/zgiai/zgi/api/internal/modules/payment/repository"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -61,6 +62,7 @@ type BillingContext struct {
 	NodeType          string
 	ModelID           uuid.UUID
 	ModelSource       PricingModelSource
+	PricingOperation  PricingOperation
 	ModelName         string // Model name for logging
 	ProviderID        uuid.UUID
 	ProviderName      string     // Provider name for logging
@@ -78,6 +80,10 @@ type BillingContext struct {
 	InputUSD          decimal.Decimal
 	OutputUSD         decimal.Decimal
 	TotalUSD          decimal.Decimal
+	PricingSource     PricingSource
+	UsageSource       UsageSource
+	PricingSnapshot   datatypes.JSON
+	LockedTokenQuote  *PricingQuote
 	BillingLane       UsageBillingLane
 	UseSystemProvider bool
 	IsStreaming       bool
@@ -576,7 +582,7 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 	}
 
 	creditsToDeduct := bc.ActualCredits
-	if creditsToDeduct == 0 && (bc.PromptTokens > 0 || bc.CompletionTokens > 0) {
+	if billingContextNeedsTokenReprice(bc) {
 		quote, quoteErr := NewPricingEngine(b.db).QuoteTokens(ctx, pricingModelRefFromBillingContext(bc), bc.PromptTokens, bc.CompletionTokens)
 		err = quoteErr
 		if err != nil {
@@ -629,6 +635,16 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 	}
 
 	return b.creditTxRepo.CreateBatch(ctx, transactions)
+}
+
+func billingContextNeedsTokenReprice(bc *BillingContext) bool {
+	if bc == nil || bc.ActualCredits != 0 {
+		return false
+	}
+	if bc.PromptTokens <= 0 && bc.CompletionTokens <= 0 {
+		return false
+	}
+	return bc.PricingSource == ""
 }
 
 // CalculateCost calculates the cost based on token usage and model pricing.

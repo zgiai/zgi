@@ -222,16 +222,13 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	}
 
 	// 11. Settle billing
-	actualQuote := PricingQuote{}
+	actualQuote := estimatedQuote
 	decision, laneErr := s.resolveBillingDecision(selection, billingCtx)
 	if laneErr != nil {
 		return nil, wrapBillingLaneMismatchError(laneErr)
 	}
-	if !decision.UseSystemProvider {
-		actualQuote, err = s.quoteImagePricing(ctx, pricingModelRefFromSelection(selection), pricingReq)
-		if err != nil {
-			actualQuote = estimatedQuote
-		}
+	if decision.UseSystemProvider {
+		actualQuote = PricingQuote{}
 	}
 
 	if err := s.settleImageSuccess(ctx, billingCtx, selection, actualQuote, resp.Settlement, responseTime); err != nil {
@@ -241,4 +238,16 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 
 	s.traceImageGeneration(ctx, req, resp, startTime, time.Now(), billingCtx, nil)
 	return resp, nil
+}
+
+func (s *llmGatewayServiceImpl) quoteImagePricingForSettlement(
+	ctx context.Context,
+	model PricingModelRef,
+	req *adapter.ImageRequest,
+	estimatedQuote PricingQuote,
+) (PricingQuote, error) {
+	if estimatedQuote.TotalCredits > 0 || !estimatedQuote.TotalUSD.IsZero() {
+		return estimatedQuote, nil
+	}
+	return s.quoteImagePricing(ctx, model, req)
 }

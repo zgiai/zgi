@@ -32,6 +32,19 @@ func (s *llmGatewayServiceImpl) quoteTokenPricing(
 	return engine.QuoteTokens(ctx, model, promptTokens, completionTokens)
 }
 
+func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlement(
+	ctx context.Context,
+	bc *BillingContext,
+	model PricingModelRef,
+	promptTokens int,
+	completionTokens int,
+) (PricingQuote, error) {
+	if bc != nil && bc.LockedTokenQuote != nil {
+		return repriceLockedTokenQuote(*bc.LockedTokenQuote, promptTokens, completionTokens)
+	}
+	return s.quoteTokenPricing(ctx, model, promptTokens, completionTokens)
+}
+
 func (s *llmGatewayServiceImpl) quoteImagePricing(
 	ctx context.Context,
 	model PricingModelRef,
@@ -59,8 +72,9 @@ func pricingModelRefFromBillingContext(bc *BillingContext) PricingModelRef {
 		return PricingModelRef{Source: PricingModelSourceGlobal}
 	}
 	return normalizePricingModelRef(PricingModelRef{
-		ModelID: bc.ModelID,
-		Source:  bc.ModelSource,
+		ModelID:   bc.ModelID,
+		Source:    bc.ModelSource,
+		Operation: bc.PricingOperation,
 	})
 }
 
@@ -75,4 +89,15 @@ func applyPricingQuoteToBillingContext(bc *BillingContext, quote PricingQuote) {
 	bc.InputCost = decimal.NewFromInt(quote.InputCredits)
 	bc.OutputCost = decimal.NewFromInt(quote.OutputCredits)
 	bc.TotalCost = decimal.NewFromInt(quote.TotalCredits)
+	bc.PricingSource = quote.PricingSource
+	bc.UsageSource = quote.UsageSource
+	bc.PricingSnapshot = quote.PricingSnapshot
+}
+
+func lockTokenPricingQuote(bc *BillingContext, quote PricingQuote) {
+	if bc == nil {
+		return
+	}
+	locked := quote
+	bc.LockedTokenQuote = &locked
 }

@@ -315,6 +315,12 @@ func (r *ChannelRouter) resolveSelectionModel(ctx context.Context, organizationI
 		} else if privateModel != nil {
 			return llmModelFromPrivateModel(privateModel), privateModel, nil
 		}
+
+		llmModel, err := r.getModelForProvider(ctx, providerHint, modelName)
+		if err != nil {
+			return nil, nil, err
+		}
+		return llmModel, nil, nil
 	}
 
 	if privateModel, err := r.getPrivateModel(ctx, organizationID, modelName); err != nil {
@@ -380,11 +386,23 @@ func (r *ChannelRouter) getModel(ctx context.Context, modelName string) (*llmmod
 		return r.configCache.GetModelByName(ctx, modelName)
 	}
 
+	return r.queryActiveModel(ctx, "", modelName)
+}
+
+func (r *ChannelRouter) getModelForProvider(ctx context.Context, provider, modelName string) (*llmmodel.LLMModel, error) {
+	return r.queryActiveModel(ctx, provider, modelName)
+}
+
+func (r *ChannelRouter) queryActiveModel(ctx context.Context, provider, modelName string) (*llmmodel.LLMModel, error) {
 	var m llmmodel.LLMModel
-	err := r.db.WithContext(ctx).
+	query := r.db.WithContext(ctx).
 		Model(&llmmodel.LLMModel{}).
-		Joins("JOIN llm_providers ON llm_models.provider = llm_providers.provider").
-		Where("llm_models.name = ? AND llm_models.is_active = ? AND llm_models.deleted_at IS NULL", modelName, true).
+		Joins("JOIN llm_providers ON llm_models.provider = llm_providers.provider")
+	if provider != "" {
+		query = query.Where("llm_models.provider = ?", provider)
+	}
+	err := query.
+		Where("llm_models.name = ? AND llm_models.is_active = ? AND llm_models.status = ? AND llm_models.deleted_at IS NULL", modelName, true, llmmodel.ModelStatusActive).
 		Where("llm_providers.is_active = ? AND llm_providers.deleted_at IS NULL", true).
 		First(&m).Error
 	if err != nil {

@@ -84,9 +84,11 @@ type fakePricingEngine struct {
 	tokenErr   error
 	imageErr   error
 	lastModel  PricingModelRef
+	tokenCalls int
 }
 
 func (f *fakePricingEngine) QuoteTokens(ctx context.Context, model PricingModelRef, promptTokens, completionTokens int) (PricingQuote, error) {
+	f.tokenCalls++
 	f.lastModel = model
 	if f.tokenErr != nil {
 		return PricingQuote{}, f.tokenErr
@@ -597,7 +599,6 @@ func TestBillingRouting_SettleChatSuccess_UsesPricingEngineQuote(t *testing.T) {
 			InputCredits:  12,
 			OutputCredits: 6,
 			TotalCredits:  18,
-			Source:        PricingSourceUSDPrice,
 		},
 	}
 
@@ -657,6 +658,70 @@ func TestBillingRouting_SettleChatSuccess_UsesPricingEngineQuote(t *testing.T) {
 	}
 	if !local.lastSettle.TotalCost.Equal(decimal.NewFromInt(18)) {
 		t.Fatalf("totalCost = %s, want 18", local.lastSettle.TotalCost)
+	}
+}
+
+func TestBillingRouting_SettleChatSuccess_UsesLockedQuote(t *testing.T) {
+	remote := &fakeBillingProvider{checkBalanceResult: true}
+	local := &fakeBillingProvider{checkBalanceResult: true}
+	engine := &fakePricingEngine{tokenErr: errors.New("pricing changed during request")}
+
+	s := &llmGatewayServiceImpl{
+		billing:       remote,
+		localBilling:  local,
+		pricingEngine: engine,
+		healthTracker: NewChannelHealthTracker(nil),
+	}
+
+	ps := &ProviderSelection{
+		UseSystemProvider: false,
+		ModelSource:       PricingModelSourceGlobal,
+		Model: llmmodel.LLMModel{
+			ID:    uuid.New(),
+			Model: "gpt-4o-mini",
+		},
+		Provider: providermodel.LLMProvider{
+			Provider: "openai",
+		},
+	}
+	bc := &BillingContext{
+		RequestID:         "req-locked-pricing",
+		UseSystemProvider: false,
+	}
+	lockTokenPricingQuote(bc, withTokenPricingBasis(
+		newUSDQuote(decimal.Zero, decimal.Zero, PricingSourceCodeDefaultFallback, "in,out", UsageSourceProviderUsage, nil),
+		decimal.RequireFromString("1"),
+		decimal.RequireFromString("2"),
+		true,
+		true,
+		"in",
+		"out",
+	))
+
+	err := s.settleChatSuccess(
+		context.Background(),
+		bc,
+		ps,
+		nil,
+		&adapter.Usage{
+			PromptTokens:     1000,
+			CompletionTokens: 1000,
+			TotalTokens:      2000,
+		},
+		nil,
+		10,
+	)
+	if err != nil {
+		t.Fatalf("settleChatSuccess returned error: %v", err)
+	}
+	if engine.tokenCalls != 0 {
+		t.Fatalf("pricing engine token calls = %d, want 0", engine.tokenCalls)
+	}
+	if local.lastSettle == nil {
+		t.Fatalf("expected settle context to be captured")
+	}
+	if local.lastSettle.ActualCredits != 3000 {
+		t.Fatalf("actualCredits = %d, want 3000", local.lastSettle.ActualCredits)
 	}
 }
 
@@ -795,6 +860,26 @@ func TestBillingRouting_SettleImageSuccess_PlatformUsesProxySettlement(t *testin
 	}
 	if local.settleCalls != 0 {
 		t.Fatalf("local settle calls = %d, want 0", local.settleCalls)
+	}
+}
+
+func TestBillingRouting_ImageSettlementReusesEstimatedQuote(t *testing.T) {
+	wantErr := errors.New("image pricing unavailable")
+	s := &llmGatewayServiceImpl{
+		pricingEngine: &fakePricingEngine{imageErr: wantErr},
+	}
+
+	quote, err := s.quoteImagePricingForSettlement(
+		context.Background(),
+		PricingModelRef{ModelID: uuid.New(), Source: PricingModelSourceGlobal},
+		&adapter.ImageRequest{Model: "gpt-image"},
+		PricingQuote{TotalCredits: 123},
+	)
+	if err != nil {
+		t.Fatalf("quoteImagePricingForSettlement returned error: %v", err)
+	}
+	if quote.TotalCredits != 123 {
+		t.Fatalf("total credits = %d, want 123", quote.TotalCredits)
 	}
 }
 
@@ -984,7 +1069,6 @@ func TestBillingRouting_HandleStreamBilling_UsesPricingEngineQuote(t *testing.T)
 			InputCredits:  10,
 			OutputCredits: 20,
 			TotalCredits:  30,
-			Source:        PricingSourceUSDPrice,
 		},
 	}
 
@@ -1038,6 +1122,60 @@ func TestBillingRouting_HandleStreamBilling_UsesPricingEngineQuote(t *testing.T)
 	}
 	if !local.lastSettle.TotalCost.Equal(decimal.NewFromInt(30)) {
 		t.Fatalf("totalCost = %s, want 30", local.lastSettle.TotalCost)
+	}
+}
+
+func TestBillingRouting_HandleStreamBilling_UsesLockedQuote(t *testing.T) {
+	remote := &fakeBillingProvider{checkBalanceResult: true}
+	local := &fakeBillingProvider{checkBalanceResult: true}
+	engine := &fakePricingEngine{tokenErr: errors.New("pricing changed during stream")}
+
+	s := &llmGatewayServiceImpl{
+		billing:       remote,
+		localBilling:  local,
+		pricingEngine: engine,
+		healthTracker: NewChannelHealthTracker(nil),
+	}
+
+	in := make(chan adapter.StreamResponse, 2)
+	out := make(chan adapter.StreamResponse, 4)
+	in <- adapter.StreamResponse{}
+	in <- adapter.StreamResponse{
+		Done: true,
+		Usage: &adapter.Usage{
+			PromptTokens:     1000,
+			CompletionTokens: 1000,
+			TotalTokens:      2000,
+		},
+	}
+	close(in)
+
+	bc := &BillingContext{
+		UseSystemProvider: false,
+		RequestID:         "req-stream-locked-pricing",
+	}
+	lockTokenPricingQuote(bc, withTokenPricingBasis(
+		newUSDQuote(decimal.Zero, decimal.Zero, PricingSourceCodeDefaultFallback, "in,out", UsageSourceProviderUsage, nil),
+		decimal.RequireFromString("1"),
+		decimal.RequireFromString("2"),
+		true,
+		true,
+		"in",
+		"out",
+	))
+
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), nil)
+
+	for range out {
+	}
+	if engine.tokenCalls != 0 {
+		t.Fatalf("pricing engine token calls = %d, want 0", engine.tokenCalls)
+	}
+	if local.lastSettle == nil {
+		t.Fatalf("expected local settle context to be captured")
+	}
+	if local.lastSettle.ActualCredits != 3000 {
+		t.Fatalf("actualCredits = %d, want 3000", local.lastSettle.ActualCredits)
 	}
 }
 

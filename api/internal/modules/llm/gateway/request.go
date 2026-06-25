@@ -525,7 +525,7 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	actualPromptTokens := usage.PromptTokens
 	actualCompletionTokens := usage.CompletionTokens
 
-	quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), actualPromptTokens, actualCompletionTokens)
+	quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromSelection(providerSelection), actualPromptTokens, actualCompletionTokens)
 	if err != nil {
 		return fmt.Errorf("failed to calculate credits: %w", err)
 	}
@@ -619,7 +619,7 @@ func (s *llmGatewayServiceImpl) settleEmbeddingsSuccess(
 		return nil
 	}
 
-	quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), actualTokens, 0)
+	quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), actualTokens, 0)
 	if err != nil {
 		return fmt.Errorf("failed to calculate credits: %w", err)
 	}

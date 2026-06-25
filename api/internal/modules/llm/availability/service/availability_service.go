@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,14 +11,17 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/availability/dto"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type availabilityService struct {
 	modelRepo          llmrepo.ModelRepository
+	configRepo         llmrepo.ModelConfigRepository
 	routeRepo          channelrepo.TenantRouteRepository
 	globalProviderRepo providerrepo.ProviderRepository
 	providerConfigRepo providerrepo.ProviderConfigRepository
@@ -28,17 +32,19 @@ func NewAvailabilityService(
 	modelRepo llmrepo.ModelRepository,
 	routeRepo channelrepo.TenantRouteRepository,
 ) AvailabilityService {
-	return NewAvailabilityServiceWithProviderRepos(modelRepo, routeRepo, nil, nil)
+	return NewAvailabilityServiceWithProviderRepos(modelRepo, nil, routeRepo, nil, nil)
 }
 
 func NewAvailabilityServiceWithProviderRepos(
 	modelRepo llmrepo.ModelRepository,
+	configRepo llmrepo.ModelConfigRepository,
 	routeRepo channelrepo.TenantRouteRepository,
 	globalProviderRepo providerrepo.ProviderRepository,
 	providerConfigRepo providerrepo.ProviderConfigRepository,
 ) AvailabilityService {
 	return &availabilityService{
 		modelRepo:          modelRepo,
+		configRepo:         configRepo,
 		routeRepo:          routeRepo,
 		globalProviderRepo: globalProviderRepo,
 		providerConfigRepo: providerConfigRepo,
@@ -51,26 +57,28 @@ func (s *availabilityService) CheckModelAvailability(
 	organizationID, modelID uuid.UUID,
 ) (*dto.ModelAvailability, error) {
 	// 1. Get model info
-	model, err := s.modelRepo.GetByID(ctx, modelID)
+	modelRecord, err := s.modelRepo.GetByID(ctx, modelID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get model: %w", err)
 	}
+	if !modelRecordIsAvailable(modelRecord) {
+		return s.unavailableModel(modelRecord, []string{"Model is currently inactive in the system"}), nil
+	}
 
-	providerEnabled, err := s.isProviderEnabled(ctx, organizationID, model.Provider)
+	tenantEnabled, err := s.isTenantModelEnabled(ctx, organizationID, modelRecord.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load model config: %w", err)
+	}
+	if !tenantEnabled {
+		return s.unavailableModel(modelRecord, []string{"Model is explicitly disabled for your tenant"}), nil
+	}
+
+	providerEnabled, err := s.isProviderEnabled(ctx, organizationID, modelRecord.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider visibility: %w", err)
 	}
 	if !providerEnabled {
-		return &dto.ModelAvailability{
-			ModelID:   model.ID,
-			ModelName: model.Model,
-			Provider:  model.Provider,
-			Status:    dto.ModelUnavailable,
-			ChannelInfo: dto.ChannelAvailabilityInfo{
-				Warnings: []string{"Model provider is disabled for your tenant"},
-			},
-			UpdatedAt: time.Now(),
-		}, nil
+		return s.unavailableModel(modelRecord, []string{"Model provider is disabled for your tenant"}), nil
 	}
 
 	// 2. Get all enabled routes for this tenant
@@ -80,7 +88,7 @@ func (s *availabilityService) CheckModelAvailability(
 	}
 
 	// 3. Filter routes that support this model
-	supportedRoutes := s.filterRoutesForModel(routes, model.Model)
+	supportedRoutes := s.filterRoutesForModel(routes, modelRecord.Model)
 
 	// 4. Analyze channel status
 	channelInfo := s.analyzeChannelStatus(supportedRoutes)
@@ -89,9 +97,9 @@ func (s *availabilityService) CheckModelAvailability(
 	status := s.determineStatus(channelInfo)
 
 	return &dto.ModelAvailability{
-		ModelID:     model.ID,
-		ModelName:   model.Model,
-		Provider:    model.Provider,
+		ModelID:     modelRecord.ID,
+		ModelName:   modelRecord.Model,
+		Provider:    modelRecord.Provider,
 		Status:      status,
 		ChannelInfo: channelInfo,
 		UpdatedAt:   time.Now(),
@@ -114,7 +122,7 @@ func (s *availabilityService) BatchCheckAvailability(
 				zap.Stringer("model_id", modelID),
 				zap.Error(err),
 			)
-			continue
+			return nil, err
 		}
 		results = append(results, availability)
 	}
@@ -261,6 +269,41 @@ func (s *availabilityService) isProviderEnabled(ctx context.Context, organizatio
 		return false, nil
 	}
 	return enabled, nil
+}
+
+func (s *availabilityService) isTenantModelEnabled(ctx context.Context, organizationID uuid.UUID, modelID uuid.UUID) (bool, error) {
+	if s.configRepo == nil {
+		return true, nil
+	}
+
+	config, err := s.configRepo.GetByModelID(ctx, organizationID, modelID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return true, nil
+		}
+		return false, err
+	}
+	return config == nil || config.IsEnabled, nil
+}
+
+func (s *availabilityService) unavailableModel(modelRecord *llmmodel.LLMModel, warnings []string) *dto.ModelAvailability {
+	result := &dto.ModelAvailability{
+		Status: dto.ModelUnavailable,
+		ChannelInfo: dto.ChannelAvailabilityInfo{
+			Warnings: warnings,
+		},
+		UpdatedAt: time.Now(),
+	}
+	if modelRecord != nil {
+		result.ModelID = modelRecord.ID
+		result.ModelName = modelRecord.Model
+		result.Provider = modelRecord.Provider
+	}
+	return result
+}
+
+func modelRecordIsAvailable(modelRecord *llmmodel.LLMModel) bool {
+	return modelRecord != nil && modelRecord.IsActive && modelRecord.Status == llmmodel.ModelStatusActive
 }
 
 func boolPtr(b bool) *bool {

@@ -395,9 +395,9 @@ type CatalogModel struct {
 	Currency                string                  `protobuf:"bytes,14,opt,name=currency,proto3" json:"currency,omitempty"`
 	ContextWindow           int32                   `protobuf:"varint,15,opt,name=context_window,json=contextWindow,proto3" json:"context_window,omitempty"`
 	MaxOutputTokens         int32                   `protobuf:"varint,16,opt,name=max_output_tokens,json=maxOutputTokens,proto3" json:"max_output_tokens,omitempty"`
-	InputPrice              float64                 `protobuf:"fixed64,17,opt,name=input_price,json=inputPrice,proto3" json:"input_price,omitempty"`
-	OutputPrice             float64                 `protobuf:"fixed64,18,opt,name=output_price,json=outputPrice,proto3" json:"output_price,omitempty"`
-	CachedInputPrice        float64                 `protobuf:"fixed64,19,opt,name=cached_input_price,json=cachedInputPrice,proto3" json:"cached_input_price,omitempty"`
+	InputPrice              *float64                `protobuf:"fixed64,17,opt,name=input_price,json=inputPrice,proto3,oneof" json:"input_price,omitempty"`
+	OutputPrice             *float64                `protobuf:"fixed64,18,opt,name=output_price,json=outputPrice,proto3,oneof" json:"output_price,omitempty"`
+	CachedInputPrice        *float64                `protobuf:"fixed64,19,opt,name=cached_input_price,json=cachedInputPrice,proto3,oneof" json:"cached_input_price,omitempty"`
 	UseCases                []string                `protobuf:"bytes,20,rep,name=use_cases,json=useCases,proto3" json:"use_cases,omitempty"`
 	InputModalities         []string                `protobuf:"bytes,21,rep,name=input_modalities,json=inputModalities,proto3" json:"input_modalities,omitempty"`
 	OutputModalities        []string                `protobuf:"bytes,22,rep,name=output_modalities,json=outputModalities,proto3" json:"output_modalities,omitempty"`
@@ -557,22 +557,22 @@ func (x *CatalogModel) GetMaxOutputTokens() int32 {
 }
 
 func (x *CatalogModel) GetInputPrice() float64 {
-	if x != nil {
-		return x.InputPrice
+	if x != nil && x.InputPrice != nil {
+		return *x.InputPrice
 	}
 	return 0
 }
 
 func (x *CatalogModel) GetOutputPrice() float64 {
-	if x != nil {
-		return x.OutputPrice
+	if x != nil && x.OutputPrice != nil {
+		return *x.OutputPrice
 	}
 	return 0
 }
 
 func (x *CatalogModel) GetCachedInputPrice() float64 {
-	if x != nil {
-		return x.CachedInputPrice
+	if x != nil && x.CachedInputPrice != nil {
+		return *x.CachedInputPrice
 	}
 	return 0
 }
@@ -1200,7 +1200,7 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"\x06status\x18\v \x01(\tR\x06status\x12\x1b\n" +
 	"\tis_active\x18\f \x01(\bR\bisActive\x12*\n" +
 	"\x11is_system_enabled\x18\r \x01(\bR\x0fisSystemEnabled\x12#\n" +
-	"\rmetadata_json\x18\x0e \x01(\tR\fmetadataJson\"\xb3\t\n" +
+	"\rmetadata_json\x18\x0e \x01(\tR\fmetadataJson\"\xfa\t\n" +
 	"\fCatalogModel\x12\x1a\n" +
 	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x1d\n" +
@@ -1223,11 +1223,11 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"accessType\x12\x1a\n" +
 	"\bcurrency\x18\x0e \x01(\tR\bcurrency\x12%\n" +
 	"\x0econtext_window\x18\x0f \x01(\x05R\rcontextWindow\x12*\n" +
-	"\x11max_output_tokens\x18\x10 \x01(\x05R\x0fmaxOutputTokens\x12\x1f\n" +
-	"\vinput_price\x18\x11 \x01(\x01R\n" +
-	"inputPrice\x12!\n" +
-	"\foutput_price\x18\x12 \x01(\x01R\voutputPrice\x12,\n" +
-	"\x12cached_input_price\x18\x13 \x01(\x01R\x10cachedInputPrice\x12\x1b\n" +
+	"\x11max_output_tokens\x18\x10 \x01(\x05R\x0fmaxOutputTokens\x12$\n" +
+	"\vinput_price\x18\x11 \x01(\x01H\x00R\n" +
+	"inputPrice\x88\x01\x01\x12&\n" +
+	"\foutput_price\x18\x12 \x01(\x01H\x01R\voutputPrice\x88\x01\x01\x121\n" +
+	"\x12cached_input_price\x18\x13 \x01(\x01H\x02R\x10cachedInputPrice\x88\x01\x01\x12\x1b\n" +
 	"\tuse_cases\x18\x14 \x03(\tR\buseCases\x12)\n" +
 	"\x10input_modalities\x18\x15 \x03(\tR\x0finputModalities\x12+\n" +
 	"\x11output_modalities\x18\x16 \x03(\tR\x10outputModalities\x12)\n" +
@@ -1241,7 +1241,10 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"\x05tools\x18\x1e \x01(\v2\x1d.zgi.rpc.v1.CatalogModelToolsR\x05tools\x12B\n" +
 	"\n" +
 	"parameters\x18\x1f \x01(\v2\".zgi.rpc.v1.CatalogModelParametersR\n" +
-	"parameters\"\x82\x04\n" +
+	"parametersB\x0e\n" +
+	"\f_input_priceB\x0f\n" +
+	"\r_output_priceB\x15\n" +
+	"\x13_cached_input_price\"\x82\x04\n" +
 	"\x15CatalogModelEndpoints\x12)\n" +
 	"\x10chat_completions\x18\x01 \x01(\bR\x0fchatCompletions\x12\x1c\n" +
 	"\tresponses\x18\x02 \x01(\bR\tresponses\x12\x1a\n" +
@@ -1360,6 +1363,7 @@ func file_pkg_rpc_v1_catalog_proto_init() {
 	if File_pkg_rpc_v1_catalog_proto != nil {
 		return
 	}
+	file_pkg_rpc_v1_catalog_proto_msgTypes[5].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

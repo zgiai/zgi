@@ -132,8 +132,8 @@ type ModelMetaData struct {
 	ContextWindow    int                    `json:"context_window"`
 	MaxOutputTokens  int                    `json:"max_output_tokens"`
 	Currency         string                 `json:"currency"`
-	InputPrice       float64                `json:"input_price"`
-	OutputPrice      float64                `json:"output_price"`
+	InputPrice       *float64               `json:"input_price"`
+	OutputPrice      *float64               `json:"output_price"`
 	CachedInputPrice float64                `json:"cached_input_price"`
 	IsFlagship       bool                   `json:"is_flagship"`
 	IsRecommended    bool                   `json:"is_recommended"`
@@ -664,8 +664,23 @@ func normalizedRemotePriceValue(value float64) float64 {
 	return normalized
 }
 
+func remotePriceValue(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func normalizedOptionalRemotePriceValue(value *float64) float64 {
+	return normalizedRemotePriceValue(remotePriceValue(value))
+}
+
 func pricesDiffer(local decimal.Decimal, remote float64) bool {
 	return !normalizeLocalPrice(local).Equal(normalizeRemotePrice(remote))
+}
+
+func optionalPricesDiffer(local decimal.Decimal, remote *float64) bool {
+	return pricesDiffer(local, remotePriceValue(remote))
 }
 
 func equalStringSlices(left, right []string) bool {
@@ -695,10 +710,16 @@ func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bo
 	if remote.MaxOutputTokens > 0 && local.MaxOutputTokens != remote.MaxOutputTokens {
 		return true
 	}
-	if pricesDiffer(local.InputPrice, remote.InputPrice) {
+	if optionalPricesDiffer(local.InputPrice, remote.InputPrice) {
 		return true
 	}
-	if pricesDiffer(local.OutputPrice, remote.OutputPrice) {
+	if local.InputPriceConfigured != (remote.InputPrice != nil) {
+		return true
+	}
+	if optionalPricesDiffer(local.OutputPrice, remote.OutputPrice) {
+		return true
+	}
+	if local.OutputPriceConfigured != (remote.OutputPrice != nil) {
 		return true
 	}
 	if pricesDiffer(local.CachedInputPrice, remote.CachedInputPrice) {
@@ -769,18 +790,32 @@ func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaD
 	if remote.MaxOutputTokens > 0 && local.MaxOutputTokens != remote.MaxOutputTokens {
 		diffs = append(diffs, DiffField{Field: "max_output_tokens", OldValue: local.MaxOutputTokens, NewValue: remote.MaxOutputTokens})
 	}
-	if pricesDiffer(local.InputPrice, remote.InputPrice) {
+	if optionalPricesDiffer(local.InputPrice, remote.InputPrice) {
 		diffs = append(diffs, DiffField{
 			Field:    "input_price",
 			OldValue: normalizedPriceValue(local.InputPrice),
-			NewValue: normalizedRemotePriceValue(remote.InputPrice),
+			NewValue: normalizedOptionalRemotePriceValue(remote.InputPrice),
 		})
 	}
-	if pricesDiffer(local.OutputPrice, remote.OutputPrice) {
+	if local.InputPriceConfigured != (remote.InputPrice != nil) {
+		diffs = append(diffs, DiffField{
+			Field:    "input_price_configured",
+			OldValue: local.InputPriceConfigured,
+			NewValue: remote.InputPrice != nil,
+		})
+	}
+	if optionalPricesDiffer(local.OutputPrice, remote.OutputPrice) {
 		diffs = append(diffs, DiffField{
 			Field:    "output_price",
 			OldValue: normalizedPriceValue(local.OutputPrice),
-			NewValue: normalizedRemotePriceValue(remote.OutputPrice),
+			NewValue: normalizedOptionalRemotePriceValue(remote.OutputPrice),
+		})
+	}
+	if local.OutputPriceConfigured != (remote.OutputPrice != nil) {
+		diffs = append(diffs, DiffField{
+			Field:    "output_price_configured",
+			OldValue: local.OutputPriceConfigured,
+			NewValue: remote.OutputPrice != nil,
 		})
 	}
 	if pricesDiffer(local.CachedInputPrice, remote.CachedInputPrice) {
@@ -882,9 +917,11 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 		Currency:               meta.Currency,
 		ContextWindow:          meta.ContextWindow,
 		MaxOutputTokens:        meta.MaxOutputTokens,
-		InputPrice:             meta.InputPrice,
-		OutputPrice:            meta.OutputPrice,
+		InputPrice:             remotePriceValue(meta.InputPrice),
+		OutputPrice:            remotePriceValue(meta.OutputPrice),
 		CachedInputPrice:       meta.CachedInputPrice,
+		InputPriceConfigured:   meta.InputPrice != nil,
+		OutputPriceConfigured:  meta.OutputPrice != nil,
 		UseCases:               llmmodel.EnsureUseCases(meta.UseCases, endpoints),
 		InputModalities:        normalizeStringValues(meta.InputModalities),
 		OutputModalities:       normalizeStringValues(meta.OutputModalities),

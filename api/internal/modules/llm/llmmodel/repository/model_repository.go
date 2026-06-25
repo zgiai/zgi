@@ -12,7 +12,7 @@ type modelRepository struct {
 	db *gorm.DB
 }
 
-const availableModelColumns = "id, provider, name, display_name, use_cases, reasoning, function_calling, structured_output, temperature, top_p, presence_penalty, frequency_penalty, logit_bias, seed, stop, max_stop_sequences, vision, json_mode, streaming, chat_completions, embeddings, image_generation, speech_generation, transcription, moderation, realtime, batch, assistants, responses, system_prompt, logprobs, web_search, file_search, code_interpreter, computer_use, mcp, parallel_tool_calls, reasoning_effort, context_window, max_output_tokens, is_active"
+const availableModelColumns = "id, provider, name, display_name, status, use_cases, reasoning, function_calling, structured_output, temperature, top_p, presence_penalty, frequency_penalty, logit_bias, seed, stop, max_stop_sequences, vision, json_mode, streaming, chat_completions, embeddings, image_generation, speech_generation, transcription, moderation, realtime, batch, assistants, responses, system_prompt, logprobs, web_search, file_search, code_interpreter, computer_use, mcp, parallel_tool_calls, reasoning_effort, context_window, max_output_tokens, is_active"
 
 // NewModelRepository creates a new global model repository
 func NewModelRepository(db *gorm.DB) ModelRepository {
@@ -120,7 +120,7 @@ func (r *modelRepository) availableModelQuery(ctx context.Context, provider stri
 	query := r.db.WithContext(ctx).
 		Model(&model.LLMModel{}).
 		Select(availableModelColumns).
-		Where("is_active = ?", true)
+		Where("is_active = ? AND status = ?", true, model.ModelStatusActive)
 	if provider != "" {
 		query = query.Where("provider = ?", provider)
 	}
