@@ -1359,7 +1359,15 @@ func (n *Node) loadConversationHistoryPromptMessages(ctx context.Context, conver
 	if err != nil {
 		return nil, fmt.Errorf("invalid conversation id: %w", err)
 	}
+	agentUUID, err := uuid.Parse(n.APPID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid agent id: %w", err)
+	}
 
+	conversationRepo := conversation.NewAgentConversationRepository(n.db)
+	if _, err := conversationRepo.GetByIDAndAgent(ctx, conversationUUID, agentUUID); err != nil {
+		return nil, err
+	}
 	repo := conversation.NewAgentMessageRepository(n.db)
 	_, total, err := repo.GetByConversationID(ctx, conversationUUID, 1, 0)
 	if err != nil {
@@ -2260,6 +2268,9 @@ func (n *Node) inlineMediaContentByFileID(prompt *PromptMessageContent, fileID s
 	if prompt == nil || prompt.Base64 != "" || fileID == "" {
 		return nil
 	}
+	if shouldKeepWorkflowMediaURL(prompt.URL) {
+		return nil
+	}
 	if n.fileLoader == nil {
 		return fmt.Errorf("workflow local media file loader is required")
 	}
@@ -2280,6 +2291,17 @@ func (n *Node) inlineMediaContentByFileID(prompt *PromptMessageContent, fileID s
 	prompt.Base64 = base64.StdEncoding.EncodeToString(content)
 	prompt.URL = ""
 	return nil
+}
+
+func shouldKeepWorkflowMediaURL(rawURL string) bool {
+	if strings.TrimSpace(rawURL) == "" {
+		return false
+	}
+	cfg := appconfig.Current()
+	if !strings.EqualFold(strings.TrimSpace(cfg.Workflow.ImageInputURLMode), appconfig.WorkflowImageInputURLModePublicStorageURL) {
+		return false
+	}
+	return !isSignedPreviewURL(rawURL)
 }
 
 func (n *Node) handleCompletionTemplate(

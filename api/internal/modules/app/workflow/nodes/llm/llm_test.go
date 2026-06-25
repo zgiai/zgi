@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
@@ -15,6 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	"github.com/zgiai/zgi/api/pkg/storage"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -608,6 +610,46 @@ func TestTokenBufferMemory_DoesNotImplicitlyLoadConversationHistory(t *testing.T
 	if len(messages) != 0 {
 		t.Fatalf("history messages = %d, want 0", len(messages))
 	}
+}
+
+func openWorkflowConversationHistoryMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {
+	t.Helper()
+
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatalf("create sqlmock: %v", err)
+	}
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{})
+	if err != nil {
+		sqlDB.Close()
+		t.Fatalf("open gorm sqlmock: %v", err)
+	}
+	return db, mock, func() { sqlDB.Close() }
+}
+
+func TestLoadConversationHistoryPromptMessagesRequiresAgentOwnership(t *testing.T) {
+	db, mock, cleanup := openWorkflowConversationHistoryMockDB(t)
+	defer cleanup()
+
+	currentAgentID := uuid.New()
+	conversationID := uuid.New()
+
+	expectAgentConversationLookup(mock, conversationID, currentAgentID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id"}))
+
+	n := &Node{NodeStruct: base.NodeStruct{APPID: currentAgentID.String()}, db: db}
+	_, err := n.loadConversationHistoryPromptMessages(context.Background(), conversationID.String(), 10)
+	if err == nil || !strings.Contains(err.Error(), "agent conversation not found") {
+		t.Fatalf("loadConversationHistoryPromptMessages() error = %v, want ownership error", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func expectAgentConversationLookup(mock sqlmock.Sqlmock, conversationID, agentID uuid.UUID) *sqlmock.ExpectedQuery {
+	return mock.ExpectQuery(`SELECT \* FROM "agents_conversations"`).
+		WithArgs(conversationID, agentID, 1)
 }
 
 func TestPromptMessagesFromAgentMessagesExpandsRounds(t *testing.T) {
@@ -1233,6 +1275,29 @@ func TestProcessVisionFiles_InlinesLocalImageWithNonPublicFilesURL(t *testing.T)
 	}
 }
 
+func TestShouldKeepWorkflowMediaURLHonorsPublicStorageMode(t *testing.T) {
+	setTestWorkflowImageInputConfig(t, appconfig.Config{
+		Workflow: appconfig.WorkflowConfig{
+			ImageInputURLMode: appconfig.WorkflowImageInputURLModePublicStorageURL,
+		},
+		App: appconfig.AppConfig{
+			FilesURL:  "https://api.zgi.im",
+			SecretKey: "test-secret",
+		},
+	})
+
+	if !shouldKeepWorkflowMediaURL("https://cdn.example.com/upload_files/image.png") {
+		t.Fatalf("expected public storage URL to be preserved")
+	}
+	signedURL, err := file.GetSignedFileURL("file-1")
+	if err != nil {
+		t.Fatalf("GetSignedFileURL() error = %v", err)
+	}
+	if shouldKeepWorkflowMediaURL(signedURL) {
+		t.Fatalf("expected signed preview URL to be eligible for inline media")
+	}
+}
+
 func TestResolveFileURLFromID_UsesSignedPreviewURL(t *testing.T) {
 	setTestFileURLConfig(t, "https://api.zgi.im", "release")
 
@@ -1396,7 +1461,8 @@ func TestProcessVisionFiles_UsesPublicStorageURLForLocalImage(t *testing.T) {
 	insertWorkflowImageInputFile(t, db, "file-1", "upload_files/org-1/image.png", "image/png", "png", string(storage.StorageTypeQiniu))
 
 	n := &Node{db: db, fileLoader: &stubFileDownloader{downloadFn: func(ctx context.Context, fileID string) ([]byte, error) {
-		return []byte("image-bytes"), nil
+		t.Fatalf("public storage URL should not be downloaded for inline media")
+		return nil, nil
 	}}}
 	workflowFile := file.NewFile(
 		"tenant-1",
@@ -1425,10 +1491,11 @@ func TestProcessVisionFiles_UsesPublicStorageURLForLocalImage(t *testing.T) {
 		t.Fatalf("expected synthesized user content to be multimodal, got %T", processed[1].Content)
 	}
 
-	if contentList[0].Base64 == "" {
-		t.Fatalf("expected public-storage local image to use inline base64")
+	if contentList[0].Base64 != "" {
+		t.Fatalf("expected public-storage local image to keep URL, got base64 length %d", len(contentList[0].Base64))
 	}
-	if contentList[0].URL != "" {
-		t.Fatalf("expected public-storage local image URL to be cleared, got %q", contentList[0].URL)
+	want := "https://cdn-qiniu.example.com/workflow/upload_files/org-1/image.png"
+	if contentList[0].URL != want {
+		t.Fatalf("expected public-storage local image URL %q, got %q", want, contentList[0].URL)
 	}
 }
