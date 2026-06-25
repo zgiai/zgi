@@ -125,6 +125,27 @@ func TestRuntimePrepareVisionImageURL_LocalImageExceedsLimitFails(t *testing.T) 
 	}
 }
 
+func TestRuntimePrepareVisionImageURL_InternalDNSImageURLUsesDataURL(t *testing.T) {
+	svc := &service{fileService: &fakeRuntimeAttachmentFileService{
+		fileURL: "http://files:2679/console/api/files/file-1/file-preview?sign=test",
+		content: []byte("png-bytes"),
+	}}
+
+	got, err := svc.prepareVisionImageURL(context.Background(), &attachmentFile{
+		ID:        "file-1",
+		Name:      "cat.png",
+		Extension: ".png",
+		MimeType:  "image/png",
+		Kind:      attachmentKindImage,
+	})
+	if err != nil {
+		t.Fatalf("prepareVisionImageURL() error = %v", err)
+	}
+	if !strings.HasPrefix(got, "data:image/png;base64,") {
+		t.Fatalf("image url = %q, want image data URL", got)
+	}
+}
+
 func TestRuntimeHistoricalUserMessage_ImagePrepareFailureReturnsError(t *testing.T) {
 	svc := &service{fileService: &fakeRuntimeAttachmentFileService{
 		fileURL:     "http://localhost:2670/console/api/files/file-1/file-preview?sign=test",

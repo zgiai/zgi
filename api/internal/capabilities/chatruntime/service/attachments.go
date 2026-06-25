@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"net"
-	"net/url"
 	"strings"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -371,7 +369,7 @@ func (s *service) prepareVisionImageURL(ctx context.Context, file *attachmentFil
 	if err != nil {
 		return "", err
 	}
-	if isPublicHTTPURL(imageURL) || strings.HasPrefix(strings.TrimSpace(imageURL), "data:image/") {
+	if strings.HasPrefix(strings.TrimSpace(imageURL), "data:image/") {
 		return imageURL, nil
 	}
 	limitBytes := s.visionImageSizeLimitBytes()
@@ -403,22 +401,6 @@ func (s *service) visionImageSizeLimitBytes() int64 {
 		}
 	}
 	return limitMB * bytesPerMegabyte
-}
-
-func isPublicHTTPURL(raw string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
-		return false
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return false
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return true
-	}
-	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified())
 }
 
 func attachmentBundleFromMessageMetadata(metadata map[string]interface{}) *attachmentBundle {

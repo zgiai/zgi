@@ -55,16 +55,35 @@ func TestExtractPreparedAttachments_LocalImageURLUsesDataURL(t *testing.T) {
 	}
 }
 
-func TestExtractPreparedAttachments_PublicImageURLKeepsURL(t *testing.T) {
-	publicURL := "https://cdn.example.com/cat.png"
-	svc := &service{fileService: &fakeAttachmentFileService{fileURL: publicURL}}
+func TestExtractPreparedAttachments_FileServiceImageURLUsesDataURL(t *testing.T) {
+	svc := &service{fileService: &fakeAttachmentFileService{
+		fileURL: "https://cdn.example.com/cat.png",
+		content: []byte("png-bytes"),
+	}}
 	prepared := preparedChatWithImageAttachment()
 
 	if err := svc.extractPreparedAttachments(context.Background(), prepared, nil); err != nil {
 		t.Fatalf("extractPreparedAttachments() error = %v", err)
 	}
-	if got := prepared.parts.Attachments.Files[0].ImageURL; got != publicURL {
-		t.Fatalf("image url = %q, want %q", got, publicURL)
+	got := prepared.parts.Attachments.Files[0].ImageURL
+	if !strings.HasPrefix(got, "data:image/png;base64,") {
+		t.Fatalf("image url = %q, want image data URL", got)
+	}
+}
+
+func TestExtractPreparedAttachments_InternalDNSImageURLUsesDataURL(t *testing.T) {
+	svc := &service{fileService: &fakeAttachmentFileService{
+		fileURL: "http://files:2679/console/api/files/file-1/file-preview?sign=test",
+		content: []byte("png-bytes"),
+	}}
+	prepared := preparedChatWithImageAttachment()
+
+	if err := svc.extractPreparedAttachments(context.Background(), prepared, nil); err != nil {
+		t.Fatalf("extractPreparedAttachments() error = %v", err)
+	}
+	got := prepared.parts.Attachments.Files[0].ImageURL
+	if !strings.HasPrefix(got, "data:image/png;base64,") {
+		t.Fatalf("image url = %q, want image data URL", got)
 	}
 }
 
