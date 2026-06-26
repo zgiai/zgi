@@ -11,6 +11,8 @@ const (
 	usageBillStatusSuccess = "success"
 	usageBillStatusFailed  = "failed"
 	usageBillStatusPartial = "partial"
+
+	usageSourceEstimated = "estimated_usage"
 )
 
 type UsageBill struct {

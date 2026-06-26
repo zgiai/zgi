@@ -62,11 +62,8 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 	}
 
 	// 3. Estimate tokens
-	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateTotalTokens(
-		effectiveReq.Messages,
-		effectiveReq.MaxTokens,
-		effectiveReq.Model,
-	)
+	promptTokens := s.tokenEstimator.EstimateCreateResponsePromptTokens(effectiveReq)
+	completionTokens := s.tokenEstimator.EstimateCreateResponseCompletionTokens(effectiveReq)
 
 	// 4. Select providers
 	organizationID, err := uuid.Parse(apiKey.OrganizationID)
@@ -153,7 +150,21 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			return nil, fmt.Errorf("all providers failed: %w", lastErr)
 		}
 
-		if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, response.Usage, nil, responseTime); err != nil {
+		var responseUsage *adapter.Usage
+		if response != nil {
+			responseUsage = response.Usage
+		}
+		if response != nil && !providerSelection.UseSystemProvider {
+			if usage, estimated := s.completeCreateResponseUsageFromText(effectiveReq, response.Usage, createResponseText(response), promptTokens); hasBillableTokenUsage(usage) {
+				response.Usage = usage
+				responseUsage = usage
+				if estimated {
+					markEstimatedUsageSource(billingCtx, usage)
+				}
+			}
+		}
+
+		if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, responseUsage, nil, responseTime); err != nil {
 			return nil, err
 		}
 
@@ -268,14 +279,9 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 			return nil, lastErr
 		}
 
-		// Success
-		// For EmbeddingsResponse, Usage is a value type, not a pointer
-		// Check if it's zero-valued to prevent issues
-		actualTokens := 0
-		if response.Usage.TotalTokens > 0 {
-			actualTokens = response.Usage.TotalTokens
-		} else {
-			actualTokens = promptTokens
+		actualTokens, estimatedUsage := ensureEmbeddingUsageForSelection(providerSelection, response, promptTokens)
+		if estimatedUsage {
+			markEstimatedUsageSource(billingCtx, &response.Usage)
 		}
 
 		if err := s.settleEmbeddingsSuccess(ctx, billingCtx, providerSelection, channelID, actualTokens, response.Settlement, responseTime); err != nil {
@@ -393,13 +399,9 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 			return nil, lastErr
 		}
 
-		// Success
-		// For rerank, usage might be in search units or tokens
-		actualTokens := 0
-		if response.Usage != nil && response.Usage.TotalTokens > 0 {
-			actualTokens = response.Usage.TotalTokens
-		} else {
-			actualTokens = promptTokens
+		actualTokens, estimatedUsage := ensureRerankUsageForSelection(providerSelection, response, promptTokens)
+		if estimatedUsage {
+			markEstimatedUsageSource(billingCtx, response.Usage)
 		}
 
 		if err := s.settleEmbeddingsSuccess(ctx, billingCtx, providerSelection, channelID, actualTokens, response.Settlement, responseTime); err != nil {

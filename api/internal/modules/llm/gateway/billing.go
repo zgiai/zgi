@@ -72,6 +72,7 @@ type BillingContext struct {
 	PromptTokens      int
 	CompletionTokens  int
 	TotalTokens       int
+	UsageSource       string
 	InputCost         decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
 	OutputCost        decimal.Decimal // Legacy: output credits consumed for logging/RPC compatibility
 	TotalCost         decimal.Decimal // Legacy: total credits consumed for logging/RPC compatibility

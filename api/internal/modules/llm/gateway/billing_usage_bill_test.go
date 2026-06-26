@@ -67,6 +67,14 @@ func TestBuildUsageBill_NormalizesTimes(t *testing.T) {
 			t.Fatalf("SettledAt=%s before RequestCreatedAt=%s", bill.SettledAt, bill.RequestCreatedAt)
 		}
 	})
+
+	t.Run("does not write usage source column", func(t *testing.T) {
+		for _, column := range usageBillUpsertColumns {
+			if column == "usage_source" {
+				t.Fatalf("usageBillUpsertColumns contains %q, want schema-free usage source", column)
+			}
+		}
+	})
 }
 
 func testUsageBillContext(requestCreatedAt, settledAt time.Time) *BillingContext {
