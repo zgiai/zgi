@@ -3786,6 +3786,10 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 			}
 		}
 
+		if len(record) == 0 {
+			continue
+		}
+
 		records = append(records, record)
 	}
 

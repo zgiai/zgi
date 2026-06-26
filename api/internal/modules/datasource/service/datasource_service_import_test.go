@@ -31,6 +31,22 @@ func TestParseExcelFileSkipUnmatchedColumns(t *testing.T) {
 	}
 }
 
+func TestParseExcelFileSkipUnmatchedColumnsDropsRowsWithoutMatchedFields(t *testing.T) {
+	file := buildImportWorkbook(t, []string{"extra", "name"}, []string{"ignored"})
+	columns := []dto.TableColumn{
+		{Name: "name", Type: "text"},
+	}
+
+	svc := &dataSourceService{}
+	records, err := svc.parseExcelFile(bytes.NewReader(file), "records.xlsx", columns, true)
+	if err != nil {
+		t.Fatalf("parseExcelFile() error = %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("len(records) = %d, want 0; records = %#v", len(records), records)
+	}
+}
+
 func TestParseExcelFileRejectsUnmatchedColumnsByDefault(t *testing.T) {
 	file := buildImportWorkbook(t, []string{"name", "extra"}, []string{"Ada", "ignored"})
 	columns := []dto.TableColumn{
