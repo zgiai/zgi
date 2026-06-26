@@ -54,6 +54,7 @@ type GenerateCurrentResultRunnerDeps struct {
 type generateCurrentResultRefStore interface {
 	ListActiveByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error)
 	MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*model.KnowledgeBaseAssetRef, error)
+	MarkFailed(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage string) (*model.KnowledgeBaseAssetRef, error)
 }
 
 type generateCurrentResultEmbeddingTargetStore interface {
@@ -434,6 +435,9 @@ func (r *GenerateCurrentResultRunner) enqueueDatasetRefSyncs(ctx context.Context
 			return err
 		}
 		if err := r.datasetRefSync.EnqueueDatasetRefSync(ctx, ref.ID, asset.ID, ref.DatasetID, generationNo, syncRunID); err != nil {
+			if _, markErr := r.refs.MarkFailed(ctx, asset.OrganizationID, ref.ID, syncRunID, "enqueue_failed", err.Error()); markErr != nil {
+				return markErr
+			}
 			return err
 		}
 	}

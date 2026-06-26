@@ -1610,14 +1610,15 @@ func (h *FileHandler) beginAndQueueRunProcessingRequest(ctx context.Context, ass
 	if err != nil {
 		return nil, err
 	}
-	if h.taskEnqueuer != nil {
-		if err := h.taskEnqueuer.EnqueueFileProcess(ctx, result.ProcessingRequest.ID); err != nil {
-			return nil, err
-		}
-	}
 	queued, err := h.processingService.QueueRequest(ctx, organizationID, result.ProcessingRequest.ID)
 	if err != nil {
 		return nil, err
+	}
+	if h.taskEnqueuer != nil {
+		if err := h.taskEnqueuer.EnqueueFileProcess(ctx, result.ProcessingRequest.ID); err != nil {
+			h.markFileProcessingEnqueueFailed(ctx, organizationID, queued.ID, result.Asset, result.ProcessingRunID, result.GenerationNo, datalibrarymodel.DocumentAssetProcessingStageParse, err)
+			return nil, err
+		}
 	}
 	return &queuedFileProcessingRequest{
 		Asset:             result.Asset,
@@ -1650,14 +1651,15 @@ func (h *FileHandler) queueGenerateAfterConfirmRequest(ctx context.Context, asse
 	if err != nil {
 		return nil, err
 	}
-	if h.taskEnqueuer != nil {
-		if err := h.taskEnqueuer.EnqueueGenerateCurrentResult(ctx, planned.ID); err != nil {
-			return nil, err
-		}
-	}
 	queued, err := h.processingService.QueueRequest(ctx, organizationID, planned.ID)
 	if err != nil {
 		return nil, err
+	}
+	if h.taskEnqueuer != nil {
+		if err := h.taskEnqueuer.EnqueueGenerateCurrentResult(ctx, planned.ID); err != nil {
+			h.markFileProcessingEnqueueFailed(ctx, organizationID, queued.ID, asset, dereferenceUUID(asset.ProcessingRunID), asset.GenerationNo, datalibrarymodel.DocumentAssetProcessingStageVectorize, err)
+			return nil, err
+		}
 	}
 	return &queuedFileProcessingRequest{
 		Asset:             asset,
@@ -1666,6 +1668,38 @@ func (h *FileHandler) queueGenerateAfterConfirmRequest(ctx context.Context, asse
 		GenerationNo:      asset.GenerationNo,
 		Mode:              FileProcessingRequestModeGenerateAfterConfirm,
 	}, nil
+}
+
+func (h *FileHandler) markFileProcessingEnqueueFailed(ctx context.Context, organizationID string, requestID uuid.UUID, asset *datalibrarymodel.DocumentAsset, processingRunID uuid.UUID, generationNo int64, stage string, cause error) {
+	if cause == nil {
+		return
+	}
+	_, _ = h.processingService.FailRequest(ctx, organizationID, requestID, "enqueue_failed", cause.Error(), map[string]any{
+		"source": "file_processing_request",
+	})
+	if h.assetStateService == nil || asset == nil || processingRunID == uuid.Nil || generationNo == 0 {
+		return
+	}
+	_, _ = h.assetStateService.MarkFailed(ctx, datalibraryservice.FailedStateInput{
+		RunStateInput: datalibraryservice.RunStateInput{
+			OrganizationID:     organizationID,
+			AssetID:            asset.ID,
+			ProcessingRunID:    processingRunID,
+			GenerationNo:       generationNo,
+			ProcessingStage:    stage,
+			ProcessingProgress: asset.ProcessingProgress,
+			ParseArtifactID:    asset.ParseArtifactID,
+		},
+		ErrorCode:    "enqueue_failed",
+		ErrorMessage: cause.Error(),
+	})
+}
+
+func dereferenceUUID(value *uuid.UUID) uuid.UUID {
+	if value == nil {
+		return uuid.Nil
+	}
+	return *value
 }
 
 // GetFilePreview gets file preview content

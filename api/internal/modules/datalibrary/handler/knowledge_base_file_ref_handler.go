@@ -88,6 +88,9 @@ func (h *KnowledgeBaseFileRefHandler) ListFileCandidates(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
+		return
+	}
 	limit, offset := parseLimitOffset(c, 20, 100)
 	result, err := h.service.ListCandidates(c.Request.Context(), datalibService.KnowledgeBaseFileCandidateRequest{
 		OrganizationID: organizationID,
@@ -211,6 +214,9 @@ func (h *KnowledgeBaseFileRefHandler) ListFileRefs(c *gin.Context) {
 	organizationID := util.GetOrganizationID(c)
 	if organizationID == "" {
 		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.requireKnowledgeBaseManage(c, organizationID, c.Param("dataset_id")) {
 		return
 	}
 	limit, offset := parseLimitOffset(c, 20, 100)

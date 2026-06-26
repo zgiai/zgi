@@ -77,6 +77,40 @@ func TestKnowledgeBaseFileRefHandlerRejectsCreateWithoutManagePermission(t *test
 	}
 }
 
+func TestKnowledgeBaseFileRefHandlerRejectsListCandidatesWithoutManagePermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	refSvc := &fakeKnowledgeBaseFileRefHandlerService{}
+	router := newKnowledgeBaseFileRefTestRouter(refSvc, nil, "org-1", "workspace-1", "account-1", false)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/datasets/dataset-1/file-candidates", nil)
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if refSvc.listCandidatesCalled {
+		t.Fatal("ListCandidates should not be called without knowledge base manage permission")
+	}
+}
+
+func TestKnowledgeBaseFileRefHandlerRejectsListRefsWithoutManagePermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	refSvc := &fakeKnowledgeBaseFileRefHandlerService{}
+	router := newKnowledgeBaseFileRefTestRouter(refSvc, nil, "org-1", "workspace-1", "account-1", false)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/datasets/dataset-1/file-refs", nil)
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if refSvc.listRefsCalled {
+		t.Fatal("ListRefs should not be called without knowledge base manage permission")
+	}
+}
+
 func TestKnowledgeBaseFileRefHandlerEnqueuesCandidateEmbeddingGeneration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	assetID := uuid.New()
@@ -154,24 +188,30 @@ func newKnowledgeBaseFileRefTestRouter(refSvc service.KnowledgeBaseFileRefServic
 		c.Next()
 	})
 	router.POST("/datasets/:dataset_id/file-refs", handler.CreateFileRefs)
+	router.GET("/datasets/:dataset_id/file-candidates", handler.ListFileCandidates)
+	router.GET("/datasets/:dataset_id/file-refs", handler.ListFileRefs)
 	router.POST("/datasets/:dataset_id/file-candidates/:asset_id/embeddings", handler.GenerateFileCandidateEmbeddings)
 	return router
 }
 
 type fakeKnowledgeBaseFileRefHandlerService struct {
-	createResult   *service.KnowledgeBaseFileRefCreateResult
-	failedReq      service.KnowledgeBaseFileRefSyncFailureRequest
-	createCalled   bool
-	generateErr    error
-	generateCalled bool
+	createResult         *service.KnowledgeBaseFileRefCreateResult
+	failedReq            service.KnowledgeBaseFileRefSyncFailureRequest
+	createCalled         bool
+	listCandidatesCalled bool
+	listRefsCalled       bool
+	generateErr          error
+	generateCalled       bool
 }
 
 func (s *fakeKnowledgeBaseFileRefHandlerService) ListCandidates(ctx context.Context, req service.KnowledgeBaseFileCandidateRequest) (*service.KnowledgeBaseFileCandidateResult, error) {
-	return nil, nil
+	s.listCandidatesCalled = true
+	return &service.KnowledgeBaseFileCandidateResult{}, nil
 }
 
 func (s *fakeKnowledgeBaseFileRefHandlerService) ListRefs(ctx context.Context, req service.KnowledgeBaseFileRefListRequest) (*service.KnowledgeBaseFileRefListResult, error) {
-	return nil, nil
+	s.listRefsCalled = true
+	return &service.KnowledgeBaseFileRefListResult{}, nil
 }
 
 func (s *fakeKnowledgeBaseFileRefHandlerService) CreateRefs(ctx context.Context, req service.KnowledgeBaseFileRefCreateRequest) (*service.KnowledgeBaseFileRefCreateResult, error) {

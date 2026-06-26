@@ -141,6 +141,54 @@ func TestGenerateCurrentResultRunnerEnqueuesDatasetRefSyncs(t *testing.T) {
 	}
 }
 
+func TestGenerateCurrentResultRunnerMarksRefFailedWhenDatasetRefSyncEnqueueFails(t *testing.T) {
+	ctx := context.Background()
+	assetID := uuid.New()
+	refID := uuid.New()
+	enqueueErr := errors.New("redis unavailable")
+	refStore := &fakeGenerateCurrentResultRefStore{
+		refs: []*model.KnowledgeBaseAssetRef{
+			{
+				ID:             refID,
+				OrganizationID: "org-1",
+				DatasetID:      "dataset-1",
+				AssetID:        assetID,
+				SyncStatus:     model.KnowledgeBaseAssetRefSyncStatusSynced,
+			},
+		},
+	}
+	enqueuer := &fakeGenerateCurrentResultDatasetRefSyncEnqueuer{err: enqueueErr}
+	runner := NewGenerateCurrentResultRunner(GenerateCurrentResultRunnerDeps{
+		Refs:           refStore,
+		DatasetRefSync: enqueuer,
+	})
+	asset := &model.DocumentAsset{
+		ID:             assetID,
+		OrganizationID: "org-1",
+		GenerationNo:   9,
+	}
+
+	err := runner.enqueueDatasetRefSyncs(ctx, asset, asset.GenerationNo)
+	if !errors.Is(err, enqueueErr) {
+		t.Fatalf("enqueueDatasetRefSyncs err=%v want %v", err, enqueueErr)
+	}
+	if refStore.failedRefID != refID ||
+		refStore.failedSyncRunID != refStore.pendingSyncRunID ||
+		refStore.failedErrorCode != "enqueue_failed" ||
+		refStore.failedErrorMessage != enqueueErr.Error() {
+		t.Fatalf("failed_ref=%s failed_run=%s pending_run=%s code=%q message=%q",
+			refStore.failedRefID,
+			refStore.failedSyncRunID,
+			refStore.pendingSyncRunID,
+			refStore.failedErrorCode,
+			refStore.failedErrorMessage,
+		)
+	}
+	if refStore.refs[0].SyncStatus != model.KnowledgeBaseAssetRefSyncStatusFailed {
+		t.Fatalf("sync_status=%s want failed", refStore.refs[0].SyncStatus)
+	}
+}
+
 func TestGenerateCurrentResultRunnerGeneratesEmbeddingsForAllTargets(t *testing.T) {
 	embedding := &fakeGenerateCurrentResultEmbeddingService{}
 	runner := &GenerateCurrentResultRunner{embedding: embedding}
@@ -242,9 +290,13 @@ func (r *singleActiveAssetRepo) GetVersionByID(ctx context.Context, id uuid.UUID
 }
 
 type fakeGenerateCurrentResultRefStore struct {
-	refs             []*model.KnowledgeBaseAssetRef
-	pendingRefID     uuid.UUID
-	pendingSyncRunID uuid.UUID
+	refs               []*model.KnowledgeBaseAssetRef
+	pendingRefID       uuid.UUID
+	pendingSyncRunID   uuid.UUID
+	failedRefID        uuid.UUID
+	failedSyncRunID    uuid.UUID
+	failedErrorCode    string
+	failedErrorMessage string
 }
 
 func (r *fakeGenerateCurrentResultRefStore) ListActiveByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error) {
@@ -270,8 +322,26 @@ func (r *fakeGenerateCurrentResultRefStore) MarkPending(ctx context.Context, org
 	return nil, nil
 }
 
+func (r *fakeGenerateCurrentResultRefStore) MarkFailed(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage string) (*model.KnowledgeBaseAssetRef, error) {
+	r.failedRefID = id
+	r.failedSyncRunID = syncRunID
+	r.failedErrorCode = errorCode
+	r.failedErrorMessage = errorMessage
+	for _, ref := range r.refs {
+		if ref.ID == id && ref.OrganizationID == organizationID {
+			ref.SyncStatus = model.KnowledgeBaseAssetRefSyncStatusFailed
+			ref.SyncRunID = &syncRunID
+			ref.SyncErrorCode = &errorCode
+			ref.SyncErrorMessage = &errorMessage
+			return ref, nil
+		}
+	}
+	return nil, nil
+}
+
 type fakeGenerateCurrentResultDatasetRefSyncEnqueuer struct {
 	items []fakeGenerateCurrentResultDatasetRefSyncItem
+	err   error
 }
 
 type fakeGenerateCurrentResultDatasetRefSyncItem struct {
@@ -283,6 +353,9 @@ type fakeGenerateCurrentResultDatasetRefSyncItem struct {
 }
 
 func (e *fakeGenerateCurrentResultDatasetRefSyncEnqueuer) EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error {
+	if e.err != nil {
+		return e.err
+	}
 	e.items = append(e.items, fakeGenerateCurrentResultDatasetRefSyncItem{
 		refID:        refID,
 		assetID:      assetID,
