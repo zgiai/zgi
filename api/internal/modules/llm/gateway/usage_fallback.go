@@ -57,6 +57,7 @@ func (s *llmGatewayServiceImpl) completeChatUsageFromText(req *adapter.ChatReque
 		usage = *existing
 		hadAny = usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0
 	}
+	knownTotal := usage.TotalTokens
 	if !hadAny && !textPresent {
 		return nil, false
 	}
@@ -87,7 +88,7 @@ func (s *llmGatewayServiceImpl) completeChatUsageFromText(req *adapter.ChatReque
 	if usage.PromptTokens <= 0 && estimatedPrompt > 0 {
 		if usage.TotalTokens > usage.CompletionTokens {
 			usage.PromptTokens = usage.TotalTokens - usage.CompletionTokens
-		} else {
+		} else if usage.TotalTokens <= 0 {
 			usage.PromptTokens = estimatedPrompt
 			estimated = true
 		}
@@ -95,16 +96,12 @@ func (s *llmGatewayServiceImpl) completeChatUsageFromText(req *adapter.ChatReque
 	if textPresent && usage.CompletionTokens <= 0 && estimatedCompletion > 0 {
 		if usage.TotalTokens > usage.PromptTokens {
 			usage.CompletionTokens = usage.TotalTokens - usage.PromptTokens
-		} else {
+		} else if usage.TotalTokens <= 0 {
 			usage.CompletionTokens = estimatedCompletion
 			estimated = true
 		}
 	}
-	if usage.TotalTokens <= 0 {
-		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-	} else if sum := usage.PromptTokens + usage.CompletionTokens; sum > usage.TotalTokens {
-		usage.TotalTokens = sum
-	}
+	normalizeCompletedUsageTotal(&usage, knownTotal)
 	if !hasBillableTokenUsage(&usage) {
 		return nil, false
 	}
@@ -163,6 +160,7 @@ func (s *llmGatewayServiceImpl) completeNativeUsageFromText(model string, existi
 		usage = *existing
 		hadAny = usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0
 	}
+	knownTotal := usage.TotalTokens
 	if !hadAny && !textPresent {
 		return nil, false
 	}
@@ -184,7 +182,7 @@ func (s *llmGatewayServiceImpl) completeNativeUsageFromText(model string, existi
 	if usage.PromptTokens <= 0 && promptTokens > 0 {
 		if usage.TotalTokens > usage.CompletionTokens {
 			usage.PromptTokens = usage.TotalTokens - usage.CompletionTokens
-		} else {
+		} else if usage.TotalTokens <= 0 {
 			usage.PromptTokens = promptTokens
 			estimated = true
 		}
@@ -192,16 +190,12 @@ func (s *llmGatewayServiceImpl) completeNativeUsageFromText(model string, existi
 	if textPresent && usage.CompletionTokens <= 0 && completionTokens > 0 {
 		if usage.TotalTokens > usage.PromptTokens {
 			usage.CompletionTokens = usage.TotalTokens - usage.PromptTokens
-		} else {
+		} else if usage.TotalTokens <= 0 {
 			usage.CompletionTokens = completionTokens
 			estimated = true
 		}
 	}
-	if usage.TotalTokens <= 0 {
-		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-	} else if sum := usage.PromptTokens + usage.CompletionTokens; sum > usage.TotalTokens {
-		usage.TotalTokens = sum
-	}
+	normalizeCompletedUsageTotal(&usage, knownTotal)
 	if !hasBillableTokenUsage(&usage) {
 		return nil, false
 	}
@@ -327,6 +321,27 @@ func normalizeUsage(usage *adapter.Usage) {
 	}
 	if usage.TotalTokens <= 0 {
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+}
+
+func normalizeCompletedUsageTotal(usage *adapter.Usage, knownTotal int) {
+	if usage == nil {
+		return
+	}
+	if knownTotal > 0 {
+		if usage.PromptTokens > knownTotal {
+			usage.PromptTokens = knownTotal
+		}
+		remaining := knownTotal - usage.PromptTokens
+		if usage.CompletionTokens > remaining {
+			usage.CompletionTokens = remaining
+		}
+		usage.TotalTokens = knownTotal
+		return
+	}
+	normalizeUsage(usage)
+	if sum := usage.PromptTokens + usage.CompletionTokens; sum > usage.TotalTokens {
+		usage.TotalTokens = sum
 	}
 }
 

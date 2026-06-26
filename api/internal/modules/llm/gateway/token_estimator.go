@@ -299,20 +299,33 @@ func estimateTokenByModel(model, text string) int {
 	m := tokenMultiplierByFamily[tokenFamilyForModel(model)]
 	var count float64
 	var previous runeClass
+	runLength := 0
+	flushRun := func() {
+		if runLength <= 0 {
+			return
+		}
+		if previous == runeClassNumber {
+			count += math.Ceil(float64(runLength)/3) * m.number
+		} else {
+			count += math.Ceil(float64(runLength)/4) * m.word
+		}
+		previous = runeClassNone
+		runLength = 0
+	}
 	for _, r := range text {
 		switch {
 		case unicode.IsSpace(r):
-			previous = runeClassNone
+			flushRun()
 			if r == '\n' || r == '\t' {
 				count += m.newline
 			} else {
 				count += m.space
 			}
 		case isCJK(r):
-			previous = runeClassNone
+			flushRun()
 			count += m.cjk
 		case isEmoji(r):
-			previous = runeClassNone
+			flushRun()
 			count += m.emoji
 		case unicode.IsLetter(r) || unicode.IsNumber(r):
 			next := runeClassLatin
@@ -320,27 +333,25 @@ func estimateTokenByModel(model, text string) int {
 				next = runeClassNumber
 			}
 			if previous != next {
-				if next == runeClassNumber {
-					count += m.number
-				} else {
-					count += m.word
-				}
+				flushRun()
 				previous = next
 			}
+			runLength++
 		case isMathSymbol(r):
-			previous = runeClassNone
+			flushRun()
 			count += m.mathSymbol
 		case r == '@':
-			previous = runeClassNone
+			flushRun()
 			count += m.atSign
 		case strings.ContainsRune("/:?&=;#%", r):
-			previous = runeClassNone
+			flushRun()
 			count += m.urlDelim
 		default:
-			previous = runeClassNone
+			flushRun()
 			count += m.symbol
 		}
 	}
+	flushRun()
 	return int(math.Ceil(count))
 }
 

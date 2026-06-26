@@ -400,7 +400,7 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 		if len(event.Data) > 0 {
 			text := nativeResponseText(event.Data)
 			if !terminal || strings.TrimSpace(collectedText.String()) == "" {
-				appendText(&collectedText, text)
+				collectedText.WriteString(text)
 			}
 		}
 		if event.Settlement != nil {

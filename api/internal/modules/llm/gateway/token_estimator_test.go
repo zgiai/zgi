@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -28,6 +29,17 @@ func TestTokenEstimator_NewAPIStyleTextCounting(t *testing.T) {
 				t.Fatalf("EstimateTextTokensForModel(%q, %q) = %d, want %d", tt.model, tt.text, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTokenEstimator_HeuristicCountsLongAlphanumericRunsByLength(t *testing.T) {
+	estimator := NewTokenEstimator()
+
+	if got := estimator.EstimateTextTokensForModel("custom-model", strings.Repeat("a", 40)); got != 11 {
+		t.Fatalf("long letter run tokens = %d, want 11", got)
+	}
+	if got := estimator.EstimateTextTokensForModel("custom-model", strings.Repeat("1", 30)); got != 16 {
+		t.Fatalf("long number run tokens = %d, want 16", got)
 	}
 }
 

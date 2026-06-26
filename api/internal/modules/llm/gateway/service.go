@@ -429,7 +429,9 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 
 		// Collect text chunks for tracing (non-blocking, best effort)
 		for _, choice := range response.Choices {
-			appendText(&collectedChunks, messageCompletionText(choice.Delta))
+			if text := messageCompletionText(choice.Delta); strings.TrimSpace(text) != "" {
+				collectedChunks.WriteString(text)
+			}
 		}
 
 		// Check for errors
