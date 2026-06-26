@@ -269,6 +269,9 @@ export default function DatasetSettingsPage() {
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               {t('datasets.settingsTitle')}
             </h1>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              {t('datasets.settingsDescription')}
+            </p>
           </div>
           <Button
             className="h-9 gap-2"
@@ -285,7 +288,7 @@ export default function DatasetSettingsPage() {
           <Card className="border-border/80 shadow-sm">
             <CardHeader className="space-y-1.5">
               <CardTitle className="text-base">{t('datasets.settings.basicInfo')}</CardTitle>
-              <CardDescription>{t('datasets.settingsDescription')}</CardDescription>
+              <CardDescription>{t('datasets.settings.basicInfoDescription')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="space-y-1.5">

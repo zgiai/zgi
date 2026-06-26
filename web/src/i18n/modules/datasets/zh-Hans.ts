@@ -1060,6 +1060,7 @@ const messages: DatasetMessages = {
     saveError: '保存失败',
     saveErrorDesc: '保存知识库设置时发生错误',
     basicInfo: '基本信息',
+    basicInfoDescription: '配置知识库基本信息',
     icon: '图标',
     iconBackground: '图标背景色',
     namePlaceholder: '请输入知识库名称',

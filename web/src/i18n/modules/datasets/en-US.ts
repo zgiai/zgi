@@ -1077,6 +1077,7 @@ const messages = {
     saveError: 'Save failed',
     saveErrorDesc: 'An error occurred while saving dataset settings',
     basicInfo: 'Basic Information',
+    basicInfoDescription: 'Configure dataset basic information',
     icon: 'Icon',
     iconBackground: 'Icon Background Color',
     namePlaceholder: 'Enter dataset name',
