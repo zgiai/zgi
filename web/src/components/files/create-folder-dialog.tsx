@@ -24,9 +24,16 @@ import {
 import { useFileFolders } from '@/hooks/use-files';
 import { fileManageService } from '@/services/file-manage.service';
 import type { FileFolder } from '@/services/types/file';
-import { useCurrentWorkspace } from '@/store';
-
-type FolderOption = FileFolder & { depth: number };
+import {
+  WorkspaceSelector,
+  type WorkspaceSelectorValue,
+} from '@/components/common/workspace-selector';
+import { useCurrentWorkspace, useIsOrganizationMode } from '@/store';
+import {
+  MAX_FILE_FOLDER_PARENT_LEVEL,
+  loadFileFolderOptions,
+  type FileFolderOption,
+} from './file-folder-levels';
 
 /**
  * Create folder form data
@@ -45,6 +52,14 @@ export interface CreateFolderDialogProps {
   onOpenChange: (open: boolean) => void;
   onConfirm: (data: CreateFolderData) => void;
   initialParentId?: string;
+}
+
+function normalizeFolderName(name: string) {
+  return name.trim().toLocaleLowerCase();
+}
+
+function normalizeParentId(parentId: string | null | undefined) {
+  return parentId && parentId !== 'root' ? parentId : '';
 }
 
 async function getFolderPath(folderId: string) {
@@ -75,15 +90,17 @@ export function CreateFolderDialog({
 }: CreateFolderDialogProps) {
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
-  const effectiveWorkspaceId = currentWorkspace?.id;
+  const isOrganizationMode = useIsOrganizationMode();
+  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
+  const effectiveWorkspaceId = isOrganizationMode ? selectedWorkspace?.id : currentWorkspace?.id;
   const { folders, isLoading } = useFileFolders(effectiveWorkspaceId, {
-    enabled: !!effectiveWorkspaceId,
+    enabled: !isOrganizationMode || !!effectiveWorkspaceId,
   });
 
   // Form state
   const [folderName, setFolderName] = useState('');
   const [parentId, setParentId] = useState('root');
-  const [folderOptions, setFolderOptions] = useState<FolderOption[]>([]);
+  const [folderOptions, setFolderOptions] = useState<FileFolderOption[]>([]);
   const [isFolderOptionsLoading, setIsFolderOptionsLoading] = useState(false);
 
   useEffect(() => {
@@ -94,9 +111,15 @@ export function CreateFolderDialog({
 
     const loadFolderOptions = async () => {
       setIsFolderOptionsLoading(true);
-      const options: FolderOption[] = folders.map(folder => ({ ...folder, depth: 1 }));
+      let options: FileFolderOption[] = folders.map(folder => ({ ...folder, depth: 1 }));
 
       try {
+        options = await loadFileFolderOptions(
+          folders,
+          effectiveWorkspaceId,
+          MAX_FILE_FOLDER_PARENT_LEVEL
+        );
+
         let nextParentId = 'root';
         if (initialParentId) {
           const existingInitialParent = options.find(folder => folder.id === initialParentId);
@@ -104,7 +127,7 @@ export function CreateFolderDialog({
             nextParentId = initialParentId;
           } else {
             const initialParentPath = await getFolderPath(initialParentId);
-            if (initialParentPath.length <= 1) {
+            if (initialParentPath.length <= MAX_FILE_FOLDER_PARENT_LEVEL) {
               const initialParentFolder = initialParentPath.at(-1);
               if (
                 initialParentFolder &&
@@ -149,6 +172,7 @@ export function CreateFolderDialog({
       setFolderName('');
       setParentId('root');
       setFolderOptions([]);
+      setSelectedWorkspace(undefined);
     }
     onOpenChange(newOpen);
   };
@@ -169,9 +193,29 @@ export function CreateFolderDialog({
     handleOpenChange(false);
   };
 
+  const handleWorkspaceChange = (workspace: WorkspaceSelectorValue) => {
+    setSelectedWorkspace(workspace);
+    setParentId('root');
+    setFolderOptions([]);
+  };
+
   // Check if can create
-  const canCreate = folderName.trim().length > 0 && !!effectiveWorkspaceId;
   const isParentFolderLoading = isLoading || isFolderOptionsLoading;
+  const normalizedFolderName = normalizeFolderName(folderName);
+  const normalizedParentId = normalizeParentId(parentId);
+  const folderCandidates = folderOptions.length > 0 ? folderOptions : folders;
+  const duplicateFolderExists =
+    normalizedFolderName.length > 0 &&
+    folderCandidates.some(
+      folder =>
+        normalizeFolderName(folder.name) === normalizedFolderName &&
+        normalizeParentId(folder.parent_id) === normalizedParentId
+    );
+  const canCreate =
+    folderName.trim().length > 0 &&
+    !!effectiveWorkspaceId &&
+    !isParentFolderLoading &&
+    !duplicateFolderExists;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -204,7 +248,27 @@ export function CreateFolderDialog({
                 className="h-11 shadow-sm"
                 autoFocus
               />
+              {duplicateFolderExists ? (
+                <p className="text-xs text-destructive">{t('files.folder.duplicateName')}</p>
+              ) : null}
             </div>
+
+            {isOrganizationMode ? (
+              <div className="space-y-2.5">
+                <Label className="text-sm font-semibold">{t('files.folder.workspaceLabel')}</Label>
+                <WorkspaceSelector
+                  value={selectedWorkspace}
+                  placeholder={t('files.folder.workspacePlaceholder')}
+                  autoSelectFirst
+                  onChange={handleWorkspaceChange}
+                />
+                {!effectiveWorkspaceId ? (
+                  <p className="text-xs text-muted-foreground">
+                    {t('files.folder.workspaceRequired')}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             {/* Parent Folder */}
             <div className="space-y-2.5">
@@ -249,6 +313,9 @@ export function CreateFolderDialog({
                   </div>
                 </SelectContent>
               </Select>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {t('files.folder.levelHint')}
+              </p>
             </div>
           </form>
         </DialogBody>

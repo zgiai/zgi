@@ -2,7 +2,7 @@
 
 import { Menu } from 'lucide-react';
 import { useMemo } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 // import { QuickThemeToggle } from '@/components/theme-switcher';
 import { useT } from '@/i18n';
 import { UserMenu } from './user-menu';
@@ -17,12 +17,22 @@ interface ConsoleHeaderProps {
   onToggleMobileSidebar?: () => void;
 }
 
+function getDatasetReturnTo(value: string | null): string | null {
+  if (!value) return null;
+  if (!value.startsWith('/console/dataset/')) return null;
+  if (value.startsWith('//') || value.includes('://')) return null;
+  return value;
+}
+
 export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const tNav = useT('navigation');
   const tDash = useT('dashboard');
   const currentWorkspace = useCurrentWorkspace();
   const currentOrganization = useOrganizationStore.use.currentOrganization();
+  const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
+  const effectivePathname = datasetReturnTo ? '/console/dataset' : pathname;
   const isDashboardRoute = pathname.startsWith('/dashboard');
 
   const pageTitle = useMemo(() => {
@@ -88,16 +98,20 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
         title: tDash('items.modelSettings'),
       },
       {
+        match: path => path.startsWith('/dashboard/settings/parsers'),
+        title: tDash('items.parserSettings'),
+      },
+      {
         match: path => path.startsWith('/dashboard/market'),
         title: tDash('items.marketplace'),
       },
     ];
 
     return (
-      routeTitles.find(route => route.match(pathname))?.title ??
+      routeTitles.find(route => route.match(effectivePathname))?.title ??
       (isDashboardRoute ? tDash('items.dashboard') : tNav('console'))
     );
-  }, [isDashboardRoute, pathname, tDash, tNav]);
+  }, [effectivePathname, isDashboardRoute, tDash, tNav]);
 
   const workspaceLabel = currentWorkspace?.name || tNav('switchWorkspace');
   const sectionLabel = isDashboardRoute ? tNav('dashboard') : tNav('console');

@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ContactRound,
   CreditCard,
+  FileSearch,
   KeyRound,
   RadioTower,
   ReceiptText,
@@ -127,6 +128,12 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           title: t('items.modelSettings'),
           href: '/dashboard/settings/model',
           icon: Settings,
+        },
+        {
+          key: 'parser-settings',
+          title: t('items.parserSettings'),
+          href: '/dashboard/settings/parsers',
+          icon: FileSearch,
         },
         {
           key: 'channel',

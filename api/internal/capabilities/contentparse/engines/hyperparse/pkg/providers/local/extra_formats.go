@@ -3,6 +3,7 @@ package local
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/csv"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/extrame/xls"
+	"github.com/xuri/excelize/v2"
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 )
 
@@ -27,20 +30,26 @@ func supportsLocalExtraExt(ext string) bool {
 func parseLocalExtraFormat(filename string, data []byte, ext string) (*extractcommon.DocumentResult, error) {
 	switch ext {
 	case ".csv":
-		return parseDelimitedAsDoc(filename, data, ",", "local:csv")
+		return parseDelimitedRowsAsDoc(filename, data, ',', "local:csv")
 	case ".tsv":
-		return parseDelimitedAsDoc(filename, data, "\t", "local:tsv")
+		return parseDelimitedRowsAsDoc(filename, data, '\t', "local:tsv")
 	case ".xlsx":
+		doc, err := parseXLSXRowsAsDoc(filename, data)
+		if err == nil {
+			return doc, nil
+		}
 		texts := extractTextFromZipXML(data, func(name string) bool {
 			return strings.HasPrefix(name, "xl/worksheets/") || name == "xl/sharedStrings.xml"
 		})
-		return buildDocFromBlocks(filename, texts, "local:xlsx", "")
+		return buildDocFromBlocks(filename, texts, "local:xlsx", "xlsx row parsing failed; fell back to xml text extraction")
 	case ".pptx":
 		texts := extractTextFromZipXML(data, func(name string) bool {
 			return strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml")
 		})
 		return buildDocFromBlocks(filename, texts, "local:pptx", "")
-	case ".xls", ".ppt", ".doc":
+	case ".xls":
+		return parseXLSRowsAsDoc(filename, data)
+	case ".ppt", ".doc":
 		blocks := extractLegacyOfficeText(data)
 		return buildDocFromBlocks(filename, blocks, "local:legacy_binary", "legacy binary office extraction; text quality may be limited")
 	default:
@@ -48,23 +57,212 @@ func parseLocalExtraFormat(filename string, data []byte, ext string) (*extractco
 	}
 }
 
-func parseDelimitedAsDoc(filename string, data []byte, sep, source string) (*extractcommon.DocumentResult, error) {
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
-	lines := strings.Split(text, "\n")
-	blocks := make([]string, 0, len(lines))
-	for _, ln := range lines {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
+func parseDelimitedRowsAsDoc(filename string, data []byte, comma rune, source string) (*extractcommon.DocumentResult, error) {
+	reader := csv.NewReader(bytes.NewReader(data))
+	reader.Comma = comma
+	reader.FieldsPerRecord = -1
+	reader.TrimLeadingSpace = true
+
+	headers, err := reader.Read()
+	if err != nil {
+		if err == io.EOF {
+			return nil, fmt.Errorf("no text extracted from %s", filepath.Ext(filename))
+		}
+		return nil, fmt.Errorf("read delimited header: %w", err)
+	}
+
+	rows := make([]spreadsheetRow, 0)
+	rowIndex := 2
+	for {
+		record, err := reader.Read()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("read delimited row: %w", err)
+		}
+		content := spreadsheetRowContent(headers, record)
+		if content == "" {
+			rowIndex++
 			continue
 		}
-		parts := strings.Split(ln, sep)
-		for i := range parts {
-			parts[i] = strings.TrimSpace(parts[i])
-		}
-		blocks = append(blocks, strings.Join(parts, " | "))
+		rows = append(rows, spreadsheetRow{Content: content, RowIndex: rowIndex})
+		rowIndex++
 	}
-	return buildDocFromBlocks(filename, blocks, source, "")
+	return buildSpreadsheetDocFromRows(filename, source, rows)
+}
+
+func parseXLSXRowsAsDoc(filename string, data []byte) (*extractcommon.DocumentResult, error) {
+	f, err := excelize.OpenReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("open xlsx: %w", err)
+	}
+	defer f.Close()
+
+	rows := make([]spreadsheetRow, 0)
+	for sheetIndex, sheetName := range f.GetSheetList() {
+		sheetRows, err := f.GetRows(sheetName)
+		if err != nil || len(sheetRows) == 0 {
+			continue
+		}
+		headers := sheetRows[0]
+		for rowIndex := 1; rowIndex < len(sheetRows); rowIndex++ {
+			content := spreadsheetRowContent(headers, sheetRows[rowIndex])
+			if content == "" {
+				continue
+			}
+			rows = append(rows, spreadsheetRow{
+				Content:  content,
+				Sheet:    sheetName,
+				Page:     sheetIndex,
+				RowIndex: rowIndex + 1,
+			})
+		}
+	}
+	return buildSpreadsheetDocFromRows(filename, "local:xlsx", rows)
+}
+
+func parseXLSRowsAsDoc(filename string, data []byte) (*extractcommon.DocumentResult, error) {
+	wb, err := xls.OpenReader(bytes.NewReader(data), "utf-8")
+	if err != nil {
+		return nil, fmt.Errorf("open xls: %w", err)
+	}
+
+	rows := make([]spreadsheetRow, 0)
+	for sheetIndex := 0; sheetIndex < wb.NumSheets(); sheetIndex++ {
+		sheet := wb.GetSheet(sheetIndex)
+		if sheet == nil {
+			continue
+		}
+		headerRow := sheet.Row(0)
+		if headerRow == nil {
+			continue
+		}
+		headers := make([]string, headerRow.LastCol())
+		for colIndex := 0; colIndex < headerRow.LastCol(); colIndex++ {
+			headers[colIndex] = headerRow.Col(colIndex)
+		}
+		for rowIndex := 1; rowIndex <= int(sheet.MaxRow); rowIndex++ {
+			row := sheet.Row(rowIndex)
+			if row == nil {
+				continue
+			}
+			record := make([]string, row.LastCol())
+			for colIndex := 0; colIndex < row.LastCol(); colIndex++ {
+				record[colIndex] = row.Col(colIndex)
+			}
+			content := spreadsheetRowContent(headers, record)
+			if content == "" {
+				continue
+			}
+			rows = append(rows, spreadsheetRow{
+				Content:  content,
+				Sheet:    sheet.Name,
+				Page:     sheetIndex,
+				RowIndex: rowIndex + 1,
+			})
+		}
+	}
+	return buildSpreadsheetDocFromRows(filename, "local:xls", rows)
+}
+
+type spreadsheetRow struct {
+	Content  string
+	Sheet    string
+	Page     int
+	RowIndex int
+}
+
+func spreadsheetRowContent(headers, record []string) string {
+	pageContent := make([]string, 0, len(record))
+	for colIndex, cell := range record {
+		cell = strings.TrimSpace(cell)
+		if cell == "" {
+			continue
+		}
+		columnName := ""
+		if colIndex < len(headers) {
+			columnName = strings.TrimSpace(headers[colIndex])
+		}
+		if columnName == "" {
+			columnName = spreadsheetColumnName(colIndex + 1)
+		}
+		pageContent = append(pageContent, fmt.Sprintf("\"%s\":\"%s\"", columnName, cell))
+	}
+	return strings.Join(pageContent, ";")
+}
+
+func spreadsheetColumnName(index int) string {
+	if index <= 0 {
+		return ""
+	}
+
+	var result strings.Builder
+	for index > 0 {
+		index--
+		result.WriteByte(byte('A' + (index % 26)))
+		index /= 26
+	}
+
+	runes := []rune(result.String())
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}
+
+func buildSpreadsheetDocFromRows(filename, source string, rows []spreadsheetRow) (*extractcommon.DocumentResult, error) {
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no text extracted from %s", filepath.Ext(filename))
+	}
+
+	markdown := make([]string, 0, len(rows))
+	out := &extractcommon.DocumentResult{
+		DocID:    makeChunkID(filename, 0),
+		FileName: filename,
+		Source:   source,
+	}
+	maxPage := 0
+	for i, row := range rows {
+		content := strings.TrimSpace(row.Content)
+		if content == "" {
+			continue
+		}
+		payload := map[string]any{
+			"row_index": row.RowIndex,
+		}
+		if row.Sheet != "" {
+			payload["sheet"] = row.Sheet
+		}
+		page := row.Page
+		if page < 0 {
+			page = 0
+		}
+		if page > maxPage {
+			maxPage = page
+		}
+		out.Chunks = append(out.Chunks, extractcommon.Chunk{
+			ID:        fmt.Sprintf("local-spreadsheet-row-%d", i),
+			Type:      "table",
+			Page:      page,
+			Text:      content,
+			Markdown:  content,
+			Ordinal:   i + 1,
+			Precision: "native",
+			Payload:   payload,
+		})
+		markdown = append(markdown, content)
+	}
+	if len(out.Chunks) == 0 {
+		return nil, fmt.Errorf("no text extracted from %s", filepath.Ext(filename))
+	}
+	out.PageCount = maxPage + 1
+	out.Pages = make([]extractcommon.Page, 0, out.PageCount)
+	for pageIndex := 0; pageIndex < out.PageCount; pageIndex++ {
+		out.Pages = append(out.Pages, extractcommon.Page{PageIndex: pageIndex})
+	}
+	out.Markdown = strings.Join(markdown, "\n\n")
+	return out, nil
 }
 
 func buildDocFromBlocks(filename string, blocks []string, source, hint string) (*extractcommon.DocumentResult, error) {

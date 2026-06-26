@@ -6,6 +6,9 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	toolfilescheduler "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file/scheduler"
+	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
+	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	datalibraryworker "github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	fileProcessHandler "github.com/zgiai/zgi/api/internal/modules/file_process/handler"
 	fileProcessRepo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
@@ -16,6 +19,7 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	jwtMiddleware "github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
@@ -29,6 +33,8 @@ type FileRouteDeps struct {
 	QuotaService               interfaces.QuotaService
 	LLMClient                  llmclient.LLMClient
 	DefaultModelService        llmdefaultservice.DefaultModelService
+	DataLibraryModule          *datalibrarymodule.Module
+	TaskManager                *queue.TaskManager
 	Scheduler                  *pkgscheduler.Scheduler
 	ScheduledFileService       interfaces.FileService
 }
@@ -42,11 +48,38 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	datasetRepo := dataset_repo.NewDatasetRepository(deps.DB)
 
 	fileService := fileProcessService.NewFileServiceWithVision(fileRepo, deps.Storage, deps.DB, deps.QuotaService, deps.OrganizationService, deps.LLMClient, deps.DefaultModelService)
+	if configurable, ok := fileService.(interface {
+		SetFileAssetDeletionService(deletionService datalibraryservice.FileAssetDeletionService)
+	}); ok {
+		configurable.SetFileAssetDeletionService(deps.DataLibraryModule.FileAssetDeletionService)
+	}
+	taskDispatcher := datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager)
+	if deps.DataLibraryModule != nil && deps.DataLibraryModule.FileAssetChunkEditService != nil {
+		deps.DataLibraryModule.FileAssetChunkEditService.SetDatasetRefSyncEnqueuer(taskDispatcher)
+	}
 	fileFolderService := fileProcessService.NewFileResourceService(fileFolderRepo, fileRepo, documentRepo, datasetRepo, deps.AccountService)
 	fileFavoriteService := fileProcessService.NewFileFavoriteService(fileFavoriteRepo, fileRepo)
 
-	fileHandler := fileProcessHandler.NewFileHandler(fileService, fileFolderService, deps.AccountService, deps.WorkspaceManagementService, deps.OrganizationService)
-	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.AccountService, deps.OrganizationService, fileFavoriteService)
+	fileHandler := fileProcessHandler.NewFileHandler(
+		fileService,
+		fileFolderService,
+		deps.AccountService,
+		deps.WorkspaceManagementService,
+		deps.OrganizationService,
+		fileProcessHandler.FileAssetProcessingServices{
+			StateService:                     deps.DataLibraryModule.FileAssetProcessingStateService,
+			ProcessingService:                deps.DataLibraryModule.ProcessingRequestService,
+			ParsePreviewService:              deps.DataLibraryModule.ParsePreviewService,
+			ParseConfirmationService:         deps.DataLibraryModule.ParseConfirmationService,
+			ParseArtifactConfirmationService: deps.DataLibraryModule.ParseArtifactConfirmationService,
+			FileAssetDetailService:           deps.DataLibraryModule.FileAssetDetailService,
+			FileAssetChunkService:            deps.DataLibraryModule.FileAssetChunkService,
+			FileAssetChunkEditService:        deps.DataLibraryModule.FileAssetChunkEditService,
+			FileAssetQAService:               deps.DataLibraryModule.FileAssetQAService,
+			TaskEnqueuer:                     taskDispatcher,
+		},
+	)
+	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.AccountService, deps.OrganizationService, fileFavoriteService, deps.DataLibraryModule.FileAssetSummaryService)
 	fileFavoriteHandler := fileProcessHandler.NewFileFavoriteHandler(fileFavoriteService, fileService, deps.AccountService)
 
 	// Create image preview handler
@@ -65,9 +98,33 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 
 		files.GET("/metadata", fileHandler.GetFilesMetadata)
 
+		files.POST("/:file_id/processing-requests", fileHandler.CreateProcessingRequest)
+
+		files.POST("/:file_id/replacement", fileHandler.ReplaceDocument)
+
+		files.GET("/:file_id/detail", fileHandler.GetFileDetail)
+
+		files.GET("/:file_id/chunks", fileHandler.ListFileChunks)
+		files.PATCH("/:file_id/chunks/batch", fileHandler.BatchUpdateFileChunks)
+		files.PATCH("/:file_id/chunks/:chunk_id", fileHandler.UpdateFileChunk)
+		files.POST("/:file_id/qa", fileHandler.AskFileQuestion)
+		files.POST("/:file_id/qa/stream", fileHandler.StreamFileQuestion)
+
+		files.GET("/:file_id/parse-preview", fileHandler.GetFileParsePreview)
+
+		files.GET("/:file_id/parse-confirmation-items", fileHandler.ListParseConfirmationItems)
+
+		files.POST("/:file_id/parse-confirmation-items/batch-ignore", fileHandler.BatchIgnoreParseConfirmationItems)
+
+		files.POST("/:file_id/parse-confirmation-items/:item_id/resolve", fileHandler.ResolveParseConfirmationItem)
+
 		files.GET("/:file_id/preview", fileHandler.GetFilePreview)
 
 		files.GET("/:file_id/preview-url", fileHandler.GetFileOriginalPreviewURL)
+
+		files.GET("/:file_id/source-preview", fileHandler.GetFileSourcePreviewPages)
+
+		files.GET("/:file_id/spreadsheet-preview", fileHandler.GetFileSpreadsheetPreview)
 
 		files.GET("/:file_id/download", fileHandler.DownloadFile)
 
@@ -137,6 +194,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	filePreview := v1.Group("/files")
 	{
 		filePreview.GET("/mineru-images", imagePreviewHandler.GetMinerUImage)
+		filePreview.GET("/document-images", imagePreviewHandler.GetDocumentImage)
 		filePreview.GET("/:file_id/file-preview",
 			jwtMiddleware.FilePreviewAuthMiddleware(deps.AccountService),
 			imagePreviewHandler.GetFilePreview,
@@ -187,6 +245,12 @@ func validateFileRouteDeps(deps FileRouteDeps) {
 	}
 	if deps.DefaultModelService == nil {
 		panic("file routes require default model service")
+	}
+	if deps.DataLibraryModule == nil {
+		panic("file routes require data library module")
+	}
+	if deps.TaskManager == nil {
+		panic("file routes require task manager")
 	}
 	if deps.Scheduler == nil {
 		panic("file routes require scheduler")

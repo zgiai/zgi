@@ -106,8 +106,64 @@ func metadataForElements(output *dto.ExtractOutput, elements []dto.ExtractElemen
 	if len(elements) > 1 {
 		metadata["element_count"] = len(elements)
 	}
+	setQualityIssueMetadata(metadata, collectQualityIssuesFromElements(elements))
 
 	return metadata
+}
+
+func collectQualityIssuesFromElements(elements []dto.ExtractElement) []any {
+	issues := make([]any, 0)
+	seen := make(map[string]struct{})
+	for _, element := range elements {
+		issues = appendQualityIssues(issues, seen, element.Metadata)
+	}
+	return issues
+}
+
+func appendQualityIssues(issues []any, seen map[string]struct{}, metadata map[string]any) []any {
+	if metadata == nil {
+		return issues
+	}
+	switch value := metadata["quality_issues"].(type) {
+	case []any:
+		for _, issue := range value {
+			issues = appendUniqueQualityIssue(issues, seen, issue)
+		}
+	case []map[string]any:
+		for _, issue := range value {
+			issues = appendUniqueQualityIssue(issues, seen, issue)
+		}
+	}
+	return issues
+}
+
+func appendUniqueQualityIssue(issues []any, seen map[string]struct{}, issue any) []any {
+	id := qualityIssueID(issue)
+	if id != "" {
+		if _, exists := seen[id]; exists {
+			return issues
+		}
+		seen[id] = struct{}{}
+	}
+	return append(issues, issue)
+}
+
+func qualityIssueID(issue any) string {
+	typed, ok := issue.(map[string]any)
+	if !ok {
+		return ""
+	}
+	id, _ := typed["id"].(string)
+	return strings.TrimSpace(id)
+}
+
+func setQualityIssueMetadata(metadata map[string]any, issues []any) {
+	if len(issues) == 0 {
+		return
+	}
+	metadata["quality_issues"] = issues
+	metadata["quality_issue_count"] = len(issues)
+	metadata["has_quality_issues"] = true
 }
 
 func addChunkMetadata(chunks []dto.TransformedChunk) {

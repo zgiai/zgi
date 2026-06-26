@@ -83,6 +83,7 @@ type ProcessingRequestRepository interface {
 	List(ctx context.Context, filter ProcessingRequestListFilter) ([]*model.ProcessingRequest, int64, error)
 	StatusSummaryByAssetID(ctx context.Context, organizationID string, assetID uuid.UUID) ([]ProcessingRequestStatusSummary, error)
 	QueueSummary(ctx context.Context, filter ProcessingRequestQueueSummaryFilter) ([]ProcessingRequestQueueSummary, error)
+	UpdateExecutionMetadata(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*model.ProcessingRequest, error)
 	TransitionStatus(ctx context.Context, id uuid.UUID, patch ProcessingRequestStatusPatch) (*model.ProcessingRequest, error)
 	ClaimNextQueued(ctx context.Context, filter ProcessingRequestClaimFilter) (*model.ProcessingRequest, error)
 }
@@ -205,6 +206,31 @@ func (r *processingRequestRepository) QueueSummary(ctx context.Context, filter P
 		})
 	}
 	return summaries, nil
+}
+
+func (r *processingRequestRepository) UpdateExecutionMetadata(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*model.ProcessingRequest, error) {
+	if organizationID == "" || id == uuid.Nil {
+		return nil, nil
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+	result := r.db.WithContext(ctx).Model(&model.ProcessingRequest{}).
+		Where("id = ?", id).
+		Where("organization_id = ?", organizationID).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"execution_metadata": datatypes.JSON(metadataJSON),
+			"updated_at":         time.Now(),
+		})
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, nil
+	}
+	return r.GetByID(ctx, id)
 }
 
 func parseAggregateTime(value *string) *time.Time {

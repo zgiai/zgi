@@ -28,6 +28,7 @@ const messages: DashboardMessages = {
     organizationSettings: '组织设置',
     aichatSkills: 'Skill 管理',
     modelSettings: '默认模型管理',
+    parserSettings: '解析器配置',
     marketplace: '插件市场',
   },
   costCenter: {
@@ -332,6 +333,51 @@ const messages: DashboardMessages = {
       'image-gen': {
         title: '默认生图模型',
         description: '用于根据提示词生成图片，适合控制台和工作流里的生图场景。',
+      },
+    },
+    parserSettings: {
+      title: '解析器配置',
+      description:
+        '配置 Reducto 和 MinerU，用于文件重新解析。除必填密钥外，其他字段会自动带上默认值，也可以按部署环境修改。',
+      actions: {
+        returnToReparse: '返回重新解析',
+        save: '保存',
+      },
+      messages: {
+        saved: '解析器配置已保存',
+        saveFailed: '解析器配置保存失败',
+      },
+      reducto: {
+        description: 'Reducto 官方解析服务。启用前需要先配置 API Key。',
+      },
+      mineru: {
+        description: 'MinerU 解析服务。选择本地服务或官方服务模式后，再配置对应字段。',
+        modes: {
+          sidecar: '本地服务',
+          official: '官方服务',
+        },
+      },
+      fields: {
+        enabled: '启用',
+        apiKey: 'API Key',
+        baseUrl: 'Base URL',
+        timeout: '超时时间（秒）',
+        mode: '模式',
+        apiUrl: 'API URL',
+        officialToken: '官方 Token',
+        modelVersion: '模型版本',
+        pollInterval: '轮询间隔（秒）',
+      },
+      placeholders: {
+        secretConfigured: '已配置，留空则保持不变',
+        secretRequired: '启用前必填',
+      },
+      status: {
+        not_configured: '未配置',
+        disabled: '已停用',
+        available: '可用',
+        failed: '异常',
+        unknown: '未知',
       },
     },
   },

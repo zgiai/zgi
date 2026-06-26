@@ -2,13 +2,17 @@ import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from './types/common';
 import type {
   ContentParsePlaygroundCompareResponse,
+  ContentParseFileRouteProvidersResponse,
   ContentParsePlaygroundPDFRenderResponse,
   ContentParsePlaygroundParseRequest,
   ContentParsePlaygroundParseResponse,
   ContentParsePlaygroundProviderSummaryResponse,
   ContentParsePlaygroundProvidersResponse,
+  ParserSettingsListResponse,
   ContentParsePlaygroundRunsResponse,
   ContentParsePlaygroundSaveResponse,
+  ParserSettingsProviderKey,
+  UpsertParserSettingsRequest,
 } from './types/content-parse';
 
 class ContentParseService extends BaseService {
@@ -16,6 +20,24 @@ class ContentParseService extends BaseService {
     ApiResponseData<ContentParsePlaygroundProvidersResponse>
   > {
     return this.request('get', '/console/api/content-parse/playground/providers');
+  }
+
+  async listFileRouteProviders(fileName: string): Promise<
+    ApiResponseData<ContentParseFileRouteProvidersResponse>
+  > {
+    const query = new URLSearchParams({ file_name: fileName }).toString();
+    return this.request('get', `/console/api/content-parse/file-route/providers?${query}`);
+  }
+
+  async listParserSettings(): Promise<ApiResponseData<ParserSettingsListResponse>> {
+    return this.request('get', '/console/api/content-parse/provider-settings');
+  }
+
+  async upsertParserSettings(
+    provider: ParserSettingsProviderKey,
+    payload: UpsertParserSettingsRequest
+  ): Promise<ApiResponseData<ParserSettingsListResponse['items'][number]>> {
+    return this.request('put', `/console/api/content-parse/provider-settings/${provider}`, payload);
   }
 
   async parsePlayground(

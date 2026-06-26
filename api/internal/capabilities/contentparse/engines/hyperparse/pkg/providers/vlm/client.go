@@ -22,6 +22,7 @@ import (
 	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
 	pdfmodel "github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/internal/inspectsvc"
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 )
 
@@ -371,19 +372,29 @@ func (c *Client) callParse(ctx context.Context, filename string, pdfData []byte,
 		return nil, fmt.Errorf("gemini: queue acquire timeout after %s (batch %d/%d)", queueTimeout, batchIdx+1, batchTotal)
 	}
 
+	pageDataURLs, renderEngine, err := inspectsvc.RenderPDFPagesToDataURLs(pdfData, pageEnd-pageStart+1)
+	if err != nil {
+		return nil, fmt.Errorf("gemini: render PDF pages for batch %d/%d: %w", batchIdx+1, batchTotal, err)
+	}
+	if len(pageDataURLs) == 0 {
+		return nil, fmt.Errorf("gemini: render PDF pages for batch %d/%d returned no pages", batchIdx+1, batchTotal)
+	}
+
 	primary := c.model()
 	fallback := c.fallbackModel()
-	br, err := c.callOnce(ctx, filename, pdfData, primary)
+	br, err := c.callOnce(ctx, filename, pageDataURLs, primary)
 	if err == nil {
+		br.Model = firstNonEmptyString(br.Model, primary)
 		return br, nil
 	}
 	if isRetryable(err) && fallback != "" && fallback != primary {
 		time.Sleep(2 * time.Second)
-		br2, err2 := c.callOnce(ctx, filename, pdfData, fallback)
+		br2, err2 := c.callOnce(ctx, filename, pageDataURLs, fallback)
 		if err2 == nil {
+			br2.Model = firstNonEmptyString(br2.Model, fallback)
 			return br2, nil
 		}
-		return nil, fmt.Errorf("gemini: primary+fallback both failed: primary=%v fallback=%v", err, err2)
+		return nil, fmt.Errorf("gemini: primary+fallback both failed after PDF render via %s: primary=%v fallback=%v", renderEngine, err, err2)
 	}
 	return nil, err
 }
@@ -426,21 +437,30 @@ func isRetryable(err error) bool {
 	return errors.As(err, &r)
 }
 
-func (c *Client) callOnce(ctx context.Context, filename string, pdfData []byte, useModel string) (*batchResult, error) {
-	b64 := base64.StdEncoding.EncodeToString(pdfData)
-	dataURI := "data:application/pdf;base64," + b64
-
-	userContent := []map[string]any{
-		{"type": "text", "text": systemPrompt},
-		{
-			"type": "file",
-			"file": map[string]any{
-				"filename":  filename,
-				"file_data": dataURI,
-			},
-		},
-	}
+func (c *Client) callOnce(ctx context.Context, filename string, pageDataURLs []string, useModel string) (*batchResult, error) {
+	userContent := buildPDFPageImageContent(filename, pageDataURLs)
 	return c.callContentOnce(ctx, userContent, useModel, "gemini")
+}
+
+func buildPDFPageImageContent(filename string, pageDataURLs []string) []map[string]any {
+	prompt := systemPrompt
+	if strings.TrimSpace(filename) != "" {
+		prompt += "\n\nThe attached images are rendered pages from PDF file: " + strings.TrimSpace(filename) + "."
+	}
+	userContent := []map[string]any{{"type": "text", "text": prompt}}
+	for _, dataURL := range pageDataURLs {
+		dataURL = strings.TrimSpace(dataURL)
+		if dataURL == "" {
+			continue
+		}
+		userContent = append(userContent, map[string]any{
+			"type": "image_url",
+			"image_url": map[string]any{
+				"url": dataURL,
+			},
+		})
+	}
+	return userContent
 }
 
 func (c *Client) callImageOnce(ctx context.Context, filename string, imgData []byte, useModel string) (*batchResult, error) {
