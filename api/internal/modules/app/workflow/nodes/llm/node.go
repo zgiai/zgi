@@ -1371,6 +1371,7 @@ func (n *Node) loadConversationHistoryPromptMessages(ctx context.Context, conver
 	if _, err := conversationRepo.GetByIDAndAgent(ctx, conversationUUID, agentUUID); err != nil {
 		return nil, err
 	}
+
 	repo := conversation.NewAgentMessageRepository(n.db)
 	_, total, err := repo.GetByConversationID(ctx, conversationUUID, 1, 0)
 	if err != nil {
