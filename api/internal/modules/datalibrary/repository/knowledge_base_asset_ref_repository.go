@@ -121,7 +121,8 @@ func (r *knowledgeBaseAssetRefRepository) FindActive(ctx context.Context, organi
 func (r *knowledgeBaseAssetRefRepository) FindActiveByAsset(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*model.KnowledgeBaseAssetRef, error) {
 	var item model.KnowledgeBaseAssetRef
 	err := r.db.WithContext(ctx).
-		Where("organization_id = ? AND dataset_id = ? AND asset_id = ?", organizationID, datasetID, assetID).
+		Where("organization_id = ? AND dataset_id = ? AND asset_id = ? AND status = ?",
+			organizationID, datasetID, assetID, model.KnowledgeBaseAssetRefStatusActive).
 		First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -137,7 +138,8 @@ func (r *knowledgeBaseAssetRefRepository) ListActiveByAsset(ctx context.Context,
 	err := r.db.WithContext(ctx).
 		Model(&model.KnowledgeBaseAssetRef{}).
 		Joins("JOIN datasets ON datasets.id = data_library_knowledge_base_asset_refs.dataset_id").
-		Where("data_library_knowledge_base_asset_refs.organization_id = ? AND data_library_knowledge_base_asset_refs.asset_id = ?", organizationID, assetID).
+		Where("data_library_knowledge_base_asset_refs.organization_id = ? AND data_library_knowledge_base_asset_refs.asset_id = ? AND data_library_knowledge_base_asset_refs.status = ?",
+			organizationID, assetID, model.KnowledgeBaseAssetRefStatusActive).
 		Order("data_library_knowledge_base_asset_refs.updated_at DESC").
 		Find(&items).Error
 	if err != nil {
@@ -150,7 +152,8 @@ func (r *knowledgeBaseAssetRefRepository) CountActiveByAssetID(ctx context.Conte
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.KnowledgeBaseAssetRef{}).
 		Joins("JOIN datasets ON datasets.id = data_library_knowledge_base_asset_refs.dataset_id").
-		Where("data_library_knowledge_base_asset_refs.organization_id = ? AND data_library_knowledge_base_asset_refs.asset_id = ?", organizationID, assetID).
+		Where("data_library_knowledge_base_asset_refs.organization_id = ? AND data_library_knowledge_base_asset_refs.asset_id = ? AND data_library_knowledge_base_asset_refs.status = ?",
+			organizationID, assetID, model.KnowledgeBaseAssetRefStatusActive).
 		Count(&count).Error
 	return count, err
 }

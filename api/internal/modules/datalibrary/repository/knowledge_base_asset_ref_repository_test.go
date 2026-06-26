@@ -19,9 +19,11 @@ func TestKnowledgeBaseAssetRefRepositoryActiveByAssetRequiresExistingDataset(t *
 
 	assetID := uuid.New()
 	activeRefID := uuid.New()
+	disabledRefID := uuid.New()
 	orphanRefID := uuid.New()
 	execKnowledgeBaseAssetRefSQL(t, db, `INSERT INTO datasets (id) VALUES (?)`, "dataset-active")
 	execKnowledgeBaseAssetRefSQL(t, db, `INSERT INTO data_library_knowledge_base_asset_refs (id, organization_id, dataset_id, asset_id, status, sync_status, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL)`, activeRefID.String(), "org-1", "dataset-active", assetID.String(), model.KnowledgeBaseAssetRefStatusActive, model.KnowledgeBaseAssetRefSyncStatusSynced)
+	execKnowledgeBaseAssetRefSQL(t, db, `INSERT INTO data_library_knowledge_base_asset_refs (id, organization_id, dataset_id, asset_id, status, sync_status, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL)`, disabledRefID.String(), "org-1", "dataset-active", assetID.String(), model.KnowledgeBaseAssetRefStatusDisabled, model.KnowledgeBaseAssetRefSyncStatusSynced)
 	execKnowledgeBaseAssetRefSQL(t, db, `INSERT INTO data_library_knowledge_base_asset_refs (id, organization_id, dataset_id, asset_id, status, sync_status, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL)`, orphanRefID.String(), "org-1", "dataset-deleted", assetID.String(), model.KnowledgeBaseAssetRefStatusActive, model.KnowledgeBaseAssetRefSyncStatusSynced)
 
 	repo := NewKnowledgeBaseAssetRefRepository(db)
@@ -39,6 +41,28 @@ func TestKnowledgeBaseAssetRefRepositoryActiveByAssetRequiresExistingDataset(t *
 	}
 	if len(refs) != 1 || refs[0].ID != activeRefID {
 		t.Fatalf("expected only active dataset ref %s, got %+v", activeRefID, refs)
+	}
+}
+
+func TestKnowledgeBaseAssetRefRepositoryFindActiveByAssetIgnoresDisabledRef(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	createKnowledgeBaseAssetRefRelationTables(t, db)
+
+	assetID := uuid.New()
+	disabledRefID := uuid.New()
+	execKnowledgeBaseAssetRefSQL(t, db, `INSERT INTO datasets (id) VALUES (?)`, "dataset-active")
+	execKnowledgeBaseAssetRefSQL(t, db, `INSERT INTO data_library_knowledge_base_asset_refs (id, organization_id, dataset_id, asset_id, status, sync_status, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL)`, disabledRefID.String(), "org-1", "dataset-active", assetID.String(), model.KnowledgeBaseAssetRefStatusDisabled, model.KnowledgeBaseAssetRefSyncStatusSynced)
+
+	repo := NewKnowledgeBaseAssetRefRepository(db)
+	ref, err := repo.FindActiveByAsset(context.Background(), "org-1", "dataset-active", assetID)
+	if err != nil {
+		t.Fatalf("find active by asset: %v", err)
+	}
+	if ref != nil {
+		t.Fatalf("expected disabled ref to be ignored, got %+v", ref)
 	}
 }
 
