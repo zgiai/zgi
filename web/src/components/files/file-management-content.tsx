@@ -155,22 +155,17 @@ function getEffectiveFileProcessingStatus(file: FileItem): FileAssetProductStatu
   return getFileProcessingStatus(file);
 }
 
-function fileMatchesProcessingStatusFilter(
-  file: FileItem,
-  filter: FileProcessingStatusFilter
-): boolean {
-  const status = getEffectiveFileProcessingStatus(file);
-
+function getProcessingStatusQueryParam(filter: FileProcessingStatusFilter): string | undefined {
   switch (filter) {
     case 'needs_action':
-      return status === 'parse_failed';
+      return 'parse_failed';
     case 'ready':
-      return status === 'ready';
+      return 'ready';
     case 'stored_only':
-      return status === 'stored_only';
+      return 'stored_only';
     case 'all':
     default:
-      return true;
+      return undefined;
   }
 }
 
@@ -648,11 +643,7 @@ function MoveFolderDialog({
         >
           <div className="space-y-2.5">
             <Label htmlFor="move-folder-target">{t('files.folder.targetFolder')}</Label>
-            <Select
-              value={targetId}
-              onValueChange={setTargetId}
-              disabled={isTargetOptionsLoading}
-            >
+            <Select value={targetId} onValueChange={setTargetId} disabled={isTargetOptionsLoading}>
               <SelectTrigger id="move-folder-target" isLoading={isTargetOptionsLoading}>
                 <SelectValue />
               </SelectTrigger>
@@ -723,7 +714,7 @@ const FileManagementContent = ({
   const { folders } = useFileFolders(workspaceId);
   const knownActiveFolderName = SYSTEM_FILE_CATEGORIES.has(activeCategory)
     ? ''
-    : folders.find(folder => folder.id === activeCategory)?.name ?? '';
+    : (folders.find(folder => folder.id === activeCategory)?.name ?? '');
 
   const { hasPermission } = useAccountPermissions();
   const canManage = hasPermission('file.manage');
@@ -758,8 +749,8 @@ const FileManagementContent = ({
   // Convert acceptExt array to extension string format (comma-separated, lowercase, no leading dots)
   const extensionParam =
     acceptExt.length > 0 ? filterLowercaseExtensions(acceptExt).join(',') : undefined;
-  const uploadAcceptExt =
-    acceptExt.length > 0 ? acceptExt : [...FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT];
+  const uploadAcceptExt = acceptExt.length > 0 ? acceptExt : [...FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT];
+  const processingStatusParam = getProcessingStatusQueryParam(processingStatusFilter);
 
   const { files, currentPage, totalPages, total, isLoading, isFetching, error, goToPage, reload } =
     useFiles('20', {
@@ -767,50 +758,59 @@ const FileManagementContent = ({
       keyword: debouncedSearchValue,
       sort: 'created_at',
       extension: extensionParam,
+      processingStatus: processingStatusParam,
       workspaceId: workspaceId,
     });
+  const countProcessingStatuses = {
+    needs_action: getProcessingStatusQueryParam('needs_action'),
+    ready: getProcessingStatusQueryParam('ready'),
+    stored_only: getProcessingStatusQueryParam('stored_only'),
+  };
+  const allFilesCount = useFiles('1', {
+    category: activeCategory,
+    keyword: debouncedSearchValue,
+    sort: 'created_at',
+    extension: extensionParam,
+    workspaceId: workspaceId,
+  });
+  const needsActionFilesCount = useFiles('1', {
+    category: activeCategory,
+    keyword: debouncedSearchValue,
+    sort: 'created_at',
+    extension: extensionParam,
+    processingStatus: countProcessingStatuses.needs_action,
+    workspaceId: workspaceId,
+  });
+  const readyFilesCount = useFiles('1', {
+    category: activeCategory,
+    keyword: debouncedSearchValue,
+    sort: 'created_at',
+    extension: extensionParam,
+    processingStatus: countProcessingStatuses.ready,
+    workspaceId: workspaceId,
+  });
+  const storedOnlyFilesCount = useFiles('1', {
+    category: activeCategory,
+    keyword: debouncedSearchValue,
+    sort: 'created_at',
+    extension: extensionParam,
+    processingStatus: countProcessingStatuses.stored_only,
+    workspaceId: workspaceId,
+  });
 
-  const scopeFilteredFiles = files;
-  const displayedFiles =
-    processingStatusFilter === 'all'
-      ? scopeFilteredFiles
-      : scopeFilteredFiles.filter(file =>
-          fileMatchesProcessingStatusFilter(file, processingStatusFilter)
-        );
-  const displayedTotal = processingStatusFilter !== 'all' ? displayedFiles.length : total;
-  const loadedNeedsActionCount = scopeFilteredFiles.filter(file =>
-    fileMatchesProcessingStatusFilter(file, 'needs_action')
-  ).length;
-  const loadedReadyCount = scopeFilteredFiles.filter(file =>
-    fileMatchesProcessingStatusFilter(file, 'ready')
-  ).length;
-  const loadedActiveProcessingCount = scopeFilteredFiles.filter(file => {
-    const status = getEffectiveFileProcessingStatus(file);
-    return status === 'parsing' || status === 'generating';
-  }).length;
+  const displayedFiles = files;
+  const displayedTotal = total;
   const hasActiveProcessingFiles = files.some(file => {
     const status = getEffectiveFileProcessingStatus(file);
     return status === 'parsing' || status === 'generating';
   });
-  const derivedStoredOnlyCount =
-    activeCategory === 'needs_action'
-      ? 0
-      : Math.max(total - loadedNeedsActionCount - loadedReadyCount - loadedActiveProcessingCount, 0);
-  const processingStatusFilterCounts = FILE_PROCESSING_STATUS_FILTERS.reduce(
-    (acc, filter) => {
-      acc[filter.id] =
-        filter.id === 'all'
-          ? activeCategory === 'needs_action'
-            ? scopeFilteredFiles.length
-            : total
-          : filter.id === 'stored_only'
-            ? derivedStoredOnlyCount
-            : scopeFilteredFiles.filter(file => fileMatchesProcessingStatusFilter(file, filter.id))
-                .length;
-      return acc;
-    },
-    {} as Record<FileProcessingStatusFilter, number>
-  );
+  const processingStatusFilterCounts: Record<FileProcessingStatusFilter, number> = {
+    all: allFilesCount.total,
+    needs_action:
+      activeCategory === 'needs_action' ? allFilesCount.total : needsActionFilesCount.total,
+    ready: activeCategory === 'needs_action' ? 0 : readyFilesCount.total,
+    stored_only: activeCategory === 'needs_action' ? 0 : storedOnlyFilesCount.total,
+  };
 
   const prevPropRef = useRef<string[]>(selectedFileIds);
   const prevInternalRef = useRef<string[]>(selectedFiles);
@@ -1106,10 +1106,10 @@ const FileManagementContent = ({
         )}
         onClick={() => setSpaceSwitcherOpen(true)}
       >
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <Users className="h-3 w-3" />
-            </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+            <Users className="h-3 w-3" />
+          </div>
           <span
             className={cn(
               'truncate font-medium',
@@ -1230,12 +1230,7 @@ const FileManagementContent = ({
       </div>
     ) : null;
 
-  const shouldShowPagination =
-    !isLoading &&
-    files.length > 0 &&
-    totalPages > 1 &&
-    processingStatusFilter === 'all' &&
-    activeCategory !== 'needs_action';
+  const shouldShowPagination = !isLoading && files.length > 0 && totalPages > 1;
 
   const fileContent = error ? (
     <div className="flex h-full items-center justify-center">

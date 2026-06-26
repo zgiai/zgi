@@ -556,6 +556,7 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 		req.Keyword,
 		req.Sort,
 		req.Extension,
+		req.ProcessingStatus,
 		&req.StartTime,
 		&req.EndTime,
 		organizationID,

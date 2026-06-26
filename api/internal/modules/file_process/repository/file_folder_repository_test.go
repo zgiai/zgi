@@ -64,6 +64,53 @@ func TestListAllFilesWithFiltersAndTenantFiltersByCurrentAssetProductStatus(t *t
 	}
 }
 
+func TestListFilesInFolderWithFiltersAndTenantFiltersByCurrentAssetProductStatus(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	createFileFolderRepositoryTables(t, db)
+
+	insertUploadFile(t, db, "file-ready", "Ready", "2026-06-18 10:00:00")
+	insertUploadFile(t, db, "file-stored", "Stored", "2026-06-18 09:00:00")
+	insertUploadFile(t, db, "file-other-folder-ready", "Other folder ready", "2026-06-18 08:00:00")
+	insertFileFolderJoin(t, db, "file-ready", "folder-1")
+	insertFileFolderJoin(t, db, "file-stored", "folder-1")
+	insertFileFolderJoin(t, db, "file-other-folder-ready", "folder-2")
+	insertDocumentAsset(t, db, "asset-ready", "file-ready", "ready", "2026-06-18 10:10:00")
+	insertDocumentAsset(t, db, "asset-stored", "file-stored", "stored_only", "2026-06-18 09:10:00")
+	insertDocumentAsset(t, db, "asset-other-ready", "file-other-folder-ready", "ready", "2026-06-18 08:10:00")
+
+	repo := NewFileFolderRepository(db)
+	files, total, err := repo.ListFilesInFolderWithFiltersAndTenant(
+		context.Background(),
+		"folder-1",
+		1,
+		20,
+		"",
+		"created_at_desc",
+		"",
+		"ready",
+		nil,
+		nil,
+		"org-1",
+		[]string{"workspace-1"},
+	)
+	if err != nil {
+		t.Fatalf("list folder files: %v", err)
+	}
+
+	if total != 1 {
+		t.Fatalf("expected total 1, got %d", total)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(files))
+	}
+	if files[0].ID != "file-ready" {
+		t.Fatalf("expected folder ready file only, got %q", files[0].ID)
+	}
+}
+
 func TestApplyWorkspaceIDsFilterUsesTextComparisonForPostgres(t *testing.T) {
 	db := openFileFolderPostgresMockDB(t)
 
@@ -181,7 +228,10 @@ func createFileFolderRepositoryTables(t *testing.T, db *gorm.DB) {
 			id text primary key,
 			organization_id text,
 			workspace_id text,
+			is_temporary boolean,
 			is_archived boolean,
+			archived_at datetime,
+			archived_by text,
 			storage_type text,
 			key text,
 			name text,
@@ -192,8 +242,11 @@ func createFileFolderRepositoryTables(t *testing.T, db *gorm.DB) {
 			created_by text,
 			created_at datetime,
 			used boolean,
+			used_by text,
+			used_at datetime,
 			hash text,
-			source_url text
+			source_url text,
+			content_text text
 		)`,
 		`CREATE TABLE data_library_document_assets (
 			id text primary key,
@@ -202,6 +255,11 @@ func createFileFolderRepositoryTables(t *testing.T, db *gorm.DB) {
 			product_status text,
 			updated_at datetime,
 			deleted_at datetime
+		)`,
+		`CREATE TABLE file_folder_joins (
+			file_id text,
+			folder_id text,
+			created_by text
 		)`,
 		`CREATE TABLE file_folders (
 			id text primary key,
@@ -272,6 +330,18 @@ func insertDocumentAsset(t *testing.T, db *gorm.DB, id string, sourceFileID stri
 		sourceFileID,
 		status,
 		parsedUpdatedAt,
+	)
+}
+
+func insertFileFolderJoin(t *testing.T, db *gorm.DB, fileID string, folderID string) {
+	t.Helper()
+	execFileFolderRepositorySQL(
+		t,
+		db,
+		`INSERT INTO file_folder_joins (file_id, folder_id, created_by) VALUES (?, ?, ?)`,
+		fileID,
+		folderID,
+		"account-1",
 	)
 }
 

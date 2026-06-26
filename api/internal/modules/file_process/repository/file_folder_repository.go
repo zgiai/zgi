@@ -31,7 +31,7 @@ type FileFolderRepository interface {
 	ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time) ([]*file_model.UploadFile, int64, error)
 	ListFavoriteFileIDs(ctx context.Context, accountID string, page, limit int) ([]string, int64, error)
 	ListFilesByIDs(ctx context.Context, fileIDs []string, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string) ([]*file_model.UploadFile, error)
-	ListFilesInFolderWithFiltersAndTenant(ctx context.Context, folderID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, workspaceIDs []string) ([]*file_model.UploadFile, int64, error)
+	ListFilesInFolderWithFiltersAndTenant(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, workspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	ListAllFilesWithFiltersAndTenant(ctx context.Context, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	ListFavoriteFilesWithFilters(ctx context.Context, accountID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, allowAllFolders bool, workspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	MoveFileToFolder(ctx context.Context, fileID, fromFolderID, toFolderID, updatedBy string) error
@@ -559,7 +559,7 @@ func (r *fileFolderRepository) ListFilesInFolderWithFilters(ctx context.Context,
 }
 
 // ListFilesInFolderWithFiltersAndTenant lists files in a folder with additional filters and tenant check
-func (r *fileFolderRepository) ListFilesInFolderWithFiltersAndTenant(ctx context.Context, folderID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, workspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
+func (r *fileFolderRepository) ListFilesInFolderWithFiltersAndTenant(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, workspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
 	var files []*file_model.UploadFile
 	var total int64
 
@@ -631,6 +631,11 @@ func (r *fileFolderRepository) ListFilesInFolderWithFiltersAndTenant(ctx context
 	if endTime != nil && !endTime.IsZero() {
 		query = query.Where("created_at <= ?", endTime)
 		countQuery = countQuery.Where("created_at <= ?", endTime)
+	}
+
+	if statuses := parseProcessingStatusFilter(processingStatus); len(statuses) > 0 {
+		query = applyCurrentAssetProductStatusFilter(query, statuses)
+		countQuery = applyCurrentAssetProductStatusFilter(countQuery, statuses)
 	}
 
 	// Get total count

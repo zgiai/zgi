@@ -43,7 +43,7 @@ type FileFolderService interface {
 	AddFileToFolder(ctx context.Context, fileID, folderID, accountID string) error
 	RemoveFileFromFolder(ctx context.Context, fileID, folderID string) error
 	ListFilesInFolder(ctx context.Context, folderID string, page, limit int) ([]*file_model.UploadFile, int64, error)
-	ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
+	ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	ListAllFilesWithFilters(ctx context.Context, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	ListFavoriteFiles(ctx context.Context, accountID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	MoveFileToFolder(ctx context.Context, fileID, fromFolderID, toFolderID, accountID string) error
@@ -441,12 +441,12 @@ func (s *fileResourceService) ListFilesInFolder(ctx context.Context, folderID st
 }
 
 // ListFilesInFolderWithFilters lists files in a folder with additional filters
-func (s *fileResourceService) ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
+func (s *fileResourceService) ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
 	if len(visibleWorkspaceIDs) == 0 {
 		return []*file_model.UploadFile{}, 0, nil
 	}
 
-	files, total, err := s.fileFolderRepo.ListFilesInFolderWithFiltersAndTenant(ctx, folderID, page, limit, keyword, sort, extension, startTime, endTime, tenantID, visibleWorkspaceIDs)
+	files, total, err := s.fileFolderRepo.ListFilesInFolderWithFiltersAndTenant(ctx, folderID, page, limit, keyword, sort, extension, processingStatus, startTime, endTime, tenantID, visibleWorkspaceIDs)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to list files in folder with filters: %w", err)
 	}

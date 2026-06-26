@@ -76,6 +76,7 @@ export interface UseAllFilesOptions {
   keyword?: string;
   sort?: string;
   extension?: string;
+  processingStatus?: string;
   workspaceId?: string;
 }
 
@@ -205,6 +206,7 @@ const getFilesKey = (
   keyword?: string,
   sort?: string,
   extension?: string,
+  processingStatus?: string,
   workspaceId?: string
 ) => {
   return [
@@ -217,6 +219,7 @@ const getFilesKey = (
       keyword: keyword?.trim() || '',
       sort: sort?.trim() || '',
       extension: extension || '',
+      processingStatus: processingStatus || '',
       workspaceId: workspaceId || '',
     },
   ];
@@ -283,18 +286,30 @@ export function useFiles(
     sort,
     category = 'all',
     extension,
+    processingStatus,
     workspaceId,
   } = options;
+  const effectiveProcessingStatus =
+    processingStatus || (category === 'needs_action' ? 'parse_failed' : undefined);
 
   // Reset to page 1 when search keyword, sort, category, or extension changes
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [keyword, sort, category, extension, workspaceId]);
+  }, [keyword, sort, category, extension, effectiveProcessingStatus, workspaceId]);
 
   const serviceMethod = getServiceMethod(category);
 
   const { data, isLoading, isFetching, error } = useQuery<ApiResponseData<AllFilesResponse>>({
-    queryKey: getFilesKey(category, limit, currentPage, keyword, sort, extension, workspaceId),
+    queryKey: getFilesKey(
+      category,
+      limit,
+      currentPage,
+      keyword,
+      sort,
+      extension,
+      effectiveProcessingStatus,
+      workspaceId
+    ),
     queryFn: async () => {
       return serviceMethod({
         page: String(currentPage),
@@ -302,7 +317,7 @@ export function useFiles(
         keyword,
         sort,
         extension,
-        processing_status: category === 'needs_action' ? 'parse_failed' : undefined,
+        processing_status: effectiveProcessingStatus,
         workspace_id: workspaceId,
       });
     },
@@ -777,7 +792,10 @@ export function useCreateFolder(): {
           if (key[1] === 'children') {
             const parentId = key[2];
             const workspaceId = key[3];
-            return parentId === variables.parent_id && (!workspaceId || workspaceId === targetWorkspaceId);
+            return (
+              parentId === variables.parent_id &&
+              (!workspaceId || workspaceId === targetWorkspaceId)
+            );
           }
 
           const workspaceId = key[1];
