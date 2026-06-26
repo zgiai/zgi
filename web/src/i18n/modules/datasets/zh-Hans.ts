@@ -167,6 +167,10 @@ const messages: DatasetMessages = {
         '当前有 {count} 个文件缺少该知识库模型对应的向量结果。生成知识库向量后即可正常添加。',
       resultSummary: '显示 {count} / {total} 个文件资产',
       addSelected: '添加 {count} 个文件',
+      partialAddConfirmTitle: '添加所选文件？',
+      partialAddConfirmDescription:
+        '已选择 {selected} 个文件，其中 {ready} 个可立即添加，{pending} 个需要先生成知识库向量。继续后，系统会自动生成向量并在完成后添加到当前知识库。',
+      partialAddConfirmAction: '继续添加',
       filters: {
         addable: '可添加',
         added: '已添加',

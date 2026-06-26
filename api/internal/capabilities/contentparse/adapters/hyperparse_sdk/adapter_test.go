@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -17,6 +18,28 @@ import (
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
 	"github.com/zgiai/zgi/api/internal/contracts"
 )
+
+type fakeFigureSummaryEnhancer struct {
+	output string
+	err    error
+	calls  []string
+}
+
+func (f *fakeFigureSummaryEnhancer) LocalizeReductoFigureSummary(ctx context.Context, organizationID, text string) (string, error) {
+	f.calls = append(f.calls, organizationID+"|"+text)
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.output, nil
+}
+
+func (f *fakeFigureSummaryEnhancer) SummarizeMineruFigureImage(ctx context.Context, organizationID, imageURL string) (string, error) {
+	f.calls = append(f.calls, organizationID+"|"+imageURL)
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.output, nil
+}
 
 func TestAdapterParsesPlainTextBytes(t *testing.T) {
 	adapter := NewAdapter()
@@ -160,6 +183,178 @@ func TestMapDocumentResultCarriesImageAssetsForNormalization(t *testing.T) {
 	assets, ok := artifact.Metadata["image_assets"].(map[string]any)
 	if !ok || assets["chart.jpg"] != "data:image/jpeg;base64,aGVsbG8=" {
 		t.Fatalf("image assets not carried for normalization: %#v", artifact.Metadata["image_assets"])
+	}
+}
+
+func TestMapDocumentResultLocalizesReductoFigureSummary(t *testing.T) {
+	localizer := &fakeFigureSummaryEnhancer{output: "图片展示了一株浅色花朵的植物。"}
+	result := &extractcommon.DocumentResult{
+		DocID:    "doc-reducto",
+		Markdown: "The image displays a plant with small flowers.",
+		ExtractOutput: &extractcommon.ExtractOutput{
+			Metadata: map[string]any{},
+			Elements: []extractcommon.ExtractElement{
+				{
+					ID:      "figure-1",
+					Type:    "figure",
+					Content: "The image displays a plant with small flowers.",
+					Metadata: map[string]any{
+						"payload": map[string]any{
+							"source":     "reducto",
+							"image_url":  "https://example.com/plant.png",
+							"page_index": 1,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	artifact := mapDocumentResultWithOptions(contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeBytes,
+		FileName:   "sample.pdf",
+		Intent:     contracts.ParseIntentDatasetIndex,
+		Profile:    contracts.ParseProfileDatasetIndex,
+		Metadata:   map[string]any{"organization_id": "org-1"},
+	}, extractcommon.EngineReducto, result, mapDocumentOptions{figureSummaryEnhancer: localizer})
+
+	if got := artifact.Elements[0].Content; got != "图片展示了一株浅色花朵的植物。" {
+		t.Fatalf("localized content = %q", got)
+	}
+	payload := artifact.Elements[0].Metadata["payload"].(map[string]any)
+	if got := payload["reducto_original_figure_summary"]; got != "The image displays a plant with small flowers." {
+		t.Fatalf("original summary payload = %v", got)
+	}
+	if got := payload["reducto_figure_summary_language"]; got != "zh-Hans" {
+		t.Fatalf("summary language payload = %v", got)
+	}
+	if len(localizer.calls) != 1 || localizer.calls[0] != "org-1|The image displays a plant with small flowers." {
+		t.Fatalf("localizer calls = %#v", localizer.calls)
+	}
+}
+
+func TestMapDocumentResultKeepsReductoFigureSummaryWhenLocalizationFails(t *testing.T) {
+	localizer := &fakeFigureSummaryEnhancer{err: errors.New("model unavailable")}
+	result := &extractcommon.DocumentResult{
+		DocID: "doc-reducto",
+		ExtractOutput: &extractcommon.ExtractOutput{
+			Metadata: map[string]any{},
+			Elements: []extractcommon.ExtractElement{
+				{
+					ID:      "figure-1",
+					Type:    "figure",
+					Content: "The image displays a plant with small flowers.",
+					Metadata: map[string]any{
+						"payload": map[string]any{
+							"source":    "reducto",
+							"image_url": "https://example.com/plant.png",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	artifact := mapDocumentResultWithOptions(contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeBytes,
+		FileName:   "sample.pdf",
+		Intent:     contracts.ParseIntentDatasetIndex,
+		Profile:    contracts.ParseProfileDatasetIndex,
+		Metadata:   map[string]any{"organization_id": "org-1"},
+	}, extractcommon.EngineReducto, result, mapDocumentOptions{figureSummaryEnhancer: localizer})
+
+	if got := artifact.Elements[0].Content; got != "The image displays a plant with small flowers." {
+		t.Fatalf("content after failed localization = %q", got)
+	}
+	payload := artifact.Elements[0].Metadata["payload"].(map[string]any)
+	if _, ok := payload["reducto_original_figure_summary"]; ok {
+		t.Fatalf("failed localization should not add original summary payload: %#v", payload)
+	}
+}
+
+func TestMapDocumentResultAppendsMineruFigureSummary(t *testing.T) {
+	localizer := &fakeFigureSummaryEnhancer{output: "图片展示了一张趋势图。"}
+	result := &extractcommon.DocumentResult{
+		DocID: "doc-mineru",
+		ExtractOutput: &extractcommon.ExtractOutput{
+			Metadata: map[string]any{},
+			Elements: []extractcommon.ExtractElement{
+				{
+					ID:      "figure-1",
+					Type:    "figure",
+					Content: "[figure]",
+					Metadata: map[string]any{
+						"markdown": "![Trend chart](data:image/jpeg;base64,aGVsbG8=)",
+						"payload": map[string]any{
+							"mineru_type":    "chart",
+							"image_data_uri": "data:image/jpeg;base64,aGVsbG8=",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	artifact := mapDocumentResultWithOptions(contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeBytes,
+		FileName:   "sample.pdf",
+		Intent:     contracts.ParseIntentDatasetIndex,
+		Profile:    contracts.ParseProfileDatasetIndex,
+		Metadata:   map[string]any{"organization_id": "org-1"},
+	}, extractcommon.EngineMineru, result, mapDocumentOptions{figureSummaryEnhancer: localizer})
+
+	if got := artifact.Elements[0].Content; got != "图片展示了一张趋势图。" {
+		t.Fatalf("mineru figure content = %q", got)
+	}
+	payload := artifact.Elements[0].Metadata["payload"].(map[string]any)
+	if got := payload["mineru_visual_summary"]; got != "图片展示了一张趋势图。" {
+		t.Fatalf("mineru visual summary payload = %v", got)
+	}
+	if got := payload["mineru_visual_summary_language"]; got != "zh-Hans" {
+		t.Fatalf("mineru visual summary language = %v", got)
+	}
+	if len(localizer.calls) != 1 || localizer.calls[0] != "org-1|data:image/jpeg;base64,aGVsbG8=" {
+		t.Fatalf("localizer calls = %#v", localizer.calls)
+	}
+}
+
+func TestMapDocumentResultKeepsMineruFigureWhenSummaryFails(t *testing.T) {
+	localizer := &fakeFigureSummaryEnhancer{err: errors.New("vision unavailable")}
+	result := &extractcommon.DocumentResult{
+		DocID: "doc-mineru",
+		ExtractOutput: &extractcommon.ExtractOutput{
+			Metadata: map[string]any{},
+			Elements: []extractcommon.ExtractElement{
+				{
+					ID:      "figure-1",
+					Type:    "figure",
+					Content: "[figure]",
+					Metadata: map[string]any{
+						"markdown": "![Trend chart](data:image/jpeg;base64,aGVsbG8=)",
+						"payload": map[string]any{
+							"mineru_type":    "chart",
+							"image_data_uri": "data:image/jpeg;base64,aGVsbG8=",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	artifact := mapDocumentResultWithOptions(contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeBytes,
+		FileName:   "sample.pdf",
+		Intent:     contracts.ParseIntentDatasetIndex,
+		Profile:    contracts.ParseProfileDatasetIndex,
+		Metadata:   map[string]any{"organization_id": "org-1"},
+	}, extractcommon.EngineMineru, result, mapDocumentOptions{figureSummaryEnhancer: localizer})
+
+	if got := artifact.Elements[0].Content; got != "[figure]" {
+		t.Fatalf("content after failed mineru summary = %q", got)
+	}
+	payload := artifact.Elements[0].Metadata["payload"].(map[string]any)
+	if _, ok := payload["mineru_visual_summary"]; ok {
+		t.Fatalf("failed summary should not add mineru summary payload: %#v", payload)
 	}
 }
 

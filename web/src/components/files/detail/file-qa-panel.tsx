@@ -387,7 +387,7 @@ export function FileQAPanel({
       <form onSubmit={handleSubmit} className="border-t border-border bg-background p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <Textarea
-            className="min-h-[84px] flex-1 resize-none placeholder:font-medium placeholder:text-primary/60"
+            className="min-h-[84px] flex-1 resize-none border-muted-foreground/20 bg-muted/10 shadow-[0_1px_3px_rgba(15,23,42,0.08)] placeholder:font-medium placeholder:text-muted-foreground/75 hover:border-primary/30 focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/10"
             value={question}
             onChange={event => setQuestion(event.target.value)}
             onCompositionStart={() => {
@@ -400,7 +400,11 @@ export function FileQAPanel({
             placeholder={t('detail.qa.placeholder')}
             disabled={isStreaming}
           />
-          <Button type="submit" className="gap-2 sm:h-[84px]" disabled={!canSubmit}>
+          <Button
+            type="submit"
+            className="gap-2 border-primary/25 shadow-[0_1px_3px_rgba(15,23,42,0.08)] disabled:shadow-none sm:h-[84px]"
+            disabled={!canSubmit}
+          >
             {isStreaming ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (

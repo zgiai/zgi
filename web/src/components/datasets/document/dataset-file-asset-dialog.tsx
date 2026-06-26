@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, FileText, Search } from 'lucide-react';
 import { toast } from 'sonner';
@@ -8,6 +8,7 @@ import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogBody,
@@ -147,15 +148,23 @@ export function DatasetFileAssetDialog({
 }: DatasetFileAssetDialogProps) {
   const t = useT('datasets');
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [partialAddConfirmOpen, setPartialAddConfirmOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState<CandidateFilter>('addable');
   const [batchGeneratingAssetIds, setBatchGeneratingAssetIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [autoAddPendingAssetIds, setAutoAddPendingAssetIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [isSelectionProcessing, setIsSelectionProcessing] = useState(false);
   const [queuedEmbeddingTasks, setQueuedEmbeddingTasks] = useState<Map<string, string>>(
     () => new Map()
   );
+  const autoAddInFlightRef = useRef(false);
   const hasQueuedEmbeddingGeneration =
-    queuedEmbeddingTasks.size > 0 || batchGeneratingAssetIds.size > 0;
+    queuedEmbeddingTasks.size > 0 ||
+    batchGeneratingAssetIds.size > 0 ||
+    autoAddPendingAssetIds.size > 0;
   const createRefsMutation = useCreateDatasetFileRefs(datasetId);
   const generateEmbeddingsMutation = useGenerateDatasetFileCandidateEmbeddings(datasetId);
   const { candidates, total, keyword, setKeyword, isLoading, isFetching, refetch } =
@@ -188,6 +197,10 @@ export function DatasetFileAssetDialog({
   useEffect(() => {
     if (!open) {
       setSelectedAssetIds([]);
+      setPartialAddConfirmOpen(false);
+      setAutoAddPendingAssetIds(new Set());
+      setIsSelectionProcessing(false);
+      autoAddInFlightRef.current = false;
       setKeyword('');
       setActiveFilter('addable');
       setBatchGeneratingAssetIds(new Set());
@@ -229,6 +242,78 @@ export function DatasetFileAssetDialog({
     }
   }, [embeddingTasksByAssetId, refetch]);
 
+  useEffect(() => {
+    if (!open || autoAddPendingAssetIds.size === 0 || autoAddInFlightRef.current) return;
+
+    const pendingIds = new Set(autoAddPendingAssetIds);
+    const autoAddReadyCandidates = candidates.filter(
+      candidate => pendingIds.has(candidate.asset_id) && candidate.addable
+    );
+    const failedAssetIds = Array.from(embeddingTasksByAssetId.entries())
+      .filter(([assetId, task]) => {
+        if (!pendingIds.has(assetId)) return false;
+        return task.status === 'failed' || task.status === 'cancelled';
+      })
+      .map(([assetId]) => assetId);
+
+    if (autoAddReadyCandidates.length === 0 && failedAssetIds.length === 0) return;
+
+    autoAddInFlightRef.current = true;
+    void (async () => {
+      let shouldClose = false;
+      try {
+        if (autoAddReadyCandidates.length > 0) {
+          await createRefsMutation.mutateAsync(
+            autoAddReadyCandidates.map(candidate => candidate.asset_id)
+          );
+        }
+
+        const completedIds = new Set([
+          ...autoAddReadyCandidates.map(candidate => candidate.asset_id),
+          ...failedAssetIds,
+        ]);
+        const remainingIds = Array.from(pendingIds).filter(assetId => !completedIds.has(assetId));
+
+        if (failedAssetIds.length > 0) {
+          toast.error(
+            t('messages.fileCandidateEmbeddingBatchGeneratePartialFailed', {
+              count: failedAssetIds.length,
+            })
+          );
+        }
+
+        setAutoAddPendingAssetIds(new Set(remainingIds));
+        shouldClose = remainingIds.length === 0;
+      } catch {
+        const completedIds = new Set([
+          ...autoAddReadyCandidates.map(candidate => candidate.asset_id),
+          ...failedAssetIds,
+        ]);
+        const remainingIds = Array.from(pendingIds).filter(assetId => !completedIds.has(assetId));
+        setAutoAddPendingAssetIds(new Set(remainingIds));
+        if (remainingIds.length === 0) {
+          setIsSelectionProcessing(false);
+        }
+      } finally {
+        autoAddInFlightRef.current = false;
+        if (shouldClose) {
+          setIsSelectionProcessing(false);
+          onSubmitted?.();
+          onOpenChange(false);
+        }
+      }
+    })();
+  }, [
+    autoAddPendingAssetIds,
+    candidates,
+    createRefsMutation,
+    embeddingTasksByAssetId,
+    onOpenChange,
+    onSubmitted,
+    open,
+    t,
+  ]);
+
   const summary = useMemo(
     () =>
       candidates.reduce(
@@ -247,19 +332,33 @@ export function DatasetFileAssetDialog({
     [activeFilter, candidates]
   );
   const selectedSet = useMemo(() => new Set(selectedAssetIds), [selectedAssetIds]);
-  const visibleAddableIds = useMemo(
-    () => visibleCandidates.filter(item => item.addable).map(item => item.asset_id),
+  const visibleSelectableIds = useMemo(
+    () =>
+      visibleCandidates
+        .filter(item => item.addable || item.requires_embedding_generation === true)
+        .map(item => item.asset_id),
     [visibleCandidates]
   );
-  const embeddingGenerationCandidateIds = useMemo(
+  const selectedReadyAssetIds = useMemo(
     () =>
       candidates
-        .filter(candidate => candidate.requires_embedding_generation === true)
+        .filter(candidate => selectedSet.has(candidate.asset_id) && candidate.addable)
         .map(candidate => candidate.asset_id),
-    [candidates]
+    [candidates, selectedSet]
   );
-  const allVisibleAddableSelected =
-    visibleAddableIds.length > 0 && visibleAddableIds.every(id => selectedSet.has(id));
+  const selectedEmbeddingGenerationAssetIds = useMemo(
+    () =>
+      candidates
+        .filter(
+          candidate =>
+            selectedSet.has(candidate.asset_id) &&
+            candidate.requires_embedding_generation === true
+        )
+        .map(candidate => candidate.asset_id),
+    [candidates, selectedSet]
+  );
+  const allVisibleSelectableSelected =
+    visibleSelectableIds.length > 0 && visibleSelectableIds.every(id => selectedSet.has(id));
   const isBatchGenerating = batchGeneratingAssetIds.size > 0;
   const activeEmbeddingAssetId =
     typeof generateEmbeddingsMutation.variables === 'string'
@@ -267,7 +366,7 @@ export function DatasetFileAssetDialog({
       : generateEmbeddingsMutation.variables?.assetId;
 
   const toggleCandidate = useCallback((candidate: DatasetFileCandidate, checked: boolean) => {
-    if (!candidate.addable) return;
+    if (!candidate.addable && candidate.requires_embedding_generation !== true) return;
     setSelectedAssetIds(prev =>
       checked
         ? Array.from(new Set([...prev, candidate.asset_id]))
@@ -276,7 +375,7 @@ export function DatasetFileAssetDialog({
   }, []);
 
   const toggleCandidateSelection = useCallback((candidate: DatasetFileCandidate) => {
-    if (!candidate.addable) return;
+    if (!candidate.addable && candidate.requires_embedding_generation !== true) return;
     setSelectedAssetIds(prev =>
       prev.includes(candidate.asset_id)
         ? prev.filter(id => id !== candidate.asset_id)
@@ -288,23 +387,127 @@ export function DatasetFileAssetDialog({
     (checked: boolean) => {
       setSelectedAssetIds(prev =>
         checked
-          ? Array.from(new Set([...prev, ...visibleAddableIds]))
-          : prev.filter(id => !visibleAddableIds.includes(id))
+          ? Array.from(new Set([...prev, ...visibleSelectableIds]))
+          : prev.filter(id => !visibleSelectableIds.includes(id))
       );
     },
-    [visibleAddableIds]
+    [visibleSelectableIds]
   );
 
-  const handleConfirm = useCallback(async () => {
-    if (selectedAssetIds.length === 0) return;
+  const handleConfirmAddReady = useCallback(async () => {
+    if (selectedReadyAssetIds.length === 0) return;
     try {
-      await createRefsMutation.mutateAsync(selectedAssetIds);
+      await createRefsMutation.mutateAsync(selectedReadyAssetIds);
       onSubmitted?.();
       onOpenChange(false);
     } catch {
       // The mutation hook already shows the API error toast. Keep the dialog open for retry.
     }
-  }, [createRefsMutation, onOpenChange, onSubmitted, selectedAssetIds]);
+  }, [createRefsMutation, onOpenChange, onSubmitted, selectedReadyAssetIds]);
+
+  const handleAddSelected = useCallback(() => {
+    if (selectedAssetIds.length === 0) return;
+    if (selectedEmbeddingGenerationAssetIds.length > 0) {
+      setPartialAddConfirmOpen(true);
+      return;
+    }
+    void handleConfirmAddReady();
+  }, [
+    handleConfirmAddReady,
+    selectedAssetIds.length,
+    selectedEmbeddingGenerationAssetIds.length,
+  ]);
+
+  const handleConfirmAddSelected = useCallback(async () => {
+    const readyAssetIds = [...selectedReadyAssetIds];
+    const pendingAssetIds = [...selectedEmbeddingGenerationAssetIds];
+    if (readyAssetIds.length === 0 && pendingAssetIds.length === 0) return;
+
+    setPartialAddConfirmOpen(false);
+    setIsSelectionProcessing(true);
+    let keepProcessing = false;
+
+    try {
+      if (readyAssetIds.length > 0) {
+        await createRefsMutation.mutateAsync(readyAssetIds);
+      }
+
+      if (pendingAssetIds.length === 0) {
+        onSubmitted?.();
+        onOpenChange(false);
+        return;
+      }
+
+      setAutoAddPendingAssetIds(new Set(pendingAssetIds));
+      setBatchGeneratingAssetIds(new Set(pendingAssetIds));
+
+      const immediateAddableAssetIds: string[] = [];
+      const queuedAssetIds: string[] = [];
+      let failedCount = 0;
+
+      for (const assetId of pendingAssetIds) {
+        try {
+          const response = await generateEmbeddingsMutation.mutateAsync({
+            assetId,
+            silent: true,
+          });
+          if (response.data?.accepted) {
+            const requestID = response.data.processing_request?.id;
+            if (requestID) {
+              setQueuedEmbeddingTasks(prev => {
+                const next = new Map(prev);
+                next.set(assetId, requestID);
+                return next;
+              });
+              queuedAssetIds.push(assetId);
+            } else {
+              failedCount += 1;
+            }
+          } else if (response.data?.addable) {
+            immediateAddableAssetIds.push(assetId);
+          } else {
+            failedCount += 1;
+          }
+        } catch {
+          failedCount += 1;
+        }
+      }
+
+      if (immediateAddableAssetIds.length > 0) {
+        await createRefsMutation.mutateAsync(immediateAddableAssetIds);
+      }
+
+      if (failedCount > 0) {
+        toast.error(
+          t('messages.fileCandidateEmbeddingBatchGeneratePartialFailed', { count: failedCount })
+        );
+      }
+
+      const remainingPendingAssetIds = queuedAssetIds;
+      keepProcessing = remainingPendingAssetIds.length > 0;
+      setAutoAddPendingAssetIds(new Set(remainingPendingAssetIds));
+
+      if (remainingPendingAssetIds.length === 0) {
+        onSubmitted?.();
+        onOpenChange(false);
+      }
+    } catch {
+      // Mutation hooks already show API errors. Keep the dialog open so the user can retry.
+    } finally {
+      setBatchGeneratingAssetIds(new Set());
+      if (!keepProcessing) {
+        setIsSelectionProcessing(false);
+      }
+    }
+  }, [
+    createRefsMutation,
+    generateEmbeddingsMutation,
+    onOpenChange,
+    onSubmitted,
+    selectedEmbeddingGenerationAssetIds,
+    selectedReadyAssetIds,
+    t,
+  ]);
 
   const handleGenerateEmbeddings = useCallback(
     async (candidate: DatasetFileCandidate) => {
@@ -326,9 +529,9 @@ export function DatasetFileAssetDialog({
   );
 
   const handleBatchGenerateEmbeddings = useCallback(async () => {
-    if (embeddingGenerationCandidateIds.length === 0 || hasQueuedEmbeddingGeneration) return;
+    if (selectedEmbeddingGenerationAssetIds.length === 0 || hasQueuedEmbeddingGeneration) return;
 
-    const assetIds = [...embeddingGenerationCandidateIds];
+    const assetIds = [...selectedEmbeddingGenerationAssetIds];
     setBatchGeneratingAssetIds(new Set(assetIds));
 
     let successCount = 0;
@@ -375,9 +578,9 @@ export function DatasetFileAssetDialog({
       setBatchGeneratingAssetIds(new Set());
     }
   }, [
-    embeddingGenerationCandidateIds,
     generateEmbeddingsMutation,
     hasQueuedEmbeddingGeneration,
+    selectedEmbeddingGenerationAssetIds,
     t,
   ]);
 
@@ -438,27 +641,23 @@ export function DatasetFileAssetDialog({
               ))}
             </div>
 
-            {embeddingGenerationCandidateIds.length > 0 ? (
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm">
-                <div className="flex min-w-0 items-center gap-2 text-destructive">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0">
-                    {t('documents.fileAssets.embeddingGenerationNotice', {
-                      count: embeddingGenerationCandidateIds.length,
-                    })}
-                  </span>
-                </div>
+            {selectedEmbeddingGenerationAssetIds.length > 0 ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-8 whitespace-nowrap border-destructive/30 bg-background text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  className="h-8 whitespace-nowrap border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
                   loading={isBatchGenerating}
-                  disabled={hasQueuedEmbeddingGeneration || generateEmbeddingsMutation.isPending}
+                  disabled={
+                    isSelectionProcessing ||
+                    hasQueuedEmbeddingGeneration ||
+                    generateEmbeddingsMutation.isPending
+                  }
                   onClick={handleBatchGenerateEmbeddings}
                 >
                   {t('documents.fileAssets.batchGenerateDatasetEmbedding', {
-                    count: embeddingGenerationCandidateIds.length,
+                    count: selectedEmbeddingGenerationAssetIds.length,
                   })}
                 </Button>
               </div>
@@ -482,8 +681,8 @@ export function DatasetFileAssetDialog({
                   <TableRow className="hover:bg-muted/40">
                     <TableHead className="px-3">
                       <Checkbox
-                        checked={allVisibleAddableSelected}
-                        disabled={visibleAddableIds.length === 0}
+                        checked={allVisibleSelectableSelected}
+                        disabled={visibleSelectableIds.length === 0}
                         onCheckedChange={checked => toggleAllVisible(checked === true)}
                         aria-label={t('documents.fileAssets.selectAll')}
                       />
@@ -524,6 +723,8 @@ export function DatasetFileAssetDialog({
                       const addable = candidate.addable;
                       const requiresEmbeddingGeneration =
                         candidate.requires_embedding_generation === true;
+                      const selectable =
+                        candidate.addable || candidate.requires_embedding_generation === true;
                       const needsFileManagement =
                         !requiresEmbeddingGeneration &&
                         !candidate.already_added &&
@@ -544,7 +745,7 @@ export function DatasetFileAssetDialog({
                           onClick={() => toggleCandidateSelection(candidate)}
                           className={cn(
                             'h-16 hover:bg-muted/30 data-[state=selected]:bg-primary/5',
-                            addable &&
+                            selectable &&
                               'cursor-pointer hover:bg-primary/5 data-[state=selected]:bg-primary/10',
                             requiresEmbeddingGeneration && 'bg-muted/20'
                           )}
@@ -552,7 +753,7 @@ export function DatasetFileAssetDialog({
                           <TableCell className="px-3" onClick={event => event.stopPropagation()}>
                             <Checkbox
                               checked={selected}
-                              disabled={!addable}
+                              disabled={!selectable}
                               onCheckedChange={checked =>
                                 toggleCandidate(candidate, checked === true)
                               }
@@ -725,14 +926,29 @@ export function DatasetFileAssetDialog({
             {t('actions.cancel')}
           </Button>
           <Button
-            onClick={handleConfirm}
-            loading={createRefsMutation.isPending}
-            disabled={selectedAssetIds.length === 0}
+            onClick={handleAddSelected}
+            loading={isSelectionProcessing || createRefsMutation.isPending}
+            disabled={selectedAssetIds.length === 0 || isSelectionProcessing}
           >
             {t('documents.fileAssets.addSelected', { count: selectedAssetIds.length })}
           </Button>
         </DialogFooter>
       </DialogContent>
+      <ConfirmDialog
+        variant="default"
+        open={partialAddConfirmOpen}
+        onOpenChange={setPartialAddConfirmOpen}
+        title={t('documents.fileAssets.partialAddConfirmTitle')}
+        description={t('documents.fileAssets.partialAddConfirmDescription', {
+          selected: selectedAssetIds.length,
+          ready: selectedReadyAssetIds.length,
+          pending: selectedEmbeddingGenerationAssetIds.length,
+        })}
+        confirmText={t('documents.fileAssets.partialAddConfirmAction')}
+        cancelText={t('actions.cancel')}
+        loading={isSelectionProcessing || createRefsMutation.isPending}
+        onConfirm={handleConfirmAddSelected}
+      />
     </Dialog>
   );
 }

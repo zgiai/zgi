@@ -9,6 +9,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	hyperparsesdk "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/hyperparse_sdk"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
@@ -591,7 +592,11 @@ func (c *ServiceContainer) GetFileService() interfaces.FileService {
 
 func (c *ServiceContainer) GetContentParseService() contracts.ContentParseService {
 	if c.contentParseService == nil {
-		c.contentParseService = contentparsecap.NewModule().Service
+		c.contentParseService = contentparsecap.NewModule(
+			contentparsecap.WithFigureSummaryEnhancer(
+				hyperparsesdk.NewDefaultChatFigureSummaryLocalizer(c.GetLLMClient(), c.GetDefaultModelService()),
+			),
+		).Service
 	}
 	return c.contentParseService
 }

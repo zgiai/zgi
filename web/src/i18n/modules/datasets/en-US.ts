@@ -167,6 +167,10 @@ const messages = {
         '{count} files are missing vector results for the current knowledge base model. Generate dataset vectors to make them addable.',
       resultSummary: 'Showing {count} of {total} file assets',
       addSelected: 'Add {count} files',
+      partialAddConfirmTitle: 'Add selected files?',
+      partialAddConfirmDescription:
+        '{selected} files are selected. {ready} can be added now, and {pending} need dataset vectors first. Continuing will generate vectors automatically and add them to this knowledge base after they are ready.',
+      partialAddConfirmAction: 'Continue Adding',
       filters: {
         addable: 'Addable',
         added: 'Added',

@@ -3,6 +3,7 @@ package contentparse
 import (
 	"github.com/gin-gonic/gin"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	hyperparsesdk "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/hyperparse_sdk"
 	systemvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/system_vlm"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
@@ -95,6 +96,9 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 	if opts.enableSystemVLM {
 		if opts.systemVLMAvailable {
 			capabilityOptions = append(capabilityOptions, contentparsecap.WithAdapters(systemvlm.NewAdapter(opts.llmClient, opts.defaultModelSvc)))
+			capabilityOptions = append(capabilityOptions, contentparsecap.WithFigureSummaryEnhancer(
+				hyperparsesdk.NewDefaultChatFigureSummaryLocalizer(opts.llmClient, opts.defaultModelSvc),
+			))
 		}
 		capabilityOptions = append(capabilityOptions, contentparsecap.WithProviderOverrides(contentparsecap.SystemVLMProviderConfig(opts.systemVLMAvailable)))
 	}

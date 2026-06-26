@@ -11,10 +11,10 @@ import {
   DialogFooter,
   DialogBody,
 } from '@/components/ui/dialog';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { FileUpload, type FileUploadRef } from '@/components/common/file-upload';
 import { toast } from 'sonner';
-import { AlertCircle, FolderOpen, RefreshCw } from 'lucide-react';
+import { FolderOpen, RefreshCw } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { FILES_QUERY_KEY, useFileFolders } from '@/hooks/use-files';
 import { useUploadConfig } from '@/hooks/use-upload';
@@ -70,6 +70,7 @@ const CreateLocalFileDialog = ({
   const [uploadFilesCount, setUploadFilesCount] = useState(0);
   const [failedUploadFilesCount, setFailedUploadFilesCount] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
   const effectiveWorkspaceId = isOrganizationMode
     ? selectedWorkspace?.id
@@ -217,6 +218,7 @@ const CreateLocalFileDialog = ({
   }, [onOpenChange]);
 
   const handleCancelUpload = useCallback(() => {
+    setCloseConfirmOpen(false);
     cancelUploadRequestedRef.current = true;
     fileUploadRef.current?.cancelUploading();
     fileUploadRef.current?.clearAll();
@@ -230,13 +232,13 @@ const CreateLocalFileDialog = ({
   const handleDialogOpenChange = useCallback(
     (nextOpen: boolean) => {
       if (!nextOpen && isUploading) {
-        toast.info(t('files.upload.uploadInProgressCloseHint'));
+        setCloseConfirmOpen(true);
         return;
       }
 
       onOpenChange(nextOpen);
     },
-    [isUploading, onOpenChange, t]
+    [isUploading, onOpenChange]
   );
 
   const canUpload = !isOrganizationMode || !!effectiveWorkspaceId;
@@ -264,15 +266,6 @@ const CreateLocalFileDialog = ({
             onQueueStateChange={state => setFailedUploadFilesCount(state.failedCount)}
             queueSummaryNamespace="files"
           />
-
-          {isUploading ? (
-            <Alert className="border-amber-200 bg-amber-50 text-amber-900">
-              <AlertCircle className="h-4 w-4 text-amber-600" />
-              <AlertDescription className="text-sm leading-5">
-                {t('files.upload.uploadInProgressCloseHint')}
-              </AlertDescription>
-            </Alert>
-          ) : null}
 
           {isOrganizationMode ? (
             <div className="space-y-2">
@@ -375,7 +368,7 @@ const CreateLocalFileDialog = ({
         <DialogFooter>
           <Button
             variant={isUploading ? 'destructive' : 'outline'}
-            onClick={isUploading ? handleCancelUpload : handleCancel}
+            onClick={isUploading ? () => setCloseConfirmOpen(true) : handleCancel}
           >
             {isUploading ? t('files.upload.cancelUpload') : t('common.cancel')}
           </Button>
@@ -388,6 +381,16 @@ const CreateLocalFileDialog = ({
           </Button>
         </DialogFooter>
       </DialogContent>
+      <ConfirmDialog
+        variant="danger"
+        open={closeConfirmOpen}
+        onOpenChange={setCloseConfirmOpen}
+        title={t('files.upload.cancelUploadConfirmTitle')}
+        description={t('files.upload.cancelUploadConfirmDescription')}
+        confirmText={t('files.upload.cancelUploadConfirmAction')}
+        cancelText={t('common.cancel')}
+        onConfirm={handleCancelUpload}
+      />
     </Dialog>
   );
 };

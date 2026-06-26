@@ -11,7 +11,6 @@ const messages = {
     uploadFile: 'Upload File',
     viewsTitle: 'Views',
     fileSpaceTitle: 'File Space',
-    folderLevelHint: 'Custom folders support a maximum three-level hierarchy.',
     allFiles: 'All Files',
     needsActionFiles: 'Needs Action',
     uploadedFiles: 'Recently Uploaded',
@@ -191,6 +190,7 @@ const messages = {
     backToFiles: 'Back to Files',
     backToDataset: 'Back to Knowledge Base',
     fileBreadcrumb: 'Files',
+    datasetBreadcrumb: 'Knowledge Base',
     previewOriginal: 'Preview Original',
     downloadOriginal: 'Download Original',
     processing: 'Processing',
@@ -389,7 +389,7 @@ const messages = {
       secondaryEmpty: 'No secondary chunks',
       searchPlaceholder: 'Search chunk content...',
       filters: {
-        all: 'All',
+        all: 'All chunks',
         issues: 'Needs optimization',
         enabled: 'Enabled',
         disabled: 'Disabled',
@@ -481,6 +481,10 @@ const messages = {
       providerReady: 'Available now',
       providerUnavailable: 'Unavailable now',
       configureProvider: 'Click here to configure and enable',
+      configureProviderConfirmTitle: 'Go to parser settings?',
+      configureProviderConfirmDescription:
+        'You will leave the current reparse window and open parser settings. This file has not been submitted for reparsing yet.',
+      configureProviderConfirmAction: 'Go to Settings',
       noAvailableProvider: 'No available parser',
       confirm: 'Reparse',
       toasts: {
@@ -670,8 +674,10 @@ const messages = {
     cannotUpload: 'Cannot upload',
     confirmUpload: 'Confirm Upload',
     cancelUpload: 'Cancel Upload',
-    uploadInProgressCloseHint:
-      'You cannot close this window while files are uploading. Click Cancel Upload to clear all uploading files and close the upload window.',
+    cancelUploadConfirmTitle: 'Cancel upload and close this window?',
+    cancelUploadConfirmDescription:
+      'Files that have not finished uploading will stop. Files already uploaded will be kept.',
+    cancelUploadConfirmAction: 'Close Window',
   },
 
   // Documents section (for compatibility)
@@ -690,6 +696,8 @@ const messages = {
     duplicateName: 'A folder with this name already exists in the same directory. Use a different name.',
     parentFolder: 'Parent Folder',
     selectParentFolder: 'Select parent folder',
+    levelHint:
+      'Folders support up to three levels. Folders at the limit cannot be selected as parent folders.',
     folderLabel: 'Folder:',
     rootFolder: 'Root Folder',
     renameTitle: 'Rename Folder',

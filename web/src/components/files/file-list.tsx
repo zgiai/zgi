@@ -610,7 +610,7 @@ function FileListBase({
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-start gap-3">
                         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-muted">
-                          <FileTypeIcon extension={file.extension} className="h-5 w-5" />
+                          <FileTypeIcon extension={file.extension} filename={file.name} className="h-5 w-5" />
                         </div>
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold text-foreground">
@@ -1012,7 +1012,11 @@ function FileListBase({
                   </TableCell>
                   <TableCell className="max-w-0 font-medium">
                     <div className="flex min-w-0 items-center gap-3">
-                      <FileTypeIcon extension={file.extension} className="h-4 w-4 flex-shrink-0" />
+                      <FileTypeIcon
+                        extension={file.extension}
+                        filename={file.name}
+                        className="h-4 w-4 flex-shrink-0"
+                      />
                       {canOpenFileDetail ? (
                         <Link
                           href={`/console/files/${file.id}`}

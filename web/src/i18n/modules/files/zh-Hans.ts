@@ -12,7 +12,6 @@ const messages: FilesMessages = {
     uploadFile: '上传文件',
     viewsTitle: '视图',
     fileSpaceTitle: '文件空间',
-    folderLevelHint: '自建文件夹层级最多支持三级目录结构。',
     allFiles: '全部文件',
     needsActionFiles: '需处理',
     uploadedFiles: '最近上传',
@@ -183,6 +182,7 @@ const messages: FilesMessages = {
     backToFiles: '返回文件列表',
     backToDataset: '返回知识库',
     fileBreadcrumb: '文件',
+    datasetBreadcrumb: '知识库',
     previewOriginal: '预览原文件',
     downloadOriginal: '下载原文件',
     processing: '处理进度',
@@ -376,7 +376,7 @@ const messages: FilesMessages = {
       secondaryEmpty: '暂无二级切片',
       searchPlaceholder: '搜索切片内容...',
       filters: {
-        all: '全部',
+        all: '全部切片',
         issues: '待优化',
         enabled: '已启用',
         disabled: '已停用',
@@ -462,6 +462,10 @@ const messages: FilesMessages = {
       providerReady: '当前可用',
       providerUnavailable: '当前不可用',
       configureProvider: '点击此处，配置后可用',
+      configureProviderConfirmTitle: '前往解析器配置页面？',
+      configureProviderConfirmDescription:
+        '将离开当前重新解析窗口并打开解析器配置页面。当前文件的重新解析请求尚未提交。',
+      configureProviderConfirmAction: '前往配置',
       noAvailableProvider: '暂无可用解析器',
       confirm: '重新解析',
       toasts: {
@@ -637,8 +641,9 @@ const messages: FilesMessages = {
     cannotUpload: '无法上传',
     confirmUpload: '确认上传',
     cancelUpload: '取消上传',
-    uploadInProgressCloseHint:
-      '文件上传过程中无法关闭窗口。请点击取消上传，清空所有正在上传的文件，以关闭上传窗口。',
+    cancelUploadConfirmTitle: '取消上传并关闭窗口？',
+    cancelUploadConfirmDescription: '关闭后，尚未上传完成的文件将停止上传，已完成上传的文件会保留。',
+    cancelUploadConfirmAction: '确认关闭',
   },
 
   // Documents section (for compatibility)
@@ -657,6 +662,7 @@ const messages: FilesMessages = {
     duplicateName: '同一级目录下已存在同名文件夹，请更换名称。',
     parentFolder: '父文件夹',
     selectParentFolder: '选择父文件夹',
+    levelHint: '最多支持三级文件夹。已达到层级上限的文件夹不可作为父文件夹。',
     folderLabel: '文件夹：',
     rootFolder: '根目录',
     renameTitle: '重命名文件夹',

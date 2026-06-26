@@ -7,6 +7,7 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  CircleHelp,
   Circle,
   Download,
   FileIcon,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -461,24 +463,40 @@ function ReparseDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="sm" className="overflow-hidden p-0">
-        <DialogHeader>
-          <DialogTitle className="text-xl font-bold tracking-tight">
+      <DialogContent className="overflow-hidden p-0 sm:max-w-[560px]">
+        <DialogHeader className="p-8 pb-5">
+          <DialogTitle className="text-2xl font-bold tracking-tight">
             {t('detail.reparse.confirmTitle')}
           </DialogTitle>
         </DialogHeader>
-        <DialogBody className="space-y-4">
-          <p className="text-sm leading-5 text-muted-foreground">
+        <DialogBody className="space-y-6 px-8 pb-8 pt-1">
+          <p className="text-base leading-7 text-muted-foreground">
             {t('detail.reparse.confirmDescription')}
           </p>
-          <div className="space-y-2.5">
-            <Label className="text-sm font-semibold">{t('detail.reparse.providerLabel')}</Label>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Label className="text-sm font-semibold">{t('detail.reparse.providerLabel')}</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={t('detail.reparse.providerDescription')}
+                    className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    <CircleHelp className="size-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="start" className="max-w-80 text-xs leading-5">
+                  {t('detail.reparse.providerDescription')}
+                </TooltipContent>
+              </Tooltip>
+            </div>
             <Select
               value={provider}
               onValueChange={handleProviderChange}
               disabled={providersLoading || !hasProviders}
             >
-              <SelectTrigger className="min-h-12 bg-background py-2.5">
+              <SelectTrigger className="min-h-14 bg-background px-4 py-3">
                 <SelectValue
                   placeholder={
                     providersLoading
@@ -495,7 +513,7 @@ function ReparseDialog({
                       key={item.key}
                       value={item.key}
                       disabled={!item.selectable && !configurable}
-                      className="py-2"
+                      className="py-2.5"
                     >
                       <div className="flex min-w-0 flex-col gap-0.5">
                         <span className="truncate">
@@ -519,12 +537,9 @@ function ReparseDialog({
                 })}
               </SelectContent>
             </Select>
-            <p className="text-xs leading-5 text-muted-foreground">
-              {t('detail.reparse.providerDescription')}
-            </p>
           </div>
         </DialogBody>
-        <DialogFooter className="gap-3 border-t bg-muted/30 px-6 py-4">
+        <DialogFooter className="gap-3 border-t bg-muted/30 px-8 py-5">
           <Button
             variant="ghost"
             size="xl"
@@ -650,13 +665,13 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const [activeView, setActiveView] = useState<'preview' | 'qa'>('preview');
   const [chunkLocateTarget, setChunkLocateTarget] = useState<FileChunkLocateTarget | null>(null);
   const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
+  const [pendingParserConfigProvider, setPendingParserConfigProvider] =
+    useState<'mineru' | 'reducto' | null>(null);
   const [selectedReparseProvider, setSelectedReparseProvider] =
     useState<FileParseProviderKey>('auto');
   const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
-  const returnToDataset = () => {
-    if (!datasetReturnTo) return;
-    router.push(datasetReturnTo);
-  };
+  const parentHref = datasetReturnTo ?? '/console/files';
+  const parentLabel = datasetReturnTo ? t('detail.datasetBreadcrumb') : t('detail.fileBreadcrumb');
   const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
     pollProcessingStatus: true,
   });
@@ -726,7 +741,13 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     });
   };
   const handleConfigureParser = (provider: 'mineru' | 'reducto') => {
+    setPendingParserConfigProvider(provider);
+  };
+  const handleConfirmConfigureParser = () => {
+    if (!pendingParserConfigProvider) return;
+    const provider = pendingParserConfigProvider;
     const returnTo = `${window.location.pathname}${window.location.search}`;
+    setPendingParserConfigProvider(null);
     router.push(
       `/dashboard/settings/parsers?provider=${provider}&returnTo=${encodeURIComponent(returnTo)}`
     );
@@ -765,15 +786,9 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
       <div className="flex h-full min-h-0 flex-col bg-bg-canvas">
         <div className="border-b bg-background px-6 py-4">
           <div className="flex flex-wrap items-center gap-2">
-            {datasetReturnTo ? (
-              <Button variant="outline" className="gap-2" onClick={returnToDataset}>
-                <ArrowLeft className="h-4 w-4" />
-                {t('detail.backToDataset')}
-              </Button>
-            ) : null}
-            <Button variant="ghost" className="gap-2" onClick={() => router.push('/console/files')}>
+            <Button variant="ghost" className="gap-2" onClick={() => router.push(parentHref)}>
               <ArrowLeft className="h-4 w-4" />
-              {t('detail.backToFiles')}
+              {datasetReturnTo ? t('detail.backToDataset') : t('detail.backToFiles')}
             </Button>
           </div>
         </div>
@@ -797,10 +812,10 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
               <Button
                 variant="ghost"
                 className="h-auto gap-2 px-0 py-0 text-sm font-medium text-muted-foreground hover:bg-transparent hover:text-foreground"
-                onClick={() => router.push('/console/files')}
+                onClick={() => router.push(parentHref)}
               >
                 <ArrowLeft className="h-4 w-4" />
-                {t('detail.fileBreadcrumb')}
+                {parentLabel}
               </Button>
               <span className="text-lg text-muted-foreground">/</span>
               <h1 className="min-w-0 max-w-[min(720px,100%)] truncate text-xl font-semibold leading-tight text-foreground">
@@ -818,17 +833,6 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {datasetReturnTo ? (
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9 gap-2 rounded-md px-3 text-sm"
-                onClick={returnToDataset}
-              >
-                <ArrowLeft className="h-4 w-4" />
-                {t('detail.backToDataset')}
-              </Button>
-            ) : null}
             <div className="flex h-9 items-center rounded-md border border-border bg-muted/30 p-0.5">
               <Button
                 type="button"
@@ -1000,6 +1004,18 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           setReparseConfirmOpen(false);
         }}
         loading={createProcessingRequest.isPending}
+      />
+      <ConfirmDialog
+        variant="default"
+        open={Boolean(pendingParserConfigProvider)}
+        onOpenChange={open => {
+          if (!open) setPendingParserConfigProvider(null);
+        }}
+        title={t('detail.reparse.configureProviderConfirmTitle')}
+        description={t('detail.reparse.configureProviderConfirmDescription')}
+        confirmText={t('detail.reparse.configureProviderConfirmAction')}
+        cancelText={common('cancel')}
+        onConfirm={handleConfirmConfigureParser}
       />
     </div>
   );

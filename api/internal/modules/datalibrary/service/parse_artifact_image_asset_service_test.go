@@ -228,6 +228,44 @@ func TestParseArtifactImageAssetServicePersistsMineruFigureImages(t *testing.T) 
 	}
 }
 
+func TestParseArtifactImageAssetServiceKeepsMineruVisualSummaryBelowImage(t *testing.T) {
+	imageData := "data:image/jpeg;base64,aGVsbG8taW1hZ2U="
+	store := &parseArtifactMemoryStorage{files: map[string][]byte{}}
+	svc := NewParseArtifactImageAssetService(store)
+	artifact := &contracts.ParseArtifact{
+		Markdown: "original",
+		Text:     "original",
+		Elements: []contracts.ParsedElement{
+			{
+				Type:    "figure",
+				Content: "图片展示了一张趋势图。",
+				Metadata: map[string]any{
+					"payload": map[string]any{
+						"mineru_type":       "chart",
+						"original_img_path": "images/chart.jpg",
+						"img_path":          imageData,
+						"image_data_uri":    imageData,
+					},
+				},
+			},
+		},
+	}
+
+	_, err := svc.Normalize(context.Background(), ParseArtifactImageAssetNormalizeInput{
+		OrganizationID: "org-1",
+		SourceFileID:   "file-1",
+		Artifact:       artifact,
+	})
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	imageURL, _ := artifact.Elements[0].Metadata["image_url"].(string)
+	expected := "![figure](" + imageURL + ")\n\n图片展示了一张趋势图。"
+	if artifact.Elements[0].Content != expected {
+		t.Fatalf("content=%q, want %q", artifact.Elements[0].Content, expected)
+	}
+}
+
 func TestParseArtifactImageAssetServicePersistsMineruFigureDataURIFromPayload(t *testing.T) {
 	imageData := []byte("hello-image")
 	store := &parseArtifactMemoryStorage{files: map[string][]byte{}}

@@ -223,9 +223,6 @@ function FileSidebarBase({
             <p className="text-xs font-medium text-muted-foreground">
               {t('files.sidebar.fileSpaceTitle')}
             </p>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-              {t('files.sidebar.folderLevelHint')}
-            </p>
           </div>
           {rootItem ? (
             <button

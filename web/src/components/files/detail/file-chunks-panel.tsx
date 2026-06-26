@@ -127,8 +127,6 @@ export function FileChunksPanel({
     });
   }, [filter, primaryChunks, search]);
 
-  const allExpanded =
-    visibleChunks.length > 0 && visibleChunks.every(chunk => expandedIds[chunk.id] ?? false);
   const visibleChunkIds = useMemo(() => visibleChunks.map(chunk => chunk.id), [visibleChunks]);
   const selectedVisibleIds = useMemo(
     () => selectedChunkIds.filter(id => visibleChunkIds.includes(id)),
@@ -236,14 +234,6 @@ export function FileChunksPanel({
     setExpandedIds(current => ({ ...current, [chunkId]: !(current[chunkId] ?? false) }));
   };
 
-  const setAllExpanded = (expanded: boolean) => {
-    const next: Record<string, boolean> = {};
-    for (const chunk of visibleChunks) {
-      next[chunk.id] = expanded;
-    }
-    setExpandedIds(current => ({ ...current, ...next }));
-  };
-
   if (!enabled) {
     return (
       <Alert className={className}>
@@ -319,14 +309,6 @@ export function FileChunksPanel({
             <option value="enabled">{t('detail.chunks.filters.enabled')}</option>
             <option value="disabled">{t('detail.chunks.filters.disabled')}</option>
           </select>
-          <Button
-            variant="outline"
-            className="h-8 gap-1.5 rounded-md px-2.5 text-sm"
-            onClick={() => setAllExpanded(!allExpanded)}
-          >
-            {allExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            {allExpanded ? t('detail.chunks.collapseAll') : t('detail.chunks.expandAll')}
-          </Button>
         </div>
 
         {ENABLE_CHUNK_BATCH_SELECTION ? (
@@ -657,7 +639,7 @@ function SecondaryChunkControls({
         {t('detail.chunks.characters', { count: characterCount })}
       </span>
       {expanded ? (
-        <div className="basis-full pt-1">
+        <div className="min-w-0 basis-full pt-1">
           {isLoading ? (
             <div className="rounded-lg border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
               {optionalFileText(
@@ -683,7 +665,7 @@ function SecondaryChunkControls({
               )}
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
               {children.map((child, index) => (
                 <SecondaryChunkRow key={child.id} chunk={child} index={index} />
               ))}
@@ -964,9 +946,9 @@ function SecondaryChunkRow({ chunk, index }: { chunk: FileDocumentChunk; index: 
   const t = useT('files');
 
   return (
-    <div className="rounded-lg border border-border bg-muted/20 p-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-3">
+    <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border bg-muted/20 p-4">
+      <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <span className="font-mono text-sm font-semibold text-success">#S-{index + 1}</span>
           <Badge variant="subtle" className="rounded-full">
             {t('detail.chunks.secondary')}
@@ -976,8 +958,8 @@ function SecondaryChunkRow({ chunk, index }: { chunk: FileDocumentChunk; index: 
           </span>
         </div>
       </div>
-      <div className="mt-3 rounded-lg border border-border bg-background p-3 shadow-sm">
-        <div className="max-h-32 min-w-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
+      <div className="mt-3 min-w-0 max-w-full overflow-hidden rounded-lg border border-border bg-background p-3 shadow-sm">
+        <div className="max-h-32 min-w-0 max-w-full flex-1 overflow-hidden whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
           {chunk.content}
         </div>
       </div>
