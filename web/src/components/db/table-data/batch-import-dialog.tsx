@@ -14,6 +14,7 @@ import {
   DialogBody,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Download, Loader, X, FileSpreadsheet } from 'lucide-react';
 import {
   useDownloadDbTableTemplate,
@@ -21,7 +22,7 @@ import {
 } from '@/hooks/db/use-db-table-import';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/utils/error-notifications';
-import { useT } from '@/i18n';
+import { useT, type UnifiedTranslations } from '@/i18n';
 import FileSelectorDialog from '@/components/files/file-selector-dialog';
 import type { FileItem } from '@/services/types/file';
 
@@ -31,6 +32,17 @@ export interface BatchImportDialogProps {
   dbId: string;
   tableId: string;
   onSuccess?: () => void;
+}
+
+function getBatchImportErrorMessage(rawMessage: string, t: UnifiedTranslations) {
+  if (rawMessage.includes('no matching columns found in Excel header')) {
+    return t('dbs.batchImport.errors.noMatchingColumns');
+  }
+  if (rawMessage.includes('missing required columns:')) {
+    const fields = rawMessage.split('missing required columns:')[1]?.trim();
+    return t('dbs.batchImport.errors.missingRequiredColumns', { fields });
+  }
+  return rawMessage;
 }
 
 const BatchImportDialog: FC<BatchImportDialogProps> = ({
@@ -43,6 +55,7 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({
   const t = useT();
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
   const [fileSelectorOpen, setFileSelectorOpen] = useState(false);
+  const [skipUnmatchedColumns, setSkipUnmatchedColumns] = useState(false);
 
   // Template download hook
   const { downloadTemplate, isDownloading } = useDownloadDbTableTemplate(dbId, tableId);
@@ -84,15 +97,18 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({
   const handleImport = async () => {
     if (!selectedFile) return;
     try {
-      await importRecords(selectedFile);
+      await importRecords(selectedFile, {
+        skip_unmatched_columns: skipUnmatchedColumns,
+      });
       // Toast is handled in the hook
       // Reset state and close dialog
       setSelectedFile(null);
       resetImport();
       onOpenChange(false);
       onSuccess?.();
-    } catch {
-      // Error toast is handled in the hook
+    } catch (err) {
+      const message = getBatchImportErrorMessage(getErrorMessage(err), t);
+      if (message) toast.error(message);
     }
   };
 
@@ -102,6 +118,7 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({
       if (!newOpen) {
         // Reset state when closing
         setSelectedFile(null);
+        setSkipUnmatchedColumns(false);
         resetImport();
       }
       onOpenChange(newOpen);
@@ -175,6 +192,22 @@ const BatchImportDialog: FC<BatchImportDialogProps> = ({
               </div>
             )}
           </div>
+
+          <label className="flex items-start gap-3 rounded-md border p-3 text-sm">
+            <Checkbox
+              checked={skipUnmatchedColumns}
+              onCheckedChange={checked => setSkipUnmatchedColumns(Boolean(checked))}
+              disabled={isImporting}
+            />
+            <span className="space-y-1">
+              <span className="block font-medium">
+                {t('dbs.batchImport.skipUnmatchedColumns')}
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                {t('dbs.batchImport.skipUnmatchedColumnsDesc')}
+              </span>
+            </span>
+          </label>
         </DialogBody>
 
         <DialogFooter>

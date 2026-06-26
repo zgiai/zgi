@@ -573,7 +573,8 @@ type ImportRecordResponse struct {
 }
 
 type ImportRecordRequest struct {
-	UploadFileID string `json:"upload_file_id" binding:"required"`
+	UploadFileID         string `json:"upload_file_id" binding:"required"`
+	SkipUnmatchedColumns bool   `json:"skip_unmatched_columns"`
 }
 
 type ImportFailedItem struct {
