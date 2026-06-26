@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -35,7 +36,11 @@ func newWorkflowConversationTitleGenerator(llmClient interface{}, graphFlowServi
 	if !ok || llm == nil || graphFlowService == nil || graphFlowService.DefaultModelSvc == nil {
 		return nil
 	}
-	return titlegen.NewService(llm, graphFlowService.DefaultModelSvc)
+	var routeModelProvider titlegen.RouteModelProvider
+	if graphFlowService.DB != nil {
+		routeModelProvider = titlegen.NewTenantRouteModelProvider(channelrepo.NewTenantRouteRepository(graphFlowService.DB))
+	}
+	return titlegen.NewServiceWithRouteModelProvider(llm, graphFlowService.DefaultModelSvc, routeModelProvider)
 }
 
 func (s *WorkflowService) enqueueWebAppConversationTitleGeneration(ctx context.Context, params workflowConversationTitleParams) {
@@ -110,12 +115,15 @@ func (s *WorkflowService) generateWebAppConversationTitle(ctx context.Context, p
 		SessionID:      params.ConversationID.String(),
 		ConversationID: params.ConversationID.String(),
 		Messages:       titleMessages,
-		FallbackTitle:  conv.Name,
+		FallbackTitle:  fallbackWorkflowConversationTitle(conv.Name, titleMessages),
 	})
 	if err != nil {
 		return err
 	}
-	if result == nil || result.Source != titlegen.SourceModel {
+	if result == nil {
+		return fmt.Errorf("title generator returned nil result")
+	}
+	if result.Source != titlegen.SourceModel && result.Source != titlegen.SourceFallback {
 		return fmt.Errorf("title generator returned fallback result")
 	}
 
@@ -135,6 +143,24 @@ func (s *WorkflowService) generateWebAppConversationTitle(ctx context.Context, p
 		logger.InfoContext(ctx, "workflow conversation title was not updated because name changed", "conversation_id", params.ConversationID.String())
 	}
 	return nil
+}
+
+func fallbackWorkflowConversationTitle(currentName string, messages []titlegen.Message) string {
+	for _, message := range messages {
+		if strings.TrimSpace(message.Role) != "user" {
+			continue
+		}
+		content := strings.TrimSpace(strings.Join(strings.Fields(message.Content), " "))
+		if content == "" {
+			continue
+		}
+		runes := []rune(content)
+		if len(runes) > 24 {
+			content = string(runes[:24])
+		}
+		return content
+	}
+	return currentName
 }
 
 func isDefaultWorkflowConversationName(name string) bool {

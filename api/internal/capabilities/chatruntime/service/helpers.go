@@ -60,8 +60,8 @@ func normalizeTitle(title, fallback string) string {
 	return string(runes[:maxConversationTitleLen])
 }
 
-func generateTitle(query string) string {
-	return normalizeTitle(query, defaultConversationTitle)
+func initialConversationTitle() string {
+	return defaultConversationTitle
 }
 
 func isActiveMessageStatus(status string) bool {
