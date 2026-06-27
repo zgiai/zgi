@@ -3,6 +3,7 @@ package workflow
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/config"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
@@ -427,6 +428,99 @@ func TestAnswerOutputCoordinatorRestorePauseSnapshotResumesWithFinalOnlyRemainde
 	}
 }
 
+func TestAnswerOutputCoordinatorPausedQuestionAnswerDoesNotFailDirectReply(t *testing.T) {
+	restoreAnswerCoordinatorConfig(t, 20, nil)
+	original, originalChan := newQuestionAnswerDirectReplyCoordinator(t)
+
+	original.MarkNodeFinished("qa1", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test1"}, nil)
+	assertAnswerMessages(t, originalChan, []string{"test1"})
+
+	original.MarkNodeFinished("qa2", "question-answer", string(workflow_shared.PAUSED), map[string]any{"question": "second question"}, nil)
+	assertNoAnswerMessages(t, originalChan)
+
+	snapshot, _ := original.PreparePauseSnapshot()
+	if snapshot == nil {
+		t.Fatal("PreparePauseSnapshot() snapshot = nil, want snapshot")
+	}
+	if snapshot.FullAnswer != "test1" {
+		t.Fatalf("snapshot.FullAnswer = %q, want %q", snapshot.FullAnswer, "test1")
+	}
+
+	restored, restoredChan := newQuestionAnswerDirectReplyCoordinator(t)
+	if err := restored.RestorePauseSnapshot(snapshot); err != nil {
+		t.Fatalf("RestorePauseSnapshot() error = %v, want nil", err)
+	}
+
+	restored.MarkNodeFinished("qa2", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test2"}, nil)
+	restored.MarkNodeFinished("qa3", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "222"}, nil)
+	restored.MarkAnswerActive("answer")
+	restored.MarkNodeFinished("answer", "answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test1test2222"}, nil)
+
+	assertAnswerMessages(t, restoredChan, []string{"test2", "222"})
+	if got := restored.FullAnswer(); got != "test1test2222" {
+		t.Fatalf("FullAnswer() = %q, want %q", got, "test1test2222")
+	}
+	if !restored.HasCompleteOutput() {
+		t.Fatal("HasCompleteOutput() = false, want true")
+	}
+}
+
+func TestFinalizeWorkflowStreamExecutionKeepsFinalAnswerWhenCoordinatorIncomplete(t *testing.T) {
+	restoreAnswerCoordinatorConfig(t, 20, nil)
+	coordinator, resultChan := newQuestionAnswerDirectReplyCoordinator(t)
+	coordinator.MarkNodeFinished("qa1", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test1"}, nil)
+	assertAnswerMessages(t, resultChan, []string{"test1"})
+	if coordinator.HasCompleteOutput() {
+		t.Fatal("HasCompleteOutput() = true, want false for partial answer")
+	}
+
+	doneChan := make(chan map[string]interface{}, 1)
+	finalizeWorkflowStreamExecution(workflowStreamFinalizeParams{
+		Ctx:                    t.Context(),
+		WorkflowElapsedTracker: newWorkflowElapsedTrackerFromNodeLogs(nil),
+		WorkflowStartTime:      time.Now(),
+		FailedNodes:            map[string]string{},
+		AllNodeOutputs:         map[string]interface{}{"answer": "test1test2222"},
+		DoneChan:               doneChan,
+		AnswerCoordinator:      coordinator,
+	})
+
+	outputs := <-doneChan
+	if got := outputs["answer"]; got != "test1test2222" {
+		t.Fatalf("outputs[answer] = %#v, want %#v", got, "test1test2222")
+	}
+}
+
+func TestFinalizeWorkflowStreamExecutionUsesCoordinatorWhenComplete(t *testing.T) {
+	restoreAnswerCoordinatorConfig(t, 20, nil)
+	coordinator, resultChan := newQuestionAnswerDirectReplyCoordinator(t)
+	coordinator.MarkNodeFinished("qa1", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test1"}, nil)
+	coordinator.MarkNodeFinished("qa2", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test2"}, nil)
+	coordinator.MarkNodeFinished("qa3", "question-answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "222"}, nil)
+	coordinator.MarkAnswerActive("answer")
+	coordinator.MarkNodeFinished("answer", "answer", string(workflow_shared.SUCCEEDED), map[string]any{"answer": "test1test2222"}, nil)
+	assertAnswerMessages(t, resultChan, []string{"test1", "test2", "222"})
+	if !coordinator.HasCompleteOutput() {
+		t.Fatal("HasCompleteOutput() = false, want true for fully drained answer")
+	}
+
+	doneChan := make(chan map[string]interface{}, 1)
+	finalizeWorkflowStreamExecution(workflowStreamFinalizeParams{
+		Ctx:                    t.Context(),
+		WorkflowElapsedTracker: newWorkflowElapsedTrackerFromNodeLogs(nil),
+		WorkflowStartTime:      time.Now(),
+		FailedNodes:            map[string]string{},
+		AllNodeOutputs:         map[string]interface{}{"answer": "stale"},
+		DoneChan:               doneChan,
+		AnswerCoordinator:      coordinator,
+	})
+
+	outputs := <-doneChan
+	if got := outputs["answer"]; got != "test1test2222" {
+		t.Fatalf("outputs[answer] = %#v, want %#v", got, "test1test2222")
+	}
+}
+
 func TestAnswerOutputCoordinatorRestorePauseSnapshotRejectsTemplateMismatch(t *testing.T) {
 	restoreAnswerCoordinatorConfig(t, 20, nil)
 	original, _ := newTestAnswerOutputCoordinator(t, []testAnswerNode{
@@ -536,6 +630,23 @@ func newTestAnswerOutputCoordinator(t *testing.T, nodes []testAnswerNode, edges 
 		t.Fatal("newAnswerOutputCoordinator() = nil, want coordinator")
 	}
 	return coordinator, resultChan
+}
+
+func newQuestionAnswerDirectReplyCoordinator(t *testing.T) (*answerOutputCoordinator, chan *WorkflowStreamEvent) {
+	t.Helper()
+
+	return newTestAnswerOutputCoordinator(t, []testAnswerNode{
+		{id: "start", nodeType: "start"},
+		{id: "qa1", nodeType: "question-answer"},
+		{id: "qa2", nodeType: "question-answer"},
+		{id: "qa3", nodeType: "question-answer"},
+		{id: "answer", nodeType: "answer", answer: "{{#qa1.answer#}}{{#qa2.answer#}}{{#qa3.answer#}}"},
+	}, []testAnswerEdge{
+		{source: "start", target: "qa1"},
+		{source: "qa1", target: "qa2"},
+		{source: "qa2", target: "qa3"},
+		{source: "qa3", target: "answer"},
+	})
 }
 
 func restoreAnswerCoordinatorConfig(t *testing.T, chunkSize int, mutate func(*config.Config)) {

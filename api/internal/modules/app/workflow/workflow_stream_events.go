@@ -222,7 +222,7 @@ func finalizeWorkflowStreamExecution(params workflowStreamFinalizeParams) {
 	trackedWorkflowElapsedTime := params.WorkflowElapsedTracker.elapsedOrFallback(ElapsedMillisecondsSince(params.WorkflowStartTime))
 	actualWorkflowElapsedTime := trackedWorkflowElapsedTime
 	allNodeOutputs := copyWorkflowAnyMap(params.AllNodeOutputs)
-	if params.AnswerCoordinator != nil && params.AnswerCoordinator.HasOutput() {
+	if params.AnswerCoordinator != nil && params.AnswerCoordinator.HasCompleteOutput() {
 		allNodeOutputs["answer"] = params.AnswerCoordinator.FullAnswer()
 	}
 
