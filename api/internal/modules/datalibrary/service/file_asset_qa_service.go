@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
@@ -107,9 +108,14 @@ type fileAssetQAService struct {
 
 type fileAssetQAIndexState struct {
 	mu               sync.Mutex
-	inFlight         chan struct{}
+	inFlight         *fileAssetQAIndexInFlight
+	readySignature   string
 	lastErr          error
 	lastIndexedCount int
+}
+
+type fileAssetQAIndexInFlight struct {
+	done chan struct{}
 }
 
 type preparedFileAssetQA struct {
@@ -282,7 +288,7 @@ func (s *fileAssetQAService) prepareCurrentFileQA(ctx context.Context, input Fil
 	if embeddingCount <= 0 {
 		return nil, ErrFileAssetQAIndexNotReady
 	}
-	if err := s.waitForFileQAIndexRebuild(ctx, asset); err != nil {
+	if _, err := s.prepareFileQAIndexForAsset(ctx, asset); err != nil {
 		return nil, fmt.Errorf("prepare file qa index: %w", err)
 	}
 	topK := normalizeFileQATopK(input.TopK)
@@ -354,64 +360,48 @@ func (s *fileAssetQAService) prepareFileQAIndexForAsset(ctx context.Context, ass
 		return nil, ErrDocumentAssetNotFound
 	}
 	state := s.qaIndexState(asset.ID)
-	state.mu.Lock()
-	if state.inFlight != nil {
-		inFlight := state.inFlight
-		state.mu.Unlock()
-		if err := waitForQAIndexDone(ctx, inFlight); err != nil {
+	for {
+		signature, err := s.fileQAIndexSignature(ctx, asset)
+		if err != nil {
 			return nil, err
 		}
+
 		state.mu.Lock()
-		indexedCount, lastErr := state.lastIndexedCount, state.lastErr
+		if state.readySignature == signature && state.lastErr == nil {
+			indexedCount := state.lastIndexedCount
+			state.mu.Unlock()
+			return &FileAssetQAIndexPrepareResult{Asset: asset, IndexedCount: indexedCount}, nil
+		}
+		if state.inFlight != nil {
+			inFlight := state.inFlight
+			state.mu.Unlock()
+			if err := waitForQAIndexDone(ctx, inFlight.done); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		inFlight := &fileAssetQAIndexInFlight{
+			done: make(chan struct{}),
+		}
+		state.inFlight = inFlight
 		state.mu.Unlock()
-		if lastErr != nil {
-			return nil, lastErr
+
+		indexedCount, err := s.vectorIndex.RebuildAssetIndex(ctx, asset)
+
+		state.mu.Lock()
+		state.lastIndexedCount = indexedCount
+		state.lastErr = err
+		if err == nil {
+			state.readySignature = signature
+		}
+		state.inFlight = nil
+		close(inFlight.done)
+		state.mu.Unlock()
+		if err != nil {
+			return nil, err
 		}
 		return &FileAssetQAIndexPrepareResult{Asset: asset, IndexedCount: indexedCount}, nil
 	}
-	inFlight := make(chan struct{})
-	state.inFlight = inFlight
-	state.mu.Unlock()
-
-	indexedCount, err := s.vectorIndex.RebuildAssetIndex(ctx, asset)
-
-	state.mu.Lock()
-	state.lastIndexedCount = indexedCount
-	state.lastErr = err
-	state.inFlight = nil
-	close(inFlight)
-	state.mu.Unlock()
-	if err != nil {
-		return nil, err
-	}
-	return &FileAssetQAIndexPrepareResult{Asset: asset, IndexedCount: indexedCount}, nil
-}
-
-func (s *fileAssetQAService) waitForFileQAIndexRebuild(ctx context.Context, asset *model.DocumentAsset) error {
-	if s == nil || asset == nil {
-		return nil
-	}
-	rawState, ok := s.indexStates.Load(asset.ID.String())
-	if !ok {
-		return nil
-	}
-	state, ok := rawState.(*fileAssetQAIndexState)
-	if !ok || state == nil {
-		return nil
-	}
-	state.mu.Lock()
-	inFlight := state.inFlight
-	state.mu.Unlock()
-	if inFlight == nil {
-		return nil
-	}
-	if err := waitForQAIndexDone(ctx, inFlight); err != nil {
-		return err
-	}
-	state.mu.Lock()
-	lastErr := state.lastErr
-	state.mu.Unlock()
-	return lastErr
 }
 
 func (s *fileAssetQAService) qaIndexState(assetID uuid.UUID) *fileAssetQAIndexState {
@@ -424,6 +414,70 @@ func (s *fileAssetQAService) qaIndexState(assetID uuid.UUID) *fileAssetQAIndexSt
 		return &fileAssetQAIndexState{}
 	}
 	return state
+}
+
+func (s *fileAssetQAService) fileQAIndexSignature(ctx context.Context, asset *model.DocumentAsset) (string, error) {
+	if asset == nil {
+		return "", ErrDocumentAssetNotFound
+	}
+	if s == nil || s.chunks == nil {
+		return "", ErrEmbeddingServiceRequired
+	}
+	h := sha256.New()
+	embeddingProvider := ""
+	if asset.EmbeddingProvider != nil {
+		embeddingProvider = strings.TrimSpace(*asset.EmbeddingProvider)
+	}
+	embeddingModel := ""
+	if asset.EmbeddingModel != nil {
+		embeddingModel = strings.TrimSpace(*asset.EmbeddingModel)
+	}
+	fmt.Fprintf(h, "asset=%s|generation=%d|provider=%s|model=%s\n", asset.ID, asset.GenerationNo, embeddingProvider, embeddingModel)
+
+	generationNo := asset.GenerationNo
+	offset := 0
+	for {
+		items, total, err := s.chunks.List(ctx, repository.DocumentChunkListFilter{
+			OrganizationID: asset.OrganizationID,
+			AssetID:        asset.ID,
+			GenerationNo:   &generationNo,
+			ChunkTypes:     []string{model.DocumentChunkTypeParent, model.DocumentChunkTypeChild},
+			Limit:          fileAssetVectorIndexPageSize,
+			Offset:         offset,
+		})
+		if err != nil {
+			return "", err
+		}
+		for _, chunk := range items {
+			if chunk == nil || chunk.OrganizationID != asset.OrganizationID || chunk.AssetID != asset.ID || chunk.GenerationNo != asset.GenerationNo {
+				continue
+			}
+			parentID := ""
+			if chunk.ParentChunkID != nil {
+				parentID = chunk.ParentChunkID.String()
+			}
+			fmt.Fprintf(
+				h,
+				"chunk=%s|parent=%s|type=%s|position=%d|enabled=%t|status=%s|hash=%s|updated=%d\n",
+				chunk.ID,
+				parentID,
+				chunk.ChunkType,
+				chunk.Position,
+				chunk.Enabled,
+				chunk.Status,
+				chunk.ContentHash,
+				chunk.UpdatedAt.UnixNano(),
+			)
+			if strings.TrimSpace(chunk.ContentHash) == "" {
+				fmt.Fprintf(h, "content=%s\n", chunk.Content)
+			}
+		}
+		offset += len(items)
+		if len(items) == 0 || int64(offset) >= total || len(items) < fileAssetVectorIndexPageSize {
+			break
+		}
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 func waitForQAIndexDone(ctx context.Context, done <-chan struct{}) error {
