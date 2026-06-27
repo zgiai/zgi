@@ -86,8 +86,7 @@ func (s *promptService) List(ctx context.Context, organizationID, accountID stri
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionAgentView,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptVisiblePermissionCodes()...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve prompt visibility scope: %w", err)
@@ -141,7 +140,7 @@ func (s *promptService) List(ctx context.Context, organizationID, accountID stri
 }
 
 func (s *promptService) GetDetail(ctx context.Context, organizationID, accountID, id string) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentView, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptVisiblePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +159,7 @@ func (s *promptService) Create(ctx context.Context, organizationID, accountID st
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptCreatePermissionCodes()...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace scope: %w", err)
@@ -216,7 +215,7 @@ func (s *promptService) Create(ctx context.Context, organizationID, accountID st
 }
 
 func (s *promptService) Update(ctx context.Context, organizationID, accountID, id string, req promptdto.UpdatePromptRequest) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptUpdatePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +254,7 @@ func (s *promptService) Update(ctx context.Context, organizationID, accountID, i
 }
 
 func (s *promptService) CreateVersion(ctx context.Context, organizationID, accountID, id string, req promptdto.PromptVersionInput) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptVersionManagePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +298,7 @@ func (s *promptService) CreateVersion(ctx context.Context, organizationID, accou
 }
 
 func (s *promptService) SetLabels(ctx context.Context, organizationID, accountID, id string, req promptdto.SetPromptLabelsRequest) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptLabelManagePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}

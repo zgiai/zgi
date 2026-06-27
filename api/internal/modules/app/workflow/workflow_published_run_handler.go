@@ -20,7 +20,7 @@ func (h *WorkflowHandler) RunPublishedWorkflow(c *gin.Context) {
 	requestedWorkspaceID := util.GetWorkspaceID(c)
 	organizationID := util.GetOrganizationID(c)
 
-	if _, ok := h.requirePublishedRuntimeAgentAccess(c, appID, workspace_model.WorkspacePermissionAgentView); !ok {
+	if _, ok := h.requirePublishedRuntimeAgentAccess(c, appID, workspace_model.WorkspacePermissionWorkflowView); !ok {
 		return
 	}
 

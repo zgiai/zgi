@@ -74,7 +74,7 @@ func (h *WorkflowHandler) GetDraftWorkflow(c *gin.Context) {
 	appID := c.Param("agent_id")
 	accountID := c.GetString("account_id")
 
-	if _, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentView); !ok {
+	if _, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowView); !ok {
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *WorkflowHandler) SyncDraftWorkflow(c *gin.Context) {
 	appID := c.Param("agent_id")
 	accountID := c.GetString("account_id")
 
-	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowUpdate)
 	if !ok {
 		return
 	}
@@ -160,7 +160,7 @@ func (h *WorkflowHandler) SyncDraftWorkflow(c *gin.Context) {
 // @Router /agents/{agent_id}/workflows/draft/config [get]
 func (h *WorkflowHandler) GetWorkflowConfig(c *gin.Context) {
 	appID := c.Param("agent_id")
-	workspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentView)
+	workspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowView)
 	if !ok {
 		return
 	}
@@ -188,7 +188,7 @@ func (h *WorkflowHandler) GetWorkflowConfig(c *gin.Context) {
 // GetPublishedWorkflowVersions handles GET /agents/:agent_id/workflows/published-versions.
 func (h *WorkflowHandler) GetPublishedWorkflowVersions(c *gin.Context) {
 	agentID := c.Param("agent_id")
-	if _, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionAgentView); !ok {
+	if _, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionWorkflowView); !ok {
 		return
 	}
 
@@ -250,7 +250,7 @@ func (h *WorkflowHandler) ManualDiagnoseNode(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionAgentManage); !ok {
+	if _, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionWorkflowDebug); !ok {
 		return
 	}
 	if err := h.workflowService.ValidateWorkflowRunNodeScope(c.Request.Context(), agentID, runID, nodeLogID); err != nil {

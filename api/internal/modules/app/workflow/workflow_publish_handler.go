@@ -34,7 +34,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 	}
 	logger.Info("Got account ID", "account_id", accountID)
 
-	workspaceID, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionAgentManage)
+	workspaceID, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionWorkflowPublish)
 	if !ok {
 		return
 	}
@@ -81,7 +81,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 // @Router /agents/{agent_id}/workflows/latest-version [get]
 func (h *WorkflowHandler) GetLatestWorkflowVersion(c *gin.Context) {
 	agentID := c.Param("agent_id")
-	workspaceID, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionAgentView)
+	workspaceID, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionWorkflowView)
 	if !ok {
 		return
 	}

@@ -15,7 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 )
 
-func TestAgentHistoryDispatchRequiresAgentViewForBuilderHistory(t *testing.T) {
+func TestAgentHistoryDispatchRequiresWorkflowLogsViewForBuilderHistory(t *testing.T) {
 	agentID := uuid.New()
 	workspaceID := uuid.New()
 	endpoints := []struct {
@@ -75,16 +75,16 @@ func TestAgentHistoryDispatchRequiresAgentViewForBuilderHistory(t *testing.T) {
 				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
 			}
 			if !permissionChecker.checked {
-				t.Fatalf("expected agent.view permission check")
+				t.Fatalf("expected workflow.logs.view permission check")
 			}
-			if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentView {
-				t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentView)
+			if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowLogsView {
+				t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowLogsView)
 			}
 		})
 	}
 }
 
-func TestAgentHistoryDispatchRuntimeLogsRequiresAgentViewBeforeBindingRequest(t *testing.T) {
+func TestAgentHistoryDispatchRuntimeLogsRequiresWorkflowLogsViewBeforeBindingRequest(t *testing.T) {
 	agentID := uuid.New()
 	workspaceID := uuid.New()
 	permissionChecker := &agentHistoryPermissionChecker{allowed: false}
@@ -117,10 +117,10 @@ func TestAgentHistoryDispatchRuntimeLogsRequiresAgentViewBeforeBindingRequest(t 
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.view permission check before request binding")
+		t.Fatalf("expected workflow.logs.view permission check before request binding")
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentView {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentView)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowLogsView {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowLogsView)
 	}
 }
 

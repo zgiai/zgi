@@ -218,6 +218,69 @@ func (s *datasetService) SetOrganizationService(organizationService interfaces.O
 	s.enterpriseService = organizationService
 }
 
+func (s *datasetService) checkKnowledgeBaseWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissions ...workspace_model.WorkspacePermissionCode) (bool, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	accountID = strings.TrimSpace(accountID)
+	if workspaceID == "" || accountID == "" || s.enterpriseService == nil {
+		return false, nil
+	}
+	organizationID = strings.TrimSpace(organizationID)
+	if organizationID == "" {
+		organization, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, workspaceID)
+		if err != nil || organization == nil {
+			return false, err
+		}
+		organizationID = strings.TrimSpace(organization.ID)
+	}
+	if organizationID == "" {
+		return false, nil
+	}
+	return s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(ctx, organizationID, workspaceID, accountID, permissions...)
+}
+
+func knowledgeBaseReadPermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderView,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
+		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseMove,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseIndexManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+	}
+}
+
+func knowledgeBaseFolderReadPermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderView,
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+	}
+}
+
+func knowledgeBaseEditPermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseMove,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseIndexManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+	}
+}
+
 // NewDatasetService creates a new DatasetService.
 // The llmClient should be obtained from the DI container (ServiceContainer.GetLLMClient()).
 func NewDatasetService(
@@ -719,7 +782,17 @@ func (s *datasetService) GetDatasetsWithPermissions(ctx context.Context, account
 }
 
 func (s *datasetService) GetDatasetsByAccountAndTenant(ctx context.Context, accountID, tenantID string) ([]*model.Dataset, error) {
-	if !s.tenantSvc.CheckPermission(ctx, tenantID, accountID) {
+	hasPermission, err := s.checkKnowledgeBaseWorkspacePermission(
+		ctx,
+		"",
+		tenantID,
+		accountID,
+		knowledgeBaseReadPermissionCodes()...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check dataset workspace permission: %w", err)
+	}
+	if !hasPermission {
 		return nil, fmt.Errorf("account %s has no access to tenant %s", accountID, tenantID)
 	}
 
@@ -920,24 +993,12 @@ func (s *datasetService) canReadDataset(ctx context.Context, dataset *model.Data
 	if dataset.CreatedBy == accountID {
 		return true, nil
 	}
-	if s.tenantSvc != nil && s.tenantSvc.CheckPermission(ctx, dataset.WorkspaceID, accountID) {
-		return true, nil
-	}
-	if !model.IsDatasetWorkspaceVisiblePermission(dataset.Permission) {
-		return false, nil
-	}
-	if s.enterpriseService == nil {
-		return false, nil
-	}
-
-	return s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
+	return s.checkKnowledgeBaseWorkspacePermission(
 		ctx,
 		dataset.OrganizationID,
 		dataset.WorkspaceID,
 		accountID,
-		workspace_model.WorkspacePermissionKnowledgeBaseView,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+		knowledgeBaseReadPermissionCodes()...,
 	)
 }
 
@@ -948,7 +1009,14 @@ func (s *datasetService) canEditDataset(ctx context.Context, dataset *model.Data
 	if dataset.CreatedBy == accountID {
 		return true
 	}
-	return s.tenantSvc != nil && s.tenantSvc.CheckPermission(ctx, dataset.WorkspaceID, accountID)
+	hasPermission, err := s.checkKnowledgeBaseWorkspacePermission(
+		ctx,
+		dataset.OrganizationID,
+		dataset.WorkspaceID,
+		accountID,
+		knowledgeBaseEditPermissionCodes()...,
+	)
+	return err == nil && hasPermission
 }
 
 // CheckEditorPermission checks if user has editor permission for dataset

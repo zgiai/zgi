@@ -35,25 +35,127 @@ type datasetAccessAuthorizer interface {
 	RequireWorkspacePermission(ctx context.Context, req interfaces.WorkspaceScopeRequest) (*interfaces.WorkspaceScope, error)
 }
 
+func knowledgeBaseViewPermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderView,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
+		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseMove,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseIndexManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+	}
+}
+
+func knowledgeBaseDocumentViewPermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseIndexManage,
+	}
+}
+
+func knowledgeBaseSegmentViewPermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+	}
+}
+
+func knowledgeBaseFolderViewPermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderView,
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+	}
+}
+
 func authorizeDatasetViewAccess(c *gin.Context, datasetService datasetAccessDatasetReader, authService datasetAccessAuthorizer, datasetID string) (*dataset_model.Dataset, bool) {
 	return authorizeDatasetAccess(
 		c,
 		datasetService,
 		authService,
 		datasetID,
-		workspace_model.WorkspacePermissionKnowledgeBaseView,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+		knowledgeBaseViewPermissionCodes()...,
 	)
 }
 
-func authorizeDatasetManageAccess(c *gin.Context, datasetService datasetAccessDatasetReader, authService datasetAccessAuthorizer, datasetID string) (*dataset_model.Dataset, bool) {
+func authorizeDatasetUpdateAccess(c *gin.Context, datasetService datasetAccessDatasetReader, authService datasetAccessAuthorizer, datasetID string) (*dataset_model.Dataset, bool) {
 	return authorizeDatasetAccess(
 		c,
 		datasetService,
 		authService,
 		datasetID,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+	)
+}
+
+func authorizeDatasetDeleteAccess(c *gin.Context, datasetService datasetAccessDatasetReader, authService datasetAccessAuthorizer, datasetID string) (*dataset_model.Dataset, bool) {
+	return authorizeDatasetAccess(
+		c,
+		datasetService,
+		authService,
+		datasetID,
+		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
+	)
+}
+
+func authorizeDatasetSegmentDeleteAccessByDataset(c *gin.Context, datasetService datasetAccessDatasetReader, authService datasetAccessAuthorizer, datasetID string) (*dataset_model.Dataset, bool) {
+	return authorizeDatasetAccess(
+		c,
+		datasetService,
+		authService,
+		datasetID,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+	)
+}
+
+func authorizeDatasetMoveAccess(c *gin.Context, datasetService datasetAccessDatasetReader, authService datasetAccessAuthorizer, datasetID string) (*dataset_model.Dataset, bool) {
+	return authorizeDatasetAccess(
+		c,
+		datasetService,
+		authService,
+		datasetID,
+		workspace_model.WorkspacePermissionKnowledgeBaseMove,
+	)
+}
+
+func authorizeDatasetDocumentCreateAccess(c *gin.Context, datasetService datasetAccessDatasetReader, authService datasetAccessAuthorizer, datasetID string) (*dataset_model.Dataset, bool) {
+	return authorizeDatasetAccess(
+		c,
+		datasetService,
+		authService,
+		datasetID,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate,
+	)
+}
+
+func authorizeDatasetDocumentBatchUpdateAccess(c *gin.Context, datasetService datasetAccessDatasetReader, authService datasetAccessAuthorizer, datasetID string) (*dataset_model.Dataset, bool) {
+	return authorizeDatasetAccess(
+		c,
+		datasetService,
+		authService,
+		datasetID,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+	)
+}
+
+func authorizeDatasetIndexManageAccess(c *gin.Context, datasetService datasetAccessDatasetReader, authService datasetAccessAuthorizer, datasetID string) (*dataset_model.Dataset, bool) {
+	return authorizeDatasetAccess(
+		c,
+		datasetService,
+		authService,
+		datasetID,
+		workspace_model.WorkspacePermissionKnowledgeBaseIndexManage,
 	)
 }
 
@@ -91,9 +193,7 @@ func authorizeDatasetWorkspaceViewAccess(c *gin.Context, authService datasetAcce
 		c,
 		authService,
 		workspaceID,
-		workspace_model.WorkspacePermissionKnowledgeBaseView,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+		knowledgeBaseViewPermissionCodes()...,
 	)
 	return ok
 }
@@ -149,9 +249,7 @@ func authorizeDatasetFolderViewAccess(c *gin.Context, folderService datasetAcces
 		authService,
 		folderID,
 		false,
-		workspace_model.WorkspacePermissionKnowledgeBaseView,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+		knowledgeBaseFolderViewPermissionCodes()...,
 	)
 }
 
@@ -201,15 +299,31 @@ func authorizeDatasetFolderAccess(c *gin.Context, folderService datasetAccessFol
 
 func authorizeDatasetDocumentViewAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, authService datasetAccessAuthorizer, datasetID, documentID string) (*dataset_model.Dataset, *dataset_model.Document, bool) {
 	return authorizeDatasetDocumentAccess(c, datasetService, documentService, authService, datasetID, documentID,
-		workspace_model.WorkspacePermissionKnowledgeBaseView,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+		knowledgeBaseDocumentViewPermissionCodes()...,
 	)
 }
 
-func authorizeDatasetDocumentManageAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, authService datasetAccessAuthorizer, datasetID, documentID string) (*dataset_model.Dataset, *dataset_model.Document, bool) {
+func authorizeDatasetDocumentSegmentUpdateAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, authService datasetAccessAuthorizer, datasetID, documentID string) (*dataset_model.Dataset, *dataset_model.Document, bool) {
 	return authorizeDatasetDocumentAccess(c, datasetService, documentService, authService, datasetID, documentID,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+	)
+}
+
+func authorizeDatasetDocumentSegmentDeleteAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, authService datasetAccessAuthorizer, datasetID, documentID string) (*dataset_model.Dataset, *dataset_model.Document, bool) {
+	return authorizeDatasetDocumentAccess(c, datasetService, documentService, authService, datasetID, documentID,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+	)
+}
+
+func authorizeDatasetDocumentUpdateAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, authService datasetAccessAuthorizer, datasetID, documentID string) (*dataset_model.Dataset, *dataset_model.Document, bool) {
+	return authorizeDatasetDocumentAccess(c, datasetService, documentService, authService, datasetID, documentID,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+	)
+}
+
+func authorizeDatasetDocumentDeleteAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, authService datasetAccessAuthorizer, datasetID, documentID string) (*dataset_model.Dataset, *dataset_model.Document, bool) {
+	return authorizeDatasetDocumentAccess(c, datasetService, documentService, authService, datasetID, documentID,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
 	)
 }
 
@@ -238,15 +352,19 @@ func authorizeDatasetDocumentAccess(c *gin.Context, datasetService datasetAccess
 
 func authorizeDatasetSegmentViewAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, segmentService datasetAccessSegmentReader, authService datasetAccessAuthorizer, datasetID, documentID, segmentID string) (*dataset_model.Dataset, *dataset_model.Document, *dataset_model.DocumentSegment, bool) {
 	return authorizeDatasetSegmentAccess(c, datasetService, documentService, segmentService, authService, datasetID, documentID, segmentID,
-		workspace_model.WorkspacePermissionKnowledgeBaseView,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+		knowledgeBaseSegmentViewPermissionCodes()...,
 	)
 }
 
-func authorizeDatasetSegmentManageAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, segmentService datasetAccessSegmentReader, authService datasetAccessAuthorizer, datasetID, documentID, segmentID string) (*dataset_model.Dataset, *dataset_model.Document, *dataset_model.DocumentSegment, bool) {
+func authorizeDatasetSegmentUpdateAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, segmentService datasetAccessSegmentReader, authService datasetAccessAuthorizer, datasetID, documentID, segmentID string) (*dataset_model.Dataset, *dataset_model.Document, *dataset_model.DocumentSegment, bool) {
 	return authorizeDatasetSegmentAccess(c, datasetService, documentService, segmentService, authService, datasetID, documentID, segmentID,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+	)
+}
+
+func authorizeDatasetSegmentDeleteAccess(c *gin.Context, datasetService datasetAccessDatasetReader, documentService datasetAccessDocumentReader, segmentService datasetAccessSegmentReader, authService datasetAccessAuthorizer, datasetID, documentID, segmentID string) (*dataset_model.Dataset, *dataset_model.Document, *dataset_model.DocumentSegment, bool) {
+	return authorizeDatasetSegmentAccess(c, datasetService, documentService, segmentService, authService, datasetID, documentID, segmentID,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
 	)
 }
 

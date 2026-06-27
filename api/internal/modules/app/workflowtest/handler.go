@@ -81,7 +81,7 @@ func (h *Handler) GetSettings(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowView) {
 		return
 	}
 	settings, err := h.service.GetSettings(c.Request.Context(), agentID)
@@ -98,7 +98,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowUpdate) {
 		return
 	}
 	var req UpdateSettingsRequest
@@ -119,7 +119,7 @@ func (h *Handler) ResetSettings(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowUpdate) {
 		return
 	}
 	settings, err := h.service.ResetSettings(c.Request.Context(), agentID)
@@ -136,7 +136,7 @@ func (h *Handler) ListScenarios(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowView) {
 		return
 	}
 	items, err := h.service.ListScenarios(c.Request.Context(), agentID)
@@ -153,7 +153,7 @@ func (h *Handler) CreateScenario(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowUpdate) {
 		return
 	}
 	var req CreateScenarioRequest
@@ -174,7 +174,7 @@ func (h *Handler) SaveScenarios(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowUpdate) {
 		return
 	}
 	var req SaveScenariosRequest
@@ -195,7 +195,7 @@ func (h *Handler) RecognizeScenarios(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowDebug) {
 		return
 	}
 	accountID := c.GetString("account_id")
@@ -232,7 +232,7 @@ func (h *Handler) CreateScenarioRecognitionTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowDebug) {
 		return
 	}
 	accountID := c.GetString("account_id")
@@ -288,7 +288,7 @@ func (h *Handler) GetActiveScenarioRecognitionTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowLogsView) {
 		return
 	}
 	h.recoverStaleScenarioRecognitionTasks(c, agentID)
@@ -305,7 +305,7 @@ func (h *Handler) GetLatestScenarioRecognitionTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowLogsView) {
 		return
 	}
 	h.recoverStaleScenarioRecognitionTasks(c, agentID)
@@ -322,7 +322,7 @@ func (h *Handler) GetScenarioRecognitionTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowLogsView) {
 		return
 	}
 	h.recoverStaleScenarioRecognitionTasks(c, agentID)
@@ -339,7 +339,7 @@ func (h *Handler) CancelScenarioRecognitionTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowRunStop) {
 		return
 	}
 	task, err := h.service.CancelScenarioRecognitionTask(c.Request.Context(), agentID, c.Param("task_id"))
@@ -355,7 +355,7 @@ func (h *Handler) ListCases(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowView) {
 		return
 	}
 	items, err := h.service.ListCases(c.Request.Context(), agentID, c.Query("status"))
@@ -372,7 +372,7 @@ func (h *Handler) CreateCase(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowUpdate) {
 		return
 	}
 	var req CreateCaseRequest
@@ -393,7 +393,7 @@ func (h *Handler) UpdateCase(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowUpdate) {
 		return
 	}
 	caseID, ok := bindCaseID(c)
@@ -418,7 +418,7 @@ func (h *Handler) DeleteCase(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowUpdate) {
 		return
 	}
 	caseID, ok := bindCaseID(c)
@@ -437,7 +437,7 @@ func (h *Handler) DeleteCases(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowUpdate) {
 		return
 	}
 	var req DeleteCasesRequest
@@ -457,7 +457,7 @@ func (h *Handler) GenerateCases(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowDebug) {
 		return
 	}
 	accountID := c.GetString("account_id")
@@ -493,7 +493,7 @@ func (h *Handler) CreateGenerationTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowDebug) {
 		return
 	}
 	accountID := c.GetString("account_id")
@@ -549,7 +549,7 @@ func (h *Handler) GetActiveGenerationTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowLogsView) {
 		return
 	}
 	h.recoverStaleGenerationTasks(c, agentID)
@@ -566,7 +566,7 @@ func (h *Handler) GetLatestGenerationTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowLogsView) {
 		return
 	}
 	h.recoverStaleGenerationTasks(c, agentID)
@@ -583,7 +583,7 @@ func (h *Handler) GetGenerationTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowLogsView) {
 		return
 	}
 	h.recoverStaleGenerationTasks(c, agentID)
@@ -600,7 +600,7 @@ func (h *Handler) CancelGenerationTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowRunStop) {
 		return
 	}
 	task, err := h.service.CancelGenerationTask(c.Request.Context(), agentID, c.Param("task_id"))
@@ -634,7 +634,7 @@ func (h *Handler) ListBatches(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowLogsView) {
 		return
 	}
 	h.recoverStaleRunningBatches(c, agentID)
@@ -652,7 +652,7 @@ func (h *Handler) CreateBatch(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowUpdate) {
 		return
 	}
 	var req CreateBatchRequest
@@ -677,7 +677,7 @@ func (h *Handler) ListBatchItems(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentView) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowLogsView) {
 		return
 	}
 	batchID := c.Param("batch_id")
@@ -699,7 +699,7 @@ func (h *Handler) RetestBatch(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowDebug) {
 		return
 	}
 	batchID, ok := bindBatchID(c)
@@ -730,7 +730,7 @@ func (h *Handler) StartBatch(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowDebug) {
 		return
 	}
 	batchID, ok := bindBatchID(c)
@@ -750,7 +750,7 @@ func (h *Handler) ExecuteBatch(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowDebug) {
 		return
 	}
 	batchID, ok := bindBatchID(c)
@@ -817,7 +817,7 @@ func (h *Handler) CancelBatch(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowRunStop) {
 		return
 	}
 	batchID, ok := bindBatchID(c)

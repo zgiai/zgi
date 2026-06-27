@@ -113,62 +113,31 @@ func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 	// Get group_id from request, if not provided, use current user's group_id
 	organizationID := tenantID
 
-	// Determine tenant_id_set based on user permissions
-	var tenantIDSet map[string]bool
-
-	// For now, use CheckGroupAdminByWorkspace as a workaround
-	isGroupAdmin := false
-	isGroupAdmin, err := h.accountService.CheckOrganizationpAdminByWorkspace(c.Request.Context(), accountID, organizationID)
-	if err != nil {
-		logger.Error("Failed to check group admin", err)
-		isGroupAdmin = false
-	}
-
 	// Get all tenants in the group for all_group permission filtering
-	// This is needed even for non-admin users to see datasets with all_group permission
 	allGroupTenantList, err := h.organizationService.GetOrganizationWorkspacesList(c.Request.Context(), organizationID)
 	if err != nil {
 		logger.Error("Failed to get all tenants in group for all_group permission", err)
 		allGroupTenantList = []*workspace_model.Workspace{}
 	}
 
-	// Extract all group tenant IDs
-	allGroupTenantIDs := make([]string, 0, len(allGroupTenantList))
+	tenantIDs := make([]string, 0, len(allGroupTenantList))
 	for _, tenant := range allGroupTenantList {
-		allGroupTenantIDs = append(allGroupTenantIDs, tenant.ID)
-	}
-
-	if isGroupAdmin {
-		// Admin can see all tenants
-		tenantIDSet = make(map[string]bool)
-		for _, tenant := range allGroupTenantList {
-			tenantIDSet[tenant.ID] = true
-		}
-	} else {
-		userMemberships, err := h.tenantService.GetUserWorkspaceMemberships(c.Request.Context(), accountID)
+		hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
+			c.Request.Context(),
+			organizationID,
+			tenant.ID,
+			accountID,
+			knowledgeBaseViewPermissionCodes()...,
+		)
 		if err != nil {
-			logger.Error("Failed to get user tenants in group", err)
-			userMemberships = nil
+			response.Fail(c, response.ErrSystemError)
+			return
 		}
-
-		groupTenantIDSet := make(map[string]bool, len(allGroupTenantList))
-		for _, tenant := range allGroupTenantList {
-			groupTenantIDSet[tenant.ID] = true
-		}
-
-		tenantIDSet = make(map[string]bool)
-		for _, membership := range userMemberships {
-			if groupTenantIDSet[membership.WorkspaceID] {
-				tenantIDSet[membership.WorkspaceID] = true
-			}
+		if hasPermission {
+			tenantIDs = append(tenantIDs, tenant.ID)
 		}
 	}
-
-	// Convert tenant ID set to slice
-	tenantIDs := make([]string, 0, len(tenantIDSet))
-	for tenantID := range tenantIDSet {
-		tenantIDs = append(tenantIDs, tenantID)
-	}
+	allGroupTenantIDs := append([]string(nil), tenantIDs...)
 
 	workspaceID := req.WorkspaceID
 	if workspaceID != "" {
@@ -188,29 +157,6 @@ func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 			}
 		}
 		allGroupTenantIDs = filteredAllGroupTenantIDs
-	}
-
-	if h.organizationService != nil && !isGroupAdmin {
-		allTeamTenantIDs := make([]string, 0, len(tenantIDs))
-		for _, id := range tenantIDs {
-			hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
-				c.Request.Context(),
-				organizationID,
-				id,
-				accountID,
-				workspace_model.WorkspacePermissionKnowledgeBaseView,
-				workspace_model.WorkspacePermissionKnowledgeBaseManage,
-				workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
-			)
-			if err != nil {
-				response.Fail(c, response.ErrSystemError)
-				return
-			}
-			if hasPermission {
-				allTeamTenantIDs = append(allTeamTenantIDs, id)
-			}
-		}
-		allGroupTenantIDs = allTeamTenantIDs
 	}
 
 	if len(tenantIDs) == 0 {
@@ -234,7 +180,7 @@ func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 		DatasetAdmin:      false,
 		AccountID:         accountID,
 		GroupID:           organizationID,
-		IsGroupAdmin:      isGroupAdmin,
+		IsGroupAdmin:      false,
 		AllGroupTenantIDs: allGroupTenantIDs, // Pass all group tenant IDs for all_group permission
 		Sort:              req.Sort,
 	}
@@ -314,7 +260,7 @@ func (h *DatasetHandler) PostDatasets(c *gin.Context) {
 			tenantID,
 			*requestWorkspaceID,
 			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
+			workspace_model.WorkspacePermissionKnowledgeBaseCreate,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -543,7 +489,7 @@ func (h *DatasetHandler) PatchDataset(c *gin.Context) {
 				tenantID,
 				*req.WorkspaceID,
 				accountID,
-				workspace_model.WorkspacePermissionKnowledgeBaseManage,
+				workspace_model.WorkspacePermissionKnowledgeBaseMove,
 			)
 			if err != nil {
 				response.Fail(c, response.ErrSystemError)
@@ -636,7 +582,7 @@ func (h *DatasetHandler) DeleteDataset(c *gin.Context) {
 			groupID,
 			datasetTenantID,
 			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
+			workspace_model.WorkspacePermissionKnowledgeBaseDelete,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -813,7 +759,6 @@ func (h *DatasetHandler) handleHitTesting(c *gin.Context, forcedMode string) {
 			datasetTenantID,
 			accountID,
 			workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -961,7 +906,6 @@ func (h *DatasetHandler) BatchHitTesting(c *gin.Context) {
 			datasetTenantID,
 			accountID,
 			workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -1082,7 +1026,6 @@ func (h *DatasetHandler) AsyncBatchHitTesting(c *gin.Context) {
 			datasetTenantID,
 			accountID,
 			workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -1766,6 +1709,9 @@ func (h *DatasetHandler) convertDatasetToResponseWithPermission(ctx context.Cont
 		TenantID:  dataset.WorkspaceID,
 		CreatedBy: dataset.CreatedBy,
 		GroupID:   nil, // Datasets are workspace-scoped and have no organization compatibility override
+		PermissionCodes: []workspace_model.WorkspacePermissionCode{
+			workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+		},
 	})
 	if err != nil {
 		logger.Error(fmt.Sprintf("Failed to check edit permission for dataset %s", dataset.ID), err)
@@ -1798,6 +1744,9 @@ func (h *DatasetHandler) convertDatasetsToResponseWithPermission(ctx context.Con
 			WorkspaceID: dataset.WorkspaceID,
 			CreatedBy:   dataset.CreatedBy,
 			GroupID:     nil, // Datasets are workspace-scoped and have no organization compatibility override
+			PermissionCodes: []workspace_model.WorkspacePermissionCode{
+				workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+			},
 		}
 	}
 

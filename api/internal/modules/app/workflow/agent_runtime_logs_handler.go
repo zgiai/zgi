@@ -195,7 +195,7 @@ func (h *AgentRuntimeLogsHandler) runtimeScope(c *gin.Context) (runtimeservice.S
 		organizationID.String(),
 		workspaceID.String(),
 		accountID.String(),
-		workspace_model.WorkspacePermissionAgentView,
+		workspace_model.WorkspacePermissionAgentLogsView,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)

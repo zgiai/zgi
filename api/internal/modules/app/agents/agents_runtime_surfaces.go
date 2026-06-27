@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -91,7 +92,7 @@ func (s *agentsService) UpdateAgentRuntimeSurfaces(ctx context.Context, agentID,
 	if err != nil || isSystemManagedAgent(ag) {
 		return nil, fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
 	}
-	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+	if err := s.ensureCanManageAgentRuntimeSurfaces(ctx, ag, accountID); err != nil {
 		if strings.EqualFold(err.Error(), "permission denied") {
 			return nil, runtimeservice.ErrPermissionDenied
 		}
@@ -160,12 +161,12 @@ func (s *agentsService) ensureCanViewAgent(ctx context.Context, ag *Agent, accou
 	var err error
 	callerOrganizationID := callerOrganizationIDFromContext(ctx)
 	if callerOrganizationID != "" && s.enterpriseService != nil {
-		canView, err = s.enterpriseService.CheckWorkspacePermission(
+		canView, err = s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
 			ctx,
 			callerOrganizationID,
 			ag.TenantID.String(),
 			accountID,
-			workspacemodel.WorkspacePermissionAgentView,
+			agentAssetVisiblePermissionCodes()...,
 		)
 		if err != nil {
 			logger.Error(fmt.Sprintf("ensureCanViewAgent: failed to check workspace permission for agent %s, account %s", ag.ID.String(), accountID), err)
@@ -173,10 +174,12 @@ func (s *agentsService) ensureCanViewAgent(ctx context.Context, ag *Agent, accou
 		}
 	} else if s.resourcePermissionService != nil {
 		canView, err = s.resourcePermissionService.CheckSingleResourceEditPermission(ctx, interfaces.SingleResourcePermissionParams{
-			AccountID: accountID,
-			TenantID:  ag.TenantID.String(),
-			CreatedBy: creatorID,
-			GroupID:   nil,
+			AccountID:       accountID,
+			TenantID:        ag.TenantID.String(),
+			OrganizationID:  callerOrganizationID,
+			CreatedBy:       creatorID,
+			GroupID:         nil,
+			PermissionCodes: agentAssetVisiblePermissionCodes(),
 		})
 		if err != nil {
 			logger.Error(fmt.Sprintf("ensureCanViewAgent: failed to check legacy resource permission for agent %s, account %s", ag.ID.String(), accountID), err)
@@ -514,15 +517,17 @@ SELECT id FROM visible_departments
 
 func (s *agentsService) runtimeGrantVisibleWorkspaceIDs(ctx context.Context, organizationID uuid.UUID, accountID string) ([]uuid.UUID, error) {
 	type workspacePermissionRow struct {
-		WorkspaceID string
-		Role        workspacemodel.WorkspaceMemberRole
-		RoleID      *string
+		WorkspaceID      string
+		Role             workspacemodel.WorkspaceMemberRole
+		RoleID           *string
+		Permissions      string
+		PermissionSource workspacemodel.WorkspaceMemberPermissionSource
 	}
 
 	var rows []workspacePermissionRow
 	if err := s.db.WithContext(ctx).
 		Table("workspace_members").
-		Select("workspace_members.workspace_id, workspace_members.role, workspace_members.role_id").
+		Select("workspace_members.workspace_id, workspace_members.role, workspace_members.role_id, COALESCE(workspace_members.permissions::text, '') AS permissions, workspace_members.permission_source").
 		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
 		Where("workspace_members.account_id = ?", strings.TrimSpace(accountID)).
 		Where("workspaces.organization_id = ? AND workspaces.status = ?", organizationID.String(), workspacemodel.WorkspaceStatusNormal).
@@ -530,26 +535,16 @@ func (s *agentsService) runtimeGrantVisibleWorkspaceIDs(ctx context.Context, org
 		return nil, fmt.Errorf("failed to load runtime grant visible workspaces: %w", err)
 	}
 
-	customRoleIDs := make([]string, 0, len(rows))
-	for _, row := range rows {
-		if row.RoleID == nil {
-			continue
-		}
-		roleID := strings.TrimSpace(*row.RoleID)
-		if roleID == "" || workspacemodel.IsBuiltinRole(roleID) {
-			continue
-		}
-		customRoleIDs = append(customRoleIDs, roleID)
-	}
-	customRolePermissions, err := s.runtimeGrantCustomRolePermissions(ctx, organizationID, customRoleIDs)
-	if err != nil {
-		return nil, err
-	}
-
 	workspaceIDs := make([]uuid.UUID, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		if !runtimeGrantWorkspaceRoleAllowsPermission(row.Role, row.RoleID, customRolePermissions, workspacemodel.WorkspacePermissionWorkspaceView) {
+		if !runtimeGrantWorkspaceMemberAllowsPermission(
+			row.Role,
+			row.RoleID,
+			runtimeGrantParseWorkspacePermissions(row.Permissions),
+			row.PermissionSource,
+			workspacemodel.WorkspacePermissionWorkspaceView,
+		) {
 			continue
 		}
 		if _, ok := seen[row.WorkspaceID]; ok {
@@ -565,64 +560,38 @@ func (s *agentsService) runtimeGrantVisibleWorkspaceIDs(ctx context.Context, org
 	return workspaceIDs, nil
 }
 
-func (s *agentsService) runtimeGrantCustomRolePermissions(ctx context.Context, organizationID uuid.UUID, roleIDs []string) (map[string][]string, error) {
-	out := make(map[string][]string)
-	if len(roleIDs) == 0 {
-		return out, nil
+func runtimeGrantParseWorkspacePermissions(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return []string{}
 	}
-
-	uniqueRoleIDs := make([]string, 0, len(roleIDs))
-	seen := make(map[string]struct{}, len(roleIDs))
-	for _, roleID := range roleIDs {
-		roleID = strings.TrimSpace(roleID)
-		if roleID == "" {
-			continue
-		}
-		if _, ok := seen[roleID]; ok {
-			continue
-		}
-		seen[roleID] = struct{}{}
-		uniqueRoleIDs = append(uniqueRoleIDs, roleID)
+	var permissions []string
+	if err := json.Unmarshal([]byte(raw), &permissions); err != nil {
+		return []string{}
 	}
-	if len(uniqueRoleIDs) == 0 {
-		return out, nil
-	}
-
-	var roles []workspacemodel.WorkspaceCustomRole
-	if err := s.db.WithContext(ctx).
-		Model(&workspacemodel.WorkspaceCustomRole{}).
-		Where("group_id = ? AND id IN ? AND status = ?", organizationID.String(), uniqueRoleIDs, workspacemodel.WorkspaceCustomRoleStatusActive).
-		Find(&roles).Error; err != nil {
-		return nil, fmt.Errorf("failed to load runtime grant custom role permissions: %w", err)
-	}
-	for _, role := range roles {
-		out[role.ID] = append([]string(nil), role.Permissions...)
-	}
-	return out, nil
+	return permissions
 }
 
-func runtimeGrantWorkspaceRoleAllowsPermission(role workspacemodel.WorkspaceMemberRole, roleID *string, customRolePermissions map[string][]string, permission workspacemodel.WorkspacePermissionCode) bool {
-	roleIDValue := ""
-	if roleID != nil {
-		roleIDValue = strings.TrimSpace(*roleID)
-	}
-	if roleIDValue != "" && !workspacemodel.IsBuiltinRole(roleIDValue) {
-		for _, granted := range customRolePermissions[roleIDValue] {
-			if workspacemodel.WorkspacePermissionCode(granted) == permission {
-				return true
-			}
-		}
-		return false
-	}
-	if roleIDValue == "" {
-		roleIDValue = workspacemodel.DefaultWorkspaceRoleID(role)
-	}
-	for _, granted := range workspacemodel.GetBuiltinGroupRolePermissionsByID(roleIDValue) {
-		if granted == permission {
-			return true
-		}
-	}
-	return false
+func runtimeGrantWorkspaceMemberAllowsPermission(
+	role workspacemodel.WorkspaceMemberRole,
+	roleID *string,
+	permissions []string,
+	permissionSource workspacemodel.WorkspaceMemberPermissionSource,
+	permission workspacemodel.WorkspacePermissionCode,
+) bool {
+	return workspacemodel.WorkspacePermissionStringsAllow(
+		runtimeGrantWorkspaceMemberPermissions(role, roleID, permissions, permissionSource),
+		permission,
+	)
+}
+
+func runtimeGrantWorkspaceMemberPermissions(
+	role workspacemodel.WorkspaceMemberRole,
+	roleID *string,
+	permissions []string,
+	permissionSource workspacemodel.WorkspaceMemberPermissionSource,
+) []string {
+	return workspacemodel.EffectiveWorkspaceMemberPermissionStrings(role, roleID, permissions, permissionSource)
 }
 
 func agentRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntimeSurface, organizationID, workspaceID uuid.UUID, surfaceEnabled bool, grants []dto.UpdateAgentRuntimeSurfaceGrant) ([]runtimeauth.SurfaceGrant, error) {

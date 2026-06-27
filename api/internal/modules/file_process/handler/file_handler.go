@@ -107,47 +107,8 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 			return
 		}
 
-		hasAccess := false
-
-		if h.tenantService != nil {
-			role, err := h.tenantService.GetUserRole(c.Request.Context(), accountID, teamTenantIDStr)
-			if err != nil {
-				h.businessError(c, response.ErrSystemError)
-				return
-			}
-			if role != nil {
-				hasAccess = true
-			}
-		}
-
-		if !hasAccess {
-			groupRole, err := h.accountService.GetOrganizationRoleByWorkspaceID(c.Request.Context(), accountID, teamTenantIDStr)
-			if err == nil && (groupRole == "owner" || groupRole == "admin") {
-				hasAccess = true
-			}
-		}
-
-		if !hasAccess {
-			h.businessError(c, response.ErrPermissionDenied)
+		if !h.authorizeWorkspaceUpload(c, organizationID, teamTenantIDStr, accountID) {
 			return
-		}
-
-		if h.enterpriseService != nil {
-			hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-				c.Request.Context(),
-				organizationID,
-				teamTenantIDStr,
-				accountID,
-				workspace_model.WorkspacePermissionFileUploadCreate,
-			)
-			if err != nil {
-				h.businessError(c, response.ErrSystemError)
-				return
-			}
-			if !hasPermission {
-				h.businessError(c, response.ErrPermissionDenied)
-				return
-			}
 		}
 
 		teamTenantID = &teamTenantIDStr
@@ -274,6 +235,43 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 	// Build response
 	fileResponse := dto.NewFileUploadResponse(uploadFile)
 	response.Success(c, fileResponse)
+}
+
+func (h *FileHandler) authorizeWorkspaceUpload(c *gin.Context, organizationID, workspaceID, accountID string) bool {
+	if h.enterpriseService != nil {
+		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionFileUploadCreate,
+		)
+		if err != nil {
+			h.businessError(c, response.ErrSystemError)
+			return false
+		}
+		if !hasPermission {
+			h.businessError(c, response.ErrPermissionDenied)
+			return false
+		}
+		return true
+	}
+
+	if h.tenantService == nil {
+		h.businessError(c, response.ErrPermissionDenied)
+		return false
+	}
+
+	role, err := h.tenantService.GetUserRole(c.Request.Context(), accountID, workspaceID)
+	if err != nil {
+		h.businessError(c, response.ErrSystemError)
+		return false
+	}
+	if role == nil {
+		h.businessError(c, response.ErrPermissionDenied)
+		return false
+	}
+	return true
 }
 
 // GetFilePreview gets file preview content
@@ -475,43 +473,8 @@ func (h *FileHandler) CreateTextFile(c *gin.Context) {
 			h.businessError(c, response.ErrInvalidParam)
 			return
 		}
-		hasAccess := false
-		if h.tenantService != nil {
-			role, err := h.tenantService.GetUserRole(c.Request.Context(), accountID, *workspaceID)
-			if err != nil {
-				h.businessError(c, response.ErrSystemError)
-				return
-			}
-			if role != nil {
-				hasAccess = true
-			}
-		}
-		if !hasAccess {
-			groupRole, err := h.accountService.GetOrganizationRoleByWorkspaceID(c.Request.Context(), accountID, *workspaceID)
-			if err == nil && (groupRole == "owner" || groupRole == "admin") {
-				hasAccess = true
-			}
-		}
-		if !hasAccess {
-			h.businessError(c, response.ErrPermissionDenied)
+		if !h.authorizeWorkspaceUpload(c, organizationID, *workspaceID, accountID) {
 			return
-		}
-		if h.enterpriseService != nil {
-			hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-				c.Request.Context(),
-				organizationID,
-				*workspaceID,
-				accountID,
-				workspace_model.WorkspacePermissionFileUploadCreate,
-			)
-			if err != nil {
-				h.businessError(c, response.ErrSystemError)
-				return
-			}
-			if !hasPermission {
-				h.businessError(c, response.ErrPermissionDenied)
-				return
-			}
 		}
 		teamTenantID = workspaceID
 	}
@@ -765,9 +728,7 @@ func (h *FileHandler) ListFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileReadablePermissionCodes()...,
 	)
 	if err != nil {
 		h.businessError(c, response.ErrSystemError)
@@ -829,9 +790,7 @@ func (h *FileHandler) ListArchivedFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileReadablePermissionCodes()...,
 	)
 	if err != nil {
 		h.businessError(c, response.ErrSystemError)
@@ -928,7 +887,7 @@ func (h *FileHandler) DeleteFiles(c *gin.Context) {
 	}
 
 	for _, fileID := range fileIDs {
-		if _, ok := authorizeFileManageAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+		if _, ok := authorizeFileDeleteAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 			return
 		}
 	}

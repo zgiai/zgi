@@ -16,7 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
-func TestExportWorkflowRequiresAgentViewPermission(t *testing.T) {
+func TestExportWorkflowRequiresWorkflowExportPermission(t *testing.T) {
 	service := &workflowImportExportService{workspaceID: "agent-workspace"}
 	permissionChecker := &workflowImportExportPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
@@ -33,17 +33,17 @@ func TestExportWorkflowRequiresAgentViewPermission(t *testing.T) {
 	}
 	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.view permission check")
+		t.Fatalf("expected workflow.export permission check")
 	}
 	if permissionChecker.lastWorkspaceID != "agent-workspace" {
 		t.Fatalf("workspace checked = %q, want agent-workspace", permissionChecker.lastWorkspaceID)
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentView {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentView)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowExport {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowExport)
 	}
 }
 
-func TestImportWorkflowUsesFormWorkspaceForAgentManagePermission(t *testing.T) {
+func TestImportWorkflowUsesFormWorkspaceForWorkflowImportPermission(t *testing.T) {
 	permissionChecker := &workflowImportExportPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
 		workspacePermissionChecker: permissionChecker,
@@ -57,14 +57,14 @@ func TestImportWorkflowUsesFormWorkspaceForAgentManagePermission(t *testing.T) {
 	}
 	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.manage permission check")
+		t.Fatalf("expected workflow.import permission check")
 	}
 	if permissionChecker.lastOrganizationID != "org-1" || permissionChecker.lastWorkspaceID != "target-workspace" || permissionChecker.lastAccountID != "account-1" {
 		t.Fatalf("permission scope = org:%q workspace:%q account:%q, want org-1/target-workspace/account-1",
 			permissionChecker.lastOrganizationID, permissionChecker.lastWorkspaceID, permissionChecker.lastAccountID)
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentManage {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentManage)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowImport {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowImport)
 	}
 }
 

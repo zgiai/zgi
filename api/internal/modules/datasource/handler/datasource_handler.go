@@ -28,6 +28,27 @@ type DataSourceHandler struct {
 	organizationService interfaces.OrganizationService
 }
 
+var databaseExistingAssetVisibilityPermissions = []workspace_model.WorkspacePermissionCode{
+	workspace_model.WorkspacePermissionDatabaseUpdate,
+	workspace_model.WorkspacePermissionDatabaseDelete,
+	workspace_model.WorkspacePermissionDatabaseMove,
+	workspace_model.WorkspacePermissionDatabaseSchemaView,
+	workspace_model.WorkspacePermissionDatabaseSchemaManage,
+	workspace_model.WorkspacePermissionDatabaseRecordView,
+	workspace_model.WorkspacePermissionDatabaseRecordCreate,
+	workspace_model.WorkspacePermissionDatabaseRecordUpdate,
+	workspace_model.WorkspacePermissionDatabaseRecordDelete,
+	workspace_model.WorkspacePermissionDatabaseImportAnalyze,
+	workspace_model.WorkspacePermissionDatabaseImportExecute,
+	workspace_model.WorkspacePermissionDatabaseImportErrorsView,
+	workspace_model.WorkspacePermissionDatabaseGuardPolicyManage,
+	workspace_model.WorkspacePermissionDatabaseTablePromptView,
+	workspace_model.WorkspacePermissionDatabaseTablePromptManage,
+	workspace_model.WorkspacePermissionDatabaseOperationLogsView,
+	workspace_model.WorkspacePermissionDatabaseSQLAuditView,
+	workspace_model.WorkspacePermissionDatabaseAIQueryRead,
+}
+
 // NewDataSourceHandler creates a new DataSourceHandler
 func NewDataSourceHandler(service service.DataSourceService, accountService interfaces.AccountService, enterpriseService interfaces.OrganizationService) *DataSourceHandler {
 	return &DataSourceHandler{
@@ -88,7 +109,7 @@ func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseUpdate) {
 		return
 	}
 
@@ -145,7 +166,7 @@ func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
 	}
 	workspaceID := strings.TrimSpace(*workspaceReq.WorkspaceID)
 
-	if !h.ensureDatabaseWorkspacePermission(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabaseWorkspacePermission(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseCreate) {
 		return
 	}
 
@@ -187,31 +208,22 @@ func (h *DataSourceHandler) ListDataSources(c *gin.Context) {
 
 	var filteredWorkspaceIDs []string
 	if h.organizationService != nil {
-		isAdmin, err := h.organizationService.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
+		var err error
+		filteredWorkspaceIDs, err = shared_visibility.ResolveVisibleWorkspaceIDs(
+			c.Request.Context(),
+			h.organizationService,
+			organizationID,
+			accountID,
+			filterWorkspaceID,
+			databaseExistingAssetVisibilityPermissions...,
+		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
 			return
 		}
-
-		if !isAdmin || filterWorkspaceID != "" {
-			filteredWorkspaceIDs, err = shared_visibility.ResolveVisibleWorkspaceIDs(
-				c.Request.Context(),
-				h.organizationService,
-				organizationID,
-				accountID,
-				filterWorkspaceID,
-				workspace_model.WorkspacePermissionDatabaseView,
-				workspace_model.WorkspacePermissionDatabaseManage,
-				workspace_model.WorkspacePermissionDatabaseDataEdit,
-			)
-			if err != nil {
-				response.Fail(c, response.ErrSystemError)
-				return
-			}
-			if len(filteredWorkspaceIDs) == 0 {
-				response.Success(c, []*dto.DataSourceResponse{})
-				return
-			}
+		if len(filteredWorkspaceIDs) == 0 {
+			response.Success(c, []*dto.DataSourceResponse{})
+			return
 		}
 	}
 
@@ -260,9 +272,7 @@ func (h *DataSourceHandler) GetDataSourceByID(c *gin.Context) {
 		organizationID,
 		id,
 		accountID,
-		workspace_model.WorkspacePermissionDatabaseView,
-		workspace_model.WorkspacePermissionDatabaseManage,
-		workspace_model.WorkspacePermissionDatabaseDataEdit,
+		databaseExistingAssetVisibilityPermissions...,
 	) {
 		return
 	}
@@ -312,7 +322,7 @@ func (h *DataSourceHandler) DeleteDataSourceByID(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseDelete) {
 		return
 	}
 
@@ -376,13 +386,7 @@ func (h *DataSourceHandler) UpdateGuardPolicy(c *gin.Context) {
 			return
 		}
 		if req.Policy.Mode == "enforce" || currentPolicy.Mode == "enforce" {
-			isAdmin, err := h.organizationService.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
-			if err != nil {
-				response.Fail(c, response.ErrSystemError)
-				return
-			}
-			if !isAdmin {
-				response.Fail(c, response.ErrPermissionDenied)
+			if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseGuardPolicyManage) {
 				return
 			}
 		}
@@ -432,42 +436,7 @@ func (h *DataSourceHandler) PreviewGuard(c *gin.Context) {
 }
 
 func (h *DataSourceHandler) ensureDatabaseManage(c *gin.Context, organizationID, dataSourceID, accountID string) bool {
-	if dataSourceID == "" {
-		response.FailWithMessage(c, response.ErrInvalidParam, "id is required")
-		return false
-	}
-	if h.organizationService == nil {
-		return true
-	}
-	dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return false
-	}
-	if dataSource == nil {
-		response.Fail(c, response.ErrNotFound)
-		return false
-	}
-	workspaceID := organizationID
-	if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-		workspaceID = *dataSource.WorkspaceID
-	}
-	hasPermission, err := h.organizationService.CheckWorkspacePermission(
-		c.Request.Context(),
-		organizationID,
-		workspaceID,
-		accountID,
-		workspace_model.WorkspacePermissionDatabaseManage,
-	)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return false
-	}
-	if !hasPermission {
-		response.Fail(c, response.ErrPermissionDenied)
-		return false
-	}
-	return true
+	return h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseGuardPolicyManage)
 }
 
 // CreateTable creates a new table in a data source
@@ -501,7 +470,7 @@ func (h *DataSourceHandler) CreateTable(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseSchemaManage) {
 		return
 	}
 
@@ -550,7 +519,7 @@ func (h *DataSourceHandler) ListTables(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseSchemaView) {
 		return
 	}
 
@@ -601,7 +570,7 @@ func (h *DataSourceHandler) GetTable(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseSchemaView) {
 		return
 	}
 
@@ -657,7 +626,7 @@ func (h *DataSourceHandler) DeleteTable(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseSchemaManage) {
 		return
 	}
 
@@ -710,7 +679,7 @@ func (h *DataSourceHandler) UpdateTable(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseSchemaManage) {
 		return
 	}
 
@@ -774,7 +743,7 @@ func (h *DataSourceHandler) UpdateTableColumns(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseSchemaManage) {
 		return
 	}
 
@@ -830,7 +799,7 @@ func (h *DataSourceHandler) GetTableColumns(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseSchemaView) {
 		return
 	}
 
@@ -891,8 +860,7 @@ func (h *DataSourceHandler) AddTableRecords(c *gin.Context) {
 		organizationID,
 		dataSourceID,
 		accountID,
-		workspace_model.WorkspacePermissionDatabaseManage,
-		workspace_model.WorkspacePermissionDatabaseDataEdit,
+		workspace_model.WorkspacePermissionDatabaseRecordCreate,
 	) {
 		return
 	}
@@ -956,7 +924,7 @@ func (h *DataSourceHandler) QueryTableRecords(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseRecordView) {
 		return
 	}
 
@@ -1013,8 +981,7 @@ func (h *DataSourceHandler) UpdateTableRecords(c *gin.Context) {
 		organizationID,
 		dataSourceID,
 		accountID,
-		workspace_model.WorkspacePermissionDatabaseManage,
-		workspace_model.WorkspacePermissionDatabaseDataEdit,
+		workspace_model.WorkspacePermissionDatabaseRecordUpdate,
 	) {
 		return
 	}
@@ -1078,8 +1045,7 @@ func (h *DataSourceHandler) DeleteTableRecords(c *gin.Context) {
 		organizationID,
 		dataSourceID,
 		accountID,
-		workspace_model.WorkspacePermissionDatabaseManage,
-		workspace_model.WorkspacePermissionDatabaseDataEdit,
+		workspace_model.WorkspacePermissionDatabaseRecordDelete,
 	) {
 		return
 	}
@@ -1139,7 +1105,7 @@ func (h *DataSourceHandler) AnalyzeFileForTable(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, scopeReq.DataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, scopeReq.DataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseImportAnalyze) {
 		return
 	}
 
@@ -1202,7 +1168,7 @@ func (h *DataSourceHandler) DownloadTableTemplate(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseSchemaView) {
 		return
 	}
 
@@ -1278,8 +1244,7 @@ func (h *DataSourceHandler) ImportTableRecords(c *gin.Context) {
 		organizationID,
 		dataSourceID,
 		accountID,
-		workspace_model.WorkspacePermissionDatabaseManage,
-		workspace_model.WorkspacePermissionDatabaseDataEdit,
+		workspace_model.WorkspacePermissionDatabaseImportExecute,
 	) {
 		return
 	}
@@ -1361,8 +1326,7 @@ func (h *DataSourceHandler) IngestFileToTable(c *gin.Context) {
 		organizationID,
 		scopeReq.TableID,
 		accountID,
-		workspace_model.WorkspacePermissionDatabaseManage,
-		workspace_model.WorkspacePermissionDatabaseDataEdit,
+		workspace_model.WorkspacePermissionDatabaseImportAnalyze,
 	) {
 		return
 	}
@@ -1409,8 +1373,7 @@ func (h *DataSourceHandler) ParseFileForTableIngest(c *gin.Context) {
 		organizationID,
 		scopeReq.TableID,
 		accountID,
-		workspace_model.WorkspacePermissionDatabaseManage,
-		workspace_model.WorkspacePermissionDatabaseDataEdit,
+		workspace_model.WorkspacePermissionDatabaseImportAnalyze,
 	) {
 		return
 	}
@@ -1456,8 +1419,7 @@ func (h *DataSourceHandler) ExtractTextToTableRecords(c *gin.Context) {
 		organizationID,
 		scopeReq.TableID,
 		accountID,
-		workspace_model.WorkspacePermissionDatabaseManage,
-		workspace_model.WorkspacePermissionDatabaseDataEdit,
+		workspace_model.WorkspacePermissionDatabaseImportAnalyze,
 	) {
 		return
 	}
@@ -1503,8 +1465,7 @@ func (h *DataSourceHandler) BatchIngestFileToTable(c *gin.Context) {
 		organizationID,
 		scopeReq.TableID,
 		accountID,
-		workspace_model.WorkspacePermissionDatabaseManage,
-		workspace_model.WorkspacePermissionDatabaseDataEdit,
+		workspace_model.WorkspacePermissionDatabaseImportAnalyze,
 	) {
 		return
 	}
@@ -1561,7 +1522,7 @@ func (h *DataSourceHandler) GetTablePrompt(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseTablePromptView) {
 		return
 	}
 
@@ -1685,7 +1646,7 @@ func (h *DataSourceHandler) UpsertTablePrompt(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseTablePromptManage) {
 		return
 	}
 
@@ -1743,7 +1704,7 @@ func (h *DataSourceHandler) DeleteTablePrompt(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseTablePromptManage) {
 		return
 	}
 
@@ -1793,7 +1754,7 @@ func (h *DataSourceHandler) ListOperationLogsByDataSourceID(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseView) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseOperationLogsView) {
 		return
 	}
 
@@ -1902,7 +1863,7 @@ func (h *DataSourceHandler) ListSQLAuditByWorkspace(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabaseWorkspacePermission(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabaseWorkspacePermission(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseSQLAuditView) {
 		return
 	}
 
@@ -1985,7 +1946,7 @@ func (h *DataSourceHandler) GetSQLAuditDetail(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabaseWorkspacePermission(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabaseWorkspacePermission(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionDatabaseSQLAuditView) {
 		return
 	}
 

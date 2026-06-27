@@ -17,7 +17,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
-func TestStopWorkflowTaskRequiresAgentManagePermission(t *testing.T) {
+func TestStopWorkflowTaskRequiresWorkflowRunStopPermission(t *testing.T) {
 	service := &workflowTaskStopService{workspaceID: "agent-workspace"}
 	permissionChecker := &workflowTaskStopPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
@@ -35,13 +35,13 @@ func TestStopWorkflowTaskRequiresAgentManagePermission(t *testing.T) {
 	}
 	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.manage permission check")
+		t.Fatalf("expected workflow.run.stop permission check")
 	}
 	if permissionChecker.lastWorkspaceID != "agent-workspace" {
 		t.Fatalf("workspace checked = %q, want agent-workspace", permissionChecker.lastWorkspaceID)
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentManage {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentManage)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowRunStop {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowRunStop)
 	}
 	if service.stopCalled {
 		t.Fatalf("StopWorkflowTask should not be called when permission is denied")
@@ -73,7 +73,7 @@ func TestStopWorkflowTaskUsesResolvedAgentWorkspace(t *testing.T) {
 	}
 }
 
-func TestRunDraftWorkflowNodeRequiresAgentManageBeforeBindingRequest(t *testing.T) {
+func TestRunDraftWorkflowNodeRequiresWorkflowDebugBeforeBindingRequest(t *testing.T) {
 	service := &workflowTaskStopService{workspaceID: "agent-workspace"}
 	permissionChecker := &workflowTaskStopPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
@@ -91,20 +91,20 @@ func TestRunDraftWorkflowNodeRequiresAgentManageBeforeBindingRequest(t *testing.
 	}
 	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.manage permission check")
+		t.Fatalf("expected workflow.debug permission check")
 	}
 	if permissionChecker.lastWorkspaceID != "agent-workspace" {
 		t.Fatalf("workspace checked = %q, want agent-workspace", permissionChecker.lastWorkspaceID)
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentManage {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentManage)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowDebug {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowDebug)
 	}
 	if service.runNodeCalled {
 		t.Fatalf("RunDraftWorkflowNode should not be called when permission is denied")
 	}
 }
 
-func TestRunAdvancedChatDraftWorkflowRequiresAgentManageBeforeBindingRequest(t *testing.T) {
+func TestRunAdvancedChatDraftWorkflowRequiresWorkflowRunDraftBeforeBindingRequest(t *testing.T) {
 	service := &workflowTaskStopService{workspaceID: "agent-workspace"}
 	permissionChecker := &workflowTaskStopPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
@@ -122,20 +122,20 @@ func TestRunAdvancedChatDraftWorkflowRequiresAgentManageBeforeBindingRequest(t *
 	}
 	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.manage permission check")
+		t.Fatalf("expected workflow.run.draft permission check")
 	}
 	if permissionChecker.lastWorkspaceID != "agent-workspace" {
 		t.Fatalf("workspace checked = %q, want agent-workspace", permissionChecker.lastWorkspaceID)
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentManage {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentManage)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowRunDraft {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowRunDraft)
 	}
 	if service.getDraftWorkflowCalled {
 		t.Fatalf("GetDraftWorkflow should not be called when permission is denied")
 	}
 }
 
-func TestGenerateDraftWorkflowSuggestedQuestionsRequiresAgentManageBeforeBindingRequest(t *testing.T) {
+func TestGenerateDraftWorkflowSuggestedQuestionsRequiresWorkflowDebugBeforeBindingRequest(t *testing.T) {
 	service := &workflowTaskStopService{workspaceID: "agent-workspace"}
 	permissionChecker := &workflowTaskStopPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
@@ -153,20 +153,20 @@ func TestGenerateDraftWorkflowSuggestedQuestionsRequiresAgentManageBeforeBinding
 	}
 	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.manage permission check")
+		t.Fatalf("expected workflow.debug permission check")
 	}
 	if permissionChecker.lastWorkspaceID != "agent-workspace" {
 		t.Fatalf("workspace checked = %q, want agent-workspace", permissionChecker.lastWorkspaceID)
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentManage {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentManage)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowDebug {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowDebug)
 	}
 	if service.suggestedQuestionsCalled {
 		t.Fatalf("GenerateDraftWorkflowSuggestedQuestions should not be called when permission is denied")
 	}
 }
 
-func TestManualDiagnoseNodeRequiresAgentManageBeforeBindingRequest(t *testing.T) {
+func TestManualDiagnoseNodeRequiresWorkflowDebugBeforeBindingRequest(t *testing.T) {
 	service := &workflowTaskStopService{workspaceID: "agent-workspace"}
 	permissionChecker := &workflowTaskStopPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
@@ -183,13 +183,13 @@ func TestManualDiagnoseNodeRequiresAgentManageBeforeBindingRequest(t *testing.T)
 	}
 	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.manage permission check")
+		t.Fatalf("expected workflow.debug permission check")
 	}
 	if permissionChecker.lastWorkspaceID != "agent-workspace" {
 		t.Fatalf("workspace checked = %q, want agent-workspace", permissionChecker.lastWorkspaceID)
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentManage {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentManage)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowDebug {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowDebug)
 	}
 	if service.validateNodeScopeCalled {
 		t.Fatalf("ValidateWorkflowRunNodeScope should not be called before permission passes")

@@ -34,13 +34,13 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 	}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
-			workspacemodel.WorkspacePermissionWorkspaceView:             {"ws-1", "ws-2"},
-			workspacemodel.WorkspacePermissionAgentView:                 {"ws-agent"},
-			workspacemodel.WorkspacePermissionKnowledgeBaseView:         {"ws-knowledge-view", "ws-knowledge-shared"},
-			workspacemodel.WorkspacePermissionKnowledgeBaseManage:       {"ws-knowledge-manage"},
-			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage: {"ws-knowledge-shared", "ws-knowledge-folder"},
-			workspacemodel.WorkspacePermissionDatabaseView:              {"ws-db"},
-			workspacemodel.WorkspacePermissionFileView:                  {"ws-file"},
+			workspacemodel.WorkspacePermissionWorkspaceView:               {"ws-1", "ws-2"},
+			workspacemodel.WorkspacePermissionAgentStatsView:              {"ws-agent"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView:   {"ws-knowledge-view", "ws-knowledge-shared"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: {"ws-knowledge-manage"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage:   {"ws-knowledge-shared", "ws-knowledge-folder"},
+			workspacemodel.WorkspacePermissionDatabaseRecordView:          {"ws-db"},
+			workspacemodel.WorkspacePermissionFileMetadataView:            {"ws-file"},
 		},
 	}
 	accountSvc := &dashboardHandlerAccountContextService{
@@ -71,13 +71,11 @@ func TestDashboardRecentWorkWorkspaceScopeUsesResourcePermissions(t *testing.T) 
 	dashboardSvc := &dashboardHandlerService{}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
 		allowedByPermission: map[workspacemodel.WorkspacePermissionCode]bool{
-			workspacemodel.WorkspacePermissionWorkspaceView:             false,
-			workspacemodel.WorkspacePermissionAgentView:                 true,
-			workspacemodel.WorkspacePermissionKnowledgeBaseView:         false,
-			workspacemodel.WorkspacePermissionKnowledgeBaseManage:       true,
-			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage: false,
-			workspacemodel.WorkspacePermissionDatabaseView:              false,
-			workspacemodel.WorkspacePermissionFileView:                  true,
+			workspacemodel.WorkspacePermissionWorkspaceView:               false,
+			workspacemodel.WorkspacePermissionAgentStatsView:              true,
+			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: true,
+			workspacemodel.WorkspacePermissionDatabaseRecordView:          false,
+			workspacemodel.WorkspacePermissionFileMetadataView:            true,
 		},
 	}
 	h := &DashboardHandler{
@@ -150,13 +148,13 @@ func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
 	}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
-			workspacemodel.WorkspacePermissionWorkspaceView:             {"ws-1", "ws-2"},
-			workspacemodel.WorkspacePermissionAgentView:                 {"ws-agent"},
-			workspacemodel.WorkspacePermissionKnowledgeBaseView:         {"ws-knowledge"},
-			workspacemodel.WorkspacePermissionKnowledgeBaseManage:       {"ws-knowledge-manage"},
-			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage: {"ws-knowledge-folder"},
-			workspacemodel.WorkspacePermissionDatabaseView:              {"ws-db"},
-			workspacemodel.WorkspacePermissionFileView:                  {"ws-file"},
+			workspacemodel.WorkspacePermissionWorkspaceView:               {"ws-1", "ws-2"},
+			workspacemodel.WorkspacePermissionAgentStatsView:              {"ws-agent"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView:   {"ws-knowledge"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: {"ws-knowledge-manage"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage:   {"ws-knowledge-folder"},
+			workspacemodel.WorkspacePermissionDatabaseRecordView:          {"ws-db"},
+			workspacemodel.WorkspacePermissionFileMetadataView:            {"ws-file"},
 		},
 	}
 	h := &DashboardHandler{
@@ -261,8 +259,6 @@ type dashboardHandlerWorkspacePermissionService struct {
 	allowed                  bool
 	allowedByPermission      map[workspacemodel.WorkspacePermissionCode]bool
 	called                   bool
-	organizationAdmin        bool
-	adminCheckCalled         bool
 	workspaceIDsByPermission map[workspacemodel.WorkspacePermissionCode][]string
 	organizationID           string
 	workspaceID              string
@@ -280,13 +276,6 @@ func (s *dashboardHandlerWorkspacePermissionService) CheckWorkspacePermission(_ 
 		return s.allowedByPermission[permissionCode], nil
 	}
 	return s.allowed, nil
-}
-
-func (s *dashboardHandlerWorkspacePermissionService) IsOrganizationAdminOrOwner(_ context.Context, organizationID, accountID string) (bool, error) {
-	s.adminCheckCalled = true
-	s.organizationID = organizationID
-	s.accountID = accountID
-	return s.organizationAdmin, nil
 }
 
 func (s *dashboardHandlerWorkspacePermissionService) ListWorkspaceIDsByPermission(_ context.Context, organizationID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) ([]string, error) {

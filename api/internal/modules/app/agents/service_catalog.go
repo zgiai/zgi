@@ -59,7 +59,7 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		return nil, errCurrentOrganizationNotFound
 	}
 
-	workspaceIDs, err := s.runnableWebAppWorkspaceIDs(ctx, currentOrganization)
+	visibleWorkspaceIDs, err := s.runnableWebAppWorkspaceIDs(ctx, currentOrganization)
 	if err != nil {
 		return nil, err
 	}
@@ -68,15 +68,22 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		Items: make([]dto.RunnableWebAppItem, 0),
 	}
 
-	if len(workspaceIDs) == 0 {
+	if req.WorkspaceID != "" && !slices.Contains(visibleWorkspaceIDs, req.WorkspaceID) {
 		return resp, nil
 	}
 
-	if req.WorkspaceID != "" && !slices.Contains(workspaceIDs, req.WorkspaceID) {
+	candidateWorkspaceIDs := visibleWorkspaceIDs
+	if req.WorkspaceID == "" && s.db != nil {
+		candidateWorkspaceIDs, err = s.runnableWebAppOrganizationWorkspaceIDs(ctx, currentOrganization)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(candidateWorkspaceIDs) == 0 {
 		return resp, nil
 	}
 
-	items, err := s.agentsRepo.ListRunnableWebApps(ctx, workspaceIDs, req.WorkspaceID)
+	items, err := s.agentsRepo.ListRunnableWebApps(ctx, candidateWorkspaceIDs, req.WorkspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list runnable web apps: %w", err)
 	}
@@ -285,6 +292,18 @@ func (s *agentsService) runnableWebAppWorkspaceIDs(ctx context.Context, currentO
 		return nil, fmt.Errorf("failed to list app center workspaces: %w", err)
 	}
 	return workspaceIDs, nil
+}
+
+func (s *agentsService) runnableWebAppOrganizationWorkspaceIDs(ctx context.Context, currentOrganization *model.OrganizationMember) ([]string, error) {
+	if currentOrganization == nil || strings.TrimSpace(currentOrganization.OrganizationID) == "" {
+		return nil, nil
+	}
+
+	workspaces, err := s.enterpriseService.GetOrganizationWorkspacesList(ctx, currentOrganization.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list app center organization workspaces: %w", err)
+	}
+	return normalWorkspaceIDs(workspaces, currentOrganization.OrganizationID), nil
 }
 
 func (s *agentsService) runnableWebAppDepartmentIDsForAudience(ctx context.Context, audience runtimeauth.RuntimeAudience) ([]uuid.UUID, error) {

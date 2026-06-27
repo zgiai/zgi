@@ -45,7 +45,7 @@ func (h *WorkflowHandler) ExportWorkflow(c *gin.Context) {
 			organizationID,
 			appWorkspaceID,
 			accountID,
-			workspace_model.WorkspacePermissionAgentView,
+			workspace_model.WorkspacePermissionWorkflowExport,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -110,7 +110,7 @@ func (h *WorkflowHandler) ImportWorkflow(c *gin.Context) {
 			organizationID,
 			workspaceID,
 			accountID,
-			workspace_model.WorkspacePermissionAgentManage,
+			workspace_model.WorkspacePermissionWorkflowImport,
 		)
 		if err != nil {
 			logger.CriticalContext(c.Request.Context(), "failed to check import workflow workspace permission", "workspace_id", workspaceID, "account_id", accountID, err)
@@ -121,17 +121,6 @@ func (h *WorkflowHandler) ImportWorkflow(c *gin.Context) {
 			response.Fail(c, response.ErrPermissionDenied)
 			return
 		}
-	}
-
-	// Import creates new agent. Verify user has editor permission in current workspace.
-	isEditor, err := h.accountService.IsEditor(c.Request.Context(), accountID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-	if !isEditor {
-		response.Fail(c, response.ErrPermissionDenied)
-		return
 	}
 
 	file, err := c.FormFile("file")

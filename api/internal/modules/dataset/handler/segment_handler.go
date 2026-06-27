@@ -141,7 +141,7 @@ func (h *SegmentHandler) DeleteDocumentSegments(c *gin.Context) {
 		groupID = tenantID
 	}
 
-	if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+	if _, _, ok := authorizeDatasetDocumentSegmentDeleteAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
 		return
 	}
 
@@ -160,7 +160,7 @@ func (h *SegmentHandler) DeleteDocumentSegments(c *gin.Context) {
 			groupID,
 			datasetTenantID,
 			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
+			workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -226,7 +226,7 @@ func (h *SegmentHandler) CreateDocumentSegment(c *gin.Context) {
 		groupID = tenantID
 	}
 
-	if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+	if _, _, ok := authorizeDatasetDocumentSegmentUpdateAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
 		return
 	}
 
@@ -244,7 +244,7 @@ func (h *SegmentHandler) CreateDocumentSegment(c *gin.Context) {
 			groupID,
 			datasetTenantID,
 			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
+			workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -305,7 +305,7 @@ func (h *SegmentHandler) UpdateDocumentSegment(c *gin.Context) {
 		groupID = tenantID
 	}
 
-	if _, _, _, ok := authorizeDatasetSegmentManageAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
+	if _, _, _, ok := authorizeDatasetSegmentUpdateAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
 		return
 	}
 
@@ -324,7 +324,7 @@ func (h *SegmentHandler) UpdateDocumentSegment(c *gin.Context) {
 			groupID,
 			datasetTenantID,
 			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
+			workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -418,7 +418,7 @@ func (h *SegmentHandler) DeleteDocumentSegment(c *gin.Context) {
 		groupID = tenantID
 	}
 
-	if _, _, _, ok := authorizeDatasetSegmentManageAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
+	if _, _, _, ok := authorizeDatasetSegmentDeleteAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
 		return
 	}
 
@@ -436,7 +436,7 @@ func (h *SegmentHandler) DeleteDocumentSegment(c *gin.Context) {
 			groupID,
 			datasetTenantID,
 			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
+			workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -524,11 +524,11 @@ func (h *SegmentHandler) UpdateDocumentSegmentStatus(c *gin.Context) {
 		return
 	}
 
-	if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+	if _, _, ok := authorizeDatasetDocumentSegmentUpdateAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
 		return
 	}
 	for _, segmentID := range segmentIDs {
-		if _, _, _, ok := authorizeDatasetSegmentManageAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
+		if _, _, _, ok := authorizeDatasetSegmentUpdateAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
 			return
 		}
 	}
@@ -599,7 +599,7 @@ func (h *SegmentHandler) CreateChildChunk(c *gin.Context) {
 		return
 	}
 
-	if _, _, _, ok := authorizeDatasetSegmentManageAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
+	if _, _, _, ok := authorizeDatasetSegmentUpdateAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
 		return
 	}
 
@@ -768,9 +768,7 @@ func (h *SegmentHandler) GetChildChunk(c *gin.Context) {
 		documentID,
 		segmentID,
 		childChunkID,
-		workspace_model.WorkspacePermissionKnowledgeBaseView,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+		knowledgeBaseSegmentViewPermissionCodes()...,
 	); !ok {
 		return
 	}
@@ -858,7 +856,7 @@ func (h *SegmentHandler) UpdateChildChunk(c *gin.Context) {
 		documentID,
 		segmentID,
 		childChunkID,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
 	); !ok {
 		return
 	}
@@ -963,7 +961,7 @@ func (h *SegmentHandler) DeleteChildChunk(c *gin.Context) {
 		documentID,
 		segmentID,
 		childChunkID,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
 	); !ok {
 		return
 	}
@@ -1037,7 +1035,7 @@ func (h *SegmentHandler) GenerateQuestionsForSegment(c *gin.Context) {
 		return
 	}
 
-	if _, _, _, ok := authorizeDatasetSegmentManageAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, c.Param("dataset_id"), c.Param("document_id"), segmentID); !ok {
+	if _, _, _, ok := authorizeDatasetSegmentUpdateAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, c.Param("dataset_id"), c.Param("document_id"), segmentID); !ok {
 		return
 	}
 
@@ -1098,7 +1096,7 @@ func (h *SegmentHandler) CreateDocumentSegmentQuestion(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, _, _, ok := authorizeDatasetSegmentManageAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, c.Param("dataset_id"), c.Param("document_id"), segmentID); !ok {
+	if _, _, _, ok := authorizeDatasetSegmentUpdateAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, c.Param("dataset_id"), c.Param("document_id"), segmentID); !ok {
 		return
 	}
 
@@ -1254,7 +1252,7 @@ func (h *SegmentHandler) UpdateDocumentSegmentQuestion(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 	segmentID := c.Param("segment_id")
-	if _, _, _, ok := authorizeDatasetSegmentManageAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
+	if _, _, _, ok := authorizeDatasetSegmentUpdateAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
 		return
 	}
 	question, err := h.segmentService.GetDocumentSegmentQuestionByID(c.Request.Context(), questionID)
@@ -1295,7 +1293,7 @@ func (h *SegmentHandler) DeleteDocumentSegmentQuestion(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 	segmentID := c.Param("segment_id")
-	if _, _, _, ok := authorizeDatasetSegmentManageAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
+	if _, _, _, ok := authorizeDatasetSegmentDeleteAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
 		return
 	}
 	question, err := h.segmentService.GetDocumentSegmentQuestionByID(c.Request.Context(), questionID)
@@ -1325,7 +1323,7 @@ func (h *SegmentHandler) DeleteDocumentSegmentQuestionsBySegment(c *gin.Context)
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, _, _, ok := authorizeDatasetSegmentManageAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, c.Param("dataset_id"), c.Param("document_id"), segmentID); !ok {
+	if _, _, _, ok := authorizeDatasetSegmentUpdateAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, c.Param("dataset_id"), c.Param("document_id"), segmentID); !ok {
 		return
 	}
 
@@ -1346,7 +1344,7 @@ func (h *SegmentHandler) DeleteDocumentSegmentQuestionsByDocument(c *gin.Context
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, c.Param("dataset_id"), documentID); !ok {
+	if _, _, ok := authorizeDatasetDocumentSegmentDeleteAccess(c, h.datasetService, h.documentService, h.authService, c.Param("dataset_id"), documentID); !ok {
 		return
 	}
 
@@ -1367,7 +1365,7 @@ func (h *SegmentHandler) DeleteDocumentSegmentQuestionsByDataset(c *gin.Context)
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, ok := authorizeDatasetManageAccess(c, h.datasetService, h.authService, datasetID); !ok {
+	if _, ok := authorizeDatasetSegmentDeleteAccessByDataset(c, h.datasetService, h.authService, datasetID); !ok {
 		return
 	}
 
@@ -1402,7 +1400,7 @@ func (h *SegmentHandler) BatchCreateDocumentSegmentQuestions(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, _, _, ok := authorizeDatasetSegmentManageAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, c.Param("dataset_id"), c.Param("document_id"), segmentID); !ok {
+	if _, _, _, ok := authorizeDatasetSegmentUpdateAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, c.Param("dataset_id"), c.Param("document_id"), segmentID); !ok {
 		return
 	}
 

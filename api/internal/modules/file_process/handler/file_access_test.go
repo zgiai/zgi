@@ -69,12 +69,13 @@ func TestAuthorizeFileViewAccessAllowsWorkspaceDownloadPermission(t *testing.T) 
 	if uploadFile == nil || uploadFile.ID != "file-1" {
 		t.Fatalf("uploadFile = %#v, want file-1", uploadFile)
 	}
-	wantPermissions := []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileDownload,
-	}
+	wantPermissions := fileReadablePermissionCodes()
 	if !reflect.DeepEqual(permissionChecker.lastPermissions, wantPermissions) {
 		t.Fatalf("permissions = %#v, want %#v", permissionChecker.lastPermissions, wantPermissions)
+	}
+	if containsWorkspacePermission(permissionChecker.lastPermissions, workspace_model.WorkspacePermissionFileView) ||
+		containsWorkspacePermission(permissionChecker.lastPermissions, workspace_model.WorkspacePermissionFileManage) {
+		t.Fatalf("permissions = %#v should use fine file permissions", permissionChecker.lastPermissions)
 	}
 }
 
@@ -146,8 +147,8 @@ func TestAuthorizeFileManageAccessAllowsOrganizationFileCreator(t *testing.T) {
 	}
 }
 
-func TestAuthorizeFileManageAccessAllowsOrganizationAdmin(t *testing.T) {
-	c, _ := newFileAccessTestContext("account-1", "org-1")
+func TestAuthorizeFileManageAccessRejectsOrganizationAdminWithoutWorkspacePermission(t *testing.T) {
+	c, recorder := newFileAccessTestContext("account-1", "org-1")
 	fileService := &fileAccessFileService{
 		files: map[string]*dto.UploadFile{
 			"file-1": {
@@ -158,13 +159,72 @@ func TestAuthorizeFileManageAccessAllowsOrganizationAdmin(t *testing.T) {
 		},
 	}
 
-	uploadFile, ok := authorizeFileManageAccess(c, fileService, &fileAccessPermissionChecker{admin: true}, "file-1")
+	_, ok := authorizeFileManageAccess(c, fileService, &fileAccessPermissionChecker{}, "file-1")
 
-	if !ok {
-		t.Fatalf("authorizeFileManageAccess ok = false, want true")
+	if ok {
+		t.Fatalf("authorizeFileManageAccess ok = true, want false")
 	}
-	if uploadFile == nil || uploadFile.ID != "file-1" {
-		t.Fatalf("uploadFile = %#v, want file-1", uploadFile)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestAuthorizeFileActionAccessUsesFinePermissions(t *testing.T) {
+	tests := []struct {
+		name           string
+		authorize      func(*gin.Context, interfaces.FileService, fileWorkspacePermissionChecker, string) (*dto.UploadFile, bool)
+		permissionCode workspace_model.WorkspacePermissionCode
+	}{
+		{
+			name:           "delete",
+			authorize:      authorizeFileDeleteAccess,
+			permissionCode: workspace_model.WorkspacePermissionFileDelete,
+		},
+		{
+			name:           "move",
+			authorize:      authorizeFileMoveAccess,
+			permissionCode: workspace_model.WorkspacePermissionFileMove,
+		},
+		{
+			name:           "archive",
+			authorize:      authorizeFileArchiveAccess,
+			permissionCode: workspace_model.WorkspacePermissionFileArchive,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := newFileAccessTestContext("account-1", "org-1")
+			workspaceID := "workspace-1"
+			fileService := &fileAccessFileService{
+				files: map[string]*dto.UploadFile{
+					"file-1": {
+						ID:             "file-1",
+						OrganizationID: "org-1",
+						WorkspaceID:    &workspaceID,
+						CreatedBy:      "account-2",
+					},
+				},
+			}
+			permissionChecker := &fileAccessPermissionChecker{
+				allowed: map[workspace_model.WorkspacePermissionCode]bool{
+					tt.permissionCode: true,
+				},
+			}
+
+			uploadFile, ok := tt.authorize(c, fileService, permissionChecker, "file-1")
+
+			if !ok {
+				t.Fatalf("%s ok = false, want true", tt.name)
+			}
+			if uploadFile == nil || uploadFile.ID != "file-1" {
+				t.Fatalf("uploadFile = %#v, want file-1", uploadFile)
+			}
+			wantPermissions := []workspace_model.WorkspacePermissionCode{tt.permissionCode}
+			if !reflect.DeepEqual(permissionChecker.lastPermissions, wantPermissions) {
+				t.Fatalf("permissions = %#v, want %#v", permissionChecker.lastPermissions, wantPermissions)
+			}
+		})
 	}
 }
 
@@ -181,7 +241,7 @@ func TestAuthorizeFileAccessRestrictsTemporaryFilesToCreator(t *testing.T) {
 		},
 	}
 
-	_, ok := authorizeFileViewAccess(c, fileService, &fileAccessPermissionChecker{admin: true}, "file-1")
+	_, ok := authorizeFileViewAccess(c, fileService, &fileAccessPermissionChecker{}, "file-1")
 
 	if ok {
 		t.Fatalf("authorizeFileViewAccess ok = true, want false")
@@ -207,7 +267,7 @@ func TestAuthorizeFileFolderManageAllowsWorkspaceManagePermission(t *testing.T) 
 	}
 	permissionChecker := &fileAccessPermissionChecker{
 		allowed: map[workspace_model.WorkspacePermissionCode]bool{
-			workspace_model.WorkspacePermissionFileManage: true,
+			workspace_model.WorkspacePermissionFileFolderManage: true,
 		},
 	}
 
@@ -222,7 +282,7 @@ func TestAuthorizeFileFolderManageAllowsWorkspaceManagePermission(t *testing.T) 
 	if permissionChecker.lastWorkspaceID != workspaceID {
 		t.Fatalf("workspaceID = %q, want %q", permissionChecker.lastWorkspaceID, workspaceID)
 	}
-	wantPermissions := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionFileManage}
+	wantPermissions := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionFileFolderManage}
 	if !reflect.DeepEqual(permissionChecker.lastPermissions, wantPermissions) {
 		t.Fatalf("permissions = %#v, want %#v", permissionChecker.lastPermissions, wantPermissions)
 	}
@@ -297,10 +357,10 @@ func TestAuthorizeFileFolderViewAllowsPartialTeamWorkspacePermission(t *testing.
 	permissionChecker := &fileAccessPermissionChecker{
 		allowedByWorkspace: map[string]map[workspace_model.WorkspacePermissionCode]bool{
 			workspaceID: {
-				workspace_model.WorkspacePermissionFileView: true,
+				workspace_model.WorkspacePermissionFileFolderView: true,
 			},
 			sharedWorkspaceID: {
-				workspace_model.WorkspacePermissionFileView: true,
+				workspace_model.WorkspacePermissionFileFolderView: true,
 			},
 		},
 	}
@@ -338,6 +398,65 @@ func TestCanListFavoriteFileFiltersInvisibleWorkspaceFile(t *testing.T) {
 	}
 	if allowed {
 		t.Fatalf("canListFavoriteFile allowed = true, want false")
+	}
+}
+
+func TestAuthorizeWorkspaceUploadUsesDirectWorkspacePermission(t *testing.T) {
+	c, recorder := newFileAccessTestContext("account-1", "org-1")
+	permissionChecker := &fileUploadPermissionChecker{
+		allowed: false,
+	}
+	handler := &FileHandler{
+		enterpriseService: permissionChecker,
+		tenantService: &fileUploadWorkspaceService{
+			role: ptrWorkspaceRole(workspace_model.WorkspaceRoleAdmin),
+		},
+	}
+
+	ok := handler.authorizeWorkspaceUpload(c, "org-1", "workspace-1", "account-1")
+
+	if ok {
+		t.Fatalf("authorizeWorkspaceUpload ok = true, want false")
+	}
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	if permissionChecker.lastWorkspaceID != "workspace-1" {
+		t.Fatalf("workspace id = %q, want workspace-1", permissionChecker.lastWorkspaceID)
+	}
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionFileUploadCreate {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionFileUploadCreate)
+	}
+}
+
+func TestAuthorizeWorkspaceUploadLegacyFallbackRequiresWorkspaceMembership(t *testing.T) {
+	c, recorder := newFileAccessTestContext("account-1", "org-1")
+	handler := &FileHandler{
+		tenantService: &fileUploadWorkspaceService{},
+	}
+
+	ok := handler.authorizeWorkspaceUpload(c, "org-1", "workspace-1", "account-1")
+
+	if ok {
+		t.Fatalf("authorizeWorkspaceUpload ok = true, want false")
+	}
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestAuthorizeWorkspaceUploadLegacyFallbackAllowsWorkspaceMember(t *testing.T) {
+	c, _ := newFileAccessTestContext("account-1", "org-1")
+	handler := &FileHandler{
+		tenantService: &fileUploadWorkspaceService{
+			role: ptrWorkspaceRole(workspace_model.WorkspaceRoleNormal),
+		},
+	}
+
+	ok := handler.authorizeWorkspaceUpload(c, "org-1", "workspace-1", "account-1")
+
+	if !ok {
+		t.Fatalf("authorizeWorkspaceUpload ok = false, want true")
 	}
 }
 
@@ -554,7 +673,6 @@ func newFileAccessTestContext(accountID, organizationID string) (*gin.Context, *
 type fileAccessPermissionChecker struct {
 	allowed            map[workspace_model.WorkspacePermissionCode]bool
 	allowedByWorkspace map[string]map[workspace_model.WorkspacePermissionCode]bool
-	admin              bool
 	lastWorkspaceID    string
 	lastPermissions    []workspace_model.WorkspacePermissionCode
 }
@@ -578,8 +696,30 @@ func (f *fileAccessPermissionChecker) CheckWorkspaceOrganizationAnyPermission(ct
 	return false, nil
 }
 
-func (f *fileAccessPermissionChecker) IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
-	return f.admin, nil
+type fileUploadPermissionChecker struct {
+	interfaces.OrganizationService
+	allowed         bool
+	lastWorkspaceID string
+	lastPermission  workspace_model.WorkspacePermissionCode
+}
+
+func (f *fileUploadPermissionChecker) CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspace_model.WorkspacePermissionCode) (bool, error) {
+	f.lastWorkspaceID = workspaceID
+	f.lastPermission = permissionCode
+	return f.allowed, nil
+}
+
+type fileUploadWorkspaceService struct {
+	interfaces.WorkspaceManagementService
+	role *workspace_model.WorkspaceMemberRole
+}
+
+func (f *fileUploadWorkspaceService) GetUserRole(ctx context.Context, accountID, workspaceID string) (*workspace_model.WorkspaceMemberRole, error) {
+	return f.role, nil
+}
+
+func ptrWorkspaceRole(role workspace_model.WorkspaceMemberRole) *workspace_model.WorkspaceMemberRole {
+	return &role
 }
 
 type fileAccessFolderService struct {
@@ -597,6 +737,15 @@ func (f *fileAccessFolderService) GetFolderByID(ctx context.Context, id string) 
 
 func (f *fileAccessFolderService) GetFolderPermissionTenants(ctx context.Context, folderID string) ([]string, error) {
 	return f.partialWorkspaces[folderID], nil
+}
+
+func containsWorkspacePermission(permissions []workspace_model.WorkspacePermissionCode, want workspace_model.WorkspacePermissionCode) bool {
+	for _, permission := range permissions {
+		if permission == want {
+			return true
+		}
+	}
+	return false
 }
 
 type fileResourcePermissionFolderService struct {
@@ -649,10 +798,6 @@ type fileResourcePermissionChecker struct {
 
 func (f *fileResourcePermissionChecker) CheckWorkspaceOrganizationAnyPermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCodes ...workspace_model.WorkspacePermissionCode) (bool, error) {
 	return f.checker.CheckWorkspaceOrganizationAnyPermission(ctx, organizationID, workspaceID, accountID, permissionCodes...)
-}
-
-func (f *fileResourcePermissionChecker) IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
-	return f.checker.IsOrganizationAdminOrOwner(ctx, organizationID, accountID)
 }
 
 func (f *fileResourcePermissionChecker) GetOrganizationWorkspacesList(ctx context.Context, organizationID string) ([]*workspace_model.Workspace, error) {

@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestGetPaginatedByTenantIDsWithPermissionsFiltersByDatasetPermission(t *testing.T) {
+func TestGetPaginatedByTenantIDsWithPermissionsReturnsScopedWorkspaceDatasets(t *testing.T) {
 	db := newDatasetPermissionTestDB(t)
 	repo := NewDatasetRepository(db)
 	ctx := context.Background()
@@ -28,13 +28,13 @@ func TestGetPaginatedByTenantIDsWithPermissionsFiltersByDatasetPermission(t *tes
 		t.Fatalf("get datasets: %v", err)
 	}
 
-	if total != 3 {
-		t.Fatalf("total = %d, want 3", total)
+	if total != 5 {
+		t.Fatalf("total = %d, want 5", total)
 	}
-	assertDatasetIDs(t, datasets, []string{"legacy-team", "team", "private-own"})
+	assertDatasetIDs(t, datasets, []string{"unknown", "legacy-team", "team", "private-own", "private-other"})
 }
 
-func TestGetDatasetsInFolderByIDWithPaginationWithPermissionsFiltersByDatasetPermission(t *testing.T) {
+func TestGetDatasetsInFolderByIDWithPaginationWithPermissionsReturnsScopedWorkspaceDatasets(t *testing.T) {
 	db := newDatasetPermissionTestDB(t)
 	repo := NewDatasetFolderRepository(db)
 	ctx := context.Background()
@@ -51,10 +51,10 @@ func TestGetDatasetsInFolderByIDWithPaginationWithPermissionsFiltersByDatasetPer
 		t.Fatalf("get folder datasets: %v", err)
 	}
 
-	if total != 3 {
-		t.Fatalf("total = %d, want 3", total)
+	if total != 5 {
+		t.Fatalf("total = %d, want 5", total)
 	}
-	assertDatasetIDs(t, datasets, []string{"legacy-team", "team", "private-own"})
+	assertDatasetIDs(t, datasets, []string{"unknown", "legacy-team", "team", "private-own", "private-other"})
 }
 
 func TestGetPaginatedByTenantIDsWithPermissionsAllowsWorkspaceAdmin(t *testing.T) {
@@ -76,7 +76,7 @@ func TestGetPaginatedByTenantIDsWithPermissionsAllowsWorkspaceAdmin(t *testing.T
 	assertDatasetIDs(t, datasets, []string{"private-other"})
 }
 
-func TestGetPaginatedByTenantIDsWithPermissionsKeepsCreatorOnlyMeWithoutTeamWorkspacePermission(t *testing.T) {
+func TestGetPaginatedByTenantIDsWithPermissionsIgnoresLegacyDatasetPermissionWhenWorkspaceScoped(t *testing.T) {
 	db := newDatasetPermissionTestDB(t)
 	repo := NewDatasetRepository(db)
 	ctx := context.Background()
@@ -90,10 +90,10 @@ func TestGetPaginatedByTenantIDsWithPermissionsKeepsCreatorOnlyMeWithoutTeamWork
 		t.Fatalf("get datasets: %v", err)
 	}
 
-	if total != 1 {
-		t.Fatalf("total = %d, want 1", total)
+	if total != 2 {
+		t.Fatalf("total = %d, want 2", total)
 	}
-	assertDatasetIDs(t, datasets, []string{"private-own"})
+	assertDatasetIDs(t, datasets, []string{"team-other", "private-own"})
 }
 
 func newDatasetPermissionTestDB(t *testing.T) *gorm.DB {

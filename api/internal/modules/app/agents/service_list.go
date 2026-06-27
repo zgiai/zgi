@@ -8,7 +8,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	shared_visibility "github.com/zgiai/zgi/api/internal/modules/shared/visibility"
-	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -136,9 +135,7 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		currentOrganization.OrganizationID,
 		accountID,
 		filter.TenantID,
-		model.WorkspacePermissionAgentView,
-		model.WorkspacePermissionAgentManage,
-		model.WorkspacePermissionAgentLock,
+		agentAssetVisiblePermissionCodes()...,
 	)
 	if err != nil {
 		logger.Error(fmt.Sprintf("GetAgentsListWithPermissions: Failed to resolve visible workspaces for account_id=%s, org_id=%s",
@@ -180,10 +177,12 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		}
 
 		permissionResources = append(permissionResources, interfaces.ResourcePermissionInfo{
-			ResourceID:  a.ID.String(),
-			WorkspaceID: a.TenantID.String(),
-			CreatedBy:   createdBy,
-			GroupID:     nil, // Agents don't have group_id, only tenant_id
+			ResourceID:      a.ID.String(),
+			WorkspaceID:     a.TenantID.String(),
+			OrganizationID:  currentOrganization.OrganizationID,
+			CreatedBy:       createdBy,
+			GroupID:         nil, // Agents don't have group_id, only tenant_id
+			PermissionCodes: agentUpdatePermissionCodes(),
 		})
 	}
 

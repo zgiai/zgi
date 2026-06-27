@@ -95,7 +95,7 @@ func (h *DocumentHandler) CreateDocument(c *gin.Context) {
 		return
 	}
 
-	dataset, ok := authorizeDatasetManageAccess(c, h.datasetService, h.authService, datasetID)
+	dataset, ok := authorizeDatasetDocumentCreateAccess(c, h.datasetService, h.authService, datasetID)
 	if !ok {
 		return
 	}
@@ -119,7 +119,7 @@ func (h *DocumentHandler) CreateDocument(c *gin.Context) {
 func (h *DocumentHandler) DeleteDocuments(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 
-	if _, ok := authorizeDatasetManageAccess(c, h.datasetService, h.authService, datasetID); !ok {
+	if _, ok := authorizeDatasetViewAccess(c, h.datasetService, h.authService, datasetID); !ok {
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *DocumentHandler) DeleteDocuments(c *gin.Context) {
 		return
 	}
 	for _, documentID := range documentIDs {
-		if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+		if _, _, ok := authorizeDatasetDocumentDeleteAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
 			return
 		}
 	}
@@ -172,7 +172,7 @@ func (h *DocumentHandler) UpdateDocument(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 
-	if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+	if _, _, ok := authorizeDatasetDocumentUpdateAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
 		return
 	}
 
@@ -202,7 +202,7 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 	datasetID := c.Param("dataset_id")
 	documentID := c.Param("document_id")
 
-	if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+	if _, _, ok := authorizeDatasetDocumentDeleteAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
 		return
 	}
 
@@ -281,7 +281,7 @@ func (h *DocumentHandler) RetryDocument(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if _, ok := authorizeDatasetManageAccess(c, h.datasetService, h.authService, datasetID); !ok {
+	if _, ok := authorizeDatasetIndexManageAccess(c, h.datasetService, h.authService, datasetID); !ok {
 		return
 	}
 
@@ -294,7 +294,7 @@ func (h *DocumentHandler) RetryDocument(c *gin.Context) {
 	}
 
 	for _, documentID := range req.DocumentIDs {
-		if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+		if _, _, ok := authorizeDatasetDocumentUpdateAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
 			return
 		}
 	}
@@ -328,7 +328,7 @@ func (h *DocumentHandler) UpdateDocumentStatus(c *gin.Context) {
 		return
 	}
 
-	if _, ok := authorizeDatasetManageAccess(c, h.datasetService, h.authService, datasetID); !ok {
+	if _, ok := authorizeDatasetDocumentBatchUpdateAccess(c, h.datasetService, h.authService, datasetID); !ok {
 		return
 	}
 
@@ -361,7 +361,7 @@ func (h *DocumentHandler) UpdateDocumentStatus(c *gin.Context) {
 	}
 
 	for _, documentID := range documentIDs {
-		if _, _, ok := authorizeDatasetDocumentManageAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
+		if _, _, ok := authorizeDatasetDocumentUpdateAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
 			return
 		}
 	}

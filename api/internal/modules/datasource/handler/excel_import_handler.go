@@ -27,7 +27,7 @@ func (h *DataSourceHandler) AnalyzeExcelImport(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportAnalyze) {
 		return
 	}
 	var req dto.AnalyzeExcelImportRequest
@@ -61,7 +61,7 @@ func (h *DataSourceHandler) ConfirmExcelImport(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportExecute) {
 		return
 	}
 	var req dto.ConfirmExcelImportRequest
@@ -95,7 +95,7 @@ func (h *DataSourceHandler) RecognizeExcelImportFields(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportAnalyze) {
 		return
 	}
 	var req dto.RecognizeExcelImportRequest
@@ -129,7 +129,7 @@ func (h *DataSourceHandler) GetExcelImportJob(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseView) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportAnalyze) {
 		return
 	}
 	result, err := h.service.GetExcelImportJob(c.Request.Context(), organizationID, dataSourceID, jobID)
@@ -161,7 +161,7 @@ func (h *DataSourceHandler) ListExcelImportErrors(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportErrorsView) {
 		return
 	}
 	limit := clampQueryInt(c.DefaultQuery("limit", "20"), 20, 1, 100)

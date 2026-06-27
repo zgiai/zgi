@@ -132,7 +132,7 @@ type DocumentService interface {
 type DocumentServiceImpl struct {
 	documentRepo      dataset_repo.DocumentRepository
 	datasetRepo       dataset_repo.DatasetRepository
-	tenantSvc         interfaces.WorkspaceManagementService
+	organizationSvc   interfaces.OrganizationService
 	indexingService   *DocumentIndexingService
 	fileService       interfaces.FileService
 	vectorCleaner     DocumentVectorCleaner
@@ -541,8 +541,20 @@ func (s *DocumentServiceImpl) CheckDatasetPermission(ctx context.Context, datase
 		return fmt.Errorf("dataset not found")
 	}
 
-	// Check if user has permission to access this tenant
-	hasPermission := s.tenantSvc.CheckPermission(ctx, dataset.WorkspaceID, userID)
+	if s.organizationSvc == nil {
+		return fmt.Errorf("workspace permission service unavailable")
+	}
+
+	hasPermission, err := s.organizationSvc.CheckWorkspaceOrganizationAnyPermission(
+		ctx,
+		dataset.OrganizationID,
+		dataset.WorkspaceID,
+		userID,
+		knowledgeBaseReadPermissionCodes()...,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to check workspace permission: %w", err)
+	}
 	if !hasPermission {
 		return fmt.Errorf("access denied")
 	}
@@ -562,8 +574,20 @@ func (s *DocumentServiceImpl) CheckEditPermission(ctx context.Context, datasetID
 		return fmt.Errorf("dataset not found")
 	}
 
-	// Check if user has permission to edit this tenant
-	hasPermission := s.tenantSvc.CheckPermission(ctx, dataset.WorkspaceID, userID)
+	if s.organizationSvc == nil {
+		return fmt.Errorf("workspace permission service unavailable")
+	}
+
+	hasPermission, err := s.organizationSvc.CheckWorkspaceOrganizationAnyPermission(
+		ctx,
+		dataset.OrganizationID,
+		dataset.WorkspaceID,
+		userID,
+		knowledgeBaseEditPermissionCodes()...,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to check workspace permission: %w", err)
+	}
 	if !hasPermission {
 		return fmt.Errorf("edit permission denied")
 	}
@@ -965,7 +989,7 @@ func newDocumentProcessRuleSnapshot(datasetID, userID, extractionStrategy string
 func NewDocumentService(
 	documentRepo dataset_repo.DocumentRepository,
 	datasetRepo dataset_repo.DatasetRepository,
-	tenantSvc interfaces.WorkspaceManagementService,
+	organizationSvc interfaces.OrganizationService,
 	indexingService *DocumentIndexingService,
 	fileService interfaces.FileService,
 	vectorCleaner DocumentVectorCleaner,
@@ -975,7 +999,7 @@ func NewDocumentService(
 	return &DocumentServiceImpl{
 		documentRepo:      documentRepo,
 		datasetRepo:       datasetRepo,
-		tenantSvc:         tenantSvc,
+		organizationSvc:   organizationSvc,
 		indexingService:   indexingService,
 		fileService:       fileService,
 		vectorCleaner:     vectorCleaner,

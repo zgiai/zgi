@@ -30,7 +30,7 @@ func (h *WorkflowHandler) RunAdvancedChatDraftWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	requestedWorkspaceID := util.GetWorkspaceID(c)
 
-	if _, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage); !ok {
+	if _, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunDraft); !ok {
 		return
 	}
 
@@ -157,7 +157,7 @@ func (h *WorkflowHandler) RunAdvancedChatWorkflow(c *gin.Context) {
 	requestedWorkspaceID := util.GetWorkspaceID(c)
 	organizationID := util.GetOrganizationID(c)
 
-	if _, ok := h.requirePublishedRuntimeAgentAccess(c, appID, workspace_model.WorkspacePermissionAgentView); !ok {
+	if _, ok := h.requirePublishedRuntimeAgentAccess(c, appID, workspace_model.WorkspacePermissionWorkflowView); !ok {
 		return
 	}
 

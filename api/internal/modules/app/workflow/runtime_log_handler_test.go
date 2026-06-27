@@ -173,7 +173,7 @@ func TestGetWorkflowRunNodeLogs_FiltersFrontendInputs(t *testing.T) {
 	}
 }
 
-func TestGetRuntimeLogsRequiresAgentViewBeforeLogQuery(t *testing.T) {
+func TestGetRuntimeLogsRequiresWorkflowLogsViewBeforeLogQuery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	workspaceID := uuid.New()
@@ -201,7 +201,7 @@ func TestGetRuntimeLogsRequiresAgentViewBeforeLogQuery(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.view permission check")
+		t.Fatalf("expected workflow.logs.view permission check")
 	}
 	if runRepo.runtimeLogsCalled != 0 {
 		t.Fatalf("runtime log queries = %d, want 0 before permission passes", runRepo.runtimeLogsCalled)
@@ -298,7 +298,7 @@ func TestGetWorkflowRunNodeLogsRejectsRunFromAnotherAgent(t *testing.T) {
 	}
 }
 
-func TestGetWorkflowRunNodeLogsRequiresAgentViewPermission(t *testing.T) {
+func TestGetWorkflowRunNodeLogsRequiresWorkflowLogsViewPermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	workspaceID := uuid.New()
@@ -331,11 +331,11 @@ func TestGetWorkflowRunNodeLogsRequiresAgentViewPermission(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
 	}
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.view permission check")
+		t.Fatalf("expected workflow.logs.view permission check")
 	}
 }
 
-func TestGetWorkflowRunNodeLogsRequiresAgentViewBeforeRunLookup(t *testing.T) {
+func TestGetWorkflowRunNodeLogsRequiresWorkflowLogsViewBeforeRunLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	workspaceID := uuid.New()
@@ -368,7 +368,7 @@ func TestGetWorkflowRunNodeLogsRequiresAgentViewBeforeRunLookup(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
 	}
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.view permission check")
+		t.Fatalf("expected workflow.logs.view permission check")
 	}
 	if runRepo.getByIDCalls != 0 {
 		t.Fatalf("run lookup calls = %d, want 0 before permission passes", runRepo.getByIDCalls)

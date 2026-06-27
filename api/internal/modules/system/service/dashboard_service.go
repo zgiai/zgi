@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,7 @@ type AvailableModelsLister interface {
 type dashboardService struct {
 	db              *gorm.DB
 	availableModels AvailableModelsLister
+	tableCacheMu    sync.RWMutex
 	tableCache      map[string]bool
 }
 
@@ -49,9 +51,19 @@ func NewDashboardServiceWithAvailableModels(db *gorm.DB, availableModels Availab
 
 // tableExists checks if a table exists in the database (cached per service lifetime).
 func (s *dashboardService) tableExists(ctx context.Context, tableName string) bool {
+	s.tableCacheMu.RLock()
+	if cached, ok := s.tableCache[tableName]; ok {
+		s.tableCacheMu.RUnlock()
+		return cached
+	}
+	s.tableCacheMu.RUnlock()
+
+	s.tableCacheMu.Lock()
+	defer s.tableCacheMu.Unlock()
 	if cached, ok := s.tableCache[tableName]; ok {
 		return cached
 	}
+
 	var exists bool
 	err := s.db.Raw(
 		"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = ?)",

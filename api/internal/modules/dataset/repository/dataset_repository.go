@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
-	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -176,10 +175,8 @@ func (r *datasetRepository) GetPaginatedByTenantIDsWithPermissions(ctx context.C
 	} else {
 		queryWorkspaceIDs = tenantIDs
 	}
-	allTeamWorkspaceIDs := tenantIDs
-	if allGroupTenantIDs != nil {
-		allTeamWorkspaceIDs = allGroupTenantIDs
-	}
+	_ = allGroupTenantIDs
+	_ = accountID
 
 	query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ?", queryWorkspaceIDs)
 
@@ -189,38 +186,7 @@ func (r *datasetRepository) GetPaginatedByTenantIDsWithPermissions(ctx context.C
 		query = query.Where("name ILIKE ? OR description ILIKE ?", searchPattern, searchPattern)
 	}
 
-	if !isGroupAdmin {
-		membershipSubquery := r.db.Table("workspace_members").
-			Select("1").
-			Where("workspace_members.workspace_id = datasets.workspace_id").
-			Where("workspace_members.account_id = ?", accountID)
-
-		ownerAdminSubquery := r.db.Table("workspace_members").
-			Select("1").
-			Where("workspace_members.workspace_id = datasets.workspace_id").
-			Where("workspace_members.account_id = ?", accountID).
-			Where("workspace_members.role IN ?", []workspace_model.WorkspaceMemberRole{
-				workspace_model.WorkspaceRoleOwner,
-				workspace_model.WorkspaceRoleAdmin,
-			})
-
-		onlyMeCondition := r.db.Where("permission = ? AND created_by = ?", model.DatasetPermissionOnlyMe, accountID)
-		allTeamCondition := r.db.Where("permission IN ?", []model.DatasetPermissionType{
-			model.DatasetPermissionAllTeam,
-			model.DatasetPermissionAllTeamMembers,
-		}).Where("EXISTS (?)", membershipSubquery)
-		if len(allTeamWorkspaceIDs) == 0 {
-			allTeamCondition = r.db.Where("1 = 0")
-		} else {
-			allTeamCondition = allTeamCondition.Where("datasets.workspace_id IN ?", allTeamWorkspaceIDs)
-		}
-
-		query = query.Where(
-			r.db.Where("EXISTS (?)", ownerAdminSubquery).
-				Or(onlyMeCondition).
-				Or(allTeamCondition),
-		)
-	}
+	_ = isGroupAdmin
 
 	// Get total count
 	if err := query.Count(&total).Error; err != nil {
@@ -305,33 +271,8 @@ func (r *datasetRepository) GetByTenantIDs(
 		query = query.Where("name ILIKE ?", "%"+search+"%")
 	}
 
-	if !datasetAdmin {
-		membershipSubquery := r.db.Table("workspace_members").
-			Select("1").
-			Where("workspace_members.workspace_id = datasets.workspace_id").
-			Where("workspace_members.account_id = ?", accountID)
-
-		ownerAdminSubquery := r.db.Table("workspace_members").
-			Select("1").
-			Where("workspace_members.workspace_id = datasets.workspace_id").
-			Where("workspace_members.account_id = ?", accountID).
-			Where("workspace_members.role IN ?", []workspace_model.WorkspaceMemberRole{
-				workspace_model.WorkspaceRoleOwner,
-				workspace_model.WorkspaceRoleAdmin,
-			})
-
-		onlyMeCondition := r.db.Where("permission = ? AND created_by = ?", model.DatasetPermissionOnlyMe, accountID)
-		allTeamCondition := r.db.Where("permission IN ?", []model.DatasetPermissionType{
-			model.DatasetPermissionAllTeam,
-			model.DatasetPermissionAllTeamMembers,
-		}).Where("EXISTS (?)", membershipSubquery)
-
-		query = query.Where(
-			r.db.Where("EXISTS (?)", ownerAdminSubquery).
-				Or(onlyMeCondition).
-				Or(allTeamCondition),
-		)
-	}
+	_ = datasetAdmin
+	_ = accountID
 
 	countQuery := query.Session(&gorm.Session{})
 	if err := countQuery.Count(&total).Error; err != nil {
@@ -384,17 +325,5 @@ func (r *datasetRepository) CheckDatasetPermission(ctx context.Context, datasetI
 		return false, err
 	}
 
-	var ownerAdminCount int64
-	if err := r.db.WithContext(ctx).Table("workspace_members").
-		Where("workspace_id = ? AND account_id = ? AND role IN ?", dataset.WorkspaceID, accountID, []string{"owner", "admin"}).
-		Count(&ownerAdminCount).Error; err != nil {
-		return false, err
-	}
-
-	if ownerAdminCount > 0 {
-		return true, nil
-	}
-
-	// Default permission: only creator has access
 	return dataset.CreatedBy == accountID, nil
 }

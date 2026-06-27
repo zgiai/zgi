@@ -13,7 +13,6 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	promptdto "github.com/zgiai/zgi/api/internal/modules/prompts/dto"
 	promptmodel "github.com/zgiai/zgi/api/internal/modules/prompts/model"
-	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 const (
@@ -52,7 +51,7 @@ func (s *promptService) Optimize(
 	if s == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
-	if err := s.requirePromptWorkspaceAccess(ctx, organizationID, accountID, workspaceID, workspace_model.WorkspacePermissionAgentManage); err != nil {
+	if err := s.requirePromptWorkspaceAccess(ctx, organizationID, accountID, workspaceID, promptOptimizePermissionCodes()...); err != nil {
 		return nil, err
 	}
 
@@ -168,7 +167,7 @@ func (s *promptService) OptimizeStream(
 	if s == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
-	if err := s.requirePromptWorkspaceAccess(ctx, organizationID, accountID, workspaceID, workspace_model.WorkspacePermissionAgentManage); err != nil {
+	if err := s.requirePromptWorkspaceAccess(ctx, organizationID, accountID, workspaceID, promptOptimizePermissionCodes()...); err != nil {
 		return nil, err
 	}
 
@@ -467,8 +466,7 @@ func (s *promptService) resolveOptimizerPromptID(
 		organizationID,
 		accountID,
 		rawPromptID,
-		workspace_model.WorkspacePermissionAgentView,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptOptimizePermissionCodes()...,
 	)
 	if err != nil {
 		return nil, err

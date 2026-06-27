@@ -15,7 +15,6 @@ import (
 
 type fileWorkspacePermissionChecker interface {
 	CheckWorkspaceOrganizationAnyPermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCodes ...workspace_model.WorkspacePermissionCode) (bool, error)
-	IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error)
 }
 
 type fileFolderPermissionReader interface {
@@ -39,8 +38,7 @@ func authorizeFileViewAccess(c *gin.Context, fileService interfaces.FileService,
 		fileService,
 		permissionChecker,
 		fileID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileReadablePermissionCodes()...,
 	)
 }
 
@@ -50,7 +48,37 @@ func authorizeFileManageAccess(c *gin.Context, fileService interfaces.FileServic
 		fileService,
 		permissionChecker,
 		fileID,
-		workspace_model.WorkspacePermissionFileManage,
+		fileManagePermissionCodes()...,
+	)
+}
+
+func authorizeFileDeleteAccess(c *gin.Context, fileService interfaces.FileService, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFileAccess(
+		c,
+		fileService,
+		permissionChecker,
+		fileID,
+		workspace_model.WorkspacePermissionFileDelete,
+	)
+}
+
+func authorizeFileMoveAccess(c *gin.Context, fileService interfaces.FileService, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFileAccess(
+		c,
+		fileService,
+		permissionChecker,
+		fileID,
+		workspace_model.WorkspacePermissionFileMove,
+	)
+}
+
+func authorizeFileArchiveAccess(c *gin.Context, fileService interfaces.FileService, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFileAccess(
+		c,
+		fileService,
+		permissionChecker,
+		fileID,
+		workspace_model.WorkspacePermissionFileArchive,
 	)
 }
 
@@ -95,20 +123,9 @@ func authorizeFileAccess(c *gin.Context, fileService interfaces.FileService, per
 
 	workspaceID := getUploadFileWorkspaceID(uploadFile)
 	if workspaceID == "" {
-		if requiresFileManagePermission(permissions) && uploadFile.CreatedBy != accountID {
-			if permissionChecker == nil {
-				response.Fail(c, response.ErrSystemError)
-				return nil, false
-			}
-			isAdmin, err := permissionChecker.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
-			if err != nil {
-				response.Fail(c, response.ErrSystemError)
-				return nil, false
-			}
-			if !isAdmin {
-				response.Fail(c, response.ErrPermissionDenied)
-				return nil, false
-			}
+		if requiresFileWritePermission(permissions) && uploadFile.CreatedBy != accountID {
+			response.Fail(c, response.ErrPermissionDenied)
+			return nil, false
 		}
 		return uploadFile, true
 	}
@@ -153,19 +170,11 @@ func authorizeFileFolderAccess(c *gin.Context, folderService fileFolderPermissio
 		response.Fail(c, response.ErrSystemError)
 		return nil, false
 	}
-	isAdmin, err := permissionChecker.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return nil, false
-	}
-	if isAdmin {
-		return folder, true
-	}
 
 	workspaceID := getFileFolderWorkspaceID(folder)
 	if requireManage {
 		if workspaceID != "" {
-			hasPermission, err := hasWorkspaceFilePermission(c.Request.Context(), permissionChecker, organizationID, accountID, workspaceID, workspace_model.WorkspacePermissionFileManage)
+			hasPermission, err := hasWorkspaceFilePermission(c.Request.Context(), permissionChecker, organizationID, accountID, workspaceID, workspace_model.WorkspacePermissionFileFolderManage)
 			if err != nil {
 				response.Fail(c, response.ErrSystemError)
 				return nil, false
@@ -210,9 +219,16 @@ func authorizeFileFolderAccess(c *gin.Context, folderService fileFolderPermissio
 	return folder, true
 }
 
-func requiresFileManagePermission(permissions []workspace_model.WorkspacePermissionCode) bool {
+func requiresFileWritePermission(permissions []workspace_model.WorkspacePermissionCode) bool {
 	for _, permission := range permissions {
-		if permission == workspace_model.WorkspacePermissionFileManage {
+		switch permission {
+		case workspace_model.WorkspacePermissionFileUpdate,
+			workspace_model.WorkspacePermissionFileDelete,
+			workspace_model.WorkspacePermissionFileMove,
+			workspace_model.WorkspacePermissionFileArchive,
+			workspace_model.WorkspacePermissionFileFolderManage,
+			workspace_model.WorkspacePermissionFileShareManage,
+			workspace_model.WorkspacePermissionFileFavoriteManage:
 			return true
 		}
 	}
@@ -236,10 +252,35 @@ func fileFolderAllowsSharedView(folder *file_model.FileFolder) bool {
 }
 
 func fileViewPermissions() []workspace_model.WorkspacePermissionCode {
+	return fileReadablePermissionCodes()
+}
+
+func fileReadablePermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
+		workspace_model.WorkspacePermissionFileMetadataView,
+		workspace_model.WorkspacePermissionFilePreview,
+		workspace_model.WorkspacePermissionFileFolderView,
+		workspace_model.WorkspacePermissionFileRelatedView,
 		workspace_model.WorkspacePermissionFileDownload,
+		workspace_model.WorkspacePermissionFileUpdate,
+		workspace_model.WorkspacePermissionFileDelete,
+		workspace_model.WorkspacePermissionFileMove,
+		workspace_model.WorkspacePermissionFileArchive,
+		workspace_model.WorkspacePermissionFileFolderManage,
+		workspace_model.WorkspacePermissionFileShareManage,
+		workspace_model.WorkspacePermissionFileFavoriteManage,
+	}
+}
+
+func fileManagePermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionFileUpdate,
+		workspace_model.WorkspacePermissionFileDelete,
+		workspace_model.WorkspacePermissionFileMove,
+		workspace_model.WorkspacePermissionFileArchive,
+		workspace_model.WorkspacePermissionFileFolderManage,
+		workspace_model.WorkspacePermissionFileShareManage,
+		workspace_model.WorkspacePermissionFileFavoriteManage,
 	}
 }
 

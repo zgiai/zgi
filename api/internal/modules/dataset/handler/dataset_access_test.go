@@ -96,7 +96,7 @@ func TestAuthorizeDatasetDocumentViewAccessRejectsDocumentOutsideDataset(t *test
 	}
 }
 
-func TestAuthorizeDatasetManageAccessUsesManagePermission(t *testing.T) {
+func TestAuthorizeDatasetUpdateAccessUsesDatasetUpdatePermission(t *testing.T) {
 	c, _ := newDatasetAccessTestContext("account-1", "org-1")
 	datasets := &datasetAccessDatasetService{
 		datasets: map[string]*dataset_model.Dataset{
@@ -109,21 +109,49 @@ func TestAuthorizeDatasetManageAccessUsesManagePermission(t *testing.T) {
 	}
 	auth := &datasetAccessAuthorizationService{allow: true}
 
-	dataset, ok := authorizeDatasetManageAccess(c, datasets, auth, "dataset-1")
+	dataset, ok := authorizeDatasetUpdateAccess(c, datasets, auth, "dataset-1")
 
 	if !ok {
-		t.Fatalf("authorizeDatasetManageAccess ok = false, want true")
+		t.Fatalf("authorizeDatasetUpdateAccess ok = false, want true")
 	}
 	if dataset == nil || dataset.ID != "dataset-1" {
 		t.Fatalf("dataset = %#v, want dataset-1", dataset)
 	}
-	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseManage}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseUpdate}
 	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
 		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
 	}
 	if auth.lastRequest.OrganizationID != "org-1" || auth.lastRequest.WorkspaceID != "workspace-1" || auth.lastRequest.AccountID != "account-1" {
 		t.Fatalf("auth request = %#v, want org/workspace/account scope", auth.lastRequest)
 	}
+}
+
+func TestAuthorizeDatasetViewAccessUsesFineKnowledgeBaseViewPermissions(t *testing.T) {
+	c, _ := newDatasetAccessTestContext("account-1", "org-1")
+	datasets := &datasetAccessDatasetService{
+		datasets: map[string]*dataset_model.Dataset{
+			"dataset-1": {
+				ID:             "dataset-1",
+				OrganizationID: "org-1",
+				WorkspaceID:    "workspace-1",
+			},
+		},
+	}
+	auth := &datasetAccessAuthorizationService{allow: true}
+
+	dataset, ok := authorizeDatasetViewAccess(c, datasets, auth, "dataset-1")
+
+	if !ok {
+		t.Fatalf("authorizeDatasetViewAccess ok = false, want true")
+	}
+	if dataset == nil || dataset.ID != "dataset-1" {
+		t.Fatalf("dataset = %#v, want dataset-1", dataset)
+	}
+	want := knowledgeBaseViewPermissionCodes()
+	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
+		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
+	}
+	assertNoCoarseKnowledgeBasePermissions(t, auth.lastRequest.PermissionCodes)
 }
 
 func TestAuthorizeDatasetFolderViewAccessRejectsCrossOrganizationFolder(t *testing.T) {
@@ -174,7 +202,7 @@ func TestAuthorizeDatasetFolderViewAccessIgnoresLegacyOnlyMeForNonCreator(t *tes
 	}
 }
 
-func TestAuthorizeDatasetFolderViewAccessUsesKnowledgeBaseViewPermissions(t *testing.T) {
+func TestAuthorizeDatasetFolderViewAccessUsesFineKnowledgeBaseFolderViewPermissions(t *testing.T) {
 	c, _ := newDatasetAccessTestContext("account-1", "org-1")
 	folders := &datasetAccessFolderService{
 		folders: map[string]*dataset_model.DatasetFolder{
@@ -197,14 +225,66 @@ func TestAuthorizeDatasetFolderViewAccessUsesKnowledgeBaseViewPermissions(t *tes
 	if folder == nil || folder.ID != "folder-1" {
 		t.Fatalf("folder = %#v, want folder-1", folder)
 	}
-	want := []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionKnowledgeBaseView,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
-	}
+	want := knowledgeBaseFolderViewPermissionCodes()
 	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
 		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
 	}
+	if containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseView) ||
+		containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseManage) {
+		t.Fatalf("folder view permissions should not include coarse knowledge base view/manage: %#v", auth.lastRequest.PermissionCodes)
+	}
+}
+
+func TestAuthorizeDatasetDocumentAndSegmentViewUseFinePermissions(t *testing.T) {
+	c, _ := newDatasetAccessTestContext("account-1", "org-1")
+	datasets := &datasetAccessDatasetService{
+		datasets: map[string]*dataset_model.Dataset{
+			"dataset-1": {
+				ID:             "dataset-1",
+				OrganizationID: "org-1",
+				WorkspaceID:    "workspace-1",
+			},
+		},
+	}
+	documents := &datasetAccessDocumentService{
+		documents: map[string]*dataset_model.Document{
+			"document-1": {
+				ID:             "document-1",
+				OrganizationID: "org-1",
+				DatasetID:      "dataset-1",
+			},
+		},
+	}
+	segments := &datasetAccessSegmentService{
+		segments: map[string]*dataset_model.DocumentSegment{
+			"segment-1": {
+				ID:             "segment-1",
+				OrganizationID: "org-1",
+				DatasetID:      "dataset-1",
+				DocumentID:     "document-1",
+			},
+		},
+	}
+
+	documentAuth := &datasetAccessAuthorizationService{allow: true}
+	_, _, ok := authorizeDatasetDocumentViewAccess(c, datasets, documents, documentAuth, "dataset-1", "document-1")
+	if !ok {
+		t.Fatalf("authorizeDatasetDocumentViewAccess ok = false, want true")
+	}
+	if !reflect.DeepEqual(documentAuth.lastRequest.PermissionCodes, knowledgeBaseDocumentViewPermissionCodes()) {
+		t.Fatalf("document permissions = %#v, want %#v", documentAuth.lastRequest.PermissionCodes, knowledgeBaseDocumentViewPermissionCodes())
+	}
+	assertNoCoarseKnowledgeBasePermissions(t, documentAuth.lastRequest.PermissionCodes)
+
+	segmentAuth := &datasetAccessAuthorizationService{allow: true}
+	_, _, _, ok = authorizeDatasetSegmentViewAccess(c, datasets, documents, segments, segmentAuth, "dataset-1", "document-1", "segment-1")
+	if !ok {
+		t.Fatalf("authorizeDatasetSegmentViewAccess ok = false, want true")
+	}
+	if !reflect.DeepEqual(segmentAuth.lastRequest.PermissionCodes, knowledgeBaseSegmentViewPermissionCodes()) {
+		t.Fatalf("segment permissions = %#v, want %#v", segmentAuth.lastRequest.PermissionCodes, knowledgeBaseSegmentViewPermissionCodes())
+	}
+	assertNoCoarseKnowledgeBasePermissions(t, segmentAuth.lastRequest.PermissionCodes)
 }
 
 func TestAuthorizeDatasetFolderManageAccessUsesFolderManagePermission(t *testing.T) {
@@ -340,7 +420,7 @@ func TestAuthorizeDatasetChildChunkAccessRejectsChildOutsideSegment(t *testing.T
 		"document-1",
 		"segment-1",
 		"child-1",
-		workspace_model.WorkspacePermissionKnowledgeBaseView,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentView,
 	)
 
 	if ok {
@@ -351,9 +431,10 @@ func TestAuthorizeDatasetChildChunkAccessRejectsChildOutsideSegment(t *testing.T
 	}
 }
 
-func TestUpdateDocumentRequiresManageBeforeBindingRequest(t *testing.T) {
+func TestUpdateDocumentRequiresDocumentUpdateBeforeBindingRequest(t *testing.T) {
 	datasetID := "dataset-1"
 	documentID := "document-1"
+	auth := &datasetAccessAuthorizationService{}
 	datasets := &datasetDocumentPermissionDatasetService{
 		datasets: map[string]*dataset_model.Dataset{
 			datasetID: {
@@ -375,7 +456,7 @@ func TestUpdateDocumentRequiresManageBeforeBindingRequest(t *testing.T) {
 	handler := &DocumentHandler{
 		datasetService:  datasets,
 		documentService: documents,
-		authService:     &datasetAccessAuthorizationService{},
+		authService:     auth,
 	}
 	c, recorder := newDatasetAccessTestContext("account-1", "org-1")
 	c.Request = httptest.NewRequest(http.MethodPatch, "/datasets/"+datasetID+"/documents/"+documentID, bytes.NewBufferString("{"))
@@ -393,10 +474,15 @@ func TestUpdateDocumentRequiresManageBeforeBindingRequest(t *testing.T) {
 	if documents.updateDocumentCalls != 0 {
 		t.Fatalf("UpdateDocument calls = %d, want 0", documents.updateDocumentCalls)
 	}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate}
+	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
+		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
+	}
 }
 
-func TestRetryDocumentRequiresManageBeforeBindingRequest(t *testing.T) {
+func TestRetryDocumentRequiresIndexManageBeforeBindingRequest(t *testing.T) {
 	datasetID := "dataset-1"
+	auth := &datasetAccessAuthorizationService{}
 	datasets := &datasetDocumentPermissionDatasetService{
 		datasets: map[string]*dataset_model.Dataset{
 			datasetID: {
@@ -410,7 +496,7 @@ func TestRetryDocumentRequiresManageBeforeBindingRequest(t *testing.T) {
 	handler := &DocumentHandler{
 		datasetService:  datasets,
 		documentService: documents,
-		authService:     &datasetAccessAuthorizationService{},
+		authService:     auth,
 	}
 	c, recorder := newDatasetAccessTestContext("account-1", "org-1")
 	c.Request = httptest.NewRequest(http.MethodPost, "/datasets/"+datasetID+"/retry", bytes.NewBufferString("{"))
@@ -425,10 +511,15 @@ func TestRetryDocumentRequiresManageBeforeBindingRequest(t *testing.T) {
 	if documents.retryDocumentsCalls != 0 {
 		t.Fatalf("RetryDocuments calls = %d, want 0", documents.retryDocumentsCalls)
 	}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseIndexManage}
+	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
+		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
+	}
 }
 
-func TestUpdateDocumentStatusRequiresManageBeforeDocumentIDValidation(t *testing.T) {
+func TestUpdateDocumentStatusRequiresDocumentUpdateBeforeDocumentIDValidation(t *testing.T) {
 	datasetID := "11111111-1111-1111-1111-111111111111"
+	auth := &datasetAccessAuthorizationService{}
 	datasets := &datasetDocumentPermissionDatasetService{
 		datasets: map[string]*dataset_model.Dataset{
 			datasetID: {
@@ -442,7 +533,7 @@ func TestUpdateDocumentStatusRequiresManageBeforeDocumentIDValidation(t *testing
 	handler := &DocumentHandler{
 		datasetService:  datasets,
 		documentService: documents,
-		authService:     &datasetAccessAuthorizationService{},
+		authService:     auth,
 	}
 	c, recorder := newDatasetAccessTestContext("account-1", "org-1")
 	c.Request = httptest.NewRequest(http.MethodPatch, "/datasets/"+datasetID+"/documents/status/enable/batch?document_id=not-a-uuid", nil)
@@ -459,9 +550,13 @@ func TestUpdateDocumentStatusRequiresManageBeforeDocumentIDValidation(t *testing
 	if documents.updateDocumentStatusCalls != 0 {
 		t.Fatalf("UpdateDocumentStatus calls = %d, want 0", documents.updateDocumentStatusCalls)
 	}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate}
+	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
+		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
+	}
 }
 
-func TestCreateDocumentSegmentQuestionRequiresManageBeforeBindingRequest(t *testing.T) {
+func TestCreateDocumentSegmentQuestionRequiresSegmentUpdateBeforeBindingRequest(t *testing.T) {
 	datasetID := "dataset-1"
 	documentID := "document-1"
 	segmentID := "segment-1"
@@ -516,7 +611,7 @@ func TestCreateDocumentSegmentQuestionRequiresManageBeforeBindingRequest(t *test
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
-	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseManage}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate}
 	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
 		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
 	}
@@ -525,7 +620,7 @@ func TestCreateDocumentSegmentQuestionRequiresManageBeforeBindingRequest(t *test
 	}
 }
 
-func TestBatchCreateDocumentSegmentQuestionsRequiresManageBeforeBindingRequest(t *testing.T) {
+func TestBatchCreateDocumentSegmentQuestionsRequiresSegmentUpdateBeforeBindingRequest(t *testing.T) {
 	datasetID := "dataset-1"
 	documentID := "document-1"
 	segmentID := "segment-1"
@@ -580,7 +675,7 @@ func TestBatchCreateDocumentSegmentQuestionsRequiresManageBeforeBindingRequest(t
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
-	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseManage}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate}
 	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
 		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
 	}
@@ -589,7 +684,7 @@ func TestBatchCreateDocumentSegmentQuestionsRequiresManageBeforeBindingRequest(t
 	}
 }
 
-func TestGenerateQuestionsForSegmentRequiresManageBeforeCountValidation(t *testing.T) {
+func TestGenerateQuestionsForSegmentRequiresSegmentUpdateBeforeCountValidation(t *testing.T) {
 	datasetID := "dataset-1"
 	documentID := "document-1"
 	segmentID := "segment-1"
@@ -644,7 +739,7 @@ func TestGenerateQuestionsForSegmentRequiresManageBeforeCountValidation(t *testi
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
-	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseManage}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate}
 	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
 		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
 	}
@@ -653,7 +748,7 @@ func TestGenerateQuestionsForSegmentRequiresManageBeforeCountValidation(t *testi
 	}
 }
 
-func TestUpdateDocumentSegmentQuestionRequiresManageBeforeBindingRequest(t *testing.T) {
+func TestUpdateDocumentSegmentQuestionRequiresSegmentUpdateBeforeBindingRequest(t *testing.T) {
 	datasetID := "dataset-1"
 	documentID := "document-1"
 	segmentID := "segment-1"
@@ -710,7 +805,7 @@ func TestUpdateDocumentSegmentQuestionRequiresManageBeforeBindingRequest(t *test
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
-	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseManage}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate}
 	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
 		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
 	}
@@ -1309,4 +1404,27 @@ func (s *datasetAccessAuthorizationService) RequireWorkspacePermission(ctx conte
 		WorkspaceID:     req.WorkspaceID,
 		PermissionCodes: req.PermissionCodes,
 	}, nil
+}
+
+func containsWorkspacePermission(codes []workspace_model.WorkspacePermissionCode, want workspace_model.WorkspacePermissionCode) bool {
+	for _, code := range codes {
+		if code == want {
+			return true
+		}
+	}
+	return false
+}
+
+func assertNoCoarseKnowledgeBasePermissions(t *testing.T, codes []workspace_model.WorkspacePermissionCode) {
+	t.Helper()
+
+	disallowed := []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseView,
+		workspace_model.WorkspacePermissionKnowledgeBaseManage,
+	}
+	for _, code := range disallowed {
+		if containsWorkspacePermission(codes, code) {
+			t.Fatalf("permissions should not include coarse knowledge base permission %s: %#v", code, codes)
+		}
+	}
 }

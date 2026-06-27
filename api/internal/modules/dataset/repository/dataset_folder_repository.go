@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
-	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
 
@@ -290,27 +289,7 @@ func (r *datasetFolderRepository) CheckFolderPermission(ctx context.Context, fol
 		return false, err
 	}
 
-	// Check if user is tenant admin or owner
-	var ownerAdminCount int64
-	if err := r.db.WithContext(ctx).Table("workspace_members").
-		Where("workspace_id = ? AND account_id = ? AND role IN ?", workspaceID, accountID, []string{"owner", "admin"}).
-		Count(&ownerAdminCount).Error; err != nil {
-		return false, err
-	}
-
-	if ownerAdminCount > 0 {
-		return true, nil
-	}
-
-	// Check permission based on folder permission type
-	switch folder.Permission {
-	case "all_team":
-		return true, nil
-	case "only_me":
-		return folder.CreatedBy == accountID, nil
-	default:
-		return false, nil
-	}
+	return folder.CreatedBy == accountID, nil
 }
 
 // CheckFolderEditorPermission Check if user has permission to edit folder
@@ -320,19 +299,6 @@ func (r *datasetFolderRepository) CheckFolderEditorPermission(ctx context.Contex
 		return false, err
 	}
 
-	// Check if user is tenant admin or owner
-	var ownerAdminCount int64
-	if err := r.db.WithContext(ctx).Table("workspace_members").
-		Where("workspace_id = ? AND account_id = ? AND role IN ?", workspaceID, accountID, []string{"owner", "admin"}).
-		Count(&ownerAdminCount).Error; err != nil {
-		return false, err
-	}
-
-	if ownerAdminCount > 0 {
-		return true, nil
-	}
-
-	// Only creator can edit
 	return folder.CreatedBy == accountID, nil
 }
 
@@ -581,54 +547,9 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPaginationWithPermi
 		query = query.Where("id IN (?)", subQuery)
 	}
 
-	// If not group admin, apply permission filters
-	// Similar to agents permission logic
-	if !isGroupAdmin {
-		// Build permission filter conditions
-		// 1. is_owner_or_admin: User has OWNER or ADMIN role in the tenant
-		isOwnerOrAdminSubquery := r.db.Table("workspace_members").
-			Select("1").
-			Where("workspace_members.workspace_id = datasets.workspace_id").
-			Where("workspace_members.account_id = ?", accountID).
-			Where("workspace_members.role IN ?", []workspace_model.WorkspaceMemberRole{
-				workspace_model.WorkspaceRoleOwner,
-				workspace_model.WorkspaceRoleAdmin,
-			})
-
-		// 2. only_me_condition: Dataset permission is only_me and user is creator
-		onlyMeCondition := r.db.Where("permission = ? AND created_by = ?", model.DatasetPermissionOnlyMe, accountID)
-
-		// 3. all_team_condition: Dataset permission is all_team/all_team_members and user is member of the tenant
-		allTeamCondition := r.db.Where("permission IN ?", []model.DatasetPermissionType{
-			model.DatasetPermissionAllTeam,
-			model.DatasetPermissionAllTeamMembers,
-		}).Where("EXISTS (?)",
-			r.db.Table("workspace_members").
-				Select("1").
-				Where("workspace_members.workspace_id = datasets.workspace_id").
-				Where("workspace_members.account_id = ?", accountID),
-		)
-
-		// 4. all_group_condition: Dataset permission is all_group
-		// All users in the group can see datasets with all_group permission
-		// allGroupCondition := r.db.Where("permission = ?", "all_group")
-
-		// 5. all_read_condition: Dataset permission is all_read (everyone can read)
-		// allReadCondition := r.db.Where("permission = ?", "all_read")
-
-		// Combine permission conditions with OR
-		// User can access dataset if:
-		// - They are owner/admin of the tenant, OR
-		// - Dataset permission is all_group (visible to entire group), OR
-		// - Dataset permission is all_team/all_team_members and user is member of the tenant, OR
-		// - Dataset permission is only_me and they are creator, OR
-		// - Dataset permission is all_read (everyone can read)
-		query = query.Where(
-			r.db.Where("EXISTS (?)", isOwnerOrAdminSubquery).
-				Or(allTeamCondition).
-				Or(onlyMeCondition),
-		)
-	}
+	_ = isGroupAdmin
+	_ = accountID
+	_ = allGroupTenantIDs
 
 	// Count total
 	if err := query.Count(&total).Error; err != nil {

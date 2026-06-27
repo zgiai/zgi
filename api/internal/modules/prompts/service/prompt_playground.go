@@ -11,7 +11,6 @@ import (
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	promptdto "github.com/zgiai/zgi/api/internal/modules/prompts/dto"
-	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 func (s *promptService) PlaygroundStream(
@@ -35,8 +34,7 @@ func (s *promptService) PlaygroundStream(
 		organizationID,
 		accountID,
 		workspaceID,
-		workspace_model.WorkspacePermissionAgentView,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptPlaygroundPermissionCodes()...,
 	); err != nil {
 		return err
 	}

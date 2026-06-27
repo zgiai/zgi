@@ -22,7 +22,6 @@ type accountContextReader interface {
 
 type organizationAccessChecker interface {
 	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error)
-	IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error)
 	ListWorkspaceIDsByPermission(ctx context.Context, organizationID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) ([]string, error)
 }
 
@@ -183,7 +182,7 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
-	agentWorkspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionAgentView)
+	agentWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(ctx, organizationID, accountID, dashboardAgentVisiblePermissionCodes()...)
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
@@ -191,18 +190,16 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 		ctx,
 		organizationID,
 		accountID,
-		workspacemodel.WorkspacePermissionKnowledgeBaseView,
-		workspacemodel.WorkspacePermissionKnowledgeBaseManage,
-		workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage,
+		dashboardKnowledgeBaseVisiblePermissionCodes()...,
 	)
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
-	dataSourceWorkspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionDatabaseView)
+	dataSourceWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(ctx, organizationID, accountID, dashboardDatabaseVisiblePermissionCodes()...)
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
-	fileWorkspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionFileView)
+	fileWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(ctx, organizationID, accountID, dashboardFileVisiblePermissionCodes()...)
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
@@ -227,26 +224,24 @@ func (h *DashboardHandler) buildSingleWorkspaceRecentWorkScopes(ctx context.Cont
 	} else if ok {
 		scopes.WorkspaceIDs = []string{workspaceID}
 	}
-	if ok, err := h.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionAgentView); err != nil {
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, dashboardAgentVisiblePermissionCodes()...); err != nil {
 		return scopes, err
 	} else if ok {
 		scopes.AgentWorkspaceIDs = []string{workspaceID}
 	}
 	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID,
-		workspacemodel.WorkspacePermissionKnowledgeBaseView,
-		workspacemodel.WorkspacePermissionKnowledgeBaseManage,
-		workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage,
+		dashboardKnowledgeBaseVisiblePermissionCodes()...,
 	); err != nil {
 		return scopes, err
 	} else if ok {
 		scopes.DatasetWorkspaceIDs = []string{workspaceID}
 	}
-	if ok, err := h.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseView); err != nil {
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, dashboardDatabaseVisiblePermissionCodes()...); err != nil {
 		return scopes, err
 	} else if ok {
 		scopes.DataSourceWorkspaceIDs = []string{workspaceID}
 	}
-	if ok, err := h.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionFileView); err != nil {
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, dashboardFileVisiblePermissionCodes()...); err != nil {
 		return scopes, err
 	} else if ok {
 		scopes.FileWorkspaceIDs = []string{workspaceID}
@@ -289,6 +284,98 @@ func (h *DashboardHandler) listWorkspaceIDsByAnyPermission(ctx context.Context, 
 		}
 	}
 	return out, nil
+}
+
+func dashboardAgentVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
+	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionWorkflowView,
+		workspacemodel.WorkspacePermissionAgentLogsView,
+		workspacemodel.WorkspacePermissionAgentStatsView,
+		workspacemodel.WorkspacePermissionAgentConversationView,
+		workspacemodel.WorkspacePermissionWorkflowLogsView,
+		workspacemodel.WorkspacePermissionWorkflowStatsView,
+		workspacemodel.WorkspacePermissionWorkflowEventsView,
+		workspacemodel.WorkspacePermissionAgentUpdate,
+		workspacemodel.WorkspacePermissionAgentDelete,
+		workspacemodel.WorkspacePermissionAgentMove,
+		workspacemodel.WorkspacePermissionAgentCopy,
+		workspacemodel.WorkspacePermissionAgentExport,
+		workspacemodel.WorkspacePermissionAgentPublish,
+		workspacemodel.WorkspacePermissionAgentRuntimeConfigManage,
+		workspacemodel.WorkspacePermissionAgentRuntimeAccessManage,
+		workspacemodel.WorkspacePermissionAgentConversationManage,
+		workspacemodel.WorkspacePermissionWorkflowUpdate,
+		workspacemodel.WorkspacePermissionWorkflowDelete,
+		workspacemodel.WorkspacePermissionWorkflowMove,
+		workspacemodel.WorkspacePermissionWorkflowCopy,
+		workspacemodel.WorkspacePermissionWorkflowExport,
+		workspacemodel.WorkspacePermissionWorkflowRunDraft,
+		workspacemodel.WorkspacePermissionWorkflowRunStop,
+		workspacemodel.WorkspacePermissionWorkflowDebug,
+		workspacemodel.WorkspacePermissionWorkflowPublish,
+		workspacemodel.WorkspacePermissionWorkflowRuntimeConfigManage,
+		workspacemodel.WorkspacePermissionWorkflowRuntimeAccessManage,
+	}
+}
+
+func dashboardKnowledgeBaseVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
+	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionKnowledgeBaseFolderView,
+		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView,
+		workspacemodel.WorkspacePermissionKnowledgeBaseSegmentView,
+		workspacemodel.WorkspacePermissionKnowledgeBaseGraphView,
+		workspacemodel.WorkspacePermissionKnowledgeBaseUpdate,
+		workspacemodel.WorkspacePermissionKnowledgeBaseDelete,
+		workspacemodel.WorkspacePermissionKnowledgeBaseMove,
+		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentCreate,
+		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		workspacemodel.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		workspacemodel.WorkspacePermissionKnowledgeBaseSegmentDelete,
+		workspacemodel.WorkspacePermissionKnowledgeBaseIndexManage,
+		workspacemodel.WorkspacePermissionKnowledgeBaseGraphManage,
+		workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage,
+	}
+}
+
+func dashboardDatabaseVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
+	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionDatabaseUpdate,
+		workspacemodel.WorkspacePermissionDatabaseDelete,
+		workspacemodel.WorkspacePermissionDatabaseMove,
+		workspacemodel.WorkspacePermissionDatabaseSchemaView,
+		workspacemodel.WorkspacePermissionDatabaseSchemaManage,
+		workspacemodel.WorkspacePermissionDatabaseRecordView,
+		workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+		workspacemodel.WorkspacePermissionDatabaseRecordUpdate,
+		workspacemodel.WorkspacePermissionDatabaseRecordDelete,
+		workspacemodel.WorkspacePermissionDatabaseImportAnalyze,
+		workspacemodel.WorkspacePermissionDatabaseImportExecute,
+		workspacemodel.WorkspacePermissionDatabaseImportErrorsView,
+		workspacemodel.WorkspacePermissionDatabaseGuardPolicyManage,
+		workspacemodel.WorkspacePermissionDatabaseTablePromptView,
+		workspacemodel.WorkspacePermissionDatabaseTablePromptManage,
+		workspacemodel.WorkspacePermissionDatabaseOperationLogsView,
+		workspacemodel.WorkspacePermissionDatabaseSQLAuditView,
+		workspacemodel.WorkspacePermissionDatabaseAIQueryRead,
+	}
+}
+
+func dashboardFileVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
+	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionFileMetadataView,
+		workspacemodel.WorkspacePermissionFilePreview,
+		workspacemodel.WorkspacePermissionFileFolderView,
+		workspacemodel.WorkspacePermissionFileRelatedView,
+		workspacemodel.WorkspacePermissionFileUpdate,
+		workspacemodel.WorkspacePermissionFileDelete,
+		workspacemodel.WorkspacePermissionFileMove,
+		workspacemodel.WorkspacePermissionFileArchive,
+		workspacemodel.WorkspacePermissionFileFolderManage,
+		workspacemodel.WorkspacePermissionFileShareManage,
+		workspacemodel.WorkspacePermissionFileFavoriteManage,
+		workspacemodel.WorkspacePermissionFileDownload,
+	}
 }
 
 func dashboardQueryLimit(c *gin.Context) int {

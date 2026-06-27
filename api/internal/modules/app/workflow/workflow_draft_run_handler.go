@@ -26,7 +26,7 @@ func (h *WorkflowHandler) RunDraftWorkflow(c *gin.Context) {
 	appID := c.Param("agent_id")
 	accountID := c.GetString("account_id")
 
-	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunDraft)
 	if !ok {
 		return
 	}

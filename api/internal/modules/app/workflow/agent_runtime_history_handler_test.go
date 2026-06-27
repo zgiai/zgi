@@ -415,10 +415,10 @@ func TestAgentRuntimeLogRoutesRequireAgentViewPermission(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 			}
 			if !permissionChecker.checked {
-				t.Fatalf("expected agent.view permission check")
+				t.Fatalf("expected workflow.logs.view permission check")
 			}
 			if service.listRuntimeLogFiltersCalled || service.getMessageRuntimeLogCalled {
-				t.Fatalf("runtime service should not be called after missing agent.view denial")
+				t.Fatalf("runtime service should not be called after missing workflow.logs.view denial")
 			}
 		})
 	}
@@ -460,10 +460,10 @@ func TestAgentRuntimeRunsRequiresAgentViewBeforeBindingQuery(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.view permission check before query binding")
+		t.Fatalf("expected workflow.logs.view permission check before query binding")
 	}
 	if service.listRuntimeLogFiltersCalled {
-		t.Fatalf("runtime service should not be called after missing agent.view denial")
+		t.Fatalf("runtime service should not be called after missing workflow.logs.view denial")
 	}
 }
 

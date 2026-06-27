@@ -136,7 +136,7 @@ func (h *AgentHistoryDispatchHandler) requireBuilderAgentHistoryView(c *gin.Cont
 		response.Fail(c, response.ErrSystemError)
 		return false
 	}
-	_, ok := h.workflowRuns.requireAgentWorkspacePermission(c, c.Param("agent_id"), workspace_model.WorkspacePermissionAgentView)
+	_, ok := h.workflowRuns.requireAgentWorkspacePermission(c, c.Param("agent_id"), workspace_model.WorkspacePermissionWorkflowLogsView)
 	return ok
 }
 

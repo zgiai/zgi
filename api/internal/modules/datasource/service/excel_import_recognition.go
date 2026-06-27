@@ -11,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	excelimportrepo "github.com/zgiai/zgi/api/internal/modules/datasource/repository/excelimport"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/prompt"
 )
 
@@ -67,6 +68,9 @@ func (s *dataSourceService) RecognizeExcelImportFields(ctx context.Context, orga
 	}
 	if dataSource == nil || dataSource.OrganizationID != organizationID {
 		return dto.RecognizeExcelImportData{}, fmt.Errorf("data source not found")
+	}
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseImportAnalyze); err != nil {
+		return dto.RecognizeExcelImportData{}, err
 	}
 
 	jobRepo := excelimportrepo.NewJobRepository(s.db)

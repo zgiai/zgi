@@ -264,7 +264,7 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 			callerOrganizationID,
 			targetWorkspaceID,
 			accountID,
-			workspace_model.WorkspacePermissionAgentManage,
+			workspace_model.WorkspacePermissionAgentCreate,
 		)
 		if err != nil {
 			logger.Error("Failed to check create agent workspace permission", err)
@@ -300,7 +300,7 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 			callerOrganizationID,
 			targetWorkspaceID,
 			accountID,
-			workspace_model.WorkspacePermissionAgentManage,
+			workspace_model.WorkspacePermissionAgentCreate,
 		)
 		if err != nil {
 			logger.Error("Failed to check create agent workspace permission", err)
@@ -1200,7 +1200,7 @@ func (h *AgentsHandler) UpdateAgent(c *gin.Context) {
 			callerOrganizationID,
 			v,
 			accountID,
-			workspace_model.WorkspacePermissionAgentManage,
+			workspace_model.WorkspacePermissionAgentUpdate,
 		)
 		if err != nil {
 			logger.Error("Failed to check workspace permission for update", err)

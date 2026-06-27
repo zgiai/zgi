@@ -344,7 +344,7 @@ func TestAgentsHandlerWorkflowBindingCandidatesRequireManageBeforeServiceCall(t 
 	require.False(t, service.workflowBindingCandidatesCalled)
 }
 
-func TestAgentsHandlerCreateRequiresManageBeforeBindingBusinessFields(t *testing.T) {
+func TestAgentsHandlerCreateRequiresCreateBeforeBindingBusinessFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	service := &stubWebAppStatusHandlerService{}
@@ -372,7 +372,7 @@ func TestAgentsHandlerCreateRequiresManageBeforeBindingBusinessFields(t *testing
 	require.Equal(t, "88888888-8888-8888-8888-888888888888", organizationService.organizationID)
 	require.Equal(t, "22222222-2222-2222-2222-222222222222", organizationService.workspaceID)
 	require.Equal(t, "99999999-9999-9999-9999-999999999999", organizationService.accountID)
-	require.Equal(t, workspace_model.WorkspacePermissionAgentManage, organizationService.permission)
+	require.Equal(t, workspace_model.WorkspacePermissionAgentCreate, organizationService.permission)
 	require.False(t, service.createAgentCalled)
 }
 

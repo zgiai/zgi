@@ -435,7 +435,7 @@ func (t *databaseTool) authorizeDataSource(ctx context.Context, scope databaseSc
 	if workspaceID == "" {
 		workspaceID = scope.OrganizationID
 	}
-	hasAIQuery, err := t.organization.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionDatabaseAIQuery)
+	hasAIQuery, err := t.organization.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionDatabaseAIQueryRead)
 	if err != nil {
 		return err
 	}
@@ -443,21 +443,29 @@ func (t *databaseTool) authorizeDataSource(ctx context.Context, scope databaseSc
 		return fmt.Errorf("database ai query permission is required")
 	}
 	if !write {
-		hasView, err := t.organization.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionDatabaseView)
+		hasView, err := t.organization.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionDatabaseRecordView)
 		if err != nil {
 			return err
 		}
 		if !hasView {
-			return fmt.Errorf("database view permission is required")
+			return fmt.Errorf("database record view permission is required")
 		}
 		return nil
 	}
-	canWrite, err := t.organization.CheckWorkspaceOrganizationAnyPermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionDatabaseDataEdit, workspacemodel.WorkspacePermissionDatabaseManage)
+	canWrite, err := t.organization.CheckWorkspaceOrganizationAnyPermission(
+		ctx,
+		scope.OrganizationID,
+		workspaceID,
+		scope.AccountID,
+		workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+		workspacemodel.WorkspacePermissionDatabaseRecordUpdate,
+		workspacemodel.WorkspacePermissionDatabaseRecordDelete,
+	)
 	if err != nil {
 		return err
 	}
 	if !canWrite {
-		return fmt.Errorf("database data edit or manage permission is required")
+		return fmt.Errorf("database record mutation permission is required")
 	}
 	return nil
 }

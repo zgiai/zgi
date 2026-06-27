@@ -38,7 +38,7 @@ func TestListAccessibleDatabasesRequiresReadPermissions(t *testing.T) {
 		t.Fatalf("databases payload type = %T", payload["databases"])
 	}
 	if len(databases) != 0 {
-		t.Fatalf("databases = %#v, want no rows without database.view", databases)
+		t.Fatalf("databases = %#v, want no rows without database.record.view", databases)
 	}
 }
 
@@ -174,7 +174,7 @@ func TestInsertTableRecordsRequiresWritePermission(t *testing.T) {
 		"table_id":       "table-1",
 		"records":        []map[string]interface{}{{"name": "Ada"}},
 	}, nil, nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "data edit or manage") {
+	if err == nil || !strings.Contains(err.Error(), "record mutation") {
 		t.Fatalf("Invoke() error = %v, want write permission rejection", err)
 	}
 }
@@ -292,16 +292,15 @@ type databaseFakeOrganizationService struct {
 	aiQuery       bool
 	view          bool
 	dataEdit      bool
-	manage        bool
 	lastAccountID string
 }
 
 func (s *databaseFakeOrganizationService) CheckWorkspacePermission(_ context.Context, _, _, accountID string, permission workspacemodel.WorkspacePermissionCode) (bool, error) {
 	s.lastAccountID = accountID
 	switch permission {
-	case workspacemodel.WorkspacePermissionDatabaseAIQuery:
+	case workspacemodel.WorkspacePermissionDatabaseAIQueryRead:
 		return s.aiQuery, nil
-	case workspacemodel.WorkspacePermissionDatabaseView:
+	case workspacemodel.WorkspacePermissionDatabaseRecordView:
 		return s.view, nil
 	default:
 		return false, nil
@@ -312,12 +311,10 @@ func (s *databaseFakeOrganizationService) CheckWorkspaceOrganizationAnyPermissio
 	s.lastAccountID = accountID
 	for _, permission := range permissions {
 		switch permission {
-		case workspacemodel.WorkspacePermissionDatabaseDataEdit:
+		case workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+			workspacemodel.WorkspacePermissionDatabaseRecordUpdate,
+			workspacemodel.WorkspacePermissionDatabaseRecordDelete:
 			if s.dataEdit {
-				return true, nil
-			}
-		case workspacemodel.WorkspacePermissionDatabaseManage:
-			if s.manage {
 				return true, nil
 			}
 		}

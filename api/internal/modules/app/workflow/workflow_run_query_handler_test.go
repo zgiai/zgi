@@ -16,7 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
-func TestGetWorkflowRunsRequiresAgentViewBeforeBindingQuery(t *testing.T) {
+func TestGetWorkflowRunsRequiresWorkflowLogsViewBeforeBindingQuery(t *testing.T) {
 	service := &workflowRunAccessService{workspaceID: "workspace-1"}
 	permissionChecker := &workflowRunAccessPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
@@ -40,17 +40,17 @@ func TestGetWorkflowRunsRequiresAgentViewBeforeBindingQuery(t *testing.T) {
 	}
 	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.view permission check")
+		t.Fatalf("expected workflow.logs.view permission check")
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentView {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentView)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowLogsView {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowLogsView)
 	}
 	if service.runsCalled {
 		t.Fatalf("GetWorkflowRuns should not be called before permission passed")
 	}
 }
 
-func TestGetWorkflowRunDetailRequiresAgentViewPermission(t *testing.T) {
+func TestGetWorkflowRunDetailRequiresWorkflowLogsViewPermission(t *testing.T) {
 	service := &workflowRunAccessService{workspaceID: "workspace-1"}
 	permissionChecker := &workflowRunAccessPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
@@ -67,7 +67,7 @@ func TestGetWorkflowRunDetailRequiresAgentViewPermission(t *testing.T) {
 	}
 	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
 	if !permissionChecker.checked {
-		t.Fatalf("expected agent.view permission check")
+		t.Fatalf("expected workflow.logs.view permission check")
 	}
 	if service.validateCalled {
 		t.Fatalf("ValidateWorkflowRunAccess called before permission passed")

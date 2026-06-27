@@ -133,7 +133,7 @@ func (h *WorkflowHandler) requireWorkflowRunEventAccess(c *gin.Context, workflow
 			util.GetOrganizationID(c),
 			run.TenantID,
 			accountID,
-			workspace_model.WorkspacePermissionAgentView,
+			workspace_model.WorkspacePermissionWorkflowEventsView,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)

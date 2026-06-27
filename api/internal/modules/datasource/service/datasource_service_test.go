@@ -489,7 +489,7 @@ func TestGetDataSourceByIDRejectsCrossOrganizationAsset(t *testing.T) {
 	}
 }
 
-func TestCreateDataSourceRequiresWorkspaceScopeAndManagePermission(t *testing.T) {
+func TestCreateDataSourceRequiresWorkspaceScopeAndCreatePermission(t *testing.T) {
 	authorization := &fakeAuthorizationService{allow: true}
 	svc := newScopedDataSourceService(map[string]*model.DataSource{}, nil, authorization)
 	workspaceID := " workspace-1 "
@@ -512,8 +512,8 @@ func TestCreateDataSourceRequiresWorkspaceScopeAndManagePermission(t *testing.T)
 	if req.OrganizationID != "organization-1" || req.WorkspaceID != "workspace-1" || req.AccountID != "account-1" {
 		t.Fatalf("workspace permission request = %#v, want organization/workspace/account scope", req)
 	}
-	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseManage {
-		t.Fatalf("permission codes = %#v, want database.manage", req.PermissionCodes)
+	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseCreate {
+		t.Fatalf("permission codes = %#v, want database.create", req.PermissionCodes)
 	}
 }
 
@@ -553,7 +553,7 @@ func TestGetTableRejectsTableOutsideDataSource(t *testing.T) {
 	}
 }
 
-func TestUpdateDataSourceUsesWorkspaceManagePermission(t *testing.T) {
+func TestUpdateDataSourceUsesWorkspaceUpdatePermission(t *testing.T) {
 	workspaceID := "workspace-1"
 	authorization := &fakeAuthorizationService{allow: true}
 	svc := newScopedDataSourceService(map[string]*model.DataSource{
@@ -577,8 +577,224 @@ func TestUpdateDataSourceUsesWorkspaceManagePermission(t *testing.T) {
 	if len(authorization.workspaceRequests) != 1 {
 		t.Fatalf("workspace permission checks = %d, want 1", len(authorization.workspaceRequests))
 	}
-	if authorization.workspaceRequests[0].PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseManage {
-		t.Fatalf("permission code = %s, want database.manage", authorization.workspaceRequests[0].PermissionCodes[0])
+	if authorization.workspaceRequests[0].PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseUpdate {
+		t.Fatalf("permission code = %s, want database.update", authorization.workspaceRequests[0].PermissionCodes[0])
+	}
+}
+
+func TestUpdateDataSourceMoveUsesWorkspaceMovePermission(t *testing.T) {
+	workspaceID := "workspace-1"
+	targetWorkspaceID := "workspace-2"
+	authorization := &fakeAuthorizationService{allow: true}
+	svc := newScopedDataSourceService(map[string]*model.DataSource{
+		"datasource-1": {
+			ID:             "datasource-1",
+			OrganizationID: "organization-1",
+			WorkspaceID:    &workspaceID,
+			Name:           "main",
+			CreatedBy:      "creator-account",
+		},
+	}, nil, authorization)
+
+	got, err := svc.UpdateDataSource(context.Background(), "organization-1", "datasource-1", "workspace-manager", dto.UpdateDataSourceRequest{WorkspaceID: &targetWorkspaceID})
+	if err != nil {
+		t.Fatalf("UpdateDataSource error = %v", err)
+	}
+	if got.WorkspaceID == nil || *got.WorkspaceID != targetWorkspaceID {
+		t.Fatalf("workspace_id = %#v, want %s", got.WorkspaceID, targetWorkspaceID)
+	}
+	if len(authorization.workspaceRequests) != 2 {
+		t.Fatalf("workspace permission checks = %d, want 2", len(authorization.workspaceRequests))
+	}
+	updateReq := authorization.workspaceRequests[0]
+	if updateReq.WorkspaceID != workspaceID || len(updateReq.PermissionCodes) != 1 || updateReq.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseUpdate {
+		t.Fatalf("first permission request = %#v, want database.update on source workspace", updateReq)
+	}
+	moveReq := authorization.workspaceRequests[1]
+	if moveReq.WorkspaceID != targetWorkspaceID || len(moveReq.PermissionCodes) != 1 || moveReq.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseMove {
+		t.Fatalf("second permission request = %#v, want database.move on target workspace", moveReq)
+	}
+}
+
+func TestDeleteDataSourceUsesWorkspaceDeletePermission(t *testing.T) {
+	workspaceID := "workspace-1"
+	authorization := &fakeAuthorizationService{allow: true}
+	svc := newScopedDataSourceService(map[string]*model.DataSource{
+		"datasource-1": {
+			ID:             "datasource-1",
+			OrganizationID: "organization-1",
+			WorkspaceID:    &workspaceID,
+			Name:           "main",
+			CreatedBy:      "creator-account",
+		},
+	}, nil, authorization)
+
+	if err := svc.DeleteDataSourceByID(context.Background(), "organization-1", "datasource-1", "workspace-manager"); err != nil {
+		t.Fatalf("DeleteDataSourceByID error = %v", err)
+	}
+	if len(authorization.workspaceRequests) != 1 {
+		t.Fatalf("workspace permission checks = %d, want 1", len(authorization.workspaceRequests))
+	}
+	req := authorization.workspaceRequests[0]
+	if req.WorkspaceID != workspaceID || len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseDelete {
+		t.Fatalf("permission request = %#v, want database.delete on source workspace", req)
+	}
+}
+
+func TestUpdateTableUsesDatabaseSchemaManagePermission(t *testing.T) {
+	workspaceID := "workspace-1"
+	authorization := &fakeAuthorizationService{allow: true}
+	svc := newScopedDataSourceService(map[string]*model.DataSource{
+		"datasource-1": {
+			ID:             "datasource-1",
+			OrganizationID: "organization-1",
+			WorkspaceID:    &workspaceID,
+		},
+	}, map[string]*model.Table{
+		"table-1": {
+			ID:             "table-1",
+			OrganizationID: "organization-1",
+			DataSourceID:   "datasource-1",
+			Name:           "Users",
+		},
+	}, authorization)
+
+	newName := "Customers"
+	got, err := svc.UpdateTable(context.Background(), "organization-1", "datasource-1", "table-1", "schema-editor", dto.UpdateTableRequest{Name: &newName})
+	if err != nil {
+		t.Fatalf("UpdateTable error = %v", err)
+	}
+	if got.Name != newName {
+		t.Fatalf("table name = %s, want %s", got.Name, newName)
+	}
+	if len(authorization.workspaceRequests) != 1 {
+		t.Fatalf("workspace permission checks = %d, want 1", len(authorization.workspaceRequests))
+	}
+	req := authorization.workspaceRequests[0]
+	if req.WorkspaceID != "workspace-1" {
+		t.Fatalf("workspace_id = %s, want workspace-1", req.WorkspaceID)
+	}
+	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseSchemaManage {
+		t.Fatalf("permission codes = %#v, want database.schema.manage", req.PermissionCodes)
+	}
+}
+
+func TestRecordAndImportServicesRequireFineDatabasePermissions(t *testing.T) {
+	tests := []struct {
+		name           string
+		call           func(context.Context, *dataSourceService) error
+		wantPermission workspace_model.WorkspacePermissionCode
+	}{
+		{
+			name: "add records",
+			call: func(ctx context.Context, svc *dataSourceService) error {
+				_, err := svc.AddTableRecords(ctx, "organization-1", "datasource-1", "table-1", "account-1", dto.AddRecordRequest{})
+				return err
+			},
+			wantPermission: workspace_model.WorkspacePermissionDatabaseRecordCreate,
+		},
+		{
+			name: "query records",
+			call: func(ctx context.Context, svc *dataSourceService) error {
+				_, err := svc.QueryTableRecords(ctx, "organization-1", "datasource-1", "table-1", "account-1", 20, 0, "")
+				return err
+			},
+			wantPermission: workspace_model.WorkspacePermissionDatabaseRecordView,
+		},
+		{
+			name: "update records",
+			call: func(ctx context.Context, svc *dataSourceService) error {
+				_, err := svc.UpdateTableRecords(ctx, "organization-1", "datasource-1", "table-1", "account-1", dto.UpdateRecordRequest{})
+				return err
+			},
+			wantPermission: workspace_model.WorkspacePermissionDatabaseRecordUpdate,
+		},
+		{
+			name: "delete records",
+			call: func(ctx context.Context, svc *dataSourceService) error {
+				_, err := svc.DeleteTableRecords(ctx, "organization-1", "datasource-1", "table-1", "account-1", dto.DeleteRecordRequest{})
+				return err
+			},
+			wantPermission: workspace_model.WorkspacePermissionDatabaseRecordDelete,
+		},
+		{
+			name: "import records",
+			call: func(ctx context.Context, svc *dataSourceService) error {
+				_, err := svc.ImportTableRecords(ctx, "organization-1", "datasource-1", "table-1", "account-1", strings.NewReader(""), "records.xlsx")
+				return err
+			},
+			wantPermission: workspace_model.WorkspacePermissionDatabaseImportExecute,
+		},
+		{
+			name: "import records from upload file",
+			call: func(ctx context.Context, svc *dataSourceService) error {
+				_, err := svc.ImportTableRecordsFromUploadFile(ctx, "organization-1", "datasource-1", "table-1", "account-1", "file-1")
+				return err
+			},
+			wantPermission: workspace_model.WorkspacePermissionDatabaseImportExecute,
+		},
+		{
+			name: "analyze file for table",
+			call: func(ctx context.Context, svc *dataSourceService) error {
+				_, err := svc.AnalyzeFileForTable(ctx, "datasource-1", "account-1", "", nil, nil)
+				return err
+			},
+			wantPermission: workspace_model.WorkspacePermissionDatabaseImportAnalyze,
+		},
+		{
+			name: "analyze excel import",
+			call: func(ctx context.Context, svc *dataSourceService) error {
+				_, err := svc.AnalyzeExcelImport(ctx, "organization-1", "datasource-1", "account-1", dto.AnalyzeExcelImportRequest{UploadFileID: "file-1"})
+				return err
+			},
+			wantPermission: workspace_model.WorkspacePermissionDatabaseImportAnalyze,
+		},
+		{
+			name: "parse file for table ingest",
+			call: func(ctx context.Context, svc *dataSourceService) error {
+				_, err := svc.ParseFileForTableIngest(ctx, "organization-1", "account-1", dto.ParseFileForTableIngestRequest{TableID: "table-1"})
+				return err
+			},
+			wantPermission: workspace_model.WorkspacePermissionDatabaseImportAnalyze,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspaceID := "workspace-1"
+			authorization := &fakeAuthorizationService{allow: false}
+			svc := newScopedDataSourceService(map[string]*model.DataSource{
+				"datasource-1": {
+					ID:             "datasource-1",
+					OrganizationID: "organization-1",
+					WorkspaceID:    &workspaceID,
+				},
+			}, map[string]*model.Table{
+				"table-1": {
+					ID:             "table-1",
+					TableID:        1,
+					OrganizationID: "organization-1",
+					DataSourceID:   "datasource-1",
+					Name:           "Users",
+				},
+			}, authorization)
+
+			err := tt.call(context.Background(), svc)
+
+			if err == nil || !strings.Contains(err.Error(), "workspace permission check failed") {
+				t.Fatalf("%s error = %v, want workspace permission check failure", tt.name, err)
+			}
+			if len(authorization.workspaceRequests) != 1 {
+				t.Fatalf("workspace permission checks = %d, want 1", len(authorization.workspaceRequests))
+			}
+			req := authorization.workspaceRequests[0]
+			if req.OrganizationID != "organization-1" || req.WorkspaceID != "workspace-1" || req.AccountID != "account-1" {
+				t.Fatalf("workspace permission request = %#v, want organization/workspace/account scope", req)
+			}
+			if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != tt.wantPermission {
+				t.Fatalf("permission codes = %#v, want %s", req.PermissionCodes, tt.wantPermission)
+			}
+		})
 	}
 }
 
@@ -605,7 +821,7 @@ func TestGetTablePromptRejectsTableOutsideDataSource(t *testing.T) {
 	}
 }
 
-func TestUpsertTablePromptRequiresDatabaseManagePermission(t *testing.T) {
+func TestUpsertTablePromptRequiresDatabaseTablePromptManagePermission(t *testing.T) {
 	workspaceID := "workspace-1"
 	authorization := &fakeAuthorizationService{allow: true}
 	svc := newScopedDataSourceService(map[string]*model.DataSource{
@@ -640,8 +856,40 @@ func TestUpsertTablePromptRequiresDatabaseManagePermission(t *testing.T) {
 	if req.WorkspaceID != "workspace-1" {
 		t.Fatalf("workspace_id = %s, want workspace-1", req.WorkspaceID)
 	}
-	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseManage {
-		t.Fatalf("permission codes = %#v, want database.manage", req.PermissionCodes)
+	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseTablePromptManage {
+		t.Fatalf("permission codes = %#v, want database.table_prompt.manage", req.PermissionCodes)
+	}
+}
+
+func TestListOperationLogsRequiresDatabaseOperationLogsViewPermission(t *testing.T) {
+	workspaceID := "workspace-1"
+	authorization := &fakeAuthorizationService{allow: true}
+	svc := newScopedDataSourceService(map[string]*model.DataSource{
+		"datasource-1": {
+			ID:             "datasource-1",
+			OrganizationID: "organization-1",
+			WorkspaceID:    &workspaceID,
+		},
+	}, nil, authorization)
+	sqlRepo := svc.sqlOperationRepo.(*fakeSQLOperationRepository)
+	sqlRepo.logs = []*model.DataSourceSQLOperation{{ID: "operation-1"}}
+
+	got, err := svc.ListOperationLogsByDataSourceIDWithFilters(context.Background(), "organization-1", "datasource-1", "auditor-1", dto.SQLOperationFilter{}, 20, 0)
+	if err != nil {
+		t.Fatalf("ListOperationLogsByDataSourceIDWithFilters error = %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "operation-1" {
+		t.Fatalf("operation logs = %#v, want operation-1", got)
+	}
+	if len(authorization.workspaceRequests) != 1 {
+		t.Fatalf("workspace permission checks = %d, want 1", len(authorization.workspaceRequests))
+	}
+	req := authorization.workspaceRequests[0]
+	if req.WorkspaceID != "workspace-1" {
+		t.Fatalf("workspace_id = %s, want workspace-1", req.WorkspaceID)
+	}
+	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseOperationLogsView {
+		t.Fatalf("permission codes = %#v, want database.operation_logs.view", req.PermissionCodes)
 	}
 }
 
@@ -669,7 +917,7 @@ func TestListOperationLogsRejectsTableFilterOutsideDataSource(t *testing.T) {
 	}
 }
 
-func TestListSQLAuditByWorkspaceRequiresDatabaseManagePermission(t *testing.T) {
+func TestListSQLAuditByWorkspaceRequiresDatabaseSQLAuditViewPermission(t *testing.T) {
 	authorization := &fakeAuthorizationService{allow: true}
 	svc := newScopedDataSourceService(nil, nil, authorization)
 	sqlRepo := svc.sqlOperationRepo.(*fakeSQLOperationRepository)
@@ -692,8 +940,8 @@ func TestListSQLAuditByWorkspaceRequiresDatabaseManagePermission(t *testing.T) {
 	if req.OrganizationID != "organization-1" || req.WorkspaceID != "workspace-1" || req.AccountID != "auditor-1" {
 		t.Fatalf("workspace permission request = %#v, want organization/workspace/account scope", req)
 	}
-	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseManage {
-		t.Fatalf("permission codes = %#v, want database.manage", req.PermissionCodes)
+	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseSQLAuditView {
+		t.Fatalf("permission codes = %#v, want database.sql_audit.view", req.PermissionCodes)
 	}
 }
 

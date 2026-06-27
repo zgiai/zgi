@@ -9,6 +9,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/zgiai/zgi/api/internal/dto"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -17,10 +18,7 @@ func TestListAccessibleDatasetsUsesOrganizationScopeAndFallsBackWhenSearchMisses
 	db, mock := newKnowledgeMockDB(t)
 	svc := &KnowledgeRetrievalService{db: db}
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "members"`)).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery(`SELECT workspaces\.id FROM "workspaces"`).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("workspace-1"))
+	expectAccessibleKnowledgeWorkspaces(mock, "workspace-1")
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "datasets"`)).
 		WillReturnRows(datasetRows())
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "datasets"`)).
@@ -54,10 +52,7 @@ func TestListAccessibleDatasetsReturnsNoResultsWhenNoWorkspaceAccess(t *testing.
 	db, mock := newKnowledgeMockDB(t)
 	svc := &KnowledgeRetrievalService{db: db}
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "members"`)).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery(`SELECT workspaces\.id FROM "workspaces"`).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	expectAccessibleKnowledgeWorkspaces(mock)
 
 	response, err := svc.ListAccessibleDatasets(context.Background(), KnowledgeScope{
 		OrganizationID: "org-1",
@@ -77,14 +72,70 @@ func TestListAccessibleDatasetsReturnsNoResultsWhenNoWorkspaceAccess(t *testing.
 	}
 }
 
+func TestListAccessibleDatasetsDoesNotFallbackFromDirectEmptyPermissionSnapshot(t *testing.T) {
+	db, mock := newKnowledgeMockDB(t)
+	svc := &KnowledgeRetrievalService{db: db}
+
+	rows := sqlmock.NewRows([]string{"id", "role", "role_id", "permissions", "permission_source"}).
+		AddRow("workspace-1", workspace_model.WorkspaceRoleAdmin, workspace_model.WorkspaceBuiltinRoleAdminID, `[]`, workspace_model.WorkspaceMemberPermissionSourceDirect)
+	mock.ExpectQuery(`SELECT workspaces\.id, workspace_members\.role, workspace_members\.role_id, COALESCE\(workspace_members\.permissions::text, ''\) AS permissions, workspace_members\.permission_source FROM "workspaces" JOIN workspace_members ON workspace_members\.workspace_id = workspaces\.id WHERE workspaces\.organization_id = \$1 AND workspace_members\.account_id = \$2`).
+		WillReturnRows(rows)
+
+	response, err := svc.ListAccessibleDatasets(context.Background(), KnowledgeScope{
+		OrganizationID: "org-1",
+		AccountID:      "account-1",
+	}, "refund", 10)
+	if err != nil {
+		t.Fatalf("ListAccessibleDatasets() error = %v", err)
+	}
+	if response.Status != KnowledgeListStatusNoResults {
+		t.Fatalf("Status = %q, want %q", response.Status, KnowledgeListStatusNoResults)
+	}
+	if response.ResultCount != 0 || len(response.KnowledgeBases) != 0 {
+		t.Fatalf("response has results: %#v", response)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestListAccessibleDatasetsFallsBackFromLegacyAdminRole(t *testing.T) {
+	db, mock := newKnowledgeMockDB(t)
+	svc := &KnowledgeRetrievalService{db: db}
+
+	rows := sqlmock.NewRows([]string{"id", "role", "role_id", "permissions", "permission_source"}).
+		AddRow("workspace-1", workspace_model.WorkspaceRoleAdmin, nil, `[]`, "")
+	mock.ExpectQuery(`SELECT workspaces\.id, workspace_members\.role, workspace_members\.role_id, COALESCE\(workspace_members\.permissions::text, ''\) AS permissions, workspace_members\.permission_source FROM "workspaces" JOIN workspace_members ON workspace_members\.workspace_id = workspaces\.id WHERE workspaces\.organization_id = \$1 AND workspace_members\.account_id = \$2`).
+		WillReturnRows(rows)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "datasets"`)).
+		WillReturnRows(datasetRows().AddRow("dataset-1", "org-1", "workspace-1", "Legacy", "legacy admin access", "vendor", false, "account-1", time.Now()))
+
+	response, err := svc.ListAccessibleDatasets(context.Background(), KnowledgeScope{
+		OrganizationID: "org-1",
+		AccountID:      "account-1",
+	}, "legacy", 10)
+	if err != nil {
+		t.Fatalf("ListAccessibleDatasets() error = %v", err)
+	}
+	if response.Status != KnowledgeListStatusSuccess {
+		t.Fatalf("Status = %q, want %q", response.Status, KnowledgeListStatusSuccess)
+	}
+	if response.ResultCount != 1 || len(response.KnowledgeBases) != 1 {
+		t.Fatalf("response count mismatch: %#v", response)
+	}
+	if response.KnowledgeBases[0].DatasetID != "dataset-1" {
+		t.Fatalf("DatasetID = %q, want %q", response.KnowledgeBases[0].DatasetID, "dataset-1")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func TestAccessibleKnowledgeDatasetAllowsOrganizationScopedDataset(t *testing.T) {
 	db, mock := newKnowledgeMockDB(t)
 	svc := &KnowledgeRetrievalService{db: db}
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "members"`)).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery(`SELECT workspaces\.id FROM "workspaces"`).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("workspace-1"))
+	expectAccessibleKnowledgeWorkspaces(mock, "workspace-1")
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "datasets"`)).
 		WillReturnRows(datasetRows().AddRow("dataset-1", "org-1", "workspace-1", "故事大纲", "各类的故事大纲", "vendor", false, "account-1", time.Now()))
 
@@ -269,6 +320,15 @@ func newKnowledgeMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 		t.Fatalf("open gorm: %v", err)
 	}
 	return db, mock
+}
+
+func expectAccessibleKnowledgeWorkspaces(mock sqlmock.Sqlmock, workspaceIDs ...string) {
+	rows := sqlmock.NewRows([]string{"id", "role", "role_id", "permissions", "permission_source"})
+	for _, workspaceID := range workspaceIDs {
+		rows.AddRow(workspaceID, workspace_model.WorkspaceRoleMember, workspace_model.WorkspaceBuiltinRoleMemberID, `["knowledge_base.view"]`, workspace_model.WorkspaceMemberPermissionSourceDirect)
+	}
+	mock.ExpectQuery(`SELECT workspaces\.id, workspace_members\.role, workspace_members\.role_id, COALESCE\(workspace_members\.permissions::text, ''\) AS permissions, workspace_members\.permission_source FROM "workspaces" JOIN workspace_members ON workspace_members\.workspace_id = workspaces\.id WHERE workspaces\.organization_id = \$1 AND workspace_members\.account_id = \$2`).
+		WillReturnRows(rows)
 }
 
 func datasetRows() *sqlmock.Rows {

@@ -18,7 +18,7 @@ func (h *WorkflowHandler) PrecheckDraftWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	callerOrganizationID := util.GetOrganizationID(c)
 
-	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunDraft)
 	if !ok {
 		return
 	}
@@ -44,7 +44,7 @@ func (h *WorkflowHandler) PrecheckAdvancedChatDraftWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	callerOrganizationID := util.GetOrganizationID(c)
 
-	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunDraft)
 	if !ok {
 		return
 	}
@@ -70,7 +70,7 @@ func (h *WorkflowHandler) PrecheckAdvancedChatWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	callerOrganizationID := util.GetOrganizationID(c)
 
-	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentView)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowView)
 	if !ok {
 		return
 	}
@@ -113,7 +113,7 @@ func (h *WorkflowHandler) PrecheckPublishedWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	callerOrganizationID := util.GetOrganizationID(c)
 
-	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentView)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowView)
 	if !ok {
 		return
 	}

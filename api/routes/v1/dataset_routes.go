@@ -112,7 +112,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	graphFlowTaskRepoObj := graphflow_repo.NewGraphFlowTaskRepository(deps.DB)
 
 	datasetServiceObj := datasetService.NewDatasetService(datasetRepoObj, documentRepoObj, chunkRepoObj, deps.WorkspaceManagementService, fileServiceObj, embeddingService, vectorClient, deps.DefaultModelService, storageInstance, deps.DB, deps.QuotaService, deps.OrganizationService, deps.LLMClient, taskManager)
-	documentServiceObj := datasetService.NewDocumentService(documentRepoObj, datasetRepoObj, deps.WorkspaceManagementService, indexingServiceObj, fileServiceObj, vectorClient, taskManager, graphFlowTaskRepoObj)
+	documentServiceObj := datasetService.NewDocumentService(documentRepoObj, datasetRepoObj, deps.OrganizationService, indexingServiceObj, fileServiceObj, vectorClient, taskManager, graphFlowTaskRepoObj)
 
 	datasetQueryServiceObj := datasetService.NewDatasetQueryService(datasetQueryRepoObj, datasetServiceObj)
 
@@ -120,7 +120,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	chunkServiceObj := datasetService.NewChunkService(chunkRepoObj, documentRepoObj, deps.DB)
 	segmentServiceObj := datasetService.NewSegmentService(chunkServiceObj, datasetRepoObj, documentRepoObj, deps.DefaultModelService, deps.DB, vectorClient, deps.LLMClient, graphFlowTaskRepoObj, taskManager)
 	folderRepo := datasetRepo.NewDatasetFolderRepository(deps.DB)
-	folderService := datasetService.NewDatasetFolderService(folderRepo, deps.AccountService, deps.WorkspaceManagementService)
+	folderService := datasetService.NewDatasetFolderService(folderRepo, deps.AccountService, deps.WorkspaceManagementService, deps.OrganizationService)
 
 	// Create BatchHitTestingTaskRepository instance
 	batchHitTestingTaskRepo := datasetRepo.NewBatchHitTestingTaskRepository(deps.DB)

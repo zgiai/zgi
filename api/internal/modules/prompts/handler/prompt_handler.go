@@ -173,7 +173,7 @@ func (h *PromptHandler) OptimizePrompt(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireCurrentPromptWorkspace(c, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.requireCurrentPromptWorkspace(c, workspace_model.WorkspacePermissionWorkspaceView) {
 		return
 	}
 	var req dto.PromptOptimizeRequest
@@ -202,7 +202,7 @@ func (h *PromptHandler) OptimizePromptStream(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireCurrentPromptWorkspace(c, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.requireCurrentPromptWorkspace(c, workspace_model.WorkspacePermissionWorkspaceView) {
 		return
 	}
 	var req dto.PromptOptimizeRequest
@@ -236,7 +236,7 @@ func (h *PromptHandler) PlaygroundPromptStream(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireCurrentPromptWorkspace(c, workspace_model.WorkspacePermissionAgentView, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.requireCurrentPromptWorkspace(c, workspace_model.WorkspacePermissionWorkspaceView) {
 		return
 	}
 	var req dto.PromptPlaygroundRequest

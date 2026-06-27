@@ -233,7 +233,7 @@ func (h *RuntimeLogHandler) runtimeLogListAccessFilter(c *gin.Context, agentID, 
 		util.GetOrganizationID(c),
 		workspaceID,
 		accountID,
-		workspace_model.WorkspacePermissionAgentView,
+		workspace_model.WorkspacePermissionWorkflowLogsView,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -370,7 +370,7 @@ func (h *RuntimeLogHandler) requireWorkflowRunAccess(c *gin.Context, agentID, ru
 		util.GetOrganizationID(c),
 		workspaceID,
 		accountID,
-		workspace_model.WorkspacePermissionAgentView,
+		workspace_model.WorkspacePermissionWorkflowLogsView,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)

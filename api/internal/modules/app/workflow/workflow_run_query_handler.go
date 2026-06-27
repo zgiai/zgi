@@ -58,7 +58,7 @@ func (h *WorkflowHandler) GetWorkflowRuns(c *gin.Context) {
 				organizationID,
 				appWorkspaceID,
 				accountID,
-				workspace_model.WorkspacePermissionAgentView,
+				workspace_model.WorkspacePermissionWorkflowLogsView,
 			)
 			if err != nil {
 				response.Fail(c, response.ErrSystemError)
@@ -194,7 +194,7 @@ func (h *WorkflowHandler) requireWorkflowRunReadAccess(c *gin.Context, agentID, 
 				util.GetOrganizationID(c),
 				workspaceID,
 				accountID,
-				workspace_model.WorkspacePermissionAgentView,
+				workspace_model.WorkspacePermissionWorkflowLogsView,
 			)
 			if err != nil {
 				response.Fail(c, response.ErrSystemError)

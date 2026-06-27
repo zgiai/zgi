@@ -164,6 +164,116 @@ func TestAgentsService_GetRunnableWebApps_OrganizationMemberWithoutWorkspaceView
 	require.Equal(t, &dto.RunnableWebAppsResponse{Items: []dto.RunnableWebAppItem{}}, resp)
 }
 
+func TestAgentsService_GetRunnableWebApps_NoWorkspaceMemberCanSeeAccountGrantedAppCenterApp(t *testing.T) {
+	ctx := t.Context()
+	db, mock := newRunnableWebAppsMockDB(t)
+
+	orgID := uuid.New()
+	accountID := uuid.New()
+	otherAccountID := uuid.New()
+	workspaceID := uuid.New()
+	visibleAgentID := uuid.New()
+	hiddenAgentID := uuid.New()
+	fallbackAgentID := uuid.New()
+	visibleSurfaceID := uuid.New()
+	hiddenSurfaceID := uuid.New()
+	now := time.Now()
+	orgIDString := orgID.String()
+
+	repo := &stubAgentsRepository{
+		items: []runnableWebAppItem{
+			{
+				AgentID:      visibleAgentID.String(),
+				WorkspaceID:  workspaceID.String(),
+				WebAppID:     "webapp-visible",
+				WebAppStatus: string(AgentWebAppStatusActive),
+				AgentName:    "Visible",
+				AgentType:    "CONVERSATIONAL_WORKFLOW",
+			},
+			{
+				AgentID:      hiddenAgentID.String(),
+				WorkspaceID:  workspaceID.String(),
+				WebAppID:     "webapp-hidden",
+				WebAppStatus: string(AgentWebAppStatusActive),
+				AgentName:    "Hidden",
+				AgentType:    "CONVERSATIONAL_WORKFLOW",
+			},
+			{
+				AgentID:      fallbackAgentID.String(),
+				WorkspaceID:  workspaceID.String(),
+				WebAppID:     "webapp-fallback",
+				WebAppStatus: string(AgentWebAppStatusActive),
+				AgentName:    "Fallback",
+				AgentType:    "CONVERSATIONAL_WORKFLOW",
+			},
+		},
+	}
+	tenantService := &stubWorkspaceManagementService{
+		currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: orgIDString,
+			AccountID:      accountID.String(),
+			Role:           workspace_model.OrganizationRoleNormal,
+		},
+	}
+	orgService := &stubOrganizationService{
+		permissionWorkspaceIDs: []string{},
+		workspaces: []*workspace_model.Workspace{
+			{ID: workspaceID.String(), Status: workspace_model.WorkspaceStatusNormal, OrganizationID: &orgIDString},
+		},
+	}
+	service := &agentsService{
+		db:                db,
+		agentsRepo:        repo,
+		tenantService:     tenantService,
+		enterpriseService: orgService,
+	}
+
+	mock.ExpectQuery(`SELECT department_members\.department_id FROM "department_members" JOIN departments ON departments\.id = department_members\.department_id WHERE`).
+		WillReturnRows(sqlmock.NewRows([]string{"department_id"}))
+	mock.ExpectQuery(`SELECT "resource_id" FROM "published_runtime_surfaces" WHERE resource_type = .* AND surface = .* AND organization_id = .* AND resource_id IN`).
+		WillReturnRows(sqlmock.NewRows([]string{"resource_id"}).
+			AddRow(visibleAgentID.String()).
+			AddRow(hiddenAgentID.String()))
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surfaces" WHERE resource_type = .* AND surface = .* AND organization_id = .* AND resource_id IN`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"resource_type",
+			"resource_id",
+			"organization_id",
+			"workspace_id",
+			"surface",
+			"enabled",
+			"compatibility_source",
+			"created_at",
+			"updated_at",
+			"deleted_at",
+		}).
+			AddRow(visibleSurfaceID.String(), string(runtimeauth.PublishedRuntimeResourceAgent), visibleAgentID.String(), orgID.String(), workspaceID.String(), string(runtimeauth.PublishedRuntimeSurfaceAppCenter), true, runtimeauth.PublishedRuntimeSourceGrant, now, now, nil).
+			AddRow(hiddenSurfaceID.String(), string(runtimeauth.PublishedRuntimeResourceAgent), hiddenAgentID.String(), orgID.String(), workspaceID.String(), string(runtimeauth.PublishedRuntimeSurfaceAppCenter), true, runtimeauth.PublishedRuntimeSourceGrant, now, now, nil))
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surface_grants" WHERE surface_id IN`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"surface_id",
+			"subject_type",
+			"subject_id",
+			"enabled",
+			"created_at",
+			"updated_at",
+			"deleted_at",
+		}).
+			AddRow(uuid.New().String(), visibleSurfaceID.String(), string(runtimeauth.PublishedRuntimeSubjectAccount), accountID.String(), true, now, now, nil).
+			AddRow(uuid.New().String(), hiddenSurfaceID.String(), string(runtimeauth.PublishedRuntimeSubjectAccount), otherAccountID.String(), true, now, now, nil))
+
+	resp, err := service.GetRunnableWebApps(ctx, accountID.String(), dto.GetRunnableWebAppsRequest{})
+	require.NoError(t, err)
+	require.True(t, orgService.listWorkspaceIDsByPermissionCalled)
+	require.True(t, orgService.getOrganizationWorkspacesListCalled)
+	require.Equal(t, []string{workspaceID.String()}, repo.lastWorkspaceIDs)
+	require.Len(t, resp.Items, 1)
+	require.Equal(t, visibleAgentID.String(), resp.Items[0].AgentID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAgentsService_GetRunnableWebApps_AllowsWorkspaceViewWithoutAgentView(t *testing.T) {
 	ctx := t.Context()
 	orgID := "org-1"
@@ -380,6 +490,7 @@ func TestAgentsService_GetRunnableWebApps_FiltersByAppCenterRuntimeGrant(t *test
 	visibleSurfaceID := uuid.New()
 	hiddenSurfaceID := uuid.New()
 	now := time.Now()
+	orgIDString := orgID.String()
 
 	repo := &stubAgentsRepository{
 		items: []runnableWebAppItem{
@@ -403,13 +514,17 @@ func TestAgentsService_GetRunnableWebApps_FiltersByAppCenterRuntimeGrant(t *test
 	}
 	tenantService := &stubWorkspaceManagementService{
 		currentOrganization: &workspace_model.OrganizationMember{
-			OrganizationID: orgID.String(),
+			OrganizationID: orgIDString,
 			AccountID:      accountID.String(),
 			Role:           workspace_model.OrganizationRoleNormal,
 		},
 	}
 	orgService := &stubOrganizationService{
 		permissionWorkspaceIDs: []string{workspaceID.String(), otherWorkspaceID.String()},
+		workspaces: []*workspace_model.Workspace{
+			{ID: workspaceID.String(), Status: workspace_model.WorkspaceStatusNormal, OrganizationID: &orgIDString},
+			{ID: otherWorkspaceID.String(), Status: workspace_model.WorkspaceStatusNormal, OrganizationID: &orgIDString},
+		},
 	}
 	service := &agentsService{
 		db:                db,

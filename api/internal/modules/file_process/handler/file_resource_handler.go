@@ -72,9 +72,7 @@ func (h *FileResourceHandler) GetFolders(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileReadablePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -180,7 +178,7 @@ func (h *FileResourceHandler) PostFolder(c *gin.Context) {
 			organizationID,
 			accountID,
 			*workspaceID,
-			workspace_model.WorkspacePermissionFileManage,
+			workspace_model.WorkspacePermissionFileFolderManage,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -427,9 +425,7 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileReadablePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -577,7 +573,7 @@ func (h *FileResourceHandler) MoveFilesToFolder(c *gin.Context) {
 
 	// Check if all files exist
 	for _, fileID := range req.FileIDs {
-		if _, ok := authorizeFileManageAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+		if _, ok := authorizeFileMoveAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 			return
 		}
 	}
@@ -792,9 +788,7 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileReadablePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -943,9 +937,7 @@ func (h *FileResourceHandler) ListRecentFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileReadablePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -1086,9 +1078,7 @@ func (h *FileResourceHandler) ListFavoriteFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileReadablePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -1209,7 +1199,7 @@ func (h *FileResourceHandler) ArchiveFiles(c *gin.Context) {
 	}
 
 	for _, fileID := range req.FileIDs {
-		if _, ok := authorizeFileManageAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+		if _, ok := authorizeFileArchiveAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 			return
 		}
 	}
@@ -1248,7 +1238,7 @@ func (h *FileResourceHandler) UnarchiveFiles(c *gin.Context) {
 	}
 
 	for _, fileID := range req.FileIDs {
-		if _, ok := authorizeFileManageAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+		if _, ok := authorizeFileArchiveAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 			return
 		}
 	}
@@ -1316,9 +1306,7 @@ func (h *FileResourceHandler) GetFileStatistics(c *gin.Context) {
 		organizationID,
 		accountID,
 		"",
-		workspace_model.WorkspacePermissionFileView,
-		workspace_model.WorkspacePermissionFileManage,
-		workspace_model.WorkspacePermissionFileDownload,
+		fileReadablePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)

@@ -52,6 +52,35 @@ func TestAgentsService_GetAgentsListWithPermissions_ReturnsEmptyWhenWorkspacePer
 	require.Zero(t, resp.Total)
 	require.False(t, resp.HasMore)
 	require.False(t, repo.getPaginatedAgentsMultipleTenantsCalled)
+	require.Equal(t, agentAssetVisiblePermissionCodes(), orgService.lastPermissions)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentView)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentManage)
+}
+
+func TestAgentsServiceBuildPermissionContextOrgAdminUsesWorkspaceMemberships(t *testing.T) {
+	ctx := t.Context()
+	tenantService := &stubWorkspaceManagementServiceForAgentsList{
+		currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+			Role:           workspace_model.OrganizationRoleAdmin,
+		},
+		workspaceIDsByOrganization: []string{"ws-admin", "ws-member", "ws-outside"},
+		userWorkspaceMemberships: []interfaces.WorkspaceMembership{
+			{WorkspaceID: "ws-member", Role: workspace_model.WorkspaceRoleMember},
+			{WorkspaceID: "ws-admin", Role: workspace_model.WorkspaceRoleAdmin},
+			{WorkspaceID: "ws-other-org", Role: workspace_model.WorkspaceRoleAdmin},
+		},
+	}
+	service := &agentsService{tenantService: tenantService}
+
+	permissionContext, err := service.buildPermissionContext(ctx, "account-1")
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"ws-admin", "ws-member", "ws-outside"}, permissionContext.OrganizationDeptIDs)
+	require.Equal(t, []string{"ws-member", "ws-admin"}, permissionContext.ValidDepartmentIDs)
+	require.Equal(t, []string{"ws-admin"}, permissionContext.AdminDepartmentIDs)
+	require.Equal(t, []string{"ws-member"}, permissionContext.NormalDepartmentIDs)
 }
 
 type stubAgentsListRepository struct {
@@ -96,6 +125,7 @@ type stubOrganizationServiceForAgentsList struct {
 
 	workspaces               []*workspace_model.Workspace
 	permissionsByWorkspaceID map[string]bool
+	lastPermissions          []workspace_model.WorkspacePermissionCode
 }
 
 func (s *stubOrganizationServiceForAgentsList) GetOrganizationWorkspacesList(_ context.Context, _ string) ([]*workspace_model.Workspace, error) {
@@ -116,7 +146,8 @@ func (s *stubOrganizationServiceForAgentsList) ListWorkspaceIDsByPermission(_ co
 	return workspaceIDs, nil
 }
 
-func (s *stubOrganizationServiceForAgentsList) CheckWorkspaceOrganizationAnyPermission(_ context.Context, _, workspaceID, _ string, _ ...workspace_model.WorkspacePermissionCode) (bool, error) {
+func (s *stubOrganizationServiceForAgentsList) CheckWorkspaceOrganizationAnyPermission(_ context.Context, _, workspaceID, _ string, permissions ...workspace_model.WorkspacePermissionCode) (bool, error) {
+	s.lastPermissions = append([]workspace_model.WorkspacePermissionCode(nil), permissions...)
 	return s.permissionsByWorkspaceID[workspaceID], nil
 }
 

@@ -11,7 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 )
 
-func TestWorkflowStatisticHandlersRequireAgentViewBeforeQueryBinding(t *testing.T) {
+func TestWorkflowStatisticHandlersRequireWorkflowStatsViewBeforeQueryBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	endpoints := []struct {
@@ -37,10 +37,10 @@ func TestWorkflowStatisticHandlersRequireAgentViewBeforeQueryBinding(t *testing.
 				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 			}
 			if !permissionChecker.checked {
-				t.Fatalf("expected agent.view permission check before query binding")
+				t.Fatalf("expected workflow.stats.view permission check before query binding")
 			}
-			if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentView {
-				t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentView)
+			if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowStatsView {
+				t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowStatsView)
 			}
 			if service.statisticCalls != 0 {
 				t.Fatalf("statistic calls = %d, want 0 before permission passes", service.statisticCalls)

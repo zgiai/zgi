@@ -28,7 +28,7 @@ func TestPromptOptimizerRequiresCurrentWorkspaceBeforeModelSetup(t *testing.T) {
 	}
 }
 
-func TestPromptOptimizerRequiresAgentManagePermissionBeforeModelSetup(t *testing.T) {
+func TestPromptOptimizerRequiresWorkspaceViewBeforeModelSetup(t *testing.T) {
 	organizationService := &promptWorkspaceAccessOrganizationService{
 		workspaces: []*workspace_model.Workspace{{ID: "workspace-1", Status: workspace_model.WorkspaceStatusNormal}},
 		allowed:    false,
@@ -43,12 +43,12 @@ func TestPromptOptimizerRequiresAgentManagePermissionBeforeModelSetup(t *testing
 	if !organizationService.permissionChecked {
 		t.Fatalf("expected workspace permission check")
 	}
-	if got := organizationService.permissionCodes; len(got) != 1 || got[0] != workspace_model.WorkspacePermissionAgentManage {
-		t.Fatalf("permission codes = %v, want [%s]", got, workspace_model.WorkspacePermissionAgentManage)
+	if got := organizationService.permissionCodes; len(got) != 1 || got[0] != workspace_model.WorkspacePermissionWorkspaceView {
+		t.Fatalf("permission codes = %v, want [%s]", got, workspace_model.WorkspacePermissionWorkspaceView)
 	}
 }
 
-func TestPromptPlaygroundRequiresAgentViewOrManagePermissionBeforeModelSetup(t *testing.T) {
+func TestPromptPlaygroundRequiresWorkspaceViewBeforeModelSetup(t *testing.T) {
 	organizationService := &promptWorkspaceAccessOrganizationService{
 		workspaces: []*workspace_model.Workspace{{ID: "workspace-1", Status: workspace_model.WorkspaceStatusNormal}},
 		allowed:    false,
@@ -61,8 +61,7 @@ func TestPromptPlaygroundRequiresAgentViewOrManagePermissionBeforeModelSetup(t *
 		t.Fatalf("PlaygroundStream() error = %v, want workspace not accessible", err)
 	}
 	want := []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionAgentView,
-		workspace_model.WorkspacePermissionAgentManage,
+		workspace_model.WorkspacePermissionWorkspaceView,
 	}
 	if got := organizationService.permissionCodes; !sameWorkspaceAccessPermissions(got, want) {
 		t.Fatalf("permission codes = %v, want %v", got, want)
@@ -83,7 +82,7 @@ func TestPromptOptimizerRejectsPromptFromAnotherWorkspace(t *testing.T) {
 			},
 		},
 		organizationService: &promptWorkspaceAccessOrganizationService{
-			isAdmin: true,
+			allowed: true,
 			workspaces: []*workspace_model.Workspace{
 				{ID: workspaceID, Status: workspace_model.WorkspaceStatusNormal},
 				{ID: otherWorkspaceID, Status: workspace_model.WorkspaceStatusNormal},

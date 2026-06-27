@@ -68,7 +68,7 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	}
 	logger.DebugContext(c.Request.Context(), "create api key agent parsed", "agent_id", agentID.String())
 
-	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentManage)
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentRuntimeAccessManage)
 	if !ok {
 		return
 	}
@@ -123,7 +123,7 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 		return
 	}
 
-	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentView)
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentRuntimeAccessManage)
 	if !ok {
 		return
 	}
@@ -172,7 +172,7 @@ func (h *APIKeyHandler) GetAPIKey(c *gin.Context) {
 		return
 	}
 
-	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentView)
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentRuntimeAccessManage)
 	if !ok {
 		return
 	}
@@ -215,7 +215,7 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 		return
 	}
 
-	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentManage)
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentRuntimeAccessManage)
 	if !ok {
 		return
 	}
@@ -293,7 +293,7 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 		return
 	}
 
-	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentManage)
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentRuntimeAccessManage)
 	if !ok {
 		return
 	}
@@ -336,7 +336,7 @@ func (h *APIKeyHandler) RevokeAPIKey(c *gin.Context) {
 		return
 	}
 
-	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentManage)
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentRuntimeAccessManage)
 	if !ok {
 		return
 	}
@@ -397,7 +397,7 @@ func (h *APIKeyHandler) GetAPIKeyUsageLogs(c *gin.Context) {
 		return
 	}
 
-	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentView)
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentRuntimeAccessManage)
 	if !ok {
 		return
 	}
@@ -490,7 +490,7 @@ func (h *APIKeyHandler) GetAPIKeyUsageStats(c *gin.Context) {
 		return
 	}
 
-	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentView)
+	tenantUUID, ok := h.requireAgentAPIKeyAccess(c, agentID, workspace_model.WorkspacePermissionAgentRuntimeAccessManage)
 	if !ok {
 		return
 	}

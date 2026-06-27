@@ -48,21 +48,9 @@ func (s *agentsService) buildPermissionContext(ctx context.Context, accountID st
 	}
 	permCtx.OrganizationDeptIDs = orgDeptIDs
 
-	// Step 2: Check if user is organization admin/owner
-	// Requirement 2.1: If role is owner or admin, return early with all departments
-	if permCtx.OrganizationRole == "owner" || permCtx.OrganizationRole == "admin" {
-		// Requirement 11.5: Add structured logging with context
-		logger.Info("buildPermissionContext: User is org admin/owner", map[string]interface{}{
-			"account_id":      accountID,
-			"organization_id": permCtx.OrganizationID,
-			"role":            permCtx.OrganizationRole,
-			"dept_count":      len(orgDeptIDs),
-		})
-		// Org admins have access to all departments, no need to calculate intersections
-		return permCtx, nil
-	}
-
-	// Step 3: For normal users, get department memberships and calculate intersection
+	// Step 2: Get workspace memberships and calculate intersection.
+	// Organization owner/admin is an organization-management role only; workspace
+	// asset access still comes from workspace membership permissions.
 	// Requirement 3.1: Query user's department memberships (current=false)
 	// Requirement 11.3: Handle database errors (500) with logging
 	userDepts, err := s.tenantService.GetUserWorkspaceMemberships(ctx, accountID)
