@@ -3,10 +3,13 @@ package service
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	datalibrarymodel "github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
+	"github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
 	defaultmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/model"
 	defaultmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -110,6 +113,56 @@ func TestBuildFileQAUserPromptGuardsAgainstIrrelevantQuestionsAndSnippetFormats(
 	}
 }
 
+func TestFileAssetQAServicePrepareIndexSharesConcurrentRebuildForSameAsset(t *testing.T) {
+	assetID := uuid.New()
+	runID := uuid.New()
+	asset := &datalibrarymodel.DocumentAsset{
+		ID:              assetID,
+		OrganizationID:  "org-1",
+		SourceFileID:    "file-1",
+		ProductStatus:   datalibrarymodel.DocumentAssetProductStatusReady,
+		VectorStatus:    datalibrarymodel.DocumentAssetVectorStatusReady,
+		ProcessingRunID: &runID,
+		GenerationNo:    7,
+	}
+	vectorIndex := newFileAssetQARebuildVectorIndex()
+	service := &fileAssetQAService{
+		assets:      &fileAssetStateAssetRepo{asset: asset},
+		embeddings:  &fileAssetQAEmbeddingRepo{count: 3},
+		vectorIndex: vectorIndex,
+	}
+	input := FileAssetQAIndexPrepareInput{
+		OrganizationID: "org-1",
+		SourceFileID:   "file-1",
+	}
+
+	errs := make(chan error, 2)
+	go func() {
+		_, err := service.PrepareCurrentFileQAIndex(context.Background(), input)
+		errs <- err
+	}()
+	<-vectorIndex.entered
+
+	go func() {
+		_, err := service.PrepareCurrentFileQAIndex(context.Background(), input)
+		errs <- err
+	}()
+	time.Sleep(30 * time.Millisecond)
+	if vectorIndex.calls != 1 {
+		t.Fatalf("rebuild calls while first rebuild is in flight = %d, want 1", vectorIndex.calls)
+	}
+
+	close(vectorIndex.release)
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("PrepareCurrentFileQAIndex error = %v", err)
+		}
+	}
+	if vectorIndex.calls != 1 {
+		t.Fatalf("rebuild calls after concurrent prepare = %d, want 1", vectorIndex.calls)
+	}
+}
+
 func fileAssetQATestAsset() *datalibrarymodel.DocumentAsset {
 	workspaceID := "workspace-1"
 	return &datalibrarymodel.DocumentAsset{
@@ -118,6 +171,109 @@ func fileAssetQATestAsset() *datalibrarymodel.DocumentAsset {
 		WorkspaceID:    &workspaceID,
 		CreatedBy:      "creator-1",
 	}
+}
+
+type fileAssetQAEmbeddingRepo struct {
+	count int64
+}
+
+func (r *fileAssetQAEmbeddingRepo) Create(ctx context.Context, item *datalibrarymodel.DocumentChunkEmbedding) error {
+	return nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) Upsert(ctx context.Context, item *datalibrarymodel.DocumentChunkEmbedding) error {
+	return nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) GetByID(ctx context.Context, id uuid.UUID) (*datalibrarymodel.DocumentChunkEmbedding, error) {
+	return nil, nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) FindByChunkModel(ctx context.Context, chunkID uuid.UUID, provider string, embeddingModel string) (*datalibrarymodel.DocumentChunkEmbedding, error) {
+	return nil, nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) List(ctx context.Context, filter repository.DocumentChunkEmbeddingListFilter) ([]*datalibrarymodel.DocumentChunkEmbedding, int64, error) {
+	return []*datalibrarymodel.DocumentChunkEmbedding{}, 0, nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) ListModelTargetsByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]repository.DocumentChunkEmbeddingModelTarget, error) {
+	return nil, nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) ListModelTargetsByChunkIDs(ctx context.Context, organizationID string, chunkIDs []uuid.UUID) ([]repository.DocumentChunkEmbeddingModelTarget, error) {
+	return nil, nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error) {
+	return r.count, nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) CountReadyByAssetGenerationModel(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, provider string, embeddingModel string) (int64, error) {
+	return r.count, nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) DeleteByChunkID(ctx context.Context, organizationID string, chunkID uuid.UUID) error {
+	return nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) DeleteByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) error {
+	return nil
+}
+
+func (r *fileAssetQAEmbeddingRepo) DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error {
+	return nil
+}
+
+var _ repository.DocumentChunkEmbeddingRepository = (*fileAssetQAEmbeddingRepo)(nil)
+
+type fileAssetQARebuildVectorIndex struct {
+	mu      sync.Mutex
+	calls   int
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newFileAssetQARebuildVectorIndex() *fileAssetQARebuildVectorIndex {
+	return &fileAssetQARebuildVectorIndex{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (v *fileAssetQARebuildVectorIndex) EnsureAssetIndexed(ctx context.Context, asset *datalibrarymodel.DocumentAsset) error {
+	return nil
+}
+
+func (v *fileAssetQARebuildVectorIndex) RebuildAssetIndex(ctx context.Context, asset *datalibrarymodel.DocumentAsset) (int, error) {
+	v.mu.Lock()
+	v.calls++
+	if v.calls == 1 {
+		close(v.entered)
+	}
+	v.mu.Unlock()
+	<-v.release
+	return 3, nil
+}
+
+func (v *fileAssetQARebuildVectorIndex) IndexChunkEmbeddings(ctx context.Context, asset *datalibrarymodel.DocumentAsset, chunks []*datalibrarymodel.DocumentChunk, embeddings []*datalibrarymodel.DocumentChunkEmbedding, resetAsset bool) error {
+	return nil
+}
+
+func (v *fileAssetQARebuildVectorIndex) DeleteAssetIndex(ctx context.Context, asset *datalibrarymodel.DocumentAsset) error {
+	return nil
+}
+
+func (v *fileAssetQARebuildVectorIndex) DeleteChunkVector(ctx context.Context, asset *datalibrarymodel.DocumentAsset, chunkID uuid.UUID) error {
+	return nil
+}
+
+func (v *fileAssetQARebuildVectorIndex) DeleteChildVectorsByParent(ctx context.Context, asset *datalibrarymodel.DocumentAsset, parentChunkID uuid.UUID) error {
+	return nil
+}
+
+func (v *fileAssetQARebuildVectorIndex) Search(ctx context.Context, asset *datalibrarymodel.DocumentAsset, queryVector []float64, limit int) ([]map[string]interface{}, error) {
+	return nil, nil
 }
 
 func fileAssetQATestSources() []*FileAssetQASource {

@@ -573,6 +573,10 @@ func (f *documentChunkEmbeddingFakeVectorIndex) EnsureAssetIndexed(ctx context.C
 	return nil
 }
 
+func (f *documentChunkEmbeddingFakeVectorIndex) RebuildAssetIndex(ctx context.Context, asset *model.DocumentAsset) (int, error) {
+	return 0, nil
+}
+
 func (f *documentChunkEmbeddingFakeVectorIndex) IndexChunkEmbeddings(ctx context.Context, asset *model.DocumentAsset, chunks []*model.DocumentChunk, embeddings []*model.DocumentChunkEmbedding, resetAsset bool) error {
 	f.indexCalls++
 	return nil

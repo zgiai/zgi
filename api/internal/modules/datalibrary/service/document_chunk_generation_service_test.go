@@ -172,4 +172,12 @@ func (r *documentChunkGenerationChunkRepo) Update(ctx context.Context, id uuid.U
 	return r.GetByID(ctx, id)
 }
 
+func (r *documentChunkGenerationChunkRepo) UpdateEnabledByIDs(ctx context.Context, organizationID string, ids []uuid.UUID, enabled bool, updatedBy string) ([]*model.DocumentChunk, error) {
+	return []*model.DocumentChunk{}, nil
+}
+
+func (r *documentChunkGenerationChunkRepo) UpdateEnabledByParentIDs(ctx context.Context, organizationID string, parentIDs []uuid.UUID, enabled bool, updatedBy string) (int64, error) {
+	return 0, nil
+}
+
 var _ repository.DocumentChunkRepository = (*documentChunkGenerationChunkRepo)(nil)

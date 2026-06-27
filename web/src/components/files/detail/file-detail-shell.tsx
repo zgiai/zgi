@@ -63,6 +63,7 @@ import type {
 import { useDownloadFile } from '@/hooks/use-files';
 import { useFileDetail } from '@/hooks/file/use-file-detail';
 import { useCreateFileProcessingRequest } from '@/hooks/file/use-file-processing-request';
+import { usePrepareFileQAIndex } from '@/hooks/file/use-file-qa';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { formatDate, formatFileSize } from '@/utils/format';
 
@@ -591,11 +592,13 @@ function FilePreviewChunksWorkbench({
   chunksEnabled,
   chunkQueryVersion,
   locateTarget,
+  onChunksChanged,
 }: {
   file: FileItem;
   chunksEnabled: boolean;
   chunkQueryVersion?: number | string | null;
   locateTarget?: FileChunkLocateTarget | null;
+  onChunksChanged?: () => void;
 }) {
   const t = useT('files');
   const [originalPreviewHidden, setOriginalPreviewHidden] = useState(false);
@@ -649,6 +652,7 @@ function FilePreviewChunksWorkbench({
           locateTarget={locateTarget}
           onToggleOriginalPreview={() => setOriginalPreviewHidden(current => !current)}
           onLocateIssue={locateIssue}
+          onChunksChanged={onChunksChanged}
         />
       </section>
     </div>
@@ -664,6 +668,11 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const { downloadFile, isDownloading } = useDownloadFile();
   const [activeView, setActiveView] = useState<'preview' | 'qa'>('preview');
   const [chunkLocateTarget, setChunkLocateTarget] = useState<FileChunkLocateTarget | null>(null);
+  const [qaIndexReadyKey, setQAIndexReadyKey] = useState<string | null>(null);
+  const [qaIndexPreparingKey, setQAIndexPreparingKey] = useState<string | null>(null);
+  const [qaIndexFailedKey, setQAIndexFailedKey] = useState<string | null>(null);
+  const [qaIndexPrepareError, setQAIndexPrepareError] = useState<string | null>(null);
+  const [qaIndexRevision, setQAIndexRevision] = useState(0);
   const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
   const [pendingParserConfigProvider, setPendingParserConfigProvider] =
     useState<'mineru' | 'reducto' | null>(null);
@@ -676,6 +685,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     pollProcessingStatus: true,
   });
   const createProcessingRequest = useCreateFileProcessingRequest(fileId);
+  const prepareQAIndex = usePrepareFileQAIndex(fileId);
 
   const detail = data?.data;
   const file = detail?.file;
@@ -693,6 +703,27 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const embeddingCount = processing?.embedding_count ?? file?.embedding_count ?? 0;
   const chunksEnabled = status === 'ready';
   const qaEnabled = status === 'ready' && vectorStatus === 'ready' && embeddingCount > 0;
+  const qaIndexKey =
+    qaEnabled && asset
+      ? [
+          asset.id,
+          asset.generation_no,
+          asset.embedding_provider ?? '',
+          asset.embedding_model ?? '',
+          embeddingCount,
+          qaIndexRevision,
+        ].join(':')
+      : null;
+  const qaIndexIsPreparing =
+    activeView === 'qa' &&
+    qaEnabled &&
+    Boolean(qaIndexKey) &&
+    qaIndexReadyKey !== qaIndexKey &&
+    qaIndexFailedKey !== qaIndexKey;
+  const qaIndexError =
+    activeView === 'qa' && qaIndexKey && qaIndexFailedKey === qaIndexKey
+      ? qaIndexPrepareError
+      : null;
   const isFullyReady = status === 'ready' && vectorStatus === 'ready';
   const showProcessingWorkbench = !isFullyReady;
   const showHeaderRefresh = !isFullyReady;
@@ -769,6 +800,39 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   useEffect(() => {
     setChunkLocateTarget(null);
   }, [fileId]);
+
+  useEffect(() => {
+    if (activeView !== 'qa' || !qaEnabled || !qaIndexKey) return;
+    if (qaIndexReadyKey === qaIndexKey || qaIndexPreparingKey === qaIndexKey) return;
+    if (qaIndexFailedKey === qaIndexKey) return;
+
+    setQAIndexPreparingKey(qaIndexKey);
+    setQAIndexPrepareError(null);
+    void prepareQAIndex
+      .mutateAsync()
+      .then(() => {
+        setQAIndexReadyKey(qaIndexKey);
+        setQAIndexFailedKey(null);
+      })
+      .catch(error => {
+        setQAIndexFailedKey(qaIndexKey);
+        setQAIndexPrepareError(
+          error instanceof Error ? error.message : t('detail.qa.prepareFailedTitle')
+        );
+      })
+      .finally(() => {
+        setQAIndexPreparingKey(current => (current === qaIndexKey ? null : current));
+      });
+  }, [
+    activeView,
+    prepareQAIndex,
+    qaEnabled,
+    qaIndexFailedKey,
+    qaIndexKey,
+    qaIndexPreparingKey,
+    qaIndexReadyKey,
+    t,
+  ]);
 
   useEffect(() => {
     if (!reparseProviders.length) return;
@@ -965,6 +1029,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
             chunksEnabled={chunksEnabled}
             chunkQueryVersion={chunkQueryVersion}
             locateTarget={chunkLocateTarget}
+            onChunksChanged={() => setQAIndexRevision(current => current + 1)}
           />
         </section>
         <section
@@ -980,6 +1045,8 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
             processing={processing}
             vectorStatus={vectorStatus}
             enabled={qaEnabled}
+            preparingIndex={qaIndexIsPreparing}
+            prepareError={qaIndexError}
             onLocateSource={(source: FileQuestionAnswerSource) => {
               setChunkLocateTarget({
                 chunkId: source.primary_chunk_id,

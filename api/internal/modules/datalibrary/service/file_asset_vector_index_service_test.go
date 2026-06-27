@@ -12,6 +12,7 @@ import (
 
 func TestFileAssetVectorIndexServiceEnsureAssetIndexedFiltersCurrentAssetEmbeddingModel(t *testing.T) {
 	assetID := uuid.New()
+	parentID := uuid.New()
 	chunkID := uuid.New()
 	provider := "qwen"
 	modelName := "text-embedding-v4"
@@ -20,6 +21,7 @@ func TestFileAssetVectorIndexServiceEnsureAssetIndexedFiltersCurrentAssetEmbeddi
 		OrganizationID: "org-1",
 		AssetID:        assetID,
 		GenerationNo:   3,
+		ParentChunkID:  &parentID,
 		ChunkType:      model.DocumentChunkTypeChild,
 		Content:        "简介 人参为五加科人参属多年生草本植物",
 		ContentHash:    "hash-1",
@@ -53,6 +55,16 @@ func TestFileAssetVectorIndexServiceEnsureAssetIndexedFiltersCurrentAssetEmbeddi
 	vectorDB := &fileAssetVectorIndexFieldDeleteDB{}
 	svc := &fileAssetVectorIndexService{
 		chunks: &fileAssetVectorIndexChunkRepo{items: []*model.DocumentChunk{
+			{
+				ID:             parentID,
+				OrganizationID: "org-1",
+				AssetID:        assetID,
+				GenerationNo:   3,
+				ChunkType:      model.DocumentChunkTypeParent,
+				Content:        "parent",
+				Enabled:        true,
+				Status:         model.DocumentChunkStatusReady,
+			},
 			chunk,
 		}},
 		embeddings: embeddingRepo,
@@ -278,6 +290,14 @@ func (r *fileAssetVectorIndexChunkRepo) DeleteChildrenByParent(ctx context.Conte
 
 func (r *fileAssetVectorIndexChunkRepo) Update(ctx context.Context, id uuid.UUID, patch repository.DocumentChunkPatch) (*model.DocumentChunk, error) {
 	return nil, nil
+}
+
+func (r *fileAssetVectorIndexChunkRepo) UpdateEnabledByIDs(ctx context.Context, organizationID string, ids []uuid.UUID, enabled bool, updatedBy string) ([]*model.DocumentChunk, error) {
+	return nil, nil
+}
+
+func (r *fileAssetVectorIndexChunkRepo) UpdateEnabledByParentIDs(ctx context.Context, organizationID string, parentIDs []uuid.UUID, enabled bool, updatedBy string) (int64, error) {
+	return 0, nil
 }
 
 var _ repository.DocumentChunkRepository = (*fileAssetVectorIndexChunkRepo)(nil)

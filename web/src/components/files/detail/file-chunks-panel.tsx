@@ -47,11 +47,12 @@ interface FileChunksPanelProps {
   locateTarget?: FileChunkLocateTarget | null;
   onToggleOriginalPreview?: () => void;
   onLocateIssue?: (locator: FilePreviewLocator) => void;
+  onChunksChanged?: () => void;
 }
 
 type ChunkFilter = 'all' | 'issues' | 'enabled' | 'disabled';
 const SHOW_CHUNK_QUALITY_ISSUES = false;
-const ENABLE_CHUNK_BATCH_SELECTION = false;
+const ENABLE_CHUNK_BATCH_SELECTION = true;
 
 interface ChunkQualityIssue {
   id?: string;
@@ -90,6 +91,7 @@ export function FileChunksPanel({
   locateTarget,
   onToggleOriginalPreview,
   onLocateIssue,
+  onChunksChanged,
 }: FileChunksPanelProps) {
   const t = useT('files');
   const [editingPrimaryChunkId, setEditingPrimaryChunkId] = useState<string | null>(null);
@@ -200,11 +202,13 @@ export function FileChunksPanel({
       chunkId: chunk.id,
       data: { content: primaryDraft },
     });
+    onChunksChanged?.();
     cancelEditPrimary();
   };
 
   const toggleChunkEnabled = async (chunk: FileDocumentChunk, checked: boolean) => {
     await updateChunk.mutateAsync({ chunkId: chunk.id, data: { enabled: checked } });
+    onChunksChanged?.();
   };
 
   const toggleChunkSelected = (chunkId: string, checked: boolean) => {
@@ -228,6 +232,7 @@ export function FileChunksPanel({
       chunk_ids: chunksToUpdate.map(chunk => chunk.id),
       enabled: checked,
     });
+    onChunksChanged?.();
   };
 
   const toggleExpanded = (chunkId: string) => {

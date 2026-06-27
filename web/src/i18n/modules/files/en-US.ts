@@ -449,6 +449,10 @@ const messages = {
       notReadyTitle: 'Document Q&A is not ready',
       notReadyDescription:
         'Ask questions after parsing finishes and secondary chunk vectors are available.',
+      preparingTitle: 'Preparing document Q&A index',
+      preparingDescription:
+        'The temporary retrieval index is being rebuilt from the currently enabled chunks.',
+      prepareFailedTitle: 'Failed to prepare document Q&A index',
       chunkSummary: '{count} chunks',
       vectorSummary: '{count} vectors',
       emptyTitle: 'Ask this document',

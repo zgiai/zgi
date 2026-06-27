@@ -951,6 +951,28 @@ func (h *FileHandler) handleFileAssetChunkError(c *gin.Context, err error) {
 	}
 }
 
+// PrepareFileQAIndex rebuilds the temporary vector index used by file QA.
+// POST /files/:file_id/qa/index
+func (h *FileHandler) PrepareFileQAIndex(c *gin.Context) {
+	if h.fileAssetQAService == nil {
+		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset qa service is not available")
+		return
+	}
+	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	if !ok {
+		return
+	}
+	result, err := h.fileAssetQAService.PrepareCurrentFileQAIndex(c.Request.Context(), datalibraryservice.FileAssetQAIndexPrepareInput{
+		OrganizationID: organizationID,
+		SourceFileID:   uploadFile.ID,
+	})
+	if err != nil {
+		h.handleFileAssetQAError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 // AskFileQuestion answers one question using the current file's chunk index.
 // POST /files/:file_id/qa
 func (h *FileHandler) AskFileQuestion(c *gin.Context) {
