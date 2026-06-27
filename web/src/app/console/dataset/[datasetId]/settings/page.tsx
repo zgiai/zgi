@@ -33,6 +33,7 @@ import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
 import { toast } from 'sonner';
+import { KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 export default function DatasetSettingsPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
@@ -42,8 +43,8 @@ export default function DatasetSettingsPage() {
   const currentWorkspace = useCurrentWorkspace();
 
   // Permission checking
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasPermission('knowledge_base.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManage = hasAnyPermission(KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES);
 
   // Form state
   const [name, setName] = useState('');

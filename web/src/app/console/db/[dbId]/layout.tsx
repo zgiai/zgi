@@ -35,6 +35,10 @@ import type { DbTable } from '@/services/types/db';
 import { ResourceSidebar, ResourceSidebarHeader } from '@/components/common/resource-sidebar';
 import { EditDbDialog } from '@/components/db/dialog';
 import { ErrorBoundary } from '@/components/error-boundary';
+import {
+  DATABASE_MANAGE_PERMISSION_CODES,
+  DATABASE_VISIBLE_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -47,9 +51,10 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const { dbId } = React.use(params);
 
   // Permissions
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('database.view');
-  const canManage = hasPermission('database.manage');
+  const { hasPermission, hasAnyPermission, isLoading: isPermissionsLoading } =
+    useAccountPermissions();
+  const canView = hasAnyPermission(DATABASE_VISIBLE_PERMISSION_CODES);
+  const canManage = hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES);
   const canAiQuery = hasPermission('database.ai_query');
 
   const { data: dbDetail, isLoading: isDbLoading } = useDb(dbId, {

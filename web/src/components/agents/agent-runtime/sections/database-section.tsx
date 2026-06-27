@@ -17,6 +17,7 @@ import { AgentRuntimeDatabaseDialog } from '../database-dialog';
 import { AgentRuntimeDatabaseTableDialog } from '../database-table-dialog';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
+import { DATABASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 interface AgentRuntimeDatabaseSectionProps {
   open: boolean;
@@ -36,10 +37,10 @@ export function AgentRuntimeDatabaseSection({
   const [tableDialogDbId, setTableDialogDbId] = useState('');
   const [pendingTableDialogDbIds, setPendingTableDialogDbIds] = useState<string[]>([]);
   const { dbs, isLoading: isDbsLoading } = useDbsBasic({}, { enabled: open });
-  const { hasPermission } = useAccountPermissions();
+  const { hasPermission, hasAnyPermission } = useAccountPermissions();
   const canEditWritable =
     hasPermission('database.ai_query') &&
-    (hasPermission('database.data_edit') || hasPermission('database.manage'));
+    (hasPermission('database.data_edit') || hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES));
   const selectedCount = bindings.reduce((count, binding) => count + binding.table_ids.length, 0);
   const dbsByID = useMemo(() => new Map(dbs.map(db => [db.id, db])), [dbs]);
   const tableDialogDb = tableDialogDbId ? dbsByID.get(tableDialogDbId) : undefined;

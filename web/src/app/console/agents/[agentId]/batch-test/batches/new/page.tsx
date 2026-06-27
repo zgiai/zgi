@@ -11,6 +11,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useT } from '@/i18n';
 import { canShowAgentBatchTest, supportsWorkflowDetailPages } from '@/utils/agent-detail-routes';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { AGENT_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 interface NewBatchTestPageProps {
   params: Promise<{
@@ -24,8 +25,8 @@ export default function NewBatchTestPage({ params }: NewBatchTestPageProps) {
   const tRoot = useT();
   const { agentId } = use(params);
   const { agent, isLoading, error, refetch } = useAgent(agentId);
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasPermission('agent.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManage = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
 
   if (isLoading || isPermissionsLoading) {
     return (

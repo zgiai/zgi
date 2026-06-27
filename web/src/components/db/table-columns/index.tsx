@@ -24,6 +24,7 @@ import { BannerKey, hideBanner, isBannerHidden } from '@/utils/ui-local';
 import TableColumnsEditor from '@/components/db/table-columns/table-colums-editor';
 import { SchemaHealthNotice } from '@/components/db/schema-health';
 import { generateClientId } from '@/utils/client-id';
+import { DATABASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 interface TableColumnsProps {
   dbId: string;
@@ -41,8 +42,8 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
   const t = useT('dbs');
 
   // Permissions
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('database.manage');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canManage = hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES);
 
   const { columns, isLoading, isFetching } = useDbTableColumns(dbId, tableId, {
     includeSystemFields: true,

@@ -68,10 +68,10 @@ interface TaskWorkbenchContentProps {
  */
 export function TaskWorkbench() {
   const currentWorkspace = useCurrentWorkspace();
-  const { hasPermission } = useAccountPermissions();
+  const { hasWorkspaceAccess } = useAccountPermissions();
   const isMobile = useIsMobile();
   const workspaceId = currentWorkspace?.id;
-  const canManageTasks = Boolean(workspaceId) && hasPermission('workspace.manage');
+  const canManageTasks = Boolean(workspaceId) && hasWorkspaceAccess();
 
   if (!workspaceId) {
     return <TaskWorkspaceRequiredState />;

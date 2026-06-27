@@ -16,6 +16,10 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
 import { getAgentDetailRouteAccess } from '@/utils/agent-detail-routes';
+import {
+  AGENT_ASSET_VISIBLE_PERMISSION_CODES,
+  AGENT_MANAGE_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 interface AgentSidebarProps {
   /** When true, hide navigation items (workspace mismatch mode) */
@@ -34,9 +38,9 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
   const agentId = params?.agentId ?? '';
   const { agent, isLoading } = useAgent(agentId);
   const t = useT();
-  const { hasPermission } = useAccountPermissions();
-  const canView = hasPermission('agent.view');
-  const canManage = hasPermission('agent.manage');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canView = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
+  const canManage = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
   const [editOpen, setEditOpen] = React.useState(false);
   const isDebugFocusMode = useWorkflowDebugFocusMode();
   const [isCollapsed, setIsCollapsed] = usePersistentSidebarCollapse(

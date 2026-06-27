@@ -35,6 +35,8 @@ import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
+import { AGENT_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 
 interface AgentCardProps {
   agent: Agent;
@@ -43,8 +45,6 @@ interface AgentCardProps {
   /** Callback when agent is deleted; provides id and page index for incremental refetch */
   onDeleted?: (id: string, pageIndex: number) => void;
 }
-
-import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 
 function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
   const t = useT('agents');
@@ -59,8 +59,8 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
   const { currentOrganization } = useOrganizations();
 
   // Permissions
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('agent.manage');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canManage = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
   const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
   const agentHref = getAgentDetailEditHref(agent.id, agent.agent_type);
   const modeText =

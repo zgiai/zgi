@@ -24,6 +24,7 @@ import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
 import { useT } from '@/i18n';
+import { AGENT_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 import agentService from '@/services/agent.service';
 import { datasetService } from '@/services';
 import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
@@ -232,8 +233,8 @@ export function useAgentRuntimePageModel(agentId: string) {
   const t = useT('agents.agentRuntime');
   const tRoot = useT();
   const { agent, isLoading: isAgentLoading } = useAgent(agentId);
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManageAgent = hasPermission('agent.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManageAgent = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
   const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(agentId);
   const { data: allSkills = [], isLoading: isSkillsLoading } = useAIChatSkills();

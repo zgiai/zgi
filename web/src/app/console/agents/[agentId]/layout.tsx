@@ -8,16 +8,17 @@ import { useAgent } from '@/hooks/agent/use-agents';
 import { useParams } from 'next/navigation';
 import { WorkspaceMismatchGuard } from '@/components/common/workspace-mismatch-guard';
 import { useT } from '@/i18n';
+import { AGENT_ASSET_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
 
 export default function AgentLayout({ children }: { children: React.ReactNode }) {
   const t = useT();
   const params = useParams<{ agentId: string }>();
   const agentId = params?.agentId ?? '';
 
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const { agent, isLoading: isAgentLoading } = useAgent(agentId);
 
-  const canView = hasPermission('agent.view');
+  const canView = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
   const isLoading = isPermissionsLoading || isAgentLoading;
 
   if (isLoading) {

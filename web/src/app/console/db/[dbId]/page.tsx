@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Plus, Table2, Search, ArrowRight, ScrollText, FileSpreadsheet } from 'lucide-react';
 
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { DATABASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 export default function DbOverviewPage() {
   const { dbId } = useParams();
@@ -19,8 +20,8 @@ export default function DbOverviewPage() {
   const t = useT();
 
   // Permissions
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('database.manage');
+  const { hasPermission, hasAnyPermission } = useAccountPermissions();
+  const canManage = hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES);
   const canAiQuery = hasPermission('database.ai_query');
 
   const { data: dbDetail, isLoading: isDbLoading } = useDb(dbId as string);

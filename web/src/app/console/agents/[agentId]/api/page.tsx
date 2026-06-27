@@ -11,6 +11,7 @@ import type { AgentType } from '@/services/types/agent';
 import { useT } from '@/i18n';
 import { canShowAgentApiKeys } from '@/utils/agent-detail-routes';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { AGENT_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 export default function AgentApiPage() {
   const { agentId } = useParams<{ agentId: string }>();
@@ -18,8 +19,8 @@ export default function AgentApiPage() {
   const tWebapp = useT('webapp');
 
   const { agent, isLoading, error } = useAgent(agentId);
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasPermission('agent.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManage = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
   const agentType = (agent?.data?.agent_type as AgentType | undefined) ?? undefined;
   const canShowWorkflowApiTabs = canShowAgentApiKeys(agentType, { canView: true, canManage });
 

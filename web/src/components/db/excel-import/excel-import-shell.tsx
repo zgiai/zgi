@@ -76,6 +76,7 @@ import {
   isReservedDbColumnName,
   type TableNameErrorCode,
 } from '@/utils/validation';
+import { DATABASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 type Step = 'file' | 'preview' | 'schema' | 'result';
 
@@ -114,8 +115,8 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   const router = useRouter();
   const user = useCurrentUser();
   const { locale } = useLocale();
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasPermission('database.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManage = hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES);
   const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
   const { tables } = useDbTables(dbId, { enabled: canManage });
   const [step, setStep] = useState<Step>('file');

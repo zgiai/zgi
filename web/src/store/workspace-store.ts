@@ -59,8 +59,8 @@ interface WorkspaceState {
   selectWorkspace: (workspace: Workspace) => void;
   // Permission check helpers
   hasPermission: (permission: PermissionCode) => boolean;
-  hasAnyPermission: (permissions: PermissionCode[]) => boolean;
-  hasAllPermissions: (permissions: PermissionCode[]) => boolean;
+  hasAnyPermission: (permissions: readonly PermissionCode[]) => boolean;
+  hasAllPermissions: (permissions: readonly PermissionCode[]) => boolean;
   isAdmin: () => boolean;
   // Hydration state
   _hasHydrated: boolean;
@@ -132,19 +132,37 @@ const useWorkspaceStoreBase = create<WorkspaceState>()(
         if (contextStatus !== 'ready') {
           return false;
         }
+        if (
+          permissionState.organizationRole === 'owner' ||
+          permissionState.organizationRole === 'admin'
+        ) {
+          return true;
+        }
         return permissionState.permissions.includes(permission);
       },
-      hasAnyPermission: (permissions: PermissionCode[]) => {
+      hasAnyPermission: (permissions: readonly PermissionCode[]) => {
         const { contextStatus, permissionState } = get();
         if (contextStatus !== 'ready') {
           return false;
         }
+        if (
+          permissionState.organizationRole === 'owner' ||
+          permissionState.organizationRole === 'admin'
+        ) {
+          return permissions.length > 0;
+        }
         return permissions.some(p => permissionState.permissions.includes(p));
       },
-      hasAllPermissions: (permissions: PermissionCode[]) => {
+      hasAllPermissions: (permissions: readonly PermissionCode[]) => {
         const { contextStatus, permissionState } = get();
         if (contextStatus !== 'ready') {
           return false;
+        }
+        if (
+          permissionState.organizationRole === 'owner' ||
+          permissionState.organizationRole === 'admin'
+        ) {
+          return true;
         }
         return permissions.every(p => permissionState.permissions.includes(p));
       },

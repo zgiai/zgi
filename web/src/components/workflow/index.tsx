@@ -27,6 +27,7 @@ import { getNodeAbsolutePosition } from './store/helpers/graph';
 import { useAuthStore } from '@/store/auth-store';
 import { useBuiltinTools } from '@/hooks/workflow/use-builtin-tools';
 import { useLocale } from '@/hooks/use-locale';
+import { WORKFLOW_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 // Throttled global mouse tracker to isolate re-renders from WorkflowEditor
 // Uses both requestAnimationFrame and time-based throttling (50ms) to minimize store updates
@@ -202,8 +203,8 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     return viewport;
   }, [isHistoryMode, selectedRunId, historySnapshots, viewport]);
 
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('agent.manage');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canManage = hasAnyPermission(WORKFLOW_MANAGE_PERMISSION_CODES);
 
   // Ensure store holds current agent type for downstream filtering
   useEffect(() => {

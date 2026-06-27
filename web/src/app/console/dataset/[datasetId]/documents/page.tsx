@@ -38,6 +38,7 @@ import {
   ExtractionStrategySelect,
   extractionStrategyLabelKey,
 } from '@/components/datasets/document/extraction-strategy-select';
+import { KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 // New: data source union shared with child components
 export type DataSourceType = 'file' | 'notion' | 'web' | 'api';
@@ -70,8 +71,8 @@ export default function DatasetDocumentsPage() {
   const isExternalDataSource = !!datasetData?.data?.external_knowledge_info?.external_knowledge_id;
 
   // Permission checking - use new permission system
-  const { hasPermission } = useAccountPermissions();
-  const canEdit = hasPermission('knowledge_base.manage');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canEdit = hasAnyPermission(KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES);
 
   /* ------------------------------ documents ------------------------------ */
   const [sortField, setSortField] = useState<

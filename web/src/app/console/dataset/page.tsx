@@ -37,6 +37,7 @@ import { useIsInitialized } from '@/store/auth-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { cn } from '@/lib/utils';
+import { KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
 
 function DatasetModelsPreloader() {
   useAvailableModels({ use_case: 'text-chat' });
@@ -52,9 +53,10 @@ function DatasetsPageContent() {
   const queryClient = useQueryClient();
 
   // Permission checking
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('knowledge_base.view');
-  const canManage = hasPermission('knowledge_base.manage');
+  const { hasPermission, hasAnyPermission, isLoading: isPermissionsLoading } =
+    useAccountPermissions();
+  const canView = hasAnyPermission(KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES);
+  const canManage = hasPermission('knowledge_base.create');
   const canManageFolders = hasPermission('knowledge_base.folder_manage');
 
   // Replace local create-only dialog with centralized dialog state

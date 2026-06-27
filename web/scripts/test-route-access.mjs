@@ -448,12 +448,12 @@ assert.match(
 assert.match(
   workspaceLayoutSource,
   /useAccountPermissions/,
-  'workspace management layout should still enforce concrete workspace permissions'
+  'workspace management layout should still consume concrete workspace permission state'
 );
 assert.match(
   workspaceLayoutSource,
-  /hasPermission\('workspace\.view'\)/,
-  'workspace management layout should require workspace.view after capability gating'
+  /hasWorkspaceAccess\(\)/,
+  'workspace management layout should derive access from workspace membership after capability gating'
 );
 assert.doesNotMatch(
   workspaceLayoutSource,
@@ -701,12 +701,12 @@ assert.match(
 );
 assert.match(
   workspaceStoreSource,
-  /hasAnyPermission:\s*\(permissions: PermissionCode\[\]\)\s*=>\s*{[\s\S]*?if\s*\(contextStatus !== 'ready'\)\s*{[\s\S]*?return false;/,
+  /hasAnyPermission:\s*\(permissions: (?:readonly )?PermissionCode\[\]\)\s*=>\s*{[\s\S]*?if\s*\(contextStatus !== 'ready'\)\s*{[\s\S]*?return false;/,
   'workspace store hasAnyPermission should fail closed without a ready workspace context'
 );
 assert.match(
   workspaceStoreSource,
-  /hasAllPermissions:\s*\(permissions: PermissionCode\[\]\)\s*=>\s*{[\s\S]*?if\s*\(contextStatus !== 'ready'\)\s*{[\s\S]*?return false;/,
+  /hasAllPermissions:\s*\(permissions: (?:readonly )?PermissionCode\[\]\)\s*=>\s*{[\s\S]*?if\s*\(contextStatus !== 'ready'\)\s*{[\s\S]*?return false;/,
   'workspace store hasAllPermissions should fail closed without a ready workspace context'
 );
 assert.doesNotMatch(
@@ -949,7 +949,7 @@ for (const appCenterPath of appCenterPaths) {
   const appCenterSource = fs.readFileSync(appCenterPath, 'utf8');
   assert.match(
     appCenterSource,
-    /useRunnableWebApps\(\)/,
+    /useRunnableWebApps\((?:\s*\{[\s\S]*?workspaceId:\s*null[\s\S]*?\}\s*)?\)/,
     `${path.relative(rootDir, appCenterPath)} should load runnable apps through organization scope by default`
   );
   assert.doesNotMatch(

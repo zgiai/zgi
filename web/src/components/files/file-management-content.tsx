@@ -73,6 +73,7 @@ import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-
 import { fileManageService } from '@/services/file-manage.service';
 import type { Organization } from '@/services/types/organization';
 import type { Workspace } from '@/store/workspace-store';
+import { FILE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 export interface FileManagementContentProps {
   /** Enable file selection mode */
@@ -430,8 +431,8 @@ const FileManagementContent = ({
   const { deleteFolder, isDeleting: isDeletingFolder } = useDeleteFolder();
   const { folders } = useFileFolders(workspaceId);
 
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('file.manage');
+  const { hasPermission, hasAnyPermission } = useAccountPermissions();
+  const canManage = hasAnyPermission(FILE_MANAGE_PERMISSION_CODES);
   const canCreateFolder = hasPermission('file.move_create');
   const canUpload = hasPermission('file.upload_create');
   const canCreateInActiveFolder = canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < 2;

@@ -50,6 +50,7 @@ import { FilePreviewDialog } from './file-preview-dialog';
 import { isOriginalPreviewSupported } from '@/utils/file-helpers';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
+import { FILE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 export interface FileListProps {
   files: FileItem[];
   maxCount?: number;
@@ -145,9 +146,9 @@ function FileListBase({
   const { currentOrganization } = useOrganizations();
 
   // Permission checks
-  const { hasPermission } = useAccountPermissions();
+  const { hasPermission, hasAnyPermission } = useAccountPermissions();
   const canDownload = hasPermission('file.download');
-  const canManage = hasPermission('file.manage');
+  const canManage = hasAnyPermission(FILE_MANAGE_PERMISSION_CODES);
   const canUpload = hasPermission('file.upload_create');
   const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
   const hasAnyAction = canDownload || canManage || canMoveAssets;

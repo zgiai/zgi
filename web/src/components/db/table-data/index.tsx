@@ -46,14 +46,15 @@ const DEFAULT_PAGE_SIZE = 20;
 
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
+import { DATABASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
   const t = useT();
 
   // Permissions
-  const { hasPermission } = useAccountPermissions();
+  const { hasPermission, hasAnyPermission } = useAccountPermissions();
   const canEditData = hasPermission('database.data_edit');
-  const canManage = hasPermission('database.manage');
+  const canManage = hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES);
 
   // Fetch table columns (structure).
   const {

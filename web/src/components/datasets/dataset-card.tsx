@@ -25,6 +25,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { ICON_BG } from '@/lib/config';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
+import { KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 interface DatasetCardProps {
   dataset: Dataset;
@@ -46,8 +47,8 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
   const { currentOrganization } = useOrganizations();
 
   // Permission checking - use new permission system
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('knowledge_base.manage');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canManage = hasAnyPermission(KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES);
   const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
 
   return (

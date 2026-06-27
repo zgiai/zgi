@@ -22,6 +22,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ShieldAlert } from 'lucide-react';
 import { AgentEmptyElement, AgentEmptySearchResults } from '@/components/agents/empty-element';
+import { AGENT_ASSET_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
 
 export default function AgentsPage() {
   const t = useT();
@@ -29,9 +30,10 @@ export default function AgentsPage() {
   const currentWorkspace = useCurrentWorkspace();
 
   // Permissions
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('agent.view');
-  const canManage = hasPermission('agent.manage');
+  const { hasPermission, hasAnyPermission, isLoading: isPermissionsLoading } =
+    useAccountPermissions();
+  const canView = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
+  const canManage = hasPermission('agent.create');
 
   const PAGE_SIZE = 20;
   const queryClient = useQueryClient();

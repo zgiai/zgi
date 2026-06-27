@@ -19,6 +19,10 @@ import {
 import { EditDatasetDialog } from '@/components/datasets/dialog/edit-dataset-dialog';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { Button } from '@/components/ui/button';
+import {
+  KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES,
+  KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 export default function DatasetDetailLayout({ children }: { children: React.ReactNode }) {
   function DatasetModelsPreloader() {
@@ -38,9 +42,9 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
   const t = useT();
 
   // Permission checking
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('knowledge_base.view');
-  const canManage = hasPermission('knowledge_base.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canView = hasAnyPermission(KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES);
+  const canManage = hasAnyPermission(KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES);
 
   // Get dataset details for conditional rendering
   const dataset = data?.data;

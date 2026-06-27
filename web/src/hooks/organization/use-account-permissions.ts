@@ -129,17 +129,29 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
       if (!hasUsableWorkspaceContext) {
         return false;
       }
+      const gRole = permissionsData?.organization_role ?? null;
+      if (gRole === 'owner' || gRole === 'admin') {
+        return true;
+      }
       return permissionsData?.permissions.includes(permission) ?? false;
     },
-    hasAnyPermission: (permissions: PermissionCode[]) => {
+    hasAnyPermission: (permissions: readonly PermissionCode[]) => {
       if (!hasUsableWorkspaceContext) {
         return false;
       }
+      const gRole = permissionsData?.organization_role ?? null;
+      if (gRole === 'owner' || gRole === 'admin') {
+        return permissions.length > 0;
+      }
       return permissions.some(p => permissionsData?.permissions.includes(p) ?? false);
     },
-    hasAllPermissions: (permissions: PermissionCode[]) => {
+    hasAllPermissions: (permissions: readonly PermissionCode[]) => {
       if (!hasUsableWorkspaceContext) {
         return false;
+      }
+      const gRole = permissionsData?.organization_role ?? null;
+      if (gRole === 'owner' || gRole === 'admin') {
+        return true;
       }
       return permissions.every(p => permissionsData?.permissions.includes(p) ?? false);
     },
@@ -148,6 +160,17 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
         ? (permissionsData?.organization_role ?? null)
         : null;
       return gRole === 'owner' || gRole === 'admin';
+    },
+    hasWorkspaceAccess: () => hasUsableWorkspaceContext,
+    isWorkspaceManager: () => {
+      const gRole = hasUsableWorkspaceContext
+        ? (permissionsData?.organization_role ?? null)
+        : null;
+      if (gRole === 'owner' || gRole === 'admin') {
+        return true;
+      }
+      const wRole = hasUsableWorkspaceContext ? (permissionsData?.workspace_role ?? null) : null;
+      return wRole === 'owner' || wRole === 'admin';
     },
   };
 }

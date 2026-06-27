@@ -55,9 +55,10 @@ export default function PromptDetailPage() {
   const params = useParams<{ promptId: string }>();
   const promptId = params?.promptId ?? '';
   const templateT = rootT as unknown as TemplateTranslator;
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('agent.view');
-  const canManage = hasPermission('agent.manage');
+  const { hasWorkspaceAccess, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canUseWorkspaceTools = hasWorkspaceAccess();
+  const canView = canUseWorkspaceTools;
+  const canManage = canUseWorkspaceTools;
   const { prompt, isLoading } = usePrompt(promptId, canView);
   const targetWorkspaceId = prompt?.workspace_id ?? '';
   const createVersion = useCreatePromptVersion(promptId);

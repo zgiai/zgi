@@ -18,6 +18,7 @@ import { useT } from '@/i18n';
 import { ICON_BG } from '@/lib/config';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
+import { DATABASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 interface DbCardProps {
   db: Db;
@@ -37,8 +38,8 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
   const { currentOrganization } = useOrganizations();
 
   // Permissions
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('database.manage');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canManage = hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES);
   const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
 
   return (

@@ -43,6 +43,7 @@ import { cn } from '@/lib/utils';
 import { AgentRuntimeLogDetailDrawer } from './_components/agent-runtime-log-detail-drawer';
 import { LogDetailDrawer, type HistoryTab } from './_components/log-detail-drawer';
 import { LogStatusBadge } from './_components/log-status-badge';
+import { AGENT_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
 
 interface AgentLogsPageProps {
   params: Promise<{ agentId: string }>;
@@ -152,8 +153,8 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const [searchFilter, setSearchFilter] = useState('');
 
   const { agent, isLoading: isAgentLoading, error: agentError } = useAgent(agentId);
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasPermission('agent.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManage = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
   const agentDetail = agent?.data ?? null;
   const isPublished = agentDetail?.is_published === true;
   const supportsRuntimeLogs = supportsAgentRuntimeLogs(agentDetail?.agent_type);
