@@ -38,15 +38,54 @@ func TestWorkspacePermissionFilterHonorsRequestedPermission(t *testing.T) {
 	require.Equal(t, []string{adminWorkspaceID}, workspacePermissionResponseIDs(workspaces))
 }
 
-func TestWorkspacePermissionFilterOrganizationAdminGetsNormalWorkspacesWithoutMembership(t *testing.T) {
+func TestWorkspacePermissionFilterAllowsFineCreatePermission(t *testing.T) {
 	t.Parallel()
 
 	fixture := newWorkspacePermissionFilterFixture(t)
 	accountID := uuid.NewString()
 	now := time.Now().UTC()
 
-	firstWorkspaceID := fixture.addWorkspace("First", model.WorkspaceStatusNormal, now)
-	secondWorkspaceID := fixture.addWorkspace("Second", model.WorkspaceStatusNormal, now.Add(time.Second))
+	createWorkspaceID := fixture.addWorkspace("Database create", model.WorkspaceStatusNormal, now)
+	viewWorkspaceID := fixture.addWorkspace("Database view", model.WorkspaceStatusNormal, now.Add(time.Second))
+
+	fixture.addOrganizationMember(accountID, model.OrganizationRoleNormal)
+	fixture.addWorkspaceMemberWithPermissions(
+		createWorkspaceID,
+		accountID,
+		model.WorkspaceRoleNormal,
+		nil,
+		[]string{string(model.WorkspacePermissionDatabaseCreate)},
+		model.WorkspaceMemberPermissionSourceDirect,
+	)
+	fixture.addWorkspaceMemberWithPermissions(
+		viewWorkspaceID,
+		accountID,
+		model.WorkspaceRoleNormal,
+		nil,
+		[]string{string(model.WorkspacePermissionDatabaseSchemaView)},
+		model.WorkspaceMemberPermissionSourceDirect,
+	)
+
+	workspaces, err := fixture.service.GetAccessibleWorkspacesByPermission(
+		context.Background(),
+		accountID,
+		fixture.organizationID,
+		"create_database",
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{createWorkspaceID}, workspacePermissionResponseIDs(workspaces))
+}
+
+func TestWorkspacePermissionFilterOrganizationAdminDoesNotBypassWorkspaceMembership(t *testing.T) {
+	t.Parallel()
+
+	fixture := newWorkspacePermissionFilterFixture(t)
+	accountID := uuid.NewString()
+	now := time.Now().UTC()
+
+	fixture.addWorkspace("First", model.WorkspaceStatusNormal, now)
+	fixture.addWorkspace("Second", model.WorkspaceStatusNormal, now.Add(time.Second))
 	fixture.addWorkspace("Archived", model.WorkspaceStatusArchived, now.Add(2*time.Second))
 	fixture.addOrganizationMember(accountID, model.OrganizationRoleAdmin)
 
@@ -58,7 +97,47 @@ func TestWorkspacePermissionFilterOrganizationAdminGetsNormalWorkspacesWithoutMe
 	)
 	require.NoError(t, err)
 
-	require.Equal(t, []string{firstWorkspaceID, secondWorkspaceID}, workspacePermissionResponseIDs(workspaces))
+	require.Empty(t, workspacePermissionResponseIDs(workspaces))
+}
+
+func TestWorkspacePermissionFilterDoesNotFallbackToCustomRoleTemplate(t *testing.T) {
+	t.Parallel()
+
+	fixture := newWorkspacePermissionFilterFixture(t)
+	accountID := uuid.NewString()
+	customRoleID := uuid.NewString()
+	now := time.Now().UTC()
+
+	directWorkspaceID := fixture.addWorkspace("Direct", model.WorkspaceStatusNormal, now)
+	templateOnlyWorkspaceID := fixture.addWorkspace("Template only", model.WorkspaceStatusNormal, now.Add(time.Second))
+
+	fixture.addOrganizationMember(accountID, model.OrganizationRoleNormal)
+	fixture.addWorkspaceMemberWithPermissions(
+		directWorkspaceID,
+		accountID,
+		model.WorkspaceRoleNormal,
+		&customRoleID,
+		[]string{string(model.WorkspacePermissionDatabaseManage)},
+		model.WorkspaceMemberPermissionSourceRoleTemplate,
+	)
+	fixture.addWorkspaceMemberWithPermissions(
+		templateOnlyWorkspaceID,
+		accountID,
+		model.WorkspaceRoleNormal,
+		&customRoleID,
+		nil,
+		model.WorkspaceMemberPermissionSourceRoleTemplate,
+	)
+
+	workspaces, err := fixture.service.GetAccessibleWorkspacesByPermission(
+		context.Background(),
+		accountID,
+		fixture.organizationID,
+		"create_database",
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{directWorkspaceID}, workspacePermissionResponseIDs(workspaces))
 }
 
 func TestWorkspacePermissionFilterRejectsUnknownPermissionType(t *testing.T) {
@@ -139,12 +218,25 @@ func (f *workspacePermissionFilterFixture) addWorkspaceMember(
 	role model.WorkspaceMemberRole,
 	roleID *string,
 ) {
+	f.addWorkspaceMemberWithPermissions(workspaceID, accountID, role, roleID, nil, "")
+}
+
+func (f *workspacePermissionFilterFixture) addWorkspaceMemberWithPermissions(
+	workspaceID string,
+	accountID string,
+	role model.WorkspaceMemberRole,
+	roleID *string,
+	permissions []string,
+	source model.WorkspaceMemberPermissionSource,
+) {
 	f.workspaceJoins[workspaceMemberKey(workspaceID, accountID)] = &model.WorkspaceMember{
-		ID:          uuid.NewString(),
-		WorkspaceID: workspaceID,
-		AccountID:   accountID,
-		Role:        role,
-		RoleID:      roleID,
+		ID:               uuid.NewString(),
+		WorkspaceID:      workspaceID,
+		AccountID:        accountID,
+		Role:             role,
+		RoleID:           roleID,
+		Permissions:      permissions,
+		PermissionSource: source,
 	}
 }
 

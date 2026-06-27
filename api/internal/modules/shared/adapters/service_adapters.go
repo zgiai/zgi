@@ -448,6 +448,10 @@ func (t *TenantServiceAdapter) UpdateMemberCustomRoleWithPermissionCheck(ctx con
 	return t.tenantService.UpdateMemberCustomRoleWithPermissionCheck(ctx, tenant, member, roleID, operator)
 }
 
+func (t *TenantServiceAdapter) UpdateMemberDirectPermissions(ctx context.Context, workspaceID, accountID string, permissions []string) error {
+	return t.tenantService.UpdateMemberDirectPermissions(ctx, workspaceID, accountID, permissions)
+}
+
 func (t *TenantServiceAdapter) LeaveWorkspace(ctx context.Context, workspaceID, accountID string) error {
 	return t.tenantService.LeaveWorkspace(ctx, workspaceID, accountID)
 }
@@ -466,18 +470,21 @@ func (t *TenantServiceAdapter) GetWorkspaceMembers(ctx context.Context, tenantID
 	var interfaceMembers []*interfaces.AccountWithRole
 	for _, member := range workspaceMembers {
 		interfaceMembers = append(interfaceMembers, &interfaces.AccountWithRole{
-			ID:           member.ID,
-			Name:         member.Name,
-			Avatar:       member.Avatar,
-			AvatarURL:    member.AvatarURL,
-			Email:        member.Email,
-			LastLoginAt:  member.LastLoginAt,
-			LastActiveAt: member.LastActiveAt,
-			CreatedAt:    member.CreatedAt,
-			Role:         member.Role,
-			RoleID:       member.RoleID,
-			Status:       member.Status,
-			HasMobile:    member.HasMobile,
+			ID:                       member.ID,
+			Name:                     member.Name,
+			Avatar:                   member.Avatar,
+			AvatarURL:                member.AvatarURL,
+			Email:                    member.Email,
+			LastLoginAt:              member.LastLoginAt,
+			LastActiveAt:             member.LastActiveAt,
+			CreatedAt:                member.CreatedAt,
+			Role:                     member.Role,
+			RoleID:                   member.RoleID,
+			Permissions:              member.Permissions,
+			PermissionSource:         member.PermissionSource,
+			PermissionTemplateRoleID: member.PermissionTemplateRoleID,
+			Status:                   member.Status,
+			HasMobile:                member.HasMobile,
 		})
 	}
 	return interfaceMembers, nil
@@ -497,13 +504,16 @@ func (t *TenantServiceAdapter) GetWorkspaceMembersWithExtensions(ctx context.Con
 	var interfaceMembers []*interfaces.WorkspaceMemberWithExtensionResponse
 	for _, member := range workspaceMembers {
 		interfaceMembers = append(interfaceMembers, &interfaces.WorkspaceMemberWithExtensionResponse{
-			Account:          member.Account,
-			Role:             member.Role,
-			JoinedAt:         member.JoinedAt,
-			Position:         member.Position,
-			Permissions:      member.Permissions,
-			Extension:        member.Extension,
-			OrganizationRole: member.OrganizationRole,
+			Account:                  member.Account,
+			Role:                     member.Role,
+			RoleID:                   member.RoleID,
+			JoinedAt:                 member.JoinedAt,
+			Position:                 member.Position,
+			Permissions:              member.Permissions,
+			PermissionSource:         member.PermissionSource,
+			PermissionTemplateRoleID: member.PermissionTemplateRoleID,
+			Extension:                member.Extension,
+			OrganizationRole:         member.OrganizationRole,
 		})
 	}
 	return interfaceMembers, nil
@@ -517,13 +527,16 @@ func (t *TenantServiceAdapter) GetWorkspaceMemberWithExtensionsById(ctx context.
 
 	// Convert workspace_service.TenantMemberWithExtensionResponse to interfaces.TenantMemberWithExtensionResponse
 	return &interfaces.WorkspaceMemberWithExtensionResponse{
-		Account:          workspaceMember.Account,
-		Role:             workspaceMember.Role,
-		JoinedAt:         workspaceMember.JoinedAt,
-		Position:         workspaceMember.Position,
-		Permissions:      workspaceMember.Permissions,
-		Extension:        workspaceMember.Extension,
-		OrganizationRole: workspaceMember.OrganizationRole,
+		Account:                  workspaceMember.Account,
+		Role:                     workspaceMember.Role,
+		RoleID:                   workspaceMember.RoleID,
+		JoinedAt:                 workspaceMember.JoinedAt,
+		Position:                 workspaceMember.Position,
+		Permissions:              workspaceMember.Permissions,
+		PermissionSource:         workspaceMember.PermissionSource,
+		PermissionTemplateRoleID: workspaceMember.PermissionTemplateRoleID,
+		Extension:                workspaceMember.Extension,
+		OrganizationRole:         workspaceMember.OrganizationRole,
 	}, nil
 }
 
@@ -537,18 +550,21 @@ func (t *TenantServiceAdapter) GetDatasetOperatorMembers(ctx context.Context, te
 	var interfaceMembers []*interfaces.AccountWithRole
 	for _, member := range workspaceMembers {
 		interfaceMembers = append(interfaceMembers, &interfaces.AccountWithRole{
-			ID:           member.ID,
-			Name:         member.Name,
-			Avatar:       member.Avatar,
-			AvatarURL:    member.AvatarURL,
-			Email:        member.Email,
-			LastLoginAt:  member.LastLoginAt,
-			LastActiveAt: member.LastActiveAt,
-			CreatedAt:    member.CreatedAt,
-			Role:         member.Role,
-			RoleID:       member.RoleID,
-			Status:       member.Status,
-			HasMobile:    member.HasMobile,
+			ID:                       member.ID,
+			Name:                     member.Name,
+			Avatar:                   member.Avatar,
+			AvatarURL:                member.AvatarURL,
+			Email:                    member.Email,
+			LastLoginAt:              member.LastLoginAt,
+			LastActiveAt:             member.LastActiveAt,
+			CreatedAt:                member.CreatedAt,
+			Role:                     member.Role,
+			RoleID:                   member.RoleID,
+			Permissions:              member.Permissions,
+			PermissionSource:         member.PermissionSource,
+			PermissionTemplateRoleID: member.PermissionTemplateRoleID,
+			Status:                   member.Status,
+			HasMobile:                member.HasMobile,
 		})
 	}
 	return interfaceMembers, nil

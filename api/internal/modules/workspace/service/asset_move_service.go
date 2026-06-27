@@ -30,7 +30,7 @@ var (
 )
 
 type assetMoveOrganizationService interface {
-	IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error)
+	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspace_model.WorkspacePermissionCode) (bool, error)
 }
 
 type WorkspaceAssetMoveService struct {
@@ -80,14 +80,6 @@ func (s *WorkspaceAssetMoveService) previewWithDB(ctx context.Context, db *gorm.
 		return nil, ErrAssetMoveInvalidRequest
 	}
 
-	allowed, err := s.organizationService.IsOrganizationAdminOrOwner(ctx, organizationID, accountID)
-	if err != nil {
-		return nil, err
-	}
-	if !allowed {
-		return nil, ErrAssetMovePermissionDenied
-	}
-
 	targetWorkspace, targetBlockers, err := s.loadTargetWorkspace(ctx, db, organizationID, req.TargetWorkspaceID)
 	if err != nil {
 		return nil, err
@@ -119,8 +111,20 @@ func (s *WorkspaceAssetMoveService) previewWithDB(ctx context.Context, db *gorm.
 		}
 		seen[seenKey] = struct{}{}
 
+		permission, supportedPermission := assetMovePermissionForType(requestItem.Type)
+		if len(targetBlockers) == 0 && supportedPermission {
+			if err := s.requireAssetMovePermission(ctx, organizationID, item.TargetWorkspaceID, accountID, permission); err != nil {
+				return nil, err
+			}
+		}
+
 		if len(targetBlockers) == 0 && requestItem.Type != "" && requestItem.ID != "" {
 			if err := s.previewAsset(ctx, db, organizationID, requestItem, &item); err != nil {
+				return nil, err
+			}
+		}
+		if len(item.Blockers) == 0 && supportedPermission && item.FromWorkspaceID != "" {
+			if err := s.requireAssetMovePermission(ctx, organizationID, item.FromWorkspaceID, accountID, permission); err != nil {
 				return nil, err
 			}
 		}
@@ -132,6 +136,35 @@ func (s *WorkspaceAssetMoveService) previewWithDB(ctx context.Context, db *gorm.
 	}
 
 	return preview, nil
+}
+
+func assetMovePermissionForType(assetType string) (workspace_model.WorkspacePermissionCode, bool) {
+	switch assetType {
+	case AssetMoveTypeAgent:
+		return workspace_model.WorkspacePermissionAgentMove, true
+	case AssetMoveTypeDataset:
+		return workspace_model.WorkspacePermissionKnowledgeBaseMove, true
+	case AssetMoveTypeFile:
+		return workspace_model.WorkspacePermissionFileMove, true
+	case AssetMoveTypeDatabase:
+		return workspace_model.WorkspacePermissionDatabaseMove, true
+	default:
+		return "", false
+	}
+}
+
+func (s *WorkspaceAssetMoveService) requireAssetMovePermission(ctx context.Context, organizationID, workspaceID, accountID string, permission workspace_model.WorkspacePermissionCode) error {
+	if s.organizationService == nil {
+		return ErrAssetMovePermissionDenied
+	}
+	allowed, err := s.organizationService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, permission)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrAssetMovePermissionDenied
+	}
+	return nil
 }
 
 func (s *WorkspaceAssetMoveService) loadTargetWorkspace(ctx context.Context, db *gorm.DB, organizationID, workspaceID string) (*workspace_model.Workspace, []string, error) {

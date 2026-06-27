@@ -78,13 +78,37 @@ func TestAuthorizationServiceRequiresWorkspacePermission(t *testing.T) {
 	}
 }
 
-func TestAuthorizationServiceAllowsOrganizationAdminWithoutWorkspaceMembership(t *testing.T) {
+func TestAuthorizationServiceDeniesOrganizationAdminWithoutWorkspacePermission(t *testing.T) {
 	t.Parallel()
 
 	org := newAuthorizationFixture()
 	org.members["org-1:admin-1"] = model.OrganizationRoleAdmin
 	org.workspaces["org-1"] = []*model.Workspace{
 		{ID: "ws-1", Status: model.WorkspaceStatusNormal},
+	}
+	svc := NewAuthorizationService(org)
+
+	_, err := svc.RequireWorkspacePermission(context.Background(), interfaces.WorkspaceScopeRequest{
+		OrganizationID:  "org-1",
+		WorkspaceID:     "ws-1",
+		AccountID:       "admin-1",
+		PermissionCodes: []model.WorkspacePermissionCode{model.WorkspacePermissionAgentManage},
+	})
+	if !errors.Is(err, ErrAuthorizationDenied) {
+		t.Fatalf("RequireWorkspacePermission error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+func TestAuthorizationServiceAllowsOrganizationAdminWithWorkspacePermission(t *testing.T) {
+	t.Parallel()
+
+	org := newAuthorizationFixture()
+	org.members["org-1:admin-1"] = model.OrganizationRoleAdmin
+	org.workspaces["org-1"] = []*model.Workspace{
+		{ID: "ws-1", Status: model.WorkspaceStatusNormal},
+	}
+	org.workspacePermissions["org-1:ws-1:admin-1"] = []model.WorkspacePermissionCode{
+		model.WorkspacePermissionAgentManage,
 	}
 	svc := NewAuthorizationService(org)
 
@@ -97,8 +121,8 @@ func TestAuthorizationServiceAllowsOrganizationAdminWithoutWorkspaceMembership(t
 	if err != nil {
 		t.Fatalf("RequireWorkspacePermission error = %v", err)
 	}
-	if !scope.WorkspaceIsAdmin {
-		t.Fatalf("WorkspaceIsAdmin = false, want true")
+	if scope.WorkspaceID != "ws-1" {
+		t.Fatalf("WorkspaceID = %q, want ws-1", scope.WorkspaceID)
 	}
 }
 

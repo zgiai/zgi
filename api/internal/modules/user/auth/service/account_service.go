@@ -1979,16 +1979,25 @@ func (s *AccountService) GetAccountCapabilities(ctx context.Context, accountID s
 
 	workspacePermissions, err := s.organizationService.GetWorkspaceMemberPermissions(ctx, organizationID, workspaceID, accountID, accountID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get workspace permissions: %w", err)
+		if !isAdmin {
+			return nil, fmt.Errorf("failed to get workspace permissions: %w", err)
+		}
+		workspacePermissions = nil
 	}
 	if workspacePermissions == nil {
-		response.Workspace.RequiresWorkspace = true
-		response.Routes.WorkspaceRequired = true
-		return response, nil
+		if !isAdmin {
+			response.Workspace.RequiresWorkspace = true
+			response.Routes.WorkspaceRequired = true
+			return response, nil
+		}
+		workspacePermissions = accountOrganizationAdminWorkspacePermissions(organizationID, workspaceID, accountID, role)
 	}
 
 	permissions := append([]string(nil), workspacePermissions.Permissions...)
-	canViewWorkspace := isAdmin || hasAccountCapabilityPermission(permissions, string(workspace_model.WorkspacePermissionWorkspaceView))
+	if isAdmin {
+		permissions = workspace_model.WorkspacePermissionStringsFromCodes(workspace_model.AllWorkspacePermissionCodes())
+	}
+	canViewWorkspace := true
 	response.Workspace = dto.AccountWorkspaceCapabilities{
 		ID:                &workspaceID,
 		Available:         true,
@@ -2040,7 +2049,7 @@ func (s *AccountService) EnsureAccountContextForWorkspace(ctx context.Context, a
 		return nil, false, fmt.Errorf("account %s is not a member of organization %s", accountID, organizationID)
 	}
 
-	canAccessTarget, err := s.canAccountAccessWorkspace(ctx, accountID, organizationID, workspaceID)
+	canAccessTarget, err := s.canAccountAccessWorkspace(ctx, accountID, workspaceID)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to check workspace access: %w", err)
 	}
@@ -2262,7 +2271,7 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 			return nil, fmt.Errorf("account %s is not a member of organization %s", accountID, *targetOrganizationID)
 		}
 
-		canAccess, err := s.canAccountAccessWorkspace(ctx, accountID, *targetOrganizationID, workspace.ID)
+		canAccess, err := s.canAccountAccessWorkspace(ctx, accountID, workspace.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check workspace access: %w", err)
 		}
@@ -2383,7 +2392,7 @@ func (s *AccountService) resolveWorkspaceOrganizationContext(ctx context.Context
 		return nil, nil
 	}
 
-	canAccess, err := s.canAccountAccessWorkspace(ctx, accountID, *workspace.OrganizationID, workspace.ID)
+	canAccess, err := s.canAccountAccessWorkspace(ctx, accountID, workspace.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check workspace access: %w", err)
 	}
@@ -2426,27 +2435,30 @@ func (s *AccountService) isWorkspaceAccessibleInOrganization(ctx context.Context
 		return false, nil
 	}
 
-	return s.canAccountAccessWorkspace(ctx, accountID, organizationID, workspaceID)
+	return s.canAccountAccessWorkspace(ctx, accountID, workspaceID)
 }
 
-func (s *AccountService) canAccountAccessWorkspace(ctx context.Context, accountID, organizationID, workspaceID string) (bool, error) {
-	isAdmin, err := s.isOrganizationAdminOrOwner(ctx, organizationID, accountID)
-	if err != nil {
-		return false, err
-	}
-	if isAdmin {
+func (s *AccountService) canAccountAccessWorkspace(ctx context.Context, accountID, workspaceID string) (bool, error) {
+	join, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
+	if err == nil && join != nil {
 		return true, nil
 	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
 
-	join, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
+	workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, workspaceID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, nil
 		}
 		return false, err
 	}
+	if workspace == nil || workspace.OrganizationID == nil || strings.TrimSpace(*workspace.OrganizationID) == "" {
+		return false, nil
+	}
 
-	return join != nil, nil
+	return s.isOrganizationAdminOrOwner(ctx, strings.TrimSpace(*workspace.OrganizationID), accountID)
 }
 
 func (s *AccountService) isOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
@@ -2454,6 +2466,32 @@ func (s *AccountService) isOrganizationAdminOrOwner(ctx context.Context, organiz
 		return false, nil
 	}
 	return s.organizationService.IsOrganizationAdminOrOwner(ctx, organizationID, accountID)
+}
+
+func accountOrganizationAdminWorkspacePermissions(organizationID, workspaceID, accountID string, organizationRole workspace_model.OrganizationRole) *dto.WorkspaceMemberPermissionsResponse {
+	workspaceRole := workspace_model.WorkspaceRoleAdmin
+	workspaceRoleID := workspace_model.WorkspaceBuiltinRoleAdminID
+	roleName := "Admin"
+	permissionSource := workspace_model.WorkspaceMemberPermissionSourceRoleTemplate
+	if organizationRole == workspace_model.OrganizationRoleOwner {
+		workspaceRole = workspace_model.WorkspaceRoleOwner
+		workspaceRoleID = workspace_model.WorkspaceBuiltinRoleOwnerID
+		roleName = "Owner"
+		permissionSource = workspace_model.WorkspaceMemberPermissionSourceOwner
+	}
+
+	return &dto.WorkspaceMemberPermissionsResponse{
+		OrganizationID:           organizationID,
+		WorkspaceID:              workspaceID,
+		AccountID:                accountID,
+		OrganizationRole:         string(organizationRole),
+		WorkspaceRole:            string(workspaceRole),
+		WorkspaceRoleID:          &workspaceRoleID,
+		WorkspaceRoleName:        roleName,
+		Permissions:              workspace_model.WorkspacePermissionStringsFromCodes(workspace_model.AllWorkspacePermissionCodes()),
+		PermissionSource:         permissionSource,
+		PermissionTemplateRoleID: &workspaceRoleID,
+	}
 }
 
 func accountCapabilitiesContextMode(ctxModel *auth_model.AccountContext) string {
@@ -2578,15 +2616,6 @@ func (s *AccountService) accountRuntimeAudienceWorkspaceIDs(ctx context.Context,
 		return nil, fmt.Errorf("failed to load account runtime audience workspaces: %w", err)
 	}
 	return workspaceIDs, nil
-}
-
-func hasAccountCapabilityPermission(permissions []string, target string) bool {
-	for _, permission := range permissions {
-		if permission == target {
-			return true
-		}
-	}
-	return false
 }
 
 func ptrStringValue(value *string) string {

@@ -88,15 +88,6 @@ func (s *authorizationServiceImpl) RequireWorkspacePermission(ctx context.Contex
 		return nil, err
 	}
 
-	if organizationScope.IsAdmin {
-		return &interfaces.WorkspaceScope{
-			OrganizationScope: *organizationScope,
-			WorkspaceID:       workspaceID,
-			PermissionCodes:   req.PermissionCodes,
-			WorkspaceIsAdmin:  true,
-		}, nil
-	}
-
 	hasPermission, err := s.organizationService.CheckWorkspaceOrganizationAnyPermission(
 		ctx,
 		organizationScope.OrganizationID,

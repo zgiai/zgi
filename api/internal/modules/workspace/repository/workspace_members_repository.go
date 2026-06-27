@@ -28,11 +28,9 @@ type WorkspaceMemberRepository interface {
 	GetJoinsByWorkspaceID(ctx context.Context, workspaceID string) ([]*model.WorkspaceMember, error)
 	GetJoinsByMemberID(ctx context.Context, memberID string) ([]*model.WorkspaceMember, error)
 	GetOwnerByWorkspaceID(ctx context.Context, workspaceID string) (*model.WorkspaceMember, error)
-	GetAdminsByWorkspaceID(ctx context.Context, workspaceID string) ([]*model.WorkspaceMember, error)
 
 	IsMemberInWorkspace(ctx context.Context, memberID, workspaceID string) (bool, error)
 	IsMemberOwner(ctx context.Context, memberID, workspaceID string) (bool, error)
-	IsMemberAdmin(ctx context.Context, memberID, workspaceID string) (bool, error)
 	WithTx(tx *gorm.DB) WorkspaceMemberRepository
 }
 
@@ -74,6 +72,7 @@ func (r *workspaceMemberRepository) GetByWorkspaceAndMember(ctx context.Context,
 }
 
 func (r *workspaceMemberRepository) Update(ctx context.Context, join *model.WorkspaceMember) error {
+	model.ApplyWorkspaceMemberDefaults(join)
 	return r.db.WithContext(ctx).Save(join).Error
 }
 
@@ -191,12 +190,6 @@ func (r *workspaceMemberRepository) GetOwnerByWorkspaceID(ctx context.Context, w
 	return &join, nil
 }
 
-func (r *workspaceMemberRepository) GetAdminsByWorkspaceID(ctx context.Context, workspaceID string) ([]*model.WorkspaceMember, error) {
-	var joins []*model.WorkspaceMember
-	err := r.db.WithContext(ctx).Where("workspace_id = ? AND role IN ?", workspaceID, []model.WorkspaceMemberRole{model.WorkspaceRoleOwner, model.WorkspaceRoleAdmin}).Find(&joins).Error
-	return joins, err
-}
-
 func (r *workspaceMemberRepository) IsMemberInWorkspace(ctx context.Context, memberID, workspaceID string) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.WorkspaceMember{}).Where("account_id = ? AND workspace_id = ?", memberID, workspaceID).Count(&count).Error
@@ -206,12 +199,6 @@ func (r *workspaceMemberRepository) IsMemberInWorkspace(ctx context.Context, mem
 func (r *workspaceMemberRepository) IsMemberOwner(ctx context.Context, memberID, workspaceID string) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.WorkspaceMember{}).Where("account_id = ? AND workspace_id = ? AND role = ?", memberID, workspaceID, model.WorkspaceRoleOwner).Count(&count).Error
-	return count > 0, err
-}
-
-func (r *workspaceMemberRepository) IsMemberAdmin(ctx context.Context, memberID, workspaceID string) (bool, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&model.WorkspaceMember{}).Where("account_id = ? AND workspace_id = ? AND role IN ?", memberID, workspaceID, []model.WorkspaceMemberRole{model.WorkspaceRoleOwner, model.WorkspaceRoleAdmin}).Count(&count).Error
 	return count > 0, err
 }
 

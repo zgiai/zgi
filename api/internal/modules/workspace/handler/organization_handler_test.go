@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,7 @@ type fakeOrganizationService struct {
 	addMemberFn                      func(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error
 	directAddMemberFn                func(ctx context.Context, req *shared_dto.DirectAddOrganizationMemberRequest) (*shared_dto.DirectAddOrganizationMemberResponse, error)
 	listWorkspaceRolesFn             func(ctx context.Context, organizationID, accountID string, includeOwner bool) (*shared_dto.WorkspaceRoleListResponse, error)
+	applyWorkspaceRoleTemplateFn     func(ctx context.Context, req *shared_dto.ApplyWorkspaceRoleTemplateRequest) (*shared_dto.ApplyWorkspaceRoleTemplateResponse, error)
 }
 
 func (f fakeOrganizationService) GetWorkspaceMemberPermissions(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error) {
@@ -178,12 +180,20 @@ func (f fakeOrganizationService) ListWorkspaceRoles(ctx context.Context, organiz
 	return &shared_dto.WorkspaceRoleListResponse{}, nil
 }
 
+func (f fakeOrganizationService) ApplyWorkspaceRoleTemplate(ctx context.Context, req *shared_dto.ApplyWorkspaceRoleTemplateRequest) (*shared_dto.ApplyWorkspaceRoleTemplateResponse, error) {
+	if f.applyWorkspaceRoleTemplateFn != nil {
+		return f.applyWorkspaceRoleTemplateFn(ctx, req)
+	}
+	return &shared_dto.ApplyWorkspaceRoleTemplateResponse{}, nil
+}
+
 type fakeWorkspaceManagementService struct {
 	interfaces.WorkspaceManagementService
-	getWorkspaceMembersFn func(ctx context.Context, workspaceID string) ([]*interfaces.AccountWithRole, error)
-	getWorkspaceByIDFn    func(ctx context.Context, id string) (*model.Workspace, error)
-	getUserRoleFn         func(ctx context.Context, accountID, workspaceID string) (*model.WorkspaceMemberRole, error)
-	addMemberFn           func(ctx context.Context, req *interfaces.AddMemberRequest) error
+	getWorkspaceMembersFn           func(ctx context.Context, workspaceID string) ([]*interfaces.AccountWithRole, error)
+	getWorkspaceByIDFn              func(ctx context.Context, id string) (*model.Workspace, error)
+	getUserRoleFn                   func(ctx context.Context, accountID, workspaceID string) (*model.WorkspaceMemberRole, error)
+	addMemberFn                     func(ctx context.Context, req *interfaces.AddMemberRequest) error
+	updateMemberDirectPermissionsFn func(ctx context.Context, workspaceID, accountID string, permissions []string) error
 }
 
 func (f fakeWorkspaceManagementService) GetWorkspaceMembers(ctx context.Context, workspaceID string) ([]*interfaces.AccountWithRole, error) {
@@ -210,6 +220,13 @@ func (f fakeWorkspaceManagementService) GetUserRole(ctx context.Context, account
 func (f fakeWorkspaceManagementService) AddMember(ctx context.Context, req *interfaces.AddMemberRequest) error {
 	if f.addMemberFn != nil {
 		return f.addMemberFn(ctx, req)
+	}
+	return nil
+}
+
+func (f fakeWorkspaceManagementService) UpdateMemberDirectPermissions(ctx context.Context, workspaceID, accountID string, permissions []string) error {
+	if f.updateMemberDirectPermissionsFn != nil {
+		return f.updateMemberDirectPermissionsFn(ctx, workspaceID, accountID, permissions)
 	}
 	return nil
 }
@@ -347,6 +364,42 @@ func TestGetWorkspaceMemberPermissionsReturnsSingleErrorResponse(t *testing.T) {
 	require.Equal(t, response.ErrWorkspaceNotInOrganization.Message, resp.Message)
 }
 
+func TestGetWorkspaceMemberPermissionsMapsMissingWorkspaceMember(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			getWorkspaceMemberPermissionsFn: func(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "ws-1", workspaceID)
+				require.Equal(t, "acc-1", accountID)
+				require.Equal(t, "acc-1", targetAccountID)
+				return nil, errors.New("workspace member not found")
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/current/workspaces/ws-1/accounts/current/permissions")
+	c.Set("account_id", "acc-1")
+	c.Set("organization_id", "org-1")
+	c.Set("tenant_id", "org-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "current"},
+		{Key: "workspace_id", Value: "ws-1"},
+		{Key: "account_id", Value: "current"},
+	}
+
+	handler.GetWorkspaceMemberPermissions(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	var resp response.Response
+	err := json.Unmarshal(recorder.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	require.Equal(t, "205007", resp.Code)
+	require.Equal(t, response.ErrMemberNotInWorkspace.Message, resp.Message)
+}
+
 func TestGetWorkspaceMemberPermissionsReturnsSuccessResponse(t *testing.T) {
 	t.Parallel()
 
@@ -386,6 +439,172 @@ func TestGetWorkspaceMemberPermissionsReturnsSuccessResponse(t *testing.T) {
 	require.Equal(t, "0", resp.Code)
 	require.Equal(t, "success", resp.Message)
 	require.Contains(t, recorder.Body.String(), `"workspace_id":"ws-1"`)
+}
+
+func TestUpdateOrganizationWorkspaceMemberPermissionsUsesPermissionManage(t *testing.T) {
+	t.Parallel()
+
+	updateCalled := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			checkWorkspacePermissionFn: func(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "ws-1", workspaceID)
+				require.Equal(t, "operator-1", accountID)
+				require.Equal(t, model.WorkspacePermissionWorkspacePermissionManage, permissionCode)
+				return true, nil
+			},
+		},
+		workspaceManagementService: fakeWorkspaceManagementService{
+			updateMemberDirectPermissionsFn: func(ctx context.Context, workspaceID, accountID string, permissions []string) error {
+				updateCalled = true
+				require.Equal(t, "ws-1", workspaceID)
+				require.Equal(t, "member-1", accountID)
+				require.ElementsMatch(t, []string{"agent.manage"}, permissions)
+				return nil
+			},
+		},
+		accountService: fakeAccountService{},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPut, "/organizations/org-1/workspaces/ws-1/members/member-1/permissions")
+	c.Set("account_id", "operator-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "workspace_id", Value: "ws-1"},
+		{Key: "member_id", Value: "member-1"},
+	}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"permissions":["agent.manage"]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateOrganizationWorkspaceMemberPermissions(c)
+
+	require.True(t, updateCalled)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"result":"success"`)
+}
+
+func TestUpdateOrganizationWorkspaceMemberPermissionsRejectsMissingPermission(t *testing.T) {
+	t.Parallel()
+
+	updateCalled := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			checkWorkspacePermissionFn: func(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error) {
+				require.Equal(t, model.WorkspacePermissionWorkspacePermissionManage, permissionCode)
+				return false, nil
+			},
+		},
+		workspaceManagementService: fakeWorkspaceManagementService{
+			updateMemberDirectPermissionsFn: func(ctx context.Context, workspaceID, accountID string, permissions []string) error {
+				updateCalled = true
+				return nil
+			},
+		},
+		accountService: fakeAccountService{},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPut, "/organizations/org-1/workspaces/ws-1/members/member-1/permissions")
+	c.Set("account_id", "operator-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "workspace_id", Value: "ws-1"},
+		{Key: "member_id", Value: "member-1"},
+	}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"permissions":["agent.manage"]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateOrganizationWorkspaceMemberPermissions(c)
+
+	require.False(t, updateCalled)
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestBatchAddOrganizationMembersToWorkspaceDefaultsToNormalRole(t *testing.T) {
+	t.Parallel()
+
+	addCalled := false
+	var addedRole model.WorkspaceMemberRole
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			getOrganizationByWorkspaceIDFn: func(ctx context.Context, workspaceID string) (*model.Organization, error) {
+				require.Equal(t, "ws-1", workspaceID)
+				return &model.Organization{ID: "org-1", Status: model.OrganizationStatusActive}, nil
+			},
+			checkWorkspacePermissionFn: func(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "ws-1", workspaceID)
+				require.Equal(t, "operator-1", accountID)
+				require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, permissionCode)
+				return true, nil
+			},
+		},
+		workspaceManagementService: fakeWorkspaceManagementService{
+			getWorkspaceByIDFn: func(ctx context.Context, id string) (*model.Workspace, error) {
+				require.Equal(t, "ws-1", id)
+				return &model.Workspace{ID: id}, nil
+			},
+			getUserRoleFn: func(ctx context.Context, accountID, workspaceID string) (*model.WorkspaceMemberRole, error) {
+				return nil, nil
+			},
+			addMemberFn: func(ctx context.Context, req *interfaces.AddMemberRequest) error {
+				addCalled = true
+				require.Equal(t, "ws-1", req.WorkspaceID)
+				require.Equal(t, "member-1", req.AccountID)
+				addedRole = req.Role
+				require.Nil(t, req.Permissions)
+				require.Nil(t, req.RoleID)
+				return nil
+			},
+		},
+		accountService: fakeAccountService{},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/workspaces/ws-1/members/batch-add")
+	c.Set("account_id", "operator-1")
+	c.Set("organization_id", "org-1")
+	c.Set("tenant_id", "org-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "workspace_id", Value: "ws-1"},
+	}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"account_ids":["member-1"]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.BatchAddOrganizationMembersToWorkspace(c)
+
+	require.True(t, addCalled)
+	require.Equal(t, model.WorkspaceRoleNormal, addedRole)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+}
+
+func TestBatchAddOrganizationMembersToWorkspaceRejectsDirectPermissions(t *testing.T) {
+	t.Parallel()
+
+	addCalled := false
+	handler := &OrganizationHandler{
+		workspaceManagementService: fakeWorkspaceManagementService{
+			addMemberFn: func(ctx context.Context, req *interfaces.AddMemberRequest) error {
+				addCalled = true
+				return nil
+			},
+		},
+		accountService: fakeAccountService{},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/workspaces/ws-1/members/batch-add")
+	c.Set("account_id", "operator-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "workspace_id", Value: "ws-1"},
+	}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"account_ids":["member-1"],"permissions":["agent.view"]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.BatchAddOrganizationMembersToWorkspace(c)
+
+	require.False(t, addCalled)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
 func TestOrganizationWorkspaceRoutesRejectCrossOrganizationWorkspaceBeforePermission(t *testing.T) {
@@ -1134,6 +1353,48 @@ func TestListWorkspaceRolesRejectsAccountWithoutOrganizationAccess(t *testing.T)
 	var resp response.Response
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, strconv.Itoa(response.ErrPermissionDenied.Code), resp.Code)
+}
+
+func TestApplyWorkspaceRoleTemplateBindsTargetsAndOperator(t *testing.T) {
+	t.Parallel()
+
+	serviceCalled := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationAdminOrOwnerFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "admin-1", accountID)
+				return true, nil
+			},
+			applyWorkspaceRoleTemplateFn: func(ctx context.Context, req *shared_dto.ApplyWorkspaceRoleTemplateRequest) (*shared_dto.ApplyWorkspaceRoleTemplateResponse, error) {
+				serviceCalled = true
+				require.Equal(t, "org-1", req.OrganizationID)
+				require.Equal(t, model.WorkspaceBuiltinRoleMemberID, req.RoleID)
+				require.Equal(t, "admin-1", req.OperatorID)
+				require.Len(t, req.Members, 2)
+				require.Equal(t, "ws-1", req.Members[0].WorkspaceID)
+				require.Equal(t, "member-1", req.Members[0].AccountID)
+				require.Equal(t, "ws-2", req.Members[1].WorkspaceID)
+				require.Equal(t, "member-1", req.Members[1].AccountID)
+				return &shared_dto.ApplyWorkspaceRoleTemplateResponse{AppliedCount: 2}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/roles/00000000-0000-0000-0000-000000000003/apply-template")
+	c.Set("account_id", "admin-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "role_id", Value: model.WorkspaceBuiltinRoleMemberID},
+	}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"members":[{"workspace_id":"ws-1","account_id":"member-1"},{"workspace_id":"ws-2","account_id":"member-1"}]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.ApplyWorkspaceRoleTemplate(c)
+
+	require.True(t, serviceCalled)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"applied_count":2`)
 }
 
 func TestGetOrganizationMembersRejectsNonAdminWorkspaceManager(t *testing.T) {

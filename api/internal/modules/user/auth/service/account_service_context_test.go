@@ -501,7 +501,7 @@ func TestGetAccountCapabilitiesRuntimeAudienceIncludesActiveDepartments(t *testi
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestGetAccountCapabilitiesWorkspaceModeUsesWorkspaceViewPermission(t *testing.T) {
+func TestGetAccountCapabilitiesWorkspaceModeUsesWorkspaceMembership(t *testing.T) {
 	organizationID := "org-1"
 	workspaceID := "ws-1"
 	repo := &fakeAccountContextRepository{
@@ -535,7 +535,7 @@ func TestGetAccountCapabilitiesWorkspaceModeUsesWorkspaceViewPermission(t *testi
 				WorkspaceID:    workspaceID,
 				AccountID:      "acc-1",
 				Permissions: []string{
-					string(workspace_model.WorkspacePermissionWorkspaceView),
+					string(workspace_model.WorkspacePermissionAgentView),
 				},
 			},
 		},
@@ -555,10 +555,10 @@ func TestGetAccountCapabilitiesWorkspaceModeUsesWorkspaceViewPermission(t *testi
 	require.False(t, capabilities.Routes.WorkspaceRequired)
 	require.True(t, capabilities.Workspace.Available)
 	require.True(t, capabilities.Workspace.CanView)
-	require.Contains(t, capabilities.Workspace.Permissions, string(workspace_model.WorkspacePermissionWorkspaceView))
+	require.NotContains(t, capabilities.Workspace.Permissions, string(workspace_model.WorkspacePermissionWorkspaceView))
 }
 
-func TestGetAccountCapabilitiesWorkspaceModeDeniesWithoutWorkspaceViewPermission(t *testing.T) {
+func TestGetAccountCapabilitiesWorkspaceModeAllowsEmptyPermissionSnapshot(t *testing.T) {
 	organizationID := "org-1"
 	workspaceID := "ws-1"
 	repo := &fakeAccountContextRepository{
@@ -591,6 +591,111 @@ func TestGetAccountCapabilitiesWorkspaceModeDeniesWithoutWorkspaceViewPermission
 				OrganizationID: organizationID,
 				WorkspaceID:    workspaceID,
 				AccountID:      "acc-1",
+				Permissions:    []string{},
+			},
+		},
+	}
+
+	svc := &AccountService{
+		accountRepo:                repo,
+		workspaceManagementService: workspaceService,
+		organizationService:        organizationService,
+	}
+
+	capabilities, err := svc.GetAccountCapabilities(context.Background(), "acc-1")
+	require.NoError(t, err)
+	require.True(t, capabilities.Routes.WorkspaceScopeAllowed)
+	require.False(t, capabilities.Routes.WorkspaceRequired)
+	require.True(t, capabilities.Workspace.Available)
+	require.True(t, capabilities.Workspace.CanView)
+	require.Empty(t, capabilities.Workspace.Permissions)
+}
+
+func TestGetAccountCapabilitiesKeepsWorkspaceForOrganizationAdminWithoutWorkspaceMembership(t *testing.T) {
+	organizationID := "org-1"
+	workspaceID := "ws-1"
+	repo := &fakeAccountContextRepository{
+		ctxModel: &auth_model.AccountContext{
+			AccountID:             "acc-1",
+			CurrentOrganizationID: &organizationID,
+			CurrentWorkspaceID:    &workspaceID,
+		},
+	}
+	workspaceService := &fakeWorkspaceContextService{
+		workspaces: map[string]*workspace_model.Workspace{
+			workspaceID: {
+				ID:             workspaceID,
+				Name:           "Stale",
+				Status:         workspace_model.WorkspaceStatusNormal,
+				OrganizationID: &organizationID,
+			},
+		},
+		joins: map[string]bool{},
+	}
+	organizationService := &fakeOrganizationContextService{
+		members: map[string]bool{organizationID: true},
+		admins:  map[string]bool{organizationID: true},
+		roles: map[string]workspace_model.OrganizationRole{
+			organizationID: workspace_model.OrganizationRoleAdmin,
+		},
+	}
+
+	svc := &AccountService{
+		accountRepo:                repo,
+		workspaceManagementService: workspaceService,
+		organizationService:        organizationService,
+	}
+
+	capabilities, err := svc.GetAccountCapabilities(context.Background(), "acc-1")
+	require.NoError(t, err)
+	require.Equal(t, "workspace", capabilities.Context.Mode)
+	require.True(t, capabilities.Organization.IsAdmin)
+	require.True(t, capabilities.Routes.OrganizationScopeAllowed)
+	require.True(t, capabilities.Routes.WorkspaceScopeAllowed)
+	require.False(t, capabilities.Routes.WorkspaceRequired)
+	require.True(t, capabilities.Workspace.Available)
+	require.True(t, capabilities.Workspace.CanView)
+	require.Equal(t, string(workspace_model.WorkspaceRoleAdmin), capabilities.Workspace.Role)
+	require.Contains(t, capabilities.Workspace.Permissions, string(workspace_model.WorkspacePermissionDatabaseDelete))
+	require.NotNil(t, capabilities.Context.CurrentWorkspaceID)
+	require.Equal(t, workspaceID, *capabilities.Context.CurrentWorkspaceID)
+	require.Nil(t, repo.updated)
+}
+
+func TestGetAccountCapabilitiesOrganizationAdminOverridesWorkspaceMembershipPermissions(t *testing.T) {
+	organizationID := "org-1"
+	workspaceID := "ws-1"
+	repo := &fakeAccountContextRepository{
+		ctxModel: &auth_model.AccountContext{
+			AccountID:             "acc-1",
+			CurrentOrganizationID: &organizationID,
+			CurrentWorkspaceID:    &workspaceID,
+		},
+	}
+	workspaceService := &fakeWorkspaceContextService{
+		workspaces: map[string]*workspace_model.Workspace{
+			workspaceID: {
+				ID:             workspaceID,
+				Name:           "Workspace",
+				Status:         workspace_model.WorkspaceStatusNormal,
+				OrganizationID: &organizationID,
+			},
+		},
+		joins: map[string]bool{
+			workspaceID + ":acc-1": true,
+		},
+	}
+	organizationService := &fakeOrganizationContextService{
+		members: map[string]bool{organizationID: true},
+		admins:  map[string]bool{organizationID: true},
+		roles: map[string]workspace_model.OrganizationRole{
+			organizationID: workspace_model.OrganizationRoleAdmin,
+		},
+		workspacePermissions: map[string]*shared_dto.WorkspaceMemberPermissionsResponse{
+			organizationID + ":" + workspaceID + ":acc-1": {
+				OrganizationID: organizationID,
+				WorkspaceID:    workspaceID,
+				AccountID:      "acc-1",
 				Permissions:    []string{string(workspace_model.WorkspacePermissionAgentView)},
 			},
 		},
@@ -604,10 +709,12 @@ func TestGetAccountCapabilitiesWorkspaceModeDeniesWithoutWorkspaceViewPermission
 
 	capabilities, err := svc.GetAccountCapabilities(context.Background(), "acc-1")
 	require.NoError(t, err)
-	require.False(t, capabilities.Routes.WorkspaceScopeAllowed)
-	require.False(t, capabilities.Routes.WorkspaceRequired)
+	require.True(t, capabilities.Organization.IsAdmin)
 	require.True(t, capabilities.Workspace.Available)
-	require.False(t, capabilities.Workspace.CanView)
+	require.True(t, capabilities.Workspace.CanView)
+	require.True(t, capabilities.Routes.WorkspaceScopeAllowed)
+	require.False(t, capabilities.Routes.WorkspaceRequired)
+	require.Contains(t, capabilities.Workspace.Permissions, string(workspace_model.WorkspacePermissionDatabaseDelete))
 }
 
 func TestEnsureAccountContextForWorkspaceCreatesTargetWhenContextMissing(t *testing.T) {

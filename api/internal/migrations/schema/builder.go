@@ -90,6 +90,22 @@ func (b *Builder) UpdateRowsWhereEqual(table, setColumn string, setValue any, wh
 	return nil
 }
 
+func (b *Builder) DataFix(description string, fn func(*gorm.DB) error) error {
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return fmt.Errorf("data fix description is required")
+	}
+	if fn == nil {
+		return fmt.Errorf("data fix %s has nil function", description)
+	}
+
+	b.executedStatements = append(b.executedStatements, "DATA FIX: "+description)
+	if err := fn(b.db); err != nil {
+		return fmt.Errorf("execute data fix %s: %w", description, err)
+	}
+	return nil
+}
+
 func (b *Builder) HasTable(table string) (bool, error) {
 	if err := validateIdent(table); err != nil {
 		return false, err

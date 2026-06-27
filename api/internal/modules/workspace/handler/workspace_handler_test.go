@@ -48,7 +48,7 @@ func TestWorkspaceStatisticsUsesRouteWorkspaceOrganizationForPermission(t *testi
 	require.False(t, workspaceSvc.statisticsCalled)
 }
 
-func TestUpdateWorkspaceAllowsOrganizationAdminWithoutWorkspaceMembership(t *testing.T) {
+func TestUpdateWorkspaceRequiresWorkspaceManagePermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	workspaceID := "workspace-route"
@@ -69,7 +69,8 @@ func TestUpdateWorkspaceAllowsOrganizationAdminWithoutWorkspaceMembership(t *tes
 
 	handler.UpdateWorkspace(c)
 
-	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+	requireWorkspaceHandlerResponseCode(t, recorder, response.ErrPermissionDenied)
 	require.True(t, organizationSvc.getOrganizationByWorkspaceIDCalled)
 	require.Equal(t, workspaceID, organizationSvc.lastWorkspaceIDForOrganization)
 	require.True(t, organizationSvc.checkWorkspacePermissionCalled)
@@ -77,13 +78,8 @@ func TestUpdateWorkspaceAllowsOrganizationAdminWithoutWorkspaceMembership(t *tes
 	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
 	require.Equal(t, accountID, organizationSvc.lastPermissionAccountID)
 	require.Equal(t, model.WorkspacePermissionWorkspaceManage, organizationSvc.lastPermissionCode)
-	require.True(t, accountSvc.isOrganizationAdminOrOwnerCalled)
-	require.Equal(t, routeOrganizationID, accountSvc.lastOrganizationID)
-	require.Equal(t, accountID, accountSvc.lastAccountID)
-	require.True(t, workspaceSvc.updateCalled)
-	require.Equal(t, workspaceID, workspaceSvc.lastUpdateWorkspaceID)
-	require.Equal(t, "Renamed workspace", workspaceSvc.lastUpdateName)
-	require.True(t, workspaceSvc.lastUpdateHasAdminPermission)
+	require.False(t, accountSvc.isOrganizationAdminOrOwnerCalled)
+	require.False(t, workspaceSvc.updateCalled)
 }
 
 func newWorkspaceHandlerContext(method, target, accountID string) (*gin.Context, *httptest.ResponseRecorder) {
@@ -101,22 +97,22 @@ func requestBody(body string) io.ReadCloser {
 type workspaceHandlerWorkspaceService struct {
 	workspace_service.WorkspaceService
 
-	updateCalled                 bool
-	statisticsCalled             bool
-	lastUpdateWorkspaceID        string
-	lastUpdateName               string
-	lastUpdateHasAdminPermission bool
+	updateCalled                     bool
+	statisticsCalled                 bool
+	lastUpdateWorkspaceID            string
+	lastUpdateName                   string
+	lastUpdateHasWorkspacePermission bool
 }
 
 func (s *workspaceHandlerWorkspaceService) CreateWorkspace(context.Context, string, string) error {
 	return nil
 }
 
-func (s *workspaceHandlerWorkspaceService) UpdateWorkspace(_ context.Context, workspaceID, name string, status *model.WorkspaceStatus, accountID string, hasAdminPermission bool) (*model.WorkspaceUpdateResponse, error) {
+func (s *workspaceHandlerWorkspaceService) UpdateWorkspace(_ context.Context, workspaceID, name string, status *model.WorkspaceStatus, accountID string, hasWorkspacePermission bool) (*model.WorkspaceUpdateResponse, error) {
 	s.updateCalled = true
 	s.lastUpdateWorkspaceID = workspaceID
 	s.lastUpdateName = name
-	s.lastUpdateHasAdminPermission = hasAdminPermission
+	s.lastUpdateHasWorkspacePermission = hasWorkspacePermission
 	return &model.WorkspaceUpdateResponse{
 		Result: "success",
 		Tenant: struct {

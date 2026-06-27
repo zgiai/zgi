@@ -41,7 +41,7 @@ func TestMembersHandlerCurrentMembersUsesCurrentWorkspaceOrganizationForPermissi
 	require.Equal(t, organizationID, organizationSvc.lastPermissionOrganizationID)
 	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
 	require.Equal(t, accountID, organizationSvc.lastPermissionAccountID)
-	require.Equal(t, model.WorkspacePermissionWorkspaceView, organizationSvc.lastPermissionCode)
+	require.Equal(t, model.WorkspacePermissionWorkspaceMemberView, organizationSvc.lastPermissionCode)
 }
 
 func TestMembersHandlerWorkspaceMembersExtensionUsesRouteWorkspaceOrganizationForPermission(t *testing.T) {
@@ -69,7 +69,7 @@ func TestMembersHandlerWorkspaceMembersExtensionUsesRouteWorkspaceOrganizationFo
 	require.Equal(t, organizationID, organizationSvc.lastPermissionOrganizationID)
 	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
 	require.Equal(t, accountID, organizationSvc.lastPermissionAccountID)
-	require.Equal(t, model.WorkspacePermissionWorkspaceView, organizationSvc.lastPermissionCode)
+	require.Equal(t, model.WorkspacePermissionWorkspaceMemberView, organizationSvc.lastPermissionCode)
 }
 
 func TestMembersHandlerCancelWorkspaceInviteRequiresManageBeforeMemberLookup(t *testing.T) {
@@ -103,7 +103,7 @@ func TestMembersHandlerCancelWorkspaceInviteRequiresManageBeforeMemberLookup(t *
 	require.Equal(t, organizationID, organizationSvc.lastPermissionOrganizationID)
 	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
 	require.Equal(t, accountID, organizationSvc.lastPermissionAccountID)
-	require.Equal(t, model.WorkspacePermissionWorkspaceManage, organizationSvc.lastPermissionCode)
+	require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, organizationSvc.lastPermissionCode)
 }
 
 func newMembersHandlerContext(method, target, accountID string) (*gin.Context, *httptest.ResponseRecorder) {

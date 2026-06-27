@@ -29,7 +29,7 @@ func (h *OrganizationHandler) GetOrganizationWorkspaceAvailableMembers(c *gin.Co
 		return
 	}
 
-	if !h.requireOrganizationWorkspacePermission(c, organizationID, workspaceID, accountID, model.WorkspacePermissionWorkspaceManage) {
+	if !h.requireOrganizationWorkspacePermission(c, organizationID, workspaceID, accountID, model.WorkspacePermissionWorkspaceMemberManage) {
 		return
 	}
 

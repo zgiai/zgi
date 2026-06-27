@@ -78,6 +78,8 @@ func (r WorkspaceMemberRole) IsValidRole() bool {
 		WorkspaceRoleOwner,
 		WorkspaceRoleAdmin,
 		WorkspaceRoleEditor,
+		WorkspaceRoleMember,
+		WorkspaceRoleViewer,
 		WorkspaceRoleNormal,
 	}
 
@@ -110,20 +112,37 @@ func (r WorkspaceMemberRole) IsDatasetEditRole() bool {
 }
 
 func (r WorkspaceMemberRole) IsNonOwnerRole() bool {
-	return r == WorkspaceRoleAdmin || r == WorkspaceRoleEditor || r == WorkspaceRoleNormal
+	return r == WorkspaceRoleAdmin ||
+		r == WorkspaceRoleEditor ||
+		r == WorkspaceRoleMember ||
+		r == WorkspaceRoleViewer ||
+		r == WorkspaceRoleNormal
 }
+
+// WorkspaceMemberPermissionSource describes how a member's effective permissions were assigned.
+type WorkspaceMemberPermissionSource string
+
+const (
+	WorkspaceMemberPermissionSourceOwner        WorkspaceMemberPermissionSource = "owner"
+	WorkspaceMemberPermissionSourceRoleTemplate WorkspaceMemberPermissionSource = "role_template"
+	WorkspaceMemberPermissionSourceDirect       WorkspaceMemberPermissionSource = "direct"
+	WorkspaceMemberPermissionSourceLegacyRole   WorkspaceMemberPermissionSource = "legacy_role"
+)
 
 // WorkspaceMember Workspace account association
 type WorkspaceMember struct {
-	ID          string              `gorm:"type:varchar(255);primaryKey" json:"id"`
-	WorkspaceID string              `gorm:"type:varchar(255);not null;index" json:"workspace_id"`
-	AccountID   string              `gorm:"type:varchar(255);not null;index" json:"account_id"`
-	Role        WorkspaceMemberRole `gorm:"type:varchar(16);not null" json:"role"`
-	RoleID      *string             `gorm:"type:uuid" json:"role_id,omitempty"`
-	Current     bool                `gorm:"not null;default:false" json:"current"`
-	CreatedAt   time.Time           `json:"created_at"`
-	UpdatedAt   time.Time           `json:"updated_at"`
-	InvitedBy   *string             `gorm:"column:invited_by;type:uuid" json:"invited_by"`
+	ID                       string                          `gorm:"type:varchar(255);primaryKey" json:"id"`
+	WorkspaceID              string                          `gorm:"type:varchar(255);not null;index" json:"workspace_id"`
+	AccountID                string                          `gorm:"type:varchar(255);not null;index" json:"account_id"`
+	Role                     WorkspaceMemberRole             `gorm:"type:varchar(16);not null" json:"role"`
+	RoleID                   *string                         `gorm:"type:uuid" json:"role_id,omitempty"`
+	Permissions              []string                        `gorm:"type:jsonb;serializer:json;not null;default:'[]'" json:"permissions"`
+	PermissionSource         WorkspaceMemberPermissionSource `gorm:"type:varchar(32);not null;default:'role_template'" json:"permission_source"`
+	PermissionTemplateRoleID *string                         `gorm:"column:permission_template_role_id;type:uuid" json:"permission_template_role_id,omitempty"`
+	Current                  bool                            `gorm:"not null;default:false" json:"current"`
+	CreatedAt                time.Time                       `json:"created_at"`
+	UpdatedAt                time.Time                       `json:"updated_at"`
+	InvitedBy                *string                         `gorm:"column:invited_by;type:uuid" json:"invited_by"`
 
 	// Extensions JSON field for additional data (e.g., position)
 	// Currently used to store:
@@ -151,6 +170,93 @@ func DefaultWorkspaceRoleID(role WorkspaceMemberRole) string {
 	}
 }
 
+func WorkspacePermissionStringsFromCodes(codes []WorkspacePermissionCode) []string {
+	if len(codes) == 0 {
+		return []string{}
+	}
+
+	permissions := make([]string, 0, len(codes))
+	seen := make(map[string]struct{}, len(codes))
+	for _, code := range codes {
+		codeStr := strings.TrimSpace(string(code))
+		if codeStr == "" {
+			continue
+		}
+		if _, ok := seen[codeStr]; ok {
+			continue
+		}
+		seen[codeStr] = struct{}{}
+		permissions = append(permissions, codeStr)
+	}
+	return permissions
+}
+
+func NormalizeWorkspacePermissionStrings(permissions []string) []string {
+	if len(permissions) == 0 {
+		return []string{}
+	}
+
+	normalized := make([]string, 0, len(permissions))
+	seen := make(map[string]struct{}, len(permissions))
+	for _, permission := range permissions {
+		permission = strings.TrimSpace(permission)
+		if permission == "" {
+			continue
+		}
+		if _, ok := seen[permission]; ok {
+			continue
+		}
+		seen[permission] = struct{}{}
+		normalized = append(normalized, permission)
+	}
+	return normalized
+}
+
+func DefaultWorkspaceMemberPermissionStrings(role WorkspaceMemberRole, roleID *string) []string {
+	if role == WorkspaceRoleOwner {
+		return WorkspacePermissionStringsFromCodes(AllWorkspacePermissionCodes())
+	}
+
+	effectiveRoleID := ""
+	if roleID != nil {
+		effectiveRoleID = strings.TrimSpace(*roleID)
+	}
+	if effectiveRoleID == "" {
+		effectiveRoleID = DefaultWorkspaceRoleID(role)
+	}
+
+	if IsBuiltinRole(effectiveRoleID) {
+		return WorkspacePermissionStringsFromCodes(GetBuiltinGroupRolePermissionsByID(effectiveRoleID))
+	}
+	return []string{}
+}
+
+func EffectiveWorkspaceMemberPermissionStrings(role WorkspaceMemberRole, roleID *string, permissions []string, permissionSource WorkspaceMemberPermissionSource) []string {
+	if role == WorkspaceRoleOwner {
+		return WorkspacePermissionStringsFromCodes(AllWorkspacePermissionCodes())
+	}
+
+	normalized := NormalizeWorkspacePermissionStrings(permissions)
+	if len(normalized) > 0 ||
+		permissionSource == WorkspaceMemberPermissionSourceDirect ||
+		permissionSource == WorkspaceMemberPermissionSourceRoleTemplate {
+		expanded := ExpandWorkspacePermissionStringsForCompatibility(normalized)
+		filtered := make([]string, 0, len(expanded))
+		for _, permission := range expanded {
+			code := WorkspacePermissionCode(permission)
+			if !IsKnownWorkspacePermissionCode(code) ||
+				IsWorkspaceGovernancePermission(code) ||
+				isRetiredWorkspacePermission(code) {
+				continue
+			}
+			filtered = append(filtered, permission)
+		}
+		return WorkspacePermissionStringsFromCodes(permissionStringsToCodes(filtered))
+	}
+
+	return DefaultWorkspaceMemberPermissionStrings(role, roleID)
+}
+
 func ApplyWorkspaceMemberDefaults(join *WorkspaceMember) {
 	if join == nil {
 		return
@@ -173,6 +279,35 @@ func ApplyWorkspaceMemberDefaults(join *WorkspaceMember) {
 		if roleID := DefaultWorkspaceRoleID(join.Role); roleID != "" {
 			join.RoleID = &roleID
 		}
+	}
+
+	if join.PermissionTemplateRoleID != nil {
+		roleID := strings.TrimSpace(*join.PermissionTemplateRoleID)
+		if roleID == "" {
+			join.PermissionTemplateRoleID = nil
+		} else if roleID != *join.PermissionTemplateRoleID {
+			join.PermissionTemplateRoleID = &roleID
+		}
+	}
+
+	if join.PermissionTemplateRoleID == nil && join.RoleID != nil {
+		roleID := *join.RoleID
+		join.PermissionTemplateRoleID = &roleID
+	}
+
+	if join.PermissionSource == "" {
+		join.PermissionSource = WorkspaceMemberPermissionSourceRoleTemplate
+	}
+
+	if join.Role == WorkspaceRoleOwner {
+		join.PermissionSource = WorkspaceMemberPermissionSourceOwner
+		join.Permissions = DefaultWorkspaceMemberPermissionStrings(join.Role, join.RoleID)
+		return
+	}
+
+	join.Permissions = NormalizeWorkspacePermissionStrings(join.Permissions)
+	if len(join.Permissions) == 0 && join.PermissionSource != WorkspaceMemberPermissionSourceDirect {
+		join.Permissions = DefaultWorkspaceMemberPermissionStrings(join.Role, join.RoleID)
 	}
 }
 
