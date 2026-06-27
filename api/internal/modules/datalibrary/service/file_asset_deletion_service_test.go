@@ -159,6 +159,10 @@ func (v *fileAssetDeletionVectorIndex) EnsureAssetIndexed(ctx context.Context, a
 	return nil
 }
 
+func (v *fileAssetDeletionVectorIndex) RebuildAssetIndex(ctx context.Context, asset *model.DocumentAsset) (int, error) {
+	return 0, nil
+}
+
 func (v *fileAssetDeletionVectorIndex) IndexChunkEmbeddings(ctx context.Context, asset *model.DocumentAsset, chunks []*model.DocumentChunk, embeddings []*model.DocumentChunkEmbedding, resetAsset bool) error {
 	return nil
 }

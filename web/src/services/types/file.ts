@@ -647,6 +647,11 @@ export interface AskFileQuestionRequest {
   answer_model?: string;
 }
 
+export interface PrepareFileQAIndexResponse {
+  asset: FileDocumentAsset;
+  indexed_count: number;
+}
+
 export interface FileQuestionAnswerChildSource {
   chunk_id: string;
   position: number;

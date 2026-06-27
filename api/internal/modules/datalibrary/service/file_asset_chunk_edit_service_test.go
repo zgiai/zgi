@@ -280,6 +280,77 @@ func TestFileAssetChunkEditServiceBatchUpdatesChunksAndEnqueuesDatasetRefSyncOnc
 	}
 }
 
+func TestFileAssetChunkEditServiceTogglesParentWithoutMaintainingVectorIndex(t *testing.T) {
+	assetID := uuid.New()
+	runID := uuid.New()
+	parentID := uuid.New()
+	childID := uuid.New()
+	assetRepo := &fileAssetStateAssetRepo{
+		asset: &model.DocumentAsset{
+			ID:              assetID,
+			OrganizationID:  "org-1",
+			SourceFileID:    "file-1",
+			ProcessingRunID: &runID,
+			GenerationNo:    5,
+		},
+	}
+	chunkRepo := newFileAssetChunkEditChunkRepo([]*model.DocumentChunk{
+		{
+			ID:              parentID,
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    5,
+			ChunkType:       model.DocumentChunkTypeParent,
+			Content:         "parent",
+			ContentHash:     documentChunkContentHash("parent"),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
+		},
+		{
+			ID:              childID,
+			OrganizationID:  "org-1",
+			AssetID:         assetID,
+			ProcessingRunID: runID,
+			GenerationNo:    5,
+			ParentChunkID:   &parentID,
+			ChunkType:       model.DocumentChunkTypeChild,
+			Content:         "child",
+			ContentHash:     documentChunkContentHash("child"),
+			Enabled:         true,
+			Status:          model.DocumentChunkStatusReady,
+		},
+	})
+	vectorIndex := &fileAssetChunkEditVectorIndex{}
+	embeddingRepo := &fileAssetChunkEditEmbeddingRepo{}
+	svc := NewFileAssetChunkEditService(assetRepo, chunkRepo, embeddingRepo, nil, vectorIndex)
+	enabled := false
+
+	_, err := svc.UpdateCurrentFileChunk(context.Background(), FileAssetChunkEditInput{
+		OrganizationID: "org-1",
+		SourceFileID:   "file-1",
+		ChunkID:        parentID,
+		Enabled:        &enabled,
+		UpdatedBy:      "user-1",
+	})
+	if err != nil {
+		t.Fatalf("UpdateCurrentFileChunk: %v", err)
+	}
+
+	parent, _ := chunkRepo.GetByID(context.Background(), parentID)
+	child, _ := chunkRepo.GetByID(context.Background(), childID)
+	if parent.Enabled || child.Enabled {
+		t.Fatalf("parent enabled=%v child enabled=%v, want both false", parent.Enabled, child.Enabled)
+	}
+	if vectorIndex.ensureCalls != 0 || len(vectorIndex.deletedParentIDs) != 0 || len(vectorIndex.deletedChunkIDs) != 0 {
+		t.Fatalf("vector maintenance occurred: ensure=%d deletedParents=%v deletedChunks=%v",
+			vectorIndex.ensureCalls, vectorIndex.deletedParentIDs, vectorIndex.deletedChunkIDs)
+	}
+	if embeddingRepo.deleteByChunkIDCalls != 0 {
+		t.Fatalf("embedding deletes = %d, want 0", embeddingRepo.deleteByChunkIDCalls)
+	}
+}
+
 func TestFileAssetChunkEditServiceUpdatesParentChunkAndRegeneratesChildren(t *testing.T) {
 	assetID := uuid.New()
 	runID := uuid.New()
@@ -354,8 +425,8 @@ func TestFileAssetChunkEditServiceUpdatesParentChunkAndRegeneratesChildren(t *te
 	if chunkEmbed.called != len(newChildren) {
 		t.Fatalf("embedding called=%d children=%d", chunkEmbed.called, len(newChildren))
 	}
-	if len(vectorIndex.deletedParentIDs) != 1 || vectorIndex.deletedParentIDs[0] != chunkID {
-		t.Fatalf("deleted parent vectors=%v", vectorIndex.deletedParentIDs)
+	if len(vectorIndex.deletedParentIDs) != 0 || vectorIndex.ensureCalls != 0 {
+		t.Fatalf("vector maintenance occurred: ensure=%d deletedParents=%v", vectorIndex.ensureCalls, vectorIndex.deletedParentIDs)
 	}
 }
 
@@ -635,6 +706,48 @@ func (r *fileAssetChunkEditChunkRepo) Update(ctx context.Context, id uuid.UUID, 
 	return &cloned, nil
 }
 
+func (r *fileAssetChunkEditChunkRepo) UpdateEnabledByIDs(ctx context.Context, organizationID string, ids []uuid.UUID, enabled bool, updatedBy string) ([]*model.DocumentChunk, error) {
+	updated := make([]*model.DocumentChunk, 0, len(ids))
+	for _, id := range ids {
+		enabledPatch := enabled
+		item, err := r.Update(ctx, id, repository.DocumentChunkPatch{
+			OrganizationID: organizationID,
+			Enabled:        &enabledPatch,
+			UpdatedBy:      updatedBy,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if item != nil {
+			updated = append(updated, item)
+		}
+	}
+	return updated, nil
+}
+
+func (r *fileAssetChunkEditChunkRepo) UpdateEnabledByParentIDs(ctx context.Context, organizationID string, parentIDs []uuid.UUID, enabled bool, updatedBy string) (int64, error) {
+	allowed := map[uuid.UUID]struct{}{}
+	for _, id := range parentIDs {
+		allowed[id] = struct{}{}
+	}
+	var count int64
+	for _, item := range r.items {
+		if item.OrganizationID != organizationID || item.ParentChunkID == nil {
+			continue
+		}
+		if _, ok := allowed[*item.ParentChunkID]; !ok {
+			continue
+		}
+		if item.Enabled == enabled {
+			continue
+		}
+		item.Enabled = enabled
+		item.UpdatedBy = updatedBy
+		count++
+	}
+	return count, nil
+}
+
 var _ repository.DocumentChunkRepository = (*fileAssetChunkEditChunkRepo)(nil)
 
 type fileAssetChunkEditEmbeddingService struct {
@@ -673,10 +786,17 @@ var _ DocumentChunkEmbeddingService = (*fileAssetChunkEditEmbeddingService)(nil)
 
 type fileAssetChunkEditVectorIndex struct {
 	deletedParentIDs []uuid.UUID
+	deletedChunkIDs  []uuid.UUID
+	ensureCalls      int
 }
 
 func (v *fileAssetChunkEditVectorIndex) EnsureAssetIndexed(ctx context.Context, asset *model.DocumentAsset) error {
+	v.ensureCalls++
 	return nil
+}
+
+func (v *fileAssetChunkEditVectorIndex) RebuildAssetIndex(ctx context.Context, asset *model.DocumentAsset) (int, error) {
+	return 0, nil
 }
 
 func (v *fileAssetChunkEditVectorIndex) IndexChunkEmbeddings(ctx context.Context, asset *model.DocumentAsset, chunks []*model.DocumentChunk, embeddings []*model.DocumentChunkEmbedding, resetAsset bool) error {
@@ -688,6 +808,7 @@ func (v *fileAssetChunkEditVectorIndex) DeleteAssetIndex(ctx context.Context, as
 }
 
 func (v *fileAssetChunkEditVectorIndex) DeleteChunkVector(ctx context.Context, asset *model.DocumentAsset, chunkID uuid.UUID) error {
+	v.deletedChunkIDs = append(v.deletedChunkIDs, chunkID)
 	return nil
 }
 
@@ -701,6 +822,61 @@ func (v *fileAssetChunkEditVectorIndex) Search(ctx context.Context, asset *model
 }
 
 var _ FileAssetVectorIndexService = (*fileAssetChunkEditVectorIndex)(nil)
+
+type fileAssetChunkEditEmbeddingRepo struct {
+	deleteByChunkIDCalls int
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) Create(ctx context.Context, item *model.DocumentChunkEmbedding) error {
+	return nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) Upsert(ctx context.Context, item *model.DocumentChunkEmbedding) error {
+	return nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.DocumentChunkEmbedding, error) {
+	return nil, nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) FindByChunkModel(ctx context.Context, chunkID uuid.UUID, provider string, embeddingModel string) (*model.DocumentChunkEmbedding, error) {
+	return nil, nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) List(ctx context.Context, filter repository.DocumentChunkEmbeddingListFilter) ([]*model.DocumentChunkEmbedding, int64, error) {
+	return []*model.DocumentChunkEmbedding{}, 0, nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) CountReadyByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) (int64, error) {
+	return 0, nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) ListModelTargetsByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]repository.DocumentChunkEmbeddingModelTarget, error) {
+	return nil, nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) ListModelTargetsByChunkIDs(ctx context.Context, organizationID string, chunkIDs []uuid.UUID) ([]repository.DocumentChunkEmbeddingModelTarget, error) {
+	return nil, nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) CountReadyByAssetGenerationModel(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64, provider string, embeddingModel string) (int64, error) {
+	return 0, nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) DeleteByChunkID(ctx context.Context, organizationID string, chunkID uuid.UUID) error {
+	r.deleteByChunkIDCalls++
+	return nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) DeleteByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) error {
+	return nil
+}
+
+func (r *fileAssetChunkEditEmbeddingRepo) DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error {
+	return nil
+}
+
+var _ repository.DocumentChunkEmbeddingRepository = (*fileAssetChunkEditEmbeddingRepo)(nil)
 
 type fileAssetChunkEditDatasetRefSyncEnqueuer struct {
 	items []fileAssetChunkEditDatasetRefSyncItem

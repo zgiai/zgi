@@ -15,6 +15,7 @@ const fileAssetVectorIndexPageSize = 500
 
 type FileAssetVectorIndexService interface {
 	EnsureAssetIndexed(ctx context.Context, asset *model.DocumentAsset) error
+	RebuildAssetIndex(ctx context.Context, asset *model.DocumentAsset) (int, error)
 	IndexChunkEmbeddings(ctx context.Context, asset *model.DocumentAsset, chunks []*model.DocumentChunk, embeddings []*model.DocumentChunkEmbedding, resetAsset bool) error
 	DeleteAssetIndex(ctx context.Context, asset *model.DocumentAsset) error
 	DeleteChunkVector(ctx context.Context, asset *model.DocumentAsset, chunkID uuid.UUID) error
@@ -41,17 +42,32 @@ func NewFileAssetVectorIndexService(chunks repository.DocumentChunkRepository, e
 }
 
 func (s *fileAssetVectorIndexService) EnsureAssetIndexed(ctx context.Context, asset *model.DocumentAsset) error {
+	_, err := s.indexAssetEmbeddings(ctx, asset, false)
+	return err
+}
+
+func (s *fileAssetVectorIndexService) RebuildAssetIndex(ctx context.Context, asset *model.DocumentAsset) (int, error) {
+	return s.indexAssetEmbeddings(ctx, asset, true)
+}
+
+func (s *fileAssetVectorIndexService) indexAssetEmbeddings(ctx context.Context, asset *model.DocumentAsset, resetAsset bool) (int, error) {
 	if asset == nil {
-		return ErrDocumentAssetNotFound
+		return 0, ErrDocumentAssetNotFound
 	}
 	if err := s.ensureConfigured(); err != nil {
-		return err
+		return 0, err
 	}
 	generationNo := asset.GenerationNo
 	if generationNo <= 0 {
-		return ErrProcessingRunMismatch
+		return 0, ErrProcessingRunMismatch
+	}
+	if resetAsset {
+		if err := s.DeleteAssetIndex(ctx, asset); err != nil {
+			return 0, err
+		}
 	}
 	offset := 0
+	indexed := 0
 	for {
 		filter := repository.DocumentChunkEmbeddingListFilter{
 			OrganizationID: asset.OrganizationID,
@@ -69,10 +85,10 @@ func (s *fileAssetVectorIndexService) EnsureAssetIndexed(ctx context.Context, as
 		}
 		items, _, err := s.embeddings.List(ctx, filter)
 		if err != nil {
-			return err
+			return indexed, err
 		}
 		if len(items) == 0 {
-			return nil
+			return indexed, nil
 		}
 		chunkIDs := make([]uuid.UUID, 0, len(items))
 		for _, item := range items {
@@ -82,26 +98,43 @@ func (s *fileAssetVectorIndexService) EnsureAssetIndexed(ctx context.Context, as
 		}
 		chunks, err := s.chunks.ListByIDs(ctx, asset.OrganizationID, chunkIDs)
 		if err != nil {
-			return err
+			return indexed, err
 		}
 		chunksByID := make(map[uuid.UUID]*model.DocumentChunk, len(chunks))
+		parentIDs := make([]uuid.UUID, 0, len(chunks))
 		for _, chunk := range chunks {
 			chunksByID[chunk.ID] = chunk
+			if chunk.ParentChunkID != nil && *chunk.ParentChunkID != uuid.Nil {
+				parentIDs = append(parentIDs, *chunk.ParentChunkID)
+			}
+		}
+		parents, err := s.chunks.ListByIDs(ctx, asset.OrganizationID, parentIDs)
+		if err != nil {
+			return indexed, err
+		}
+		parentsByID := make(map[uuid.UUID]*model.DocumentChunk, len(parents))
+		for _, parent := range parents {
+			parentsByID[parent.ID] = parent
 		}
 		selectedChunks := make([]*model.DocumentChunk, 0, len(items))
 		selectedEmbeddings := make([]*model.DocumentChunkEmbedding, 0, len(items))
 		for _, item := range items {
 			chunk := chunksByID[item.ChunkID]
-			if isVectorIndexableChildChunk(asset, chunk, item) {
+			var parent *model.DocumentChunk
+			if chunk != nil && chunk.ParentChunkID != nil {
+				parent = parentsByID[*chunk.ParentChunkID]
+			}
+			if isVectorIndexableChildChunk(asset, chunk, parent, item) {
 				selectedChunks = append(selectedChunks, chunk)
 				selectedEmbeddings = append(selectedEmbeddings, item)
 			}
 		}
 		if err := s.IndexChunkEmbeddings(ctx, asset, selectedChunks, selectedEmbeddings, false); err != nil {
-			return err
+			return indexed, err
 		}
+		indexed += len(selectedEmbeddings)
 		if len(items) < fileAssetVectorIndexPageSize {
-			return nil
+			return indexed, nil
 		}
 		offset += len(items)
 	}
@@ -138,7 +171,7 @@ func (s *fileAssetVectorIndexService) IndexChunkEmbeddings(ctx context.Context, 
 			continue
 		}
 		chunk := chunksByID[item.ChunkID]
-		if !isVectorIndexableChildChunk(asset, chunk, item) {
+		if !isVectorIndexableChildChunkBasic(asset, chunk, item) {
 			continue
 		}
 		parentID := ""
@@ -297,7 +330,32 @@ func (s *fileAssetVectorIndexService) deleteAssetVectors(ctx context.Context, as
 	}
 }
 
-func isVectorIndexableChildChunk(asset *model.DocumentAsset, chunk *model.DocumentChunk, item *model.DocumentChunkEmbedding) bool {
+func isVectorIndexableChildChunk(asset *model.DocumentAsset, chunk *model.DocumentChunk, parent *model.DocumentChunk, item *model.DocumentChunkEmbedding) bool {
+	if asset == nil || chunk == nil || parent == nil || item == nil {
+		return false
+	}
+	return chunk.OrganizationID == asset.OrganizationID &&
+		chunk.AssetID == asset.ID &&
+		chunk.GenerationNo == asset.GenerationNo &&
+		chunk.ChunkType == model.DocumentChunkTypeChild &&
+		parent.OrganizationID == asset.OrganizationID &&
+		parent.AssetID == asset.ID &&
+		parent.GenerationNo == asset.GenerationNo &&
+		parent.ChunkType == model.DocumentChunkTypeParent &&
+		parent.Enabled &&
+		parent.Status == model.DocumentChunkStatusReady &&
+		chunk.Enabled &&
+		chunk.Status == model.DocumentChunkStatusReady &&
+		item.OrganizationID == asset.OrganizationID &&
+		item.AssetID == asset.ID &&
+		item.ChunkID == chunk.ID &&
+		item.GenerationNo == asset.GenerationNo &&
+		item.Status == model.DocumentChunkEmbeddingStatusReady &&
+		len(item.EmbeddingVector) > 0 &&
+		strings.TrimSpace(chunk.Content) != ""
+}
+
+func isVectorIndexableChildChunkBasic(asset *model.DocumentAsset, chunk *model.DocumentChunk, item *model.DocumentChunkEmbedding) bool {
 	if asset == nil || chunk == nil || item == nil {
 		return false
 	}

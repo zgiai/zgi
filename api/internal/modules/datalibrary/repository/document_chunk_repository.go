@@ -46,6 +46,8 @@ type DocumentChunkRepository interface {
 	DeleteByAssetGeneration(ctx context.Context, organizationID string, assetID uuid.UUID, generationNo int64) error
 	DeleteChildrenByParent(ctx context.Context, organizationID string, parentChunkID uuid.UUID) error
 	Update(ctx context.Context, id uuid.UUID, patch DocumentChunkPatch) (*model.DocumentChunk, error)
+	UpdateEnabledByIDs(ctx context.Context, organizationID string, ids []uuid.UUID, enabled bool, updatedBy string) ([]*model.DocumentChunk, error)
+	UpdateEnabledByParentIDs(ctx context.Context, organizationID string, parentIDs []uuid.UUID, enabled bool, updatedBy string) (int64, error)
 }
 
 type documentChunkRepository struct {
@@ -268,4 +270,47 @@ func (r *documentChunkRepository) Update(ctx context.Context, id uuid.UUID, patc
 		return nil, result.Error
 	}
 	return r.GetByID(ctx, id)
+}
+
+func (r *documentChunkRepository) UpdateEnabledByIDs(ctx context.Context, organizationID string, ids []uuid.UUID, enabled bool, updatedBy string) ([]*model.DocumentChunk, error) {
+	if organizationID == "" || len(ids) == 0 {
+		return []*model.DocumentChunk{}, nil
+	}
+	updates := map[string]any{
+		"enabled":    enabled,
+		"updated_at": time.Now(),
+	}
+	if updatedBy != "" {
+		updates["updated_by"] = updatedBy
+	}
+	if err := r.db.WithContext(ctx).Model(&model.DocumentChunk{}).
+		Where("organization_id = ?", organizationID).
+		Where("id IN ?", ids).
+		Where("deleted_at IS NULL").
+		Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	return r.ListByIDs(ctx, organizationID, ids)
+}
+
+func (r *documentChunkRepository) UpdateEnabledByParentIDs(ctx context.Context, organizationID string, parentIDs []uuid.UUID, enabled bool, updatedBy string) (int64, error) {
+	if organizationID == "" || len(parentIDs) == 0 {
+		return 0, nil
+	}
+	updates := map[string]any{
+		"enabled":    enabled,
+		"updated_at": time.Now(),
+	}
+	if updatedBy != "" {
+		updates["updated_by"] = updatedBy
+	}
+	result := r.db.WithContext(ctx).Model(&model.DocumentChunk{}).
+		Where("organization_id = ?", organizationID).
+		Where("parent_chunk_id IN ?", parentIDs).
+		Where("deleted_at IS NULL").
+		Updates(updates)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
 }

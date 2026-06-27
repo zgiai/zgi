@@ -41,6 +41,7 @@ import type {
   BatchUpdateFileChunksResponse,
   AskFileQuestionRequest,
   AskFileQuestionResponse,
+  PrepareFileQAIndexResponse,
   FileQuestionStreamEvent,
   FileSourcePreviewPagesResponse,
   FileSpreadsheetPreviewResponse,
@@ -220,6 +221,10 @@ class FileManageService extends BaseService {
     data: AskFileQuestionRequest
   ): Promise<ApiResponseData<AskFileQuestionResponse>> {
     return this.request('post', `/console/api/files/${fileId}/qa`, data);
+  }
+
+  async prepareFileQAIndex(fileId: string): Promise<ApiResponseData<PrepareFileQAIndexResponse>> {
+    return this.request('post', `/console/api/files/${fileId}/qa/index`);
   }
 
   async streamFileQuestion(

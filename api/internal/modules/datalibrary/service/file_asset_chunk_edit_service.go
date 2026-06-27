@@ -244,13 +244,20 @@ func (s *fileAssetChunkEditService) BatchUpdateCurrentFileChunks(ctx context.Con
 	}
 
 	enabled := input.Enabled
-	updatedChunks := make([]*model.DocumentChunk, 0, len(chunkIDs))
-	embeddingReady := false
-	for _, chunkID := range chunkIDs {
-		chunk, err := s.chunks.GetByID(ctx, chunkID)
-		if err != nil {
-			return nil, err
+	chunks, err := s.chunks.ListByIDs(ctx, input.OrganizationID, chunkIDs)
+	if err != nil {
+		return nil, err
+	}
+	chunksByID := make(map[uuid.UUID]*model.DocumentChunk, len(chunks))
+	for _, chunk := range chunks {
+		if chunk != nil {
+			chunksByID[chunk.ID] = chunk
 		}
+	}
+	changedChunkIDs := make([]uuid.UUID, 0, len(chunkIDs))
+	changedParentIDs := make([]uuid.UUID, 0)
+	for _, chunkID := range chunkIDs {
+		chunk := chunksByID[chunkID]
 		if chunk == nil || chunk.OrganizationID != input.OrganizationID || chunk.AssetID != asset.ID {
 			return nil, ErrDocumentAssetNotFound
 		}
@@ -272,13 +279,21 @@ func (s *fileAssetChunkEditService) BatchUpdateCurrentFileChunks(ctx context.Con
 		if chunk.Enabled == enabled {
 			continue
 		}
-		result, err := s.updateCurrentFileChunkWithAsset(ctx, asset, chunk, editInput, false)
+		changedChunkIDs = append(changedChunkIDs, chunk.ID)
+		if chunk.ChunkType == model.DocumentChunkTypeParent {
+			changedParentIDs = append(changedParentIDs, chunk.ID)
+		}
+	}
+	updatedChunks := []*model.DocumentChunk{}
+	if len(changedChunkIDs) > 0 {
+		updatedChunks, err = s.chunks.UpdateEnabledByIDs(ctx, input.OrganizationID, changedChunkIDs, enabled, input.UpdatedBy)
 		if err != nil {
 			return nil, err
 		}
-		if result != nil && result.Chunk != nil {
-			updatedChunks = append(updatedChunks, result.Chunk)
-			embeddingReady = embeddingReady || result.EmbeddingReady
+	}
+	if len(changedParentIDs) > 0 {
+		if _, err := s.chunks.UpdateEnabledByParentIDs(ctx, input.OrganizationID, changedParentIDs, enabled, input.UpdatedBy); err != nil {
+			return nil, err
 		}
 	}
 	if len(updatedChunks) > 0 {
@@ -290,7 +305,7 @@ func (s *fileAssetChunkEditService) BatchUpdateCurrentFileChunks(ctx context.Con
 		Asset:          asset,
 		Chunks:         updatedChunks,
 		UpdatedCount:   len(updatedChunks),
-		EmbeddingReady: embeddingReady,
+		EmbeddingReady: false,
 	}, nil
 }
 
@@ -325,31 +340,12 @@ func (s *fileAssetChunkEditService) syncEditedChunkEmbedding(ctx context.Context
 		if err := s.syncChildEnabledWithParent(ctx, asset, updatedChunk, input); err != nil {
 			return nil, false, err
 		}
-		if s.vectorIndex == nil || input.Enabled == nil {
-			return nil, false, nil
-		}
-		if updatedChunk.Enabled {
-			return nil, false, s.vectorIndex.EnsureAssetIndexed(ctx, asset)
-		}
-		return nil, false, s.vectorIndex.DeleteChildVectorsByParent(ctx, asset, updatedChunk.ID)
-	}
-	if !updatedChunk.Enabled || updatedChunk.Status != model.DocumentChunkStatusReady {
-		if s.vectorIndex != nil {
-			if err := s.vectorIndex.DeleteChunkVector(ctx, asset, updatedChunk.ID); err != nil {
-				return nil, false, err
-			}
-		}
-		if s.embeddings != nil {
-			if err := s.embeddings.DeleteByChunkID(ctx, input.OrganizationID, updatedChunk.ID); err != nil {
-				return nil, false, err
-			}
-		}
 		return nil, false, nil
 	}
-	if input.Content == nil {
-		if s.vectorIndex != nil && input.Enabled != nil && updatedChunk.Enabled {
-			return nil, false, s.vectorIndex.EnsureAssetIndexed(ctx, asset)
-		}
+	if input.Content == nil && input.Enabled != nil {
+		return nil, false, nil
+	}
+	if !updatedChunk.Enabled || updatedChunk.Status != model.DocumentChunkStatusReady {
 		return nil, false, nil
 	}
 	if s.chunkEmbed != nil {
@@ -399,11 +395,6 @@ func (s *fileAssetChunkEditService) rebuildParentChildChunks(ctx context.Context
 	})
 	if err != nil {
 		return false, err
-	}
-	if s.vectorIndex != nil {
-		if err := s.vectorIndex.DeleteChildVectorsByParent(ctx, asset, updatedChunk.ID); err != nil {
-			return false, err
-		}
 	}
 	if err := s.deleteChildEmbeddings(ctx, asset, oldChildren); err != nil {
 		return false, err
@@ -510,31 +501,8 @@ func (s *fileAssetChunkEditService) syncChildEnabledWithParent(ctx context.Conte
 	if input.Enabled == nil || asset == nil || parentChunk == nil {
 		return nil
 	}
-	children, _, err := s.chunks.List(ctx, repository.DocumentChunkListFilter{
-		OrganizationID: asset.OrganizationID,
-		AssetID:        asset.ID,
-		GenerationNo:   &asset.GenerationNo,
-		ParentChunkID:  &parentChunk.ID,
-		ChunkTypes:     []string{model.DocumentChunkTypeChild},
-		Limit:          500,
-		Offset:         0,
-	})
-	if err != nil {
-		return err
-	}
-	for _, child := range children {
-		if child == nil || child.Enabled == *input.Enabled {
-			continue
-		}
-		if _, err := s.chunks.Update(ctx, child.ID, repository.DocumentChunkPatch{
-			OrganizationID: input.OrganizationID,
-			Enabled:        input.Enabled,
-			UpdatedBy:      input.UpdatedBy,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := s.chunks.UpdateEnabledByParentIDs(ctx, input.OrganizationID, []uuid.UUID{parentChunk.ID}, *input.Enabled, input.UpdatedBy)
+	return err
 }
 
 func resolveChunkEditEmbeddingModel(asset *model.DocumentAsset, input FileAssetChunkEditInput) (string, string) {

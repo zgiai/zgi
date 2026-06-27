@@ -38,6 +38,8 @@ interface FileQAPanelProps {
   processing?: FileDetailProcessing;
   vectorStatus?: string;
   enabled: boolean;
+  preparingIndex?: boolean;
+  prepareError?: string | null;
   onLocateSource?: (source: FileQuestionAnswerSource) => void;
 }
 
@@ -65,6 +67,8 @@ function answerModelValue(provider: string, model: string): string {
 export function FileQAPanel({
   fileId,
   enabled,
+  preparingIndex = false,
+  prepareError = null,
   onLocateSource,
 }: FileQAPanelProps) {
   const t = useT('files');
@@ -120,7 +124,7 @@ export function FileQAPanel({
       ),
     [answerModels, defaultAnswerModel]
   );
-  const canSubmit = enabled && question.trim().length > 0 && !isStreaming;
+  const canSubmit = enabled && !preparingIndex && !prepareError && question.trim().length > 0 && !isStreaming;
 
   useEffect(() => {
     return () => {
@@ -147,7 +151,7 @@ export function FileQAPanel({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = question.trim();
-    if (!trimmed || !enabled) return;
+    if (!trimmed || !enabled || preparingIndex || prepareError) return;
     const exchangeId = `${Date.now()}-${exchanges.length}`;
     const controller = new AbortController();
     abortRef.current?.abort();
@@ -274,6 +278,26 @@ export function FileQAPanel({
         <AlertCircle className="h-4 w-4" />
         <AlertTitle>{t('detail.qa.notReadyTitle')}</AlertTitle>
         <AlertDescription>{t('detail.qa.notReadyDescription')}</AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (preparingIndex) {
+    return (
+      <Alert>
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <AlertTitle>{t('detail.qa.preparingTitle')}</AlertTitle>
+        <AlertDescription>{t('detail.qa.preparingDescription')}</AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (prepareError) {
+    return (
+      <Alert variant="destructive">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>{t('detail.qa.prepareFailedTitle')}</AlertTitle>
+        <AlertDescription>{prepareError}</AlertDescription>
       </Alert>
     );
   }
