@@ -49,7 +49,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   const contextStatus = useWorkspaceContextStatus();
   const hasHydrated = useHasHydrated();
   const {
-    hasPermission,
+    hasWorkspaceAccess,
     isLoading: isLoadingPermissions,
     isFetching: isFetchingPermissions,
   } = useAccountPermissions();
@@ -65,7 +65,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     isCapabilitiesLoading ||
     isCapabilitiesFetching;
   const hasWorkspaceContext = contextStatus === 'ready' && !!currentWorkspace;
-  const canViewWorkspace = hasPermission('workspace.view');
+  const canViewWorkspace = hasWorkspaceAccess();
 
   const workspaceNavItems: WorkspaceNavItem[] = [
     {

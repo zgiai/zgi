@@ -11,10 +11,12 @@ export interface WorkspaceManagement extends WorkspaceEntity {
   member_count?: number;
   leader_id?: string;
   leader_name?: string;
-  department_id?: string;
-  department_name?: string;
   api_key_id?: string;
   api_key_name?: string;
+  quota_configured?: boolean;
+  used_quota?: number;
+  remain_quota?: number;
+  quota_limit?: number | null;
 }
 
 export interface WorkspaceManagementList {
@@ -45,10 +47,13 @@ export interface WorkspaceMemberAccount {
   role: string;
   role_id: string;
   role_name: string;
+  permissions?: string[];
+  permission_source?: 'owner' | 'role_template' | 'direct' | 'legacy_role';
+  permission_template_role_id?: string;
   status: string;
   has_mobile?: boolean;
-  department_id: string;
-  department_name: string;
+  department_id?: string;
+  department_name?: string;
   member_name?: string;
 }
 
@@ -89,18 +94,18 @@ export interface WorkspaceMemberRole {
   workspace_id: string;
   position?: string;
   permissions: string[];
+  permission_source?: 'owner' | 'role_template' | 'direct' | 'legacy_role';
+  permission_template_role_id?: string;
 }
 
 export interface UpdateWorkspaceRequest {
   name?: string;
-  department_id?: string;
   leader_id?: string;
   api_key_id?: string;
 }
 
 export interface CreateWorkspaceRequest {
   name: string;
-  department_id?: string;
   leader_id?: string;
   api_key_id?: string;
 }
@@ -132,12 +137,15 @@ export interface AccountPermissions {
   workspace_role_name: string;
   /** List of permission strings */
   permissions: string[];
+  permission_source?: 'owner' | 'role_template' | 'direct' | 'legacy_role';
+  permission_template_role_id?: string;
 }
 
 export interface BatchAddMemberRequest {
   account_ids: string[];
   role_id?: string;
   role?: string;
+  permissions?: string[];
 }
 
 export type BatchAddMemberResultStatus = 'success' | 'skipped' | 'failed' | string;

@@ -80,6 +80,42 @@ export function useWorkspaceMemberActions() {
     },
   });
 
+  const updateWorkspaceMemberPermissionsMutation = useMutation({
+    mutationFn: async ({
+      workspaceId,
+      memberId,
+      permissions,
+    }: {
+      workspaceId: string;
+      memberId: string;
+      permissions: string[];
+    }) => {
+      if (!organizationId) throw new Error('No organization selected');
+      return await workspaceService.updateWorkspaceMemberPermissions(
+        organizationId,
+        workspaceId,
+        memberId,
+        permissions
+      );
+    },
+    onSuccess: (_, { workspaceId, memberId }) => {
+      toast.success(t('workspace.messages.memberUpdatedSuccess'));
+      invalidateOrganizationMemberGraph(queryClient, organizationId);
+      queryClient.invalidateQueries({
+        queryKey: WORKSPACE_KEYS.members(organizationId, workspaceId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: WORKSPACE_KEYS.memberDetail(organizationId, workspaceId, memberId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: WORKSPACE_KEYS.permissions(organizationId, workspaceId, memberId),
+      });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('workspace.messages.memberUpdateError'));
+    },
+  });
+
   // Batch add workspace members
   const batchAddWorkspaceMembersMutation = useMutation({
     mutationFn: async ({
@@ -117,6 +153,8 @@ export function useWorkspaceMemberActions() {
     isRemovingMember: removeWorkspaceMemberMutation.isPending,
     updateWorkspaceMemberRole: updateWorkspaceMemberRoleMutation.mutateAsync,
     isUpdatingRole: updateWorkspaceMemberRoleMutation.isPending,
+    updateWorkspaceMemberPermissions: updateWorkspaceMemberPermissionsMutation.mutateAsync,
+    isUpdatingPermissions: updateWorkspaceMemberPermissionsMutation.isPending,
     batchAddWorkspaceMembers: batchAddWorkspaceMembersMutation.mutateAsync,
     isBatchAddingWorkspaceMembers: batchAddWorkspaceMembersMutation.isPending,
   };

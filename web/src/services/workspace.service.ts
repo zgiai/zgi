@@ -45,6 +45,24 @@ class WorkspaceService extends BaseService {
     return response.data;
   }
 
+  // Get workspaces joined by a specific organization member
+  async getJoinedWorkspaces(
+    organizationId: string,
+    accountId: string,
+    params?: {
+      page?: number;
+      limit?: number;
+    }
+  ): Promise<WorkspaceManagementList> {
+    const response = await this.request<ApiResponseData<WorkspaceManagementList>>(
+      'get',
+      `/organizations/${organizationId}/joined-workspaces/${accountId}`,
+      undefined,
+      { params }
+    );
+    return response.data;
+  }
+
   // Get managed workspaces list for an organization
   async getManagedWorkspaces(organizationId: string, params: { limit?: number; page?: number }) {
     const response = await this.request<ApiResponseData<WorkspaceList>>(
@@ -219,6 +237,21 @@ class WorkspaceService extends BaseService {
       'put',
       `/organizations/${organizationId}/workspaces/${workspaceId}/members/${memberId}/update-role`,
       { role_id }
+    );
+    return response.data;
+  }
+
+  // Update workspace member direct permissions
+  async updateWorkspaceMemberPermissions(
+    organizationId: string,
+    workspaceId: string,
+    memberId: string,
+    permissions: string[]
+  ) {
+    const response = await this.request<ApiResponseData<{ result: 'success' }>>(
+      'put',
+      `/organizations/${organizationId}/workspaces/${workspaceId}/members/${memberId}/permissions`,
+      { permissions }
     );
     return response.data;
   }

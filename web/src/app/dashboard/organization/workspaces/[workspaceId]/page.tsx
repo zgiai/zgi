@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import {
@@ -14,6 +14,7 @@ import {
   Loader2,
   Check,
   X,
+  ShieldCheck,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -55,9 +56,17 @@ import {
   useUpdateWorkspaceQuota,
 } from '@/hooks/workspace-quota/use-workspace-quota';
 import { WorkspaceQuotaType } from '@/services/types/workspace-quota';
-import { DEFAULT_AI_CREDIT_EDIT_MAX, sanitizeAiCreditIntegerInput } from '@/utils/ai-credits';
+import {
+  DEFAULT_AI_CREDIT_EDIT_MAX,
+  formatAiCreditFiatEstimate,
+  formatChannelCreditPoints,
+  sanitizeAiCreditIntegerInput,
+} from '@/utils/ai-credits';
 import { Pagination } from '@/components/ui/pagination';
 import { StickyDataTable } from '@/components/common/sticky-data-table';
+import { WorkspaceMemberPermissionsDialog } from '@/components/member/workspace-member-permissions-dialog';
+import { useLocale } from '@/hooks/use-locale';
+import { pickLocale } from '@/utils/tool-helpers';
 
 export default function WorkspaceDetailPage() {
   const params = useParams();
@@ -72,7 +81,8 @@ export default function WorkspaceDetailPage() {
   const { currentOrganization } = useOrganizations();
 
   // Get roles for organization
-  const { roles, isLoading: isLoadingRoles } = useOrganizationRoles();
+  const { roles } = useOrganizationRoles();
+  const { locale } = useLocale();
 
   // Get workspace detail
   const {
@@ -84,6 +94,9 @@ export default function WorkspaceDetailPage() {
   // State
   const [memberSearchKeyword, setMemberSearchKeyword] = useState('');
   const [memberToRemove, setMemberToRemove] = useState<string | null>(null);
+  const [memberToEditPermissions, setMemberToEditPermissions] =
+    useState<WorkspaceMemberAccount | null>(null);
+  const [permissionsDialogOpen, setPermissionsDialogOpen] = useState(false);
   const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
   const [memberPage, setMemberPage] = useState(1);
   const [isMemberPageChanging, setIsMemberPageChanging] = useState(false);
@@ -119,6 +132,8 @@ export default function WorkspaceDetailPage() {
     removeWorkspaceMember,
     isRemovingMember,
     updateWorkspaceMemberRole: updateMemberRole,
+    updateWorkspaceMemberPermissions,
+    isUpdatingPermissions,
     batchAddWorkspaceMembers,
     isBatchAddingWorkspaceMembers: isAddingMembers,
   } = useWorkspaceMemberActions();
@@ -142,6 +157,30 @@ export default function WorkspaceDetailPage() {
   const [removeMemberDialogOpen, setRemoveMemberDialogOpen] = useState(false);
   const workspaceMembersTotalPages = Math.max(1, Math.ceil(workspaceMembersTotal / memberPageSize));
   const shouldShowMemberSkeleton = isLoadingMembers || isMemberPageChanging;
+  const selectableRoleTemplates = useMemo(
+    () =>
+      roles.filter(
+        role =>
+          role.status === 'active' &&
+          role.id.toLowerCase() !== 'owner' &&
+          role.name.toLowerCase() !== 'owner'
+      ),
+    [roles]
+  );
+  const isFixedGovernanceRole = (role?: string) => role === 'owner' || role === 'admin';
+  const getFixedRoleLabel = (role?: string) => {
+    if (role === 'owner') return t('detail.roleOwner');
+    if (role === 'admin') return t('detail.roleAdmin');
+    return t('detail.roleMember');
+  };
+  const getRoleDisplayName = (role: (typeof roles)[number]) =>
+    role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name;
+  const formatQuotaPoints = (value?: number | null) =>
+    formatChannelCreditPoints(value ?? 0, { locale });
+  const formatQuotaFiat = (value?: number | null) =>
+    tWorkspace('quota.approxFiat', {
+      amount: formatAiCreditFiatEstimate(value ?? 0, { locale }),
+    });
 
   // Update workspace name when workspaceInfo changes
   useEffect(() => {
@@ -220,6 +259,70 @@ export default function WorkspaceDetailPage() {
     } catch (error) {
       console.error('Failed to remove member:', error);
     }
+  };
+
+  const handleSaveMemberPermissions = async (memberId: string, permissions: string[]) => {
+    if (!workspaceId || !currentOrganization?.id) return;
+    await updateWorkspaceMemberPermissions({
+      workspaceId,
+      memberId,
+      permissions,
+    });
+    await refetchMembers();
+    setPermissionsDialogOpen(false);
+    setMemberToEditPermissions(null);
+  };
+
+  const handleApplyMemberTemplate = async (memberId: string, roleId: string) => {
+    if (!workspaceId || !currentOrganization?.id || !roleId) return;
+    try {
+      setUpdatingMemberId(memberId);
+      await updateMemberRole({
+        workspaceId,
+        memberId,
+        role_id: roleId,
+      });
+      await refetchMembers();
+      setPermissionsDialogOpen(false);
+      setMemberToEditPermissions(null);
+    } finally {
+      setUpdatingMemberId(null);
+    }
+  };
+
+  const getPermissionSourceLabel = (member: WorkspaceMemberAccount) => {
+    if (member.role === 'owner' || member.permission_source === 'owner') {
+      return t('detail.memberPermissions.source.owner');
+    }
+    if (member.permission_source === 'direct') {
+      return t('detail.memberPermissions.source.direct');
+    }
+    if (member.permission_source === 'legacy_role') {
+      return t('detail.memberPermissions.source.legacy');
+    }
+    return t('detail.memberPermissions.source.template');
+  };
+
+  const getMemberPermissionDisplayName = (member: WorkspaceMemberAccount) => {
+    if (isFixedGovernanceRole(member.role)) {
+      return getFixedRoleLabel(member.role);
+    }
+
+    if (member.permission_source === 'direct') {
+      return t('detail.memberPermissions.source.direct');
+    }
+
+    const templateId = member.permission_template_role_id || member.role_id;
+    const matchedTemplate = roles.find(role => role.id === templateId);
+    if (matchedTemplate) {
+      return getRoleDisplayName(matchedTemplate);
+    }
+
+    if (member.permission_source === 'legacy_role') {
+      return t('detail.memberPermissions.source.legacy');
+    }
+
+    return member.role_name || getFixedRoleLabel(member.role);
   };
 
   // Show skeleton until workspace detail and members list are both loaded (first time only)
@@ -362,7 +465,7 @@ export default function WorkspaceDetailPage() {
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-bold text-text-primary uppercase tracking-wider flex items-center gap-2">
                       <Coins className="h-4 w-4" />
-                      {tWorkspace('quota.title')}
+                      {t('detail.quotaStatus')}
                     </h3>
                     <Button
                       variant="ghost"
@@ -386,35 +489,24 @@ export default function WorkspaceDetailPage() {
                   {isLoadingQuota ? (
                     <div className="space-y-4">
                       <Skeleton className="h-12 w-full" />
-                      <Skeleton className="h-12 w-full" />
                     </div>
                   ) : quota?.quota_limit === null || quota?.quota_limit === undefined ? (
-                    // Unlimited type: show unlimited label
-                    <div className="flex flex-col p-3 rounded-lg bg-muted/30">
-                      <span className="text-xs text-muted-foreground mb-1">
-                        {tWorkspace('quota.quotaLimit')}
-                      </span>
+                    <div className="flex flex-col p-4 rounded-lg bg-muted/30">
                       <span className="text-xl font-bold">{tWorkspace('quota.unlimited')}</span>
                     </div>
                   ) : (
-                    // Custom type: show used and remain quota only
-                    <div className="space-y-4">
-                      <div className="flex flex-col p-3 rounded-lg bg-orange-50 dark:bg-orange-950/20">
-                        <span className="text-xs text-muted-foreground mb-1">
-                          {tWorkspace('quota.usedQuota')}
-                        </span>
-                        <span className="text-xl font-bold text-orange-600">
-                          {(quota?.used_quota ?? 0).toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="flex flex-col p-3 rounded-lg bg-green-50 dark:bg-green-950/20">
-                        <span className="text-xs text-muted-foreground mb-1">
-                          {tWorkspace('quota.remainQuota')}
-                        </span>
-                        <span className="text-xl font-bold text-green-600">
-                          {(quota?.remain_quota ?? 0).toLocaleString()}
-                        </span>
-                      </div>
+                    <div className="flex flex-col p-4 rounded-lg bg-green-50 dark:bg-green-950/20">
+                      <span className="text-xs text-muted-foreground mb-1">
+                        {tWorkspace('quota.remainQuota')}
+                      </span>
+                      <span className="text-xl font-bold text-green-600">
+                        {tWorkspace('quota.pointsLabel', {
+                          points: formatQuotaPoints(quota?.remain_quota),
+                        })}
+                      </span>
+                      <span className="mt-1 text-xs text-muted-foreground">
+                        {formatQuotaFiat(quota?.remain_quota)}
+                      </span>
                     </div>
                   )}
                 </CardContent>
@@ -447,7 +539,7 @@ export default function WorkspaceDetailPage() {
                 columns={[
                   { key: 'name', header: t('detail.nameAndEmail'), className: 'pl-8' },
                   { key: 'role', header: t('detail.workspaceRole') },
-                  { key: 'department', header: t('detail.department') },
+                  { key: 'department', header: t('detail.memberDepartment') },
                   {
                     key: 'operations',
                     header: t('detail.operations'),
@@ -523,83 +615,73 @@ export default function WorkspaceDetailPage() {
                         </div>
                       </TableCell>
                       <TableCell className="py-4">
-                        {member.role === 'owner' ? (
+                        <Badge
+                          variant={isFixedGovernanceRole(member.role) ? 'secondary' : 'outline'}
+                          className="max-w-[180px] truncate rounded-md"
+                        >
+                          {getMemberPermissionDisplayName(member)}
+                        </Badge>
+                        {!isFixedGovernanceRole(member.role) ? (
                           <Badge
-                            variant="secondary"
-                            className="bg-primary/10 text-primary border-none text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider shadow-none"
+                            variant="outline"
+                            className="mt-2 block w-fit rounded-md text-[10px] font-medium"
                           >
-                            {member.role_name}
+                            {getPermissionSourceLabel(member)}
                           </Badge>
-                        ) : (
-                          <Select
-                            value={member.role_id || ''}
-                            onValueChange={async value => {
-                              try {
-                                setUpdatingMemberId(member.id);
-                                await updateMemberRole({
-                                  workspaceId: workspaceId,
-                                  memberId: member.id,
-                                  role_id: value,
-                                });
-                              } catch (error) {
-                                console.error('Failed to update member role:', error);
-                              } finally {
-                                setUpdatingMemberId(null);
-                              }
-                            }}
-                            disabled={isLoadingRoles || updatingMemberId === member.id}
-                          >
-                            <SelectTrigger className="h-8 w-32 bg-muted/60 border text-xs font-semibold rounded-lg shadow-none focus:ring-1 focus:ring-brand-main/20">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="glass-panel border-none">
-                              {isLoadingRoles ? (
-                                <SelectItem value="" disabled className="text-xs">
-                                  {t('detail.loading')}
-                                </SelectItem>
-                              ) : (
-                                roles
-                                  .filter(
-                                    role =>
-                                      role.status === 'active' &&
-                                      role.id.toLowerCase() !== 'owner' &&
-                                      role.name.toLowerCase() !== 'owner'
-                                  )
-                                  .map(role => (
-                                    <SelectItem key={role.id} value={role.id} className="text-xs">
-                                      {role.name}
-                                    </SelectItem>
-                                  ))
-                              )}
-                            </SelectContent>
-                          </Select>
-                        )}
+                        ) : null}
                       </TableCell>
                       <TableCell className="py-4 text-[13px] text-text-secondary font-medium">
                         {member.department_name || '-'}
                       </TableCell>
                       <TableCell className="py-4 pr-8 text-right">
-                        {member.role !== 'owner' && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                isIcon
-                                className="h-8 w-8 rounded-lg text-text-placeholder hover:bg-destructive hover:text-destructive-foreground transition-all shadow-none opacity-0 group-hover:opacity-100"
-                                onClick={() => {
-                                  setMemberToRemove(member.id);
-                                  setRemoveMemberDialogOpen(true);
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent className="glass-panel border-none text-xs">
-                              {t('detail.remove')}
-                            </TooltipContent>
-                          </Tooltip>
-                        )}
+                        <div className="flex justify-end gap-1">
+                          {!isFixedGovernanceRole(member.role) ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  isIcon
+                                  aria-label={t('detail.memberPermissions.edit')}
+                                  title={t('detail.memberPermissions.edit')}
+                                  className="h-8 w-8 rounded-lg text-text-placeholder hover:bg-primary/10 hover:text-primary transition-all shadow-none opacity-0 group-hover:opacity-100"
+                                  onClick={() => {
+                                    setMemberToEditPermissions(member);
+                                    setPermissionsDialogOpen(true);
+                                  }}
+                                >
+                                  <ShieldCheck className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent className="glass-panel border-none text-xs">
+                                {t('detail.memberPermissions.edit')}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : null}
+                          {member.role !== 'owner' && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  isIcon
+                                  aria-label={t('detail.remove')}
+                                  title={t('detail.remove')}
+                                  className="h-8 w-8 rounded-lg text-text-placeholder hover:bg-destructive hover:text-destructive-foreground transition-all shadow-none opacity-0 group-hover:opacity-100"
+                                  onClick={() => {
+                                    setMemberToRemove(member.id);
+                                    setRemoveMemberDialogOpen(true);
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent className="glass-panel border-none text-xs">
+                                {t('detail.remove')}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -646,6 +728,20 @@ export default function WorkspaceDetailPage() {
           }
         }}
         isLoading={isAddingMembers}
+      />
+
+      <WorkspaceMemberPermissionsDialog
+        open={permissionsDialogOpen}
+        onOpenChange={open => {
+          setPermissionsDialogOpen(open);
+          if (!open) setMemberToEditPermissions(null);
+        }}
+        member={memberToEditPermissions}
+        onSave={handleSaveMemberPermissions}
+        roleTemplates={selectableRoleTemplates}
+        onApplyTemplate={handleApplyMemberTemplate}
+        isSaving={isUpdatingPermissions}
+        isApplyingTemplate={!!memberToEditPermissions && updatingMemberId === memberToEditPermissions.id}
       />
 
       {/* Quota Edit Dialog */}

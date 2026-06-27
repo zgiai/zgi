@@ -5,7 +5,6 @@ import { Loader2, Search, Users } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useT } from '@/i18n';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -173,14 +172,7 @@ export function AssignWorkspaceDialog({
         )}
       >
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-semibold">{workspace.name}</span>
-            {workspace.department_name ? (
-              <Badge variant="secondary" className="max-w-[140px] truncate text-[10px]">
-                {workspace.department_name}
-              </Badge>
-            ) : null}
-          </div>
+          <span className="block truncate text-sm font-semibold">{workspace.name}</span>
           <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
             <span>{workspace.leader_name || t('noLeader')}</span>
             <span>

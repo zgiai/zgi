@@ -32,6 +32,8 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useAvailableWorkspaceMembers } from '@/hooks/workspace/use-available-workspace-members';
 import { useDepartments } from '@/hooks/organization/use-departments';
 import { useOrganizationRoles } from '@/hooks/organization/use-organization-roles';
+import { useLocale } from '@/hooks/use-locale';
+import { pickLocale } from '@/utils/tool-helpers';
 import type { AvailableWorkspaceMember, BatchAddMembersResponse } from '@/services/types/workspace';
 
 interface AddWorkspaceMemberModalProps {
@@ -74,6 +76,7 @@ export function AddWorkspaceMemberModal({
 
   const { departments } = useDepartments();
   const { roles, isLoading: isLoadingRoles } = useOrganizationRoles();
+  const { locale } = useLocale();
 
   const {
     members,
@@ -104,10 +107,24 @@ export function AddWorkspaceMemberModal({
       roles.filter(
         role =>
           role.status === 'active' &&
-          role.id.toLowerCase() !== 'owner' &&
-          role.name.toLowerCase() !== 'owner'
+          role.applicable !== false &&
+          !role.fixed_governance &&
+          role.role_kind !== 'governance' &&
+          role.role_kind !== 'legacy_builtin'
       ),
     [roles]
+  );
+  const defaultRoleId = useMemo(
+    () =>
+      selectableRoles.find(role => role.system_key === 'default_basic')?.id ||
+      selectableRoles[0]?.id ||
+      '',
+    [selectableRoles]
+  );
+  const getRoleDisplayName = useCallback(
+    (role: (typeof selectableRoles)[number]) =>
+      role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name,
+    [locale]
   );
 
   const currentPageMemberIds = useMemo(
@@ -137,9 +154,14 @@ export function AddWorkspaceMemberModal({
     setSearchQuery(initialSearchQuery ?? '');
     setSelectedMemberIds([]);
     setSelectedDepartmentId('all');
-    setSelectedRoleId('');
+    setSelectedRoleId(defaultRoleId);
     setCurrentPage(1);
-  }, [initialSearchQuery, open]);
+  }, [defaultRoleId, initialSearchQuery, open]);
+
+  useEffect(() => {
+    if (!open || selectedRoleId || !defaultRoleId) return;
+    setSelectedRoleId(defaultRoleId);
+  }, [defaultRoleId, open, selectedRoleId]);
 
   const showAddSummary = useCallback(
     (result?: BatchAddMembersResponse | void) => {
@@ -204,7 +226,7 @@ export function AddWorkspaceMemberModal({
   }, [onOpenChange]);
 
   const handleSubmit = useCallback(async () => {
-    if (selectedMemberIds.length === 0 || !selectedRoleId) return;
+    if (selectedMemberIds.length === 0) return;
 
     setIsSubmitting(true);
     try {
@@ -369,7 +391,7 @@ export function AddWorkspaceMemberModal({
               <SelectContent>
                 {selectableRoles.map(role => (
                   <SelectItem key={role.id} value={role.id}>
-                    {role.name}
+                    {getRoleDisplayName(role)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -383,7 +405,7 @@ export function AddWorkspaceMemberModal({
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={selectedMemberIds.length === 0 || !selectedRoleId || isBusy}
+            disabled={selectedMemberIds.length === 0 || isBusy}
           >
             {isBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {t('organization.workspaceManagement.detail.addMemberModal.add', {

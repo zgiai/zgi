@@ -10,6 +10,8 @@ import type {
   CreateRoleRequest,
   UpdateRolePermissionsRequest,
   UpdateRoleInfoRequest,
+  ApplyRoleTemplateRequest,
+  ApplyRoleTemplateResponse,
   DepartmentList,
   AllDepartmentMemberList,
   DirectAddMemberRequest,
@@ -212,6 +214,20 @@ class OrganizationService extends BaseService {
     const response = await this.request<ApiResponseData<void>>(
       'put',
       `/organizations/${organizationId}/roles/${roleId}/permissions`,
+      data
+    );
+    return response.data;
+  }
+
+  // Apply a role template snapshot to explicit workspace-member targets
+  async applyRoleTemplate(
+    organizationId: string,
+    roleId: string,
+    data: ApplyRoleTemplateRequest
+  ) {
+    const response = await this.request<ApiResponseData<ApplyRoleTemplateResponse>>(
+      'post',
+      `/organizations/${organizationId}/roles/${roleId}/apply-template`,
       data
     );
     return response.data;

@@ -7,6 +7,7 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Pagination } from '@/components/ui/pagination';
 import { TableCell, TableRow } from '@/components/ui/table';
@@ -28,9 +29,16 @@ import { workspaceService as organizationService } from '@/services/workspace.se
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  formatAiCreditFiatEstimate,
+  formatChannelCreditPoints,
+  normalizeAiCreditValue,
+} from '@/utils/ai-credits';
+import { useLocale } from '@/hooks/use-locale';
 
 function WorkspaceManagementPageContent() {
   const t = useT('dashboard.organization.workspaceManagement');
+  const { locale } = useLocale();
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -241,6 +249,32 @@ function WorkspaceManagementPageContent() {
     return `/dashboard/organization/workspaces/${workspaceId}${query}`;
   };
 
+  const getDisplayQuotaValue = (value?: number | null) => normalizeAiCreditValue(value) ?? 0;
+
+  const formatQuotaPoints = (value?: number | null) =>
+    formatChannelCreditPoints(getDisplayQuotaValue(value), { locale });
+
+  const formatQuotaFiatEstimate = (value?: number | null) =>
+    formatAiCreditFiatEstimate(getDisplayQuotaValue(value), { locale });
+
+  const getQuotaStatus = (workspace: WorkspaceManagement) => {
+    if (workspace.quota_limit === null || workspace.quota_limit === undefined) {
+      return {
+        label: t('quotaUnlimited'),
+        detail: null,
+        variant: 'secondary' as const,
+      };
+    }
+
+    return {
+      label: t('quotaRemaining', {
+        remain: formatQuotaPoints(workspace.remain_quota),
+      }),
+      detail: t('quotaFiatApprox', { amount: formatQuotaFiatEstimate(workspace.remain_quota) }),
+      variant: 'outline' as const,
+    };
+  };
+
   return (
     <div className="flex h-full flex-col space-y-5 overflow-auto bg-bg-canvas/50 p-4 lg:p-6">
       {/* Header */}
@@ -301,7 +335,7 @@ function WorkspaceManagementPageContent() {
             columns={[
               { key: 'workspaceName', header: t('workspaceName'), className: 'pl-6' },
               { key: 'manager', header: t('manager') },
-              { key: 'department', header: t('department') },
+              { key: 'quota', header: t('quotaStatus') },
               { key: 'memberCount', header: t('memberCount') },
               { key: 'actions', header: t('actions'), align: 'right', className: 'pr-6' },
             ]}
@@ -343,93 +377,103 @@ function WorkspaceManagementPageContent() {
             }
           >
             {!shouldShowWorkspaceSkeleton &&
-              workspaces.map((workspace: WorkspaceManagement) => (
-                <TableRow
-                  key={workspace.id}
-                  className="group border-b border-border/10 hover:bg-bg-canvas/40 transition-colors cursor-pointer interactive-subtle"
-                  onClick={() => router.push(getWorkspaceDetailHref(workspace.id))}
-                >
-                  <TableCell className="py-4 pl-6">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm shadow-sm">
-                        {workspace.name.charAt(0).toUpperCase()}
+              workspaces.map((workspace: WorkspaceManagement) => {
+                const quotaStatus = getQuotaStatus(workspace);
+                return (
+                  <TableRow
+                    key={workspace.id}
+                    className="group border-b border-border/10 hover:bg-bg-canvas/40 transition-colors cursor-pointer interactive-subtle"
+                    onClick={() => router.push(getWorkspaceDetailHref(workspace.id))}
+                  >
+                    <TableCell className="py-4 pl-6">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm shadow-sm">
+                          {workspace.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-text-primary group-hover:text-primary transition-colors">
+                            {workspace.name}
+                          </span>
+                          <span className="text-[11px] text-text-placeholder uppercase font-medium tracking-tighter">
+                            ID: {workspace.id.slice(0, 8)}
+                          </span>
+                        </div>
+                        <ChevronRight className="h-4 w-4 text-text-placeholder opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 ml-1" />
                       </div>
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-text-primary group-hover:text-primary transition-colors">
-                          {workspace.name}
-                        </span>
-                        <span className="text-[11px] text-text-placeholder uppercase font-medium tracking-tighter">
-                          ID: {workspace.id.slice(0, 8)}
+                    </TableCell>
+                    <TableCell className="text-text-secondary font-medium">
+                      {workspace.leader_name || (
+                        <span className="text-text-placeholder italic">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-text-secondary font-medium">
+                      <div className="flex flex-col gap-1">
+                        <Badge variant={quotaStatus.variant} className="w-fit rounded-md">
+                          {quotaStatus.label}
+                        </Badge>
+                        {quotaStatus.detail ? (
+                          <span className="text-xs text-text-placeholder">
+                            {quotaStatus.detail}
+                          </span>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-text-secondary font-medium">
+                      <div className="flex items-center gap-1.5">
+                        <Users className="h-3.5 w-3.5 opacity-50" />
+                        <span>
+                          {workspace.member_count || 0}
+                          <span className="text-[12px] ml-0.5 opacity-70">{t('people')}</span>
                         </span>
                       </div>
-                      <ChevronRight className="h-4 w-4 text-text-placeholder opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 ml-1" />
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-text-secondary font-medium">
-                    {workspace.leader_name || (
-                      <span className="text-text-placeholder italic">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-text-secondary font-medium">
-                    {workspace.department_name || (
-                      <span className="text-text-placeholder italic">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-text-secondary font-medium">
-                    <div className="flex items-center gap-1.5">
-                      <Users className="h-3.5 w-3.5 opacity-50" />
-                      <span>
-                        {workspace.member_count || 0}
-                        <span className="text-[12px] ml-0.5 opacity-70">{t('people')}</span>
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right pr-6" onClick={e => e.stopPropagation()}>
-                    <div className="flex items-center justify-end gap-2">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            isIcon
-                            onClick={e => {
-                              e.stopPropagation();
-                              handleOpenEditDialog(workspace);
-                            }}
-                            className="h-8 w-8 rounded-lg hover:shadow-sm"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent className="glass-panel border-none text-xs">
-                          {t('edit')}
-                        </TooltipContent>
-                      </Tooltip>
+                    </TableCell>
+                    <TableCell className="text-right pr-6" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-2">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              isIcon
+                              onClick={e => {
+                                e.stopPropagation();
+                                handleOpenEditDialog(workspace);
+                              }}
+                              className="h-8 w-8 rounded-lg hover:shadow-sm"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent className="glass-panel border-none text-xs">
+                            {t('edit')}
+                          </TooltipContent>
+                        </Tooltip>
 
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            isIcon
-                            onClick={e => {
-                              e.stopPropagation();
-                              setWorkspaceToDelete(workspace);
-                              setDeleteConfirmOpen(true);
-                            }}
-                            className="h-8 w-8 rounded-lg text-text-placeholder hover:text-destructive-foreground hover:bg-destructive transition-all"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent className="glass-panel border-none text-xs">
-                          {t('disband')}
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              isIcon
+                              onClick={e => {
+                                e.stopPropagation();
+                                setWorkspaceToDelete(workspace);
+                                setDeleteConfirmOpen(true);
+                              }}
+                              className="h-8 w-8 rounded-lg text-text-placeholder hover:text-destructive-foreground hover:bg-destructive transition-all"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent className="glass-panel border-none text-xs">
+                            {t('disband')}
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
           </StickyDataTable>
         </div>
       </div>

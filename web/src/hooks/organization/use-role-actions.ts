@@ -13,6 +13,7 @@ import type {
   CreateRoleRequest,
   UpdateRolePermissionsRequest,
   UpdateRoleInfoRequest,
+  ApplyRoleTemplateRequest,
 } from '@/services/types/organization';
 
 /**
@@ -95,6 +96,43 @@ export function useRoleActions() {
     },
   });
 
+  const applyRoleTemplateMutation = useMutation({
+    mutationFn: async ({
+      roleId,
+      data,
+    }: {
+      roleId: string;
+      data: ApplyRoleTemplateRequest;
+    }) => {
+      if (!currentOrganization?.id) {
+        throw new Error('No organization selected');
+      }
+      return await organizationService.applyRoleTemplate(currentOrganization.id, roleId, data);
+    },
+    onSuccess: response => {
+      if (response.failed_count > 0) {
+        toast.warning(
+          t('organization.permissions.applyTemplatePartial', {
+            applied: response.applied_count,
+            failed: response.failed_count,
+          })
+        );
+      } else {
+        toast.success(t('organization.permissions.applyTemplateSuccess'));
+      }
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
+      queryClient.invalidateQueries({
+        queryKey: ORGANIZATION_KEYS.roles(currentOrganization?.id || ''),
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['workspace'],
+      });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('organization.permissions.applyTemplateError'));
+    },
+  });
+
   // Delete role mutation
   const deleteRoleMutation = useMutation({
     mutationFn: async (roleId: string) => {
@@ -122,10 +160,12 @@ export function useRoleActions() {
     createRole: createRoleMutation.mutateAsync,
     updateRolePermissions: updateRolePermissionsMutation.mutateAsync,
     updateRoleInfo: updateRoleInfoMutation.mutateAsync,
+    applyRoleTemplate: applyRoleTemplateMutation.mutateAsync,
     deleteRole: deleteRoleMutation.mutateAsync,
     isCreating: createRoleMutation.isPending,
     isUpdating: updateRolePermissionsMutation.isPending,
     isUpdatingInfo: updateRoleInfoMutation.isPending,
+    isApplyingTemplate: applyRoleTemplateMutation.isPending,
     isDeleting: deleteRoleMutation.isPending,
     isSaving: createRoleMutation.isPending || updateRolePermissionsMutation.isPending,
   };

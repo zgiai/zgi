@@ -46,14 +46,20 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     useOrganizationStore.use.isSwitchingOrganization();
 
   const organizationId = currentOrganization?.id ?? null;
+  const accountId = user?.id ?? null;
 
   const fetchJoinedWorkspacePages = async (): Promise<JoinedWorkspacePagesResult> => {
-    if (!organizationId) {
-      throw new Error('No organization selected');
+    if (!organizationId || !accountId) {
+      throw new Error('No organization or account selected');
     }
     const requestOrganizationId = organizationId;
+    const requestAccountId = accountId;
 
-    const firstPage = await workspaceService.getWorkspaces(requestOrganizationId, { page, limit });
+    const firstPage = await workspaceService.getJoinedWorkspaces(
+      requestOrganizationId,
+      requestAccountId,
+      { page, limit }
+    );
     const seenWorkspaceIds = new Set<string>();
     const mergedWorkspaces = firstPage.data.filter(workspace => {
       if (seenWorkspaceIds.has(workspace.id)) return false;
@@ -66,10 +72,14 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     let nextPage = (firstPage.page || page) + 1;
 
     while (latestPage.has_more && pagesFetched < MAX_JOINED_WORKSPACE_PAGES) {
-      latestPage = await workspaceService.getWorkspaces(requestOrganizationId, {
-        page: nextPage,
-        limit,
-      });
+      latestPage = await workspaceService.getJoinedWorkspaces(
+        requestOrganizationId,
+        requestAccountId,
+        {
+          page: nextPage,
+          limit,
+        }
+      );
 
       latestPage.data.forEach(workspace => {
         if (seenWorkspaceIds.has(workspace.id)) return;
@@ -99,9 +109,9 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     error,
     refetch,
   } = useQuery({
-    queryKey: WORKSPACE_KEYS.forSwitcher(organizationId, { page, limit }),
+    queryKey: WORKSPACE_KEYS.forSwitcher(organizationId, { page, limit, accountId }),
     queryFn: fetchJoinedWorkspacePages,
-    enabled: !!organizationId && !isSwitchingOrganization,
+    enabled: !!organizationId && !!accountId && !isSwitchingOrganization,
     staleTime: 2 * 60 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,

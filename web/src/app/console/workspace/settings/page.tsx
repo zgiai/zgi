@@ -37,9 +37,11 @@ export default function WorkspaceSettingsPage() {
 
   const currentWorkspace = useCurrentWorkspace();
   const { currentOrganization } = useOrganizations();
-  const { workspaceRole, permissions } = usePermissions();
-  const isOwner = workspaceRole === 'owner';
-  const canManage = permissions.includes('workspace.manage');
+  const { organizationRole, workspaceRole } = usePermissions();
+  const isOrganizationManager = organizationRole === 'owner' || organizationRole === 'admin';
+  const isOwner = workspaceRole === 'owner' || organizationRole === 'owner';
+  const canManage = isOrganizationManager || workspaceRole === 'owner' || workspaceRole === 'admin';
+  const canTransferOwnership = isOrganizationManager || workspaceRole === 'owner';
 
   const {
     updateWorkspace,
@@ -73,7 +75,7 @@ export default function WorkspaceSettingsPage() {
     keyword: debouncedOwnerSearchKeyword,
     page: ownerPage,
     limit: ownerPageSize,
-    enabled: isOwner && !!currentWorkspace,
+    enabled: canTransferOwnership && !!currentWorkspace,
   });
   const ownerCandidatesTotalPages = Math.max(1, Math.ceil(ownerCandidatesTotal / ownerPageSize));
 
@@ -253,7 +255,7 @@ export default function WorkspaceSettingsPage() {
         </Card>
 
         {/* Transfer Ownership Card */}
-        {workspaceRole && isOwner && (
+        {workspaceRole && canTransferOwnership && (
           <Card className="border-border/80 shadow-sm">
             <CardHeader className="space-y-1.5">
               <CardTitle className="flex items-center gap-2 text-base text-foreground">
@@ -366,7 +368,7 @@ export default function WorkspaceSettingsPage() {
         )}
 
         {/* Leave Workspace Card */}
-        {workspaceRole && !isOwner && (
+        {workspaceRole && !isOwner && !isOrganizationManager && (
           <Card className="border-border/80 shadow-sm">
             <CardHeader className="space-y-1.5">
               <CardTitle className="flex items-center gap-2 text-base text-foreground">

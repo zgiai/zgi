@@ -28,7 +28,8 @@ export const CHANNEL_INITIAL_CREDIT_BACKEND_MAX = DEFAULT_AI_CREDIT_EDIT_BACKEND
 export const CHANNEL_INITIAL_CREDIT_MAX = shrinkAiCreditEditMax(CHANNEL_INITIAL_CREDIT_BACKEND_MAX);
 export const MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION = 3;
 export const MODEL_USAGE_AI_CREDITS_DISPLAY_PRECISION = 2;
-export const CHANNEL_POINTS_PER_USD = 10_000;
+export const CHANNEL_POINTS_PER_USD = 1_000;
+export const USD_TO_CNY_ESTIMATE_RATE = 7;
 
 const AI_CREDITS_PRECISION = 1;
 
@@ -45,6 +46,10 @@ interface FormatAiCreditValueOptions {
 
 interface FormatChannelCreditOptions {
   locale?: Intl.LocalesArgument;
+}
+
+interface FormatAiCreditFiatEstimateOptions extends FormatChannelCreditOptions {
+  symbol?: string;
 }
 
 /**
@@ -311,7 +316,7 @@ export function formatChannelCreditPoints(
 }
 
 /**
- * @util Convert private channel points to an approximate USD amount.
+ * @util Convert normalized private channel points to an approximate USD amount.
  */
 export function channelPointsToUsd(value?: number | null): number | null {
   if (value === undefined || value === null || !Number.isFinite(value)) return null;
@@ -339,6 +344,28 @@ export function formatChannelCreditUsd(
   if (usd === null) return '-';
 
   return `$${usd.toLocaleString(locale, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/**
+ * @util Format the approximate fiat value for AI credit points.
+ */
+export function formatAiCreditFiatEstimate(
+  value?: number | null,
+  { locale, symbol }: FormatAiCreditFiatEstimateOptions = {}
+): string {
+  const usd = channelPointsToUsd(value);
+  if (usd === null) return '-';
+
+  const localeText = Array.isArray(locale) ? locale[0] : locale;
+  const shouldEstimateCny =
+    typeof localeText === 'string' && localeText.toLowerCase().startsWith('zh');
+  const fiat = shouldEstimateCny ? usd * USD_TO_CNY_ESTIMATE_RATE : usd;
+  const resolvedSymbol = symbol ?? (shouldEstimateCny ? '￥' : '$');
+
+  return `${resolvedSymbol}${fiat.toLocaleString(locale, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;

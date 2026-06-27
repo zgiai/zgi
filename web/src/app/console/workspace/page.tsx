@@ -8,6 +8,7 @@ import {
   BookOpen,
   CheckCircle2,
   Circle,
+  Coins,
   Database,
   FileText,
   RefreshCw,
@@ -20,10 +21,19 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { useWorkspaceQuota } from '@/hooks/workspace-quota/use-workspace-quota';
 import { useWorkspaceStatistics } from '@/hooks/workspace/use-workspace-statistics';
+import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useCurrentWorkspace } from '@/store/workspace-store';
+import { formatAiCreditFiatEstimate, formatChannelCreditPoints } from '@/utils/ai-credits';
+import {
+  AGENT_ASSET_VISIBLE_PERMISSION_CODES,
+  DATABASE_VISIBLE_PERMISSION_CODES,
+  FILE_VISIBLE_PERMISSION_CODES,
+  KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 interface WorkspaceActionEntry {
   key: string;
@@ -117,7 +127,9 @@ export default function WorkspacePage() {
   const currentWorkspace = useCurrentWorkspace();
   const workspaceId = currentWorkspace?.id ?? '';
   const {
-    hasPermission,
+    hasAnyPermission,
+    hasWorkspaceAccess,
+    isWorkspaceManager,
     workspaceRole,
     workspaceRoleName,
     organizationRole,
@@ -131,21 +143,44 @@ export default function WorkspacePage() {
     isFetching: isStatsFetching,
     refetch: refetchStats,
   } = useWorkspaceStatistics(workspaceId, Boolean(workspaceId));
+  const {
+    quota: workspaceQuota,
+    isLoading: isQuotaLoading,
+    isFetching: isQuotaFetching,
+    refetch: refetchQuota,
+  } = useWorkspaceQuota(workspaceId);
+  const { locale } = useLocale();
 
-  const canViewWorkspace = hasPermission('workspace.view');
-  const canManageWorkspace = hasPermission('workspace.manage');
-  const canViewAgents = hasPermission('agent.view');
-  const canViewDatasets = hasPermission('knowledge_base.view');
-  const canViewDatabases = hasPermission('database.view');
-  const canViewFiles = hasPermission('file.view');
+  const canViewWorkspace = hasWorkspaceAccess();
+  const canManageWorkspace = isWorkspaceManager();
+  const canViewAgents = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
+  const canViewDatasets = hasAnyPermission(KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES);
+  const canViewDatabases = hasAnyPermission(DATABASE_VISIBLE_PERMISSION_CODES);
+  const canViewFiles = hasAnyPermission(FILE_VISIBLE_PERMISSION_CODES);
   const isOrganizationAdmin = isAdmin();
   const isPermissionsBusy = isPermissionsLoading || isPermissionsFetching;
+  const isQuotaBusy = isQuotaLoading || isQuotaFetching;
+  const hasQuotaData = Boolean(workspaceQuota);
+  const isQuotaUnlimited =
+    hasQuotaData &&
+    (workspaceQuota?.quota_limit === null || workspaceQuota?.quota_limit === undefined);
   const roleLabel =
     workspaceRoleName ||
     workspaceRole ||
     t('workspace.overview.permissions.roleFallback');
   const organizationRoleLabel =
     organizationRole || t('workspace.overview.permissions.organizationRoleFallback');
+  const workspaceQuotaBalance = workspaceQuota?.remain_quota ?? 0;
+  const quotaBalanceValue = !hasQuotaData
+    ? '-'
+    : isQuotaUnlimited
+      ? t('workspace.quota.unlimited')
+      : t('workspace.quota.pointsLabel', {
+          points: formatChannelCreditPoints(workspaceQuotaBalance, { locale }),
+        });
+  const quotaBalanceFiat = t('workspace.quota.approxFiat', {
+    amount: formatAiCreditFiatEstimate(workspaceQuotaBalance, { locale }),
+  });
 
   const statCards: WorkspaceStatCard[] = [
     {
@@ -268,6 +303,9 @@ export default function WorkspacePage() {
 
   const handleRefresh = () => {
     void refetchStats();
+    if (workspaceId) {
+      void refetchQuota();
+    }
   };
 
   if (!currentWorkspace) {
@@ -297,16 +335,37 @@ export default function WorkspacePage() {
           variant="outline"
           size="default"
           onClick={handleRefresh}
-          disabled={isStatsLoading || isStatsFetching}
+          disabled={isStatsLoading || isStatsFetching || isQuotaBusy}
           className="self-start"
         >
-          <RefreshCw className={`size-4 ${isStatsFetching ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`size-4 ${isStatsFetching || isQuotaFetching ? 'animate-spin' : ''}`} />
           {t('common.refresh')}
         </Button>
       </header>
 
       <main className="min-h-0 flex-1 space-y-5 overflow-y-auto">
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <Card className="h-full border-border/80 shadow-sm">
+            <CardHeader className="p-4 pb-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex size-9 items-center justify-center rounded-lg border border-border/70 bg-muted/30">
+                  <Coins className="size-4 text-muted-foreground" />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="px-4 pb-4 pt-0">
+              <div className="text-2xl font-semibold tracking-tight">
+                {isQuotaLoading ? '-' : quotaBalanceValue}
+              </div>
+              <div className="mt-1 text-sm text-muted-foreground">
+                {t('workspace.overview.stats.quotaBalance')}
+              </div>
+              {!isQuotaLoading && !isQuotaUnlimited ? (
+                <div className="mt-1 text-xs text-muted-foreground">{quotaBalanceFiat}</div>
+              ) : null}
+            </CardContent>
+          </Card>
+
           {statCards.map(card => {
             const Icon = card.icon;
             const content = (

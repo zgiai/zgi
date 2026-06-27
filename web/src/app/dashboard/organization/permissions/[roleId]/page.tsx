@@ -13,7 +13,12 @@ import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pickLocale } from '@/utils/tool-helpers';
 import { useLocale } from '@/hooks/use-locale';
-import { PERMISSION_MODULES } from '@/constants/permissions';
+import {
+  PERMISSION_MODULES,
+  formatPermissionFallbackDescription,
+  formatPermissionFallbackLabel,
+  normalizeSelectablePermissionCodes,
+} from '@/constants/permissions';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -24,6 +29,15 @@ export default function RoleConfigPage() {
   const t = useT();
   const router = useRouter();
   const params = useParams();
+  const tWithHas = t as typeof t & { has?: (key: string) => boolean };
+
+  const translateOrFallback = (key: string, fallback: string) => {
+    const fullKey = `dashboard.organization.permissions.config.${key}`;
+    if (typeof tWithHas.has === 'function' && !tWithHas.has(fullKey)) {
+      return fallback;
+    }
+    return t(fullKey as Parameters<typeof t>[0]);
+  };
 
   const roleId = params.roleId as string;
   const isNewRole = roleId === 'new';
@@ -52,10 +66,11 @@ export default function RoleConfigPage() {
 
       setName(role.name);
       setDescription(nextDescription);
-      setSelectedPermissions(new Set(role.permissions));
+      const selectablePermissions = normalizeSelectablePermissionCodes(role.permissions);
+      setSelectedPermissions(new Set(selectablePermissions));
       setSavedName(role.name);
       setSavedDescription(nextDescription);
-      setSavedPermissions(new Set(role.permissions));
+      setSavedPermissions(new Set(selectablePermissions));
     } else if (isNewRole) {
       setSavedName('');
       setSavedDescription('');
@@ -173,18 +188,20 @@ export default function RoleConfigPage() {
 
     if (isNewRole) {
       // Create new role
+      const permissions = normalizeSelectablePermissionCodes(Array.from(selectedPermissions));
       await createRole({
         name: name.trim(),
         description: description.trim() || undefined,
-        permissions: Array.from(selectedPermissions),
+        permissions,
       });
     } else {
       // Update role permissions
+      const permissions = normalizeSelectablePermissionCodes(Array.from(selectedPermissions));
       await updateRolePermissions({
         roleId,
-        data: { permissions: Array.from(selectedPermissions) },
+        data: { permissions },
       });
-      setSavedPermissions(new Set(selectedPermissions));
+      setSavedPermissions(new Set(permissions));
     }
   };
 
@@ -198,7 +215,7 @@ export default function RoleConfigPage() {
   };
 
   // Check if role is editable
-  const canEdit = isNewRole || !!(role && !role.builtin);
+  const canEdit = isNewRole || !!(role && role.editable);
 
   if (loading) {
     return (
@@ -289,6 +306,9 @@ export default function RoleConfigPage() {
                   ? t('dashboard.organization.permissions.config.allPermissionsEnabled')
                   : t('dashboard.organization.permissions.config.allPermissionsDisabled')}
               </p>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                {t('dashboard.organization.permissions.config.templateSnapshotNotice')}
+              </p>
             </div>
             <Switch
               checked={isAllEnabled}
@@ -307,10 +327,9 @@ export default function RoleConfigPage() {
               >
                 <div className="flex items-center justify-between border-b border-border/60 bg-background px-6 py-4">
                   <h3 className="text-sm font-bold text-text-primary uppercase tracking-wider">
-                    {t(
-                      `dashboard.organization.permissions.config.${module.title}` as Parameters<
-                        typeof t
-                      >[0]
+                    {translateOrFallback(
+                      module.title,
+                      formatPermissionFallbackLabel(module.key, locale)
                     )}
                   </h3>
                   <div className="flex items-center gap-3">
@@ -347,17 +366,15 @@ export default function RoleConfigPage() {
                               : 'text-text-primary'
                           )}
                         >
-                          {t(
-                            `dashboard.organization.permissions.config.${permission.name}` as Parameters<
-                              typeof t
-                            >[0]
+                          {translateOrFallback(
+                            permission.name,
+                            formatPermissionFallbackLabel(permission.code, locale)
                           )}
                         </div>
                         <div className="text-[11px] text-text-placeholder leading-relaxed line-clamp-3">
-                          {t(
-                            `dashboard.organization.permissions.config.${permission.description}` as Parameters<
-                              typeof t
-                            >[0]
+                          {translateOrFallback(
+                            permission.description,
+                            formatPermissionFallbackDescription(permission.code, locale)
                           )}
                         </div>
                       </div>
