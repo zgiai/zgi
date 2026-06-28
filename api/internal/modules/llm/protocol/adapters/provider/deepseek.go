@@ -341,6 +341,8 @@ func (a *DeepSeekAdapter) handleError(statusCode int, body []byte) error {
 	switch statusCode {
 	case 401:
 		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrAuthFailed)
+	case 402:
+		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrInsufficientBalance)
 	case 429:
 		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrRateLimited)
 	case 404:
