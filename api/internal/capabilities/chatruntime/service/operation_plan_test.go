@@ -944,6 +944,152 @@ func TestSkillLoopPlanToolGuardAllowsUnplannedNonMutatingToolDeviation(t *testin
 	}
 }
 
+func TestSkillLoopPlanToolGuardAllowsGovernedReadToolWithMutationLikeName(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "run the bound workflow and then check the workflow run status",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentWorkflow},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillAgentWorkflow, "run_agent_workflow"),
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentWorkflow,
+						"tool_name": "run_agent_workflow",
+					},
+				},
+				"step_status": map[string]interface{}{
+					operationPlanToolStepID(skills.SkillAgentWorkflow, "run_agent_workflow"): operationPlanStepStatusCompleted,
+				},
+				"original_user_goal": "run the bound workflow and then check the workflow run status",
+			},
+		}},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentWorkflow},
+		Tools: []skills.SkillToolDefinition{
+			{
+				Name: "get_workflow_run_status",
+				Governance: &toolgovernance.Manifest{
+					Effect:    toolgovernance.EffectRead,
+					AssetType: "workflow_run",
+					RiskLevel: toolgovernance.RiskLevelLow,
+				},
+			},
+			{
+				Name: "run_agent_workflow",
+				Governance: &toolgovernance.Manifest{
+					Effect:    toolgovernance.EffectInvoke,
+					AssetType: "workflow",
+					RiskLevel: toolgovernance.RiskLevelHigh,
+				},
+			},
+		},
+	}}}
+
+	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillAgentWorkflow,
+		ToolName:  "get_workflow_run_status",
+		Arguments: map[string]interface{}{"workflow_run_id": "run-1"},
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:   skills.SkillAgentWorkflow,
+			ToolName:  "get_workflow_run_status",
+			Arguments: map[string]interface{}{"workflow_run_id": "run-1"},
+		}},
+	}); blocked {
+		t.Fatal("get_workflow_run_status was blocked, want manifest read tool allowed despite mutation-like name")
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	deviations := mapSliceFromAny(plan["deviations"])
+	if len(deviations) != 1 {
+		t.Fatalf("deviations = %#v, want manifest read deviation", deviations)
+	}
+	if got := stringFromAny(deviations[0]["reason"]); got != "model_collected_manifest_read_evidence" {
+		t.Fatalf("deviation reason = %q, want manifest read reason; plan=%#v", got, plan)
+	}
+
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillAgentWorkflow,
+		ToolName:  "run_agent_workflow",
+		Arguments: map[string]interface{}{"binding_id": "binding-1"},
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:   skills.SkillAgentWorkflow,
+			ToolName:  "run_agent_workflow",
+			Arguments: map[string]interface{}{"binding_id": "binding-1"},
+		}},
+	}); !blocked {
+		t.Fatal("duplicate run_agent_workflow was allowed, want invoke mutation duplicate protection preserved")
+	}
+}
+
+func TestSkillLoopPlanToolGuardAllowsArtifactGenerationWithinManagedFileGoal(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "create an svg file in File Management",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillFileGenerator, skills.SkillFileManager},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"),
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillFileManager,
+						"tool_name": "save_file_to_management",
+					},
+				},
+				"step_status": map[string]interface{}{
+					operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"): operationPlanStepStatusPending,
+				},
+				"original_user_goal": "create an svg file in File Management",
+			},
+		}},
+	}
+	args := map[string]interface{}{"filename": "draft.svg", "format": "svg"}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillFileGenerator,
+		ToolName:  "generate_file",
+		Arguments: args,
+	}); blocked {
+		t.Fatal("file-generator/generate_file was blocked, want artifact generation allowed within managed file create goal")
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillFileGenerator, "generate_file")); got != operationPlanStepStatusPending {
+		t.Fatalf("generate_file step status = %q, want pending amendment; plan=%#v", got, plan)
+	}
+	deviations := mapSliceFromAny(plan["deviations"])
+	if len(deviations) != 1 {
+		t.Fatalf("deviations = %#v, want artifact generation deviation", deviations)
+	}
+	if got := stringFromAny(deviations[0]["reason"]); got != "model_generated_temporary_artifact_within_user_goal" {
+		t.Fatalf("deviation reason = %q, want artifact generation reason; plan=%#v", got, plan)
+	}
+
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillFileGenerator,
+		ToolName:  "generate_file",
+		Arguments: args,
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:   skills.SkillFileGenerator,
+			ToolName:  "generate_file",
+			Arguments: map[string]interface{}{"format": "svg", "filename": "draft.svg"},
+		}},
+	}); !blocked {
+		t.Fatal("duplicate generate_file was allowed, want same-argument artifact generation retry blocked")
+	}
+}
+
 func TestSkillLoopPlanToolGuardAllowsGovernedMutationDeviation(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{

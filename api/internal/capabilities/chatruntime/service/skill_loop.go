@@ -686,11 +686,20 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 		if skillLoopShouldBlockRepeatedLoadedNavigation(prepared, skillID, toolName, req.Arguments) {
 			return skillLoopRepeatedLoadedNavigationGuardResult(req.Arguments), true
 		}
+		if skillLoopShouldBlockDuplicateMutationToolCall(prepared, resolved, req) {
+			return skillLoopDuplicateMutationGuardResult(skillID, toolName), true
+		}
 		if skillLoopToolAllowed(allowed, skillID, toolName) {
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
-		if skillLoopShouldBlockDuplicateMutationToolCall(prepared, req) {
-			return skillLoopDuplicateMutationGuardResult(skillID, toolName), true
+		if skillLoopShouldAllowUnplannedGovernedReadTool(prepared, resolved, skillID, toolName) {
+			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_collected_manifest_read_evidence")
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopShouldAllowUnplannedArtifactGeneration(prepared, req) {
+			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_generated_temporary_artifact_within_user_goal")
+			amendOperationPlanToolStep(prepared.Message.Metadata, skillID, toolName, "model_generated_temporary_artifact_within_user_goal")
+			return skillloop.FinalAnswerGuardResult{}, false
 		}
 		if skillLoopShouldAllowRepeatedPlannedMutation(prepared, req) {
 			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_repeated_planned_mutation_within_user_goal")
@@ -728,13 +737,16 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 	}
 }
 
-func skillLoopShouldBlockDuplicateMutationToolCall(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+func skillLoopShouldBlockDuplicateMutationToolCall(prepared *PreparedChat, resolved *skills.ResolvedSkills, req skillloop.ToolCallGuardRequest) bool {
 	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
 		return false
 	}
 	skillID := strings.TrimSpace(req.SkillID)
 	toolName := strings.TrimSpace(req.ToolName)
 	if skillID == "" || toolName == "" || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	if skillLoopToolHasGovernedReadEffect(resolved, skillID, toolName) {
 		return false
 	}
 	if !skillLoopToolNameLooksAssetMutation(toolName) {
@@ -749,6 +761,54 @@ func skillLoopShouldBlockDuplicateMutationToolCall(prepared *PreparedChat, req s
 		}
 	}
 	return false
+}
+
+func skillLoopShouldAllowUnplannedGovernedReadTool(prepared *PreparedChat, resolved *skills.ResolvedSkills, skillID string, toolName string) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" || toolName == "" || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	return skillLoopToolHasGovernedReadEffect(resolved, skillID, toolName)
+}
+
+func skillLoopShouldAllowUnplannedArtifactGeneration(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	skillID := strings.TrimSpace(req.SkillID)
+	toolName := strings.TrimSpace(req.ToolName)
+	if skillID == "" || toolName == "" || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	if !isKnownArtifactGeneratorToolCall(skillID, toolName) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 || strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
+		return false
+	}
+	if operationPlanHasToolStepWithStatus(plan, skillID, toolName, operationPlanStepStatusCompleted) {
+		return false
+	}
+	if skillLoopToolCallAlreadyAttemptedWithSameArguments(req) {
+		return false
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if strings.TrimSpace(goal) == "" {
+		return false
+	}
+	if isChartGeneratorToolCall(skillID, toolName) {
+		return isChartVisualizationIntent(goal)
+	}
+	return isTemporaryFileGenerateIntent(goal) || isManagedFileCreateIntent(goal) || isContinuationIntent(goal)
 }
 
 func skillLoopDuplicateMutationGuardResult(skillID string, toolName string) skillloop.FinalAnswerGuardResult {
@@ -833,32 +893,45 @@ func skillLoopShouldAllowGovernedMutationDeviation(prepared *PreparedChat, resol
 }
 
 func skillLoopToolHasGovernedMutationEffect(resolved *skills.ResolvedSkills, skillID string, toolName string) bool {
-	if resolved == nil {
+	effect, ok := skillLoopToolGovernanceEffect(resolved, skillID, toolName)
+	if !ok {
 		return false
+	}
+	switch effect {
+	case toolgovernance.EffectCreate,
+		toolgovernance.EffectUpdate,
+		toolgovernance.EffectDelete,
+		toolgovernance.EffectPublish,
+		toolgovernance.EffectInvoke,
+		toolgovernance.EffectSchedule,
+		toolgovernance.EffectExternalSend:
+		return true
+	default:
+		return false
+	}
+}
+
+func skillLoopToolHasGovernedReadEffect(resolved *skills.ResolvedSkills, skillID string, toolName string) bool {
+	effect, ok := skillLoopToolGovernanceEffect(resolved, skillID, toolName)
+	return ok && effect == toolgovernance.EffectRead
+}
+
+func skillLoopToolGovernanceEffect(resolved *skills.ResolvedSkills, skillID string, toolName string) (toolgovernance.Effect, bool) {
+	if resolved == nil {
+		return "", false
 	}
 	doc, ok := resolved.Get(skillID)
 	if !ok || doc == nil {
-		return false
+		return "", false
 	}
 	for _, tool := range doc.Tools {
 		if !strings.EqualFold(strings.TrimSpace(tool.Name), strings.TrimSpace(toolName)) || tool.Governance == nil {
 			continue
 		}
 		manifest := toolgovernance.NormalizeManifest(*tool.Governance)
-		switch manifest.Effect {
-		case toolgovernance.EffectCreate,
-			toolgovernance.EffectUpdate,
-			toolgovernance.EffectDelete,
-			toolgovernance.EffectPublish,
-			toolgovernance.EffectInvoke,
-			toolgovernance.EffectSchedule,
-			toolgovernance.EffectExternalSend:
-			return true
-		default:
-			return false
-		}
+		return manifest.Effect, true
 	}
-	return false
+	return "", false
 }
 
 func skillLoopToolCallAlreadyAttemptedWithSameArguments(req skillloop.ToolCallGuardRequest) bool {
