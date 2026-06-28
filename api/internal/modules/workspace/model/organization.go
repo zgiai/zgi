@@ -364,9 +364,17 @@ var deprecatedWorkspacePermissionSnapshotExpansions = map[WorkspacePermissionCod
 	WorkspacePermissionFileManage:          legacyWorkspacePermissionExpansions[WorkspacePermissionFileManage],
 }
 
+var compatibilityWorkspacePermissionSnapshotExpansions = map[WorkspacePermissionCode][]WorkspacePermissionCode{
+	WorkspacePermissionDatabaseDataEdit: legacyWorkspacePermissionExpansions[WorkspacePermissionDatabaseDataEdit],
+	WorkspacePermissionDatabaseAIQuery:  legacyWorkspacePermissionExpansions[WorkspacePermissionDatabaseAIQuery],
+	WorkspacePermissionFileUploadCreate: legacyWorkspacePermissionExpansions[WorkspacePermissionFileUploadCreate],
+	WorkspacePermissionFileMoveCreate:   legacyWorkspacePermissionExpansions[WorkspacePermissionFileMoveCreate],
+}
+
 // CanonicalWorkspacePermissionSnapshotStrings normalizes member or template snapshots.
-// Deprecated coarse asset permissions are replaced by fine-grained equivalents so
-// new snapshots do not keep reintroducing legacy asset permission codes.
+// Deprecated and compatibility-only coarse asset permissions are replaced by
+// fine-grained equivalents so new snapshots do not keep reintroducing legacy
+// asset permission codes.
 func CanonicalWorkspacePermissionSnapshotStrings(permissions []string) []string {
 	normalized := NormalizeWorkspacePermissionStrings(permissions)
 	if len(normalized) == 0 {
@@ -380,6 +388,12 @@ func CanonicalWorkspacePermissionSnapshotStrings(permissions []string) []string 
 			continue
 		}
 		if mapped, ok := deprecatedWorkspacePermissionSnapshotExpansions[code]; ok {
+			for _, mappedCode := range mapped {
+				codes = appendWorkspacePermissionCode(codes, mappedCode)
+			}
+			continue
+		}
+		if mapped, ok := compatibilityWorkspacePermissionSnapshotExpansions[code]; ok {
 			for _, mappedCode := range mapped {
 				codes = appendWorkspacePermissionCode(codes, mappedCode)
 			}
@@ -442,6 +456,18 @@ func IsWorkspaceMembershipPermission(code WorkspacePermissionCode) bool {
 	}
 }
 
+func IsWorkspaceCompatibilityPermission(code WorkspacePermissionCode) bool {
+	switch code {
+	case WorkspacePermissionDatabaseDataEdit,
+		WorkspacePermissionDatabaseAIQuery,
+		WorkspacePermissionFileUploadCreate,
+		WorkspacePermissionFileMoveCreate:
+		return true
+	default:
+		return false
+	}
+}
+
 func isRetiredWorkspacePermission(code WorkspacePermissionCode) bool {
 	value := string(code)
 	return strings.HasPrefix(value, "prompt.") ||
@@ -470,6 +496,7 @@ func CanonicalAssignableWorkspacePermissionSnapshotStrings(permissions []string)
 		code := WorkspacePermissionCode(permission)
 		if !IsKnownWorkspacePermissionCode(code) ||
 			IsWorkspaceGovernancePermission(code) ||
+			IsWorkspaceCompatibilityPermission(code) ||
 			isRetiredWorkspacePermission(code) {
 			continue
 		}

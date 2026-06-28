@@ -226,7 +226,9 @@ func DefaultWorkspaceMemberPermissionStrings(role WorkspaceMemberRole, roleID *s
 	}
 
 	if IsBuiltinRole(effectiveRoleID) {
-		return WorkspacePermissionStringsFromCodes(GetBuiltinGroupRolePermissionsByID(effectiveRoleID))
+		return CanonicalAssignableWorkspacePermissionSnapshotStrings(
+			WorkspacePermissionStringsFromCodes(GetBuiltinGroupRolePermissionsByID(effectiveRoleID)),
+		)
 	}
 	return []string{}
 }
@@ -246,6 +248,7 @@ func EffectiveWorkspaceMemberPermissionStrings(role WorkspaceMemberRole, roleID 
 			code := WorkspacePermissionCode(permission)
 			if !IsKnownWorkspacePermissionCode(code) ||
 				IsWorkspaceGovernancePermission(code) ||
+				IsWorkspaceCompatibilityPermission(code) ||
 				isRetiredWorkspacePermission(code) {
 				continue
 			}

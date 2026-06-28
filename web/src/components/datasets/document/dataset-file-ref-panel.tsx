@@ -23,6 +23,9 @@ import { formatDate } from '@/utils/format';
 interface DatasetFileRefPanelProps {
   refs: DatasetFileRef[];
   canEdit?: boolean;
+  canToggleEnabled?: boolean;
+  canRetry?: boolean;
+  canRemove?: boolean;
   retryingRefId?: string;
   removingRefId?: string;
   togglingRefId?: string;
@@ -120,6 +123,9 @@ function TableHeadWithHelp({ label, tooltip }: { label: string; tooltip: string 
 export function DatasetFileRefPanel({
   refs,
   canEdit = true,
+  canToggleEnabled,
+  canRetry,
+  canRemove,
   retryingRefId,
   removingRefId,
   togglingRefId,
@@ -129,6 +135,9 @@ export function DatasetFileRefPanel({
 }: DatasetFileRefPanelProps) {
   const t = useT('datasets');
   const pathname = usePathname();
+  const canToggleEnabledAction = canToggleEnabled ?? canEdit;
+  const canRetryAction = canRetry ?? canEdit;
+  const canRemoveAction = canRemove ?? canEdit;
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
   const returnTo = `${pathname}${currentSearch ? `?${currentSearch}` : ''}`;
@@ -176,7 +185,8 @@ export function DatasetFileRefPanel({
             const isSynced = ref.sync_status === 'synced';
             const isFailed = ref.sync_status === 'failed';
             const enabled = Boolean(ref.dataset_document_enabled && isSynced);
-            const canToggle = canEdit && isSynced && Boolean(ref.dataset_document_id);
+            const canToggle =
+              canToggleEnabledAction && isSynced && Boolean(ref.dataset_document_id);
             const ext = fileExtension(ref.file_name);
 
             return (
@@ -234,7 +244,7 @@ export function DatasetFileRefPanel({
                         {t('documents.fileRefs.openFile')}
                       </Link>
                     </Button>
-                    {canEdit && isFailed ? (
+                    {canRetryAction && isFailed ? (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -246,7 +256,7 @@ export function DatasetFileRefPanel({
                         {t('documents.fileRefs.retry')}
                       </Button>
                     ) : null}
-                    {canEdit ? (
+                    {canRemoveAction ? (
                       <Button
                         variant="ghost"
                         size="sm"

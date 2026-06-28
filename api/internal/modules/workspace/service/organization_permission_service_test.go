@@ -11,6 +11,19 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestBuiltinWorkspaceRoleSummaryPermissionsCanonicalizesCompatibilityCodes(t *testing.T) {
+	ownerPermissions := builtinWorkspaceRoleSummaryPermissions(model.WorkspaceBuiltinRoleOwnerID)
+	require.Contains(t, ownerPermissions, string(model.WorkspacePermissionDatabaseAIQueryRead))
+	require.NotContains(t, ownerPermissions, string(model.WorkspacePermissionDatabaseAIQuery))
+	require.NotContains(t, ownerPermissions, string(model.WorkspacePermissionFileUploadCreate))
+
+	memberPermissions := builtinWorkspaceRoleSummaryPermissions(model.WorkspaceBuiltinRoleMemberID)
+	require.Contains(t, memberPermissions, string(model.WorkspacePermissionDatabaseAIQueryRead))
+	require.Contains(t, memberPermissions, string(model.WorkspacePermissionFileUpload))
+	require.NotContains(t, memberPermissions, string(model.WorkspacePermissionDatabaseAIQuery))
+	require.NotContains(t, memberPermissions, string(model.WorkspacePermissionFileUploadCreate))
+}
+
 func TestOrganizationServiceCheckWorkspacePermissionFailsClosedForMissingOrganizationScope(t *testing.T) {
 	t.Parallel()
 

@@ -13,6 +13,7 @@ interface AgentRuntimeWorkflowSectionProps {
   bindings: AgentWorkflowBinding[];
   candidatesByBindingID: Map<string, AgentWorkflowBindingCandidate>;
   isLoading: boolean;
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onOpenWorkflowDialog: () => void;
   onChangeBindings: (value: AgentWorkflowBinding[]) => void;
@@ -23,6 +24,7 @@ export function AgentRuntimeWorkflowSection({
   bindings,
   candidatesByBindingID,
   isLoading,
+  readOnly = false,
   onToggleSection,
   onOpenWorkflowDialog,
   onChangeBindings,
@@ -30,6 +32,7 @@ export function AgentRuntimeWorkflowSection({
   const t = useT('agents.agentRuntime');
 
   const removeWorkflow = (bindingId: string) => {
+    if (readOnly) return;
     onChangeBindings(bindings.filter(binding => binding.binding_id !== bindingId));
   };
 
@@ -45,6 +48,7 @@ export function AgentRuntimeWorkflowSection({
       isLoading={isLoading}
       onToggleSection={onToggleSection}
       onAdd={onOpenWorkflowDialog}
+      readOnly={readOnly}
     >
       <div className="space-y-2">
         {bindings.map(binding => {
@@ -79,6 +83,7 @@ export function AgentRuntimeWorkflowSection({
                   isIcon
                   className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
                   aria-label={t('workflow.remove', { name: label })}
+                  disabled={readOnly}
                   onClick={() => removeWorkflow(binding.binding_id)}
                 >
                   <Trash2 className="size-4" />

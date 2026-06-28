@@ -32,10 +32,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { agentService } from '@/services';
 import { useExportWorkflow } from '@/hooks/workflow/use-workflow-import-export';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
-import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
-import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
-import { AGENT_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import {
+  getAgentDetailEditHref,
+  isAgentRuntimeType,
+  isWorkflowRuntimeType,
+} from '@/utils/agent-detail-routes';
+import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 
 interface AgentCardProps {
@@ -58,12 +61,37 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
   const [moveOpen, setMoveOpen] = useState(false);
   const queryClient = useQueryClient();
   const { exportWorkflow, isExporting } = useExportWorkflow();
-  const { currentOrganization } = useOrganizations();
 
   // Permissions
   const { hasAnyPermission } = useAccountPermissions();
-  const canManage = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
-  const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
+  const isAgentRuntime = isAgentRuntimeType(agent.agent_type);
+  const isWorkflowRuntime = isWorkflowRuntimeType(agent.agent_type);
+  const updatePermissionCodes = isWorkflowRuntime
+    ? WORKFLOW_PERMISSION_ACTIONS.update
+    : isAgentRuntime
+      ? AGENT_PERMISSION_ACTIONS.update
+      : [];
+  const exportPermissionCodes = isWorkflowRuntime
+    ? WORKFLOW_PERMISSION_ACTIONS.export
+    : isAgentRuntime
+      ? AGENT_PERMISSION_ACTIONS.export
+      : [];
+  const deletePermissionCodes = isWorkflowRuntime
+    ? WORKFLOW_PERMISSION_ACTIONS.delete
+    : isAgentRuntime
+      ? AGENT_PERMISSION_ACTIONS.delete
+      : [];
+  const movePermissionCodes = isWorkflowRuntime
+    ? WORKFLOW_PERMISSION_ACTIONS.move
+    : isAgentRuntime
+      ? AGENT_PERMISSION_ACTIONS.move
+      : [];
+  const canUpdateRuntime = hasAnyPermission(updatePermissionCodes);
+  const canExportRuntime = hasAnyPermission(exportPermissionCodes);
+  const canDeleteRuntime = hasAnyPermission(deletePermissionCodes);
+  const canMoveAssets = hasAnyPermission(movePermissionCodes);
+  const canShowActions = canUpdateRuntime || canExportRuntime || canDeleteRuntime || canMoveAssets;
+  const shouldPrefetchAgentDetail = canUpdateRuntime || canExportRuntime || canDeleteRuntime;
   const agentHref = getAgentDetailEditHref(agent.id, agent.agent_type);
   const modeText =
     agent.agent_type === AgentType.AGENT
@@ -150,12 +178,12 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
           </CardContent>
         </Card>
       </Link>
-      {/* Show actions available to workspace managers or organization admins. */}
-      {(canManage || canMoveAssets) && (
+      {/* Show only actions backed by the corresponding permission. */}
+      {canShowActions && (
         <div className="absolute bottom-2 right-2">
           <DropdownMenu
             onOpenChange={open => {
-              if (open && canManage) {
+              if (open && shouldPrefetchAgentDetail) {
                 // Prefetch agent detail when actions menu opens
                 queryClient.prefetchQuery({
                   queryKey: ['agents', 'detail', agent.id],
@@ -172,21 +200,21 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {canManage && (
-                <>
-                  <DropdownMenuItem inset onSelect={() => setEditOpen(true)}>
-                    <Edit className="h-4 w-4" />
-                    {t('actions.edit')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    inset
-                    disabled={isExporting}
-                    onSelect={() => setExportConfirmOpen(true)}
-                  >
-                    <Download className="h-4 w-4" />
-                    {t('actions.exportYaml')}
-                  </DropdownMenuItem>
-                </>
+              {canUpdateRuntime && (
+                <DropdownMenuItem inset onSelect={() => setEditOpen(true)}>
+                  <Edit className="h-4 w-4" />
+                  {t('actions.edit')}
+                </DropdownMenuItem>
+              )}
+              {canExportRuntime && (
+                <DropdownMenuItem
+                  inset
+                  disabled={isExporting}
+                  onSelect={() => setExportConfirmOpen(true)}
+                >
+                  <Download className="h-4 w-4" />
+                  {t('actions.exportYaml')}
+                </DropdownMenuItem>
               )}
               {canMoveAssets && (
                 <DropdownMenuItem inset onSelect={() => setMoveOpen(true)}>
@@ -194,7 +222,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
                   {tCommon('assetMove.title')}
                 </DropdownMenuItem>
               )}
-              {canManage && (
+              {canDeleteRuntime && (
                 <DropdownMenuItem variant="destructive" inset onSelect={() => setConfirmOpen(true)}>
                   <Trash2 className="h-4 w-4" />
                   {t('actions.delete')}
@@ -221,6 +249,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
         confirmText={t('actions.exportYaml')}
         cancelText={tCommon('close')}
         onConfirm={() => {
+          if (!canExportRuntime) return;
           void exportWorkflow({
             agentId: agent.id,
             version: agent.is_published ? 'published' : 'draft',
@@ -239,12 +268,14 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
         confirmText={tCommon('confirm')}
         cancelText={tCommon('close')}
         onConfirm={() =>
-          deleteMutation.mutate(agent.id, {
-            onSuccess: () => {
-              setConfirmOpen(false);
-              onDeleted?.(agent.id, pageIndex);
-            },
-          })
+          canDeleteRuntime
+            ? deleteMutation.mutate(agent.id, {
+                onSuccess: () => {
+                  setConfirmOpen(false);
+                  onDeleted?.(agent.id, pageIndex);
+                },
+              })
+            : undefined
         }
         loading={deleteMutation.isPending}
       />

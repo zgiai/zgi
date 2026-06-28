@@ -74,7 +74,7 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 }
 
 func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
-	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentPublishPermissionCodes()...)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentPublishPermissionCodes("AGENT")...)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func (s *agentsService) createAgentPublishedVersion(ctx context.Context, version
 }
 
 func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID, accountID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error) {
-	_, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false, agentPublishPermissionCodes()...)
+	_, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false, agentPublishPermissionCodes("AGENT")...)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,7 @@ func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID,
 }
 
 func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agentID, accountID string, req dto.RollbackAgentPublishedVersionRequest) (*dto.AgentConfigResponse, error) {
-	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentPublishPermissionCodes()...)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentPublishPermissionCodes("AGENT")...)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +262,7 @@ func (s *agentsService) loadAuthorizedAgentRuntimeDraft(ctx context.Context, age
 		return nil, nil, fmt.Errorf("agent runtime config is only available for AGENT type")
 	}
 	if len(permissionCodes) == 0 {
-		permissionCodes = agentRuntimeConfigManagePermissionCodes()
+		permissionCodes = agentRuntimeConfigManagePermissionCodes(ag.AgentsType)
 	}
 	if err := s.ensureCanManageAgent(ctx, ag, accountID, permissionCodes...); err != nil {
 		return nil, nil, err

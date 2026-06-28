@@ -16,9 +16,8 @@ import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { useDeleteDb } from '@/hooks/db/use-dbs';
 import { useT } from '@/i18n';
 import { ICON_BG } from '@/lib/config';
-import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
-import { DATABASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface DbCardProps {
   db: Db;
@@ -35,12 +34,13 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [workspaceMoveOpen, setWorkspaceMoveOpen] = useState(false);
   const router = useRouter();
-  const { currentOrganization } = useOrganizations();
 
   // Permissions
   const { hasAnyPermission } = useAccountPermissions();
-  const canManage = hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES);
-  const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
+  const canUpdateDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.update);
+  const canDeleteDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.delete);
+  const canMoveDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.move);
+  const canShowActions = canUpdateDatabase || canDeleteDatabase || canMoveDatabase;
 
   return (
     <div className="relative h-36 sm:h-40">
@@ -79,7 +79,7 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
         </CardContent>
       </Card>
 
-      {(canManage || canMoveAssets) && (
+      {canShowActions && (
         <div className="absolute bottom-1.5 sm:bottom-2 right-1.5 sm:right-2 z-10">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -92,17 +92,17 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {canManage && (
+              {canUpdateDatabase && (
                 <DropdownMenuItem inset onSelect={() => onEdit?.(db)}>
                   <Pencil className="h-4 w-4" /> {common('edit')}
                 </DropdownMenuItem>
               )}
-              {canMoveAssets && (
+              {canMoveDatabase && (
                 <DropdownMenuItem inset onSelect={() => setWorkspaceMoveOpen(true)}>
                   <MoveRight className="h-4 w-4" /> {common('assetMove.title')}
                 </DropdownMenuItem>
               )}
-              {canManage && (
+              {canDeleteDatabase && (
                 <DropdownMenuItem variant="destructive" inset onSelect={() => setConfirmOpen(true)}>
                   <Trash2 className="h-4 w-4" /> {common('delete')}
                 </DropdownMenuItem>
@@ -120,12 +120,14 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
         confirmText={common('confirm')}
         cancelText={common('close')}
         onConfirm={() =>
-          deleteMutation.mutate(db.id, {
-            onSuccess: () => {
-              setConfirmOpen(false);
-              onDeleted?.(db.id);
-            },
-          })
+          canDeleteDatabase
+            ? deleteMutation.mutate(db.id, {
+                onSuccess: () => {
+                  setConfirmOpen(false);
+                  onDeleted?.(db.id);
+                },
+              })
+            : undefined
         }
       />
       <WorkspaceAssetMoveDialog

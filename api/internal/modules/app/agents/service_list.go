@@ -182,7 +182,7 @@ func (s *agentsService) GetAgentsListWithPermissions(
 			OrganizationID:  currentOrganization.OrganizationID,
 			CreatedBy:       createdBy,
 			GroupID:         nil, // Agents don't have group_id, only tenant_id
-			PermissionCodes: agentUpdatePermissionCodes(),
+			PermissionCodes: agentUpdatePermissionCodes(a.AgentsType),
 		})
 	}
 

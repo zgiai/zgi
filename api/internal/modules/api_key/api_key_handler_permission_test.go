@@ -101,7 +101,10 @@ func TestAPIKeyManagementRequiresAgentPermissionBeforeRequestHandling(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &apiKeyPermissionRepository{}
-			resolver := &apiKeyPermissionAgentWorkspaceResolver{workspaceID: workspaceID}
+			resolver := &apiKeyPermissionAgentWorkspaceResolver{
+				workspaceID: workspaceID,
+				agentType:   "AGENT",
+			}
 			permissionChecker := &apiKeyPermissionChecker{allowed: false}
 			handler := &APIKeyHandler{
 				apiKeyRepo:             repo,
@@ -122,6 +125,67 @@ func TestAPIKeyManagementRequiresAgentPermissionBeforeRequestHandling(t *testing
 			}
 			if permissionChecker.lastWorkspaceID != workspaceID {
 				t.Fatalf("workspace checked = %q, want %q", permissionChecker.lastWorkspaceID, workspaceID)
+			}
+			if permissionChecker.lastPermission != tt.wantPermission {
+				t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, tt.wantPermission)
+			}
+			if repo.calls != 0 {
+				t.Fatalf("repository calls = %d, want 0", repo.calls)
+			}
+		})
+	}
+}
+
+func TestAPIKeyManagementPermissionFollowsAgentType(t *testing.T) {
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	workspaceID := "22222222-2222-2222-2222-222222222222"
+	tests := []struct {
+		name           string
+		agentType      string
+		wantPermission workspace_model.WorkspacePermissionCode
+	}{
+		{
+			name:           "agent runtime",
+			agentType:      "AGENT",
+			wantPermission: workspace_model.WorkspacePermissionAgentRuntimeAccessManage,
+		},
+		{
+			name:           "workflow runtime",
+			agentType:      "WORKFLOW",
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRuntimeAccessManage,
+		},
+		{
+			name:           "conversational workflow runtime",
+			agentType:      "CONVERSATIONAL_WORKFLOW",
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRuntimeAccessManage,
+		},
+		{
+			name:           "frontend conversational agent alias",
+			agentType:      "CONVERSATIONAL_AGENT",
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRuntimeAccessManage,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &apiKeyPermissionRepository{}
+			permissionChecker := &apiKeyPermissionChecker{allowed: false}
+			handler := &APIKeyHandler{
+				apiKeyRepo:          repo,
+				organizationService: permissionChecker,
+				agentWorkspaceResolver: &apiKeyPermissionAgentWorkspaceResolver{
+					workspaceID: workspaceID,
+					agentType:   tt.agentType,
+				},
+			}
+			ctx, recorder := newAPIKeyPermissionContext(http.MethodGet, "/agents/"+agentID.String()+"/api-keys", "", gin.Params{
+				{Key: "agent_id", Value: agentID.String()},
+			})
+
+			handler.ListAPIKeys(ctx)
+
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 			}
 			if permissionChecker.lastPermission != tt.wantPermission {
 				t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, tt.wantPermission)
@@ -216,12 +280,16 @@ func requireAPIKeyResponseCode(t *testing.T, recorder *httptest.ResponseRecorder
 
 type apiKeyPermissionAgentWorkspaceResolver struct {
 	workspaceID string
+	agentType   string
 	lastAgentID uuid.UUID
 }
 
-func (r *apiKeyPermissionAgentWorkspaceResolver) ResolveAgentWorkspace(_ context.Context, _ string, agentID uuid.UUID) (string, error) {
+func (r *apiKeyPermissionAgentWorkspaceResolver) ResolveAgentScope(_ context.Context, _ string, agentID uuid.UUID) (apiKeyAgentScope, error) {
 	r.lastAgentID = agentID
-	return r.workspaceID, nil
+	return apiKeyAgentScope{
+		WorkspaceID: r.workspaceID,
+		AgentType:   r.agentType,
+	}, nil
 }
 
 type apiKeyPermissionChecker struct {

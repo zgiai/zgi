@@ -75,6 +75,11 @@ interface WorkflowHeaderProps {
   isPublishing?: boolean;
   // Control whether publish is allowed (e.g., validation passed)
   canPublish?: boolean;
+  canSave: boolean;
+  canRunDraft: boolean;
+  canPublishWorkflow: boolean;
+  canManageRuntimeAccess: boolean;
+  canViewRuntimeLogs: boolean;
   // Actions
   onSave: () => Promise<void> | void;
   onPublish: ({
@@ -113,9 +118,13 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
   isSaving,
   isPublishing,
   canPublish,
+  canSave,
+  canRunDraft,
+  canPublishWorkflow,
+  canManageRuntimeAccess,
+  canViewRuntimeLogs,
   onSave,
   onPublish,
-  isReadOnly,
   isHistoryMode = false,
   isPermissionReadOnly = false,
   selectedRunId,
@@ -251,6 +260,11 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
       return;
     }
 
+    if (!canRunDraft) {
+      toast.error(t('workflow.readOnlyMode'));
+      return;
+    }
+
     if (errors.length > 0 && !isBannerHidden(BannerKey.WorkflowRunErrorsWarning)) {
       setRunWarnOpen(true);
       return;
@@ -259,6 +273,11 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
   };
 
   const handlePublishClick = async () => {
+    if (!canPublishWorkflow) {
+      toast.error(t('workflow.readOnlyMode'));
+      return;
+    }
+
     if (canPublish === false) {
       toast.error(t('workflow.fixErrorsBeforePublishing'));
       return;
@@ -273,6 +292,9 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
   };
 
   const handleWebAppStatusConfirm = () => {
+    if (!canManageRuntimeAccess) {
+      return;
+    }
     if (nextWebAppStatus === 'inactive' && isOfflineReasonTooLong) {
       toast.error(t('workflow.webappStatus.reasonTooLong'));
       return;
@@ -342,81 +364,81 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
           </div>
         </div>
 
-        {isReadOnly ? (
+        {isHistoryMode ? (
           <div className="flex items-center gap-2">
-            {isHistoryMode ? (
-              // History mode: show run history info with exit button
-              <>
-                <div className="text-sm text-amber-600">
-                  {selectedRunId
-                    ? t('workflow.viewingRunHistoryWithId', { id: selectedRunId })
-                    : t('workflow.viewingRunHistory')}
-                </div>
-                <WorkflowRunsDropdown
-                  agentId={agentId}
-                  query={debuggerRunsQuery}
-                  icon={
-                    agentType === AgentType.CONVERSATIONAL_AGENT ? <History size={20} /> : undefined
-                  }
-                  tooltipLabel={
-                    agentType === AgentType.CONVERSATIONAL_AGENT
-                      ? t('workflow.conversationHistory.title')
-                      : t('workflow.recentRuns')
-                  }
-                  dropdownLabel={t('workflow.recentRuns')}
-                  itemFilter={
-                    agentType === AgentType.CONVERSATIONAL_AGENT
-                      ? item => Boolean(item.conversation_id)
-                      : undefined
-                  }
-                  onSelect={(runId: string) => {
-                    onSelectRunHistory(runId);
-                  }}
-                />
-                <button
-                  onClick={onExitHistory}
-                  className="px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 text-sm"
-                >
-                  {t('workflow.returnToEdit')}
-                </button>
-              </>
+            <div className="text-sm text-amber-600">
+              {selectedRunId
+                ? t('workflow.viewingRunHistoryWithId', { id: selectedRunId })
+                : t('workflow.viewingRunHistory')}
+            </div>
+            {canViewRuntimeLogs ? (
+              <WorkflowRunsDropdown
+                agentId={agentId}
+                query={debuggerRunsQuery}
+                icon={
+                  agentType === AgentType.CONVERSATIONAL_AGENT ? <History size={20} /> : undefined
+                }
+                tooltipLabel={
+                  agentType === AgentType.CONVERSATIONAL_AGENT
+                    ? t('workflow.conversationHistory.title')
+                    : t('workflow.recentRuns')
+                }
+                dropdownLabel={t('workflow.recentRuns')}
+                itemFilter={
+                  agentType === AgentType.CONVERSATIONAL_AGENT
+                    ? item => Boolean(item.conversation_id)
+                    : undefined
+                }
+                onSelect={(runId: string) => {
+                  onSelectRunHistory(runId);
+                }}
+              />
+            ) : null}
+            <button
+              onClick={onExitHistory}
+              className="px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 text-sm"
+            >
+              {t('workflow.returnToEdit')}
+            </button>
+          </div>
+        ) : (
+          <>
+            {canSave ? (
+              <WorkflowToolbar />
             ) : isPermissionReadOnly ? (
-              // Permission-based read-only: show read-only notice without exit button
               <div className="text-sm text-muted-foreground bg-muted px-3 py-1.5 rounded">
                 {t('workflow.readOnlyMode')}
               </div>
             ) : null}
-          </div>
-        ) : (
-          <>
-            <WorkflowToolbar />
             <div className="flex items-center gap-2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="relative">
-                    <Button
-                      onClick={() => onSave()}
-                      variant="ghost"
-                      size="sm"
-                      isIcon
-                      interactive="subtle"
-                      aria-label={t('workflow.save')}
-                      disabled={isSaving}
-                    >
-                      <SaveIcon size={18} />
-                      <div
-                        className={cn(
-                          'w-2 h-2 rounded-full absolute top-0.5 right-0.5 border-2 border-background',
-                          isDirty ? 'bg-yellow-400' : 'bg-emerald-500'
-                        )}
-                      />
-                    </Button>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>{t('workflow.save')}</TooltipContent>
-              </Tooltip>
+              {canSave ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="relative">
+                      <Button
+                        onClick={() => onSave()}
+                        variant="ghost"
+                        size="sm"
+                        isIcon
+                        interactive="subtle"
+                        aria-label={t('workflow.save')}
+                        disabled={isSaving}
+                      >
+                        <SaveIcon size={18} />
+                        <div
+                          className={cn(
+                            'w-2 h-2 rounded-full absolute top-0.5 right-0.5 border-2 border-background',
+                            isDirty ? 'bg-yellow-400' : 'bg-emerald-500'
+                          )}
+                        />
+                      </Button>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('workflow.save')}</TooltipContent>
+                </Tooltip>
+              ) : null}
 
-              {agentType === AgentType.CONVERSATIONAL_AGENT && (
+              {canSave && agentType === AgentType.CONVERSATIONAL_AGENT && (
                 <Tooltip disableHoverableContent>
                   <TooltipTrigger asChild>
                     <Button
@@ -435,7 +457,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                   </TooltipContent>
                 </Tooltip>
               )}
-              {agentType !== AgentType.CONVERSATIONAL_AGENT && (
+              {canViewRuntimeLogs && agentType !== AgentType.CONVERSATIONAL_AGENT && (
                 <WorkflowRunsDropdown
                   agentId={agentId}
                   query={debuggerRunsQuery}
@@ -444,7 +466,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                   }}
                 />
               )}
-              {agentType === AgentType.CONVERSATIONAL_AGENT && (
+              {canViewRuntimeLogs && agentType === AgentType.CONVERSATIONAL_AGENT && (
                 <WorkflowRunsDropdown
                   agentId={agentId}
                   query={debuggerRunsQuery}
@@ -457,7 +479,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                   }}
                 />
               )}
-              {agentType === AgentType.CONVERSATIONAL_AGENT && (
+              {canSave && agentType === AgentType.CONVERSATIONAL_AGENT && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -475,21 +497,23 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                 </Tooltip>
               )}
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    onClick={openEnvironmentPanel}
-                    variant="ghost"
-                    size="sm"
-                    isIcon
-                    interactive="subtle"
-                    aria-label={t('workflow.environmentVariables.title')}
-                  >
-                    <KeySquare size={18} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('workflow.environmentVariables.title')}</TooltipContent>
-              </Tooltip>
+              {canSave ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={openEnvironmentPanel}
+                      variant="ghost"
+                      size="sm"
+                      isIcon
+                      interactive="subtle"
+                      aria-label={t('workflow.environmentVariables.title')}
+                    >
+                      <KeySquare size={18} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('workflow.environmentVariables.title')}</TooltipContent>
+                </Tooltip>
+              ) : null}
 
               <Button
                 onClick={handleRunClick}
@@ -501,6 +525,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                     ? 'border-emerald-600 bg-emerald-600 ring-2 ring-emerald-400/25 hover:border-emerald-700 hover:bg-emerald-700'
                     : 'border-emerald-600/30 bg-emerald-600 hover:border-emerald-700 hover:bg-emerald-700'
                 )}
+                disabled={!canRunDraft && !isDebugPanelOpen}
               >
                 {isDebugPanelOpen ? <X size={16} /> : <Play size={16} fill="currentColor" />}
                 <span className="font-semibold">
@@ -572,6 +597,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                   <Button
                     size="sm"
                     className="flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-3.5 text-primary shadow-none transition-colors hover:border-primary/35 hover:bg-primary/15"
+                    disabled={!canPublishWorkflow && !canManageRuntimeAccess && !webAppUrl}
                   >
                     <UploadCloud size={16} />
                     <span className="font-semibold">
@@ -581,7 +607,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
                   <DropdownMenuItem
-                    disabled={Boolean(isPublishing) || isSaving}
+                    disabled={!canPublishWorkflow || Boolean(isPublishing) || isSaving}
                     title={canPublish === false ? t('workflow.fixErrorsBeforePublishing') : ''}
                     onSelect={event => {
                       event.preventDefault();
@@ -619,6 +645,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                         </Badge>
                       </DropdownMenuLabel>
                       <DropdownMenuItem
+                        disabled={!canManageRuntimeAccess}
                         onSelect={() => {
                           setWebAppStatusDialogOpen(true);
                         }}
@@ -640,16 +667,21 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                         <AppWindowIcon className="text-highlight" />
                         {t('workflow.webapp')}
                       </DropdownMenuItem>
-                      <DropdownMenuItem asChild>
-                        <Link href={`/console/agents/${agentId}/logs`}>
-                          <History className="text-highlight" />
-                          {t('workflow.webappLogs')}
-                        </Link>
-                      </DropdownMenuItem>
+                      {canViewRuntimeLogs ? (
+                        <DropdownMenuItem asChild>
+                          <Link href={`/console/agents/${agentId}/logs`}>
+                            <History className="text-highlight" />
+                            {t('workflow.webappLogs')}
+                          </Link>
+                        </DropdownMenuItem>
+                      ) : null}
                     </>
                   )}
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => setPublishSettingsOpen(true)}>
+                  <DropdownMenuItem
+                    disabled={!canManageRuntimeAccess}
+                    onSelect={() => setPublishSettingsOpen(true)}
+                  >
                     <SlidersHorizontal className="size-4" />
                     {t('agentRuntime.header.publishSettings')}
                   </DropdownMenuItem>
@@ -708,7 +740,11 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                     <Button
                       variant={isWebAppOffline ? 'default' : 'destructive'}
                       onClick={handleWebAppStatusConfirm}
-                      disabled={webAppStatusMutation.isPending || isOfflineReasonTooLong}
+                      disabled={
+                        !canManageRuntimeAccess ||
+                        webAppStatusMutation.isPending ||
+                        isOfflineReasonTooLong
+                      }
                     >
                       {webAppStatusMutation.isPending ? (
                         <Loader2 size={16} className="animate-spin" />
@@ -725,7 +761,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
               <PublishSettingsDialog
                 agentId={agentId}
                 open={publishSettingsOpen}
-                canManage={!isReadOnly && !isPermissionReadOnly}
+                canManage={canManageRuntimeAccess}
                 onOpenChange={setPublishSettingsOpen}
               />
             </div>

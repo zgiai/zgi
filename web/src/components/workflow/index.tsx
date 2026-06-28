@@ -27,7 +27,7 @@ import { getNodeAbsolutePosition } from './store/helpers/graph';
 import { useAuthStore } from '@/store/auth-store';
 import { useBuiltinTools } from '@/hooks/workflow/use-builtin-tools';
 import { useLocale } from '@/hooks/use-locale';
-import { WORKFLOW_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 // Throttled global mouse tracker to isolate re-renders from WorkflowEditor
 // Uses both requestAnimationFrame and time-based throttling (50ms) to minimize store updates
@@ -128,6 +128,10 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const mode = useWorkflowStore.use.mode();
   const storeCanEdit = useWorkflowStore.use.canEdit();
   const setCanEdit = useWorkflowStore.use.setCanEdit();
+  const setCanRunDraft = useWorkflowStore.use.setCanRunDraft();
+  const setCanStopRun = useWorkflowStore.use.setCanStopRun();
+  const setCanDebug = useWorkflowStore.use.setCanDebug();
+  const setCanViewRuntimeLogs = useWorkflowStore.use.setCanViewRuntimeLogs();
 
   const isHistoryMode = mode === 'history';
   const isPermissionReadOnly = !storeCanEdit;
@@ -204,7 +208,15 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   }, [isHistoryMode, selectedRunId, historySnapshots, viewport]);
 
   const { hasAnyPermission } = useAccountPermissions();
-  const canManage = hasAnyPermission(WORKFLOW_MANAGE_PERMISSION_CODES);
+  const canEditWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update);
+  const canRunWorkflowDraft = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
+  const canStopWorkflowRun = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop);
+  const canDebugWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
+  const canPublishWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish);
+  const canManageWorkflowRuntimeAccess = hasAnyPermission(
+    WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
+  );
+  const canViewWorkflowRuntimeLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
 
   // Ensure store holds current agent type for downstream filtering
   useEffect(() => {
@@ -213,8 +225,23 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
 
   // Sync canEdit permission from permission system to store
   useEffect(() => {
-    setCanEdit(canManage);
-  }, [canManage, setCanEdit]);
+    setCanEdit(canEditWorkflow);
+    setCanRunDraft(canRunWorkflowDraft);
+    setCanStopRun(canStopWorkflowRun);
+    setCanDebug(canDebugWorkflow);
+    setCanViewRuntimeLogs(canViewWorkflowRuntimeLogs);
+  }, [
+    canDebugWorkflow,
+    canEditWorkflow,
+    canRunWorkflowDraft,
+    canStopWorkflowRun,
+    canViewWorkflowRuntimeLogs,
+    setCanDebug,
+    setCanEdit,
+    setCanRunDraft,
+    setCanStopRun,
+    setCanViewRuntimeLogs,
+  ]);
 
   const resetWorkflowUiState = useCallback(() => {
     try {
@@ -450,6 +477,11 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
             isSaving={isSaving}
             isPublishing={isPublishing}
             canPublish={isValid}
+            canSave={canEditWorkflow}
+            canRunDraft={canRunWorkflowDraft}
+            canPublishWorkflow={canPublishWorkflow}
+            canManageRuntimeAccess={canManageWorkflowRuntimeAccess}
+            canViewRuntimeLogs={canViewWorkflowRuntimeLogs}
             onSave={() => {
               handleCombinedSave({
                 silent: false,

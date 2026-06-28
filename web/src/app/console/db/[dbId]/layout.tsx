@@ -36,7 +36,7 @@ import { ResourceSidebar, ResourceSidebarHeader } from '@/components/common/reso
 import { EditDbDialog } from '@/components/db/dialog';
 import { ErrorBoundary } from '@/components/error-boundary';
 import {
-  DATABASE_MANAGE_PERMISSION_CODES,
+  DATABASE_PERMISSION_ACTIONS,
   DATABASE_VISIBLE_PERMISSION_CODES,
 } from '@/constants/permissions';
 
@@ -51,11 +51,19 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const { dbId } = React.use(params);
 
   // Permissions
-  const { hasPermission, hasAnyPermission, isLoading: isPermissionsLoading } =
-    useAccountPermissions();
+  const {
+    hasPermission,
+    hasAnyPermission,
+    isLoading: isPermissionsLoading,
+  } = useAccountPermissions();
   const canView = hasAnyPermission(DATABASE_VISIBLE_PERMISSION_CODES);
-  const canManage = hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES);
-  const canAiQuery = hasPermission('database.ai_query');
+  const canUpdateDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.update);
+  const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
+  const canAiQuery = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
+    ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
+  ]);
+  const canViewOperationLogs = hasPermission('database.operation_logs.view');
 
   const { data: dbDetail, isLoading: isDbLoading } = useDb(dbId, {
     enabled: canView,
@@ -90,12 +98,12 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
 
   const onOpenCreate = () => {
-    if (!canManage) return;
+    if (!canManageSchema) return;
     setTableDialog({ mode: 'create' });
   };
 
   const onOpenEdit = (table: DbTable) => {
-    if (!canManage) return;
+    if (!canManageSchema) return;
     setTableDialog({ mode: 'edit', table });
   };
 
@@ -156,7 +164,9 @@ export default function DbLayout({ children, params }: LayoutProps) {
                 name={db?.name || t('dbs.noName')}
                 description={db?.description || ''}
                 iconActionLabel={t('dbs.edit')}
-                onIconClick={canManage && !isMismatch && db ? () => setEditDbOpen(true) : undefined}
+                onIconClick={
+                  canUpdateDatabase && !isMismatch && db ? () => setEditDbOpen(true) : undefined
+                }
               />
             }
           >
@@ -202,7 +212,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
               {dbMenuOpen && !isCollapsed && (
                 <div className="pl-3 space-y-0.5">
                   {/* Create table */}
-                  {canManage && (
+                  {canManageSchema && (
                     <button
                       type="button"
                       onClick={e => {
@@ -252,7 +262,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
                             {label}
                           </Link>
                           {/* Actions dropdown replacing edit button */}
-                          {canManage && (
+                          {canManageSchema && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <button
@@ -321,27 +331,29 @@ export default function DbLayout({ children, params }: LayoutProps) {
                   </span>
                 </Link>
               )}
-              <Link
-                href={`/console/db/${dbId}/record`}
-                className={cn(
-                  'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
-                  pathname === `/console/db/${dbId}/record` ||
-                    pathname.startsWith(`/console/db/${dbId}/record/`)
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-primary/5 hover:text-primary',
-                  isCollapsed && 'justify-center px-0'
-                )}
-              >
-                <ScrollText className="h-4 w-4 shrink-0" />
-                <span
+              {canViewOperationLogs && (
+                <Link
+                  href={`/console/db/${dbId}/record`}
                   className={cn(
-                    'truncate ml-1.5 transition-all duration-300',
-                    isCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
+                    'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    pathname === `/console/db/${dbId}/record` ||
+                      pathname.startsWith(`/console/db/${dbId}/record/`)
+                      ? 'bg-primary/10 text-primary'
+                      : 'hover:bg-primary/5 hover:text-primary',
+                    isCollapsed && 'justify-center px-0'
                   )}
                 >
-                  {t('dbs.features.logs')}
-                </span>
-              </Link>
+                  <ScrollText className="h-4 w-4 shrink-0" />
+                  <span
+                    className={cn(
+                      'truncate ml-1.5 transition-all duration-300',
+                      isCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
+                    )}
+                  >
+                    {t('dbs.features.logs')}
+                  </span>
+                </Link>
+              )}
             </nav>
           </ResourceSidebar>
 
@@ -376,6 +388,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
           cancelText={t('common.cancel')}
           loading={deleteMutation.isPending}
           onConfirm={() => {
+            if (!canManageSchema) return;
             if (!deleteTarget) return;
             deleteMutation.mutate(deleteTarget.id, {
               onSuccess: () => {

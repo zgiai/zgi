@@ -424,8 +424,8 @@ func TestAuthorizeWorkspaceUploadUsesDirectWorkspacePermission(t *testing.T) {
 	if permissionChecker.lastWorkspaceID != "workspace-1" {
 		t.Fatalf("workspace id = %q, want workspace-1", permissionChecker.lastWorkspaceID)
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionFileUploadCreate {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionFileUploadCreate)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionFileUpload {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionFileUpload)
 	}
 }
 

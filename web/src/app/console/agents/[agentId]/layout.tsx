@@ -8,7 +8,8 @@ import { useAgent } from '@/hooks/agent/use-agents';
 import { useParams } from 'next/navigation';
 import { WorkspaceMismatchGuard } from '@/components/common/workspace-mismatch-guard';
 import { useT } from '@/i18n';
-import { AGENT_ASSET_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
+import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { isAgentRuntimeType, isWorkflowRuntimeType } from '@/utils/agent-detail-routes';
 
 export default function AgentLayout({ children }: { children: React.ReactNode }) {
   const t = useT();
@@ -18,7 +19,14 @@ export default function AgentLayout({ children }: { children: React.ReactNode })
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const { agent, isLoading: isAgentLoading } = useAgent(agentId);
 
-  const canView = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
+  const agentType = agent?.data?.agent_type;
+  const canViewAgentDetail = hasAnyPermission(AGENT_PERMISSION_ACTIONS.page);
+  const canViewWorkflowDetail = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.page);
+  const canView = isAgentRuntimeType(agentType)
+    ? canViewAgentDetail
+    : isWorkflowRuntimeType(agentType)
+      ? canViewWorkflowDetail
+      : false;
   const isLoading = isPermissionsLoading || isAgentLoading;
 
   if (isLoading) {

@@ -82,7 +82,7 @@ import { fileManageService } from '@/services/file-manage.service';
 import { toast } from 'sonner';
 import type { Organization } from '@/services/types/organization';
 import type { Workspace } from '@/store/workspace-store';
-import { FILE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { FILE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import {
   MAX_FILE_FOLDER_LEVEL,
   getDescendantFolderIds,
@@ -717,10 +717,10 @@ const FileManagementContent = ({
     ? ''
     : (folders.find(folder => folder.id === activeCategory)?.name ?? '');
 
-  const { hasPermission, hasAnyPermission } = useAccountPermissions();
-  const canManage = hasAnyPermission(FILE_MANAGE_PERMISSION_CODES);
-  const canCreateFolder = hasPermission('file.move_create');
-  const canUpload = hasPermission('file.upload_create');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canManageFolder = hasAnyPermission(FILE_PERMISSION_ACTIONS.folderManage);
+  const canCreateFolder = canManageFolder;
+  const canUpload = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
   const canCreateInActiveFolder =
     canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < MAX_FILE_FOLDER_LEVEL;
   const { organizations } = useOrganizations(isAuthenticated);
@@ -1089,9 +1089,9 @@ const FileManagementContent = ({
       onNewFolder={canCreateInActiveFolder ? handleNewFolder : undefined}
       onUpload={canUpload ? handleUpload : undefined}
       onFolderCreateChild={canCreateFolder ? handleCreateChildFolder : undefined}
-      onFolderRename={canManage ? handleFolderRename : undefined}
-      onFolderMove={canManage ? handleFolderMove : undefined}
-      onFolderDelete={canManage ? handleFolderDelete : undefined}
+      onFolderRename={canManageFolder ? handleFolderRename : undefined}
+      onFolderMove={canManageFolder ? handleFolderMove : undefined}
+      onFolderDelete={canManageFolder ? handleFolderDelete : undefined}
       workspaceId={workspaceId}
       flushTop
     />

@@ -36,6 +36,8 @@ interface DraftContentProps {
   isStarting: boolean;
   isRunning?: boolean;
   isStopping?: boolean;
+  runDisabled?: boolean;
+  runDisabledMessage?: string;
   stopDisabled?: boolean;
   stopDisabledMessage?: string;
   onSubmit: (values: FormInputs) => void;
@@ -76,6 +78,8 @@ const DraftContent: React.FC<DraftContentProps> = ({
   isStarting,
   isRunning = false,
   isStopping = false,
+  runDisabled = false,
+  runDisabledMessage,
   stopDisabled = false,
   stopDisabledMessage,
   onSubmit,
@@ -116,7 +120,7 @@ const DraftContent: React.FC<DraftContentProps> = ({
   const hasInputs = startVariables.length > 0;
   const hasRunState =
     runItems.length > 0 || Boolean(runSummary) || Boolean(streamedText) || Boolean(finalResult);
-  const isPrimaryActionDisabled = isStarting || (isLoadingDraft && !hasLocalNodes);
+  const isPrimaryActionDisabled = runDisabled || isStarting || (isLoadingDraft && !hasLocalNodes);
   const debugSample = React.useMemo<DebugSampleInput | null>(() => {
     const values: FormInputs = {};
     const previewItems: DebugSampleInput['previewItems'] = [];
@@ -319,7 +323,11 @@ const DraftContent: React.FC<DraftContentProps> = ({
                   ? t('agents.workflow.rerunDebug')
                   : t('agents.workflow.runNow')}
           </Button>
-          {isRunning && stopDisabled && stopDisabledMessage ? (
+          {!isRunning && runDisabled && runDisabledMessage ? (
+            <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+              {runDisabledMessage}
+            </div>
+          ) : isRunning && stopDisabled && stopDisabledMessage ? (
             <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
               {stopDisabledMessage}
             </div>

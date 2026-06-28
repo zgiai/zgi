@@ -47,7 +47,13 @@ var databaseExistingAssetVisibilityPermissions = []workspace_model.WorkspacePerm
 	workspace_model.WorkspacePermissionDatabaseOperationLogsView,
 	workspace_model.WorkspacePermissionDatabaseSQLAuditView,
 	workspace_model.WorkspacePermissionDatabaseAIQueryRead,
+	workspace_model.WorkspacePermissionDatabaseAIQueryWrite,
 }
+
+var databaseWorkspaceVisibilityPermissions = append(
+	[]workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseCreate},
+	databaseExistingAssetVisibilityPermissions...,
+)
 
 // NewDataSourceHandler creates a new DataSourceHandler
 func NewDataSourceHandler(service service.DataSourceService, accountService interfaces.AccountService, enterpriseService interfaces.OrganizationService) *DataSourceHandler {
@@ -215,7 +221,7 @@ func (h *DataSourceHandler) ListDataSources(c *gin.Context) {
 			organizationID,
 			accountID,
 			filterWorkspaceID,
-			databaseExistingAssetVisibilityPermissions...,
+			databaseWorkspaceVisibilityPermissions...,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)

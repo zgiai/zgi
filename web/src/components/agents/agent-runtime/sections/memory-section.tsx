@@ -37,6 +37,7 @@ interface AgentRuntimeMemorySectionProps {
   agentMemoryEnabled: boolean;
   agentMemorySlots: AgentMemorySlotConfig[];
   agentMemorySlotValidationErrors: AgentMemorySlotValidationError[];
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeAgentMemoryEnabled: (value: boolean) => void;
   onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => void;
@@ -47,6 +48,7 @@ export function AgentRuntimeMemorySection({
   agentMemoryEnabled,
   agentMemorySlots,
   agentMemorySlotValidationErrors,
+  readOnly = false,
   onToggleSection,
   onChangeAgentMemoryEnabled,
   onChangeAgentMemorySlots,
@@ -82,6 +84,7 @@ export function AgentRuntimeMemorySection({
   })() as AgentMemorySlotValidationError;
 
   const addAgentMemorySlot = () => {
+    if (readOnly) return;
     if (agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS) return;
     const key = newMemoryKey.trim().toLowerCase();
     if (!key) return;
@@ -101,6 +104,7 @@ export function AgentRuntimeMemorySection({
     setMemoryItemDialogOpen(false);
   };
   const updateAgentMemorySlot = (index: number, patch: Partial<AgentMemorySlotConfig>) => {
+    if (readOnly) return;
     onChangeAgentMemorySlots(
       agentMemorySlots.map((slot, currentIndex) =>
         currentIndex === index ? { ...slot, ...patch } : slot
@@ -108,6 +112,7 @@ export function AgentRuntimeMemorySection({
     );
   };
   const removeAgentMemorySlot = (index: number) => {
+    if (readOnly) return;
     onChangeAgentMemorySlots(agentMemorySlots.filter((_, currentIndex) => currentIndex !== index));
   };
   const getAgentMemorySlotErrorText = (error: AgentMemorySlotValidationError) => {
@@ -115,11 +120,13 @@ export function AgentRuntimeMemorySection({
     return t(`memory.validation.${error}`);
   };
   const openCustomMemoryDialog = () => {
+    if (readOnly) return;
     setNewMemoryKey(nextAgentMemorySlotKey);
     setNewMemoryDescription('');
     setMemoryItemDialogOpen(true);
   };
   const applyTemplate = (template: AgentMemoryTemplate, mode: 'merge' | 'replace') => {
+    if (readOnly) return;
     const result = applyAgentMemoryTemplate(agentMemorySlots, template, mode);
     if (!result.ok) {
       toast.error(t('memory.templateTooMany'));
@@ -134,6 +141,7 @@ export function AgentRuntimeMemorySection({
     );
   };
   const addTemplateSlot = (template: AgentMemoryTemplate, slotKey: string) => {
+    if (readOnly) return;
     const slot = template.slots.find(item => item.key === slotKey);
     if (!slot) return;
     const result = addAgentMemoryTemplateSlot(agentMemorySlots, slot);
@@ -161,6 +169,7 @@ export function AgentRuntimeMemorySection({
         cancelText={t('memory.deleteConfirmCancel')}
         variant="danger"
         onConfirm={() => {
+          if (readOnly) return;
           if (pendingRemoveMemoryIndex !== null) {
             removeAgentMemorySlot(pendingRemoveMemoryIndex);
           }
@@ -178,6 +187,7 @@ export function AgentRuntimeMemorySection({
         cancelText={t('memory.templateReplaceConfirmCancel')}
         variant="warning"
         onConfirm={() => {
+          if (readOnly) return;
           if (pendingReplaceTemplate) {
             applyTemplate(pendingReplaceTemplate, 'replace');
           }
@@ -198,6 +208,7 @@ export function AgentRuntimeMemorySection({
                 error={Boolean(newMemoryKeyError)}
                 errorText={newMemoryKeyError ? t(`memory.validation.${newMemoryKeyError}`) : null}
                 onChange={event => setNewMemoryKey(event.target.value.toLowerCase().slice(0, 64))}
+                disabled={readOnly}
               />
             </div>
             <div className="space-y-1.5">
@@ -207,6 +218,7 @@ export function AgentRuntimeMemorySection({
                 showCharacterCount
                 className="min-h-24"
                 placeholder={t('memory.slotDescriptionPlaceholder')}
+                disabled={readOnly}
                 onChange={event => setNewMemoryDescription(event.target.value.slice(0, 200))}
               />
             </div>
@@ -217,7 +229,11 @@ export function AgentRuntimeMemorySection({
             </Button>
             <Button
               onClick={addAgentMemorySlot}
-              disabled={Boolean(newMemoryKeyError) || agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS}
+              disabled={
+                readOnly ||
+                Boolean(newMemoryKeyError) ||
+                agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS
+              }
             >
               {t('memory.addDialogConfirm')}
             </Button>
@@ -271,7 +287,7 @@ export function AgentRuntimeMemorySection({
                             type="button"
                             variant="ghost"
                             size="xs"
-                            disabled={addDisabled}
+                            disabled={readOnly || addDisabled}
                             onClick={() => addTemplateSlot(template, slot.key)}
                           >
                             <Plus className="size-3" />
@@ -289,6 +305,7 @@ export function AgentRuntimeMemorySection({
                       type="button"
                       variant="ghost"
                       size="sm"
+                      disabled={readOnly}
                       onClick={() => setPendingReplaceTemplate(template)}
                     >
                       {t('memory.templateReplace')}
@@ -296,7 +313,7 @@ export function AgentRuntimeMemorySection({
                     <Button
                       type="button"
                       size="sm"
-                      disabled={mergeWouldExceed}
+                      disabled={readOnly || mergeWouldExceed}
                       onClick={() => applyTemplate(template, 'merge')}
                     >
                       <Sparkles className="size-4" />
@@ -323,7 +340,11 @@ export function AgentRuntimeMemorySection({
                 <div className="text-sm font-medium">{t('memory.agentTitle')}</div>
                 <div className="text-xs text-muted-foreground">{t('memory.agentDescription')}</div>
               </div>
-              <Switch checked={agentMemoryEnabled} onCheckedChange={onChangeAgentMemoryEnabled} />
+              <Switch
+                checked={agentMemoryEnabled}
+                disabled={readOnly}
+                onCheckedChange={onChangeAgentMemoryEnabled}
+              />
             </div>
             {agentMemoryEnabled && (
               <div className="space-y-2">
@@ -333,6 +354,7 @@ export function AgentRuntimeMemorySection({
                     variant="outline"
                     size="sm"
                     onClick={() => setMemoryTemplateDialogOpen(true)}
+                    disabled={readOnly}
                   >
                     <Sparkles className="size-4" />
                     {t('memory.applyTemplate')}
@@ -342,7 +364,7 @@ export function AgentRuntimeMemorySection({
                     variant="outline"
                     size="sm"
                     onClick={openCustomMemoryDialog}
-                    disabled={agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS}
+                    disabled={readOnly || agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS}
                   >
                     <Plus className="size-4" />
                     {agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS
@@ -358,6 +380,7 @@ export function AgentRuntimeMemorySection({
                       variant="secondary"
                       size="sm"
                       onClick={() => setMemoryTemplateDialogOpen(true)}
+                      disabled={readOnly}
                     >
                       <Sparkles className="size-4" />
                       {t('memory.applyTemplate')}
@@ -382,6 +405,7 @@ export function AgentRuntimeMemorySection({
                           <div className="flex shrink-0 items-center gap-2">
                             <Switch
                               checked={slot.enabled}
+                              disabled={readOnly}
                               onCheckedChange={checked =>
                                 updateAgentMemorySlot(index, { enabled: checked })
                               }
@@ -391,6 +415,7 @@ export function AgentRuntimeMemorySection({
                               variant="ghost"
                               isIcon
                               aria-label={t('memory.removeSlot')}
+                              disabled={readOnly}
                               onClick={() => {
                                 if (slot.id) {
                                   setPendingRemoveMemoryIndex(index);
@@ -413,6 +438,7 @@ export function AgentRuntimeMemorySection({
                             showCharacterCount
                             className="min-h-20"
                             placeholder={t('memory.slotDescriptionPlaceholder')}
+                            disabled={readOnly}
                             onChange={event =>
                               updateAgentMemorySlot(index, {
                                 description: event.target.value.slice(0, 200),

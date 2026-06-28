@@ -11,7 +11,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useT } from '@/i18n';
 import { canShowAgentBatchTest, supportsWorkflowDetailPages } from '@/utils/agent-detail-routes';
 import { getErrorMessage } from '@/utils/error-notifications';
-import { AGENT_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface BatchTestBatchesPageProps {
   params: Promise<{
@@ -26,7 +26,7 @@ export default function BatchTestBatchesPage({ params }: BatchTestBatchesPagePro
   const { agentId } = use(params);
   const { agent, isLoading, error, refetch } = useAgent(agentId);
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
+  const canRunBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
 
   if (isLoading || isPermissionsLoading) {
     return (
@@ -73,7 +73,7 @@ export default function BatchTestBatchesPage({ params }: BatchTestBatchesPagePro
     );
   }
 
-  if (!canShowAgentBatchTest(agent.data.agent_type, { canView: true, canManage })) {
+  if (!canShowAgentBatchTest(agent.data.agent_type, { canView: true, canRunBatchTest })) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">

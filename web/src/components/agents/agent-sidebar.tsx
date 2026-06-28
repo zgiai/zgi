@@ -15,10 +15,15 @@ import AgentDialog from '@/components/agents/agent-dialog';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
-import { getAgentDetailRouteAccess } from '@/utils/agent-detail-routes';
+import {
+  getAgentDetailRouteAccess,
+  isAgentRuntimeType,
+  isWorkflowRuntimeType,
+} from '@/utils/agent-detail-routes';
 import {
   AGENT_ASSET_VISIBLE_PERMISSION_CODES,
-  AGENT_MANAGE_PERMISSION_CODES,
+  AGENT_PERMISSION_ACTIONS,
+  WORKFLOW_PERMISSION_ACTIONS,
 } from '@/constants/permissions';
 import { markAgentListRestoreIntentFromDetail } from '@/utils/agent-list-state';
 
@@ -41,7 +46,18 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
   const t = useT();
   const { hasAnyPermission } = useAccountPermissions();
   const canView = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
-  const canManage = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
+  const canUpdateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.update);
+  const canUpdateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update);
+  const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
+  const canManageWorkflowRuntimeAccess = hasAnyPermission(
+    WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
+  );
+  const canViewAgentLogs = hasAnyPermission(AGENT_PERMISSION_ACTIONS.logsView);
+  const canViewWorkflowLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
+  const canRunWorkflowBatchTest = hasAnyPermission([
+    ...WORKFLOW_PERMISSION_ACTIONS.debug,
+    ...WORKFLOW_PERMISSION_ACTIONS.logsView,
+  ]);
   const [editOpen, setEditOpen] = React.useState(false);
   const isDebugFocusMode = useWorkflowDebugFocusMode();
   const [isCollapsed, setIsCollapsed] = usePersistentSidebarCollapse(
@@ -52,13 +68,42 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
   const agentData = agent?.data;
+  const isAgentRuntime = isAgentRuntimeType(agentData?.agent_type);
+  const isWorkflowRuntime = isWorkflowRuntimeType(agentData?.agent_type);
+  const canEditRuntime = isAgentRuntime
+    ? canUpdateAgent
+    : isWorkflowRuntime
+      ? canUpdateWorkflow
+      : false;
+  const canManageRuntimeAccess = isAgentRuntime
+    ? canManageAgentRuntimeAccess
+    : isWorkflowRuntime
+      ? canManageWorkflowRuntimeAccess
+      : false;
+  const canViewRuntimeLogs = isAgentRuntime
+    ? canViewAgentLogs
+    : isWorkflowRuntime
+      ? canViewWorkflowLogs
+      : false;
   const routeAccess = React.useMemo(
     () =>
       getAgentDetailRouteAccess(agentId, agentData?.agent_type, {
         canView,
-        canManage,
+        canEditRuntime,
+        canManageRuntimeAccess,
+        canViewRuntimeLogs,
+        canRunBatchTest: isWorkflowRuntime && canRunWorkflowBatchTest,
       }),
-    [agentData?.agent_type, agentId, canManage, canView]
+    [
+      agentData?.agent_type,
+      agentId,
+      canEditRuntime,
+      canManageRuntimeAccess,
+      canRunWorkflowBatchTest,
+      canView,
+      canViewRuntimeLogs,
+      isWorkflowRuntime,
+    ]
   );
 
   const navItems: ResourceSidebarNavItem[] = React.useMemo(() => {
@@ -157,7 +202,9 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
             onBackClick={() => markAgentListRestoreIntentFromDetail(agentId)}
             iconActionLabel={t('agents.actions.edit')}
             onIconClick={
-              canManage && !isMismatch && agentData ? () => setEditOpen(true) : undefined
+              routeAccess.canEditRuntime && !isMismatch && agentData
+                ? () => setEditOpen(true)
+                : undefined
             }
           />
         }

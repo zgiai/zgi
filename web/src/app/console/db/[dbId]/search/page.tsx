@@ -34,6 +34,12 @@ import { useWorkflowBillingFeedback } from '@/hooks/workflow/use-workflow-billin
 import { WorkflowPrecheckWarningBanner } from '@/components/workflow/common/workflow-precheck-warning';
 import type { WorkflowPrecheckWarning } from '@/services/types/workflow';
 import { generateClientId } from '@/utils/client-id';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
+import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 export interface ModelConfig {
   provider: string;
@@ -47,13 +53,20 @@ export default function DbSearchPage() {
   const tDb = useT();
   const user = useCurrentUser();
   const { getWorkflowRunErrorText, notifyBillingError } = useWorkflowBillingFeedback('webapp');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canAiQuery = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
+    ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
+  ]);
 
   // Route param for current DB
   const params = useParams<{ dbId: string }>();
   const dbId = params?.dbId;
 
   // Fetch built-in workflows to get bi_chat web_app_id and agent_id
-  const { biChatWorkflow, isLoading: isWorkflowLoading } = useBuiltInWorkflows();
+  const { biChatWorkflow, isLoading: isWorkflowLoading } = useBuiltInWorkflows({
+    enabled: canAiQuery,
+  });
   const webAppId = biChatWorkflow?.web_app_id;
   const biChatAgentId = biChatWorkflow?.agent_id;
   const precheckMutation = useWebAppPrecheck(webAppId ?? '');
@@ -62,7 +75,7 @@ export default function DbSearchPage() {
   const isConfigMissing = !isWorkflowLoading && (!webAppId || !biChatAgentId);
 
   // Tables under current DB
-  const { tables, isLoading } = useDbTables(dbId);
+  const { tables, isLoading } = useDbTables(dbId, { enabled: canAiQuery });
 
   // Conversation state
   const [convId] = useState<string>(() => generateClientId('conversation'));
@@ -194,7 +207,7 @@ export default function DbSearchPage() {
   }, []);
 
   // Current DB detail -> dynamic data source metadata
-  const { data: dbDetail, isLoading: isDbLoading } = useDb(dbId);
+  const { data: dbDetail, isLoading: isDbLoading } = useDb(dbId, { enabled: canAiQuery });
 
   const dataSourceSource = useMemo(() => {
     const db = dbDetail?.data;
@@ -544,6 +557,14 @@ export default function DbSearchPage() {
     }
     return undefined;
   }, [isModelSelected, hasSelectedTables, tDb, isWorkflowLoading]);
+
+  if (isPermissionsLoading) {
+    return <PermissionLoadingState />;
+  }
+
+  if (!canAiQuery) {
+    return <PermissionDeniedState />;
+  }
 
   if (isWorkflowLoading) {
     return (

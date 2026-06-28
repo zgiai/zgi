@@ -17,11 +17,12 @@ import { AgentRuntimeDatabaseDialog } from '../database-dialog';
 import { AgentRuntimeDatabaseTableDialog } from '../database-table-dialog';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
-import { DATABASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface AgentRuntimeDatabaseSectionProps {
   open: boolean;
   bindings: AgentDatabaseBinding[];
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeBindings: (value: AgentDatabaseBinding[]) => void;
 }
@@ -29,6 +30,7 @@ interface AgentRuntimeDatabaseSectionProps {
 export function AgentRuntimeDatabaseSection({
   open,
   bindings,
+  readOnly = false,
   onToggleSection,
   onChangeBindings,
 }: AgentRuntimeDatabaseSectionProps) {
@@ -37,15 +39,23 @@ export function AgentRuntimeDatabaseSection({
   const [tableDialogDbId, setTableDialogDbId] = useState('');
   const [pendingTableDialogDbIds, setPendingTableDialogDbIds] = useState<string[]>([]);
   const { dbs, isLoading: isDbsLoading } = useDbsBasic({}, { enabled: open });
-  const { hasPermission, hasAnyPermission } = useAccountPermissions();
-  const canEditWritable =
-    hasPermission('database.ai_query') &&
-    (hasPermission('database.data_edit') || hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES));
+  const { hasAnyPermission } = useAccountPermissions();
+  const canUseAiQuery = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
+    ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
+  ]);
+  const canWriteDatabaseRecords = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.recordCreate,
+    ...DATABASE_PERMISSION_ACTIONS.recordUpdate,
+    ...DATABASE_PERMISSION_ACTIONS.recordDelete,
+  ]);
+  const canEditWritable = !readOnly && canUseAiQuery && canWriteDatabaseRecords;
   const selectedCount = bindings.reduce((count, binding) => count + binding.table_ids.length, 0);
   const dbsByID = useMemo(() => new Map(dbs.map(db => [db.id, db])), [dbs]);
   const tableDialogDb = tableDialogDbId ? dbsByID.get(tableDialogDbId) : undefined;
 
   const removeTable = (dataSourceID: string, tableID: string) => {
+    if (readOnly) return;
     onChangeBindings(
       bindings
         .map(binding =>
@@ -97,6 +107,7 @@ export function AgentRuntimeDatabaseSection({
   };
 
   const openTableDialog = (dataSourceID: string) => {
+    if (readOnly) return;
     setTableDialogDbId(dataSourceID);
   };
 
@@ -107,6 +118,7 @@ export function AgentRuntimeDatabaseSection({
   };
 
   const handleConfirmDatabases = (dataSourceIDs: string[]) => {
+    if (readOnly) return;
     const selected = new Set(dataSourceIDs);
     const existing = new Set(bindings.map(binding => binding.data_source_id));
     const keptBindings = bindings.filter(binding => selected.has(binding.data_source_id));
@@ -134,6 +146,7 @@ export function AgentRuntimeDatabaseSection({
         isLoading={isDbsLoading}
         onToggleSection={onToggleSection}
         onAdd={() => setDialogOpen(true)}
+        readOnly={readOnly}
       >
         <div className="space-y-2">
           {bindings.map(binding => (
@@ -143,6 +156,7 @@ export function AgentRuntimeDatabaseSection({
               dataSourceName={dbsByID.get(binding.data_source_id)?.name}
               tableIDs={binding.table_ids}
               writableTableIDs={binding.writable_table_ids ?? []}
+              readOnly={readOnly}
               canEditWritable={canEditWritable}
               onOpenTableDialog={openTableDialog}
               onRemoveTable={removeTable}
@@ -179,6 +193,7 @@ function DatabaseBindingCard({
   dataSourceName,
   tableIDs,
   writableTableIDs,
+  readOnly,
   canEditWritable,
   onOpenTableDialog,
   onRemoveTable,
@@ -189,6 +204,7 @@ function DatabaseBindingCard({
   dataSourceName?: string;
   tableIDs: string[];
   writableTableIDs: string[];
+  readOnly: boolean;
   canEditWritable: boolean;
   onOpenTableDialog: (dataSourceID: string) => void;
   onRemoveTable: (dataSourceID: string, tableID: string) => void;
@@ -217,6 +233,7 @@ function DatabaseBindingCard({
               isIcon
               className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
               aria-label={t('database.addTableForDatabase', { name: databaseLabel })}
+              disabled={readOnly}
               onClick={() => onOpenTableDialog(dataSourceID)}
             >
               <Plus className="size-4" />
@@ -277,9 +294,7 @@ function DatabaseBindingCard({
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <Badge variant="subtle">
-                    {writableSet.has(tableID)
-                      ? t('database.writeEnabled')
-                      : t('database.readOnly')}
+                    {writableSet.has(tableID) ? t('database.writeEnabled') : t('database.readOnly')}
                   </Badge>
                   <Switch
                     checked={writableSet.has(tableID)}
@@ -296,6 +311,7 @@ function DatabaseBindingCard({
                     isIcon
                     className="size-7 text-muted-foreground hover:text-destructive"
                     aria-label={t('database.removeTable', { name: label })}
+                    disabled={readOnly}
                     onClick={() => onRemoveTable(dataSourceID, tableID)}
                   >
                     <Trash2 className="size-4" />

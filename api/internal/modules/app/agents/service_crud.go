@@ -388,7 +388,7 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 			OrganizationID:  callerOrganizationID,
 			CreatedBy:       createdBy,
 			GroupID:         nil, // Agents don't have group_id
-			PermissionCodes: agentUpdatePermissionCodes(),
+			PermissionCodes: agentUpdatePermissionCodes(ag.AgentsType),
 		})
 		if err != nil {
 			logger.Error(fmt.Sprintf("GetAgent: Failed to check edit permission for agent %s, account %s: %v", agentID, accountID, err), err)
@@ -536,7 +536,7 @@ func (s *agentsService) UpdateAgent(ctx context.Context, agentID string, req int
 			callerOrganizationID,
 			ag.TenantID.String(),
 			accountID,
-			agentUpdatePermissionCodes()...,
+			agentUpdatePermissionCodes(ag.AgentsType)...,
 		)
 		if err != nil {
 			logger.Error(fmt.Sprintf("UpdateAgent: failed to check workspace permission for agent %s, account %s", agentID, accountID), err)
@@ -549,7 +549,7 @@ func (s *agentsService) UpdateAgent(ctx context.Context, agentID string, req int
 			OrganizationID:  callerOrganizationID,
 			CreatedBy:       creatorID,
 			GroupID:         nil,
-			PermissionCodes: agentUpdatePermissionCodes(),
+			PermissionCodes: agentUpdatePermissionCodes(ag.AgentsType),
 		})
 		if err != nil {
 			logger.Error(fmt.Sprintf("UpdateAgent: failed to check edit permission for agent %s, account %s", agentID, accountID), err)
@@ -810,7 +810,7 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 			callerOrganizationID,
 			workspaceID,
 			accountID,
-			agentDeletePermissionCodes()...,
+			agentDeletePermissionCodes(agent.AgentsType)...,
 		)
 		if err != nil {
 			logger.Error(fmt.Sprintf("DeleteAgent: failed to check workspace permission for agent %s, account %s", agentID, accountID), err)
@@ -823,7 +823,7 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 			OrganizationID:  callerOrganizationID,
 			CreatedBy:       creatorID,
 			GroupID:         uuidPtrToString(groupID),
-			PermissionCodes: agentDeletePermissionCodes(),
+			PermissionCodes: agentDeletePermissionCodes(agent.AgentsType),
 		})
 		if err != nil {
 			logger.Error(fmt.Sprintf("DeleteAgent: failed to check edit permission for agent %s, account %s", agentID, accountID), err)

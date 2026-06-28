@@ -656,9 +656,14 @@ func builtinWorkspaceRoleSummary(roleID string) shared_dto.WorkspaceRoleSummary 
 		FixedGovernance: fixedGovernance,
 		RoleKind:        roleKind,
 		Status:          model.WorkspaceCustomRoleStatusActive,
-		Permissions:     model.WorkspacePermissionStringsFromCodes(model.GetBuiltinGroupRolePermissionsByID(roleID)),
+		Permissions:     builtinWorkspaceRoleSummaryPermissions(roleID),
 		MemberCount:     0,
 	}
+}
+
+func builtinWorkspaceRoleSummaryPermissions(roleID string) []string {
+	permissions := model.WorkspacePermissionStringsFromCodes(model.GetBuiltinGroupRolePermissionsByID(roleID))
+	return model.CanonicalWorkspacePermissionSnapshotStrings(permissions)
 }
 
 // ListWorkspaceRoles lists built-in and custom roles for an organization.

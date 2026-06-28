@@ -16,7 +16,7 @@ import (
 )
 
 type apiKeyAgentWorkspaceResolver interface {
-	ResolveAgentWorkspace(ctx context.Context, organizationID string, agentID uuid.UUID) (string, error)
+	ResolveAgentScope(ctx context.Context, organizationID string, agentID uuid.UUID) (apiKeyAgentScope, error)
 }
 
 type apiKeyWorkspacePermissionChecker interface {
@@ -27,6 +27,11 @@ type dbAPIKeyAgentWorkspaceResolver struct {
 	db *gorm.DB
 }
 
+type apiKeyAgentScope struct {
+	WorkspaceID string
+	AgentType   string
+}
+
 func newDBAPIKeyAgentWorkspaceResolver(db *gorm.DB) apiKeyAgentWorkspaceResolver {
 	if db == nil {
 		return nil
@@ -34,31 +39,35 @@ func newDBAPIKeyAgentWorkspaceResolver(db *gorm.DB) apiKeyAgentWorkspaceResolver
 	return &dbAPIKeyAgentWorkspaceResolver{db: db}
 }
 
-func (r *dbAPIKeyAgentWorkspaceResolver) ResolveAgentWorkspace(ctx context.Context, organizationID string, agentID uuid.UUID) (string, error) {
+func (r *dbAPIKeyAgentWorkspaceResolver) ResolveAgentScope(ctx context.Context, organizationID string, agentID uuid.UUID) (apiKeyAgentScope, error) {
+	var scope apiKeyAgentScope
 	if r == nil || r.db == nil {
-		return "", fmt.Errorf("api key agent workspace resolver is not configured")
+		return scope, fmt.Errorf("api key agent workspace resolver is not configured")
 	}
 
 	var row struct {
 		WorkspaceID string `gorm:"column:workspace_id"`
+		AgentType   string `gorm:"column:agent_type"`
 	}
 	err := r.db.WithContext(ctx).
 		Table("agents").
-		Select("agents.tenant_id AS workspace_id").
+		Select("agents.tenant_id AS workspace_id, agents.agent_type AS agent_type").
 		Joins("JOIN workspaces ON workspaces.id = agents.tenant_id").
 		Where("agents.id = ? AND agents.deleted_at IS NULL AND workspaces.organization_id = ?", agentID, organizationID).
 		Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", nil
+		return scope, nil
 	}
 	if err != nil {
-		return "", err
+		return scope, err
 	}
 
-	return row.WorkspaceID, nil
+	scope.WorkspaceID = row.WorkspaceID
+	scope.AgentType = row.AgentType
+	return scope, nil
 }
 
-func (h *APIKeyHandler) requireAgentAPIKeyAccess(c *gin.Context, agentID uuid.UUID, permissionCode workspace_model.WorkspacePermissionCode) (uuid.UUID, bool) {
+func (h *APIKeyHandler) requireAgentAPIKeyAccess(c *gin.Context, agentID uuid.UUID) (uuid.UUID, bool) {
 	accountID := strings.TrimSpace(c.GetString("account_id"))
 	organizationID := strings.TrimSpace(util.GetOrganizationIDCompat(c))
 	if accountID == "" || organizationID == "" {
@@ -70,17 +79,18 @@ func (h *APIKeyHandler) requireAgentAPIKeyAccess(c *gin.Context, agentID uuid.UU
 		return uuid.Nil, false
 	}
 
-	workspaceID, err := h.agentWorkspaceResolver.ResolveAgentWorkspace(c.Request.Context(), organizationID, agentID)
+	scope, err := h.agentWorkspaceResolver.ResolveAgentScope(c.Request.Context(), organizationID, agentID)
 	if err != nil {
 		logger.ErrorContext(c.Request.Context(), "failed to resolve api key agent workspace", "agent_id", agentID.String(), err)
 		response.Fail(c, response.ErrSystemError)
 		return uuid.Nil, false
 	}
-	workspaceID = strings.TrimSpace(workspaceID)
+	workspaceID := strings.TrimSpace(scope.WorkspaceID)
 	if workspaceID == "" {
 		response.Fail(c, response.ErrPermissionDenied)
 		return uuid.Nil, false
 	}
+	permissionCode := apiKeyRuntimeAccessPermission(scope.AgentType)
 
 	hasPermission, err := h.organizationService.CheckWorkspacePermission(
 		c.Request.Context(),
@@ -107,4 +117,13 @@ func (h *APIKeyHandler) requireAgentAPIKeyAccess(c *gin.Context, agentID uuid.UU
 	}
 
 	return workspaceUUID, true
+}
+
+func apiKeyRuntimeAccessPermission(agentType string) workspace_model.WorkspacePermissionCode {
+	switch strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(agentType), "-", "_")) {
+	case "WORKFLOW", "CONVERSATIONAL_WORKFLOW", "CONVERSATIONAL_AGENT":
+		return workspace_model.WorkspacePermissionWorkflowRuntimeAccessManage
+	default:
+		return workspace_model.WorkspacePermissionAgentRuntimeAccessManage
+	}
 }

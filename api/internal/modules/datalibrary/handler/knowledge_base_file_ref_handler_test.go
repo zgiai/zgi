@@ -39,7 +39,7 @@ func TestKnowledgeBaseFileRefHandlerMarksRefFailedWhenCreateEnqueueFails(t *test
 			},
 		},
 	}
-	router := newKnowledgeBaseFileRefTestRouter(refSvc, &fakeDatasetRefSyncEnqueuer{err: errors.New("queue unavailable")}, "org-1", "workspace-1", "account-1", true)
+	router, permissions := newKnowledgeBaseFileRefTestRouter(refSvc, &fakeDatasetRefSyncEnqueuer{err: errors.New("queue unavailable")}, "org-1", "workspace-1", "account-1", true)
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/datasets/dataset-1/file-refs", bytes.NewBufferString(`{"asset_ids":["`+assetID.String()+`"]}`))
@@ -48,6 +48,9 @@ func TestKnowledgeBaseFileRefHandlerMarksRefFailedWhenCreateEnqueueFails(t *test
 
 	if resp.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if permissions.lastPermission != workspaceModel.WorkspacePermissionKnowledgeBaseDocumentCreate {
+		t.Fatalf("permission = %q, want %q", permissions.lastPermission, workspaceModel.WorkspacePermissionKnowledgeBaseDocumentCreate)
 	}
 	if refSvc.failedReq.RefID != refID ||
 		refSvc.failedReq.SyncRunID != syncRunID ||
@@ -59,10 +62,10 @@ func TestKnowledgeBaseFileRefHandlerMarksRefFailedWhenCreateEnqueueFails(t *test
 	}
 }
 
-func TestKnowledgeBaseFileRefHandlerRejectsCreateWithoutManagePermission(t *testing.T) {
+func TestKnowledgeBaseFileRefHandlerRejectsCreateWithoutDocumentCreatePermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	refSvc := &fakeKnowledgeBaseFileRefHandlerService{}
-	router := newKnowledgeBaseFileRefTestRouter(refSvc, nil, "org-1", "workspace-1", "account-1", false)
+	router, permissions := newKnowledgeBaseFileRefTestRouter(refSvc, nil, "org-1", "workspace-1", "account-1", false)
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/datasets/dataset-1/file-refs", bytes.NewBufferString(`{"asset_ids":["`+uuid.NewString()+`"]}`))
@@ -73,14 +76,17 @@ func TestKnowledgeBaseFileRefHandlerRejectsCreateWithoutManagePermission(t *test
 		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	if refSvc.createCalled {
-		t.Fatal("CreateRefs should not be called without knowledge base manage permission")
+		t.Fatal("CreateRefs should not be called without knowledge base document create permission")
+	}
+	if permissions.lastPermission != workspaceModel.WorkspacePermissionKnowledgeBaseDocumentCreate {
+		t.Fatalf("permission = %q, want %q", permissions.lastPermission, workspaceModel.WorkspacePermissionKnowledgeBaseDocumentCreate)
 	}
 }
 
-func TestKnowledgeBaseFileRefHandlerRejectsListCandidatesWithoutManagePermission(t *testing.T) {
+func TestKnowledgeBaseFileRefHandlerRejectsListCandidatesWithoutDocumentCreatePermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	refSvc := &fakeKnowledgeBaseFileRefHandlerService{}
-	router := newKnowledgeBaseFileRefTestRouter(refSvc, nil, "org-1", "workspace-1", "account-1", false)
+	router, permissions := newKnowledgeBaseFileRefTestRouter(refSvc, nil, "org-1", "workspace-1", "account-1", false)
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/datasets/dataset-1/file-candidates", nil)
@@ -90,14 +96,17 @@ func TestKnowledgeBaseFileRefHandlerRejectsListCandidatesWithoutManagePermission
 		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	if refSvc.listCandidatesCalled {
-		t.Fatal("ListCandidates should not be called without knowledge base manage permission")
+		t.Fatal("ListCandidates should not be called without knowledge base document create permission")
+	}
+	if permissions.lastPermission != workspaceModel.WorkspacePermissionKnowledgeBaseDocumentCreate {
+		t.Fatalf("permission = %q, want %q", permissions.lastPermission, workspaceModel.WorkspacePermissionKnowledgeBaseDocumentCreate)
 	}
 }
 
-func TestKnowledgeBaseFileRefHandlerRejectsListRefsWithoutManagePermission(t *testing.T) {
+func TestKnowledgeBaseFileRefHandlerRejectsListRefsWithoutDocumentViewPermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	refSvc := &fakeKnowledgeBaseFileRefHandlerService{}
-	router := newKnowledgeBaseFileRefTestRouter(refSvc, nil, "org-1", "workspace-1", "account-1", false)
+	router, permissions := newKnowledgeBaseFileRefTestRouter(refSvc, nil, "org-1", "workspace-1", "account-1", false)
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/datasets/dataset-1/file-refs", nil)
@@ -107,7 +116,10 @@ func TestKnowledgeBaseFileRefHandlerRejectsListRefsWithoutManagePermission(t *te
 		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	if refSvc.listRefsCalled {
-		t.Fatal("ListRefs should not be called without knowledge base manage permission")
+		t.Fatal("ListRefs should not be called without knowledge base document view permission")
+	}
+	if permissions.lastPermission != workspaceModel.WorkspacePermissionKnowledgeBaseDocumentView {
+		t.Fatalf("permission = %q, want %q", permissions.lastPermission, workspaceModel.WorkspacePermissionKnowledgeBaseDocumentView)
 	}
 }
 
@@ -118,7 +130,7 @@ func TestKnowledgeBaseFileRefHandlerEnqueuesCandidateEmbeddingGeneration(t *test
 		generateErr: errors.New("GenerateCandidateEmbeddings should not be called synchronously"),
 	}
 	enqueuer := &fakeDatasetRefSyncEnqueuer{}
-	router := newKnowledgeBaseFileRefTestRouter(refSvc, enqueuer, "org-1", "workspace-1", "account-1", true)
+	router, permissions := newKnowledgeBaseFileRefTestRouter(refSvc, enqueuer, "org-1", "workspace-1", "account-1", true)
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/datasets/dataset-1/file-candidates/"+assetID.String()+"/embeddings", nil)
@@ -153,6 +165,9 @@ func TestKnowledgeBaseFileRefHandlerEnqueuesCandidateEmbeddingGeneration(t *test
 	if refSvc.generateCalled {
 		t.Fatal("GenerateCandidateEmbeddings should not run in the request handler")
 	}
+	if permissions.lastPermission != workspaceModel.WorkspacePermissionKnowledgeBaseIndexManage {
+		t.Fatalf("permission = %q, want %q", permissions.lastPermission, workspaceModel.WorkspacePermissionKnowledgeBaseIndexManage)
+	}
 	if enqueuer.embedding.AssetID != assetID ||
 		enqueuer.embedding.OrganizationID != "org-1" ||
 		enqueuer.embedding.WorkspaceID == nil ||
@@ -164,15 +179,16 @@ func TestKnowledgeBaseFileRefHandlerEnqueuesCandidateEmbeddingGeneration(t *test
 	}
 }
 
-func newKnowledgeBaseFileRefTestRouter(refSvc service.KnowledgeBaseFileRefService, enqueuer datasetFileRefSyncEnqueuer, organizationID string, workspaceID string, accountID string, allowManage bool) *gin.Engine {
+func newKnowledgeBaseFileRefTestRouter(refSvc service.KnowledgeBaseFileRefService, enqueuer datasetFileRefSyncEnqueuer, organizationID string, workspaceID string, accountID string, allowPermission bool) (*gin.Engine, *fakeKnowledgeBaseFileRefOrganizationService) {
 	router := gin.New()
+	permissions := &fakeKnowledgeBaseFileRefOrganizationService{allow: allowPermission}
 	handler := NewKnowledgeBaseFileRefHandler(
 		refSvc,
 		enqueuer,
 		nil,
 		nil,
 		&fakeKnowledgeBaseFileRefDatasetReader{workspaceID: workspaceID},
-		&fakeKnowledgeBaseFileRefOrganizationService{allow: allowManage},
+		permissions,
 		&fakeKnowledgeBaseFileRefProcessingService{},
 	)
 	router.Use(func(c *gin.Context) {
@@ -191,7 +207,7 @@ func newKnowledgeBaseFileRefTestRouter(refSvc service.KnowledgeBaseFileRefServic
 	router.GET("/datasets/:dataset_id/file-candidates", handler.ListFileCandidates)
 	router.GET("/datasets/:dataset_id/file-refs", handler.ListFileRefs)
 	router.POST("/datasets/:dataset_id/file-candidates/:asset_id/embeddings", handler.GenerateFileCandidateEmbeddings)
-	return router
+	return router, permissions
 }
 
 type fakeKnowledgeBaseFileRefHandlerService struct {
@@ -323,12 +339,11 @@ func (r *fakeKnowledgeBaseFileRefDatasetReader) GetDatasetByID(ctx context.Conte
 }
 
 type fakeKnowledgeBaseFileRefOrganizationService struct {
-	allow bool
+	allow          bool
+	lastPermission workspaceModel.WorkspacePermissionCode
 }
 
 func (s *fakeKnowledgeBaseFileRefOrganizationService) CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspaceModel.WorkspacePermissionCode) (bool, error) {
-	if permissionCode != workspaceModel.WorkspacePermissionKnowledgeBaseManage {
-		return false, nil
-	}
+	s.lastPermission = permissionCode
 	return s.allow, nil
 }

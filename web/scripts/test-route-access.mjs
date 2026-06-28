@@ -76,6 +76,31 @@ const agentRuntimeHeaderPath = path.join(
   'agent-runtime',
   'header.tsx'
 );
+const agentRuntimePageModelPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'agents',
+  'agent-runtime',
+  'hooks',
+  'use-agent-runtime-page-model.tsx'
+);
+const agentRuntimePromptPanelPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'agents',
+  'agent-runtime',
+  'prompt-panel.tsx'
+);
+const agentRuntimeOrchestrationPanelPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'agents',
+  'agent-runtime',
+  'orchestration-panel.tsx'
+);
 const agentSidebarPath = path.join(rootDir, 'src', 'components', 'agents', 'agent-sidebar.tsx');
 const agentApiPagePath = path.join(
   rootDir,
@@ -111,6 +136,7 @@ const consoleSidebarPath = path.join(
   'console',
   'console-sidebar.tsx'
 );
+const permissionConstantsPath = path.join(rootDir, 'src', 'constants', 'permissions.ts');
 const appCenterPaths = [
   path.join(rootDir, 'src', 'app', 'console', 'work', 'app', 'page.tsx'),
   path.join(rootDir, 'src', 'app', 'console', 'work', 'app', 'layout.tsx'),
@@ -550,6 +576,7 @@ assert.doesNotMatch(
 );
 
 const consoleSidebarSource = fs.readFileSync(consoleSidebarPath, 'utf8');
+const permissionConstantsSource = fs.readFileSync(permissionConstantsPath, 'utf8');
 assert.match(
   consoleSidebarSource,
   /getConsoleRouteAccess/,
@@ -565,6 +592,31 @@ assert.doesNotMatch(
   /if\s*\(!isWorkspaceRequired\)\s*{[^}]*hasPermission/s,
   'console sidebar should not skip workspace permission filtering while in organization mode'
 );
+assert.match(
+  permissionConstantsSource,
+  /COMPATIBILITY_PERMISSION_CODES[\s\S]*'database\.data_edit'[\s\S]*'database\.ai_query'[\s\S]*'file\.upload_create'[\s\S]*'file\.move_create'/,
+  'legacy aggregate permissions should be declared compatibility-only'
+);
+assert.match(
+  permissionConstantsSource,
+  /!COMPATIBILITY_PERMISSION_CODE_VALUES\.has\(code\)/,
+  'selectable permission list should exclude compatibility-only aggregate permissions'
+);
+assert.match(
+  permissionConstantsSource,
+  /COMPATIBILITY_PERMISSION_EXPANSIONS[\s\S]*'database\.data_edit'[\s\S]*'database\.record\.create'[\s\S]*'database\.record\.update'[\s\S]*'database\.record\.delete'[\s\S]*'database\.import\.execute'[\s\S]*'database\.import\.errors\.view'/,
+  'role/member permission normalization should preserve database.data_edit by expanding it to exact action permissions'
+);
+assert.match(
+  permissionConstantsSource,
+  /COMPATIBILITY_PERMISSION_CODE_VALUES\.has\(permission\)[\s\S]*COMPATIBILITY_PERMISSION_EXPANSIONS/,
+  'role/member permission normalization should expand compatibility-only aggregate permissions before saving'
+);
+assert.doesNotMatch(
+  permissionConstantsSource,
+  /legacyDataEdit|legacyAiQuery|uploadCreate|moveCreate/,
+  'frontend action matrix should not expose compatibility-only aggregate permissions as action groups'
+);
 
 const consolePageSource = fs.readFileSync(consolePagePath, 'utf8');
 const workspaceStoreSource = fs.readFileSync(workspaceStorePath, 'utf8');
@@ -578,6 +630,12 @@ const publishSettingsDialogSource = fs.readFileSync(publishSettingsDialogPath, '
 const runtimeAudiencePickerSource = fs.readFileSync(runtimeAudiencePickerPath, 'utf8');
 const runtimeGrantSubjectRowSource = fs.readFileSync(runtimeGrantSubjectRowPath, 'utf8');
 const agentRuntimeHeaderSource = fs.readFileSync(agentRuntimeHeaderPath, 'utf8');
+const agentRuntimePageModelSource = fs.readFileSync(agentRuntimePageModelPath, 'utf8');
+const agentRuntimePromptPanelSource = fs.readFileSync(agentRuntimePromptPanelPath, 'utf8');
+const agentRuntimeOrchestrationPanelSource = fs.readFileSync(
+  agentRuntimeOrchestrationPanelPath,
+  'utf8'
+);
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
 assert.match(
@@ -924,6 +982,51 @@ assert.match(
   agentRuntimeHeaderSource,
   /publishSettingsOpen/,
   'agent runtime header should control the publication settings dialog locally'
+);
+assert.match(
+  agentRuntimeHeaderSource,
+  /const canManageRuntimeAccess\s*=\s*!disablePublishSettingsActions/,
+  'agent runtime header should derive runtime access controls separately from publish controls'
+);
+assert.match(
+  agentRuntimeHeaderSource,
+  /disabled=\{!canUsePublishDropdown\}/,
+  'agent runtime publish dropdown trigger should remain usable for runtime access settings or webapp links without publish permission'
+);
+assert.match(
+  agentRuntimeHeaderSource,
+  /disabled=\{!canPublish \|\| isPublishing \|\| saveState === 'saving'\}/,
+  'agent runtime publish action should remain gated by agent.publish'
+);
+assert.match(
+  agentRuntimeHeaderSource,
+  /if \(!canManageRuntimeAccess\) \{[\s\S]*?return;[\s\S]*?\}/,
+  'agent runtime webapp status mutation should require runtime access management'
+);
+assert.match(
+  agentRuntimePageModelSource,
+  /const isRuntimeConfigReadOnly\s*=\s*isVersionPreviewing \|\| !canConfigureAgentRuntime/,
+  'agent runtime page model should derive a read-only state from runtime config permission'
+);
+assert.match(
+  agentRuntimePageModelSource,
+  /prompt:\s*\{[\s\S]*?readOnly:\s*isRuntimeConfigReadOnly/,
+  'agent runtime page model should pass read-only state to the prompt panel'
+);
+assert.match(
+  agentRuntimePageModelSource,
+  /orchestration:\s*\{[\s\S]*?readOnly:\s*isRuntimeConfigReadOnly/,
+  'agent runtime page model should pass read-only state to orchestration controls'
+);
+assert.match(
+  agentRuntimePromptPanelSource,
+  /<WorkflowValueEditor[\s\S]*?readOnly=\{readOnly\}/,
+  'agent prompt editor should become read-only without runtime config permission'
+);
+assert.match(
+  agentRuntimeOrchestrationPanelSource,
+  /<AgentRuntimeModelSection[\s\S]*?readOnly=\{readOnly\}/,
+  'agent orchestration panel should forward read-only state into runtime sections'
 );
 assert.match(
   agentSidebarSource,

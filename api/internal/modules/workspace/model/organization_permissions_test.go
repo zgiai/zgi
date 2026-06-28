@@ -57,6 +57,20 @@ func TestBuiltinMemberPermissionsIncludeCompatibleFineCodes(t *testing.T) {
 	}
 }
 
+func TestDefaultWorkspaceMemberPermissionStringsDoNotExposeCompatibilityPermissions(t *testing.T) {
+	for _, role := range []WorkspaceMemberRole{WorkspaceRoleAdmin, WorkspaceRoleNormal} {
+		permissions := DefaultWorkspaceMemberPermissionStrings(role, nil)
+
+		if !containsWorkspacePermissionString(permissions, string(WorkspacePermissionDatabaseAIQueryRead)) {
+			t.Fatalf("default permissions for role %s should include fine-grained ai query read: %#v", role, permissions)
+		}
+		if !containsWorkspacePermissionString(permissions, string(WorkspacePermissionFileUpload)) {
+			t.Fatalf("default permissions for role %s should include fine-grained file upload: %#v", role, permissions)
+		}
+		assertNoCompatibilityWorkspacePermissions(t, permissions)
+	}
+}
+
 func TestEffectiveWorkspaceMemberPermissionStringsDoesNotSynthesizeToolPermissions(t *testing.T) {
 	permissions := EffectiveWorkspaceMemberPermissionStrings(
 		WorkspaceRoleAdmin,
@@ -120,7 +134,8 @@ func TestCanonicalWorkspacePermissionSnapshotStringsReplacesDeprecatedAssetCoars
 		WorkspacePermissionKnowledgeBaseDocumentView,
 		WorkspacePermissionDatabaseSchemaManage,
 		WorkspacePermissionFileMetadataView,
-		WorkspacePermissionFileUploadCreate,
+		WorkspacePermissionFileUpload,
+		WorkspacePermissionFileTextCreate,
 	}
 	for _, code := range expected {
 		if !WorkspacePermissionStringsAllow(permissions, code) && !containsWorkspacePermissionString(permissions, string(code)) {
@@ -139,6 +154,35 @@ func TestCanonicalWorkspacePermissionSnapshotStringsReplacesDeprecatedAssetCoars
 			t.Errorf("canonical permissions should replace deprecated asset permission %s: %#v", code, permissions)
 		}
 	}
+	assertNoCompatibilityWorkspacePermissions(t, permissions)
+}
+
+func TestCanonicalAssignableWorkspacePermissionSnapshotStringsExpandsCompatibilityPermissionsWithoutRetainingThem(t *testing.T) {
+	permissions := CanonicalAssignableWorkspacePermissionSnapshotStrings([]string{
+		string(WorkspacePermissionDatabaseDataEdit),
+		string(WorkspacePermissionDatabaseAIQuery),
+		string(WorkspacePermissionFileUploadCreate),
+		string(WorkspacePermissionFileMoveCreate),
+	})
+
+	expected := []WorkspacePermissionCode{
+		WorkspacePermissionDatabaseRecordCreate,
+		WorkspacePermissionDatabaseRecordUpdate,
+		WorkspacePermissionDatabaseRecordDelete,
+		WorkspacePermissionDatabaseImportExecute,
+		WorkspacePermissionDatabaseImportErrorsView,
+		WorkspacePermissionDatabaseAIQueryRead,
+		WorkspacePermissionFileUpload,
+		WorkspacePermissionFileTextCreate,
+		WorkspacePermissionFileMove,
+		WorkspacePermissionFileFolderManage,
+	}
+	for _, code := range expected {
+		if !containsWorkspacePermissionString(permissions, string(code)) {
+			t.Errorf("assignable permissions missing %s after compatibility expansion: %#v", code, permissions)
+		}
+	}
+	assertNoCompatibilityWorkspacePermissions(t, permissions)
 }
 
 func TestCanonicalAssignableWorkspacePermissionSnapshotStringsExcludesRetiredToolPermissions(t *testing.T) {
@@ -271,6 +315,15 @@ func assertNoRetiredWorkspacePermissions(t *testing.T, permissions []string) {
 			strings.HasPrefix(permission, "dashboard.") ||
 			strings.HasPrefix(permission, "workspace.") {
 			t.Fatalf("permissions should not contain retired permission %s: %#v", permission, permissions)
+		}
+	}
+}
+
+func assertNoCompatibilityWorkspacePermissions(t *testing.T, permissions []string) {
+	t.Helper()
+	for _, permission := range permissions {
+		if IsWorkspaceCompatibilityPermission(WorkspacePermissionCode(permission)) {
+			t.Fatalf("permissions should not contain compatibility-only permission %s: %#v", permission, permissions)
 		}
 	}
 }

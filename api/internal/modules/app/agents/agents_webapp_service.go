@@ -51,7 +51,7 @@ func (s *agentsService) UpdateWebAppStatus(ctx context.Context, agentID string, 
 		return nil, fmt.Errorf("agent not found")
 	}
 
-	if err := s.ensureCanManageAgent(ctx, ag, accountID, agentRuntimeConfigManagePermissionCodes()...); err != nil {
+	if err := s.ensureCanManageAgent(ctx, ag, accountID, agentRuntimeAccessManagePermissionCodes(ag.AgentsType)...); err != nil {
 		return nil, err
 	}
 
@@ -98,7 +98,7 @@ func (s *agentsService) RequireAgentManageAccess(ctx context.Context, agentID, a
 	if err != nil || isSystemManagedAgent(ag) {
 		return fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
 	}
-	if err := s.ensureCanManageAgent(ctx, ag, accountID, agentManageGatePermissionCodes()...); err != nil {
+	if err := s.ensureCanManageAgent(ctx, ag, accountID, agentManageGatePermissionCodes(ag.AgentsType)...); err != nil {
 		if strings.EqualFold(err.Error(), "permission denied") {
 			return runtimeservice.ErrPermissionDenied
 		}
@@ -165,7 +165,7 @@ func (s *agentsService) ensureWorkspacePermission(ctx context.Context, workspace
 
 func (s *agentsService) ensureCanManageAgent(ctx context.Context, ag *Agent, accountID string, permissionCodes ...model.WorkspacePermissionCode) error {
 	if len(permissionCodes) == 0 {
-		permissionCodes = agentUpdatePermissionCodes()
+		permissionCodes = agentUpdatePermissionCodes(ag.AgentsType)
 	}
 	permissionCodes = append([]model.WorkspacePermissionCode(nil), permissionCodes...)
 
@@ -207,8 +207,5 @@ func (s *agentsService) ensureCanManageAgent(ctx context.Context, ag *Agent, acc
 }
 
 func (s *agentsService) ensureCanManageAgentRuntimeSurfaces(ctx context.Context, ag *Agent, accountID string) error {
-	if err := s.ensureCanManageAgent(ctx, ag, accountID, agentRuntimeConfigManagePermissionCodes()...); err != nil {
-		return err
-	}
-	return s.ensureCanManageAgent(ctx, ag, accountID, agentRuntimeAccessManagePermissionCodes()...)
+	return s.ensureCanManageAgent(ctx, ag, accountID, agentRuntimeAccessManagePermissionCodes(ag.AgentsType)...)
 }

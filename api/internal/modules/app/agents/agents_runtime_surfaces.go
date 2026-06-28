@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -517,17 +516,13 @@ SELECT id FROM visible_departments
 
 func (s *agentsService) runtimeGrantVisibleWorkspaceIDs(ctx context.Context, organizationID uuid.UUID, accountID string) ([]uuid.UUID, error) {
 	type workspacePermissionRow struct {
-		WorkspaceID      string
-		Role             workspacemodel.WorkspaceMemberRole
-		RoleID           *string
-		Permissions      string
-		PermissionSource workspacemodel.WorkspaceMemberPermissionSource
+		WorkspaceID string
 	}
 
 	var rows []workspacePermissionRow
 	if err := s.db.WithContext(ctx).
 		Table("workspace_members").
-		Select("workspace_members.workspace_id, workspace_members.role, workspace_members.role_id, COALESCE(workspace_members.permissions::text, '') AS permissions, workspace_members.permission_source").
+		Select("workspace_members.workspace_id").
 		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
 		Where("workspace_members.account_id = ?", strings.TrimSpace(accountID)).
 		Where("workspaces.organization_id = ? AND workspaces.status = ?", organizationID.String(), workspacemodel.WorkspaceStatusNormal).
@@ -538,15 +533,6 @@ func (s *agentsService) runtimeGrantVisibleWorkspaceIDs(ctx context.Context, org
 	workspaceIDs := make([]uuid.UUID, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		if !runtimeGrantWorkspaceMemberAllowsPermission(
-			row.Role,
-			row.RoleID,
-			runtimeGrantParseWorkspacePermissions(row.Permissions),
-			row.PermissionSource,
-			workspacemodel.WorkspacePermissionWorkspaceView,
-		) {
-			continue
-		}
 		if _, ok := seen[row.WorkspaceID]; ok {
 			continue
 		}
@@ -558,40 +544,6 @@ func (s *agentsService) runtimeGrantVisibleWorkspaceIDs(ctx context.Context, org
 		workspaceIDs = append(workspaceIDs, workspaceID)
 	}
 	return workspaceIDs, nil
-}
-
-func runtimeGrantParseWorkspacePermissions(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "null" {
-		return []string{}
-	}
-	var permissions []string
-	if err := json.Unmarshal([]byte(raw), &permissions); err != nil {
-		return []string{}
-	}
-	return permissions
-}
-
-func runtimeGrantWorkspaceMemberAllowsPermission(
-	role workspacemodel.WorkspaceMemberRole,
-	roleID *string,
-	permissions []string,
-	permissionSource workspacemodel.WorkspaceMemberPermissionSource,
-	permission workspacemodel.WorkspacePermissionCode,
-) bool {
-	return workspacemodel.WorkspacePermissionStringsAllow(
-		runtimeGrantWorkspaceMemberPermissions(role, roleID, permissions, permissionSource),
-		permission,
-	)
-}
-
-func runtimeGrantWorkspaceMemberPermissions(
-	role workspacemodel.WorkspaceMemberRole,
-	roleID *string,
-	permissions []string,
-	permissionSource workspacemodel.WorkspaceMemberPermissionSource,
-) []string {
-	return workspacemodel.EffectiveWorkspaceMemberPermissionStrings(role, roleID, permissions, permissionSource)
 }
 
 func agentRuntimeSurfaceGrantsFromRequest(surface runtimeauth.PublishedRuntimeSurface, organizationID, workspaceID uuid.UUID, surfaceEnabled bool, grants []dto.UpdateAgentRuntimeSurfaceGrant) ([]runtimeauth.SurfaceGrant, error) {

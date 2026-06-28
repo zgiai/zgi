@@ -559,7 +559,7 @@ func (h *FileHandler) authorizeWorkspaceUpload(c *gin.Context, organizationID, w
 			organizationID,
 			workspaceID,
 			accountID,
-			workspace_model.WorkspacePermissionFileUploadCreate,
+			workspace_model.WorkspacePermissionFileUpload,
 		)
 		if err != nil {
 			h.businessError(c, response.ErrSystemError)
@@ -795,7 +795,7 @@ func (h *FileHandler) CreateProcessingRequest(c *gin.Context) {
 // GetFileDetail returns file metadata with the current file asset processing state.
 // GET /files/:file_id/detail
 func (h *FileHandler) GetFileDetail(c *gin.Context) {
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizeDocumentFileWith(c, h.getAuthorizedFileForView)
 	if !ok {
 		return
 	}
@@ -2117,6 +2117,10 @@ func (h *FileHandler) DownloadFile(c *gin.Context) {
 
 func (h *FileHandler) getAuthorizedFileForDownload(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileDownloadAccess(c, h.fileService, h.enterpriseService, fileID)
+}
+
+func (h *FileHandler) getAuthorizedFileForView(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFileViewAccess(c, h.fileService, h.enterpriseService, fileID)
 }
 
 func (h *FileHandler) getAuthorizedFileForManage(c *gin.Context, fileID string) (*dto.UploadFile, bool) {

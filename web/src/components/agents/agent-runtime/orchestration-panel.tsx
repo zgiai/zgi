@@ -53,6 +53,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   className?: string;
   scrollAreaClassName?: string;
   scrollViewportClassName?: string;
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeModelValue: (value: ModelSelectorParameterValue) => void;
   onChangeHomeTitle: (value: string) => void;
@@ -100,6 +101,7 @@ export function AgentRuntimeOrchestrationPanel({
   className,
   scrollAreaClassName,
   scrollViewportClassName,
+  readOnly = false,
   onToggleSection,
   onChangeModelValue,
   onChangeHomeTitle,
@@ -137,6 +139,7 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeModelSection
             open={openSections.model}
             modelValue={modelValue}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeModelValue={onChangeModelValue}
           />
@@ -151,6 +154,7 @@ export function AgentRuntimeOrchestrationPanel({
             selectableSkillsCount={selectableSkillsCount}
             isSkillsLoading={isSkillsLoading}
             isSkillConfigLoading={isSkillConfigLoading}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onOpenSkillDialog={onOpenSkillDialog}
             onToggleSkill={onToggleSkill}
@@ -163,6 +167,7 @@ export function AgentRuntimeOrchestrationPanel({
             isDatasetsLoading={isDatasetsLoading}
             selectedKnowledgeDatasets={selectedKnowledgeDatasets}
             selectedKnowledgeDatasetIds={selectedKnowledgeDatasetIds}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onOpenKnowledgeDialog={onOpenKnowledgeDialog}
             onToggleKnowledgeDataset={onToggleKnowledgeDataset}
@@ -173,6 +178,7 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeDatabaseSection
             open={openSections.databases}
             bindings={databaseBindings}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeBindings={onChangeDatabaseBindings}
           />
@@ -184,6 +190,7 @@ export function AgentRuntimeOrchestrationPanel({
             bindings={workflowBindings}
             candidatesByBindingID={workflowCandidatesByBindingID}
             isLoading={isWorkflowCandidatesLoading}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onOpenWorkflowDialog={onOpenWorkflowDialog}
             onChangeBindings={onChangeWorkflowBindings}
@@ -194,6 +201,7 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeFileSection
             open={openSections.files}
             fileUploadEnabled={fileUploadEnabled}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeFileUploadEnabled={onChangeFileUploadEnabled}
           />
@@ -205,6 +213,7 @@ export function AgentRuntimeOrchestrationPanel({
             agentMemoryEnabled={agentMemoryEnabled}
             agentMemorySlots={agentMemorySlots}
             agentMemorySlotValidationErrors={agentMemorySlotValidationErrors}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeAgentMemoryEnabled={onChangeAgentMemoryEnabled}
             onChangeAgentMemorySlots={onChangeAgentMemorySlots}
@@ -220,6 +229,7 @@ export function AgentRuntimeOrchestrationPanel({
             isGeneratingSuggestions={isGeneratingSuggestions}
             defaultHomeTitle={defaultHomeTitle}
             defaultInputPlaceholder={defaultInputPlaceholder}
+            readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeHomeTitle={onChangeHomeTitle}
             onChangeInputPlaceholder={onChangeInputPlaceholder}

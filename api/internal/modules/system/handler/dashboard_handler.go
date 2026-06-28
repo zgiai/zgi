@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	systemmodel "github.com/zgiai/zgi/api/internal/modules/system/model"
 	"github.com/zgiai/zgi/api/internal/modules/system/service"
@@ -23,7 +24,10 @@ type accountContextReader interface {
 type organizationAccessChecker interface {
 	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error)
 	ListWorkspaceIDsByPermission(ctx context.Context, organizationID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) ([]string, error)
+	GetUserWorkspacesInOrganization(ctx context.Context, organizationID, accountID string, page, limit int) (*dto.WorkspacePaginationResponse, error)
 }
+
+const dashboardWorkspaceScopePageLimit = 200
 
 // DashboardHandler handles dashboard related requests
 type DashboardHandler struct {
@@ -178,7 +182,7 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 		return systemmodel.DashboardWorkspaceScopes{}, nil
 	}
 
-	workspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionWorkspaceView)
+	workspaceIDs, err := h.listDashboardWorkspaceIDs(ctx, organizationID, accountID)
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
@@ -219,9 +223,11 @@ func (h *DashboardHandler) buildSingleWorkspaceRecentWorkScopes(ctx context.Cont
 		return scopes, nil
 	}
 
-	if ok, err := h.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionWorkspaceView); err != nil {
+	workspaceIDs, err := h.listDashboardWorkspaceIDs(ctx, organizationID, accountID)
+	if err != nil {
 		return scopes, err
-	} else if ok {
+	}
+	if containsWorkspaceID(workspaceIDs, workspaceID) {
 		scopes.WorkspaceIDs = []string{workspaceID}
 	}
 	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, dashboardAgentVisiblePermissionCodes()...); err != nil {
@@ -248,6 +254,60 @@ func (h *DashboardHandler) buildSingleWorkspaceRecentWorkScopes(ctx context.Cont
 	}
 
 	return scopes, nil
+}
+
+func (h *DashboardHandler) listDashboardWorkspaceIDs(ctx context.Context, organizationID, accountID string) ([]string, error) {
+	seen := make(map[string]struct{})
+	workspaceIDs := make([]string, 0)
+	addWorkspaceID := func(workspaceID string) {
+		workspaceID = strings.TrimSpace(workspaceID)
+		if workspaceID == "" {
+			return
+		}
+		if _, ok := seen[workspaceID]; ok {
+			return
+		}
+		seen[workspaceID] = struct{}{}
+		workspaceIDs = append(workspaceIDs, workspaceID)
+	}
+
+	for page := 1; ; page++ {
+		resp, err := h.enterpriseService.GetUserWorkspacesInOrganization(ctx, organizationID, accountID, page, dashboardWorkspaceScopePageLimit)
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil {
+			break
+		}
+		for _, workspace := range resp.Data {
+			if workspace != nil {
+				addWorkspaceID(workspace.ID)
+			}
+		}
+		if !resp.HasMore || len(resp.Data) == 0 {
+			break
+		}
+	}
+
+	legacyWorkspaceIDs, err := h.enterpriseService.ListWorkspaceIDsByPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionWorkspaceView)
+	if err != nil {
+		return nil, err
+	}
+	for _, workspaceID := range legacyWorkspaceIDs {
+		addWorkspaceID(workspaceID)
+	}
+
+	return workspaceIDs, nil
+}
+
+func containsWorkspaceID(workspaceIDs []string, targetWorkspaceID string) bool {
+	targetWorkspaceID = strings.TrimSpace(targetWorkspaceID)
+	for _, workspaceID := range workspaceIDs {
+		if strings.TrimSpace(workspaceID) == targetWorkspaceID {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *DashboardHandler) hasAnyWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCodes ...workspacemodel.WorkspacePermissionCode) (bool, error) {
@@ -288,7 +348,11 @@ func (h *DashboardHandler) listWorkspaceIDsByAnyPermission(ctx context.Context, 
 
 func dashboardAgentVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionAgentCreate,
+		workspacemodel.WorkspacePermissionAgentImport,
 		workspacemodel.WorkspacePermissionWorkflowView,
+		workspacemodel.WorkspacePermissionWorkflowCreate,
+		workspacemodel.WorkspacePermissionWorkflowImport,
 		workspacemodel.WorkspacePermissionAgentLogsView,
 		workspacemodel.WorkspacePermissionAgentStatsView,
 		workspacemodel.WorkspacePermissionAgentConversationView,
@@ -320,10 +384,12 @@ func dashboardAgentVisiblePermissionCodes() []workspacemodel.WorkspacePermission
 
 func dashboardKnowledgeBaseVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionKnowledgeBaseCreate,
 		workspacemodel.WorkspacePermissionKnowledgeBaseFolderView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseSegmentView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseGraphView,
+		workspacemodel.WorkspacePermissionKnowledgeBaseRetrievalTest,
 		workspacemodel.WorkspacePermissionKnowledgeBaseUpdate,
 		workspacemodel.WorkspacePermissionKnowledgeBaseDelete,
 		workspacemodel.WorkspacePermissionKnowledgeBaseMove,
@@ -340,6 +406,7 @@ func dashboardKnowledgeBaseVisiblePermissionCodes() []workspacemodel.WorkspacePe
 
 func dashboardDatabaseVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionDatabaseCreate,
 		workspacemodel.WorkspacePermissionDatabaseUpdate,
 		workspacemodel.WorkspacePermissionDatabaseDelete,
 		workspacemodel.WorkspacePermissionDatabaseMove,
@@ -358,6 +425,7 @@ func dashboardDatabaseVisiblePermissionCodes() []workspacemodel.WorkspacePermiss
 		workspacemodel.WorkspacePermissionDatabaseOperationLogsView,
 		workspacemodel.WorkspacePermissionDatabaseSQLAuditView,
 		workspacemodel.WorkspacePermissionDatabaseAIQueryRead,
+		workspacemodel.WorkspacePermissionDatabaseAIQueryWrite,
 	}
 }
 
@@ -367,6 +435,8 @@ func dashboardFileVisiblePermissionCodes() []workspacemodel.WorkspacePermissionC
 		workspacemodel.WorkspacePermissionFilePreview,
 		workspacemodel.WorkspacePermissionFileFolderView,
 		workspacemodel.WorkspacePermissionFileRelatedView,
+		workspacemodel.WorkspacePermissionFileUpload,
+		workspacemodel.WorkspacePermissionFileTextCreate,
 		workspacemodel.WorkspacePermissionFileUpdate,
 		workspacemodel.WorkspacePermissionFileDelete,
 		workspacemodel.WorkspacePermissionFileMove,

@@ -56,6 +56,8 @@ interface AgentRuntimeHeaderProps {
   isDirty: boolean;
   isPublishing: boolean;
   disablePrimaryActions?: boolean;
+  disablePublishActions?: boolean;
+  disablePublishSettingsActions?: boolean;
   webAppUrl: string;
   versionControl?: ReactNode;
   showPreviewAction?: boolean;
@@ -75,6 +77,8 @@ export function AgentRuntimeHeader({
   isDirty,
   isPublishing,
   disablePrimaryActions = false,
+  disablePublishActions = disablePrimaryActions,
+  disablePublishSettingsActions = disablePublishActions,
   webAppUrl,
   versionControl,
   showPreviewAction = false,
@@ -109,6 +113,9 @@ export function AgentRuntimeHeader({
     : t('header.takeOffline');
   const offlineReasonLength = Array.from(offlineReason).length;
   const isOfflineReasonTooLong = offlineReasonLength > WEB_APP_OFFLINE_REASON_MAX_LENGTH;
+  const canPublish = !disablePublishActions;
+  const canManageRuntimeAccess = !disablePublishSettingsActions;
+  const canUsePublishDropdown = canPublish || canManageRuntimeAccess || Boolean(webAppUrl);
 
   const handleOpenWebApp = () => {
     if (!webAppUrl || isWebAppOffline) return;
@@ -123,7 +130,7 @@ export function AgentRuntimeHeader({
   };
 
   const handleWebAppStatusConfirm = () => {
-    if (disablePrimaryActions) {
+    if (!canManageRuntimeAccess) {
       return;
     }
     if (nextWebAppStatus === 'inactive' && isOfflineReasonTooLong) {
@@ -269,7 +276,7 @@ export function AgentRuntimeHeader({
                 size="sm"
                 className="flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-3.5 text-primary shadow-none transition-colors hover:border-primary/35 hover:bg-primary/15"
                 aria-label={isPublishing ? publishingLabel : publishLabel}
-                disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
+                disabled={!canUsePublishDropdown}
               >
                 {isPublishing ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -281,7 +288,7 @@ export function AgentRuntimeHeader({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuItem
-                disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
+                disabled={!canPublish || isPublishing || saveState === 'saving'}
                 onSelect={event => {
                   event.preventDefault();
                   onPublish();
@@ -314,7 +321,7 @@ export function AgentRuntimeHeader({
               ) : null}
               {isPublished ? (
                 <DropdownMenuItem
-                  disabled={disablePrimaryActions}
+                  disabled={!canManageRuntimeAccess}
                   onSelect={() => {
                     setWebAppStatusDialogOpen(true);
                   }}
@@ -324,7 +331,7 @@ export function AgentRuntimeHeader({
                 </DropdownMenuItem>
               ) : null}
               <DropdownMenuItem
-                disabled={disablePrimaryActions}
+                disabled={disablePublishSettingsActions}
                 onSelect={() => setPublishSettingsOpen(true)}
               >
                 <SlidersHorizontal className="size-4" />
@@ -400,7 +407,7 @@ export function AgentRuntimeHeader({
               variant={isWebAppOffline ? 'default' : 'destructive'}
               onClick={handleWebAppStatusConfirm}
               disabled={
-                disablePrimaryActions || webAppStatusMutation.isPending || isOfflineReasonTooLong
+                !canManageRuntimeAccess || webAppStatusMutation.isPending || isOfflineReasonTooLong
               }
             >
               {webAppStatusMutation.isPending ? (
@@ -418,7 +425,7 @@ export function AgentRuntimeHeader({
       <PublishSettingsDialog
         agentId={agentId}
         open={publishSettingsOpen}
-        canManage={!disablePrimaryActions}
+        canManage={!disablePublishSettingsActions}
         onOpenChange={setPublishSettingsOpen}
       />
     </>

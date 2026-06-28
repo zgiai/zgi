@@ -33,7 +33,7 @@ import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
 import { toast } from 'sonner';
-import { KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 export default function DatasetSettingsPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
@@ -44,7 +44,7 @@ export default function DatasetSettingsPage() {
 
   // Permission checking
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasAnyPermission(KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES);
+  const canUpdateDataset = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.update);
 
   // Form state
   const [name, setName] = useState('');
@@ -164,6 +164,10 @@ export default function DatasetSettingsPage() {
   const isNameValid = nameErrors.length === 0;
 
   const handleSave = useCallback(async () => {
+    if (!canUpdateDataset) {
+      toast.error(t('common.unauthorizedDescription'));
+      return;
+    }
     if (updateDataset.isPending || !dataset) return;
 
     if (!isNameValid) {
@@ -231,6 +235,7 @@ export default function DatasetSettingsPage() {
     configData,
     isNameValid,
     t,
+    canUpdateDataset,
   ]);
 
   if (isLoading) {
@@ -246,7 +251,7 @@ export default function DatasetSettingsPage() {
   }
 
   // Check manage permission - show empty state if no permission
-  if (!isPermissionsLoading && !canManage) {
+  if (!isPermissionsLoading && !canUpdateDataset) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
         <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
@@ -277,7 +282,7 @@ export default function DatasetSettingsPage() {
           <Button
             className="h-9 gap-2"
             variant="default"
-            disabled={updateDataset.isPending}
+            disabled={updateDataset.isPending || !canUpdateDataset}
             onClick={handleSave}
           >
             <Save className="h-4 w-4" />

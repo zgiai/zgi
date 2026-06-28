@@ -82,11 +82,15 @@ export function useWorkflowChatPanelState({
   agentIconType,
   agentIcon,
   agentIconUrl,
-}: WorkflowChatPanelProps) {  const t = useT();
+}: WorkflowChatPanelProps) {
+  const t = useT();
   const workflowChatPrecheck = useWorkflowChatDraftPrecheck(agentId);
   const setActivePanel = useActivePanel(state => state.setActive);
   const saveWorkflowDraft = useSaveWorkflowDraft();
   const { getWorkflowRunErrorText, notifyBillingError } = useWorkflowBillingFeedback('agents');
+  const canRunDraft = useWorkflowStore.use.canRunDraft();
+  const canStopRun = useWorkflowStore.use.canStopRun();
+  const canViewRuntimeLogs = useWorkflowStore.use.canViewRuntimeLogs();
   const [convId, setConvId] = useState(() => generateClientId('conversation'));
   const [shake, setShake] = useState(false);
   const { panelWidth, isResizing, panelWidthStyle, resizeHandleProps } = useResizableRightPanel({
@@ -191,8 +195,7 @@ export function useWorkflowChatPanelState({
   const setNodeRunStatus = useWorkflowStore.use.setNodeRunStatus();
   const setActiveOutputHandle = useWorkflowStore.use.setActiveOutputHandle();
   const resetActiveOutputHandles = useWorkflowStore.use.resetActiveOutputHandles();
-  const beginRuntimeLogPopoverAutoOpen =
-    useWorkflowStore.use.beginRuntimeLogPopoverAutoOpen();
+  const beginRuntimeLogPopoverAutoOpen = useWorkflowStore.use.beginRuntimeLogPopoverAutoOpen();
   const finalizeRuntimeLogPopoversAfterRun =
     useWorkflowStore.use.finalizeRuntimeLogPopoversAfterRun();
   const setAutoFollow = useWorkflowStore.use.setAutoFollow();
@@ -505,6 +508,7 @@ export function useWorkflowChatPanelState({
   const { start, cancel, stop, isStarting, isRunning, isStopping } = useRunWorkflowChatDraftStream(
     agentId,
     {
+      enabled: canRunDraft,
       onWorkflowStarted: payload => {
         rememberApprovalEventSequence(payload);
         rememberBackendConversation(payload);
@@ -870,8 +874,7 @@ export function useWorkflowChatPanelState({
         handleWorkflowPaused(payload);
       },
       onWorkflowFinished: payload => {
-        const rawStatus =
-          typeof payload.status === 'string' ? payload.status.toLowerCase() : '';
+        const rawStatus = typeof payload.status === 'string' ? payload.status.toLowerCase() : '';
         const shouldKeepApprovalPending =
           !['failed', 'error', 'stopped', 'expired'].includes(rawStatus) &&
           hasUnresolvedApprovalEntries(approvalRuntimeStateRef.current);
@@ -1525,7 +1528,8 @@ export function useWorkflowChatPanelState({
               nodeId,
               nodeType,
               title,
-              elapsedTime: typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined,
+              elapsedTime:
+                typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined,
               error: getWorkflowRunErrorText(record.error),
               iterationOutputs: record.outputs,
               iterationRounds: sortWorkflowRunRounds(sess?.rounds ?? []).map(r => ({
@@ -1542,7 +1546,8 @@ export function useWorkflowChatPanelState({
           {
             const nodeId =
               typeof record.node_id === 'string' ? (record.node_id as string) : undefined;
-            const nodeType = typeof record.node_type === 'string' ? (record.node_type as string) : 'loop';
+            const nodeType =
+              typeof record.node_type === 'string' ? (record.node_type as string) : 'loop';
             const title = typeof record.title === 'string' ? (record.title as string) : nodeType;
             const key = nodeId ?? title;
             loopSessionsRef.current.set(key, {
@@ -1570,7 +1575,8 @@ export function useWorkflowChatPanelState({
           {
             const nodeId =
               typeof record.node_id === 'string' ? (record.node_id as string) : undefined;
-            const nodeType = typeof record.node_type === 'string' ? (record.node_type as string) : 'loop';
+            const nodeType =
+              typeof record.node_type === 'string' ? (record.node_type as string) : 'loop';
             const title = typeof record.title === 'string' ? (record.title as string) : nodeType;
             const index = typeof record.index === 'number' ? record.index : 0;
             const key = nodeId ?? title;
@@ -1604,7 +1610,8 @@ export function useWorkflowChatPanelState({
           {
             const nodeId =
               typeof record.node_id === 'string' ? (record.node_id as string) : undefined;
-            const nodeType = typeof record.node_type === 'string' ? (record.node_type as string) : 'loop';
+            const nodeType =
+              typeof record.node_type === 'string' ? (record.node_type as string) : 'loop';
             const title = typeof record.title === 'string' ? (record.title as string) : nodeType;
             const key = nodeId ?? title;
             const sess = loopSessionsRef.current.get(key);
@@ -1626,7 +1633,8 @@ export function useWorkflowChatPanelState({
               nodeId,
               nodeType,
               title,
-              elapsedTime: typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined,
+              elapsedTime:
+                typeof record.elapsed_time === 'number' ? record.elapsed_time : undefined,
               error: getWorkflowRunErrorText(record.error),
               loopOutputs: record.outputs,
               loopRounds: sortWorkflowRunRounds(sess?.rounds ?? []).map(r => ({
@@ -2130,6 +2138,10 @@ export function useWorkflowChatPanelState({
         inputs: Record<string, unknown>;
       }
     ) => {
+      if (!canRunDraft) {
+        toast.error(t('common.unauthorizedDescription'));
+        return;
+      }
       if (!chatConv) {
         initSingle({
           id: convId,
@@ -2214,6 +2226,7 @@ export function useWorkflowChatPanelState({
       }
     },
     [
+      canRunDraft,
       cancelWorkflowRunEvents,
       convId,
       chatConv,
@@ -2272,6 +2285,10 @@ export function useWorkflowChatPanelState({
       }
     ) => {
       if (isConversationPaused && !questionAnswerPrompt) return;
+      if (!canRunDraft) {
+        toast.error(t('common.unauthorizedDescription'));
+        return;
+      }
       if (errors.length > 0 && !isBannerHidden(BannerKey.WorkflowRunErrorsWarning)) {
         pendingSendRef.current = { items, userInput };
         setRunWarnOpen(true);
@@ -2279,7 +2296,14 @@ export function useWorkflowChatPanelState({
       }
       void startChatWithPrecheck(items, userInput);
     },
-    [errors.length, isConversationPaused, questionAnswerPrompt, startChatWithPrecheck]
+    [
+      canRunDraft,
+      errors.length,
+      isConversationPaused,
+      questionAnswerPrompt,
+      startChatWithPrecheck,
+      t,
+    ]
   );
 
   const handleReset = useCallback(() => {
@@ -2330,8 +2354,12 @@ export function useWorkflowChatPanelState({
       toast.info(t('nodes.approval.runtime.stopDisabled'));
       return;
     }
+    if (!canStopRun) {
+      toast.error(t('common.unauthorizedDescription'));
+      return;
+    }
     stop();
-  }, [hasBlockingApprovalStop, stop, t]);
+  }, [canStopRun, hasBlockingApprovalStop, stop, t]);
 
   // features already derived above
 
@@ -2411,9 +2439,8 @@ export function useWorkflowChatPanelState({
     [startVariables]
   );
 
-
-
-  const placeholder = startVariables.length > 0 ? t('agents.workflow.startForm.fillFormToStart') : undefined;
+  const placeholder =
+    startVariables.length > 0 ? t('agents.workflow.startForm.fillFormToStart') : undefined;
   const inputTopNotice =
     questionAnswerInputNotice ||
     (isApprovalStopBlocked ? (
@@ -2429,7 +2456,10 @@ export function useWorkflowChatPanelState({
       />
     ) : null);
   const sendDisabled = Boolean(
-    isStarting || (isConversationPaused && !questionAnswerPrompt) || questionAnswerSubmitting
+    !canRunDraft ||
+      isStarting ||
+      (isConversationPaused && !questionAnswerPrompt) ||
+      questionAnswerSubmitting
   );
   const handleViewRunErrors = useCallback(() => {
     setRunWarnOpen(false);
@@ -2453,6 +2483,7 @@ export function useWorkflowChatPanelState({
     resizeHandleProps,
     isResizing,
     shake,
+    canViewRuntimeLogs,
     debugRunsQuery,
     handleSelectDebugRun,
     handleReset,

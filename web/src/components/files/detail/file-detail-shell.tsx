@@ -66,6 +66,11 @@ import { useCreateFileProcessingRequest } from '@/hooks/file/use-file-processing
 import { usePrepareFileQAIndex } from '@/hooks/file/use-file-qa';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { formatDate, formatFileSize } from '@/utils/format';
+import { FILE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
 
 interface FileDetailShellProps {
   fileId: string;
@@ -136,7 +141,9 @@ function parseProviderTranslationPath(provider: string) {
   return `upload.parseProviders.${parseProviderTranslationKey(provider)}` as never;
 }
 
-function isConfigurableParserProvider(provider: FileParseProviderKey): provider is 'mineru' | 'reducto' {
+function isConfigurableParserProvider(
+  provider: FileParseProviderKey
+): provider is 'mineru' | 'reducto' {
   return provider === 'mineru' || provider === 'reducto';
 }
 
@@ -299,7 +306,10 @@ function ProcessingWorkbenchOverview({
           )}
         >
           <BannerIcon
-            className={cn('h-4 w-4', status === 'parsing' || status === 'generating' ? 'animate-spin' : '')}
+            className={cn(
+              'h-4 w-4',
+              status === 'parsing' || status === 'generating' ? 'animate-spin' : ''
+            )}
           />
         </div>
         <div className="min-w-0 flex-1">
@@ -323,7 +333,12 @@ function ProcessingWorkbenchOverview({
                     : Circle;
               return (
                 <div key={step.key} className="flex items-center">
-                  <div className={cn('flex items-center gap-1.5 font-medium', getWorkbenchStepTone(step.state))}>
+                  <div
+                    className={cn(
+                      'flex items-center gap-1.5 font-medium',
+                      getWorkbenchStepTone(step.state)
+                    )}
+                  >
                     <span
                       className={cn(
                         'flex h-6 w-6 items-center justify-center rounded-full border bg-background',
@@ -336,7 +351,9 @@ function ProcessingWorkbenchOverview({
                     >
                       <StepIcon className="h-3.5 w-3.5" />
                     </span>
-                    <span className="text-xs">{t(`detail.workbench.steps.${step.key}` as never)}</span>
+                    <span className="text-xs">
+                      {t(`detail.workbench.steps.${step.key}` as never)}
+                    </span>
                   </div>
                   {index < steps.length - 1 ? (
                     <span
@@ -376,8 +393,7 @@ function ReparseButtonWithTooltip({
     getCurrentParseProvider(latestRequest);
   const requestedLabel = t(parseProviderTranslationPath(requestedProvider || 'auto'));
   const finalLabel = finalProvider ? t(parseProviderTranslationPath(finalProvider)) : '';
-  const shouldShowFinalProvider =
-    Boolean(finalProvider) && finalProvider !== requestedProvider;
+  const shouldShowFinalProvider = Boolean(finalProvider) && finalProvider !== requestedProvider;
   const isAuto = requestedProvider === 'auto';
 
   if (!canReparse) return null;
@@ -391,16 +407,18 @@ function ReparseButtonWithTooltip({
           onClick={onReparse}
           disabled={loading}
         >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RotateCcw className="h-4 w-4" />
+          )}
           {t('detail.reparse.action')}
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom" align="start" className="max-w-md text-left">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-foreground">
-              {t('detail.parseMethod.title')}
-            </span>
+            <span className="font-semibold text-foreground">{t('detail.parseMethod.title')}</span>
             <Badge variant="subtle" className="max-w-full truncate">
               {requestedLabel}
             </Badge>
@@ -612,9 +630,7 @@ function FilePreviewChunksWorkbench({
     <div
       className={cn(
         'grid min-h-0 flex-1 bg-bg-canvas',
-        originalPreviewHidden
-          ? 'grid-cols-1'
-          : 'xl:grid-cols-[minmax(0,1fr)_minmax(480px,0.95fr)]'
+        originalPreviewHidden ? 'grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_minmax(480px,0.95fr)]'
       )}
     >
       {!originalPreviewHidden ? (
@@ -663,8 +679,27 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { files: t, common } = useT();
-  const { hasPermission } = useAccountPermissions();
+  const {
+    hasPermission,
+    hasAnyPermission,
+    isLoading: isPermissionsLoading,
+  } = useAccountPermissions();
+  const canOpenFileDetail = hasAnyPermission([
+    ...FILE_PERMISSION_ACTIONS.metadataView,
+    ...FILE_PERMISSION_ACTIONS.preview,
+    ...FILE_PERMISSION_ACTIONS.relatedView,
+    ...FILE_PERMISSION_ACTIONS.download,
+    ...FILE_PERMISSION_ACTIONS.upload,
+    ...FILE_PERMISSION_ACTIONS.update,
+    ...FILE_PERMISSION_ACTIONS.delete,
+    ...FILE_PERMISSION_ACTIONS.move,
+    ...FILE_PERMISSION_ACTIONS.archive,
+    ...FILE_PERMISSION_ACTIONS.shareManage,
+    ...FILE_PERMISSION_ACTIONS.favoriteManage,
+  ]);
   const canDownload = hasPermission('file.download');
+  const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);
+  const canUploadFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
   const { downloadFile, isDownloading } = useDownloadFile();
   const [activeView, setActiveView] = useState<'preview' | 'qa'>('preview');
   const [chunkLocateTarget, setChunkLocateTarget] = useState<FileChunkLocateTarget | null>(null);
@@ -674,14 +709,16 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const [qaIndexPrepareError, setQAIndexPrepareError] = useState<string | null>(null);
   const [qaIndexRevision, setQAIndexRevision] = useState(0);
   const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
-  const [pendingParserConfigProvider, setPendingParserConfigProvider] =
-    useState<'mineru' | 'reducto' | null>(null);
+  const [pendingParserConfigProvider, setPendingParserConfigProvider] = useState<
+    'mineru' | 'reducto' | null
+  >(null);
   const [selectedReparseProvider, setSelectedReparseProvider] =
     useState<FileParseProviderKey>('auto');
   const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
   const parentHref = datasetReturnTo ?? '/console/files';
   const parentLabel = datasetReturnTo ? t('detail.datasetBreadcrumb') : t('detail.fileBreadcrumb');
   const { data, isLoading, isFetching, error, refetch } = useFileDetail(fileId, {
+    enabled: canOpenFileDetail,
     pollProcessingStatus: true,
   });
   const createProcessingRequest = useCreateFileProcessingRequest(fileId);
@@ -694,12 +731,25 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const artifactState = detail?.artifact_state;
   const summary = processing?.summary;
   const status = getProcessingStatus(file, summary?.product_status ?? asset?.product_status);
-  const vectorStatus = summary?.vector_status ?? asset?.vector_status ?? artifactState?.vector_status ?? file?.vector_status;
+  const vectorStatus =
+    summary?.vector_status ??
+    asset?.vector_status ??
+    artifactState?.vector_status ??
+    file?.vector_status;
   const pendingCount =
-    processing?.pending_confirmation_count ?? summary?.pending_confirmation_count ?? file?.pending_confirmation_count ?? 0;
+    processing?.pending_confirmation_count ??
+    summary?.pending_confirmation_count ??
+    file?.pending_confirmation_count ??
+    0;
   const chunkCount =
-    processing?.chunk_count ?? summary?.chunk_count ?? asset?.chunk_count ?? file?.chunk_count ?? artifactState?.chunk_count ?? 0;
-  const chunkQueryVersion = summary?.generation_no ?? asset?.generation_no ?? file?.generation_no ?? null;
+    processing?.chunk_count ??
+    summary?.chunk_count ??
+    asset?.chunk_count ??
+    file?.chunk_count ??
+    artifactState?.chunk_count ??
+    0;
+  const chunkQueryVersion =
+    summary?.generation_no ?? asset?.generation_no ?? file?.generation_no ?? null;
   const embeddingCount = processing?.embedding_count ?? file?.embedding_count ?? 0;
   const chunksEnabled = status === 'ready';
   const qaEnabled = status === 'ready' && vectorStatus === 'ready' && embeddingCount > 0;
@@ -727,8 +777,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const isFullyReady = status === 'ready' && vectorStatus === 'ready';
   const showProcessingWorkbench = !isFullyReady;
   const showHeaderRefresh = !isFullyReady;
-  const canRequestProcessing =
-    hasPermission('file.manage') || hasPermission('file.upload_create') || canDownload;
+  const canRequestProcessing = canUpdateFile || canUploadFile || canDownload;
   const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
   const providerStatusQuery = useQuery({
     queryKey: ['content-parse', 'file-route-providers', file?.name],
@@ -842,6 +891,10 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     const firstSelectableProvider = reparseProviders.find(provider => provider.selectable);
     setSelectedReparseProvider(firstSelectableProvider?.key ?? reparseProviders[0].key);
   }, [selectedReparseProvider, reparseProviders]);
+
+  if (isPermissionsLoading) return <PermissionLoadingState />;
+
+  if (!canOpenFileDetail) return <PermissionDeniedState />;
 
   if (isLoading) return <FileDetailLoading />;
 
@@ -1018,10 +1071,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
 
       <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <section
-          className={cn(
-            'h-full min-h-0 flex-col',
-            activeView === 'preview' ? 'flex' : 'hidden'
-          )}
+          className={cn('h-full min-h-0 flex-col', activeView === 'preview' ? 'flex' : 'hidden')}
           aria-hidden={activeView !== 'preview'}
         >
           <FilePreviewChunksWorkbench

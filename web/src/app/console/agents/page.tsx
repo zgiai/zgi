@@ -44,7 +44,8 @@ export default function AgentsPage() {
   const { hasPermission, hasAnyPermission, isLoading: isPermissionsLoading } =
     useAccountPermissions();
   const canView = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
-  const canManage = hasPermission('agent.create');
+  const canCreate = hasPermission('agent.create');
+  const canImport = hasPermission('agent.import');
 
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -281,18 +282,18 @@ export default function AgentsPage() {
   };
 
   const handleCreate = () => {
-    if (!canManage) return;
+    if (!canCreate) return;
     setTemplateOpen(true);
   };
 
   const handleCreateBlank = () => {
-    if (!canManage) return;
+    if (!canCreate) return;
     setTemplateOpen(false);
     setOpen(true);
   };
 
   const handleImport = () => {
-    if (!canManage) return;
+    if (!canImport) return;
     setImportOpen(true);
   };
 
@@ -347,16 +348,20 @@ export default function AgentsPage() {
               <FolderPlus />
               {t('createFolder')}
             </Button> */}
-            {canManage && (
+            {(canImport || canCreate) && (
               <>
-                <Button variant="outline" onClick={handleImport} className="w-full sm:w-auto">
-                  <Upload className="h-4 w-4" />
-                  <span className="text-sm">{t('agents.importAgent')}</span>
-                </Button>
-                <Button onClick={handleCreate} className="w-full sm:w-auto">
-                  <Plus className="h-4 w-4" />
-                  <span className="text-sm">{t('agents.create')}</span>
-                </Button>
+                {canImport && (
+                  <Button variant="outline" onClick={handleImport} className="w-full sm:w-auto">
+                    <Upload className="h-4 w-4" />
+                    <span className="text-sm">{t('agents.importAgent')}</span>
+                  </Button>
+                )}
+                {canCreate && (
+                  <Button onClick={handleCreate} className="w-full sm:w-auto">
+                    <Plus className="h-4 w-4" />
+                    <span className="text-sm">{t('agents.create')}</span>
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -380,23 +385,27 @@ export default function AgentsPage() {
             />
           ) : (
             <AgentEmptyElement
-              actions={
-                canManage
+              actions={[
+                ...(canImport
                   ? [
                       {
                         label: t('agents.importAgent'),
                         icon: <Upload className="h-4 w-4" />,
                         onClick: handleImport,
-                        variant: 'outline',
+                        variant: 'outline' as const,
                       },
+                    ]
+                  : []),
+                ...(canCreate
+                  ? [
                       {
                         label: t('agents.createFirstAgent'),
                         icon: <Plus className="h-4 w-4" />,
                         onClick: handleCreate,
                       },
                     ]
-                  : []
-              }
+                  : []),
+              ]}
             />
           ))}
 

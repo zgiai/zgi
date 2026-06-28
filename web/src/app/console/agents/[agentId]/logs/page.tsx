@@ -43,7 +43,7 @@ import { cn } from '@/lib/utils';
 import { AgentRuntimeLogDetailDrawer } from './_components/agent-runtime-log-detail-drawer';
 import { LogDetailDrawer, type HistoryTab } from './_components/log-detail-drawer';
 import { LogStatusBadge } from './_components/log-status-badge';
-import { AGENT_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface AgentLogsPageProps {
   params: Promise<{ agentId: string }>;
@@ -154,15 +154,17 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
 
   const { agent, isLoading: isAgentLoading, error: agentError } = useAgent(agentId);
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
+  const canViewAgentRuntimeLogs = hasAnyPermission(AGENT_PERMISSION_ACTIONS.logsView);
+  const canViewWorkflowRuntimeLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
   const agentDetail = agent?.data ?? null;
   const isPublished = agentDetail?.is_published === true;
   const supportsRuntimeLogs = supportsAgentRuntimeLogs(agentDetail?.agent_type);
+  const isAgentRuntime = agentDetail?.agent_type === AgentType.AGENT;
+  const canViewRuntimeLogs = isAgentRuntime ? canViewAgentRuntimeLogs : canViewWorkflowRuntimeLogs;
   const canAccessRuntimeLogs = canShowAgentRuntimeLogs(agentDetail?.agent_type, {
     canView: true,
-    canManage,
+    canViewRuntimeLogs,
   });
-  const isAgentRuntime = agentDetail?.agent_type === AgentType.AGENT;
   const canQueryWorkflowLogs = canAccessRuntimeLogs && isPublished && !isAgentRuntime;
   const canQueryAgentRuntimeLogs = canAccessRuntimeLogs && isPublished && isAgentRuntime;
   const isConversationWorkflow = agentDetail?.agent_type === AgentType.CONVERSATIONAL_AGENT;
@@ -591,7 +593,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     );
   }
 
-  if (!canManage) {
+  if (!canAccessRuntimeLogs) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">

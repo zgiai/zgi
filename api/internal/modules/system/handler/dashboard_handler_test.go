@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zgiai/zgi/api/internal/dto"
 	systemmodel "github.com/zgiai/zgi/api/internal/modules/system/model"
 	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -33,8 +34,8 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 		},
 	}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
+		userWorkspaceIDs: []string{"ws-1", "ws-2"},
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
-			workspacemodel.WorkspacePermissionWorkspaceView:               {"ws-1", "ws-2"},
 			workspacemodel.WorkspacePermissionAgentStatsView:              {"ws-agent"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView:   {"ws-knowledge-view", "ws-knowledge-shared"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: {"ws-knowledge-manage"},
@@ -70,6 +71,7 @@ func TestDashboardRecentWorkWorkspaceScopeUsesResourcePermissions(t *testing.T) 
 	recorder, c := newDashboardRecentWorkContext("org-1", "acc-1", "?scope=workspace&workspace_id=ws-1")
 	dashboardSvc := &dashboardHandlerService{}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
+		userWorkspaceIDs: []string{"ws-1"},
 		allowedByPermission: map[workspacemodel.WorkspacePermissionCode]bool{
 			workspacemodel.WorkspacePermissionWorkspaceView:               false,
 			workspacemodel.WorkspacePermissionAgentStatsView:              true,
@@ -92,7 +94,7 @@ func TestDashboardRecentWorkWorkspaceScopeUsesResourcePermissions(t *testing.T) 
 	require.Equal(t, "ws-1", permissionSvc.workspaceID)
 	require.Equal(t, "acc-1", permissionSvc.accountID)
 	require.True(t, dashboardSvc.recentWorkCalled)
-	require.Equal(t, []string(nil), dashboardSvc.recentWorkReq.WorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.WorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
 	require.Equal(t, []string(nil), dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
@@ -104,6 +106,7 @@ func TestDashboardRecentWorkWorkspaceScopeFallsBackToCurrentWorkspace(t *testing
 	workspaceID := "ws-1"
 	dashboardSvc := &dashboardHandlerService{}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{allowed: true}
+	permissionSvc.userWorkspaceIDs = []string{"ws-1"}
 	accountSvc := &dashboardHandlerAccountContextService{
 		accountContext: &authmodel.AccountContext{
 			AccountID:          "acc-1",
@@ -147,8 +150,8 @@ func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
 		},
 	}
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
+		userWorkspaceIDs: []string{"ws-1", "ws-2"},
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
-			workspacemodel.WorkspacePermissionWorkspaceView:               {"ws-1", "ws-2"},
 			workspacemodel.WorkspacePermissionAgentStatsView:              {"ws-agent"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView:   {"ws-knowledge"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: {"ws-knowledge-manage"},
@@ -260,6 +263,7 @@ type dashboardHandlerWorkspacePermissionService struct {
 	allowedByPermission      map[workspacemodel.WorkspacePermissionCode]bool
 	called                   bool
 	workspaceIDsByPermission map[workspacemodel.WorkspacePermissionCode][]string
+	userWorkspaceIDs         []string
 	organizationID           string
 	workspaceID              string
 	accountID                string
@@ -285,4 +289,40 @@ func (s *dashboardHandlerWorkspacePermissionService) ListWorkspaceIDsByPermissio
 		return []string{}, nil
 	}
 	return s.workspaceIDsByPermission[permissionCode], nil
+}
+
+func (s *dashboardHandlerWorkspacePermissionService) GetUserWorkspacesInOrganization(_ context.Context, organizationID, accountID string, page, limit int) (*dto.WorkspacePaginationResponse, error) {
+	s.organizationID = organizationID
+	s.accountID = accountID
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = len(s.userWorkspaceIDs)
+	}
+	start := (page - 1) * limit
+	if start >= len(s.userWorkspaceIDs) {
+		return &dto.WorkspacePaginationResponse{
+			Data:    []*workspacemodel.Workspace{},
+			Page:    page,
+			Limit:   limit,
+			Total:   int64(len(s.userWorkspaceIDs)),
+			HasMore: false,
+		}, nil
+	}
+	end := start + limit
+	if end > len(s.userWorkspaceIDs) {
+		end = len(s.userWorkspaceIDs)
+	}
+	workspaces := make([]*workspacemodel.Workspace, 0, end-start)
+	for _, workspaceID := range s.userWorkspaceIDs[start:end] {
+		workspaces = append(workspaces, &workspacemodel.Workspace{ID: workspaceID})
+	}
+	return &dto.WorkspacePaginationResponse{
+		Data:    workspaces,
+		Page:    page,
+		Limit:   limit,
+		Total:   int64(len(s.userWorkspaceIDs)),
+		HasMore: end < len(s.userWorkspaceIDs),
+	}, nil
 }

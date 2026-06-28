@@ -265,6 +265,8 @@ func fileReadablePermissionCodes() []workspace_model.WorkspacePermissionCode {
 		workspace_model.WorkspacePermissionFileFolderView,
 		workspace_model.WorkspacePermissionFileRelatedView,
 		workspace_model.WorkspacePermissionFileDownload,
+		workspace_model.WorkspacePermissionFileUpload,
+		workspace_model.WorkspacePermissionFileTextCreate,
 		workspace_model.WorkspacePermissionFileUpdate,
 		workspace_model.WorkspacePermissionFileDelete,
 		workspace_model.WorkspacePermissionFileMove,

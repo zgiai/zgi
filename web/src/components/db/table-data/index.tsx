@@ -25,10 +25,7 @@ import { TableDataHeader } from './header';
 import { TableDataBody } from './body';
 import BatchImportDialog from './batch-import-dialog';
 import RowDetailDialog from './row-detail-dialog';
-import {
-  isBusinessTimeColumn,
-  SchemaHealthNotice,
-} from '@/components/db/schema-health';
+import { isBusinessTimeColumn, SchemaHealthNotice } from '@/components/db/schema-health';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/utils/error-notifications';
 import {
@@ -46,15 +43,23 @@ const DEFAULT_PAGE_SIZE = 20;
 
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
-import { DATABASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
   const t = useT();
 
   // Permissions
-  const { hasPermission, hasAnyPermission } = useAccountPermissions();
-  const canEditData = hasPermission('database.data_edit');
-  const canManage = hasAnyPermission(DATABASE_MANAGE_PERMISSION_CODES);
+  const { hasAnyPermission } = useAccountPermissions();
+  const canCreateRecord = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.recordCreate);
+  const canUpdateRecord = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.recordUpdate);
+  const canDeleteRecord = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.recordDelete);
+  const canEditData = canCreateRecord || canUpdateRecord || canDeleteRecord;
+  const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
+  const canBatchImport = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.importAnalyze,
+    ...DATABASE_PERMISSION_ACTIONS.importExecute,
+  ]);
+  const canSmartIngest = hasAnyPermission([...DATABASE_PERMISSION_ACTIONS.aiQueryWrite]);
 
   // Fetch table columns (structure).
   const {
@@ -177,6 +182,7 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
   const generateTempId = () => `tmp-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 
   const addEmptyRow = () => {
+    if (!canCreateRecord) return;
     if (!hasDataFields) return;
     const newRow: DbTableRecord = nonSystemColumns.reduce<DbTableRecord>((acc, col) => {
       let defaultValue: DbTableRecord[keyof DbTableRecord] = null;
@@ -204,6 +210,7 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
   };
 
   const onAddRowFromEmpty = () => {
+    if (!canCreateRecord) return;
     setIsEditing(true);
     addEmptyRow();
   };
@@ -372,6 +379,18 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
 
     // Deleted rows: collected ids to remove
     const toDeleteIds = pendingDeletes;
+    if (toCreate.length > 0 && !canCreateRecord) {
+      toast.error(t('common.unauthorizedDescription'));
+      return;
+    }
+    if (toUpdate.length > 0 && !canUpdateRecord) {
+      toast.error(t('common.unauthorizedDescription'));
+      return;
+    }
+    if (toDeleteIds.length > 0 && !canDeleteRecord) {
+      toast.error(t('common.unauthorizedDescription'));
+      return;
+    }
     const didChange = toCreate.length > 0 || toUpdate.length > 0 || toDeleteIds.length > 0;
     try {
       if (toCreate.length > 0) {
@@ -403,6 +422,7 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
   };
 
   const onDeleteRow = async (row: DbTableRecord) => {
+    if (!canDeleteRecord) return;
     if (row.id) {
       // Defer deletion: collect id and remove locally only
       setPendingDeletes(prev => {
@@ -532,8 +552,12 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
         onStartEdit={() => setIsEditing(true)}
         onRefresh={onRefresh}
         canEditData={canEditData}
-        canManage={canManage}
-        onBatchImport={() => setBatchImportOpen(true)}
+        canManage={canManageSchema}
+        canBatchImport={canBatchImport}
+        canSmartIngest={canSmartIngest}
+        onBatchImport={() => {
+          if (canBatchImport) setBatchImportOpen(true);
+        }}
         pageSearch={pageSearch}
         onPageSearchChange={value => {
           setPageSearch(value);
@@ -565,13 +589,18 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
             drafts={drafts}
             setDrafts={setDrafts}
             onAddRow={onAddRowFromEmpty}
-            onBatchImport={() => setBatchImportOpen(true)}
+            onBatchImport={() => {
+              if (canBatchImport) setBatchImportOpen(true);
+            }}
             hasDataFields={hasDataFields}
             manageStructureHref={`/console/db/${dbId}/table/${tableId}/structure`}
             smartCreateHref={`/console/db/${dbId}/table/${tableId}/create`}
             smartIngestHref={`/console/db/${dbId}/table/${tableId}/data`}
             canEditData={canEditData}
-            canManage={canManage}
+            canManage={canManageSchema}
+            canBatchImport={canBatchImport}
+            canSmartIngest={canSmartIngest}
+            canDeleteData={canDeleteRecord}
             containerWidth={containerWidth}
             stickyColumnNames={stickyColumnNames}
             onOpenRow={row => {

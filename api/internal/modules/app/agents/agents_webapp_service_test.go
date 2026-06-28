@@ -48,7 +48,7 @@ func TestAgentsService_UpdateWebAppStatus_AllowsManagerEditor(t *testing.T) {
 	require.Equal(t, agentID.String(), resp.AgentID)
 	require.Equal(t, "33333333-3333-3333-3333-333333333333", resp.WebAppID)
 	require.Equal(t, "inactive", resp.WebAppStatus)
-	require.Equal(t, agentRuntimeConfigManagePermissionCodes(), orgService.lastPermissions)
+	require.Equal(t, agentRuntimeAccessManagePermissionCodes("AGENT"), orgService.lastPermissions)
 	require.Equal(t, AgentWebAppStatusInactive, repo.lastStatus)
 	require.Equal(t, "maintenance", repo.lastReason)
 	require.Equal(t, accountID, repo.lastUpdatedBy)
@@ -89,6 +89,36 @@ func TestAgentsService_UpdateWebAppStatus_RejectsMissingPermission(t *testing.T)
 		Status: string(AgentWebAppStatusInactive),
 	})
 	require.EqualError(t, err, "permission denied")
+	require.False(t, repo.updateCalled)
+}
+
+func TestAgentsService_UpdateWebAppStatus_RejectsRuntimeConfigWithoutRuntimeAccessPermission(t *testing.T) {
+	ctx := webAppStatusTestContext()
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:       agentID,
+			TenantID: uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+			WebAppID: uuid.MustParse("33333333-3333-3333-3333-333333333333"),
+		},
+	}
+	orgService := &stubWebAppStatusOrganizationService{
+		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
+			workspace_model.WorkspacePermissionAgentRuntimeConfigManage: true,
+		},
+	}
+	service := &agentsService{
+		agentsRepo:        repo,
+		accountService:    &stubWebAppStatusAccountService{isEditor: true},
+		enterpriseService: orgService,
+	}
+
+	_, err := service.UpdateWebAppStatus(ctx, agentID.String(), dto.UpdateWebAppStatusRequest{
+		Status: string(AgentWebAppStatusInactive),
+	})
+
+	require.EqualError(t, err, "permission denied")
+	require.Equal(t, agentRuntimeAccessManagePermissionCodes("AGENT"), orgService.lastPermissions)
 	require.False(t, repo.updateCalled)
 }
 
@@ -473,7 +503,7 @@ func TestAgentsService_AgentMemoryEndpointsRequireManagePermission(t *testing.T)
 			err := tt.call(service)
 			require.EqualError(t, err, "permission denied")
 			require.True(t, orgService.checkCalled)
-			require.Equal(t, agentRuntimeConfigManagePermissionCodes(), orgService.lastPermissions)
+			require.Equal(t, agentRuntimeConfigManagePermissionCodes("AGENT"), orgService.lastPermissions)
 		})
 	}
 }
@@ -497,7 +527,7 @@ func TestAgentsService_AgentMemoryEndpointsAllowManagePermissionWithoutEditorRol
 	_, err := service.ListAgentMemorySlots(ctx, agentID.String(), "99999999-9999-9999-9999-999999999999")
 	require.NoError(t, err)
 	require.True(t, orgService.checkCalled)
-	require.Equal(t, agentRuntimeConfigManagePermissionCodes(), orgService.lastPermissions)
+	require.Equal(t, agentRuntimeConfigManagePermissionCodes("AGENT"), orgService.lastPermissions)
 }
 
 func TestAgentsService_GetAgent_RejectsMissingWorkspaceViewPermission(t *testing.T) {
@@ -649,7 +679,43 @@ func TestAgentsService_UpdateAgentRuntimeSurfaces_RequiresRuntimeAccessPermissio
 	})
 
 	require.ErrorIs(t, err, runtimeservice.ErrPermissionDenied)
-	require.Equal(t, agentRuntimeAccessManagePermissionCodes(), orgService.lastPermissions)
+	require.Equal(t, agentRuntimeAccessManagePermissionCodes("AGENT"), orgService.lastPermissions)
+}
+
+func TestAgentsService_UpdateAgentRuntimeSurfaces_AllowsRuntimeAccessWithoutRuntimeConfigPermission(t *testing.T) {
+	db, cleanup := openAgentRuntimeSurfacesMockDB(t)
+	defer cleanup()
+
+	ctx := webAppStatusTestContext()
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:       agentID,
+			TenantID: uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+		},
+	}
+	orgService := &stubWebAppStatusOrganizationService{
+		organizationID: "88888888-8888-8888-8888-888888888888",
+		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
+			workspace_model.WorkspacePermissionAgentRuntimeAccessManage: true,
+		},
+	}
+	service := &agentsService{
+		agentsRepo:        repo,
+		accountService:    &stubWebAppStatusAccountService{isEditor: true},
+		enterpriseService: orgService,
+		db:                db,
+	}
+
+	_, err := service.UpdateAgentRuntimeSurfaces(ctx, agentID.String(), "99999999-9999-9999-9999-999999999999", dto.UpdateAgentRuntimeSurfacesRequest{
+		Surfaces: []dto.UpdateAgentRuntimeSurfaceAuthorization{{
+			Surface: "internal",
+			Enabled: false,
+		}},
+	})
+
+	require.ErrorIs(t, err, runtimeservice.ErrInvalidInput)
+	require.Equal(t, agentRuntimeAccessManagePermissionCodes("AGENT"), orgService.lastPermissions)
 }
 
 func TestAgentsService_UpdateAgentRuntimeSurfaces_IgnoresLegacyBuiltinSurfaceInput(t *testing.T) {
@@ -1167,61 +1233,6 @@ func runtimeSurfaceTestMap(surfaces []dto.AgentRuntimeSurfaceAuthorization) map[
 		out[surface.Surface] = surface
 	}
 	return out
-}
-
-func TestRuntimeGrantWorkspaceMemberAllowsPermissionUsesDirectPermissions(t *testing.T) {
-	t.Parallel()
-
-	if !runtimeGrantWorkspaceMemberAllowsPermission(
-		workspace_model.WorkspaceRoleNormal,
-		nil,
-		[]string{string(workspace_model.WorkspacePermissionWorkspaceView)},
-		workspace_model.WorkspaceMemberPermissionSourceDirect,
-		workspace_model.WorkspacePermissionWorkspaceView,
-	) {
-		t.Fatal("direct workspace.view should allow workspace visibility")
-	}
-
-	if runtimeGrantWorkspaceMemberAllowsPermission(
-		workspace_model.WorkspaceRoleAdmin,
-		nil,
-		[]string{},
-		workspace_model.WorkspaceMemberPermissionSourceDirect,
-		workspace_model.WorkspacePermissionWorkspaceView,
-	) {
-		t.Fatal("direct empty permissions should not fall back to admin role template")
-	}
-
-	if runtimeGrantWorkspaceMemberAllowsPermission(
-		workspace_model.WorkspaceRoleAdmin,
-		nil,
-		[]string{},
-		workspace_model.WorkspaceMemberPermissionSourceRoleTemplate,
-		workspace_model.WorkspacePermissionWorkspaceView,
-	) {
-		t.Fatal("empty role-template permission snapshot should not fall back to admin role template")
-	}
-
-	if runtimeGrantWorkspaceMemberAllowsPermission(
-		workspace_model.WorkspaceRoleNormal,
-		nil,
-		[]string{string(workspace_model.WorkspacePermissionAgentCreate)},
-		workspace_model.WorkspaceMemberPermissionSourceDirect,
-		workspace_model.WorkspacePermissionAgentManage,
-	) {
-		t.Fatal("fine agent.create grant should not imply legacy agent.manage")
-	}
-
-	customRoleID := "10000000-0000-0000-0000-000000000001"
-	if runtimeGrantWorkspaceMemberAllowsPermission(
-		workspace_model.WorkspaceRoleNormal,
-		&customRoleID,
-		nil,
-		workspace_model.WorkspaceMemberPermissionSourceRoleTemplate,
-		workspace_model.WorkspacePermissionWorkspaceView,
-	) {
-		t.Fatal("empty custom role-template snapshot should not read live role permissions")
-	}
 }
 
 type stubWebAppStatusRepository struct {

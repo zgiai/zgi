@@ -19,18 +19,33 @@ import {
   useRetryDatasetFileRefSync,
 } from '@/hooks/dataset/use-dataset-file-refs';
 import type { DatasetFileRef } from '@/services/types/dataset';
-import { KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
 
 export default function DatasetDocumentsPage() {
   const t = useT();
   const params = useParams();
   const datasetId = params.datasetId as string;
-  const { data: datasetData } = useDataset(datasetId);
-  const isExternalDataSource = !!datasetData?.data?.external_knowledge_info?.external_knowledge_id;
 
   // Permission checking - use new permission system
-  const { hasAnyPermission } = useAccountPermissions();
-  const canEdit = hasAnyPermission(KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES);
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canViewDocuments = hasAnyPermission([
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentCreate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentUpdate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentDelete,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage,
+  ]);
+  const { data: datasetData } = useDataset(datasetId, { enabled: canViewDocuments });
+  const isExternalDataSource = !!datasetData?.data?.external_knowledge_info?.external_knowledge_id;
+  const canCreateDocument = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentCreate);
+  const canUpdateDocument = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentUpdate);
+  const canDeleteDocument = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentDelete);
+  const canManageIndex = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage);
+  const canEdit = canCreateDocument || canUpdateDocument || canDeleteDocument || canManageIndex;
 
   const [fileSelectorOpen, setFileSelectorOpen] = useState(false);
   const [fileRefPollingEnabled, setFileRefPollingEnabled] = useState(false);
@@ -47,7 +62,7 @@ export default function DatasetDocumentsPage() {
     { limit: 100 },
     {
       refetchInterval: fileRefPollingEnabled ? 5000 : false,
-      enabled: true,
+      enabled: canViewDocuments,
     }
   );
   const retryFileRefMutation = useRetryDatasetFileRefSync(datasetId);
@@ -83,14 +98,16 @@ export default function DatasetDocumentsPage() {
 
   const handleRetryFileRef = useCallback(
     async (ref: DatasetFileRef) => {
+      if (!canManageIndex) return;
       await retryFileRefMutation.mutateAsync(ref.id);
       await refetchFileRefs();
     },
-    [retryFileRefMutation, refetchFileRefs]
+    [canManageIndex, retryFileRefMutation, refetchFileRefs]
   );
 
   const handleToggleEnabled = useCallback(
     async (ref: DatasetFileRef, enabled: boolean) => {
+      if (!canUpdateDocument) return;
       if (!ref.dataset_document_id) return;
       try {
         setTogglingRefId(ref.id);
@@ -107,15 +124,24 @@ export default function DatasetDocumentsPage() {
         setTogglingRefId(undefined);
       }
     },
-    [bulkDisableMutation, bulkEnableMutation, refetchFileRefs, t]
+    [bulkDisableMutation, bulkEnableMutation, canUpdateDocument, refetchFileRefs, t]
   );
 
   const confirmRemoveFileRef = useCallback(async () => {
+    if (!canDeleteDocument) return;
     if (!refToRemove) return;
     await deleteFileRefMutation.mutateAsync(refToRemove.id);
     setRefToRemove(null);
     await refetchFileRefs();
-  }, [deleteFileRefMutation, refToRemove, refetchFileRefs]);
+  }, [canDeleteDocument, deleteFileRefMutation, refToRemove, refetchFileRefs]);
+
+  if (isPermissionsLoading) {
+    return <PermissionLoadingState />;
+  }
+
+  if (!canViewDocuments) {
+    return <PermissionDeniedState />;
+  }
 
   return (
     <div className="min-h-full bg-background">
@@ -153,7 +179,7 @@ export default function DatasetDocumentsPage() {
               className="h-10 rounded-lg pl-10"
             />
           </div>
-          {!isExternalDataSource && canEdit ? (
+          {!isExternalDataSource && canCreateDocument ? (
             <Button className="h-10 rounded-lg px-4" onClick={() => setFileSelectorOpen(true)}>
               <Plus className="h-4 w-4" />
               {t('datasets.documents.fileRefs.addFile')}
@@ -166,8 +192,15 @@ export default function DatasetDocumentsPage() {
         <DatasetFileRefPanel
           refs={filteredRefs}
           canEdit={canEdit}
-          retryingRefId={retryFileRefMutation.isPending ? retryFileRefMutation.variables : undefined}
-          removingRefId={deleteFileRefMutation.isPending ? deleteFileRefMutation.variables : undefined}
+          canToggleEnabled={canUpdateDocument}
+          canRetry={canManageIndex}
+          canRemove={canDeleteDocument}
+          retryingRefId={
+            retryFileRefMutation.isPending ? retryFileRefMutation.variables : undefined
+          }
+          removingRefId={
+            deleteFileRefMutation.isPending ? deleteFileRefMutation.variables : undefined
+          }
           togglingRefId={togglingRefId}
           onRetry={handleRetryFileRef}
           onRemove={setRefToRemove}

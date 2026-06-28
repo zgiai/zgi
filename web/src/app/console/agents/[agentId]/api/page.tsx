@@ -9,9 +9,9 @@ import { useAgent } from '@/hooks/agent/use-agents';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import type { AgentType } from '@/services/types/agent';
 import { useT } from '@/i18n';
-import { canShowAgentApiKeys } from '@/utils/agent-detail-routes';
+import { canShowAgentApiKeys, supportsWorkflowDetailPages } from '@/utils/agent-detail-routes';
 import { getErrorMessage } from '@/utils/error-notifications';
-import { AGENT_MANAGE_PERMISSION_CODES } from '@/constants/permissions';
+import { WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 export default function AgentApiPage() {
   const { agentId } = useParams<{ agentId: string }>();
@@ -20,9 +20,13 @@ export default function AgentApiPage() {
 
   const { agent, isLoading, error } = useAgent(agentId);
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
+  const canManageRuntimeAccess = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage);
   const agentType = (agent?.data?.agent_type as AgentType | undefined) ?? undefined;
-  const canShowWorkflowApiTabs = canShowAgentApiKeys(agentType, { canView: true, canManage });
+  const canShowApiTabs = canShowAgentApiKeys(agentType, {
+    canView: true,
+    canManageRuntimeAccess,
+  });
+  const supportsApiTabs = supportsWorkflowDetailPages(agentType);
 
   if (isLoading || isPermissionsLoading) {
     return (
@@ -48,23 +52,7 @@ export default function AgentApiPage() {
     );
   }
 
-  if (!canManage) {
-    return (
-      <div className="flex h-full w-full items-center justify-center p-6">
-        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
-          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
-            <AlertCircle className="size-5 text-muted-foreground" />
-          </div>
-          <div className="text-lg font-semibold">{t('common.accessDenied')}</div>
-          <div className="mt-2 text-sm text-muted-foreground">
-            {t('common.unauthorizedDescription')}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!canShowWorkflowApiTabs) {
+  if (!supportsApiTabs) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
@@ -74,6 +62,22 @@ export default function AgentApiPage() {
           <div className="text-lg font-semibold">{tWebapp('appCenter.appUnavailableTitle')}</div>
           <div className="mt-2 text-sm text-muted-foreground">
             {tWebapp('appCenter.appUnavailableDescription')}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canShowApiTabs) {
+    return (
+      <div className="flex h-full w-full items-center justify-center p-6">
+        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+            <AlertCircle className="size-5 text-muted-foreground" />
+          </div>
+          <div className="text-lg font-semibold">{t('common.accessDenied')}</div>
+          <div className="mt-2 text-sm text-muted-foreground">
+            {t('common.unauthorizedDescription')}
           </div>
         </div>
       </div>

@@ -14,6 +14,7 @@ interface AgentRuntimeKnowledgeSectionProps {
   isDatasetsLoading: boolean;
   selectedKnowledgeDatasets: AgentKnowledgeDataset[];
   selectedKnowledgeDatasetIds: string[];
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onOpenKnowledgeDialog: () => void;
   onToggleKnowledgeDataset: (datasetId: string, checked: boolean) => void;
@@ -24,6 +25,7 @@ export function AgentRuntimeKnowledgeSection({
   isDatasetsLoading,
   selectedKnowledgeDatasets,
   selectedKnowledgeDatasetIds,
+  readOnly = false,
   onToggleSection,
   onOpenKnowledgeDialog,
   onToggleKnowledgeDataset,
@@ -42,6 +44,7 @@ export function AgentRuntimeKnowledgeSection({
       isLoading={isDatasetsLoading}
       onToggleSection={onToggleSection}
       onAdd={onOpenKnowledgeDialog}
+      readOnly={readOnly}
     >
       <div className="space-y-2">
         {selectedKnowledgeDatasets.map(dataset => (
@@ -70,6 +73,7 @@ export function AgentRuntimeKnowledgeSection({
                 className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
                 aria-label={t('knowledge.remove', { name: dataset.name })}
                 onClick={() => onToggleKnowledgeDataset(dataset.id, false)}
+                disabled={readOnly}
               >
                 <Trash2 className="size-4" />
               </Button>
