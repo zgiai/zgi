@@ -204,6 +204,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				switch decision.normalizedStatus() {
 				case completionVerificationStatusPass:
 					completionVerificationRetryCount = 0
+					if strings.TrimSpace(text) == "" {
+						if answer, ok := FastPathFinalAnswerForCompletionEvidence(completionEvidenceForFastPath(req)); ok {
+							text = answer
+						}
+					}
 				case completionVerificationStatusNeedsAction:
 					completionVerificationRetryCount++
 					if completionVerificationRetryCount > defaultMaxCompletionVerificationRetries {

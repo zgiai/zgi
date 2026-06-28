@@ -37,6 +37,15 @@ func FastPathFinalAnswerForToolTrace(trace skills.SkillTrace) (string, bool) {
 		case "delete_file":
 			return fileManagementDeleteFastPathAnswer(trace.Result)
 		}
+	case strings.EqualFold(skillID, skills.SkillFileGenerator):
+		switch toolName {
+		case "generate_file", "generate_docx", "generate_pdf", "generate_pptx":
+			return generatedArtifactFastPathAnswer(trace.Result, skillID, toolName)
+		}
+	case strings.EqualFold(skillID, skills.SkillChartGenerator):
+		if toolName == "generate_chart" {
+			return generatedArtifactFastPathAnswer(trace.Result, skillID, toolName)
+		}
 	default:
 		return "", false
 	}
@@ -69,6 +78,12 @@ func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (
 		return answer, true
 	}
 	if answer, ok := latestToolResultFastPathAnswerFromEvidence(evidence); ok {
+		return answer, true
+	}
+	if answer, ok := latestClientActionFastPathAnswerFromEvidence(evidence); ok {
+		return answer, true
+	}
+	if answer, ok := generatedArtifactFastPathAnswerFromEvidence(evidence); ok {
 		return answer, true
 	}
 	return "", false
@@ -117,7 +132,12 @@ func fastPathPendingActionBlocksTrace(trace skills.SkillTrace, pending string) b
 	if skillID != "" && strings.Contains(pending, skillID+"/"+toolName) {
 		return false
 	}
-	if fastPathAuthoritativeMutation(trace) && fastPathPendingActionIsPostVerification(pending) {
+	switch {
+	case fastPathAuthoritativeMutation(trace) && fastPathPendingActionIsPostVerification(pending):
+		return false
+	case fastPathTraceIsConsoleNavigation(trace) && fastPathPendingActionIsRoutePostVerification(pending):
+		return false
+	case fastPathTraceIsTemporaryArtifactGeneration(trace) && fastPathPendingActionIsArtifactPostVerification(pending):
 		return false
 	}
 	return true
@@ -239,6 +259,28 @@ func fastPathAuthoritativeMutation(trace skills.SkillTrace) bool {
 		return toolName == "save_file_to_management" || toolName == "delete_file"
 	}
 	return false
+}
+
+func fastPathTraceIsConsoleNavigation(trace skills.SkillTrace) bool {
+	return strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillConsoleNavigator) &&
+		strings.EqualFold(strings.TrimSpace(trace.ToolName), "navigate")
+}
+
+func fastPathTraceIsTemporaryArtifactGeneration(trace skills.SkillTrace) bool {
+	skillID := strings.TrimSpace(trace.SkillID)
+	toolName := strings.ToLower(strings.TrimSpace(trace.ToolName))
+	if strings.EqualFold(skillID, skills.SkillChartGenerator) {
+		return toolName == "generate_chart"
+	}
+	if !strings.EqualFold(skillID, skills.SkillFileGenerator) {
+		return false
+	}
+	switch toolName {
+	case "generate_file", "generate_docx", "generate_pdf", "generate_pptx":
+		return true
+	default:
+		return false
+	}
 }
 
 func agentCreateFastPathAnswerWithEvidence(trace skills.SkillTrace, evidence map[string]interface{}) (string, bool) {
@@ -435,6 +477,50 @@ func fastPathPendingActionIsPostVerification(pending string) bool {
 		"search",
 		"read",
 		"inspect",
+		"generated_file_metadata",
+		"generated_files",
+		"message_file_card",
+		"file card",
+	} {
+		if strings.Contains(pending, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func fastPathPendingActionIsRoutePostVerification(pending string) bool {
+	pending = strings.ToLower(strings.TrimSpace(pending))
+	if pending == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"observe",
+		"observation",
+		"asset_observation",
+		"page_refresh",
+		"refresh",
+		"route_loaded",
+		"current_page",
+		"inspect",
+	} {
+		if strings.Contains(pending, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func fastPathPendingActionIsArtifactPostVerification(pending string) bool {
+	pending = strings.ToLower(strings.TrimSpace(pending))
+	if pending == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"generated_file_metadata",
+		"generated_files",
+		"message_file_card",
+		"file card",
 	} {
 		if strings.Contains(pending, marker) {
 			return true
@@ -452,6 +538,50 @@ func latestToolResultFastPathAnswerFromEvidence(evidence map[string]interface{})
 		if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(trace, evidence); ok {
 			return answer, true
 		}
+	}
+	return "", false
+}
+
+func generatedArtifactFastPathAnswerFromEvidence(evidence map[string]interface{}) (string, bool) {
+	for _, artifact := range fastPathGeneratedArtifactCandidates(evidence) {
+		skillID := strings.TrimSpace(firstNonEmptyString(artifact["skill_id"], artifact["skillID"]))
+		toolName := strings.TrimSpace(firstNonEmptyString(artifact["tool_name"], artifact["toolName"]))
+		if skillID == "" {
+			skillID = skills.SkillFileGenerator
+		}
+		if toolName == "" {
+			toolName = "generate_file"
+		}
+		trace := skills.SkillTrace{
+			Kind:     "tool_call",
+			Status:   "success",
+			SkillID:  skillID,
+			ToolName: toolName,
+			Result:   artifact,
+		}
+		if fastPathBlockedByPendingPlanAction(trace, evidence) {
+			continue
+		}
+		if answer, ok := generatedArtifactFastPathAnswer(artifact, skillID, toolName); ok {
+			return answer, true
+		}
+	}
+	return "", false
+}
+
+func latestClientActionFastPathAnswerFromEvidence(evidence map[string]interface{}) (string, bool) {
+	if len(evidenceMapFromAny(evidence["operation_plan"])) == 0 {
+		return "", false
+	}
+	for _, action := range fastPathClientActionCandidates(evidence) {
+		trace, answer, ok := fastPathTraceAndAnswerFromClientAction(action)
+		if !ok {
+			continue
+		}
+		if fastPathBlockedByPendingPlanAction(trace, evidence) {
+			continue
+		}
+		return answer, true
 	}
 	return "", false
 }
@@ -483,6 +613,63 @@ func fastPathLatestToolResultCandidates(evidence map[string]interface{}) []map[s
 	return candidates
 }
 
+func fastPathGeneratedArtifactCandidates(evidence map[string]interface{}) []map[string]interface{} {
+	if len(evidence) == 0 {
+		return nil
+	}
+	candidates := make([]map[string]interface{}, 0, 8)
+	appendFiles := func(source map[string]interface{}) {
+		files := mapSliceFromAny(source["generated_files"])
+		for i := len(files) - 1; i >= 0; i-- {
+			if len(files[i]) > 0 {
+				candidates = append(candidates, files[i])
+			}
+		}
+	}
+	appendFiles(evidence)
+	operationSummary := evidenceMapFromAny(evidence["operation_result_summary"])
+	appendFiles(operationSummary)
+	executionSummary := evidenceMapFromAny(evidence["execution_summary"])
+	appendFiles(executionSummary)
+	appendFiles(evidenceMapFromAny(executionSummary["operation_result_summary"]))
+	executionLedger := evidenceMapFromAny(evidence["execution_ledger"])
+	appendFiles(executionLedger)
+	appendFiles(evidenceMapFromAny(executionLedger["summary"]))
+	appendFiles(evidenceMapFromAny(executionLedger["operation_result_summary"]))
+	return dedupeFastPathMaps(candidates, "tool_file_id", "file_id", "filename")
+}
+
+func fastPathClientActionCandidates(evidence map[string]interface{}) []map[string]interface{} {
+	if len(evidence) == 0 {
+		return nil
+	}
+	candidates := make([]map[string]interface{}, 0, 8)
+	appendLatest := func(source map[string]interface{}) {
+		if latest := evidenceMapFromAny(source["latest_client_action"]); len(latest) > 0 {
+			candidates = append(candidates, latest)
+		}
+	}
+	appendActions := func(source map[string]interface{}) {
+		actions := mapSliceFromAny(source["client_actions"])
+		for i := len(actions) - 1; i >= 0; i-- {
+			if len(actions[i]) > 0 {
+				candidates = append(candidates, actions[i])
+			}
+		}
+	}
+	operationSummary := evidenceMapFromAny(evidence["operation_result_summary"])
+	appendLatest(operationSummary)
+	appendActions(evidence)
+	executionSummary := evidenceMapFromAny(evidence["execution_summary"])
+	appendLatest(evidenceMapFromAny(executionSummary["operation_result_summary"]))
+	appendActions(executionSummary)
+	executionLedger := evidenceMapFromAny(evidence["execution_ledger"])
+	appendLatest(evidenceMapFromAny(executionLedger["operation_result_summary"]))
+	appendActions(executionLedger)
+	appendActions(evidenceMapFromAny(executionLedger["summary"]))
+	return dedupeFastPathMaps(candidates, "action_id", "runtime_id", "href", "loaded_href", "observed_path")
+}
+
 func fastPathTraceFromToolResult(result map[string]interface{}) (skills.SkillTrace, bool) {
 	if len(result) == 0 {
 		return skills.SkillTrace{}, false
@@ -509,6 +696,83 @@ func fastPathTraceFromToolResult(result map[string]interface{}) (skills.SkillTra
 	}, true
 }
 
+func fastPathTraceAndAnswerFromClientAction(action map[string]interface{}) (skills.SkillTrace, string, bool) {
+	if len(action) == 0 {
+		return skills.SkillTrace{}, "", false
+	}
+	status := strings.ToLower(strings.TrimSpace(firstNonEmptyString(action["status"], action["latest_client_action_status"])))
+	if status != "succeeded" && status != "success" && status != "completed" {
+		return skills.SkillTrace{}, "", false
+	}
+	result := evidenceMapFromAny(action["result"])
+	skillID := strings.TrimSpace(firstNonEmptyString(action["skill_id"], action["skillID"]))
+	toolName := strings.TrimSpace(firstNonEmptyString(action["tool_name"], action["toolName"]))
+	actionType := strings.ToLower(strings.TrimSpace(firstNonEmptyString(action["action_type"], action["type"], action["event_type"])))
+	if !strings.EqualFold(skillID, skills.SkillConsoleNavigator) &&
+		!strings.EqualFold(toolName, "navigate") &&
+		actionType != "route_navigation" {
+		return skills.SkillTrace{}, "", false
+	}
+	href := strings.TrimSpace(firstNonEmptyString(
+		action["href"],
+		action["route"],
+		action["target_page"],
+		action["loaded_href"],
+		action["observed_path"],
+		result["href"],
+		result["route"],
+		result["target_page"],
+		result["loaded_href"],
+		result["observed_path"],
+	))
+	if href == "" {
+		return skills.SkillTrace{}, "", false
+	}
+	label := strings.TrimSpace(firstNonEmptyString(action["label"], action["title"], result["label"], result["title"]))
+	if label == "" {
+		label = href
+	}
+	return skills.SkillTrace{
+		Kind:     "client_action",
+		Status:   "success",
+		SkillID:  skills.SkillConsoleNavigator,
+		ToolName: "navigate",
+		Result: map[string]interface{}{
+			"href":   href,
+			"label":  label,
+			"status": status,
+		},
+	}, fmt.Sprintf("\u5df2\u6253\u5f00\u300c%s\u300d\u9875\u9762\u3002", label), true
+}
+
+func generatedArtifactFastPathAnswer(result map[string]interface{}, skillID string, toolName string) (string, bool) {
+	if len(result) == 0 {
+		return "", false
+	}
+	status := strings.ToLower(strings.TrimSpace(stringFromAny(result["status"])))
+	if status != "" && status != "completed" && status != "success" && status != "succeeded" {
+		return "", false
+	}
+	target := strings.ToLower(strings.TrimSpace(stringFromAny(result["target"])))
+	if target == "managed_file" || target == "file_management" {
+		return "", false
+	}
+	fileID := strings.TrimSpace(firstNonEmptyString(result["tool_file_id"], result["file_id"], result["id"], result["source_file_id"]))
+	if fileID == "" &&
+		strings.TrimSpace(firstNonEmptyString(result["download_url"], result["url"])) == "" {
+		return "", false
+	}
+	filename := strings.TrimSpace(firstNonEmptyString(result["filename"], result["name"], result["file_name"], result["title"]))
+	if filename == "" {
+		return "", false
+	}
+	if strings.EqualFold(strings.TrimSpace(skillID), skills.SkillChartGenerator) ||
+		strings.EqualFold(strings.TrimSpace(toolName), "generate_chart") {
+		return fmt.Sprintf("\u56fe\u8868\u6587\u4ef6\u300c%s\u300d\u5df2\u751f\u6210\u3002", filename), true
+	}
+	return fmt.Sprintf("\u6587\u4ef6\u300c%s\u300d\u5df2\u751f\u6210\u3002", filename), true
+}
+
 func copyFastPathResultMap(source map[string]interface{}) map[string]interface{} {
 	if len(source) == 0 {
 		return nil
@@ -521,6 +785,34 @@ func copyFastPathResultMap(source map[string]interface{}) map[string]interface{}
 		default:
 			out[key] = value
 		}
+	}
+	return out
+}
+
+func dedupeFastPathMaps(items []map[string]interface{}, keyFields ...string) []map[string]interface{} {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		if len(item) == 0 {
+			continue
+		}
+		keyParts := make([]string, 0, len(keyFields))
+		for _, field := range keyFields {
+			if value := strings.TrimSpace(firstNonEmptyString(item[field])); value != "" {
+				keyParts = append(keyParts, field+"="+value)
+			}
+		}
+		key := strings.Join(keyParts, "|")
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		out = append(out, item)
 	}
 	return out
 }

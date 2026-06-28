@@ -253,6 +253,109 @@ func TestFastPathFinalAnswerForFileManagementDeleteRequiresDeletedEvidence(t *te
 	}
 }
 
+func TestFastPathFinalAnswerForGeneratedArtifact(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":       "completed",
+			"target":       "temporary_artifact",
+			"tool_file_id": "tool-file-1",
+			"filename":     "draft.svg",
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want generated artifact answer")
+	}
+	if !strings.Contains(answer, "draft.svg") || !strings.Contains(answer, "\u5df2\u751f\u6210") {
+		t.Fatalf("answer = %q, want generated artifact confirmation", answer)
+	}
+}
+
+func TestFastPathFinalAnswerForGeneratedArtifactBlocksManagedSavePending(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":       "completed",
+			"target":       "temporary_artifact",
+			"tool_file_id": "tool-file-1",
+			"filename":     "draft.svg",
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "save_remaining_generated_files_to_file_management",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:file-generator/generate_file",
+					"status":    "completed",
+					"skill_id":  skills.SkillFileGenerator,
+					"tool_name": "generate_file",
+				},
+				map[string]interface{}{
+					"id":        "tool:file-manager/save_file_to_management",
+					"status":    "pending",
+					"skill_id":  skills.SkillFileManager,
+					"tool_name": "save_file_to_management",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:file-generator/generate_file":         "completed",
+				"tool:file-manager/save_file_to_management": "pending",
+			},
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want blocked while managed save is pending")
+	}
+}
+
+func TestFastPathFinalAnswerForGeneratedArtifactBlocksPendingRoute(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":       "completed",
+			"target":       "temporary_artifact",
+			"tool_file_id": "tool-file-1",
+			"filename":     "draft.svg",
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "navigate_to_files_page",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:file-generator/generate_file",
+					"status":    "completed",
+					"skill_id":  skills.SkillFileGenerator,
+					"tool_name": "generate_file",
+				},
+				map[string]interface{}{
+					"id":        "tool:console-navigator/navigate",
+					"status":    "pending",
+					"skill_id":  skills.SkillConsoleNavigator,
+					"tool_name": "navigate",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:file-generator/generate_file": "completed",
+				"tool:console-navigator/navigate":   "pending",
+			},
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want blocked while route step is pending")
+	}
+}
+
 func TestFastPathFinalAnswerWithEvidenceBlocksDifferentPendingPlanAction(t *testing.T) {
 	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
 		Kind:     "tool_call",
@@ -618,6 +721,102 @@ func TestFastPathFinalAnswerForCompletionEvidenceUsesLatestToolResultAfterObserv
 	}
 }
 
+func TestFastPathFinalAnswerForCompletionEvidenceSummarizesGeneratedArtifact(t *testing.T) {
+	evidence := map[string]interface{}{
+		"generated_files": []interface{}{
+			map[string]interface{}{
+				"target":       "temporary_artifact",
+				"tool_file_id": "tool-file-1",
+				"filename":     "chart.svg",
+				"skill_id":     skills.SkillChartGenerator,
+				"tool_name":    "generate_chart",
+			},
+		},
+		"operation_plan": map[string]interface{}{
+			"status":              "completed",
+			"pending_next_action": "message_file_card",
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want generated artifact answer")
+	}
+	if !strings.Contains(answer, "chart.svg") || !strings.Contains(answer, "\u56fe\u8868\u6587\u4ef6") {
+		t.Fatalf("answer = %q, want chart artifact confirmation", answer)
+	}
+}
+
+func TestFastPathFinalAnswerForCompletionEvidenceSummarizesRouteClientAction(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "asset_observation",
+		},
+		"operation_result_summary": map[string]interface{}{
+			"latest_client_action": map[string]interface{}{
+				"status":      "succeeded",
+				"action_type": "route_navigation",
+				"skill_id":    skills.SkillConsoleNavigator,
+				"tool_name":   "navigate",
+				"label":       "\u6587\u4ef6\u7ba1\u7406",
+				"result": map[string]interface{}{
+					"loaded_href": "/console/files",
+				},
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want route client action answer")
+	}
+	if !strings.Contains(answer, "\u6587\u4ef6\u7ba1\u7406") || !strings.Contains(answer, "\u5df2\u6253\u5f00") {
+		t.Fatalf("answer = %q, want route-open confirmation", answer)
+	}
+}
+
+func TestFastPathFinalAnswerForCompletionEvidenceBlocksRouteWhenNextToolPending(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:console-navigator/navigate",
+					"status":    "completed",
+					"skill_id":  skills.SkillConsoleNavigator,
+					"tool_name": "navigate",
+				},
+				map[string]interface{}{
+					"id":        "tool:file-generator/generate_file",
+					"status":    "pending",
+					"skill_id":  skills.SkillFileGenerator,
+					"tool_name": "generate_file",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:console-navigator/navigate":   "completed",
+				"tool:file-generator/generate_file": "pending",
+			},
+		},
+		"operation_result_summary": map[string]interface{}{
+			"latest_client_action": map[string]interface{}{
+				"status":      "succeeded",
+				"action_type": "route_navigation",
+				"skill_id":    skills.SkillConsoleNavigator,
+				"tool_name":   "navigate",
+				"result": map[string]interface{}{
+					"loaded_href": "/console/files",
+				},
+			},
+		},
+	}
+
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by pending file generation", answer)
+	}
+}
+
 func TestFastPathFinalAnswerForCompletionEvidenceRespectsPendingDifferentPlanAction(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -653,6 +852,85 @@ func TestFastPathFinalAnswerForCompletionEvidenceRespectsPendingDifferentPlanAct
 
 	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
 		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by pending Agent config update", answer)
+	}
+}
+
+func TestRunnerUsesFastPathWhenVerifierPassesEmptyFinalAnswer(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillFileGenerator, `---
+name: file-generator
+description: Generate files.
+when_to_use: Use for file generation.
+provider_type: builtin
+provider_id: file_generator
+runtime_type: tool
+tools:
+  - generate_file
+---
+
+# File Generator
+
+Use generate_file to create a temporary artifact.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: ""},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"generated file evidence exists","missing_steps":[],"unsupported_claims":[],"next_action_hint":"","final_answer":"","final_answer_guidance":""}`},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillFileGenerator})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "生成一个 svg 文件"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"user_request": "生成一个 svg 文件",
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":       "temporary_artifact",
+						"tool_file_id": "tool-file-1",
+						"filename":     "empty-final.svg",
+						"skill_id":     skills.SkillFileGenerator,
+						"tool_name":    "generate_file",
+					},
+				},
+				"operation_plan": map[string]interface{}{
+					"status":              "completed",
+					"pending_next_action": "message_file_card",
+				},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(answer, "empty-final.svg") || !strings.Contains(answer, "\u5df2\u751f\u6210") {
+		t.Fatalf("answer = %q, want evidence-based generated file answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want planning plus verifier", fakeLLM.appChatCalls)
 	}
 }
 
