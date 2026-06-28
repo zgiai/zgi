@@ -44,6 +44,12 @@ func (s *service) RunToolGovernanceDecisionStream(
 	}
 	continuation, err := s.beginToolGovernanceContinuation(ctx, scope, conversationID, messageID, correlationID)
 	if err != nil {
+		if IsContinuationAlreadyRunningError(err) {
+			if streamErr := s.StreamConversationEvents(ctx, scope, conversationID, messageID, "", onEvent); streamErr != nil {
+				return nil, streamErr
+			}
+			return &ChatResult{Status: runtimemodel.MessageStatusStreaming}, nil
+		}
 		return nil, err
 	}
 
@@ -107,7 +113,7 @@ func (s *service) beginToolGovernanceContinuation(ctx context.Context, scope Sco
 		return nil, fmt.Errorf("%w: tool governance approval event not found", ErrNotFound)
 	}
 	if message.Status == runtimemodel.MessageStatusStreaming {
-		return nil, fmt.Errorf("%w: tool governance continuation is already running; reconnect to the active stream instead of retrying the action", ErrInvalidInput)
+		return nil, newContinuationAlreadyRunningError("tool governance continuation is already running; reconnect to the active stream instead of retrying the action")
 	}
 	if message.Status != runtimemodel.MessageStatusWaitingApproval {
 		return nil, fmt.Errorf("%w: message is not waiting for tool governance approval", ErrInvalidInput)
@@ -126,7 +132,7 @@ func (s *service) beginToolGovernanceContinuation(ctx context.Context, scope Sco
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return fmt.Errorf("%w: tool governance continuation is already running; reconnect to the active stream instead of retrying the action", ErrInvalidInput)
+			return newContinuationAlreadyRunningError("tool governance continuation is already running; reconnect to the active stream instead of retrying the action")
 		}
 		txRepos := repository.NewRepositories(tx)
 		if err := txRepos.Conversation.StartStreaming(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, message.ID); err != nil {

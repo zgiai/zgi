@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
@@ -594,6 +596,9 @@ func TestBeginClientActionContinuationRejectsDuplicateAfterClaim(t *testing.T) {
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("duplicate beginClientActionContinuation() error = %v, want ErrInvalidInput", err)
 	}
+	if !errors.Is(err, ErrContinuationAlreadyRunning) {
+		t.Fatalf("duplicate beginClientActionContinuation() error = %v, want ErrContinuationAlreadyRunning", err)
+	}
 	if duplicate != nil {
 		t.Fatalf("duplicate continuation = %#v, want nil", duplicate)
 	}
@@ -800,6 +805,201 @@ func TestBeginToolGovernanceContinuationRejectsAlreadyStreamingMessage(t *testin
 	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("beginToolGovernanceContinuation() error = %v, want already running ErrInvalidInput", err)
 	}
+	if !errors.Is(err, ErrContinuationAlreadyRunning) {
+		t.Fatalf("beginToolGovernanceContinuation() error = %v, want ErrContinuationAlreadyRunning", err)
+	}
+}
+
+func TestRunToolGovernanceDecisionStreamAlreadyRunningRecoversActiveStream(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	now := time.Now().UTC()
+
+	conversation := &runtimemodel.Conversation{
+		ID:                   conversationID,
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		CallerType:           runtimemodel.ConversationCallerAIChat,
+		Status:               runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
+		CurrentLeafMessageID: &messageID,
+		Metadata:             map[string]interface{}{},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	message := &runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "Delete report.pdf",
+		Status:         runtimemodel.MessageStatusWaitingApproval,
+		Metadata:       pendingToolGovernanceDecisionMetadata("corr-approve"),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
+	conversationRepo := &toolGovernanceStreamConversationRepo{conversation: conversation}
+	llm := &toolGovernanceStreamLLM{}
+	svc := NewService(&repository.Repositories{
+		Access:       toolGovernanceStreamAccessRepo{},
+		Conversation: conversationRepo,
+		Message:      messageRepo,
+	}, llm).(*service)
+
+	if _, err := svc.SubmitToolGovernanceDecision(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		"corr-approve",
+		runtimedto.ToolGovernanceDecisionRequest{Action: "approve"},
+	); err != nil {
+		t.Fatalf("SubmitToolGovernanceDecision() error = %v", err)
+	}
+
+	conversation.RuntimeStatus = runtimemodel.ConversationRuntimeStatusStreaming
+	conversation.ActiveMessageID = &messageID
+	message.Status = runtimemodel.MessageStatusStreaming
+
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer redisServer.Close()
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close()
+	svc.events = newStreamEventStore(redisClient)
+	appendRecoveredContinuationEvents(t, ctx, svc.events, conversationID, messageID)
+
+	var events []StreamEvent
+	result, err := svc.RunToolGovernanceDecisionStream(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		"corr-approve",
+		runtimedto.ToolGovernanceDecisionRequest{Action: "approve"},
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunToolGovernanceDecisionStream() error = %v", err)
+	}
+	if result == nil || result.Status != runtimemodel.MessageStatusStreaming {
+		t.Fatalf("result = %#v, want streaming recovery result", result)
+	}
+	if len(llm.appChatRequests) != 0 || len(llm.streamRequests) != 0 {
+		t.Fatalf("LLM calls = app %d stream %d, want none while reconnecting active stream", len(llm.appChatRequests), len(llm.streamRequests))
+	}
+	if messageRepo.updateCompletedCalled || message.Status != runtimemodel.MessageStatusStreaming {
+		t.Fatalf("message status = %q completedCalled=%v, want existing active stream untouched", message.Status, messageRepo.updateCompletedCalled)
+	}
+	assertRecoveredContinuationEvents(t, events)
+}
+
+func TestRunClientActionContinuationStreamAlreadyRunningRecoversActiveStream(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	provider := "deepseek"
+	now := time.Now().UTC()
+	actionID := "route_navigation:open-files"
+	event := map[string]interface{}{
+		"action_id":   actionID,
+		"action_type": "route_navigation",
+		"status":      clientActionStatusWaiting,
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+		"href":        "/console/files",
+	}
+	metadata := mergeClientActionMetadata(map[string]interface{}{
+		"surface":              "contextual_sidebar",
+		"configured_skill_ids": []string{skills.SkillConsoleNavigator},
+	}, event)
+	metadata["client_action_continuation"] = compactSkillInvocation(event)
+
+	conversation := &runtimemodel.Conversation{
+		ID:                   conversationID,
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		CallerType:           runtimemodel.ConversationCallerAIChat,
+		Title:                "Files",
+		Status:               runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusStreaming,
+		CurrentLeafMessageID: &messageID,
+		ActiveMessageID:      &messageID,
+		Metadata:             map[string]interface{}{},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	message := &runtimemodel.Message{
+		ID:              messageID,
+		ConversationID:  conversationID,
+		Query:           "Open files",
+		Status:          runtimemodel.MessageStatusStreaming,
+		ModelProvider:   &provider,
+		ModelName:       "deepseek-chat",
+		ModelParameters: map[string]interface{}{},
+		Metadata:        metadata,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
+	llm := &toolGovernanceStreamLLM{}
+	svc := NewService(&repository.Repositories{
+		Access:       toolGovernanceStreamAccessRepo{},
+		Conversation: &toolGovernanceStreamConversationRepo{conversation: conversation},
+		Message:      messageRepo,
+	}, llm).(*service)
+
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer redisServer.Close()
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close()
+	svc.events = newStreamEventStore(redisClient)
+	appendRecoveredContinuationEvents(t, ctx, svc.events, conversationID, messageID)
+
+	var events []StreamEvent
+	result, err := svc.RunClientActionContinuationStream(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		actionID,
+		runtimedto.ClientActionResultRequest{
+			Status:  "succeeded",
+			Surface: "contextual_sidebar",
+			Result: map[string]interface{}{
+				"loaded_href": "/console/files",
+			},
+		},
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunClientActionContinuationStream() error = %v", err)
+	}
+	if result == nil || result.Status != runtimemodel.MessageStatusStreaming {
+		t.Fatalf("result = %#v, want streaming recovery result", result)
+	}
+	if len(llm.appChatRequests) != 0 || len(llm.streamRequests) != 0 {
+		t.Fatalf("LLM calls = app %d stream %d, want none while reconnecting active stream", len(llm.appChatRequests), len(llm.streamRequests))
+	}
+	if messageRepo.updateCompletedCalled || message.Status != runtimemodel.MessageStatusStreaming {
+		t.Fatalf("message status = %q completedCalled=%v, want existing active stream untouched", message.Status, messageRepo.updateCompletedCalled)
+	}
+	assertRecoveredContinuationEvents(t, events)
 }
 
 func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t *testing.T) {
@@ -1349,6 +1549,54 @@ func assertToolGovernanceStreamEvents(t *testing.T, events []StreamEvent) {
 	} {
 		if !seen[want] {
 			t.Fatalf("stream events missing %q in %#v", want, events)
+		}
+	}
+}
+
+func appendRecoveredContinuationEvents(t *testing.T, ctx context.Context, store *streamEventStore, conversationID, messageID uuid.UUID) {
+	t.Helper()
+	payloadBase := map[string]interface{}{
+		"conversation_id": conversationID.String(),
+		"message_id":      messageID.String(),
+	}
+	for _, item := range []struct {
+		eventType string
+		payload   map[string]interface{}
+	}{
+		{eventType: streamEventMessageStart, payload: copyStringAnyMap(payloadBase)},
+		{eventType: streamEventMessage, payload: map[string]interface{}{
+			"conversation_id": conversationID.String(),
+			"message_id":      messageID.String(),
+			"answer":          "recovering existing stream",
+		}},
+		{eventType: streamEventMessageEnd, payload: map[string]interface{}{
+			"conversation_id": conversationID.String(),
+			"message_id":      messageID.String(),
+			"status":          runtimemodel.MessageStatusCompleted,
+			"metadata":        map[string]interface{}{},
+		}},
+	} {
+		if _, err := store.append(ctx, messageID, conversationID, item.eventType, item.payload); err != nil {
+			t.Fatalf("append %s event: %v", item.eventType, err)
+		}
+	}
+}
+
+func assertRecoveredContinuationEvents(t *testing.T, events []StreamEvent) {
+	t.Helper()
+	if len(events) == 0 {
+		t.Fatal("recovered stream events = none")
+	}
+	seen := map[string]bool{}
+	for _, event := range events {
+		if event.EventType == streamEventError {
+			t.Fatalf("recovered stream events = %#v, want no stream error", events)
+		}
+		seen[event.EventType] = true
+	}
+	for _, want := range []string{streamEventMessageStart, streamEventMessage, streamEventMessageEnd} {
+		if !seen[want] {
+			t.Fatalf("recovered stream events missing %q in %#v", want, events)
 		}
 	}
 }

@@ -95,6 +95,12 @@ func (s *service) RunClientActionContinuationStream(
 
 	continuation, err := s.beginClientActionContinuation(ctx, scope, conversationID, messageID, actionID)
 	if err != nil {
+		if IsContinuationAlreadyRunningError(err) {
+			if streamErr := s.StreamConversationEvents(ctx, scope, conversationID, messageID, "", onEvent); streamErr != nil {
+				return nil, streamErr
+			}
+			return &ChatResult{Status: runtimemodel.MessageStatusStreaming}, nil
+		}
 		return nil, err
 	}
 	conversation, message, err := s.reloadClientActionContinuationMessage(ctx, scope, conversationID, messageID)
@@ -200,7 +206,7 @@ func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope
 		return nil, fmt.Errorf("%w: client action event not found", ErrNotFound)
 	}
 	if message.Status == runtimemodel.MessageStatusStreaming {
-		return nil, fmt.Errorf("%w: client action continuation is already running; reconnect to the active stream instead of retrying the action", ErrInvalidInput)
+		return nil, newContinuationAlreadyRunningError("client action continuation is already running; reconnect to the active stream instead of retrying the action")
 	}
 	if message.Status != runtimemodel.MessageStatusWaitingClientAction {
 		return nil, fmt.Errorf("%w: message is not waiting for client action continuation", ErrInvalidInput)
@@ -219,7 +225,7 @@ func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return fmt.Errorf("%w: client action continuation is already running; reconnect to the active stream instead of retrying the action", ErrInvalidInput)
+			return newContinuationAlreadyRunningError("client action continuation is already running; reconnect to the active stream instead of retrying the action")
 		}
 		txRepos := repository.NewRepositories(tx)
 		if err := txRepos.Conversation.StartStreaming(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, message.ID); err != nil {
