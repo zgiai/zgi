@@ -75,9 +75,11 @@ const messages: WorkspaceMessages = {
       adminTitle: '让工作空间保持可协作状态',
       adminDescription: '通过成员管理和空间设置，让访问范围与当前工作空间的使用方式保持一致。',
       memberTitle: '当前访问范围由你的成员权限决定',
-      memberDescription: '你可以进入当前权限快照已开放的区域；如果需要更多权限，请联系工作空间管理员。',
+      memberDescription:
+        '你可以进入当前权限快照已开放的区域；如果需要更多权限，请联系工作空间管理员。',
       permissionBoundaryTitle: '权限边界',
-      permissionBoundaryDescription: '只有当前角色具备对应查看权限时，相关工作空间资产才会展示和开放入口。',
+      permissionBoundaryDescription:
+        '只有当前角色具备对应查看权限时，相关工作空间资产才会展示和开放入口。',
       memberOperationTitle: '成员操作',
       memberOperationDescription: '成员调整、空间设置和所有权操作统一保留在工作空间管理流程中。',
     },
@@ -98,7 +100,7 @@ const messages: WorkspaceMessages = {
     error: '加载成员列表失败',
     roles: {
       owner: '空间负责人',
-      admin: '管理员',
+      admin: '空间管理员',
       normal: '普通成员',
     },
     statuses: {
@@ -142,17 +144,22 @@ const messages: WorkspaceMessages = {
       workspaceId: '工作空间 ID',
     },
     transfer: {
-      title: '转让所有权',
-      description: '将此工作空间转让给另一位成员。此操作无法撤销。',
-      selectMember: '选择新所有者',
+      title: '空间负责人',
+      description:
+        '空间负责人是该工作空间唯一的责任人。组织所有者和管理员可以管理空间，但不会因此成为空间负责人。',
+      currentLead: '当前负责人',
+      noCurrentLead: '暂未设置负责人',
+      organizationManagerNotice:
+        '你正在以组织管理员身份管理此工作空间，这不会改变该空间的负责人身份。',
+      selectMember: '选择新的空间负责人',
       placeholder: '请选择一位成员...',
       searchPlaceholder: '搜索成员',
       noMembers: '没有可选成员',
-      button: '转让',
+      button: '更换负责人',
       confirm: {
-        title: '转让工作空间所有权',
-        description: '您确定要将工作空间所有权转让给 {name} 吗？转让后您将失去所有者权限。',
-        button: '确认转让',
+        title: '更换空间负责人',
+        description: '确认将 {name} 设为空间唯一负责人？当前负责人将调整为空间管理员。',
+        button: '确认更换',
       },
     },
     leave: {

@@ -175,6 +175,11 @@ export default function WorkspaceDetailPage() {
   };
   const getRoleDisplayName = (role: (typeof roles)[number]) =>
     role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name;
+  const getOrganizationRoleBadgeLabel = (role?: string) => {
+    if (role === 'owner') return t('detail.organizationOwner');
+    if (role === 'admin') return t('detail.organizationAdmin');
+    return '';
+  };
   const formatQuotaPoints = (value?: number | null) =>
     formatChannelCreditPoints(value ?? 0, { locale });
   const formatQuotaFiat = (value?: number | null) =>
@@ -611,6 +616,14 @@ export default function WorkspaceDetailPage() {
                             <span className="text-[11px] text-text-placeholder font-medium">
                               {member.email}
                             </span>
+                            {getOrganizationRoleBadgeLabel(member.organization_role) ? (
+                              <Badge
+                                variant="outline"
+                                className="mt-1 w-fit rounded-md border-blue-200 bg-blue-50 px-1.5 py-0 text-[10px] font-medium text-blue-700"
+                              >
+                                {getOrganizationRoleBadgeLabel(member.organization_role)}
+                              </Badge>
+                            ) : null}
                           </div>
                         </div>
                       </TableCell>
@@ -741,7 +754,9 @@ export default function WorkspaceDetailPage() {
         roleTemplates={selectableRoleTemplates}
         onApplyTemplate={handleApplyMemberTemplate}
         isSaving={isUpdatingPermissions}
-        isApplyingTemplate={!!memberToEditPermissions && updatingMemberId === memberToEditPermissions.id}
+        isApplyingTemplate={
+          !!memberToEditPermissions && updatingMemberId === memberToEditPermissions.id
+        }
       />
 
       {/* Quota Edit Dialog */}

@@ -13,6 +13,8 @@ import type { PermissionCode } from '@/constants/permissions';
 export interface Workspace {
   id: string;
   name: string;
+  leader_id?: string;
+  leader_name?: string;
 }
 
 export type WorkspaceContextStatus = 'loading' | 'ready' | 'workspace_required';

@@ -124,6 +124,7 @@ CREATE TABLE members (
 	organization_id text not null,
 	account_id text not null,
 	name text,
+	role text not null,
 	status text not null
 )`).Error)
 	require.NoError(t, db.Exec(`
@@ -162,10 +163,11 @@ CREATE TABLE workspace_members (
 		now,
 	).Error)
 	require.NoError(t, db.Exec(
-		`INSERT INTO members (organization_id, account_id, name, status) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO members (organization_id, account_id, name, role, status) VALUES (?, ?, ?, ?, ?)`,
 		"org-1",
 		"acc-1",
 		"Member Name",
+		"admin",
 		"active",
 	).Error)
 	require.NoError(t, db.Exec(
@@ -214,6 +216,7 @@ CREATE TABLE workspace_members (
 	require.NotNil(t, members[0].DepartmentName)
 	require.Equal(t, "dept-1", *members[0].DepartmentID)
 	require.Equal(t, "Platform", *members[0].DepartmentName)
+	require.Equal(t, "admin", members[0].OrganizationRole)
 }
 
 func TestUpdateMemberDirectPermissionsStoresExpandedDirectPermissions(t *testing.T) {
@@ -441,6 +444,181 @@ func TestGetAccessibleWorkspaceIDsReturnsDirectMembershipsOnly(t *testing.T) {
 	require.ElementsMatch(t, []string{"ws-direct-1", "ws-direct-2"}, workspaceIDs)
 }
 
+func TestTransferOwnerByOrganizationAdminDemotesActualOwner(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Workspace{}, &model.WorkspaceMember{}))
+
+	orgID := "org-1"
+	workspaceID := "ws-1"
+	oldOwnerID := "owner-1"
+	newOwnerID := "member-1"
+	operatorID := "org-admin-1"
+	require.NoError(t, db.Create(&model.Workspace{
+		ID:             workspaceID,
+		Name:           "Workspace",
+		Status:         model.WorkspaceStatusNormal,
+		Plan:           "basic",
+		OrganizationID: &orgID,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-owner",
+		WorkspaceID: workspaceID,
+		AccountID:   oldOwnerID,
+		Role:        model.WorkspaceRoleOwner,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-member",
+		WorkspaceID: workspaceID,
+		AccountID:   newOwnerID,
+		Role:        model.WorkspaceRoleNormal,
+	}).Error)
+
+	svc := &WorkspaceManagementServiceImpl{
+		db:                  db,
+		workspaceRepo:       repository.NewWorkspaceRepository(db),
+		workspaceMemberRepo: repository.NewWorkspaceMemberRepository(db),
+		organizationService: workspaceManagementTestOrganizationService{
+			adminAccounts: map[string]bool{operatorID: true},
+		},
+	}
+
+	err = svc.TransferOwner(context.Background(), workspaceID, operatorID, newOwnerID)
+
+	require.NoError(t, err)
+	var oldOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, oldOwnerID).First(&oldOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleAdmin, oldOwnerJoin.Role)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceRoleTemplate, oldOwnerJoin.PermissionSource)
+	require.NotNil(t, oldOwnerJoin.RoleID)
+	require.Equal(t, model.WorkspaceBuiltinRoleAdminID, *oldOwnerJoin.RoleID)
+
+	var newOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, newOwnerID).First(&newOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleOwner, newOwnerJoin.Role)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceOwner, newOwnerJoin.PermissionSource)
+
+	var operatorJoinCount int64
+	require.NoError(t, db.Model(&model.WorkspaceMember{}).
+		Where("workspace_id = ? AND account_id = ?", workspaceID, operatorID).
+		Count(&operatorJoinCount).Error)
+	require.Zero(t, operatorJoinCount)
+}
+
+func TestTransferOwnerNormalizesHistoricalOwnersWhenTargetAlreadyOwner(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Workspace{}, &model.WorkspaceMember{}))
+
+	orgID := "org-1"
+	workspaceID := "ws-1"
+	oldOwnerID := "owner-1"
+	targetOwnerID := "owner-2"
+	normalMemberID := "member-1"
+	operatorID := "org-admin-1"
+	require.NoError(t, db.Create(&model.Workspace{
+		ID:             workspaceID,
+		Name:           "Workspace",
+		Status:         model.WorkspaceStatusNormal,
+		Plan:           "basic",
+		OrganizationID: &orgID,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-owner-1",
+		WorkspaceID: workspaceID,
+		AccountID:   oldOwnerID,
+		Role:        model.WorkspaceRoleOwner,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-owner-2",
+		WorkspaceID: workspaceID,
+		AccountID:   targetOwnerID,
+		Role:        model.WorkspaceRoleOwner,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-member",
+		WorkspaceID: workspaceID,
+		AccountID:   normalMemberID,
+		Role:        model.WorkspaceRoleNormal,
+	}).Error)
+
+	svc := &WorkspaceManagementServiceImpl{
+		db:                  db,
+		workspaceRepo:       repository.NewWorkspaceRepository(db),
+		workspaceMemberRepo: repository.NewWorkspaceMemberRepository(db),
+		organizationService: workspaceManagementTestOrganizationService{
+			adminAccounts: map[string]bool{operatorID: true},
+		},
+	}
+
+	err = svc.TransferOwner(context.Background(), workspaceID, operatorID, targetOwnerID)
+
+	require.NoError(t, err)
+	var ownerCount int64
+	require.NoError(t, db.Model(&model.WorkspaceMember{}).
+		Where("workspace_id = ? AND role = ?", workspaceID, model.WorkspaceRoleOwner).
+		Count(&ownerCount).Error)
+	require.EqualValues(t, 1, ownerCount)
+
+	var oldOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, oldOwnerID).First(&oldOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleAdmin, oldOwnerJoin.Role)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceRoleTemplate, oldOwnerJoin.PermissionSource)
+
+	var targetOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, targetOwnerID).First(&targetOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleOwner, targetOwnerJoin.Role)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceOwner, targetOwnerJoin.PermissionSource)
+
+	var normalMemberJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, normalMemberID).First(&normalMemberJoin).Error)
+	require.Equal(t, model.WorkspaceRoleNormal, normalMemberJoin.Role)
+}
+
+func TestTransferOwnerByWorkspaceOwnerDemotesSelfToAdmin(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.WorkspaceMember{}))
+
+	workspaceID := "ws-1"
+	oldOwnerID := "owner-1"
+	newOwnerID := "member-1"
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-owner",
+		WorkspaceID: workspaceID,
+		AccountID:   oldOwnerID,
+		Role:        model.WorkspaceRoleOwner,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-member",
+		WorkspaceID: workspaceID,
+		AccountID:   newOwnerID,
+		Role:        model.WorkspaceRoleNormal,
+	}).Error)
+
+	svc := &WorkspaceManagementServiceImpl{
+		db:                  db,
+		workspaceMemberRepo: repository.NewWorkspaceMemberRepository(db),
+	}
+
+	err = svc.TransferOwner(context.Background(), workspaceID, oldOwnerID, newOwnerID)
+
+	require.NoError(t, err)
+	var oldOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, oldOwnerID).First(&oldOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleAdmin, oldOwnerJoin.Role)
+
+	var newOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, newOwnerID).First(&newOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleOwner, newOwnerJoin.Role)
+}
+
 type workspaceMemberDirectPermissionRepo struct {
 	repository.WorkspaceMemberRepository
 	join    *model.WorkspaceMember
@@ -490,9 +668,14 @@ func stringPtr(value string) *string {
 
 type workspaceManagementTestOrganizationService struct {
 	interfaces.OrganizationService
-	organization *model.Organization
+	organization  *model.Organization
+	adminAccounts map[string]bool
 }
 
 func (s workspaceManagementTestOrganizationService) GetOrganizationByWorkspaceID(context.Context, string) (*model.Organization, error) {
 	return s.organization, nil
+}
+
+func (s workspaceManagementTestOrganizationService) IsOrganizationAdminOrOwner(_ context.Context, _ string, accountID string) (bool, error) {
+	return s.adminAccounts[accountID], nil
 }

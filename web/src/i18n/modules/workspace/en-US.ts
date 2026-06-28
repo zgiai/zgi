@@ -103,7 +103,7 @@ const messages = {
     error: 'Failed to load members',
     roles: {
       owner: 'Workspace Lead',
-      admin: 'Admin',
+      admin: 'Workspace Admin',
       normal: 'Member',
     },
     statuses: {
@@ -148,18 +148,23 @@ const messages = {
       workspaceId: 'Workspace ID',
     },
     transfer: {
-      title: 'Transfer Ownership',
-      description: 'Transfer this workspace to another member. This action cannot be undone.',
-      selectMember: 'Select New Owner',
+      title: 'Workspace Lead',
+      description:
+        'The workspace lead is the unique person responsible for this workspace. Organization owners and admins can manage it without becoming the lead.',
+      currentLead: 'Current lead',
+      noCurrentLead: 'No workspace lead',
+      organizationManagerNotice:
+        'You are managing this workspace as an organization admin. This does not make you the workspace lead.',
+      selectMember: 'Select new workspace lead',
       placeholder: 'Choose a member...',
       searchPlaceholder: 'Search members',
       noMembers: 'No members available',
-      button: 'Transfer',
+      button: 'Change lead',
       confirm: {
-        title: 'Transfer Workspace Ownership',
+        title: 'Change workspace lead',
         description:
-          'Are you sure you want to transfer ownership to {name}? You will lose owner permissions.',
-        button: 'Confirm Transfer',
+          'Set {name} as the unique workspace lead? The current lead will become a workspace admin.',
+        button: 'Confirm change',
       },
     },
     leave: {

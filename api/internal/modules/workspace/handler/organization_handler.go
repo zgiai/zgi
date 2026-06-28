@@ -973,24 +973,6 @@ func (h *OrganizationHandler) UpdateOrganizationWorkspace(c *gin.Context) {
 			return
 		}
 
-		targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(ctx, workspaceID)
-		if err != nil || targetWorkspace == nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-
-		newLeader, err := h.accountService.GetAccountByID(ctx, leaderID)
-		if err != nil || newLeader == nil {
-			response.Fail(c, response.ErrAccountNotFound)
-			return
-		}
-
-		operator, err := h.accountService.GetAccountByID(ctx, accountID)
-		if err != nil || operator == nil {
-			response.Fail(c, response.ErrAccountNotFound)
-			return
-		}
-
 		existingJoinRole, err := h.workspaceManagementService.GetUserRole(ctx, leaderID, workspaceID)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
@@ -1003,26 +985,24 @@ func (h *OrganizationHandler) UpdateOrganizationWorkspace(c *gin.Context) {
 			}
 		}
 
-		if existingJoinRole == nil || *existingJoinRole != model.WorkspaceRoleOwner {
-			err = h.workspaceManagementService.UpdateMemberRoleWithPermissionCheck(ctx, targetWorkspace, newLeader, string(model.WorkspaceRoleOwner), operator)
-			if err != nil {
-				switch {
-				case isCannotOperateSelfError(err):
-					response.Fail(c, response.ErrCannotOperateSelf)
-					return
-				case isNoPermissionError(err):
-					response.Fail(c, response.ErrPermissionDenied)
-					return
-				case isMemberNotInWorkspaceError(err):
-					response.Fail(c, response.ErrMemberNotInWorkspace)
-					return
-				case isRoleAlreadyAssignedError(err):
-					response.Fail(c, response.ErrRoleAlreadyAssigned)
-					return
-				default:
-					response.FailWithMessage(c, response.ErrSystemError, err.Error())
-					return
-				}
+		err = h.workspaceManagementService.TransferOwner(ctx, workspaceID, accountID, leaderID)
+		if err != nil {
+			switch {
+			case isCannotOperateSelfError(err):
+				response.Fail(c, response.ErrCannotOperateSelf)
+				return
+			case isNoPermissionError(err):
+				response.Fail(c, response.ErrPermissionDenied)
+				return
+			case isMemberNotInWorkspaceError(err):
+				response.Fail(c, response.ErrMemberNotInWorkspace)
+				return
+			case isRoleAlreadyAssignedError(err):
+				response.Fail(c, response.ErrRoleAlreadyAssigned)
+				return
+			default:
+				response.FailWithMessage(c, response.ErrSystemError, err.Error())
+				return
 			}
 		}
 	}

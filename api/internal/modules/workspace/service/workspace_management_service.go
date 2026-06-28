@@ -788,6 +788,7 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMembersPaginated(ctx contex
 		PermissionSource         model.WorkspaceMemberPermissionSource `gorm:"column:permission_source"`
 		PermissionTemplateRoleID *string                               `gorm:"column:permission_template_role_id"`
 		MemberName               *string                               `gorm:"column:member_name"`
+		OrganizationRole         *string                               `gorm:"column:organization_role"`
 	}
 
 	var results []Result
@@ -805,7 +806,7 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMembersPaginated(ctx contex
 	}
 
 	if orgID != "" {
-		fields = append(fields, "om.name as member_name")
+		fields = append(fields, "om.name as member_name", "om.role as organization_role")
 		query = query.Joins("LEFT JOIN members om ON om.account_id = a.id AND om.organization_id = ?", orgID)
 	}
 
@@ -862,6 +863,10 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMembersPaginated(ctx contex
 		if r.Avatar != nil {
 			avatar = *r.Avatar
 		}
+		organizationRole := ""
+		if r.OrganizationRole != nil {
+			organizationRole = strings.TrimSpace(*r.OrganizationRole)
+		}
 
 		members = append(members, &interfaces.AccountWithRole{
 			ID:                       r.AccountID,
@@ -883,6 +888,7 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMembersPaginated(ctx contex
 			HasMobile:                r.MobileE164 != nil && strings.TrimSpace(*r.MobileE164) != "",
 			DepartmentID:             departmentsByAccount[r.AccountID].ID,
 			DepartmentName:           departmentsByAccount[r.AccountID].Name,
+			OrganizationRole:         organizationRole,
 		})
 	}
 
@@ -1181,19 +1187,19 @@ func (s *WorkspaceManagementServiceImpl) GetCurrentOrganization(ctx context.Cont
 	return s.workspaceMemberRepo.GetCurrentOrganization(ctx, accountID)
 }
 
-// TransferOwner transfers workspace ownership from current owner to another member
-func (s *WorkspaceManagementServiceImpl) TransferOwner(ctx context.Context, workspaceID, currentOwnerID, newOwnerID string) error {
+// TransferOwner transfers workspace ownership to another workspace member.
+func (s *WorkspaceManagementServiceImpl) TransferOwner(ctx context.Context, workspaceID, operatorID, newOwnerID string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.workspaceMemberRepo.WithTx(tx)
 
 		// 1. Verify operator authority. Workspace owners and organization admins can transfer ownership.
-		currentJoin, err := repo.GetByWorkspaceAndMember(ctx, workspaceID, currentOwnerID)
+		operatorJoin, err := repo.GetByWorkspaceAndMember(ctx, workspaceID, operatorID)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		operatorIsWorkspaceOwner := currentJoin != nil && currentJoin.Role == model.WorkspaceRoleOwner
+		operatorIsWorkspaceOwner := operatorJoin != nil && operatorJoin.Role == model.WorkspaceRoleOwner
 		if !operatorIsWorkspaceOwner {
-			allowed, err := s.isWorkspaceOrganizationAdminOrOwner(ctx, workspaceID, currentOwnerID)
+			allowed, err := s.isWorkspaceOrganizationAdminOrOwner(ctx, workspaceID, operatorID)
 			if err != nil {
 				return err
 			}
@@ -1210,23 +1216,33 @@ func (s *WorkspaceManagementServiceImpl) TransferOwner(ctx context.Context, work
 		if targetJoin == nil {
 			return usererrors.ErrMemberNotInWorkspace
 		}
-		if targetJoin.Role == model.WorkspaceRoleOwner {
-			return nil // Already owner
-		}
 
-		// 3. Downgrade current owner Member
-		currentJoin.Role = model.WorkspaceRoleNormal
-		adminRoleID := model.WorkspaceBuiltinRoleMemberID
-		currentJoin.RoleID = &adminRoleID
-		currentJoin.PermissionSource = model.WorkspaceMemberPermissionSourceRoleTemplate
-		currentJoin.PermissionTemplateRoleID = &adminRoleID
-		currentJoin.Permissions = nil
-		if err := s.applyWorkspaceMemberPermissionTemplate(ctx, currentJoin); err != nil {
+		// 3. Normalize historical owner rows. Organization admins may manage a workspace
+		// without being its owner or even a workspace member, so we always demote every
+		// existing owner except the target member.
+		joins, err := repo.GetJoinsByWorkspaceID(ctx, workspaceID)
+		if err != nil {
 			return err
 		}
 
-		if err := repo.Update(ctx, currentJoin); err != nil {
-			return fmt.Errorf("failed to downgrade current owner: %w", err)
+		for _, join := range joins {
+			if join == nil || join.Role != model.WorkspaceRoleOwner || join.AccountID == targetJoin.AccountID {
+				continue
+			}
+
+			join.Role = model.WorkspaceRoleAdmin
+			adminRoleID := model.WorkspaceBuiltinRoleAdminID
+			join.RoleID = &adminRoleID
+			join.PermissionSource = model.WorkspaceMemberPermissionSourceRoleTemplate
+			join.PermissionTemplateRoleID = &adminRoleID
+			join.Permissions = nil
+			if err := s.applyWorkspaceMemberPermissionTemplate(ctx, join); err != nil {
+				return err
+			}
+
+			if err := repo.Update(ctx, join); err != nil {
+				return fmt.Errorf("failed to downgrade current owner: %w", err)
+			}
 		}
 
 		// 4. Upgrade target member to Owner
@@ -1521,33 +1537,34 @@ func (s *WorkspaceManagementServiceImpl) UpdateMemberRoleExtensions(ctx context.
 			return fmt.Errorf("invalid role: %s", *newRole)
 		}
 
-		// Handle owner role special logic
-		if *newRole == "owner" {
-			// Find current owner and change their role to admin
-			currentOwnerJoin, err := s.workspaceMemberRepo.GetOwnerByWorkspaceID(ctx, workspace.ID)
-			if err == nil && currentOwnerJoin != nil {
-				currentOwnerJoin.Role = model.WorkspaceRoleAdmin
-				if err := s.workspaceMemberRepo.Update(ctx, currentOwnerJoin); err != nil {
-					return fmt.Errorf("failed to update current owner role to admin: %w", err)
-				}
+		if *newRole == string(model.WorkspaceRoleOwner) {
+			if err := s.TransferOwner(ctx, workspace.ID, operator.ID, member.ID); err != nil {
+				return err
 			}
-		}
-
-		// Update target member's role
-		targetMemberJoin.Role = model.WorkspaceMemberRole(*newRole)
-		if roleID := workspaceRoleIDForRoleChange(targetMemberJoin.Role); roleID != "" {
-			targetMemberJoin.RoleID = &roleID
+			targetMemberJoin, err = s.workspaceMemberRepo.GetByWorkspaceAndMember(ctx, workspace.ID, member.ID)
+			if err != nil {
+				return fmt.Errorf("failed to reload workspace account join: %w", err)
+			}
+			if targetMemberJoin == nil {
+				return usererrors.NewMemberNotInWorkspaceError("Member not in workspace")
+			}
 		} else {
-			targetMemberJoin.RoleID = nil
-		}
-		targetMemberJoin.PermissionSource = model.WorkspaceMemberPermissionSourceRoleTemplate
-		targetMemberJoin.PermissionTemplateRoleID = targetMemberJoin.RoleID
-		targetMemberJoin.Permissions = nil
-		if err := s.applyWorkspaceMemberPermissionTemplate(ctx, targetMemberJoin); err != nil {
-			return err
-		}
-		if err := s.workspaceMemberRepo.Update(ctx, targetMemberJoin); err != nil {
-			return fmt.Errorf("failed to update workspace account join: %w", err)
+			// Update target member's role
+			targetMemberJoin.Role = model.WorkspaceMemberRole(*newRole)
+			if roleID := workspaceRoleIDForRoleChange(targetMemberJoin.Role); roleID != "" {
+				targetMemberJoin.RoleID = &roleID
+			} else {
+				targetMemberJoin.RoleID = nil
+			}
+			targetMemberJoin.PermissionSource = model.WorkspaceMemberPermissionSourceRoleTemplate
+			targetMemberJoin.PermissionTemplateRoleID = targetMemberJoin.RoleID
+			targetMemberJoin.Permissions = nil
+			if err := s.applyWorkspaceMemberPermissionTemplate(ctx, targetMemberJoin); err != nil {
+				return err
+			}
+			if err := s.workspaceMemberRepo.Update(ctx, targetMemberJoin); err != nil {
+				return fmt.Errorf("failed to update workspace account join: %w", err)
+			}
 		}
 	}
 
@@ -1601,27 +1618,11 @@ func (s *WorkspaceManagementServiceImpl) UpdateMemberRoleWithPermissionCheck(ctx
 		return nil
 	}
 
-	// 3. Handle owner role special logic
-	if newRole == "owner" {
-		// Find current owner and change their role to admin
-		currentOwnerJoin, err := s.workspaceMemberRepo.GetOwnerByWorkspaceID(ctx, workspace.ID)
-		if err == nil && currentOwnerJoin != nil {
-			currentOwnerJoin.Role = model.WorkspaceRoleAdmin
-			adminRoleID := model.WorkspaceBuiltinRoleAdminID
-			currentOwnerJoin.RoleID = &adminRoleID
-			currentOwnerJoin.PermissionSource = model.WorkspaceMemberPermissionSourceRoleTemplate
-			currentOwnerJoin.PermissionTemplateRoleID = &adminRoleID
-			currentOwnerJoin.Permissions = nil
-			if err := s.applyWorkspaceMemberPermissionTemplate(ctx, currentOwnerJoin); err != nil {
-				return err
-			}
-			if err := s.workspaceMemberRepo.Update(ctx, currentOwnerJoin); err != nil {
-				return fmt.Errorf("failed to update current owner role to admin: %w", err)
-			}
-		}
+	if newRole == string(model.WorkspaceRoleOwner) {
+		return s.TransferOwner(ctx, workspace.ID, operator.ID, member.ID)
 	}
 
-	// 4. Update target member's role. Reapplying the same role is intentional: role templates
+	// 3. Update target member's role. Reapplying the same role is intentional: role templates
 	// are copied into member permission snapshots, so users need a way to refresh that snapshot.
 	targetMemberJoin.Role = model.WorkspaceMemberRole(newRole)
 	var roleID *string
@@ -1676,22 +1677,8 @@ func (s *WorkspaceManagementServiceImpl) UpdateMemberRoleAndRoleIDWithPermission
 		return nil
 	}
 
-	if newRole == "owner" {
-		currentOwnerJoin, err := s.workspaceMemberRepo.GetOwnerByWorkspaceID(ctx, workspace.ID)
-		if err == nil && currentOwnerJoin != nil {
-			currentOwnerJoin.Role = model.WorkspaceRoleAdmin
-			adminRoleID := model.WorkspaceBuiltinRoleAdminID
-			currentOwnerJoin.RoleID = &adminRoleID
-			currentOwnerJoin.PermissionSource = model.WorkspaceMemberPermissionSourceRoleTemplate
-			currentOwnerJoin.PermissionTemplateRoleID = &adminRoleID
-			currentOwnerJoin.Permissions = nil
-			if err := s.applyWorkspaceMemberPermissionTemplate(ctx, currentOwnerJoin); err != nil {
-				return err
-			}
-			if err := s.workspaceMemberRepo.Update(ctx, currentOwnerJoin); err != nil {
-				return fmt.Errorf("failed to update current owner role to admin: %w", err)
-			}
-		}
+	if newRole == string(model.WorkspaceRoleOwner) {
+		return s.TransferOwner(ctx, workspace.ID, operator.ID, member.ID)
 	}
 
 	targetMemberJoin.Role = model.WorkspaceMemberRole(newRole)

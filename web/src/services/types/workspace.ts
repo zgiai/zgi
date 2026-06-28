@@ -55,6 +55,7 @@ export interface WorkspaceMemberAccount {
   department_id?: string;
   department_name?: string;
   member_name?: string;
+  organization_role?: 'owner' | 'admin' | 'normal' | '';
 }
 
 export interface AvailableWorkspaceMember {

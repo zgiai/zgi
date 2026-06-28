@@ -51,7 +51,7 @@ export function WorkspaceDialog({
   const { currentOrganization } = useOrganizations();
 
   const isEditMode = !!initialData;
-  const workspaceId = open && isEditMode ? initialData?.id ?? '' : '';
+  const workspaceId = open && isEditMode ? (initialData?.id ?? '') : '';
   const { workspaceDetail } = useWorkspaceDetail(workspaceId);
   const resolvedInitialData = workspaceDetail ?? initialData;
 
@@ -86,10 +86,10 @@ export function WorkspaceDialog({
   // Fetch organization members for workspace owner selection.
   const { members: organizationMembers, isLoading: isLoadingMembers } =
     useCurrentOrganizationMembers({
-    limit: 100,
-    page: 1,
-    enabled: open,
-  });
+      limit: 100,
+      page: 1,
+      enabled: open,
+    });
   // const { items: apiKeys, isLoading: isLoadingApiKeys } = useApiKeys(undefined);
 
   // Filter members to only include active ones
@@ -115,14 +115,21 @@ export function WorkspaceDialog({
 
   // Find leader_id from leader_name when in edit mode
   useEffect(() => {
-    if (!isEditMode || leaderId || !resolvedInitialData?.leader_name || !activeOrganizationMembers) {
+    if (
+      !isEditMode ||
+      leaderId ||
+      !resolvedInitialData?.leader_name ||
+      !activeOrganizationMembers
+    ) {
       return;
     }
 
     const leader =
       activeOrganizationMembers.find(member => member.id === resolvedInitialData.leader_id) ||
       activeOrganizationMembers.find(
-        member => member.name === resolvedInitialData.leader_name || member.member_name === resolvedInitialData.leader_name
+        member =>
+          member.name === resolvedInitialData.leader_name ||
+          member.member_name === resolvedInitialData.leader_name
       );
 
     if (leader) {
@@ -181,7 +188,9 @@ export function WorkspaceDialog({
           const originalLeaderId =
             resolvedInitialData?.leader_id ||
             activeOrganizationMembers.find(
-              m => m.name === resolvedInitialData?.leader_name || m.member_name === resolvedInitialData?.leader_name
+              m =>
+                m.name === resolvedInitialData?.leader_name ||
+                m.member_name === resolvedInitialData?.leader_name
             )?.id ||
             '';
 
@@ -315,11 +324,7 @@ export function WorkspaceDialog({
                   <div className="max-h-[200px] overflow-y-auto p-1">
                     {filteredMembers && filteredMembers.length > 0 ? (
                       filteredMembers.map(member => (
-                        <SelectItem
-                          key={member.id}
-                          value={member.id}
-                          className="rounded-md"
-                        >
+                        <SelectItem key={member.id} value={member.id} className="rounded-md">
                           <div className="flex items-center gap-3 py-1">
                             <div className="size-8 rounded-full bg-muted flex items-center justify-center shrink-0">
                               <User className="h-4 w-4 text-muted-foreground" />
@@ -345,6 +350,11 @@ export function WorkspaceDialog({
               </Select>
               {leaderError && (
                 <p className="text-xs text-destructive font-medium ml-1">{leaderError}</p>
+              )}
+              {isEditMode && !leaderError && (
+                <p className="text-xs text-muted-foreground font-medium ml-1">
+                  {t('organization.workspaceManagement.createWorkspace.leaderTransferHint')}
+                </p>
               )}
             </div>
           </form>

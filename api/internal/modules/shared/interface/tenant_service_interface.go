@@ -101,6 +101,7 @@ type AccountWithRole struct {
 	HasMobile                bool                                  `json:"has_mobile"`
 	DepartmentID             *string                               `json:"department_id,omitempty"`
 	DepartmentName           *string                               `json:"department_name,omitempty"`
+	OrganizationRole         string                                `json:"organization_role,omitempty"`
 }
 
 type WorkspaceMemberWithExtensionResponse struct {

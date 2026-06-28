@@ -150,7 +150,7 @@ export function WorkspaceMemberPermissionsDialog({
   const sourceLabel = isOwner
     ? t('source.owner')
     : isAdmin
-      ? member?.role_name || 'Admin'
+      ? member?.role_name || t('source.admin')
       : member?.permission_source === 'direct'
         ? t('source.direct')
         : member?.permission_source === 'legacy_role'

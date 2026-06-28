@@ -42,8 +42,7 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
   const markWorkspaceRequired = useWorkspaceStore.use.markWorkspaceRequired();
   const selectWorkspace = useWorkspaceStore.use.selectWorkspace();
   const user = useAuthStore.use.user();
-  const isSwitchingOrganization =
-    useOrganizationStore.use.isSwitchingOrganization();
+  const isSwitchingOrganization = useOrganizationStore.use.isSwitchingOrganization();
 
   const organizationId = currentOrganization?.id ?? null;
   const accountId = user?.id ?? null;
@@ -127,6 +126,8 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     const transformedWorkspaces = responseData.data.map(w => ({
       id: w.id,
       name: w.name,
+      leader_id: w.leader_id,
+      leader_name: w.leader_name,
     }));
 
     setWorkspaces(transformedWorkspaces);
@@ -180,6 +181,8 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
       const workspaces = responseData.data.map(w => ({
         id: w.id,
         name: w.name,
+        leader_id: w.leader_id,
+        leader_name: w.leader_name,
       }));
 
       if (profileWorkspaceId && profileWorkspaceId !== '') {
