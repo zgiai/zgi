@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/translations';
 import type {
   ConversationSearchFn,
+  ConversationSearchResult,
   ConversationSummary,
 } from '@/components/chat/controllers/types';
 
@@ -68,6 +69,7 @@ interface SidebarProps {
   onClose?: () => void;
   search?: ConversationSearchFn;
   searchKey?: readonly unknown[];
+  onSelectSearchResult?: (result: ConversationSearchResult) => void;
 }
 
 export function Sidebar({
@@ -83,6 +85,7 @@ export function Sidebar({
   onClose,
   search,
   searchKey,
+  onSelectSearchResult,
 }: SidebarProps) {
   const t = useT();
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -362,6 +365,15 @@ export function Sidebar({
           onSelect(id);
           onClose?.();
         }}
+        onNewConversation={onNewChat}
+        onSelectSearchResult={
+          onSelectSearchResult
+            ? result => {
+                onSelectSearchResult(result);
+                onClose?.();
+              }
+            : undefined
+        }
         search={search}
         searchKey={searchKey}
       />
