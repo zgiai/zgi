@@ -13,7 +13,7 @@ func TestTotalFileCountWithVisibilityAppliesWorkspaceAndFolderAccessFilters(t *t
 	db, mock, cleanup := newFileFolderRepositoryMockDB(t)
 	defer cleanup()
 
-	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "upload_files" WHERE .*upload_files\.workspace_id IN.*file_folder_joins.*file_folder_permissions`).
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "upload_files" WHERE .*upload_files\.workspace_id.*file_folder_joins.*file_folder_permissions`).
 		WithArgs(
 			"org-1",
 			"workspace-visible",

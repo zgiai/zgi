@@ -203,6 +203,24 @@ func (h *ImagePreviewHandler) GetMinerUImage(c *gin.Context) {
 	h.writeCompressedImage(c, content)
 }
 
+func (h *ImagePreviewHandler) GetDocumentImage(c *gin.Context) {
+	storageKey := strings.TrimSpace(c.Query("key"))
+	if storageKey == "" || !strings.HasPrefix(storageKey, "document-images/") {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if h.storage == nil {
+		response.Fail(c, response.ErrFileNotFound)
+		return
+	}
+	content, err := h.storage.Load(storageKey)
+	if err != nil {
+		response.Fail(c, response.ErrFileNotFound)
+		return
+	}
+	h.writeCompressedImage(c, content)
+}
+
 func (h *ImagePreviewHandler) writeCompressedImage(c *gin.Context, content []byte) {
 	compressed, mimeType, err := zgiimage.CompressPreviewImage(content)
 	if err != nil {

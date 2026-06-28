@@ -151,8 +151,11 @@ export default function HitTestingPage() {
   };
 
   // Real hit testing function
-  const handleHitTesting = async () => {
-    if (!query.trim()) return;
+  const handleHitTesting = async (options?: { queryText?: string; recordHistory?: boolean }) => {
+    const queryText = (options?.queryText ?? query).trim();
+    if (!queryText) return;
+
+    const recordHistory = options?.recordHistory ?? true;
 
     const retrievalModel = {
       search_method: retrievalConfig.search_method,
@@ -169,7 +172,7 @@ export default function HitTestingPage() {
       // External data source: use external retrieval hook
       if (isExternalDataSource) {
         const result = await externalRetrieval.mutateAsync({
-          query: query.trim(),
+          query: queryText,
           external_retrieval_model: {
             search_method: retrievalConfig.search_method,
             top_k: retrievalConfig.top_k,
@@ -177,10 +180,13 @@ export default function HitTestingPage() {
             score_threshold: retrievalConfig.score_threshold,
             reranking_enable: retrievalConfig.reranking_enable,
           },
+          record_history: recordHistory,
         });
         // Store in externalResults for external data source
         setExternalResults(result.data);
-        await refreshHistory();
+        if (recordHistory) {
+          await refreshHistory();
+        }
         return;
       }
 
@@ -191,8 +197,9 @@ export default function HitTestingPage() {
         setIsGraphSearching(true);
 
         const requestData = {
-          query: query.trim(),
+          query: queryText,
           retrieval_model: retrievalModel,
+          record_history: recordHistory,
         };
 
         const [vectorResponse, graphResponse] = await Promise.allSettled([
@@ -220,26 +227,34 @@ export default function HitTestingPage() {
         }
 
         if (hasSuccessfulRetrieval) {
-          await refreshHistory();
+          if (recordHistory) {
+            await refreshHistory();
+          }
         }
       } else if (retrievalConfig.search_method === 'graph_search' && supportsGraphFlow) {
         // Graph search mode: only call graph retrieval
         setIsGraphSearching(true);
         const result = await graphRetrieval.mutateAsync({
-          query: query.trim(),
+          query: queryText,
           retrieval_model: retrievalModel,
+          record_history: recordHistory,
         });
         setGraphResults(result.data);
-        await refreshHistory();
+        if (recordHistory) {
+          await refreshHistory();
+        }
       } else {
         // Semantic search mode (default): only call vector retrieval
         setIsVectorSearching(true);
         const result = await vectorRetrieval.mutateAsync({
-          query: query.trim(),
+          query: queryText,
           retrieval_model: retrievalModel,
+          record_history: recordHistory,
         });
         setVectorResults(result.data);
-        await refreshHistory();
+        if (recordHistory) {
+          await refreshHistory();
+        }
       }
     } catch (error) {
       console.error('Hit testing failed:', error);
@@ -253,7 +268,10 @@ export default function HitTestingPage() {
 
   // Load query from history
   const handleLoadFromHistory = (record: HitTestingRecord) => {
+    if (isSearching) return;
+
     setQuery(record.content);
+    void handleHitTesting({ queryText: record.content, recordHistory: false });
   };
 
   // Handle config save

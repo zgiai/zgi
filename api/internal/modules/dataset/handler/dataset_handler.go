@@ -780,6 +780,7 @@ func (h *DatasetHandler) handleHitTesting(c *gin.Context, forcedMode string) {
 	if forcedMode != "" {
 		mode = forcedMode
 	}
+	recordHistory := req.RecordHistory == nil || *req.RecordHistory
 
 	result, err := h.hitTestingService.Retrieve(
 		c.Request.Context(),
@@ -792,6 +793,7 @@ func (h *DatasetHandler) handleHitTesting(c *gin.Context, forcedMode string) {
 		"hit_testing",
 		"single",
 		mode,
+		recordHistory,
 	)
 	if err != nil {
 		// Handle specific error types based on current implementation
@@ -944,6 +946,7 @@ func (h *DatasetHandler) BatchHitTesting(c *gin.Context) {
 			"batch_hit_testing",
 			"batch",
 			"",
+			true,
 		)
 		if err != nil {
 			// Handle specific error types based on current implementation
@@ -1160,6 +1163,7 @@ func (h *DatasetHandler) processBatchHitTesting(taskID string, dataset *model.Da
 			"batch_hit_testing",
 			"batch",
 			"",
+			true,
 		)
 		if err != nil {
 			errMsg := err.Error()

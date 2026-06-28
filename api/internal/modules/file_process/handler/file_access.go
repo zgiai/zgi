@@ -7,11 +7,14 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	file_model "github.com/zgiai/zgi/api/internal/modules/file_process/model"
-	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
+
+type fileMetadataReader interface {
+	GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error)
+}
 
 type fileWorkspacePermissionChecker interface {
 	CheckWorkspaceOrganizationAnyPermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCodes ...workspace_model.WorkspacePermissionCode) (bool, error)
@@ -22,7 +25,7 @@ type fileFolderPermissionReader interface {
 	GetFolderPermissionTenants(ctx context.Context, folderID string) ([]string, error)
 }
 
-func authorizeFileDownloadAccess(c *gin.Context, fileService interfaces.FileService, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+func authorizeFileDownloadAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileAccess(
 		c,
 		fileService,
@@ -32,7 +35,7 @@ func authorizeFileDownloadAccess(c *gin.Context, fileService interfaces.FileServ
 	)
 }
 
-func authorizeFileViewAccess(c *gin.Context, fileService interfaces.FileService, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+func authorizeFileViewAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileAccess(
 		c,
 		fileService,
@@ -42,7 +45,7 @@ func authorizeFileViewAccess(c *gin.Context, fileService interfaces.FileService,
 	)
 }
 
-func authorizeFileManageAccess(c *gin.Context, fileService interfaces.FileService, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+func authorizeFileManageAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileAccess(
 		c,
 		fileService,
@@ -52,7 +55,7 @@ func authorizeFileManageAccess(c *gin.Context, fileService interfaces.FileServic
 	)
 }
 
-func authorizeFileDeleteAccess(c *gin.Context, fileService interfaces.FileService, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+func authorizeFileDeleteAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileAccess(
 		c,
 		fileService,
@@ -62,7 +65,7 @@ func authorizeFileDeleteAccess(c *gin.Context, fileService interfaces.FileServic
 	)
 }
 
-func authorizeFileMoveAccess(c *gin.Context, fileService interfaces.FileService, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+func authorizeFileMoveAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileAccess(
 		c,
 		fileService,
@@ -72,7 +75,7 @@ func authorizeFileMoveAccess(c *gin.Context, fileService interfaces.FileService,
 	)
 }
 
-func authorizeFileArchiveAccess(c *gin.Context, fileService interfaces.FileService, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+func authorizeFileArchiveAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileAccess(
 		c,
 		fileService,
@@ -90,7 +93,7 @@ func authorizeFileFolderManageAccess(c *gin.Context, folderService fileFolderPer
 	return authorizeFileFolderAccess(c, folderService, permissionChecker, folderID, true)
 }
 
-func authorizeFileAccess(c *gin.Context, fileService interfaces.FileService, permissionChecker fileWorkspacePermissionChecker, fileID string, permissions ...workspace_model.WorkspacePermissionCode) (*dto.UploadFile, bool) {
+func authorizeFileAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string, permissions ...workspace_model.WorkspacePermissionCode) (*dto.UploadFile, bool) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)

@@ -91,6 +91,12 @@ type playgroundProvidersResponse struct {
 	OCR       []playgroundOCRStatus      `json:"ocr_engines"`
 }
 
+type fileRouteProvidersResponse struct {
+	Source    string                     `json:"source"`
+	FileExt   string                     `json:"file_ext"`
+	Providers []playgroundProviderStatus `json:"providers"`
+}
+
 type playgroundProviderStatus struct {
 	Key          string                `json:"key"`
 	DisplayName  string                `json:"display_name"`
@@ -103,6 +109,7 @@ type playgroundProviderStatus struct {
 	Selectable   bool                  `json:"selectable"`
 	FallbackOnly bool                  `json:"fallback_only"`
 	Priority     int                   `json:"priority,omitempty"`
+	RouteRank    int                   `json:"route_rank,omitempty"`
 	Status       string                `json:"status"`
 	Reason       string                `json:"reason,omitempty"`
 }

@@ -552,6 +552,14 @@ const messages: DbsMessages = {
     importSuccess: '导入完成',
     importFailed: '导入失败',
     importResult: '总计：{total}，成功：{success}，失败：{failed}',
+    skipUnmatchedColumns: '跳过不匹配字段',
+    skipUnmatchedColumnsDesc:
+      'Excel 中不存在于当前表结构的列将不会导入。必填字段缺失时仍需补齐。',
+    errors: {
+      noMatchingColumns: 'Excel 表头没有匹配到当前表字段，请检查表头后重试。',
+      missingRequiredColumns:
+        'Excel 缺少必填字段：{fields}。请补充这些列后重试，或先将对应字段改为非必填。',
+    },
   },
   excelImport: {
     title: '导入 Excel',

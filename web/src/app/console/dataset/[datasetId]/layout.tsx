@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useParams, usePathname } from 'next/navigation';
 import { useDataset } from '@/hooks/dataset/use-datasets';
 import { useT } from '@/i18n';
-import { Database, Search, Cog, ShieldAlert, Network, Pencil } from 'lucide-react';
+import { FileText, Search, Cog, ShieldAlert, Network } from 'lucide-react';
 import { getSidebarCollapsed, saveSidebarCollapsed } from '@/utils/ui-local';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useIsInitialized } from '@/store/auth-store';
@@ -16,9 +16,7 @@ import {
   ResourceSidebarHeader,
   type ResourceSidebarNavItem,
 } from '@/components/common/resource-sidebar';
-import { EditDatasetDialog } from '@/components/datasets/dialog/edit-dataset-dialog';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
-import { Button } from '@/components/ui/button';
 import {
   KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES,
   KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
@@ -53,7 +51,6 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
   const [isCollapsed, setIsCollapsed] = React.useState<boolean>(() =>
     getSidebarCollapsed('dataset', true)
   );
-  const [editOpen, setEditOpen] = React.useState(false);
   React.useEffect(() => {
     saveSidebarCollapsed('dataset', isCollapsed);
   }, [isCollapsed]);
@@ -72,7 +69,7 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
       {
         title: t('datasets.documentsTitle'),
         href: `/console/dataset/${datasetId}/documents`,
-        icon: Database,
+        icon: FileText,
       },
       {
         title: t('datasets.hitTestingTitle'),
@@ -179,19 +176,6 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
                 </div>
               </div>
             </div>
-
-            {canManage && dataset ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 shrink-0 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
-                onClick={() => setEditOpen(true)}
-              >
-                <Pencil className="h-4 w-4" />
-                {t('datasets.actions.edit')}
-              </Button>
-            ) : null}
           </div>
           <div className="flex-1 overflow-hidden">
             <div className="h-full overflow-y-auto" id="dataset-content-area">
@@ -200,7 +184,6 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
             </div>
           </div>
         </div>
-        <EditDatasetDialog open={editOpen} onOpenChange={setEditOpen} dataset={dataset} />
       </div>
     </WorkspaceMismatchGuard>
   );

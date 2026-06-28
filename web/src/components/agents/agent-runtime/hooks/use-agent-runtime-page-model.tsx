@@ -1097,6 +1097,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         sourceLabel: t('prompt.optimizerSourceLabel'),
         sourceHelpText: t('prompt.optimizerSourceHelp'),
         sourceResetLabel: t('prompt.optimizerSourceReset'),
+        targetMaxChars: AGENT_SYSTEM_PROMPT_MAX_LENGTH,
         initialModel: modelValue.model
           ? {
               provider: modelValue.provider,

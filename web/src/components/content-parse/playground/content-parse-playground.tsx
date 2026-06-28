@@ -31,6 +31,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useT } from '@/i18n';
+import type { ScopedTranslations } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { contentParseService } from '@/services/content-parse.service';
 import type {
@@ -46,28 +47,26 @@ import type {
 } from '@/services/types/content-parse';
 import { DocumentPagePreview, type DocumentPreviewPage } from './document-page-preview';
 
-type PDFJSModule = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
+let pdfjsModulePromise: ReturnType<typeof createPDFJSModulePromise> | null = null;
 
-let pdfjsModulePromise: Promise<PDFJSModule> | null = null;
-
-type ProviderOptionView = {
+interface ProviderOptionView {
   value: ParseProviderKey;
   label: string;
   hint: string;
   explanation: string;
-};
+}
 
-type ProfileOptionView = {
+interface ProfileOptionView {
   value: ParseProfile;
   label: string;
   description: string;
-};
+}
 
-type OCREngineOptionView = {
+interface OCREngineOptionView {
   value: ParseOCREngine;
   label: string;
   description: string;
-};
+}
 
 export function ContentParsePlayground() {
   const t = useT('contentParse');
@@ -1657,17 +1656,21 @@ async function renderPDFPreview(file: File): Promise<DocumentPreviewPage[]> {
   return pages;
 }
 
-async function loadPDFJSModule(): Promise<PDFJSModule> {
+function loadPDFJSModule() {
   if (!pdfjsModulePromise) {
-    pdfjsModulePromise = import('pdfjs-dist/legacy/build/pdf.mjs').then(mod => {
-      const workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url);
-      if (!mod.GlobalWorkerOptions.workerSrc) {
-        mod.GlobalWorkerOptions.workerSrc = workerSrc.toString();
-      }
-      return mod;
-    });
+    pdfjsModulePromise = createPDFJSModulePromise();
   }
   return pdfjsModulePromise;
+}
+
+function createPDFJSModulePromise() {
+  return import('pdfjs-dist/legacy/build/pdf.mjs').then(mod => {
+    const workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url);
+    if (!mod.GlobalWorkerOptions.workerSrc) {
+      mod.GlobalWorkerOptions.workerSrc = workerSrc.toString();
+    }
+    return mod;
+  });
 }
 
 function readImageDimensions(url: string): Promise<{ width: number; height: number }> {
@@ -1732,7 +1735,7 @@ function savedRunToParseResult(
   };
 }
 
-type ContentParseTranslator = (key: any, values?: any) => string;
+type ContentParseTranslator = ScopedTranslations<'contentParse'>;
 
 function isProviderSelectable(status: ContentParsePlaygroundProviderStatus | undefined): boolean {
   if (!status) return true;

@@ -1,4 +1,5 @@
 import type { IconType } from '@/utils/icon-helpers';
+import type { FileProcessingRequestView } from './file';
 export type { IconType };
 
 // Reranking weights configuration
@@ -69,6 +70,114 @@ export interface DocumentExtractionStrategyStatus {
   configured: boolean;
   recommended?: boolean;
   reason?: string;
+}
+
+export type DatasetFileRefSyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';
+
+export type DatasetFileCandidateFilter = 'addable' | 'added' | 'all';
+
+export type DatasetFileCandidateReason =
+  | 'not_ready'
+  | 'already_added'
+  | 'embedding_model_mismatch'
+  | 'missing_chunks'
+  | 'missing_embedding'
+  | 'missing_dataset_embedding'
+  | 'dataset_embedding_model_missing';
+
+export interface DatasetFileCandidate {
+  file_id: string;
+  asset_id: string;
+  name: string;
+  file_extension?: string;
+  file_size?: number;
+  updated_at?: string;
+  processing_status: string;
+  generation_no: number;
+  addable: boolean;
+  reason?: DatasetFileCandidateReason | string;
+  embedding_provider?: string;
+  embedding_model?: string;
+  target_embedding_provider?: string;
+  target_embedding_model?: string;
+  already_added: boolean;
+  reference_count?: number;
+  chunk_count: number;
+  embedding_count: number;
+  target_embedding_count?: number;
+  requires_embedding_generation?: boolean;
+}
+
+export interface DatasetFileCandidateList {
+  items: DatasetFileCandidate[];
+  total: number;
+}
+
+export interface DatasetFileRef {
+  id: string;
+  dataset_id: string;
+  asset_id: string;
+  file_id: string;
+  file_name: string;
+  processing_status: string;
+  generation_no: number;
+  dataset_document_id?: string;
+  dataset_document_enabled?: boolean;
+  dataset_document_segment_count?: number;
+  sync_status: DatasetFileRefSyncStatus | string;
+  synced_generation_no?: number;
+  last_synced_at?: string;
+  sync_error_code?: string;
+  sync_error_message?: string;
+}
+
+export interface DatasetFileRefList {
+  items: DatasetFileRef[];
+  total: number;
+}
+
+export interface DatasetFileRefView {
+  id: string;
+  organization_id: string;
+  workspace_id?: string;
+  dataset_id: string;
+  asset_id: string;
+  dataset_document_id?: string;
+  dataset_document_enabled?: boolean;
+  dataset_document_segment_count?: number;
+  sync_status: DatasetFileRefSyncStatus | string;
+  synced_generation_no?: number;
+  sync_run_id?: string;
+  last_synced_at?: string;
+  sync_error_code?: string;
+  sync_error_message?: string;
+}
+
+export interface DatasetFileRefCreateItem {
+  asset_id: string;
+  ref?: DatasetFileRefView;
+  sync_run_id?: string;
+  generation_no?: number;
+  success: boolean;
+  reason?: DatasetFileCandidateReason | string;
+}
+
+export interface DatasetFileRefCreateResult {
+  items: DatasetFileRefCreateItem[];
+}
+
+export interface DatasetFileCandidateEmbeddingResult {
+  asset_id: string;
+  accepted?: boolean;
+  processing_request?: FileProcessingRequestView;
+  generation_no?: number;
+  embedding_provider?: string;
+  embedding_model?: string;
+  embedding_count?: number;
+  target_embedding_count?: number;
+  chunk_count?: number;
+  addable?: boolean;
+  reason?: DatasetFileCandidateReason | string;
 }
 
 export interface DocumentExtractionAttempt {
@@ -517,10 +626,12 @@ export interface Document {
    * Data source information object. The structure may vary depending on the data_source_type.
    */
   data_source_info?: {
-    upload_file_id: string;
+    upload_file_id?: string;
+    source_file_id?: string;
     /** Allow additional dynamic keys returned by the API */
     [key: string]: unknown;
   };
+  file_id?: string;
 
   /**
    * Dataset process rule identifier associated with this document.
@@ -804,11 +915,13 @@ export interface HitTestingHistoryResponse {
 export interface HitTestingRequest {
   query: string;
   retrieval_model: InternalRetrievalConfig;
+  record_history?: boolean;
 }
 
 export interface ExternalHitTestingRequest {
   query: string;
   external_retrieval_model: ExternalRetrievalConfig;
+  record_history?: boolean;
 }
 
 // Batch hit testing request interface

@@ -86,33 +86,15 @@ func (h *DocumentHandler) GetDocumentList(c *gin.Context) {
 
 // CreateDocument handles POST /datasets/:dataset_id/documents
 func (h *DocumentHandler) CreateDocument(c *gin.Context) {
-	datasetID := c.Param("dataset_id")
-
 	accountID := c.GetString("account_id")
+	organizationID := c.GetString("tenant_id")
 
-	if accountID == "" {
+	if accountID == "" || organizationID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	dataset, ok := authorizeDatasetDocumentCreateAccess(c, h.datasetService, h.authService, datasetID)
-	if !ok {
-		return
-	}
-
-	var req dto.DocumentCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
-	result, err := h.documentService.CreateDocument(c.Request.Context(), datasetID, &req, accountID, dataset.OrganizationID)
-	if err != nil {
-		response.FailWithMessage(c, response.ErrDocumentCreateFailed, err.Error())
-		return
-	}
-
-	response.Success(c, result)
+	response.FailWithMessage(c, response.ErrDocumentCreateFailed, "dataset documents must be added from ready file assets")
 }
 
 // DeleteDocuments handles DELETE /datasets/:dataset_id/documents

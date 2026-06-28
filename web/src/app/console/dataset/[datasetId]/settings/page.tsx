@@ -202,9 +202,6 @@ export default function DatasetSettingsPage() {
       icon_background: iconValue.type === 'text' ? iconValue.iconBackground : undefined,
       workspace_id: workspaceId,
       enable_graph_flow: nextGraphFlowEnabled,
-      embedding_model: currentFormData.embeddingModel || undefined,
-      embedding_model_provider:
-        currentFormData.embeddingModelProvider || dataset.embedding_model_provider || undefined,
       ...(nextGraphFlowEnabled
         ? {
             entity_model: currentFormData.entityModel || undefined,
@@ -292,7 +289,7 @@ export default function DatasetSettingsPage() {
           <Card className="border-border/80 shadow-sm">
             <CardHeader className="space-y-1.5">
               <CardTitle className="text-base">{t('datasets.settings.basicInfo')}</CardTitle>
-              <CardDescription>{t('datasets.settingsDescription')}</CardDescription>
+              <CardDescription>{t('datasets.settings.basicInfoDescription')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="space-y-1.5">

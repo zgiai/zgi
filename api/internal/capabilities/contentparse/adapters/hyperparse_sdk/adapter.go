@@ -16,10 +16,21 @@ import (
 
 const adapterName = "hyperparse_sdk"
 
-type Adapter struct{}
+type FigureSummaryEnhancer interface {
+	LocalizeReductoFigureSummary(ctx context.Context, organizationID, text string) (string, error)
+	SummarizeMineruFigureImage(ctx context.Context, organizationID, imageURL string) (string, error)
+}
+
+type Adapter struct {
+	figureSummaryEnhancer FigureSummaryEnhancer
+}
 
 func NewAdapter() *Adapter {
 	return &Adapter{}
+}
+
+func NewAdapterWithFigureSummaryEnhancer(enhancer FigureSummaryEnhancer) *Adapter {
+	return &Adapter{figureSummaryEnhancer: enhancer}
 }
 
 func (a *Adapter) Name() string {
@@ -35,7 +46,10 @@ func (a *Adapter) Parse(ctx context.Context, req contracts.ParseRequest) (*contr
 		return nil, err
 	}
 
-	return mapDocumentResult(req, engine, result), nil
+	return mapDocumentResultWithOptions(req, engine, result, mapDocumentOptions{
+		ctx:                   ctx,
+		figureSummaryEnhancer: a.figureSummaryEnhancer,
+	}), nil
 }
 
 func parseOptionsForRequest(req contracts.ParseRequest) extractcommon.ParseOptions {
@@ -82,7 +96,7 @@ func (a *Adapter) parseWithRequest(ctx context.Context, engine extractcommon.Eng
 	if supportsInputRef(engine, req.SourceType, req.SourceRef) {
 		return a.parseInputRef(ctx, engine, strings.TrimSpace(req.SourceRef), opts)
 	}
-	if req.SourceType != contracts.ParseSourceTypeBytes {
+	if len(req.Data) == 0 {
 		return nil, fmt.Errorf("hyperparse sdk adapter currently requires byte input for source type %q", req.SourceType)
 	}
 	if req.FileName == "" {
@@ -116,17 +130,24 @@ func (a *Adapter) parseInputRef(ctx context.Context, engine extractcommon.Engine
 }
 
 func supportsInputRef(engine extractcommon.Engine, sourceType contracts.ParseSourceType, sourceRef string) bool {
-	if strings.TrimSpace(sourceRef) == "" {
+	sourceRef = strings.TrimSpace(sourceRef)
+	if sourceRef == "" {
 		return false
 	}
 	if engine != extractcommon.EngineReducto {
 		return false
 	}
+	isRemoteRef := strings.HasPrefix(sourceRef, "reducto://") ||
+		strings.HasPrefix(sourceRef, "jobid://") ||
+		strings.HasPrefix(sourceRef, "http://") ||
+		strings.HasPrefix(sourceRef, "https://")
 	switch sourceType {
-	case contracts.ParseSourceTypeURL, contracts.ParseSourceTypeUploadFile:
-		return true
+	case contracts.ParseSourceTypeURL:
+		return isRemoteRef
+	case contracts.ParseSourceTypeUploadFile:
+		return strings.HasPrefix(sourceRef, "reducto://") || strings.HasPrefix(sourceRef, "jobid://")
 	default:
-		return strings.HasPrefix(sourceRef, "reducto://") || strings.HasPrefix(sourceRef, "jobid://") || strings.HasPrefix(sourceRef, "http://") || strings.HasPrefix(sourceRef, "https://")
+		return isRemoteRef
 	}
 }
 
@@ -143,7 +164,16 @@ func toHyperparseEngine(engine contracts.ParseEngine) extractcommon.Engine {
 	}
 }
 
+type mapDocumentOptions struct {
+	ctx                   context.Context
+	figureSummaryEnhancer FigureSummaryEnhancer
+}
+
 func mapDocumentResult(req contracts.ParseRequest, engine extractcommon.Engine, result *extractcommon.DocumentResult) *contracts.ParseArtifact {
+	return mapDocumentResultWithOptions(req, engine, result, mapDocumentOptions{})
+}
+
+func mapDocumentResultWithOptions(req contracts.ParseRequest, engine extractcommon.Engine, result *extractcommon.DocumentResult, opts mapDocumentOptions) *contracts.ParseArtifact {
 	if result == nil {
 		return &contracts.ParseArtifact{
 			SourceType:   req.SourceType,
@@ -190,24 +220,34 @@ func mapDocumentResult(req contracts.ParseRequest, engine extractcommon.Engine, 
 	for key, value := range result.ExtractOutput.Metadata {
 		artifact.Metadata[key] = value
 	}
+	if len(result.ImageAssets) > 0 {
+		artifact.Metadata["image_assets"] = cloneStringMap(result.ImageAssets)
+	}
 	if strings.TrimSpace(result.Source) != "" {
 		artifact.Metadata["recognition_source"] = strings.TrimSpace(result.Source)
 	}
 
 	for _, element := range result.ExtractOutput.Elements {
+		content := element.Content
+		metadata := cloneMap(element.Metadata)
+		if engine == extractcommon.EngineReducto {
+			content, metadata = localizeReductoFigureContent(req, content, metadata, opts.ctx, opts.figureSummaryEnhancer)
+		} else if engine == extractcommon.EngineMineru {
+			content, metadata = summarizeMineruFigureContent(req, content, metadata, opts.ctx, opts.figureSummaryEnhancer)
+		}
 		artifact.Elements = append(artifact.Elements, contracts.ParsedElement{
 			ID:        element.ID,
 			Type:      element.Type,
 			Subtype:   element.Subtype,
 			Page:      element.Page,
-			Content:   element.Content,
+			Content:   content,
 			BBox:      mapBoundingBox(element.BBox),
 			Ordinal:   element.Ordinal,
 			Precision: element.Precision,
 			Confidence: readConfidence(
-				element.Metadata,
+				metadata,
 			),
-			Metadata: cloneMap(element.Metadata),
+			Metadata: metadata,
 		})
 	}
 
@@ -224,6 +264,139 @@ func mapDocumentResult(req contracts.ParseRequest, engine extractcommon.Engine, 
 	}
 
 	return artifact
+}
+
+func localizeReductoFigureContent(req contracts.ParseRequest, content string, metadata map[string]any, ctx context.Context, enhancer FigureSummaryEnhancer) (string, map[string]any) {
+	text := strings.TrimSpace(content)
+	if text == "" || enhancer == nil || !isReductoFigureElement(metadata) {
+		return content, metadata
+	}
+	organizationID := metadataString(req.Metadata, "organization_id")
+	if organizationID == "" {
+		return content, metadata
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	localized, err := enhancer.LocalizeReductoFigureSummary(ctx, organizationID, text)
+	if err != nil || strings.TrimSpace(localized) == "" {
+		return content, metadata
+	}
+	metadata = cloneMap(metadata)
+	payload := clonedPayload(metadata)
+	payload["reducto_original_figure_summary"] = text
+	payload["reducto_figure_summary_language"] = "zh-Hans"
+	metadata["payload"] = payload
+	return strings.TrimSpace(localized), metadata
+}
+
+func isReductoFigureElement(metadata map[string]any) bool {
+	payload, ok := metadata["payload"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(fmt.Sprint(payload["source"])), "reducto") {
+		return false
+	}
+	if strings.TrimSpace(fmt.Sprint(payload["image_url"])) != "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(fmt.Sprint(payload["reducto_type"])), "figure")
+}
+
+func summarizeMineruFigureContent(req contracts.ParseRequest, content string, metadata map[string]any, ctx context.Context, enhancer FigureSummaryEnhancer) (string, map[string]any) {
+	if enhancer == nil || !isMineruFigureElement(metadata) {
+		return content, metadata
+	}
+	imageURL := mineruFigureImageURL(metadata)
+	if imageURL == "" {
+		return content, metadata
+	}
+	organizationID := metadataString(req.Metadata, "organization_id")
+	if organizationID == "" {
+		return content, metadata
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	summary, err := enhancer.SummarizeMineruFigureImage(ctx, organizationID, imageURL)
+	if err != nil || strings.TrimSpace(summary) == "" {
+		return content, metadata
+	}
+
+	summary = strings.TrimSpace(summary)
+	metadata = cloneMap(metadata)
+	payload := clonedPayload(metadata)
+	payload["mineru_visual_summary"] = summary
+	payload["mineru_visual_summary_language"] = "zh-Hans"
+	metadata["payload"] = payload
+	return appendFigureSummary(content, summary), metadata
+}
+
+func isMineruFigureElement(metadata map[string]any) bool {
+	payload, ok := metadata["payload"].(map[string]any)
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(fmt.Sprint(payload["mineru_type"]))) {
+	case "image", "chart", "figure":
+		return true
+	default:
+		return false
+	}
+}
+
+func mineruFigureImageURL(metadata map[string]any) string {
+	payload, ok := metadata["payload"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, key := range []string{"image_data_uri", "image_url", "img_path"} {
+		if value := strings.TrimSpace(fmt.Sprint(payload[key])); isSummarizableImageRef(value) {
+			return value
+		}
+	}
+	if value := strings.TrimSpace(fmt.Sprint(metadata["image_url"])); isSummarizableImageRef(value) {
+		return value
+	}
+	return ""
+}
+
+func isSummarizableImageRef(value string) bool {
+	if value == "" || value == "<nil>" {
+		return false
+	}
+	return strings.HasPrefix(value, "data:image/") ||
+		strings.HasPrefix(value, "http://") ||
+		strings.HasPrefix(value, "https://") ||
+		strings.HasPrefix(value, "/")
+}
+
+func appendFigureSummary(content string, summary string) string {
+	trimmedContent := strings.TrimSpace(content)
+	trimmedSummary := strings.TrimSpace(summary)
+	if trimmedSummary == "" {
+		return content
+	}
+	if trimmedContent == "" || trimmedContent == "[figure]" {
+		return trimmedSummary
+	}
+	return trimmedContent + "\n\n" + trimmedSummary
+}
+
+func clonedPayload(metadata map[string]any) map[string]any {
+	if metadata == nil {
+		return map[string]any{}
+	}
+	payload, ok := metadata["payload"].(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(payload)+2)
+	for key, value := range payload {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func MapDocumentResult(req contracts.ParseRequest, engine extractcommon.Engine, result *extractcommon.DocumentResult) *contracts.ParseArtifact {
@@ -243,6 +416,17 @@ func mapBoundingBox(box *extractcommon.BBox) *contracts.ParseBoundingBox {
 }
 
 func cloneMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func cloneStringMap(src map[string]string) map[string]any {
 	if len(src) == 0 {
 		return nil
 	}

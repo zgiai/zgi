@@ -720,7 +720,7 @@ func TestRecordAndImportServicesRequireFineDatabasePermissions(t *testing.T) {
 		{
 			name: "import records",
 			call: func(ctx context.Context, svc *dataSourceService) error {
-				_, err := svc.ImportTableRecords(ctx, "organization-1", "datasource-1", "table-1", "account-1", strings.NewReader(""), "records.xlsx")
+				_, err := svc.ImportTableRecords(ctx, "organization-1", "datasource-1", "table-1", "account-1", strings.NewReader(""), "records.xlsx", false)
 				return err
 			},
 			wantPermission: workspace_model.WorkspacePermissionDatabaseImportExecute,
@@ -728,7 +728,7 @@ func TestRecordAndImportServicesRequireFineDatabasePermissions(t *testing.T) {
 		{
 			name: "import records from upload file",
 			call: func(ctx context.Context, svc *dataSourceService) error {
-				_, err := svc.ImportTableRecordsFromUploadFile(ctx, "organization-1", "datasource-1", "table-1", "account-1", "file-1")
+				_, err := svc.ImportTableRecordsFromUploadFile(ctx, "organization-1", "datasource-1", "table-1", "account-1", "file-1", false)
 				return err
 			},
 			wantPermission: workspace_model.WorkspacePermissionDatabaseImportExecute,

@@ -242,6 +242,45 @@ func TestGenerateWebAppConversationTitleRejectsForeignAccountBeforeMessages(t *t
 	}
 }
 
+func TestGenerateWebAppConversationTitleStoresSemanticFallback(t *testing.T) {
+	ctx := context.Background()
+	agentID := uuid.New()
+	accountID := uuid.New()
+	conv := &conversation.AgentConversation{
+		ID:            uuid.New(),
+		AgentID:       agentID,
+		Name:          "Conversation 2026-05-09 13:04:05",
+		FromAccountID: &accountID,
+	}
+	gen := &fakeWorkflowConversationTitleGen{
+		title:  "生产一个胖胖的猫咪",
+		source: titlegen.SourceFallback,
+	}
+	service := newWorkflowConversationTitleTestService(&fakeWorkflowTitleConversationService{conversation: conv}, &fakeWorkflowTitleMessageService{
+		messages: []*conversation.AgentMessage{
+			{Query: "生产一个胖胖的猫咪", Answer: "![cat.png](http://example.test/cat.png)"},
+		},
+	}, gen)
+
+	organizationID := uuid.New()
+	workspaceID := uuid.New()
+	webAppID := uuid.New().String()
+
+	if err := service.generateWebAppConversationTitle(ctx, workflowConversationTitleParams{
+		WorkspaceID:    workspaceID.String(),
+		OrganizationID: organizationID.String(),
+		AgentID:        agentID.String(),
+		AccountID:      accountID,
+		ConversationID: conv.ID,
+		WebAppID:       webAppID,
+	}); err != nil {
+		t.Fatalf("generate title: %v", err)
+	}
+	if conv.Name != "生产一个胖胖的猫咪" {
+		t.Fatalf("conversation name = %q, want semantic fallback title", conv.Name)
+	}
+}
+
 func newWorkflowConversationTitleTestService(conversationSvc conversation.AgentConversationService, messageSvc conversation.AgentMessageService, gen titlegen.Service) *WorkflowService {
 	handler := &AdvancedChatWorkflowHandler{
 		conversationService: conversationSvc,

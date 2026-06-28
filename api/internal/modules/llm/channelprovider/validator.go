@@ -67,7 +67,8 @@ func TestModel(ctx context.Context, channelProvider, baseURL, apiKey, modelName 
 		BaseURL:             baseURL,
 		Timeout:             defaultTimeout,
 		MaxRetries:          defaultMaxRetries,
-		GuardOutboundURL:    true,
+		GuardOutboundURL:    outboundURLGuardEnabled(),
+		GuardOutboundDNS:    outboundDNSGuardEnabled(),
 		AllowPrivateBaseURL: AllowsPrivateBaseURL(spec.Name),
 	}
 

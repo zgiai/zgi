@@ -1256,7 +1256,7 @@ func (h *DataSourceHandler) ImportTableRecords(c *gin.Context) {
 			response.FailWithMessage(c, response.ErrInvalidParam, "invalid request: "+err.Error())
 			return
 		}
-		result, err := h.service.ImportTableRecordsFromUploadFile(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req.UploadFileID)
+		result, err := h.service.ImportTableRecordsFromUploadFile(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req.UploadFileID, req.SkipUnmatchedColumns)
 		if err != nil {
 			response.FailWithMessage(c, response.ErrSystemError, "failed to import records: "+err.Error())
 			return
@@ -1281,7 +1281,7 @@ func (h *DataSourceHandler) ImportTableRecords(c *gin.Context) {
 	defer fileContent.Close()
 
 	// Import records through service
-	result, err := h.service.ImportTableRecords(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, fileContent, file.Filename)
+	result, err := h.service.ImportTableRecords(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, fileContent, file.Filename, false)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, "failed to import records: "+err.Error())
 		return

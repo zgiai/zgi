@@ -128,8 +128,8 @@ type DataSourceService interface {
 	UpdateTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateRecordRequest) (dto.UpdateRecordResponse, error)
 	DeleteTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.DeleteRecordRequest) (dto.DeleteRecordResponse, error)
 	QueryTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, limit, offset int, order string) (dto.QueryRecordResponse, error)
-	ImportTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, file io.Reader, fileName string) (dto.ImportRecordResponse, error)
-	ImportTableRecordsFromUploadFile(ctx context.Context, organizationID, dataSourceID, tableID, accountID, uploadFileID string) (dto.ImportRecordResponse, error)
+	ImportTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, file io.Reader, fileName string, skipUnmatchedColumns bool) (dto.ImportRecordResponse, error)
+	ImportTableRecordsFromUploadFile(ctx context.Context, organizationID, dataSourceID, tableID, accountID, uploadFileID string, skipUnmatchedColumns bool) (dto.ImportRecordResponse, error)
 
 	// File analysis for table structure
 	AnalyzeFileForTable(ctx context.Context, dataSourceID, accountID, fileID string, description *string, modelSpec *dto.ModelSpec) (dto.AnalyzeFileForTableResponse, error)
@@ -3343,7 +3343,7 @@ func (s *dataSourceService) getExampleValueForType(dataType string) string {
 }
 
 // ImportTableRecords imports records from an Excel file
-func (s *dataSourceService) ImportTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, file io.Reader, fileName string) (dto.ImportRecordResponse, error) {
+func (s *dataSourceService) ImportTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, file io.Reader, fileName string, skipUnmatchedColumns bool) (dto.ImportRecordResponse, error) {
 	// 1. Validate data source and table existence
 	dataSource, table, err := s.validateDataSourceAndTable(ctx, organizationID, dataSourceID, tableID)
 	if err != nil {
@@ -3353,10 +3353,10 @@ func (s *dataSourceService) ImportTableRecords(ctx context.Context, organization
 		return dto.ImportRecordResponse{}, err
 	}
 
-	return s.importTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, file, fileName)
+	return s.importTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, file, fileName, skipUnmatchedColumns)
 }
 
-func (s *dataSourceService) importTableRecordsToTable(ctx context.Context, organizationID string, dataSource *model.DataSource, table *model.Table, accountID string, file io.Reader, fileName string) (dto.ImportRecordResponse, error) {
+func (s *dataSourceService) importTableRecordsToTable(ctx context.Context, organizationID string, dataSource *model.DataSource, table *model.Table, accountID string, file io.Reader, fileName string, skipUnmatchedColumns bool) (dto.ImportRecordResponse, error) {
 	// 2. Get table columns for validation
 	columnsResp, err := s.GetTableColumns(ctx, organizationID, dataSource.ID, table.ID, false)
 	if err != nil {
@@ -3364,7 +3364,7 @@ func (s *dataSourceService) importTableRecordsToTable(ctx context.Context, organ
 	}
 
 	// 3. Parse Excel file
-	records, err := s.parseExcelFile(file, fileName, columnsResp.Columns)
+	records, err := s.parseExcelFile(file, fileName, columnsResp.Columns, skipUnmatchedColumns)
 	if err != nil {
 		return dto.ImportRecordResponse{}, fmt.Errorf("failed to parse Excel file: %w", err)
 	}
@@ -3391,7 +3391,7 @@ func (s *dataSourceService) importTableRecordsToTable(ctx context.Context, organ
 	return response, nil
 }
 
-func (s *dataSourceService) ImportTableRecordsFromUploadFile(ctx context.Context, organizationID, dataSourceID, tableID, accountID, uploadFileID string) (dto.ImportRecordResponse, error) {
+func (s *dataSourceService) ImportTableRecordsFromUploadFile(ctx context.Context, organizationID, dataSourceID, tableID, accountID, uploadFileID string, skipUnmatchedColumns bool) (dto.ImportRecordResponse, error) {
 	dataSource, table, err := s.validateDataSourceAndTable(ctx, organizationID, dataSourceID, tableID)
 	if err != nil {
 		return dto.ImportRecordResponse{}, err
@@ -3410,7 +3410,7 @@ func (s *dataSourceService) ImportTableRecordsFromUploadFile(ctx context.Context
 	if err != nil {
 		return dto.ImportRecordResponse{}, fmt.Errorf("failed to download file: %w", err)
 	}
-	return s.importTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, bytes.NewReader(content), fileInfo.Name)
+	return s.importTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, bytes.NewReader(content), fileInfo.Name, skipUnmatchedColumns)
 }
 
 func (s *dataSourceService) AnalyzeExcelImport(ctx context.Context, organizationID, dataSourceID, accountID string, req dto.AnalyzeExcelImportRequest) (dto.AnalyzeExcelImportData, error) {
@@ -3845,7 +3845,7 @@ func convertExcelImportJob(job *excelimportmodel.ImportJob) *dto.ExcelImportJobR
 }
 
 // parseExcelFile parses an Excel file and converts it to records
-func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, columns []dto.TableColumn) ([]map[string]interface{}, error) {
+func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, columns []dto.TableColumn, skipUnmatchedColumns bool) ([]map[string]interface{}, error) {
 	// Read the file content
 	fileContent, err := io.ReadAll(file)
 	if err != nil {
@@ -3869,17 +3869,34 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 	// First row is header
 	header := rows[0]
 
-	// Validate headers match table columns
 	columnMap := make(map[string]dto.TableColumn)
 	for _, col := range columns {
 		columnMap[col.Name] = col
 	}
 
-	// Check if all headers exist in table columns
-	for _, headerName := range header {
-		if _, exists := columnMap[headerName]; !exists {
+	type matchedColumn struct {
+		index int
+		name  string
+		info  dto.TableColumn
+	}
+	matchedColumns := make([]matchedColumn, 0, len(header))
+	matchedColumnNames := make(map[string]struct{})
+	for colIndex, headerName := range header {
+		columnInfo, exists := columnMap[headerName]
+		if !exists {
+			if skipUnmatchedColumns {
+				continue
+			}
 			return nil, fmt.Errorf("column '%s' does not exist in table", headerName)
 		}
+		matchedColumns = append(matchedColumns, matchedColumn{index: colIndex, name: headerName, info: columnInfo})
+		matchedColumnNames[headerName] = struct{}{}
+	}
+	if len(matchedColumns) == 0 {
+		return nil, fmt.Errorf("no matching columns found in Excel header")
+	}
+	if missing := missingRequiredImportColumns(columns, matchedColumnNames); len(missing) > 0 {
+		return nil, fmt.Errorf("missing required columns: %s", strings.Join(missing, ", "))
 	}
 
 	// Convert data rows to records
@@ -3890,21 +3907,18 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 		}
 
 		record := make(map[string]interface{})
-		for colIndex, cellValue := range row {
-			if colIndex >= len(header) {
-				continue // Skip if more cells than headers
+		for _, matched := range matchedColumns {
+			if matched.index >= len(row) {
+				continue
 			}
-
-			columnName := header[colIndex]
-			columnInfo := columnMap[columnName]
 
 			// Convert cell value based on column type
-			convertedValue, err := s.convertCellValue(cellValue, columnInfo.Type, columnInfo.IsRequired)
+			convertedValue, err := s.convertCellValue(row[matched.index], matched.info.Type, matched.info.IsRequired)
 			if err != nil {
-				return nil, fmt.Errorf("error converting value in row %d, column '%s': %w", rowIndex+2, columnName, err)
+				return nil, fmt.Errorf("error converting value in row %d, column '%s': %w", rowIndex+2, matched.name, err)
 			}
 
-			record[columnName] = convertedValue
+			record[matched.name] = convertedValue
 		}
 
 		// Validate required fields
@@ -3915,10 +3929,27 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 			}
 		}
 
+		if len(record) == 0 {
+			continue
+		}
+
 		records = append(records, record)
 	}
 
 	return records, nil
+}
+
+func missingRequiredImportColumns(columns []dto.TableColumn, matchedColumnNames map[string]struct{}) []string {
+	missing := make([]string, 0)
+	for _, col := range columns {
+		if !col.IsRequired {
+			continue
+		}
+		if _, exists := matchedColumnNames[col.Name]; !exists {
+			missing = append(missing, col.Name)
+		}
+	}
+	return missing
 }
 
 // convertCellValue converts a cell value to the appropriate type

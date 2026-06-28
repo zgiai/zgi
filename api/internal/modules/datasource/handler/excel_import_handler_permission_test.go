@@ -1048,7 +1048,7 @@ func (s *excelImportPermissionDataSourceService) UpsertTablePrompt(_ context.Con
 	return &datasource_model.TablePrompt{}, nil
 }
 
-func (s *excelImportPermissionDataSourceService) ImportTableRecordsFromUploadFile(_ context.Context, _, _, _, _, _ string) (dto.ImportRecordResponse, error) {
+func (s *excelImportPermissionDataSourceService) ImportTableRecordsFromUploadFile(_ context.Context, _, _, _, _, _ string, _ bool) (dto.ImportRecordResponse, error) {
 	s.importTableRecordsFromUploadFileCalls++
 	return dto.ImportRecordResponse{}, nil
 }

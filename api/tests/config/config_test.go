@@ -319,6 +319,54 @@ func TestLoadLLMEncryptionKeyUsesOnlyCanonicalKey(t *testing.T) {
 	}
 }
 
+func TestLoadLLMOutboundGuardDefaults(t *testing.T) {
+	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
+		"SERVER_MODE":                  "release",
+		"ENV":                          "production",
+		"SECRET_KEY":                   "test-secret",
+		"EMAIL_MAIL_DEFAULT_SEND_FROM": "noreply@example.com",
+		"EMAIL_RESEND_API_KEY":         "test-api-key",
+	}))
+	if err != nil {
+		t.Fatalf("config.LoadFromFile() error = %v, want nil", err)
+	}
+
+	if !cfg.LLM.GuardOutboundURL {
+		t.Fatal("cfg.LLM.GuardOutboundURL = false, want true")
+	}
+	if !cfg.LLM.OutboundURLGuardEnabled() {
+		t.Fatal("cfg.LLM.OutboundURLGuardEnabled() = false, want true")
+	}
+	if cfg.LLM.GuardOutboundDNS {
+		t.Fatal("cfg.LLM.GuardOutboundDNS = true, want false")
+	}
+}
+
+func TestLoadLLMOutboundGuardOverrides(t *testing.T) {
+	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
+		"SERVER_MODE":                  "release",
+		"ENV":                          "production",
+		"SECRET_KEY":                   "test-secret",
+		"EMAIL_MAIL_DEFAULT_SEND_FROM": "noreply@example.com",
+		"EMAIL_RESEND_API_KEY":         "test-api-key",
+		"LLM_GUARD_OUTBOUND_URL":       "false",
+		"LLM_GUARD_OUTBOUND_DNS":       "true",
+	}))
+	if err != nil {
+		t.Fatalf("config.LoadFromFile() error = %v, want nil", err)
+	}
+
+	if cfg.LLM.GuardOutboundURL {
+		t.Fatal("cfg.LLM.GuardOutboundURL = true, want false")
+	}
+	if cfg.LLM.OutboundURLGuardEnabled() {
+		t.Fatal("cfg.LLM.OutboundURLGuardEnabled() = true, want false")
+	}
+	if !cfg.LLM.GuardOutboundDNS {
+		t.Fatal("cfg.LLM.GuardOutboundDNS = false, want true")
+	}
+}
+
 func TestLoadOpenTelemetryConfig(t *testing.T) {
 	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
 		"SERVER_MODE":                 "release",

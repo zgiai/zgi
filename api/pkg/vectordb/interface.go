@@ -43,6 +43,15 @@ type BatchVectorDB interface {
 	StoreVectors(ctx context.Context, objects []VectorObject) error
 }
 
+// FieldDeleteVectorDB represents a vector database that supports deleting
+// multiple objects by a metadata field in one request.
+type FieldDeleteVectorDB interface {
+	VectorDB
+
+	// DeleteObjectsByField deletes all objects whose metadata field equals the value.
+	DeleteObjectsByField(ctx context.Context, className, fieldName, fieldValue string) error
+}
+
 // BatchVectorError reports per-object failures from a batch vector write.
 type BatchVectorError struct {
 	Errors map[string]error
@@ -83,6 +92,11 @@ func (m *MockVectorDB) StoreVector(ctx context.Context, id, className string, pr
 }
 
 func (m *MockVectorDB) DeleteVector(ctx context.Context, id, className string) error {
+	// Mock implementation - just log the operation
+	return nil
+}
+
+func (m *MockVectorDB) DeleteObjectsByField(ctx context.Context, className, fieldName, fieldValue string) error {
 	// Mock implementation - just log the operation
 	return nil
 }

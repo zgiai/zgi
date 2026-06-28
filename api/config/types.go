@@ -391,7 +391,18 @@ type ContentParseConfig struct {
 type LLMConfig struct {
 	EncryptionKey           string `json:"-"`
 	OfficialModelStrictSync bool   `json:"official_model_strict_sync"`
+	GuardOutboundURL        bool   `json:"guard_outbound_url"`
+	GuardOutboundDNS        bool   `json:"guard_outbound_dns"`
 	AllowPrivateBaseURL     bool   `json:"allow_private_base_url"`
+
+	guardOutboundURLSet bool
+}
+
+func (c LLMConfig) OutboundURLGuardEnabled() bool {
+	if !c.guardOutboundURLSet && !c.GuardOutboundURL {
+		return true
+	}
+	return c.GuardOutboundURL
 }
 
 type AutomationConfig struct {

@@ -92,6 +92,7 @@ type ProcessingRequestExecutor interface {
 
 type ProcessingRequestService interface {
 	CreatePlannedRequest(ctx context.Context, req ProcessingRequest) (*ProcessingRequestView, error)
+	GetRequest(ctx context.Context, organizationID string, id uuid.UUID) (*ProcessingRequestView, error)
 	ListRequests(ctx context.Context, filter repository.ProcessingRequestListFilter) ([]*ProcessingRequestView, int64, error)
 	QueueSummary(ctx context.Context, filter repository.ProcessingRequestQueueSummaryFilter) ([]ProcessingRequestQueueSummaryView, error)
 	EnqueueRequest(ctx context.Context, organizationID string, id uuid.UUID, executor ProcessingRequestExecutor) (*ProcessingRequestView, error)
@@ -100,6 +101,7 @@ type ProcessingRequestService interface {
 	QueueRequest(ctx context.Context, organizationID string, id uuid.UUID) (*ProcessingRequestView, error)
 	RetryRequest(ctx context.Context, organizationID string, id uuid.UUID, requestedBy string, force *bool, metadata map[string]any) (*ProcessingRequestView, error)
 	StartRequest(ctx context.Context, organizationID string, id uuid.UUID, executorKey string) (*ProcessingRequestView, error)
+	UpdateRequestExecutionMetadata(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*ProcessingRequestView, error)
 	CompleteRequest(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*ProcessingRequestView, error)
 	FailRequest(ctx context.Context, organizationID string, id uuid.UUID, errorCode string, errorMessage string, metadata map[string]any) (*ProcessingRequestView, error)
 	CancelRequest(ctx context.Context, organizationID string, id uuid.UUID, reason string) (*ProcessingRequestView, error)
@@ -131,6 +133,23 @@ func (s *processingRequestService) CreatePlannedRequest(ctx context.Context, req
 	}
 	if err := s.repo.Create(ctx, item); err != nil {
 		return nil, err
+	}
+	return newProcessingRequestView(item), nil
+}
+
+func (s *processingRequestService) GetRequest(ctx context.Context, organizationID string, id uuid.UUID) (*ProcessingRequestView, error) {
+	if organizationID == "" {
+		return nil, ErrOrganizationIDRequired
+	}
+	if id == uuid.Nil {
+		return nil, ErrProcessingRequestIDRequired
+	}
+	item, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil || item.OrganizationID != organizationID {
+		return nil, ErrProcessingRequestNotFound
 	}
 	return newProcessingRequestView(item), nil
 }
@@ -328,6 +347,23 @@ func (s *processingRequestService) StartRequest(ctx context.Context, organizatio
 		AttemptCountDelta: 1,
 		StartedAt:         &now,
 	})
+}
+
+func (s *processingRequestService) UpdateRequestExecutionMetadata(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*ProcessingRequestView, error) {
+	if organizationID == "" {
+		return nil, ErrOrganizationIDRequired
+	}
+	if id == uuid.Nil {
+		return nil, ErrProcessingRequestIDRequired
+	}
+	item, err := s.repo.UpdateExecutionMetadata(ctx, organizationID, id, metadata)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, ErrProcessingRequestNotFound
+	}
+	return newProcessingRequestView(item), nil
 }
 
 func (s *processingRequestService) CompleteRequest(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*ProcessingRequestView, error) {

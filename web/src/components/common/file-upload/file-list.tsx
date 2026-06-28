@@ -12,11 +12,10 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
 import { formatFileSize } from '@/utils/format';
-import { AlertCircle, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertCircle, Trash2 } from 'lucide-react';
 
 export interface FileListItem {
   id: string;
@@ -32,6 +31,8 @@ interface FileListProps {
   onRetry?: (id: string) => void;
   onRemove?: (id: string) => void;
   className?: string;
+  queueSummaryNamespace?: 'files' | 'ui';
+  showRetryAction?: boolean;
   tableWrapperClassName?: string;
 }
 
@@ -39,28 +40,64 @@ export const FileList: React.FC<FileListProps> = ({
   items,
   onRetry,
   onRemove,
+  queueSummaryNamespace = 'ui',
+  showRetryAction = false,
   tableWrapperClassName,
 }) => {
-  const t = useT('ui');
+  const tUi = useT('ui');
+  const tFiles = useT('files');
 
   if (!items.length) return null;
+
+  const failedCount = items.filter(item => item.status === 'error').length;
+  const successCount = items.filter(item => item.status === 'success').length;
+  const tQueue = (key: string, values?: Record<string, number>) =>
+    queueSummaryNamespace === 'files'
+      ? tFiles(`upload.${key}` as never, values)
+      : tUi(`fileUpload.${key}` as never, values);
 
   return (
     <div
       className={cn('w-full rounded-lg border border-border overflow-auto', tableWrapperClassName)}
     >
+      <div className="space-y-2 border-b border-border px-4 py-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">
+            {tQueue('selectedFilesTitle', { count: items.length })}
+          </h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {failedCount > 0
+              ? tQueue('selectedFilesValidationSummary', {
+                  count: items.length,
+                  failedCount,
+                })
+              : successCount > 0
+                ? tQueue('selectedFilesResultSummary', {
+                    successCount,
+                    failedCount,
+                  })
+                : tQueue('selectedFilesPendingSummary', { count: items.length })}
+          </p>
+        </div>
+        {failedCount > 0 ? (
+          <p className="flex items-center gap-1.5 text-xs text-destructive" role="status">
+            <AlertCircle className="size-3.5" />
+            {tQueue('removeInvalidBeforeUpload')}
+          </p>
+        ) : null}
+      </div>
       <Table containerClassName="overflow-x-auto">
         <TableHeader className="sticky top-0 z-10">
           <TableRow>
-            <TableHead className="px-3 py-3">{t('fileUpload.fileName')}</TableHead>
-            <TableHead className="px-3 py-3">{t('fileUpload.size')}</TableHead>
-            <TableHead className="px-3 py-3">{t('fileUpload.status')}</TableHead>
-            <TableHead className="px-3 py-3">{t('fileUpload.action')}</TableHead>
+            <TableHead className="px-3 py-3">{tUi('fileUpload.fileName')}</TableHead>
+            <TableHead className="px-3 py-3">{tUi('fileUpload.size')}</TableHead>
+            <TableHead className="px-3 py-3">{tUi('fileUpload.status')}</TableHead>
+            <TableHead className="px-3 py-3">{tUi('fileUpload.action')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody className="divide-y divide-border">
           {items.map(item => (
-            <TableRow key={item.id}>
+            <TableRow key={item.id} className={cn(item.status === 'error' && 'bg-destructive/5')}>
               <TableCell className="px-3 py-2 max-w-[200px] truncate" title={item.name}>
                 {item.name}
               </TableCell>
@@ -69,49 +106,42 @@ export const FileList: React.FC<FileListProps> = ({
                 {item.status === 'uploading' && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
-                      <span>{t('fileUpload.uploading')}</span>
+                      <span>{tUi('fileUpload.uploading')}</span>
                       <span className="text-muted-foreground">{item.progress ?? 0}%</span>
                     </div>
                     <Progress value={item.progress ?? 0} className="h-2" />
                   </div>
                 )}
                 {item.status === 'success' && (
-                  <Badge variant="secondary">{t('fileUpload.success')}</Badge>
+                  <Badge variant="secondary">{tUi('fileUpload.success')}</Badge>
                 )}
                 {item.status === 'error' && (
-                  <div className="flex items-center gap-2">
-                    <Badge variant="destructive">{t('fileUpload.error')}</Badge>
-                    {item.errorMsg && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            className="inline-flex items-center justify-center rounded-sm text-destructive/80 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            aria-label={t('fileUpload.errorDetails')}
-                          >
-                            <AlertCircle className="size-4" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-xs break-all">
-                          {item.errorMsg}
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
+                  <div className="space-y-1.5">
+                    <Badge
+                      variant="destructive"
+                      className="gap-1.5 rounded-full px-2.5 py-1 text-xs"
+                    >
+                      <AlertCircle className="size-3.5" />
+                      {tQueue('cannotUpload')}
+                    </Badge>
+                    {item.errorMsg ? (
+                      <p className="text-xs leading-5 text-destructive">{item.errorMsg}</p>
+                    ) : null}
                   </div>
                 )}
                 {item.status === 'pending' && (
-                  <Badge variant="outline">{t('fileUpload.pending')}</Badge>
+                  <Badge variant="outline">{tUi('fileUpload.pending')}</Badge>
                 )}
               </TableCell>
               <TableCell className="px-3 py-2 space-x-2">
-                {item.status === 'error' && onRetry && (
+                {showRetryAction && item.status === 'error' && onRetry && (
                   <Button
                     size="sm"
                     type="button"
                     variant="secondary"
                     onClick={() => onRetry(item.id)}
                   >
-                    <RefreshCw className="w-4 h-4" />
+                    {tUi('fileUpload.retry')}
                   </Button>
                 )}
                 {onRemove && (

@@ -10,8 +10,9 @@ import (
 type ProviderConfig struct {
 	ID                    uuid.UUID      `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
 	Scope                 string         `gorm:"type:varchar(32);not null;index:idx_content_parse_provider_scope,priority:1" json:"scope"`
-	WorkspaceID           *uuid.UUID     `gorm:"type:uuid;column:workspace_id;index:idx_content_parse_provider_scope,priority:2" json:"workspace_id,omitempty"`
-	ProviderKey           string         `gorm:"type:varchar(64);not null;index:idx_content_parse_provider_scope,priority:3" json:"provider_key"`
+	OrganizationID        *uuid.UUID     `gorm:"type:uuid;column:organization_id;index:idx_content_parse_provider_scope,priority:2" json:"organization_id,omitempty"`
+	WorkspaceID           *uuid.UUID     `gorm:"type:uuid;column:workspace_id;index:idx_content_parse_provider_scope,priority:3" json:"workspace_id,omitempty"`
+	ProviderKey           string         `gorm:"type:varchar(64);not null;index:idx_content_parse_provider_scope,priority:4" json:"provider_key"`
 	ProviderType          string         `gorm:"type:varchar(32);not null" json:"provider_type"`
 	DisplayName           string         `gorm:"type:varchar(128);not null" json:"display_name"`
 	Enabled               bool           `gorm:"not null;default:true" json:"enabled"`

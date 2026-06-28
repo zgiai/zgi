@@ -20,6 +20,7 @@ import {
   AGENT_ASSET_VISIBLE_PERMISSION_CODES,
   AGENT_MANAGE_PERMISSION_CODES,
 } from '@/constants/permissions';
+import { markAgentListRestoreIntentFromDetail } from '@/utils/agent-list-state';
 
 interface AgentSidebarProps {
   /** When true, hide navigation items (workspace mismatch mode) */
@@ -153,6 +154,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
             showIdentity={false}
             backHref="/console/agents"
             backLabel={t('agents.backToAgentList')}
+            onBackClick={() => markAgentListRestoreIntentFromDetail(agentId)}
             iconActionLabel={t('agents.actions.edit')}
             onIconClick={
               canManage && !isMismatch && agentData ? () => setEditOpen(true) : undefined

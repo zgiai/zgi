@@ -89,6 +89,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		QuotaService:               serviceContainer.GetQuotaService(),
 		LLMClient:                  serviceContainer.GetLLMClient(),
 		DefaultModelService:        serviceContainer.GetDefaultModelService(),
+		DataLibraryModule:          serviceContainer.GetDataLibraryModule(),
+		TaskManager:                serviceContainer.GetTaskManager(),
 		Scheduler:                  serviceContainer.GetScheduler(),
 		ScheduledFileService:       serviceContainer.GetFileService(),
 	})
@@ -130,6 +132,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterDataLibraryRoutes(v1, DataLibraryRouteDeps{
 		AccountService:    accountService,
 		DataLibraryModule: serviceContainer.GetDataLibraryModule(),
+		TaskManager:       serviceContainer.GetTaskManager(),
+		TaskRegistry:      serviceContainer.GetTaskHandlerRegistry(),
 	})
 
 	// ---------- DataSource ----------

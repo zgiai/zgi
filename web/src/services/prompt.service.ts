@@ -27,6 +27,7 @@ export interface PromptOptimizeStreamCallbacks {
     detected_variables?: string[];
     provider?: string;
     model?: string;
+    target_max_chars?: number;
   }) => void;
   onChunk?: (payload: { text?: string }) => void;
   onDone?: (payload: {
@@ -37,6 +38,9 @@ export interface PromptOptimizeStreamCallbacks {
     output?: string;
     provider?: string;
     model?: string;
+    truncated?: boolean;
+    finish_reason?: string;
+    target_max_chars?: number;
   }) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
@@ -101,6 +105,7 @@ function dispatchPromptOptimizerStreamMessage(
           detected_variables?: string[];
           provider?: string;
           model?: string;
+          target_max_chars?: number;
         }
       );
       return;
@@ -117,6 +122,9 @@ function dispatchPromptOptimizerStreamMessage(
           output?: string;
           provider?: string;
           model?: string;
+          truncated?: boolean;
+          finish_reason?: string;
+          target_max_chars?: number;
         }
       );
       return;

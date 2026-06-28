@@ -736,6 +736,18 @@ func TestResolveRunStreamWorkspaceID_UsesAppWorkspaceForUserAgent(t *testing.T) 
 	}
 }
 
+func TestWebAppWorkflowRunType_OnlyChatUsesConversationWorkflow(t *testing.T) {
+	if got := webAppWorkflowRunType("chat"); got != "CONVERSATION_WORKFLOW" {
+		t.Fatalf("chat run type = %q, want CONVERSATION_WORKFLOW", got)
+	}
+	if got := webAppWorkflowRunType("workflow"); got != "WORKFLOW" {
+		t.Fatalf("workflow run type = %q, want WORKFLOW", got)
+	}
+	if got := webAppWorkflowRunType(""); got != "WORKFLOW" {
+		t.Fatalf("empty run type = %q, want WORKFLOW", got)
+	}
+}
+
 func TestBuildWorkflowStartedEventPayload_ConversationWorkflowIncludesTopLevelIDs(t *testing.T) {
 	systemInputs := map[string]interface{}{
 		"sys.conversation_id": "conv-new",

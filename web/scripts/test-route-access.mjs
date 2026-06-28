@@ -253,6 +253,7 @@ const expectedWorkspaceConsolePageRoutes = [
   '/console/db/:dbId/table/:tableId/structure',
   '/console/developer/content-parse',
   '/console/files',
+  '/console/files/:fileId',
   '/console/prompts',
   '/console/prompts/:promptId',
   '/console/work/task',

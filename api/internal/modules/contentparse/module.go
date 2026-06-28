@@ -3,12 +3,16 @@ package contentparse
 import (
 	"github.com/gin-gonic/gin"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	hyperparsesdk "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/hyperparse_sdk"
 	systemvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/system_vlm"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
+	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/handler"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmcrypto "github.com/zgiai/zgi/api/internal/modules/llm/shared/crypto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/gorm"
 )
@@ -31,6 +35,12 @@ type Module struct {
 	RunQueryService      service.RunQueryService
 	PlaygroundRunService service.PlaygroundRunService
 	ProviderCatalogs     service.ProviderCatalogResolver
+	ProviderSettings     service.ProviderSettingsService
+
+	ContentParseService contracts.ContentParseService
+	Orchestrator        *contentparsecap.Orchestrator
+	Planner             routing.Planner
+	Catalog             *contracts.ParseProviderCatalog
 
 	ProviderHandler   *handler.ProviderHandler
 	PolicyHandler     *handler.PolicyHandler
@@ -38,6 +48,7 @@ type Module struct {
 	ArtifactHandler   *handler.ArtifactHandler
 	RunHandler        *handler.RunHandler
 	PlaygroundHandler *handler.PlaygroundHandler
+	SettingsHandler   *handler.ProviderSettingsHandler
 }
 
 type ModuleOption func(*moduleOptions)
@@ -100,11 +111,16 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 	if opts.enableSystemVLM {
 		if opts.systemVLMAvailable {
 			capabilityOptions = append(capabilityOptions, contentparsecap.WithAdapters(systemvlm.NewAdapter(opts.llmClient, opts.defaultModelSvc)))
+			capabilityOptions = append(capabilityOptions, contentparsecap.WithFigureSummaryEnhancer(
+				hyperparsesdk.NewDefaultChatFigureSummaryLocalizer(opts.llmClient, opts.defaultModelSvc),
+			))
 		}
 		capabilityOptions = append(capabilityOptions, contentparsecap.WithProviderOverrides(contentparsecap.SystemVLMProviderConfig(opts.systemVLMAvailable)))
 	}
 	capabilityModule := contentparsecap.NewModule(capabilityOptions...)
-	providerCatalogs := service.NewProviderCatalogResolver(providerConfigRepo, capabilityModule.Catalog)
+	cryptoService, _ := llmcrypto.DefaultCryptoService()
+	providerCatalogs := service.NewProviderCatalogResolver(providerConfigRepo, capabilityModule.Catalog, cryptoService)
+	providerSettings := service.NewProviderSettingsService(providerConfigRepo, cryptoService)
 	playgroundHandler := handler.NewPlaygroundHandler(capabilityModule, playgroundRunService)
 	if playgroundHandler != nil {
 		playgroundHandler.SetProviderCatalogResolver(providerCatalogs)
@@ -130,6 +146,12 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 		RunQueryService:      runQueryService,
 		PlaygroundRunService: playgroundRunService,
 		ProviderCatalogs:     providerCatalogs,
+		ProviderSettings:     providerSettings,
+
+		ContentParseService: capabilityModule.Service,
+		Orchestrator:        capabilityModule.Orchestrator,
+		Planner:             capabilityModule.Planner,
+		Catalog:             capabilityModule.Catalog,
 
 		ProviderHandler:   handler.NewProviderHandler(providerAdminService),
 		PolicyHandler:     handler.NewPolicyHandler(policyAdminService),
@@ -137,6 +159,7 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 		ArtifactHandler:   handler.NewArtifactHandler(artifactService),
 		RunHandler:        handler.NewRunHandler(runQueryService, artifactService),
 		PlaygroundHandler: playgroundHandler,
+		SettingsHandler:   handler.NewProviderSettingsHandler(providerSettings),
 	}
 }
 
@@ -156,9 +179,14 @@ func (m *Module) RegisterInternalRoutes(rg *gin.RouterGroup) {
 }
 
 func (m *Module) RegisterPlaygroundRoutes(rg *gin.RouterGroup) {
-	if m == nil || m.PlaygroundHandler == nil {
+	if m == nil {
 		return
 	}
 	group := rg.Group("/content-parse")
-	m.PlaygroundHandler.RegisterRoutes(group)
+	if m.PlaygroundHandler != nil {
+		m.PlaygroundHandler.RegisterRoutes(group)
+	}
+	if m.SettingsHandler != nil {
+		m.SettingsHandler.RegisterRoutes(group)
+	}
 }

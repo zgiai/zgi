@@ -172,7 +172,7 @@ func TestAuthorizeFileManageAccessRejectsOrganizationAdminWithoutWorkspacePermis
 func TestAuthorizeFileActionAccessUsesFinePermissions(t *testing.T) {
 	tests := []struct {
 		name           string
-		authorize      func(*gin.Context, interfaces.FileService, fileWorkspacePermissionChecker, string) (*dto.UploadFile, bool)
+		authorize      func(*gin.Context, fileMetadataReader, fileWorkspacePermissionChecker, string) (*dto.UploadFile, bool)
 		permissionCode workspace_model.WorkspacePermissionCode
 	}{
 		{
@@ -813,6 +813,10 @@ func (f *fileAccessFileService) GetUploadConfig() *interfaces.FileUploadConfigRe
 }
 
 func (f *fileAccessFileService) UploadFile(ctx context.Context, filename string, content []byte, mimeType string, userID, tenantID string, userRole file_model.CreatedByRole, source *interfaces.FileSource, teamTenantID *string, isTemporary bool, isIcon bool) (*dto.UploadFile, error) {
+	return nil, nil
+}
+
+func (f *fileAccessFileService) ReplaceFileContent(ctx context.Context, fileID string, filename string, content []byte, mimeType string, userID, tenantID string) (*dto.UploadFile, error) {
 	return nil, nil
 }
 

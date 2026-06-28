@@ -32,6 +32,8 @@ import {
   isOriginalPreviewSupported,
 } from '@/utils/file-helpers';
 import { cn } from '@/lib/utils';
+import { fileManageService } from '@/services/file-manage.service';
+import type { FileSpreadsheetPreviewResponse } from '@/services/types/file';
 
 const maxOfficePreviewBytes = 10 * 1024 * 1024;
 const maxOfficeZipEntries = 256;
@@ -44,7 +46,7 @@ const maxSpreadsheetPreviewRows = 200;
 const maxSpreadsheetPreviewColumns = 100;
 const maxCsvPreviewRows = 500;
 const maxCsvPreviewColumns = 100;
-const defaultDocxPreviewZoom = 1.15;
+const defaultDocxPreviewZoom = 0.75;
 const minDocxPreviewZoom = 0.75;
 const maxDocxPreviewZoom = 1.8;
 const docxPreviewZoomStep = 0.1;
@@ -449,6 +451,9 @@ function OfficePreview({ file, previewUrl }: OfficePreviewProps) {
   if (extension === 'xlsx') {
     return <SpreadsheetPreview previewUrl={previewUrl} />;
   }
+  if (extension === 'xls') {
+    return <SpreadsheetPreview previewUrl={previewUrl} fileId={file.id} source="server" />;
+  }
 
   return (
     <PreviewMessage
@@ -784,7 +789,13 @@ interface SpreadsheetState {
   activeSheet: string;
 }
 
-function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
+interface SpreadsheetPreviewProps {
+  previewUrl: string;
+  fileId?: string;
+  source?: 'xlsx' | 'server';
+}
+
+function SpreadsheetPreview({ previewUrl, fileId, source = 'xlsx' }: SpreadsheetPreviewProps) {
   const t = useT('files');
   const [state, setState] = useState<SpreadsheetState | null>(null);
   const [activeSheet, setActiveSheet] = useState('');
@@ -802,14 +813,13 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
 
     const load = async () => {
       try {
-        const [response, jszip] = await Promise.all([
-          fetch(previewUrl, { credentials: 'include', signal: abortController.signal }),
-          import('jszip'),
-        ]);
-        if (!response.ok) throw new Error(loadErrorText);
-
-        const buffer = await readOfficePreviewBuffer(response, officeTooLargeText);
-        const sheets = await readXlsxWorkbookPreview(buffer, jszip.default, officeTooLargeText);
+        const sheets =
+          source === 'server'
+            ? await readServerSpreadsheetPreview(fileId, emptyWorkbookText)
+            : await readClientXlsxSpreadsheetPreview(previewUrl, abortController, {
+                loadErrorText,
+                officeTooLargeText,
+              });
         const firstSheet = sheets[0];
         if (!cancelled) {
           if (!firstSheet) throw new Error(emptyWorkbookText);
@@ -835,7 +845,7 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
       cancelled = true;
       abortController.abort();
     };
-  }, [previewUrl, loadErrorText, emptyWorkbookText, officeTooLargeText]);
+  }, [previewUrl, fileId, source, loadErrorText, emptyWorkbookText, officeTooLargeText]);
 
   const currentSheet = useMemo(
     () => state?.sheets.find(item => item.name === activeSheet) ?? state?.sheets[0],
@@ -1280,6 +1290,51 @@ async function readXlsxWorkbookPreview(
   );
 
   return sheets.filter((sheet): sheet is SpreadsheetSheetPreview => sheet !== null);
+}
+
+async function readClientXlsxSpreadsheetPreview(
+  previewUrl: string,
+  abortController: AbortController,
+  messages: {
+    loadErrorText: string;
+    officeTooLargeText: string;
+  }
+): Promise<SpreadsheetSheetPreview[]> {
+  const [response, jszip] = await Promise.all([
+    fetch(previewUrl, { credentials: 'include', signal: abortController.signal }),
+    import('jszip'),
+  ]);
+  if (!response.ok) throw new Error(messages.loadErrorText);
+
+  const buffer = await readOfficePreviewBuffer(response, messages.officeTooLargeText);
+  return readXlsxWorkbookPreview(buffer, jszip.default, messages.officeTooLargeText);
+}
+
+async function readServerSpreadsheetPreview(
+  fileId: string | undefined,
+  emptyWorkbookText: string
+): Promise<SpreadsheetSheetPreview[]> {
+  if (!fileId) {
+    throw new Error(emptyWorkbookText);
+  }
+  const response = await fileManageService.getSpreadsheetPreview(fileId);
+  return normalizeServerSpreadsheetPreview(response.data);
+}
+
+function normalizeServerSpreadsheetPreview(
+  preview: FileSpreadsheetPreviewResponse | undefined
+): SpreadsheetSheetPreview[] {
+  if (!preview?.sheets?.length) return [];
+
+  return preview.sheets.map(sheet => ({
+    name: sheet.name || 'Sheet',
+    rows: sheet.rows.slice(0, maxSpreadsheetPreviewRows).map(row => ({
+      number: row.number,
+      cells: row.cells.slice(0, maxSpreadsheetPreviewColumns),
+    })),
+    columnCount: Math.min(sheet.columnCount, maxSpreadsheetPreviewColumns),
+    totalRowCount: sheet.totalRowCount,
+  }));
 }
 
 async function readSharedStrings(zip: JSZip, limitErrorText: string): Promise<string[]> {

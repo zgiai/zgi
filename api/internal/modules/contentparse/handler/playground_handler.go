@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	chunkexecutor "github.com/zgiai/zgi/api/internal/capabilities/chunking/executor"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
@@ -58,6 +59,7 @@ func (h *PlaygroundHandler) SetAccountService(service interfaces.AccountService)
 func (h *PlaygroundHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.Use(h.requirePlaygroundWorkspace())
 	rg.GET("/playground/providers", h.ListProviders)
+	rg.GET("/file-route/providers", h.ListFileRouteProviders)
 	rg.POST("/playground/parse", h.Parse)
 	rg.POST("/playground/save", h.SaveRun)
 	rg.GET("/playground/admin/provider-summary", h.GetProviderSummary)
@@ -164,6 +166,34 @@ func (h *PlaygroundHandler) ListProviders(c *gin.Context) {
 	})
 }
 
+func (h *PlaygroundHandler) ListFileRouteProviders(c *gin.Context) {
+	if h == nil || h.orchestrator == nil {
+		response.FailWithMessage(c, response.ErrSystemError, "content parse is not initialized")
+		return
+	}
+	fileName := strings.TrimSpace(c.Query("file_name"))
+	if fileName == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "file_name is required")
+		return
+	}
+	health, err := h.orchestrator.Health(c.Request.Context())
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	catalog, source, err := h.catalogForRequest(c)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	providers, ext := buildFileRouteProviderStatuses(fileName, catalog, health)
+	response.Success(c, fileRouteProvidersResponse{
+		Source:    source,
+		FileExt:   ext,
+		Providers: providers,
+	})
+}
+
 func (h *PlaygroundHandler) Parse(c *gin.Context) {
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
@@ -244,7 +274,7 @@ func (h *PlaygroundHandler) executePlaygroundParse(c *gin.Context, fileHeader *m
 		return nil, &playgroundRequestError{code: response.ErrInvalidParam, err: err}
 	}
 
-	artifact, executedReq, executedCandidate, duration, err := h.executeRoutePlan(c, plan, effectiveReq)
+	artifact, executedReq, executedCandidate, duration, err := h.executeRoutePlan(c, catalog, plan, effectiveReq)
 	if err != nil {
 		return nil, &playgroundRequestError{code: response.ErrSystemError, err: err}
 	}
@@ -304,7 +334,7 @@ func (h *PlaygroundHandler) executePlaygroundParse(c *gin.Context, fileHeader *m
 	}, nil
 }
 
-func (h *PlaygroundHandler) executeRoutePlan(c *gin.Context, plan *routing.RoutePlan, req contracts.ParseRequest) (*contracts.ParseArtifact, contracts.ParseRequest, routing.RouteCandidate, time.Duration, error) {
+func (h *PlaygroundHandler) executeRoutePlan(c *gin.Context, catalog *contracts.ParseProviderCatalog, plan *routing.RoutePlan, req contracts.ParseRequest) (*contracts.ParseArtifact, contracts.ParseRequest, routing.RouteCandidate, time.Duration, error) {
 	candidates := routePlanExecutionCandidates(plan)
 	if len(candidates) == 0 {
 		return nil, req, routing.RouteCandidate{}, 0, fmt.Errorf("content parse route plan has no executable provider")
@@ -324,7 +354,13 @@ func (h *PlaygroundHandler) executeRoutePlan(c *gin.Context, plan *routing.Route
 		}
 
 		attemptStartedAt := time.Now()
-		artifact, err := h.orchestrator.ParseWithAdapter(c.Request.Context(), adapterName, attemptReq)
+		envOverrides := service.RuntimeEnvOverridesForCandidate(catalog, candidate)
+		var artifact *contracts.ParseArtifact
+		err := envconfig.WithOverridesResult(envOverrides, func() error {
+			var parseErr error
+			artifact, parseErr = h.orchestrator.ParseWithAdapter(c.Request.Context(), adapterName, attemptReq)
+			return parseErr
+		})
 		attempt := map[string]any{
 			"provider_key": candidate.ProviderKey,
 			"adapter_name": adapterName,
