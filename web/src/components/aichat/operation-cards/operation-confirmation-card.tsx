@@ -1,6 +1,7 @@
 'use client';
 
 import { AlertTriangle, Check, HelpCircle, X } from 'lucide-react';
+import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type {
   OperationCardAction,
@@ -18,13 +19,6 @@ import {
   getToneTextClassName,
 } from '@/components/aichat/operation-cards/primitives';
 
-const CONFIRMATION_STATUS_FALLBACK_LABEL: Record<OperationConfirmationStatus, string> = {
-  pending: 'Needs review',
-  confirmed: 'Confirmed',
-  rejected: 'Rejected',
-  expired: 'Expired',
-};
-
 function getConfirmationTone(status: OperationConfirmationStatus): OperationCardTone {
   if (status === 'confirmed') return 'success';
   if (status === 'rejected' || status === 'expired') return 'destructive';
@@ -39,8 +33,25 @@ function withFallbackIcon(
   return { ...action, icon: action.icon ?? icon };
 }
 
+function getConfirmationStatusLabel(
+  status: OperationConfirmationStatus,
+  t: ReturnType<typeof useT<'webapp'>>
+): string {
+  switch (status) {
+    case 'confirmed':
+      return t('consoleChat.operationCards.confirmationStatuses.confirmed');
+    case 'rejected':
+      return t('consoleChat.operationCards.confirmationStatuses.rejected');
+    case 'expired':
+      return t('consoleChat.operationCards.confirmationStatuses.expired');
+    case 'pending':
+    default:
+      return t('consoleChat.operationCards.confirmationStatuses.pending');
+  }
+}
+
 export function OperationConfirmationCard({
-  title = 'Confirm operation',
+  title,
   description,
   status = 'pending',
   statusLabel,
@@ -54,6 +65,7 @@ export function OperationConfirmationCard({
   compact = false,
   className,
 }: OperationConfirmationCardProps) {
+  const t = useT('webapp');
   const tone = getConfirmationTone(status);
   const visibleWarnings = warnings ?? [];
   const mergedActions = [
@@ -67,12 +79,12 @@ export function OperationConfirmationCard({
       <OperationCardHeader
         compact={compact}
         icon={<HelpCircle className={cn('size-4', getToneTextClassName(tone))} />}
-        title={title}
+        title={title ?? t('consoleChat.operationCards.confirmationTitle')}
         description={description}
         eyebrow={eyebrow}
         badge={
           <OperationStatusBadge
-            label={statusLabel ?? CONFIRMATION_STATUS_FALLBACK_LABEL[status]}
+            label={statusLabel ?? getConfirmationStatusLabel(status, t)}
             tone={tone}
           />
         }

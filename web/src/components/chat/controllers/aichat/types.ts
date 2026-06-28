@@ -125,6 +125,7 @@ export interface AIChatMessageStartContext {
   files?: AIChatMessageFile[];
   previousConversationId?: string | null;
   resetAnswer?: boolean;
+  forceAdvanceLeaf?: boolean;
   mode?: AIChatRecoveryMode;
   moveToTop?: boolean;
 }
@@ -167,7 +168,7 @@ export interface AIChatControllerStore extends AIChatControllerState {
   applyFileParseStart: (payload: AIChatFileParseStartEventData, eventId?: string | null) => void;
   applyFileParseEnd: (payload: AIChatFileParseEndEventData, eventId?: string | null) => void;
   applyFileParseError: (payload: AIChatFileParseErrorEventData, eventId?: string | null) => void;
-  applyMessageEnd: (payload: AIChatMessageEndEventData) => void;
+  applyMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
   applyStreamError: (payload: AIChatErrorEventData, fallbackConversationId: string | null) => void;
   mergeMessages: (conversationId: string, messages: AIChatMessage[]) => void;
   setActiveConversationId: (conversationId: string | null) => void;
@@ -214,6 +215,7 @@ export interface AIChatController {
     files?: AIChatMessageFile[];
     parentId?: string | null;
     useMemory?: boolean;
+    forceAdvanceLeaf?: boolean;
     runtimeSurface?: AIChatRuntimeSurface;
     operationContext?: unknown;
   }) => Promise<void>;

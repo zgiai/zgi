@@ -1,6 +1,7 @@
 'use client';
 
 import { AlertCircle, CheckCircle2, ExternalLink, FileText, Info } from 'lucide-react';
+import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type {
   OperationCardTone,
@@ -17,13 +18,6 @@ import {
   getToneTextClassName,
 } from '@/components/aichat/operation-cards/primitives';
 
-const RESULT_STATUS_FALLBACK_LABEL: Record<OperationResultStatus, string> = {
-  success: 'Success',
-  error: 'Error',
-  warning: 'Warning',
-  info: 'Info',
-};
-
 function getResultTone(status: OperationResultStatus): OperationCardTone {
   if (status === 'success') return 'success';
   if (status === 'error') return 'destructive';
@@ -37,8 +31,25 @@ function getResultIcon(status: OperationResultStatus) {
   return Info;
 }
 
+function getResultStatusLabel(
+  status: OperationResultStatus,
+  t: ReturnType<typeof useT<'webapp'>>
+): string {
+  switch (status) {
+    case 'success':
+      return t('consoleChat.operationCards.resultStatuses.success');
+    case 'error':
+      return t('consoleChat.operationCards.resultStatuses.error');
+    case 'warning':
+      return t('consoleChat.operationCards.resultStatuses.warning');
+    case 'info':
+    default:
+      return t('consoleChat.operationCards.resultStatuses.info');
+  }
+}
+
 export function OperationResultCard({
-  title = 'Operation result',
+  title,
   description,
   status = 'info',
   statusLabel,
@@ -50,6 +61,7 @@ export function OperationResultCard({
   compact = false,
   className,
 }: OperationResultCardProps) {
+  const t = useT('webapp');
   const tone = getResultTone(status);
   const Icon = getResultIcon(status);
   const visibleDetails = details ?? [];
@@ -59,12 +71,12 @@ export function OperationResultCard({
       <OperationCardHeader
         compact={compact}
         icon={<Icon className={cn('size-4', getToneTextClassName(tone))} />}
-        title={title}
+        title={title ?? t('consoleChat.operationCards.resultTitle')}
         description={description}
         eyebrow={eyebrow}
         badge={
           <OperationStatusBadge
-            label={statusLabel ?? RESULT_STATUS_FALLBACK_LABEL[status]}
+            label={statusLabel ?? getResultStatusLabel(status, t)}
             tone={tone}
           />
         }

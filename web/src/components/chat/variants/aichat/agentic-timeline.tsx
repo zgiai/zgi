@@ -42,7 +42,7 @@ import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-
 type TimelineTone = 'running' | 'success' | 'error';
 type TimelineDebugLabel = keyof typeof TIMELINE_DEBUG_LABEL_KEYS;
 type GovernanceFieldLabel = keyof typeof GOVERNANCE_FIELD_LABEL_KEYS;
-type WebappTranslator = ScopedTranslations<'webapp'>;
+export type WebappTranslator = ScopedTranslations<'webapp'>;
 
 const TIMELINE_DEBUG_LABEL_KEYS = {
   kind: 'consoleChat.skills.trace.debug.kind',
@@ -113,6 +113,15 @@ const UUID_DISPLAY_PATTERN =
 
 const OPAQUE_INLINE_ID_PATTERN =
   /\b(?:file|upload[-_]?file|asset|workspace|ws)[-_](?=[a-z0-9_-]*\d)[a-z0-9][a-z0-9_-]*\b/gi;
+
+interface AgentBindingDisplaySummary {
+  action: string;
+  kind: string;
+  count: number;
+  names: string[];
+  agentName: string | null;
+  changeCount: number;
+}
 
 interface AIChatAgenticTimelineProps {
   timeline: AIChatAgenticTimelineItem[];
@@ -266,6 +275,247 @@ function sanitizeTimelineResultForDisplay(
   return governanceRecord(sanitized);
 }
 
+function stringListFromUnknown(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map(item => governanceStringValue(item))
+      .filter((item): item is string => Boolean(item))
+      .filter(name => !looksLikeOpaqueAssetID(name));
+  }
+  const single = governanceStringValue(value);
+  return single && !looksLikeOpaqueAssetID(single) ? [single] : [];
+}
+
+function firstRecordFromUnknown(value: unknown): Record<string, unknown> | null {
+  if (Array.isArray(value)) {
+    return (
+      value
+        .map(item => governanceRecord(item))
+        .find((item): item is Record<string, unknown> => Boolean(item)) ?? null
+    );
+  }
+  return governanceRecord(value);
+}
+
+function agentBindingDisplaySummaryFromRecord(
+  result: Record<string, unknown>,
+  toolName?: string | null
+): AgentBindingDisplaySummary | null {
+  const normalizedTool = normalizeGovernanceToolName(toolName);
+  const primaryChange =
+    firstRecordFromUnknown(result.config_changes) ?? firstRecordFromUnknown(result.binding_changes);
+  const hasTopLevelSummary =
+    Boolean(governanceRecordString(result, ['binding_kind'])) ||
+    Boolean(governanceRecordString(result, ['change_action']));
+  const source = hasTopLevelSummary ? result : primaryChange ?? result;
+  const kind =
+    governanceRecordString(source, ['binding_kind']) ??
+    agentBindingKindFromToolName(normalizedTool);
+  if (!kind) return null;
+
+  const action =
+    governanceRecordString(source, ['change_action', 'action']) ??
+    agentBindingActionFallbackFromToolName(normalizedTool);
+  const addedCount = governanceRecordNumber(source, ['added_resource_count', 'added_count']) ?? 0;
+  const removedCount =
+    governanceRecordNumber(source, ['removed_resource_count', 'removed_count']) ?? 0;
+  const finalCount = governanceRecordNumber(source, ['final_resource_count', 'final_count']) ?? 0;
+  const explicitCount = governanceRecordNumber(source, ['resource_count', 'asset_count']);
+  const resolvedAction = action || (removedCount > 0 && addedCount === 0 ? 'unbind' : 'bind');
+  const names =
+    resolvedAction === 'unbind'
+      ? stringListFromUnknown(source.removed_resource_names)
+      : resolvedAction === 'bind'
+        ? stringListFromUnknown(source.added_resource_names)
+        : stringListFromUnknown(source.resource_names);
+  const fallbackNames = stringListFromUnknown(source.resource_names);
+  const count =
+    explicitCount ??
+    (resolvedAction === 'unbind'
+      ? removedCount
+      : resolvedAction === 'bind'
+        ? addedCount
+        : Math.max(addedCount + removedCount, finalCount, fallbackNames.length));
+  const agent = governanceRecord(result.agent);
+  const agentName =
+    governanceRecordString(result, ['agent_name']) ??
+    governanceRecordString(agent, ['name', 'agent_name']);
+  const changeCount = Array.isArray(result.config_changes)
+    ? result.config_changes.length
+    : Array.isArray(result.binding_changes)
+      ? result.binding_changes.length
+      : 1;
+  return {
+    action: resolvedAction,
+    kind,
+    count: Math.max(count, names.length, fallbackNames.length, 1),
+    names: names.length > 0 ? names : fallbackNames,
+    agentName,
+    changeCount: Math.max(changeCount, 1),
+  };
+}
+
+function agentBindingKindFromToolName(toolName: string): string | null {
+  switch (toolName) {
+    case 'replace_agent_skill_bindings':
+    case 'agent.replace_skill_bindings':
+      return 'agent_skill';
+    case 'replace_agent_knowledge_bindings':
+    case 'agent.replace_knowledge_bindings':
+      return 'knowledge_base';
+    case 'replace_agent_database_bindings':
+    case 'agent.replace_database_bindings':
+      return 'database_table';
+    case 'replace_agent_workflow_bindings':
+    case 'agent.replace_workflow_bindings':
+      return 'workflow';
+    default:
+      return null;
+  }
+}
+
+function agentBindingKindFromAssetType(assetType: string): string | null {
+  switch (normalizeGovernanceAssetType(assetType)) {
+    case 'agent_skill':
+    case 'skill':
+      return 'agent_skill';
+    case 'knowledge_base':
+    case 'knowledge':
+    case 'dataset':
+      return 'knowledge_base';
+    case 'database_table':
+    case 'table':
+      return 'database_table';
+    case 'workflow':
+      return 'workflow';
+    default:
+      return null;
+  }
+}
+
+function agentBindingActionFallbackFromToolName(toolName: string): string | null {
+  if (!AGENT_BINDING_TOOL_NAMES.has(toolName)) return null;
+  return 'update';
+}
+
+function formatAgentBindingNames(
+  names: string[],
+  count: number,
+  locale: string,
+  t: WebappTranslator
+) {
+  return names.length > 0
+    ? names.slice(0, 6).join(locale === 'en-US' ? ', ' : '、')
+    : t('consoleChat.governance.approvalPanel.targetCountFallback', { count });
+}
+
+function agentBindingDisplayText(
+  summary: AgentBindingDisplaySummary,
+  fallbackAgentName: string,
+  locale: string,
+  t: WebappTranslator
+): string | null {
+  const agent = summary.agentName ?? fallbackAgentName;
+  const count = Math.max(summary.count, 1);
+  const names = formatAgentBindingNames(summary.names, count, locale, t);
+  if (summary.kind === 'multiple') {
+    if (summary.action === 'unbind') {
+      return t('consoleChat.governance.approvalPanel.agentUnbindResources', {
+        agent,
+        count,
+      });
+    }
+    if (summary.action === 'bind') {
+      return t('consoleChat.governance.approvalPanel.agentBindResources', {
+        agent,
+        count,
+      });
+    }
+    return t('consoleChat.governance.approvalPanel.agentUpdateConfigChanges', {
+      agent,
+      count: summary.changeCount,
+    });
+  }
+  const key =
+    summary.action === 'unbind'
+      ? agentBindingUnbindTranslationKey(summary.kind)
+      : summary.action === 'bind'
+        ? agentBindingBindTranslationKey(summary.kind)
+        : agentBindingUpdateTranslationKey(summary.kind);
+  if (!key) {
+    return t('consoleChat.governance.approvalPanel.agentUpdateConfigChanges', {
+      agent,
+      count: summary.changeCount,
+    });
+  }
+  return t(key, { agent, count, names });
+}
+
+function agentOwnerNameFromAssets(value: unknown): string | null {
+  return (
+    governanceAssetsFromUnknown(value)
+      .filter(asset => isBindingOwnerAsset(asset))
+      .map(asset => governanceAssetSpecificDisplayName(asset))
+      .find((name): name is string => Boolean(name)) ?? null
+  );
+}
+
+function agentOwnerNameFromSkillInvocation(invocation: AIChatSkillInvocation): string | null {
+  const governance = invocation.governance;
+  const audit = governanceRecord(invocation.asset_operation_audit ?? governance?.asset_operation_audit);
+  const approvalEvent = governanceRecord(governance?.approval_event);
+  return (
+    agentOwnerNameFromAssets(audit?.assets) ??
+    agentOwnerNameFromAssets(approvalEvent?.assets) ??
+    agentOwnerNameFromAssets(governance?.assets)
+  );
+}
+
+function agentBindingBindTranslationKey(kind: string) {
+  switch (kind) {
+    case 'agent_skill':
+      return 'consoleChat.governance.approvalPanel.agentBindSkills' as const;
+    case 'knowledge_base':
+      return 'consoleChat.governance.approvalPanel.agentBindKnowledge' as const;
+    case 'database_table':
+      return 'consoleChat.governance.approvalPanel.agentBindDatabaseTables' as const;
+    case 'workflow':
+      return 'consoleChat.governance.approvalPanel.agentBindWorkflows' as const;
+    default:
+      return null;
+  }
+}
+
+function agentBindingUnbindTranslationKey(kind: string) {
+  switch (kind) {
+    case 'agent_skill':
+      return 'consoleChat.governance.approvalPanel.agentUnbindSkills' as const;
+    case 'knowledge_base':
+      return 'consoleChat.governance.approvalPanel.agentUnbindKnowledge' as const;
+    case 'database_table':
+      return 'consoleChat.governance.approvalPanel.agentUnbindDatabaseTables' as const;
+    case 'workflow':
+      return 'consoleChat.governance.approvalPanel.agentUnbindWorkflows' as const;
+    default:
+      return null;
+  }
+}
+
+function agentBindingUpdateTranslationKey(kind: string) {
+  switch (kind) {
+    case 'agent_skill':
+      return 'consoleChat.governance.approvalPanel.agentUpdateSkills' as const;
+    case 'knowledge_base':
+      return 'consoleChat.governance.approvalPanel.agentUpdateKnowledge' as const;
+    case 'database_table':
+      return 'consoleChat.governance.approvalPanel.agentUpdateDatabaseTables' as const;
+    case 'workflow':
+      return 'consoleChat.governance.approvalPanel.agentUpdateWorkflows' as const;
+    default:
+      return null;
+  }
+}
+
 function timelineDebugRows(invocation: AIChatSkillInvocation, locale: string) {
   return [
     ['kind', invocation.kind],
@@ -286,6 +536,21 @@ function buildSkillTitle(
   locale: string,
   t: WebappTranslator
 ): string {
+  const routeTarget = routeNavigationDisplayTarget(invocation, locale);
+  if (routeTarget) {
+    const alreadyLoaded = routeNavigationAlreadyLoaded(invocation);
+    if (alreadyLoaded && tone !== 'running' && tone !== 'error') {
+      return locale === 'en-US' ? `Already on ${routeTarget}` : `已在 ${routeTarget}`;
+    }
+    if (tone === 'running') {
+      return locale === 'en-US' ? `Navigating to ${routeTarget}` : `正在导航到 ${routeTarget}`;
+    }
+    if (tone === 'error') {
+      return locale === 'en-US' ? `Failed to navigate to ${routeTarget}` : `导航到 ${routeTarget} 失败`;
+    }
+    return locale === 'en-US' ? `Navigated to ${routeTarget}` : `已导航到 ${routeTarget}`;
+  }
+
   const toolName =
     getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
     invocation.path ||
@@ -308,6 +573,23 @@ function buildSkillTitle(
 
   if (invocation.kind === 'guardrail') {
     return t('consoleChat.skills.agentic.strategyAdjusted');
+  }
+
+  if (tone === 'success' && normalizeGovernanceToolName(invocation.skill_id) === 'agent-management') {
+    const result = invocationRecord(invocation.result);
+    const summary = agentBindingDisplaySummaryFromRecord(result, invocation.tool_name);
+    const fallbackAgentName =
+      agentOwnerNameFromSkillInvocation(invocation) ??
+      t('consoleChat.governance.approvalPanel.currentAgent');
+    const title = summary
+      ? agentBindingDisplayText(
+          summary,
+          fallbackAgentName,
+          locale,
+          t
+        )
+      : null;
+    if (title) return title;
   }
 
   if (tone === 'running') {
@@ -607,6 +889,16 @@ function governanceApprovalResult(item: GovernanceTimelineItem): Record<string, 
   );
 }
 
+function governanceExecutionResult(item: GovernanceTimelineItem): Record<string, unknown> | null {
+  const approvalResult = governanceApprovalResult(item);
+  return (
+    governanceRecord(item.event.execution_result) ??
+    governanceRecord(item.event.result) ??
+    governanceRecord(item.event.governance?.execution_result) ??
+    governanceRecord(approvalResult?.execution_result)
+  );
+}
+
 function governanceModelFeedback(item: GovernanceTimelineItem): Record<string, unknown> | null {
   const approvalResult = governanceApprovalResult(item);
   return (
@@ -695,16 +987,141 @@ function governanceApprovalAssets(item: GovernanceTimelineItem): AIChatToolGover
   return out;
 }
 
+interface GovernanceAssetGroups {
+  all: AIChatToolGovernanceAssetRef[];
+  owners: AIChatToolGovernanceAssetRef[];
+  targets: AIChatToolGovernanceAssetRef[];
+  display: AIChatToolGovernanceAssetRef[];
+}
+
+const AGENT_BINDING_TOOL_NAMES = new Set([
+  'replace_agent_skill_bindings',
+  'replace_agent_knowledge_bindings',
+  'replace_agent_database_bindings',
+  'replace_agent_workflow_bindings',
+  'agent.replace_skill_bindings',
+  'agent.replace_knowledge_bindings',
+  'agent.replace_database_bindings',
+  'agent.replace_workflow_bindings',
+]);
+
+const AGENT_CONFIG_TOOL_NAMES = new Set(['update_agent_config', 'agent.update_config']);
+
+const AGENT_BINDING_ASSET_TYPES = new Set([
+  'agent_skill',
+  'skill',
+  'knowledge_base',
+  'knowledge',
+  'dataset',
+  'database_table',
+  'table',
+  'workflow',
+]);
+
+function normalizeGovernanceAssetType(value: unknown): string {
+  return governanceStringValue(value)?.toLowerCase().replace(/-/g, '_') ?? '';
+}
+
+function normalizeGovernanceToolName(value: unknown): string {
+  return governanceStringValue(value)?.toLowerCase() ?? '';
+}
+
+function isAgentManagementGovernanceTool(skillId: string, toolName: string): boolean {
+  return (
+    skillId === 'agent-management' ||
+    skillId === 'agent_management' ||
+    toolName.startsWith('agent.')
+  );
+}
+
+function isAgentBindingGovernance(item: GovernanceTimelineItem): boolean {
+  const skillId = normalizeGovernanceToolName(governanceEventString(item, ['skill_id']));
+  const toolName = normalizeGovernanceToolName(governanceEventString(item, ['tool_name', 'tool_id']));
+  if (!isAgentManagementGovernanceTool(skillId, toolName)) return false;
+  if (AGENT_BINDING_TOOL_NAMES.has(toolName)) return true;
+  if (!AGENT_CONFIG_TOOL_NAMES.has(toolName)) return false;
+
+  const executionSummary = agentBindingDisplaySummaryFromRecord(
+    governanceExecutionResult(item) ?? {},
+    toolName
+  );
+  if (executionSummary) return true;
+
+  const assetType = normalizeGovernanceAssetType(governanceEventString(item, ['asset_type']));
+  if (AGENT_BINDING_ASSET_TYPES.has(assetType)) return true;
+
+  const assets = governanceApprovalAssets(item);
+  const hasOwner = assets.some(asset => isBindingOwnerAsset(asset));
+  const hasBindingTarget = assets.some(asset =>
+    AGENT_BINDING_ASSET_TYPES.has(normalizeGovernanceAssetType(asset.type))
+  );
+  return hasOwner && hasBindingTarget;
+}
+
+function governanceAssetMetadata(
+  asset: AIChatToolGovernanceAssetRef
+): Record<string, unknown> | null {
+  return governanceRecord(asset.metadata);
+}
+
+function isBindingOwnerAsset(asset: AIChatToolGovernanceAssetRef): boolean {
+  const metadata = governanceAssetMetadata(asset);
+  return (
+    normalizeGovernanceAssetType(asset.type) === 'agent' ||
+    governanceBooleanValue(asset.binding_owner) === true ||
+    governanceBooleanValue(metadata?.binding_owner) === true
+  );
+}
+
+function governanceAssetGroups(
+  item: GovernanceTimelineItem,
+  assets: AIChatToolGovernanceAssetRef[]
+): GovernanceAssetGroups {
+  if (!isAgentBindingGovernance(item)) {
+    return { all: assets, owners: [], targets: assets, display: assets };
+  }
+
+  const targetType = normalizeGovernanceAssetType(governanceEventString(item, ['asset_type']));
+  const owners: AIChatToolGovernanceAssetRef[] = [];
+  const targets: AIChatToolGovernanceAssetRef[] = [];
+
+  for (const asset of assets) {
+    if (isBindingOwnerAsset(asset)) {
+      owners.push(asset);
+      continue;
+    }
+    const assetType = normalizeGovernanceAssetType(asset.type);
+    if (!targetType || assetType === targetType) {
+      targets.push(asset);
+    }
+  }
+
+  return {
+    all: assets,
+    owners,
+    targets,
+    display: targets.length > 0 ? targets : assets.filter(asset => !isBindingOwnerAsset(asset)),
+  };
+}
+
+function governanceDisplayAssets(
+  item: GovernanceTimelineItem,
+  assets: AIChatToolGovernanceAssetRef[]
+): AIChatToolGovernanceAssetRef[] {
+  return governanceAssetGroups(item, assets).display;
+}
+
 function governanceAssetCount(
   item: GovernanceTimelineItem,
   assets: AIChatToolGovernanceAssetRef[]
 ): number {
-  if (assets.length > 0) return assets.length;
+  const displayAssets = governanceDisplayAssets(item, assets);
+  if (displayAssets.length > 0) return displayAssets.length;
   const modelFeedback = governanceModelFeedback(item);
   const assetOperationAudit = governanceAssetOperationAudit(item);
   for (const source of [assetOperationAudit, modelFeedback, item.event.governance, item.event]) {
     const count = governanceRecordNumber(source, ['asset_count', 'assetCount']);
-    if (count !== null) return count;
+    if (count !== null) return isAgentBindingGovernance(item) ? Math.max(0, count - 1) : count;
   }
   return 0;
 }
@@ -716,8 +1133,14 @@ function governanceAssetSpecificDisplayName(asset: AIChatToolGovernanceAssetRef)
     governanceRecordString(asset.metadata, ['filename', 'file_name']);
   if (fileName && !looksLikeOpaqueAssetID(fileName)) return fileName;
   const displayName =
-    governanceRecordString(asset, ['name', 'title', 'label']) ??
-    governanceRecordString(asset.metadata, ['name', 'title', 'label']);
+    governanceRecordString(asset, ['name', 'title', 'label', 'agent_name', 'resource_name']) ??
+    governanceRecordString(asset.metadata, [
+      'name',
+      'title',
+      'label',
+      'agent_name',
+      'resource_name',
+    ]);
   if (displayName && displayName !== id && !looksLikeOpaqueAssetID(displayName)) {
     return displayName;
   }
@@ -848,12 +1271,14 @@ function governanceEventString(
 ): string | null {
   const approvalEvent = governanceApprovalEvent(item);
   const modelFeedback = governanceModelFeedback(item);
+  const executionResult = governanceExecutionResult(item);
   for (const source of [
     item.event,
     item.event.governance,
     item.event.governance?.manifest,
     approvalEvent,
     modelFeedback,
+    executionResult,
   ]) {
     const value = governanceRecordString(source, keys);
     if (value) return value;
@@ -948,9 +1373,44 @@ function governanceRiskLabel(riskLevel: string, t: WebappTranslator): string {
 }
 
 function governanceAssetTypeLabel(assetType: string, t: WebappTranslator): string {
-  switch (assetType) {
+  switch (assetType.trim().toLowerCase()) {
     case 'file':
       return t('consoleChat.governance.assetTypes.file');
+    case 'agent':
+      return t('consoleChat.governance.assetTypes.agent');
+    case 'agent_skill':
+    case 'agent-skill':
+    case 'skill':
+      return t('consoleChat.governance.assetTypes.agentSkill');
+    case 'knowledge_base':
+    case 'knowledge-base':
+    case 'knowledge':
+      return t('consoleChat.governance.assetTypes.knowledgeBase');
+    case 'database':
+      return t('consoleChat.governance.assetTypes.database');
+    case 'database_table':
+    case 'database-table':
+    case 'table':
+      return t('consoleChat.governance.assetTypes.databaseTable');
+    case 'workflow':
+      return t('consoleChat.governance.assetTypes.workflow');
+    case 'workflow_run':
+    case 'workflow-run':
+      return t('consoleChat.governance.assetTypes.workflowRun');
+    case 'task':
+    case 'scheduled_task':
+    case 'scheduled-task':
+      return t('consoleChat.governance.assetTypes.task');
+    case 'memory':
+      return t('consoleChat.governance.assetTypes.memory');
+    case 'dataset':
+      return t('consoleChat.governance.assetTypes.dataset');
+    case 'document':
+      return t('consoleChat.governance.assetTypes.document');
+    case 'prompt':
+      return t('consoleChat.governance.assetTypes.prompt');
+    case 'workspace':
+      return t('consoleChat.governance.assetTypes.workspace');
     default:
       return assetType;
   }
@@ -1063,14 +1523,116 @@ function governanceActionSentence(
   item: GovernanceTimelineItem,
   assets: AIChatToolGovernanceAssetRef[],
   assetCount: number,
-  t: WebappTranslator
+  t: WebappTranslator,
+  locale: string
 ): string {
   const effect = governanceEventString(item, ['effect'])?.toLowerCase();
   const assetType = governanceEventString(item, ['asset_type'])?.toLowerCase();
   const skillId = governanceEventString(item, ['skill_id'])?.toLowerCase();
   const toolName = governanceEventString(item, ['tool_name', 'tool_id'])?.toLowerCase();
-  const count = Math.max(assetCount, assets.length, 1);
-  const singleAssetName = assets.length === 1 ? governanceAssetSpecificDisplayName(assets[0]) : null;
+  const assetGroups = governanceAssetGroups(item, assets);
+  const actionAssets = assetGroups.display;
+  const count = Math.max(assetCount, actionAssets.length, 1);
+  const singleAssetName =
+    actionAssets.length === 1 ? governanceAssetSpecificDisplayName(actionAssets[0]) : null;
+
+  if (skillId === 'agent-management') {
+    switch (toolName) {
+      case 'list_agent_knowledge_candidates':
+      case 'list_agent_knowledge_binding_candidates':
+      case 'agent.list_knowledge_candidates':
+        return t('consoleChat.governance.approvalPanel.agentInspectKnowledgeCandidates');
+      case 'list_agent_database_candidates':
+      case 'list_agent_database_binding_candidates':
+      case 'agent.list_database_candidates':
+        return t('consoleChat.governance.approvalPanel.agentInspectDatabaseCandidates');
+      case 'list_agent_database_tables':
+      case 'agent.list_database_tables':
+        return t('consoleChat.governance.approvalPanel.agentInspectDatabaseTables');
+      case 'list_agent_workflow_binding_candidates':
+      case 'agent.list_workflow_binding_candidates':
+        return t('consoleChat.governance.approvalPanel.agentInspectWorkflowCandidates');
+      default:
+        break;
+    }
+  }
+
+  if (toolName && isAgentBindingGovernance(item)) {
+    const resultSummary = governanceExecutionResult(item)
+      ? agentBindingDisplaySummaryFromRecord(governanceExecutionResult(item) ?? {}, toolName)
+      : null;
+    const ownerName =
+      governanceEventString(item, ['agent_name']) ??
+      resultSummary?.agentName ??
+      assetGroups.owners.map(asset => governanceAssetSpecificDisplayName(asset)).find(Boolean) ??
+      t('consoleChat.governance.approvalPanel.currentAgent');
+    if (resultSummary) {
+      const actionText = agentBindingDisplayText(resultSummary, ownerName, locale, t);
+      if (actionText) return actionText;
+    }
+    const names = actionAssets
+      .map(asset => governanceAssetSpecificDisplayName(asset))
+      .filter((name): name is string => Boolean(name))
+      .slice(0, 6);
+    const namesText =
+      names.length > 0
+        ? names.join(locale === 'en-US' ? ', ' : '、')
+        : t('consoleChat.governance.approvalPanel.targetCountFallback', { count });
+    const kind = agentBindingKindFromToolName(toolName) ?? agentBindingKindFromAssetType(assetType ?? '');
+    const updateKey = kind ? agentBindingUpdateTranslationKey(kind) : null;
+    if (updateKey) {
+      return t(updateKey, {
+        agent: ownerName,
+        count,
+        names: namesText,
+      });
+    }
+
+    if (
+      toolName === 'replace_agent_skill_bindings' ||
+      toolName === 'agent.replace_skill_bindings'
+    ) {
+      return t('consoleChat.governance.approvalPanel.agentUpdateSkills', {
+        agent: ownerName,
+        count,
+        names: namesText,
+      });
+    }
+    if (
+      toolName === 'replace_agent_knowledge_bindings' ||
+      toolName === 'agent.replace_knowledge_bindings'
+    ) {
+      return t('consoleChat.governance.approvalPanel.agentUpdateKnowledge', {
+        agent: ownerName,
+        count,
+        names: namesText,
+      });
+    }
+    if (
+      toolName === 'replace_agent_database_bindings' ||
+      toolName === 'agent.replace_database_bindings'
+    ) {
+      return t('consoleChat.governance.approvalPanel.agentUpdateDatabaseTables', {
+        agent: ownerName,
+        count,
+        names: namesText,
+      });
+    }
+    if (
+      toolName === 'replace_agent_workflow_bindings' ||
+      toolName === 'agent.replace_workflow_bindings'
+    ) {
+      return t('consoleChat.governance.approvalPanel.agentUpdateWorkflows', {
+        agent: ownerName,
+        count,
+        names: namesText,
+      });
+    }
+    return t('consoleChat.governance.approvalPanel.agentUpdateConfigChanges', {
+      agent: ownerName,
+      count,
+    });
+  }
 
   if (effect === 'delete' && assetType === 'file') {
     if (singleAssetName) {
@@ -1084,6 +1646,19 @@ function governanceActionSentence(
       });
     }
     return t('consoleChat.governance.approvalPanel.fileDeleteMany', { count });
+  }
+
+  if (effect === 'delete' && assetType === 'agent' && actionAssets.length > 1) {
+    const names = actionAssets
+      .map(asset => governanceAssetSpecificDisplayName(asset))
+      .filter(Boolean)
+      .slice(0, 6);
+    if (names.length > 0) {
+      return t('consoleChat.governance.approvalPanel.agentDeleteManyWithNames', {
+        count,
+        names: names.join(', '),
+      });
+    }
   }
 
   if (effect && assetType && singleAssetName) {
@@ -1128,11 +1703,12 @@ function buildToolGovernanceDecisionViewModel(
   const toolLabel = governanceToolLabel(item, skillDisplayById, locale, t);
   const reason = governanceReason(item);
   const approvalAssets = governanceApprovalAssets(item);
+  const displayAssets = governanceDisplayAssets(item, approvalAssets);
   const assetCount = governanceAssetCount(item, approvalAssets);
   const notice = governanceNoticeText(item, assetCount, t);
   const summaryRows: ToolGovernanceDisplayRow[] = governanceSummaryRows(
     item,
-    approvalAssets,
+    displayAssets,
     t
   ).flatMap(([labelKey, value]) =>
     value
@@ -1159,7 +1735,7 @@ function buildToolGovernanceDecisionViewModel(
         : [];
     }
   );
-  const assets: ToolGovernanceDisplayAsset[] = approvalAssets.map((asset, index) => {
+  const assets: ToolGovernanceDisplayAsset[] = displayAssets.map((asset, index) => {
     const key = `${governanceStringValue(asset.id) ?? governanceAssetDisplayName(asset)}-${index}`;
     return {
       key,
@@ -1197,7 +1773,7 @@ function buildToolGovernanceDecisionViewModel(
     });
   };
 
-  const actionSentence = governanceActionSentence(item, approvalAssets, assetCount, t);
+  const actionSentence = governanceActionSentence(item, approvalAssets, assetCount, t, locale);
 
   return {
     title: actionSentence || title,
@@ -1241,6 +1817,34 @@ function toPendingToolGovernanceApproval(
   };
 }
 
+export function resolvePendingToolGovernanceApprovalFromTimeline(
+  timeline: AIChatAgenticTimelineItem[],
+  skillDisplayById: AIChatSkillDisplayMap,
+  locale: string,
+  t: WebappTranslator,
+  onToolGovernanceDecision?: (
+    payload: AIChatToolGovernanceDecisionSubmitPayload
+  ) => void | Promise<void>
+): ToolGovernancePendingApproval | null {
+  const pending = timeline
+    .flatMap(item => {
+      if (item.type !== 'tool_governance_decision' || !isToolGovernanceNeedsApproval(item)) {
+        return [];
+      }
+      const view = buildToolGovernanceDecisionViewModel(
+        item,
+        skillDisplayById,
+        locale,
+        t,
+        onToolGovernanceDecision
+      );
+      return [toPendingToolGovernanceApproval(view, item)];
+    })
+    .sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0));
+
+  return pending[0] ?? null;
+}
+
 function ToolGovernanceDecisionRow({
   item,
   skillDisplayById,
@@ -1271,6 +1875,7 @@ function ToolGovernanceDecisionRow({
 
   return (
     <ToolGovernanceDecisionCard
+      submissionKey={view.pendingApprovalId}
       title={view.title}
       toolLabel={view.toolLabel}
       actionSentence={view.actionSentence}
@@ -1424,6 +2029,188 @@ function isWorkflowTimelineItem(
   return 'type' in item && item.type === 'workflow_run';
 }
 
+function isTerminalMessageStatus(status: AIChatMessage['status'] | undefined): boolean {
+  return status === 'completed' || status === 'error' || status === 'stopped';
+}
+
+function compactTerminalIntermediateAnswers(
+  timeline: AIChatAgenticTimelineItem[],
+  messageStatus: AIChatMessage['status'] | undefined
+): AIChatAgenticTimelineItem[] {
+  if (!isTerminalMessageStatus(messageStatus)) return timeline;
+  const intermediateItems = timeline.filter(isIntermediateAnswerItem);
+  if (intermediateItems.length <= 1) return timeline;
+
+  const latestIntermediate = intermediateItems.reduce((latest, item) => {
+    const latestAt = latest.created_at ?? 0;
+    const itemAt = item.created_at ?? 0;
+    if (itemAt > latestAt) return item;
+    if (itemAt < latestAt) return latest;
+    return item.id > latest.id ? item : latest;
+  });
+
+  return timeline.filter(
+    item => !isIntermediateAnswerItem(item) || item.id === latestIntermediate.id
+  );
+}
+
+function compactTerminalProgressText(
+  timeline: AIChatAgenticTimelineItem[],
+  messageStatus: AIChatMessage['status'] | undefined
+): AIChatAgenticTimelineItem[] {
+  if (messageStatus !== 'completed') return timeline;
+  return timeline.filter(item => item.type !== 'progress_text' || !isTransientProgressItem(item));
+}
+
+function invocationString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function invocationRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function invocationStatusIsSuccessful(invocation: AIChatSkillInvocation): boolean {
+  const status = String(invocation.status ?? '').trim().toLowerCase();
+  return status === 'success' || status === 'succeeded' || status === 'allowed';
+}
+
+function invocationNavigationTarget(invocation: AIChatSkillInvocation): string {
+  const result = invocationRecord(invocation.result);
+  const args = invocationRecord(invocation.arguments);
+  const href =
+    invocationString(invocation.href) ||
+    invocationString(result.href) ||
+    invocationString(args.href);
+  return href.replace(/\/+$/, '') || href;
+}
+
+function routeNavigationDisplayTarget(
+  invocation: AIChatSkillInvocation,
+  locale: string
+): string | null {
+  if (invocation.skill_id !== 'console-navigator' || invocation.tool_name !== 'navigate') {
+    return null;
+  }
+  const href = invocationNavigationTarget(invocation);
+  const result = invocationRecord(invocation.result);
+  const rawLabel = invocationString(result.label);
+  const normalizedHref = href.toLowerCase();
+  const englishLabels: Record<string, string> = {
+    '/console': 'Home',
+    '/console/files': 'File Management',
+    '/console/agents': 'Agents',
+    '/console/db': 'Databases',
+  };
+  const chineseLabels: Record<string, string> = {
+    '/console': '首页',
+    '/console/files': '文件管理',
+    '/console/agents': '智能体',
+    '/console/db': '数据库',
+  };
+  if (locale === 'en-US') {
+    return englishLabels[normalizedHref] || rawLabel || href;
+  }
+  return chineseLabels[normalizedHref] || rawLabel || href;
+}
+
+function routeNavigationAlreadyLoaded(invocation: AIChatSkillInvocation): boolean {
+  const result = invocationRecord(invocation.result);
+  return invocationString(result.event_type) === 'route_already_loaded';
+}
+
+function routeNavigationEventKey(
+  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
+): string | null {
+  if (!('item' in item)) return null;
+  const invocation = item.item.invocation;
+  if (invocation.skill_id !== 'console-navigator' || invocation.tool_name !== 'navigate') {
+    return null;
+  }
+  const href = invocationNavigationTarget(invocation);
+  return href ? href.toLowerCase() : null;
+}
+
+function compactAdjacentDuplicateRouteNavigationEvents<
+  T extends AIChatAgenticTimelineItem | SkillTimelineViewModel,
+>(items: T[]): T[] {
+  const compacted: T[] = [];
+  for (const item of items) {
+    const previous = compacted[compacted.length - 1];
+    const currentRouteKey = routeNavigationEventKey(item);
+    if (
+      previous &&
+      currentRouteKey &&
+      routeNavigationEventKey(previous) === currentRouteKey
+    ) {
+      compacted[compacted.length - 1] = item;
+      continue;
+    }
+    compacted.push(item);
+  }
+  return compacted;
+}
+
+function completedClientActionKey(invocation: AIChatSkillInvocation): string | null {
+  if (invocation.kind !== 'client_action') return null;
+  if (invocation.action_type !== 'route_navigation') return null;
+  if (!invocationStatusIsSuccessful(invocation)) return null;
+  const href = invocationNavigationTarget(invocation);
+  if (!href) return null;
+  return [
+    invocation.skill_id,
+    invocation.tool_name ?? '',
+    href,
+  ]
+    .map(value => value.trim().toLowerCase())
+    .join('::');
+}
+
+function toolCallClientActionKey(invocation: AIChatSkillInvocation): string | null {
+  if (invocation.kind !== 'tool_call') return null;
+  if (invocation.skill_id !== 'console-navigator' || invocation.tool_name !== 'navigate') return null;
+  if (!invocationStatusIsSuccessful(invocation)) return null;
+  const href = invocationNavigationTarget(invocation);
+  if (!href) return null;
+  return [
+    invocation.skill_id,
+    invocation.tool_name ?? '',
+    href,
+  ]
+    .map(value => value.trim().toLowerCase())
+    .join('::');
+}
+
+function isSupersededByClientActionSkillEvent(
+  item: AIChatAgenticTimelineItem,
+  completedClientActionKeys: ReadonlySet<string>
+): boolean {
+  if (item.type !== 'skill_event') return false;
+  const key = toolCallClientActionKey(item.invocation);
+  return Boolean(key && completedClientActionKeys.has(key));
+}
+
+function isCompletedSuccessfulSkillLoad(
+  item: AIChatAgenticTimelineItem,
+  messageStatus: AIChatMessage['status'] | undefined
+): boolean {
+  if (
+    item.type === 'skill_event' &&
+    item.invocation.kind === 'skill_load' &&
+    item.invocation.skill_id === 'console-navigator'
+  ) {
+    return true;
+  }
+  return (
+    messageStatus === 'completed' &&
+    item.type === 'skill_event' &&
+    item.invocation.kind === 'skill_load' &&
+    invocationStatusIsSuccessful(item.invocation)
+  );
+}
+
 function governedSkillInvocationCorrelationId(invocation: AIChatSkillInvocation): string | null {
   const modelFeedback = governanceRecord(invocation.governance?.model_feedback);
   return (
@@ -1454,7 +2241,7 @@ function normalizeGovernanceDedupePart(value: string | null): string {
 }
 
 function governanceOperationDedupeKey(item: GovernanceTimelineItem): string | null {
-  const assets = governanceApprovalAssets(item);
+  const assets = governanceDisplayAssets(item, governanceApprovalAssets(item));
   const assetKeys = assets
     .map(
       asset =>
@@ -1638,45 +2425,57 @@ export function AIChatAgenticTimeline({
         .map(governanceOperationDedupeKey)
         .filter((key): key is string => Boolean(key))
     );
+    const completedClientActionKeys = new Set(
+      timeline
+        .flatMap(item => {
+          if (item.type !== 'skill_event') return [];
+          const key = completedClientActionKey(item.invocation);
+          return key ? [key] : [];
+        })
+    );
 
-    return timeline
-        .filter(
-          item =>
-            !isGovernedSkillEvent(item, governanceCorrelationIds) &&
-            !(
-              item.type === 'tool_governance_decision' &&
-              isSupersededResolvedApprovalGovernanceItem(item, finalGovernanceOperationKeys)
-            ) &&
-            !(
-              enableToolGovernanceApprovals &&
-              item.type === 'tool_governance_decision' &&
-              isToolGovernanceNeedsApproval(item)
-            )
-        )
-        .map(item => {
-          if (item.type === 'progress_text') return item;
-          if (item.type === 'intermediate_answer') return item;
-          if (item.type === 'memory_event') return item;
-          if (item.type === 'tool_governance_decision') return item;
-          if (item.type === 'workflow_run') return item;
+    return compactAdjacentDuplicateRouteNavigationEvents(compactTerminalProgressText(
+      compactTerminalIntermediateAnswers(timeline, messageStatus),
+      messageStatus
+    )
+      .filter(
+        item =>
+          !isGovernedSkillEvent(item, governanceCorrelationIds) &&
+          !isSupersededByClientActionSkillEvent(item, completedClientActionKeys) &&
+          !isCompletedSuccessfulSkillLoad(item, messageStatus) &&
+          !(
+            item.type === 'tool_governance_decision' &&
+            isSupersededResolvedApprovalGovernanceItem(item, finalGovernanceOperationKeys)
+          ) &&
+          !(
+            enableToolGovernanceApprovals &&
+            item.type === 'tool_governance_decision' &&
+            isToolGovernanceNeedsApproval(item)
+          )
+      )
+      .map(item => {
+        if (item.type === 'progress_text') return item;
+        if (item.type === 'intermediate_answer') return item;
+        if (item.type === 'memory_event') return item;
+        if (item.type === 'tool_governance_decision') return item;
+        if (item.type === 'workflow_run') return item;
 
-          const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
-          const skill =
-            skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
-          const tone = getInvocationTone(item.invocation);
+        const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
+        const skill = skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
+        const tone = getInvocationTone(item.invocation);
 
-          return {
-            item,
-            skill,
-            tone,
-            title: buildSkillTitle(item.invocation, skill, tone, locale, t),
-            detail:
-              getAIChatSkillResultDisplay(item.invocation, locale) ||
-              item.invocation.message ||
-              item.invocation.error,
-          };
-        });
-  }, [enableToolGovernanceApprovals, governanceCorrelationIds, locale, skillDisplayById, t, timeline]);
+        return {
+          item,
+          skill,
+          tone,
+          title: buildSkillTitle(item.invocation, skill, tone, locale, t),
+          detail:
+            getAIChatSkillResultDisplay(item.invocation, locale) ||
+            item.invocation.message ||
+            item.invocation.error,
+        };
+      }));
+  }, [enableToolGovernanceApprovals, governanceCorrelationIds, locale, messageStatus, skillDisplayById, t, timeline]);
 
   if (events.length === 0) return null;
 

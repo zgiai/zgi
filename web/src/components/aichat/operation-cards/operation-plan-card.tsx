@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Loader2,
 } from 'lucide-react';
+import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type {
   OperationCardTone,
@@ -24,22 +25,6 @@ import {
   getToneSoftClassName,
   getToneTextClassName,
 } from '@/components/aichat/operation-cards/primitives';
-
-const PLAN_STATUS_FALLBACK_LABEL: Record<OperationPlanStatus, string> = {
-  pending: 'Pending',
-  running: 'Running',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-};
-
-const STEP_STATUS_FALLBACK_LABEL: Record<OperationPlanStepStatus, string> = {
-  pending: 'Pending',
-  running: 'Running',
-  completed: 'Completed',
-  failed: 'Failed',
-  skipped: 'Skipped',
-};
 
 function getPlanTone(status: OperationPlanStatus): OperationCardTone {
   if (status === 'completed') return 'success';
@@ -63,8 +48,46 @@ function StepStatusIcon({ status }: { status: OperationPlanStepStatus }) {
   return <Circle className="size-3.5" />;
 }
 
+function getPlanStatusLabel(
+  status: OperationPlanStatus,
+  t: ReturnType<typeof useT<'webapp'>>
+): string {
+  switch (status) {
+    case 'running':
+      return t('consoleChat.operationCards.planStatuses.running');
+    case 'completed':
+      return t('consoleChat.operationCards.planStatuses.completed');
+    case 'failed':
+      return t('consoleChat.operationCards.planStatuses.failed');
+    case 'cancelled':
+      return t('consoleChat.operationCards.planStatuses.cancelled');
+    case 'pending':
+    default:
+      return t('consoleChat.operationCards.planStatuses.pending');
+  }
+}
+
+function getStepStatusLabel(
+  status: OperationPlanStepStatus,
+  t: ReturnType<typeof useT<'webapp'>>
+): string {
+  switch (status) {
+    case 'running':
+      return t('consoleChat.operationCards.stepStatuses.running');
+    case 'completed':
+      return t('consoleChat.operationCards.stepStatuses.completed');
+    case 'failed':
+      return t('consoleChat.operationCards.stepStatuses.failed');
+    case 'skipped':
+      return t('consoleChat.operationCards.stepStatuses.skipped');
+    case 'pending':
+    default:
+      return t('consoleChat.operationCards.stepStatuses.pending');
+  }
+}
+
 export function OperationPlanCard({
-  title = 'Operation plan',
+  title,
   description,
   status = 'pending',
   statusLabel,
@@ -75,6 +98,7 @@ export function OperationPlanCard({
   compact = false,
   className,
 }: OperationPlanCardProps) {
+  const t = useT('webapp');
   const tone = getPlanTone(status);
   const visibleSteps = steps ?? [];
 
@@ -83,12 +107,12 @@ export function OperationPlanCard({
       <OperationCardHeader
         compact={compact}
         icon={<ClipboardList className={cn('size-4', getToneTextClassName(tone))} />}
-        title={title}
+        title={title ?? t('consoleChat.operationCards.planTitle')}
         description={description}
         eyebrow={eyebrow}
         badge={
           <OperationStatusBadge
-            label={statusLabel ?? PLAN_STATUS_FALLBACK_LABEL[status]}
+            label={statusLabel ?? getPlanStatusLabel(status, t)}
             tone={tone}
             loading={status === 'running'}
           />
@@ -126,7 +150,7 @@ export function OperationPlanCard({
                       {step.title}
                     </div>
                     <OperationStatusBadge
-                      label={step.statusLabel ?? STEP_STATUS_FALLBACK_LABEL[stepStatus]}
+                      label={step.statusLabel ?? getStepStatusLabel(stepStatus, t)}
                       tone={stepTone}
                       loading={stepStatus === 'running'}
                     />

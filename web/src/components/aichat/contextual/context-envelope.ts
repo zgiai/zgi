@@ -26,6 +26,7 @@ import type {
   AIChatOperationRelation,
   AIChatOperationResource,
 } from './types';
+import { sanitizeAIChatContextText } from '../page-context/sanitize';
 
 const MAX_CONTEXT_ITEMS = 8;
 const MAX_METADATA_KEYS = 8;
@@ -39,6 +40,33 @@ const MAX_OPERATION_FIELD_LENGTH = 160;
 const MAX_OPERATION_METADATA_KEYS = 32;
 const MAX_OPERATION_METADATA_VALUE_LENGTH = 3200;
 const MAX_OPERATION_ID_LENGTH = 120;
+
+const OPERATION_METADATA_PRIORITY_KEYS = [
+  'page',
+  'route',
+  'resource_kind',
+  'context_ready',
+  'files_query_status',
+  'files_query_settled',
+  'total_file_count',
+  'total_pages',
+  'current_page',
+  'page_size',
+  'visible_range_start',
+  'visible_range_end',
+  'visible_file_count',
+  'indexed_visible_files',
+  'selected_file_count',
+  'selected_visible_file_count',
+  'more_pages_available',
+  'ordinal_scope',
+  'visible_order_basis',
+  'sort_key',
+  'sort_direction',
+  'workspace_id',
+  'workspace_name',
+  'organization_mode',
+] as const;
 
 export interface ContextualAIChatTransportOptions {
   onAssetToolSuccess?: (payload: AIChatSkillCallEndEventData) => void;
@@ -192,7 +220,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function compactText(value: string | undefined, limit = MAX_FIELD_LENGTH): string {
-  const text = (value ?? '').replace(/\s+/g, ' ').trim();
+  const text = sanitizeAIChatContextText(value ?? '').replace(/\s+/g, ' ').trim();
   if (text.length <= limit) return text;
   return `${text.slice(0, limit).trim()}...`;
 }
@@ -297,8 +325,41 @@ function buildVisibleFileAssetSummary(items: AIChatContextItem[]): string {
     .join(' | ');
 
   return compactText(
-    `Visible file assets: count=${fileItems.length}; count and list only type=file/resource_kind=file as files; page, selection, log, and custom context items are not files. For typed ordinal requests such as second Excel, use file_type_rank/extension_rank among visible files of that type, not visible_index alone. ${entries}`,
+    `Visible file assets indexed in context: indexed_count=${fileItems.length}; count and list only type=file/resource_kind=file as files; page, selection, log, and custom context items are not files. For typed ordinal requests such as second Excel, use file_type_rank/extension_rank among visible files of that type, not visible_index alone. ${entries}`,
     1400
+  );
+}
+
+function buildFilesPageCountSummary(items: AIChatContextItem[]): string {
+  const filesPageItem = items.find(
+    item => item.metadata?.page === 'console.files' || item.metadata?.route === '/console/files'
+  );
+  if (!filesPageItem) return '';
+
+  const totalFileCount = metadataText(filesPageItem, 'total_file_count');
+  const currentPage = metadataText(filesPageItem, 'current_page');
+  const totalPages = metadataText(filesPageItem, 'total_pages');
+  const visibleRangeStart = metadataText(filesPageItem, 'visible_range_start');
+  const visibleRangeEnd = metadataText(filesPageItem, 'visible_range_end');
+  const indexedVisibleFiles =
+    metadataText(filesPageItem, 'visible_file_count') ??
+    metadataText(filesPageItem, 'indexed_visible_files');
+  const contextReady = metadataText(filesPageItem, 'context_ready');
+  const queryStatus = metadataText(filesPageItem, 'files_query_status');
+
+  if (!totalFileCount) return '';
+
+  return compactText(
+    `Current Files page table count: total_file_count=${totalFileCount}; current_page=${
+      currentPage ?? '?'
+    }${totalPages ? `/${totalPages}` : ''}; visible_range=${
+      visibleRangeStart ?? '?'
+    }-${visibleRangeEnd ?? '?'}; indexed_visible_files=${
+      indexedVisibleFiles ?? '?'
+    }; context_ready=${contextReady ?? '?'}; query_status=${
+      queryStatus ?? '?'
+    }. For questions like "how many files/items are on this page/table", answer from total_file_count. Use indexed_visible_files only for current visible ordinal references and visible context snippets.`,
+    700
   );
 }
 
@@ -316,7 +377,17 @@ function sanitizeMetadataValue(
 function sanitizeMetadata(
   metadata: AIChatContextMetadata | undefined
 ): AIChatOperationMetadata | undefined {
-  const entries = Object.entries(metadata ?? {})
+  const rawEntries = Object.entries(metadata ?? {});
+  const priorityKeys = new Set<string>(OPERATION_METADATA_PRIORITY_KEYS);
+  const orderedEntries = [
+    ...OPERATION_METADATA_PRIORITY_KEYS.flatMap(key => {
+      const entry = rawEntries.find(([entryKey]) => entryKey === key);
+      return entry ? [entry] : [];
+    }),
+    ...rawEntries.filter(([key]) => !priorityKeys.has(key)),
+  ];
+
+  const entries = orderedEntries
     .map(([key, value]) => {
       const sanitizedKey = compactOptionalText(key, 80);
       const sanitizedValue = sanitizeMetadataValue(value);
@@ -375,6 +446,10 @@ export function buildAIChatContextEnvelope(items: AIChatContextItem[]): string {
     'Important: each numbered item has an explicit type. Count or list assets only when the item type or resource_kind matches the asset type the user asked for; page items are navigation/context, not user assets.',
     `Context item type inventory: ${buildResourceTypeInventory(items)}.`,
   ];
+  const filesPageCountSummary = buildFilesPageCountSummary(items);
+  if (filesPageCountSummary) {
+    lines.push(filesPageCountSummary);
+  }
   const fileAssetSummary = buildVisibleFileAssetSummary(items);
   if (fileAssetSummary) {
     lines.push(fileAssetSummary);

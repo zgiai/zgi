@@ -361,6 +361,7 @@ export function dispatchAIChatStreamEvent(
       callbacks.onWorkflowNodeFinished?.(
         {
           ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          workflow_event: event,
           status: 'success',
           node_type: 'approval',
           title: 'Approval submitted',
@@ -377,6 +378,7 @@ export function dispatchAIChatStreamEvent(
       callbacks.onWorkflowNodeFinished?.(
         {
           ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          workflow_event: event,
           status: 'failed',
           node_type: 'approval',
           title: 'Approval expired',
@@ -389,6 +391,7 @@ export function dispatchAIChatStreamEvent(
       callbacks.onWorkflowNodeFinished?.(
         {
           ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          workflow_event: event,
           status: 'running',
           node_type: 'question-answer',
         },

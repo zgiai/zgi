@@ -104,6 +104,7 @@ export function useAllFiles(
   hasPreviousPage: boolean;
   isLoading: boolean;
   isFetching: boolean;
+  isFetched: boolean;
   error: string | null;
   goToNextPage: () => void;
   goToPreviousPage: () => void;
@@ -127,7 +128,9 @@ export function useAllFiles(
     setCurrentPage(1);
   }, [keyword, sort, extension]);
 
-  const { data, isLoading, isFetching, error } = useQuery<ApiResponseData<AllFilesResponse>>({
+  const { data, isLoading, isFetching, isFetched, error } = useQuery<
+    ApiResponseData<AllFilesResponse>
+  >({
     queryKey: getAllFilesKey(limit, currentPage, keyword, sort),
     queryFn: async () => {
       return fileManageService.getAllFiles({
@@ -189,6 +192,7 @@ export function useAllFiles(
     hasPreviousPage,
     isLoading,
     isFetching,
+    isFetched,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
     goToNextPage,
     goToPreviousPage,
@@ -267,6 +271,7 @@ export function useFiles(
   hasPreviousPage: boolean;
   isLoading: boolean;
   isFetching: boolean;
+  isFetched: boolean;
   error: string | null;
   goToNextPage: () => void;
   goToPreviousPage: () => void;
@@ -299,7 +304,9 @@ export function useFiles(
 
   const serviceMethod = getServiceMethod(category);
 
-  const { data, isLoading, isFetching, error } = useQuery<ApiResponseData<AllFilesResponse>>({
+  const { data, isLoading, isFetching, isFetched, error } = useQuery<
+    ApiResponseData<AllFilesResponse>
+  >({
     queryKey: getFilesKey(
       category,
       limit,
@@ -379,6 +386,7 @@ export function useFiles(
     hasPreviousPage,
     isLoading,
     isFetching,
+    isFetched,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
     goToNextPage,
     goToPreviousPage,

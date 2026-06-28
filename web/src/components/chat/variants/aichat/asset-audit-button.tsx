@@ -40,6 +40,14 @@ interface AIChatAssetAuditButtonProps {
 type BadgeVariant = ComponentProps<typeof Badge>['variant'];
 
 const AUDIT_PAGE_SIZE = 50;
+const AGENT_BINDING_AUDIT_TOOL_NAMES = new Set([
+  'replace_agent_knowledge_bindings',
+  'replace_agent_database_bindings',
+  'replace_agent_workflow_bindings',
+  'agent.replace_knowledge_bindings',
+  'agent.replace_database_bindings',
+  'agent.replace_workflow_bindings',
+]);
 
 export function AIChatAssetAuditButton({
   conversationId,
@@ -163,8 +171,9 @@ function AuditRecordCard({ record }: { record: AIChatAssetOperationAuditRecord }
   const t = useT('webapp');
   const status = record.approval_status || record.governance_status || record.status || '';
   const time = formatAuditTime(record.resolved_at ?? record.created_at ?? record.message_created_at);
-  const assets = record.assets ?? [];
-  const assetCount = record.asset_count ?? assets.length;
+  const rawAssets = record.assets ?? [];
+  const assets = auditDisplayAssets(record, rawAssets);
+  const assetCount = auditAssetCount(record, rawAssets);
   const toolLabel = formatToolLabel(record, t);
   const effect = record.effect ? formatEffect(record.effect, t) : null;
   const risk = record.risk_level ? formatRisk(record.risk_level, t) : null;
@@ -221,6 +230,55 @@ function AuditRecordCard({ record }: { record: AIChatAssetOperationAuditRecord }
       </div>
     </article>
   );
+}
+
+function normalizeAuditToken(value: unknown): string {
+  return stringValue(value)?.toLowerCase().replace(/-/g, '_') ?? '';
+}
+
+function isAgentBindingAuditRecord(record: AIChatAssetOperationAuditRecord): boolean {
+  const skillId = normalizeAuditToken(record.skill_id);
+  const toolName = normalizeAuditToken(record.tool_name ?? record.tool_id);
+  return (
+    (skillId === 'agent_management' || toolName.startsWith('agent.')) &&
+    AGENT_BINDING_AUDIT_TOOL_NAMES.has(toolName)
+  );
+}
+
+function isAuditBindingOwnerAsset(asset: AIChatToolGovernanceAssetRef): boolean {
+  const metadata =
+    asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata)
+      ? asset.metadata
+      : {};
+  return (
+    normalizeAuditToken(asset.type) === 'agent' ||
+    metadata.binding_owner === true ||
+    asset.binding_owner === true
+  );
+}
+
+function auditDisplayAssets(
+  record: AIChatAssetOperationAuditRecord,
+  assets: AIChatToolGovernanceAssetRef[]
+): AIChatToolGovernanceAssetRef[] {
+  if (!isAgentBindingAuditRecord(record)) return assets;
+  const targetType = normalizeAuditToken(record.asset_type);
+  const targets = assets.filter(asset => {
+    if (isAuditBindingOwnerAsset(asset)) return false;
+    const assetType = normalizeAuditToken(asset.type);
+    return !targetType || assetType === targetType;
+  });
+  return targets.length > 0 ? targets : assets.filter(asset => !isAuditBindingOwnerAsset(asset));
+}
+
+function auditAssetCount(
+  record: AIChatAssetOperationAuditRecord,
+  assets: AIChatToolGovernanceAssetRef[]
+): number {
+  const displayAssets = auditDisplayAssets(record, assets);
+  if (displayAssets.length > 0) return displayAssets.length;
+  const rawCount = record.asset_count ?? assets.length;
+  return isAgentBindingAuditRecord(record) ? Math.max(0, rawCount - 1) : rawCount;
 }
 
 function AuditAssets({ assets }: { assets: AIChatToolGovernanceAssetRef[] }) {
@@ -380,7 +438,7 @@ function formatGrantScope(
   const parts = [
     toolID,
     effect ? formatEffect(effect, t) : null,
-    assetType,
+    assetType ? formatAssetType(assetType, t) : null,
     riskLevel ? formatRisk(riskLevel, t) : null,
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(' / ') : null;
@@ -433,8 +491,52 @@ function assetDisplayName(asset: AIChatToolGovernanceAssetRef, t: ReturnType<typ
   if (displayName && displayName !== id && !looksLikeOpaqueAuditAssetID(displayName)) {
     return displayName;
   }
-  if (assetType === 'file') return t('consoleChat.governance.assetTypes.file');
+  if (assetType) return formatAssetType(assetType, t);
   return id || t('consoleChat.governance.audit.unknownAsset');
+}
+
+function formatAssetType(assetType: string, t: ReturnType<typeof useT<'webapp'>>): string {
+  switch (assetType.trim().toLowerCase()) {
+    case 'file':
+      return t('consoleChat.governance.assetTypes.file');
+    case 'agent':
+      return t('consoleChat.governance.assetTypes.agent');
+    case 'agent_skill':
+    case 'agent-skill':
+    case 'skill':
+      return t('consoleChat.governance.assetTypes.agentSkill');
+    case 'knowledge_base':
+    case 'knowledge-base':
+    case 'knowledge':
+      return t('consoleChat.governance.assetTypes.knowledgeBase');
+    case 'database':
+      return t('consoleChat.governance.assetTypes.database');
+    case 'database_table':
+    case 'database-table':
+    case 'table':
+      return t('consoleChat.governance.assetTypes.databaseTable');
+    case 'workflow':
+      return t('consoleChat.governance.assetTypes.workflow');
+    case 'workflow_run':
+    case 'workflow-run':
+      return t('consoleChat.governance.assetTypes.workflowRun');
+    case 'task':
+    case 'scheduled_task':
+    case 'scheduled-task':
+      return t('consoleChat.governance.assetTypes.task');
+    case 'memory':
+      return t('consoleChat.governance.assetTypes.memory');
+    case 'dataset':
+      return t('consoleChat.governance.assetTypes.dataset');
+    case 'document':
+      return t('consoleChat.governance.assetTypes.document');
+    case 'prompt':
+      return t('consoleChat.governance.assetTypes.prompt');
+    case 'workspace':
+      return t('consoleChat.governance.assetTypes.workspace');
+    default:
+      return assetType;
+  }
 }
 
 function looksLikeOpaqueAuditAssetID(value: string): boolean {
@@ -450,8 +552,9 @@ function looksLikeOpaqueAuditAssetID(value: string): boolean {
 }
 
 function assetMeta(asset: AIChatToolGovernanceAssetRef, t: ReturnType<typeof useT<'webapp'>>) {
+  const assetType = stringValue(asset.type);
   const parts = [
-    stringValue(asset.type),
+    assetType ? formatAssetType(assetType, t) : null,
     asset.workspace_id
       ? `${t('consoleChat.governance.fields.workspace')} ${asset.workspace_id}`
       : null,

@@ -221,6 +221,7 @@ interface AIChatInputAreaProps {
   toolGovernancePermissionTier?: AIChatToolGovernancePermissionTier;
   onToolGovernancePermissionTierChange?: (tier: AIChatToolGovernancePermissionTier) => void;
   enableToolGovernanceApprovals?: boolean;
+  activeToolGovernanceApprovalFallback?: ToolGovernancePendingApproval | null;
 }
 
 function ToolGovernancePendingApprovalBridge({
@@ -293,6 +294,7 @@ export function AIChatInputArea({
   toolGovernancePermissionTier = 'basic',
   onToolGovernancePermissionTierChange,
   enableToolGovernanceApprovals = false,
+  activeToolGovernanceApprovalFallback = null,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -396,7 +398,7 @@ export function AIChatInputArea({
     activeQuestions.length > 0 && ignoredUserInputRequestKey !== requestKey;
   const hasActiveWorkflowApprovalRequest = Boolean(activeWorkflowApprovalRequest?.approvalToken);
   const effectiveToolGovernanceApproval = enableToolGovernanceApprovals
-    ? activeToolGovernanceApproval
+    ? (activeToolGovernanceApproval ?? activeToolGovernanceApprovalFallback)
     : null;
   const hasActiveToolGovernanceApproval = Boolean(effectiveToolGovernanceApproval);
   const hasBlockingApproval = hasActiveWorkflowApprovalRequest || hasActiveToolGovernanceApproval;

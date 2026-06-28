@@ -6,6 +6,7 @@ import {
   type AIChatControllerState,
   type AIChatSetControllerState,
 } from '@/components/chat/controllers/aichat';
+import type { AIChatConversation } from '@/services/types/aichat';
 import { getNextActiveSendingState } from '@/components/chat/controllers/aichat/selectors';
 import { mergeAIChatMessages } from '@/components/chat/controllers/aichat/state-reducers';
 import type { AIChatRuntimeTransport } from '@/components/chat/transports/aichat-transport';
@@ -18,6 +19,29 @@ import {
 interface UseChatRuntimeRefreshersArgs {
   transportRef: MutableRefObject<AIChatRuntimeTransport>;
   setControllerState: AIChatSetControllerState;
+}
+
+function preserveLocalBranchLeaf(
+  current: AIChatControllerState,
+  incoming: AIChatConversation
+): AIChatConversation {
+  const existing = current.conversations.find(item => item.id === incoming.id);
+  const localLeafId = existing?.current_leaf_message_id?.trim();
+  if (!localLeafId || localLeafId === incoming.current_leaf_message_id?.trim()) {
+    return incoming;
+  }
+
+  const hasLocalLeafMessage = (current.messagesByConversation[incoming.id] ?? []).some(
+    message => message.id === localLeafId
+  );
+  if (!hasLocalLeafMessage) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    current_leaf_message_id: localLeafId,
+  };
 }
 
 /**
@@ -34,12 +58,16 @@ export function useChatRuntimeRefreshers({
         .refreshConversation(conversationId)
         .then(conversation => {
           setControllerState(current => {
+            const nextConversation = preserveLocalBranchLeaf(current, conversation);
             const nextState: AIChatControllerState = {
               ...current,
-              conversations: replaceAIChatConversation(current.conversations, conversation),
+              conversations: replaceAIChatConversation(current.conversations, nextConversation),
             };
 
-            if (conversation.runtime_status === 'streaming' && conversation.active_message_id) {
+            if (
+              nextConversation.runtime_status === 'streaming' &&
+              nextConversation.active_message_id
+            ) {
               return nextState;
             }
 
@@ -104,14 +132,17 @@ export function useChatRuntimeRefreshers({
         const response = await transportRef.current.listConversations({ page, limit });
         const incoming = response.items;
         setControllerState(current => {
+          const nextIncoming = incoming.map(conversation =>
+            preserveLocalBranchLeaf(current, conversation)
+          );
           const conversations = params.append
             ? [
                 ...current.conversations,
-                ...incoming.filter(
+                ...nextIncoming.filter(
                   item => !current.conversations.some(existing => existing.id === item.id)
                 ),
               ]
-            : incoming;
+            : nextIncoming;
 
           return {
             ...current,

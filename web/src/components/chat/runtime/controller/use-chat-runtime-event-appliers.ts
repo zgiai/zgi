@@ -380,7 +380,7 @@ export function useChatRuntimeEventAppliers({
   );
 
   const applyMessageEnd = useCallback(
-    (payload: AIChatMessageEndEventData, _eventId?: string | null) => {
+    (payload: AIChatMessageEndEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
       const shouldRefreshConversation = shouldRefreshConversationAfterMessageEnd(
         stateRef.current,
@@ -390,7 +390,7 @@ export function useChatRuntimeEventAppliers({
       if (streamingMessageRef.current?.messageId === payload.message_id) {
         streamingMessageRef.current = null;
       }
-      setControllerState(current => applyMessageEndState(current, payload));
+      setControllerState(current => applyMessageEndState(current, payload, eventId));
 
       clearRecoveryRetry(payload.conversation_id);
       delete recoveryModeByConversationRef.current[payload.conversation_id];

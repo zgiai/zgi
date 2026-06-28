@@ -67,6 +67,7 @@ export function useChatRuntimeMessageActions({
       files = [],
       parentId: parentIdOverride,
       useMemory = false,
+      forceAdvanceLeaf = false,
       runtimeSurface,
       operationContext,
     }: {
@@ -75,6 +76,7 @@ export function useChatRuntimeMessageActions({
       files?: AIChatMessageFile[];
       parentId?: string | null;
       useMemory?: boolean;
+      forceAdvanceLeaf?: boolean;
       runtimeSurface?: AIChatRuntimeSurface;
       operationContext?: unknown;
     }) => {
@@ -103,6 +105,55 @@ export function useChatRuntimeMessageActions({
 
       const abortController = new AbortController();
       let streamConversationId = activeConversationId;
+      let forceAdvanceLeafConversationId: string | null = null;
+      let forceAdvanceLeafMessageId: string | null = null;
+      let forceAdvanceLeafPersisted = false;
+      const persistForcedLeaf = (conversationId?: string, messageId?: string) => {
+        if (!forceAdvanceLeaf || forceAdvanceLeafPersisted || !conversationId || !messageId) {
+          return;
+        }
+        forceAdvanceLeafPersisted = true;
+        void transportRef.current
+          .updateConversation(conversationId, {
+            current_leaf_message_id: messageId,
+          })
+          .then(conversation => {
+            setControllerState(current => {
+              const currentConversation = current.conversations.find(
+                item => item.id === conversationId
+              );
+              if (!currentConversation) return current;
+
+              const safeConversation =
+                currentConversation.current_leaf_message_id === messageId
+                  ? {
+                      ...conversation,
+                      runtime_status: currentConversation.runtime_status,
+                      active_message_id: currentConversation.active_message_id,
+                    }
+                  : {
+                      ...conversation,
+                      current_leaf_message_id: currentConversation.current_leaf_message_id,
+                      runtime_status: currentConversation.runtime_status,
+                      active_message_id: currentConversation.active_message_id,
+                    };
+
+              return {
+                ...current,
+                conversations: replaceAIChatConversation(current.conversations, safeConversation, {
+                  moveToTop: false,
+                }),
+              };
+            });
+          })
+          .catch(error => {
+            console.warn('Failed to persist forced AIChat leaf', {
+              conversationId,
+              messageId,
+              error: getErrorMessage(error),
+            });
+          });
+      };
       if (activeConversationId) {
         streamAbortByConversationRef.current[activeConversationId]?.abort();
         streamAbortByConversationRef.current[activeConversationId] = abortController;
@@ -203,6 +254,10 @@ export function useChatRuntimeMessageActions({
                   pendingStreamAbortRef.current = null;
                 }
               }
+              if (forceAdvanceLeaf && payload.conversation_id && payload.message_id) {
+                forceAdvanceLeafConversationId = payload.conversation_id;
+                forceAdvanceLeafMessageId = payload.message_id;
+              }
               applyMessageStart(
                 payload,
                 {
@@ -210,6 +265,7 @@ export function useChatRuntimeMessageActions({
                   model,
                   files,
                   previousConversationId: draftConversationId ?? activeConversationId,
+                  forceAdvanceLeaf,
                   mode: 'active',
                 },
                 eventId
@@ -315,6 +371,10 @@ export function useChatRuntimeMessageActions({
             onMessageEnd: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMessageEnd(payload, eventId);
+              persistForcedLeaf(
+                payload.conversation_id || forceAdvanceLeafConversationId || undefined,
+                payload.message_id || forceAdvanceLeafMessageId || undefined
+              );
             },
             onErrorEvent: (payload, eventId) => {
               if (abortController.signal.aborted) return;

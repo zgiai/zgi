@@ -135,6 +135,7 @@ export function useWorkflowContinuationActions({
       if (!conversation || !sourceMessage) return;
       const sourceConversation: AIChatConversation = conversation;
       let streamStarted = false;
+      let startError: Error | null = null;
 
       const restoreWorkflowApprovalContinuation = (errorMessage?: string) => {
         setControllerState(current => {
@@ -225,54 +226,67 @@ export function useWorkflowContinuationActions({
           },
           onAgentProgress: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyAgentProgress(payload, eventId);
           },
           onIntermediateAnswer: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyIntermediateAnswer(payload, eventId);
           },
           onUserInputRequested: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyUserInputRequested(payload, eventId);
           },
           onFileParseStart: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyFileParseStart(payload, eventId);
           },
           onFileParseEnd: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyFileParseEnd(payload, eventId);
           },
           onFileParseError: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyFileParseError(payload, eventId);
           },
           onSkillLoadStart: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillLoadStart(payload, eventId);
           },
           onSkillLoadEnd: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillLoadEnd(payload, eventId);
           },
           onSkillReferenceRead: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillReferenceRead(payload, eventId);
           },
           onSkillCallStart: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillCallStart(payload, eventId);
           },
           onSkillCallEnd: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillCallEnd(payload, eventId);
           },
           onSkillCallError: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillCallError(payload, eventId);
           },
           onSkillArtifactCreated: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applySkillArtifactCreated(payload, eventId);
           },
           onToolGovernanceDecision: (payload, eventId) => {
@@ -290,56 +304,69 @@ export function useWorkflowContinuationActions({
           },
           onMemoryMutation: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyMemoryMutation(payload, eventId);
             refreshAccountMemoryAfterMemoryMutation(payload);
           },
           onWorkflowStarted: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowStarted(payload, eventId);
           },
           onWorkflowNodeStarted: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowNodeStarted(payload, eventId);
           },
           onWorkflowNodeFinished: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowNodeFinished(payload, eventId);
           },
           onWorkflowPaused: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowPaused(payload, eventId);
           },
           onWorkflowApprovalRequested: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowApprovalRequested(payload, eventId);
           },
           onWorkflowFinished: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowFinished(payload, eventId);
           },
           onWorkflowFailed: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             eventAppliers.applyWorkflowFailed(payload, eventId);
           },
           onMessageChunk: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyMessageChunk(payload, eventId);
           },
           onMessageRetract: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyMessageRetract(payload, eventId);
           },
           onMessageEnd: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyMessageEnd(payload, eventId);
           },
           onErrorEvent: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            streamStarted = true;
             applyStreamError(payload, eventId, conversationId);
           },
           onRequestError: error => {
             if (isAbortError(error)) return;
             if (!streamStarted) {
+              startError = error;
               restoreWorkflowApprovalContinuation(error.message);
               return;
             }
@@ -379,6 +406,7 @@ export function useWorkflowContinuationActions({
             callbacks,
             abortController.signal
           );
+          if (startError) throw startError;
         } else if (toolGovernanceDecision) {
           if (!continueToolGovernanceDecisionStream) return;
           await continueToolGovernanceDecisionStream(
@@ -411,7 +439,11 @@ export function useWorkflowContinuationActions({
       } catch (error) {
         if (!isAbortError(error)) {
           if (!streamStarted) {
-            restoreWorkflowApprovalContinuation(getErrorMessage(error));
+            const errorMessage = getErrorMessage(error);
+            restoreWorkflowApprovalContinuation(errorMessage);
+            if (clientActionResult) {
+              throw error instanceof Error ? error : new Error(errorMessage);
+            }
             return;
           }
           setControllerState(current => ({

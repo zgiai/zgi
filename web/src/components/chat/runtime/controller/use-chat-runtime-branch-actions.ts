@@ -56,12 +56,29 @@ export function useChatRuntimeBranchActions({
           current_leaf_message_id: nextLeafId,
         })
         .then(conversation => {
-          setControllerState(current => ({
-            ...current,
-            conversations: replaceAIChatConversation(current.conversations, conversation, {
-              moveToTop: false,
-            }),
-          }));
+          setControllerState(current => {
+            const currentConversation = current.conversations.find(
+              item => item.id === activeConversationId
+            );
+            if (!currentConversation) return current;
+
+            const safeConversation =
+              currentConversation.current_leaf_message_id === nextLeafId
+                ? conversation
+                : {
+                    ...conversation,
+                    current_leaf_message_id: currentConversation.current_leaf_message_id,
+                    runtime_status: currentConversation.runtime_status,
+                    active_message_id: currentConversation.active_message_id,
+                  };
+
+            return {
+              ...current,
+              conversations: replaceAIChatConversation(current.conversations, safeConversation, {
+                moveToTop: false,
+              }),
+            };
+          });
         })
         .catch(error => {
           setControllerState(current => ({

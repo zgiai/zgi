@@ -10,6 +10,7 @@ import {
   ServerCog,
 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
+import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type {
   HostedTaskCardProps,
@@ -25,15 +26,6 @@ import {
   getToneSoftClassName,
   getToneTextClassName,
 } from '@/components/aichat/operation-cards/primitives';
-
-const HOSTED_TASK_STATUS_FALLBACK_LABEL: Record<HostedTaskStatus, string> = {
-  queued: 'Queued',
-  running: 'Running',
-  paused: 'Paused',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-};
 
 function getHostedTaskTone(status: HostedTaskStatus): OperationCardTone {
   if (status === 'completed') return 'success';
@@ -56,8 +48,29 @@ function clampProgress(value: number) {
   return Math.min(100, Math.max(0, value));
 }
 
+function getHostedTaskStatusLabel(
+  status: HostedTaskStatus,
+  t: ReturnType<typeof useT<'webapp'>>
+): string {
+  switch (status) {
+    case 'running':
+      return t('consoleChat.operationCards.hostedTaskStatuses.running');
+    case 'paused':
+      return t('consoleChat.operationCards.hostedTaskStatuses.paused');
+    case 'completed':
+      return t('consoleChat.operationCards.hostedTaskStatuses.completed');
+    case 'failed':
+      return t('consoleChat.operationCards.hostedTaskStatuses.failed');
+    case 'cancelled':
+      return t('consoleChat.operationCards.hostedTaskStatuses.cancelled');
+    case 'queued':
+    default:
+      return t('consoleChat.operationCards.hostedTaskStatuses.queued');
+  }
+}
+
 export function HostedTaskCard({
-  title = 'Hosted task',
+  title,
   description,
   status = 'queued',
   statusLabel,
@@ -70,6 +83,7 @@ export function HostedTaskCard({
   compact = false,
   className,
 }: HostedTaskCardProps) {
+  const t = useT('webapp');
   const tone = getHostedTaskTone(status);
   const StatusIcon = getHostedTaskIcon(status);
   const normalizedProgress = typeof progress === 'number' ? clampProgress(progress) : undefined;
@@ -83,12 +97,12 @@ export function HostedTaskCard({
       <OperationCardHeader
         compact={compact}
         icon={<ServerCog className={cn('size-4', getToneTextClassName(tone))} />}
-        title={title}
+        title={title ?? t('consoleChat.operationCards.hostedTaskTitle')}
         description={description}
         eyebrow={eyebrow}
         badge={
           <OperationStatusBadge
-            label={statusLabel ?? HOSTED_TASK_STATUS_FALLBACK_LABEL[status]}
+            label={statusLabel ?? getHostedTaskStatusLabel(status, t)}
             tone={tone}
             loading={status === 'running'}
           />

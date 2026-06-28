@@ -50,6 +50,7 @@ import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/sk
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import {
   dedupeTimelineItems,
+  mergeRuntimeTimelineWithMessageTimeline,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
 import { MAX_AICHAT_BRANCHES } from '@/components/chat/variants/aichat/types';
@@ -114,6 +115,314 @@ function formatFileSize(size: number): string {
 function formatGeneratedFileExtension(file: AIChatGeneratedFile): string {
   const extension = file.extension || file.filename.split('.').pop() || '';
   return extension.replace(/^\./, '').toUpperCase();
+}
+
+function timelineRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function timelineString(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
+}
+
+function timelineStatus(value: unknown): string {
+  return timelineString(value).toLowerCase();
+}
+
+function isSuccessfulTimelineStatus(status: unknown): boolean {
+  return ['success', 'succeeded', 'allowed', 'completed', 'approved'].includes(
+    timelineStatus(status)
+  );
+}
+
+function isRunningTimelineStatus(status: unknown): boolean {
+  return [
+    'loading',
+    'running',
+    'streaming',
+    'pending',
+    'needs_approval',
+    'waiting_client_action',
+  ].includes(timelineStatus(status));
+}
+
+function timelineInvocationActionType(invocation: Record<string, unknown>): string {
+  const result = timelineRecord(invocation.result);
+  const args = timelineRecord(invocation.arguments);
+  return (
+    timelineString(invocation.action_type) ||
+    timelineString(result.action_type) ||
+    timelineString(args.action_type)
+  );
+}
+
+function hasAssetOperationEvidence(invocation: Record<string, unknown>): boolean {
+  const result = timelineRecord(invocation.result);
+  const args = timelineRecord(invocation.arguments);
+  return Boolean(
+    invocation.asset_operation_audit ||
+    result.asset_operation_audit ||
+    result.asset_type ||
+    result.effect ||
+    args.asset_type ||
+    args.effect
+  );
+}
+
+function runningInvocationBlocksStreamingStatus(invocation: Record<string, unknown>): boolean {
+  if (!isRunningTimelineStatus(invocation.status)) return false;
+
+  const kind = timelineString(invocation.kind);
+  const actionType = timelineInvocationActionType(invocation);
+  if (
+    kind === 'skill_load' ||
+    kind === 'reference_read' ||
+    kind === 'intermediate_answer' ||
+    kind === 'metadata_exposed' ||
+    kind === 'guardrail'
+  ) {
+    return false;
+  }
+
+  if (
+    kind === 'client_action' &&
+    (actionType === 'asset_observation' || actionType === 'route_navigation')
+  ) {
+    return false;
+  }
+
+  return kind === 'tool_call' || kind === 'tool_governance' || kind === 'client_action';
+}
+
+type StreamingOperationStatusKey =
+  | 'pageChanged'
+  | 'assetCreated'
+  | 'assetSaved'
+  | 'assetUpdated'
+  | 'assetDeleted'
+  | 'bindingUpdated'
+  | 'toolCompleted';
+
+interface StreamingOperationStatus {
+  key: StreamingOperationStatusKey;
+  count?: number;
+  assetType?: string;
+}
+
+function timelineFirstString(...values: unknown[]): string {
+  for (const value of values) {
+    const text = timelineString(value);
+    if (text) return text;
+  }
+  return '';
+}
+
+function timelineInvocationAudit(invocation: Record<string, unknown>): Record<string, unknown> {
+  const result = timelineRecord(invocation.result);
+  return timelineRecord(invocation.asset_operation_audit || result.asset_operation_audit);
+}
+
+function timelineInvocationEffect(invocation: Record<string, unknown>): string {
+  const result = timelineRecord(invocation.result);
+  const args = timelineRecord(invocation.arguments);
+  const audit = timelineInvocationAudit(invocation);
+  const governance = timelineRecord(invocation.governance);
+  const manifest = timelineRecord(governance.manifest);
+  return timelineFirstString(
+    audit.effect,
+    result.effect,
+    args.effect,
+    manifest.effect
+  ).toLowerCase();
+}
+
+function timelineInvocationAssetType(invocation: Record<string, unknown>): string {
+  const result = timelineRecord(invocation.result);
+  const args = timelineRecord(invocation.arguments);
+  const audit = timelineInvocationAudit(invocation);
+  const governance = timelineRecord(invocation.governance);
+  const manifest = timelineRecord(governance.manifest);
+  return timelineFirstString(
+    audit.asset_type,
+    result.asset_type,
+    args.asset_type,
+    manifest.asset_type
+  ).toLowerCase();
+}
+
+function streamingStatusFromAssetOperation(
+  invocation: Record<string, unknown>
+): StreamingOperationStatusKey {
+  const effect = timelineInvocationEffect(invocation);
+  const assetType = timelineInvocationAssetType(invocation);
+  const toolName = timelineString(invocation.tool_name).toLowerCase();
+
+  if (effect === 'delete' || toolName.includes('delete') || toolName.includes('remove')) {
+    return 'assetDeleted';
+  }
+  if (toolName.includes('bind') || toolName.includes('unbind') || toolName.includes('binding')) {
+    return 'bindingUpdated';
+  }
+  if (effect === 'create') {
+    return assetType === 'file' ? 'assetSaved' : 'assetCreated';
+  }
+  if (effect === 'publish' || effect === 'update') {
+    return 'assetUpdated';
+  }
+  if (assetType === 'file' && (toolName.includes('save') || toolName.includes('upload'))) {
+    return 'assetSaved';
+  }
+  if (toolName.includes('create')) {
+    return assetType === 'file' ? 'assetSaved' : 'assetCreated';
+  }
+  return 'assetUpdated';
+}
+
+function timelineNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function timelineArrayLength(value: unknown): number | undefined {
+  return Array.isArray(value) && value.length > 0 ? value.length : undefined;
+}
+
+function timelineFirstNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const number = timelineNumber(value);
+    if (number !== undefined) return number;
+    const length = timelineArrayLength(value);
+    if (length !== undefined) return length;
+  }
+  return undefined;
+}
+
+function streamingOperationCount(invocation: Record<string, unknown>): number | undefined {
+  const result = timelineRecord(invocation.result);
+  const args = timelineRecord(invocation.arguments);
+  const audit = timelineInvocationAudit(invocation);
+  const governance = timelineRecord(invocation.governance);
+  const operationGroup = timelineRecord(result.operation_group);
+  return timelineFirstNumber(
+    audit.asset_count,
+    result.asset_count,
+    result.target_count,
+    result.deleted_count,
+    result.created_count,
+    result.saved_count,
+    result.updated_count,
+    result.resource_count,
+    result.change_count,
+    result.item_results,
+    operationGroup.asset_count,
+    operationGroup.target_count,
+    operationGroup.item_results,
+    args.assets,
+    audit.assets,
+    governance.assets
+  );
+}
+
+function streamingOperationStatusFromInvocation(
+  invocation: Record<string, unknown>
+): StreamingOperationStatus {
+  const key = streamingStatusFromAssetOperation(invocation);
+  return {
+    key,
+    count: streamingOperationCount(invocation),
+    assetType: timelineInvocationAssetType(invocation),
+  };
+}
+
+function streamingOperationStatus(
+  timeline: AIChatAgenticTimelineItem[]
+): StreamingOperationStatus | null {
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    const item = timeline[index];
+    if (item.type !== 'skill_event') continue;
+    const invocation = item.invocation as unknown as Record<string, unknown>;
+    if (runningInvocationBlocksStreamingStatus(invocation)) return null;
+    if (!isSuccessfulTimelineStatus(invocation.status)) continue;
+
+    const skillId = timelineString(invocation.skill_id);
+    const toolName = timelineString(invocation.tool_name);
+    const kind = timelineString(invocation.kind);
+    const actionType = timelineInvocationActionType(invocation);
+    if (
+      (skillId === 'console-navigator' && toolName === 'navigate') ||
+      (kind === 'client_action' && actionType === 'route_navigation')
+    ) {
+      return { key: 'pageChanged' };
+    }
+    if (kind === 'client_action' && actionType === 'asset_observation') {
+      return { key: 'assetUpdated', count: streamingOperationCount(invocation) };
+    }
+    if (hasAssetOperationEvidence(invocation)) {
+      return streamingOperationStatusFromInvocation(invocation);
+    }
+    return { key: 'toolCompleted', count: streamingOperationCount(invocation) };
+  }
+  return null;
+}
+
+function streamingOperationAssetLabel(
+  assetType: string | undefined,
+  t: (key: string, values?: Record<string, unknown>) => string
+): string {
+  switch ((assetType ?? '').trim().toLowerCase()) {
+    case 'agent':
+      return t('consoleChat.operationStatus.assetLabels.agent');
+    case 'file':
+      return t('consoleChat.operationStatus.assetLabels.file');
+    case 'knowledge_base':
+    case 'knowledge':
+    case 'dataset':
+      return t('consoleChat.operationStatus.assetLabels.knowledgeBase');
+    case 'database_table':
+    case 'database':
+    case 'table':
+      return t('consoleChat.operationStatus.assetLabels.databaseTable');
+    case 'workflow':
+      return t('consoleChat.operationStatus.assetLabels.workflow');
+    default:
+      return t('consoleChat.operationStatus.assetLabels.asset');
+  }
+}
+
+function streamingOperationStatusText(
+  status: StreamingOperationStatus,
+  t: (key: string, values?: Record<string, unknown>) => string
+): string {
+  const count = status.count;
+  if (!count || count <= 0) {
+    return t(`consoleChat.operationStatus.${status.key}`);
+  }
+  const asset = streamingOperationAssetLabel(status.assetType, t);
+  switch (status.key) {
+    case 'assetCreated':
+      return t('consoleChat.operationStatus.assetCreatedDetailed', { count, asset });
+    case 'assetSaved':
+      return t('consoleChat.operationStatus.assetSavedDetailed', { count, asset });
+    case 'assetUpdated':
+      return t('consoleChat.operationStatus.assetUpdatedDetailed', { count, asset });
+    case 'assetDeleted':
+      return t('consoleChat.operationStatus.assetDeletedDetailed', { count, asset });
+    case 'bindingUpdated':
+      return t('consoleChat.operationStatus.bindingUpdatedDetailed', { count, asset });
+    case 'toolCompleted':
+      return t('consoleChat.operationStatus.toolCompletedDetailed', { count, asset });
+    case 'pageChanged':
+    default:
+      return t(`consoleChat.operationStatus.${status.key}`);
+  }
 }
 
 function apiAbsoluteUrl(pathOrUrl: string | undefined): string {
@@ -201,6 +510,19 @@ function generatedFilePreviewUrl(file: AIChatGeneratedFile): string {
   return '';
 }
 
+function useGeneratedFilePreviewUrl(file: AIChatGeneratedFile): string {
+  const managedFileId = managedGeneratedFileId(file);
+  const shouldResolveManagedPreview = isManagedGeneratedFile(file) && Boolean(managedFileId);
+  const { previewUrl } = useFileOriginalPreviewUrl(managedFileId, {
+    enabled: shouldResolveManagedPreview,
+  });
+
+  if (shouldResolveManagedPreview && previewUrl) {
+    return apiReachableUrl(previewUrl);
+  }
+  return generatedFilePreviewUrl(file);
+}
+
 function generatedFileDownloadUrl(file: AIChatGeneratedFile): string {
   if (isManagedGeneratedFile(file)) {
     return managedGeneratedFileDownloadUrl(file);
@@ -233,13 +555,23 @@ function generatedFileDisplayRank(file: AIChatGeneratedFile): number {
 
 function dedupeGeneratedFilesForDisplay(files: AIChatGeneratedFile[]): AIChatGeneratedFile[] {
   if (files.length <= 1) return files;
-  const indexByName = new Map<string, number>();
+  const indexByDisplayKey = new Map<string, number>();
   const out: AIChatGeneratedFile[] = [];
   files.forEach(file => {
-    const key = (file.filename || file.file_id).trim().toLowerCase();
-    const existingIndex = indexByName.get(key);
+    const key = (
+      file.filename ||
+      file.upload_file_id ||
+      file.file_id ||
+      file.tool_file_id ||
+      file.operation_id ||
+      file.correlation_id ||
+      ''
+    )
+      .trim()
+      .toLowerCase();
+    const existingIndex = indexByDisplayKey.get(key);
     if (existingIndex === undefined) {
-      indexByName.set(key, out.length);
+      indexByDisplayKey.set(key, out.length);
       out.push(file);
       return;
     }
@@ -351,7 +683,7 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const extension = formatGeneratedFileExtension(file);
   const downloadUrl = generatedFileDownloadUrl(file);
-  const previewUrl = generatedFilePreviewUrl(file) || downloadUrl;
+  const previewUrl = useGeneratedFilePreviewUrl(file) || downloadUrl;
   const canPreview = Boolean(previewUrl);
   const canDownload = Boolean(downloadUrl);
   const lifecycleLabel = isManagedGeneratedFile(file)
@@ -440,6 +772,22 @@ interface AIChatGeneratedImagePreviewsProps {
   files: AIChatGeneratedFile[];
 }
 
+function AIChatGeneratedImagePreview({ file }: { file: AIChatGeneratedFile }) {
+  const previewUrl = useGeneratedFilePreviewUrl(file);
+  if (!previewUrl) {
+    return null;
+  }
+
+  return (
+    <MarkdownImage
+      src={previewUrl}
+      alt={file.filename}
+      frameClassName="max-w-full"
+      imageClassName="min-w-32 max-w-full"
+    />
+  );
+}
+
 function AIChatGeneratedImagePreviews({ files }: AIChatGeneratedImagePreviewsProps) {
   if (files.length === 0) {
     return null;
@@ -448,12 +796,9 @@ function AIChatGeneratedImagePreviews({ files }: AIChatGeneratedImagePreviewsPro
   return (
     <div className="mt-3 flex max-w-full flex-col items-start gap-3">
       {files.map(file => (
-        <MarkdownImage
+        <AIChatGeneratedImagePreview
           key={file.file_id || generatedFilePreviewUrl(file)}
-          src={generatedFilePreviewUrl(file)}
-          alt={file.filename}
-          frameClassName="max-w-full"
-          imageClassName="min-w-32 max-w-full"
+          file={file}
         />
       ))}
     </div>
@@ -586,7 +931,9 @@ export function AIChatMessageBubble({
       ? t('consoleChat.waitingApprovalMessage')
       : message.status === 'waiting_question'
         ? t('consoleChat.waitingQuestionMessage')
-        : null;
+        : message.status === 'waiting_client_action'
+          ? t('consoleChat.waitingClientActionMessage')
+          : null;
   const userInputRequest = hideUserInputRequest ? undefined : message.metadata?.user_input_request;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
@@ -595,10 +942,26 @@ export function AIChatMessageBubble({
     [message]
   );
   const displayTimeline = useMemo(
-    () => dedupeTimelineItems(timeline.length > 0 ? timeline : historicalTimeline),
-    [historicalTimeline, timeline]
+    () =>
+      message.status === 'completed'
+        ? historicalTimeline
+        : dedupeTimelineItems(mergeRuntimeTimelineWithMessageTimeline(historicalTimeline, timeline)),
+    [historicalTimeline, message.status, timeline]
   );
   const hasTimeline = displayTimeline.length > 0;
+  const streamingStatus = useMemo(
+    () => (isStreaming ? streamingOperationStatus(displayTimeline) : null),
+    [displayTimeline, isStreaming]
+  );
+  const streamingStatusLabel = useMemo(
+    () =>
+      streamingStatus
+        ? streamingOperationStatusText(streamingStatus, (key, values) =>
+            t(key as never, values)
+          )
+        : null,
+    [streamingStatus, t]
+  );
   const shouldOpenTimelineByDefault =
     isActiveMessage ||
     displayTimeline.some(
@@ -607,7 +970,7 @@ export function AIChatMessageBubble({
           item.invocation.kind !== 'guardrail' &&
           (item.invocation.status === 'error' || item.invocation.status === 'blocked')) ||
         (item.type === 'tool_governance_decision' &&
-          ['approved', 'rejected'].includes(
+          ['rejected'].includes(
             String(
               item.event.approval_status ??
                 item.event.governance?.approval_status ??
@@ -779,6 +1142,12 @@ export function AIChatMessageBubble({
                   : t('consoleChat.waitingQuestion')}
               </span>
             ) : null}
+            {!isStreaming && isWaitingForClientAction ? (
+              <span className="inline-flex items-center gap-1">
+                <Loader2 className="size-3 animate-spin" />
+                {t('consoleChat.waitingClientAction')}
+              </span>
+            ) : null}
             {isStopped && answer ? (
               <span
                 className="inline-flex items-center"
@@ -804,6 +1173,15 @@ export function AIChatMessageBubble({
               messageStatus={message.status}
               onToolGovernanceDecision={onToolGovernanceDecision}
             />
+          ) : null}
+
+          {streamingStatusLabel ? (
+            <div className="mb-3 flex min-w-0 items-center gap-2 rounded-md border border-muted-foreground/15 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 shrink-0 animate-spin" />
+              <span className="min-w-0 break-words">
+                {streamingStatusLabel}
+              </span>
+            </div>
           ) : null}
 
           {answer ? (

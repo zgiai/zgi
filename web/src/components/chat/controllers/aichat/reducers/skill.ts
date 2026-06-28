@@ -4,6 +4,7 @@ import type {
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
   AIChatSkillCallStartEventData,
+  AIChatSkillActivityStatus,
   AIChatSkillInvocation,
   AIChatSkillLoadEndEventData,
   AIChatSkillLoadStartEventData,
@@ -14,22 +15,35 @@ import {
   type AIChatControllerState,
   type AIChatAgenticTimelineItem,
 } from '@/components/chat/controllers/aichat/types';
-import { removeTransientProgressItems } from './shared';
+import {
+  mergeSkillInvocationByStatus,
+  removeTransientProgressItems,
+  skillInvocationSemanticIdentity,
+} from './shared';
 
 function upsertSkillInvocation(
   invocations: AIChatSkillInvocation[],
   incoming: AIChatSkillInvocation
 ): AIChatSkillInvocation[] {
+  const semanticIdentity = skillInvocationSemanticIdentity(incoming);
+  if (semanticIdentity) {
+    const index = invocations.findIndex(
+      invocation => skillInvocationSemanticIdentity(invocation) === semanticIdentity
+    );
+    if (index >= 0) {
+      const next = invocations.slice();
+      next[index] = mergeSkillInvocationByStatus(next[index], incoming);
+      return next;
+    }
+  }
+
   if (incoming.runtime_id) {
     const index = invocations.findIndex(
       invocation => invocation.runtime_id === incoming.runtime_id
     );
     if (index >= 0) {
       const next = invocations.slice();
-      next[index] = {
-        ...next[index],
-        ...incoming,
-      };
+      next[index] = mergeSkillInvocationByStatus(next[index], incoming);
       return next;
     }
   }
@@ -98,6 +112,10 @@ function upsertSkillInvocation(
 }
 
 function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
+  const semanticIdentity = skillInvocationSemanticIdentity(invocation);
+  if (semanticIdentity) {
+    return semanticIdentity;
+  }
   if (invocation.runtime_id) {
     return invocation.runtime_id;
   }
@@ -109,14 +127,36 @@ function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
   ].join(':');
 }
 
+function getSkillInvocationBaseIdentity(invocation: AIChatSkillInvocation): string {
+  return [
+    invocation.kind ?? 'tool_call',
+    invocation.skill_id ?? '',
+    invocation.tool_name ?? '',
+    invocation.path ?? '',
+  ].join(':');
+}
+
 function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
   const status = String(invocation.status ?? '').toLowerCase();
-  if (invocation.kind === 'client_action' && invocation.action_type === 'route_navigation') {
+  const result =
+    invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
+      ? (invocation.result as Record<string, unknown>)
+      : {};
+  const actionType =
+    invocation.action_type ||
+    (typeof result.action_type === 'string' ? result.action_type : undefined);
+  if (invocation.kind === 'guardrail') {
+    return false;
+  }
+  if (
+    invocation.kind === 'skill_load' &&
+    invocation.skill_id === 'console-navigator'
+  ) {
     return false;
   }
   if (
     invocation.kind === 'client_action' &&
-    invocation.action_type === 'asset_observation' &&
+    (actionType === 'asset_observation' || actionType === 'route_navigation') &&
     (status === 'success' || status === 'succeeded')
   ) {
     return false;
@@ -278,6 +318,79 @@ function upsertToolGovernanceTimelineItem(
   ];
 }
 
+function toolGovernanceInvocationStatus(
+  payload: AIChatToolGovernanceDecisionEventData
+): AIChatSkillActivityStatus {
+  const approvalStatus = String(payload.approval_status ?? '').toLowerCase();
+  if (approvalStatus === 'approved') return 'allowed';
+  if (approvalStatus === 'rejected') return 'denied';
+  const status = String(payload.decision ?? payload.status ?? '').toLowerCase();
+  switch (status) {
+    case 'allowed':
+    case 'needs_approval':
+    case 'denied':
+    case 'needs_resolution':
+    case 'blocked':
+    case 'error':
+      return status;
+    default:
+      return 'needs_approval';
+  }
+}
+
+function skillInvocationFromToolGovernanceDecision(
+  payload: AIChatToolGovernanceDecisionEventData
+): AIChatSkillInvocation {
+  const normalizedPayload = normalizeToolGovernanceDecisionPayload(payload);
+  const skillId =
+    normalizedPayload.skill_id ??
+    normalizedPayload.approval_event?.skill_id ??
+    normalizedPayload.governance?.manifest?.skill_id ??
+    'tool-governance';
+  const toolName =
+    normalizedPayload.tool_name ??
+    normalizedPayload.approval_event?.tool_id ??
+    normalizedPayload.governance?.manifest?.tool_id;
+
+  return {
+    kind: 'tool_governance',
+    skill_id: skillId,
+    tool_name: toolName,
+    status: toolGovernanceInvocationStatus(normalizedPayload),
+    duration_ms: normalizedPayload.duration_ms,
+    approval_status: normalizedPayload.approval_status,
+    governance: {
+      ...(normalizedPayload.governance ?? {}),
+      ...(normalizedPayload.decision ? { status: normalizedPayload.decision } : {}),
+      ...(normalizedPayload.correlation_id ? { correlation_id: normalizedPayload.correlation_id } : {}),
+      ...(normalizedPayload.requires_approval !== undefined
+        ? { requires_approval: normalizedPayload.requires_approval }
+        : {}),
+      ...(normalizedPayload.reason ? { reason: normalizedPayload.reason } : {}),
+      ...(normalizedPayload.approval_status
+        ? { approval_status: normalizedPayload.approval_status }
+        : {}),
+      ...(normalizedPayload.approval_event
+        ? { approval_event: normalizedPayload.approval_event }
+        : {}),
+      ...(normalizedPayload.asset_operation_audit
+        ? { asset_operation_audit: normalizedPayload.asset_operation_audit }
+        : {}),
+      ...(normalizedPayload.matched_grant ? { matched_grant: normalizedPayload.matched_grant } : {}),
+      ...(normalizedPayload.approval_result
+        ? { approval_result: normalizedPayload.approval_result }
+        : {}),
+      ...(normalizedPayload.model_feedback
+        ? { model_feedback: normalizedPayload.model_feedback }
+        : {}),
+    },
+    asset_operation_audit: normalizedPayload.asset_operation_audit,
+    result: normalizedPayload.execution_result ?? null,
+    message: normalizedPayload.execution_message,
+    created_at: normalizedPayload.created_at,
+  };
+}
+
 function upsertSkillTimelineItem(
   timeline: AIChatAgenticTimelineItem[] | undefined,
   incoming: AIChatSkillInvocation,
@@ -328,16 +441,20 @@ function upsertSkillTimelineItem(
 
   const next = baseTimeline.slice();
   const incomingIdentity = getSkillInvocationIdentity(incoming);
+  const incomingBaseIdentity = getSkillInvocationBaseIdentity(incoming);
   const reverseIndex = [...next].reverse().findIndex(item => {
     if (item.type !== 'skill_event') return false;
     const invocation = item.invocation;
     const status = String(invocation.status ?? '').toLowerCase();
+    const isPending =
+      status === 'loading' ||
+      status === 'running' ||
+      status === 'needs_approval' ||
+      status === 'waiting_client_action';
+    if (!isPending) return false;
     return (
-      getSkillInvocationIdentity(invocation) === incomingIdentity &&
-      (status === 'loading' ||
-        status === 'running' ||
-        status === 'needs_approval' ||
-        status === 'waiting_client_action')
+      getSkillInvocationIdentity(invocation) === incomingIdentity ||
+      getSkillInvocationBaseIdentity(invocation) === incomingBaseIdentity
     );
   });
 
@@ -470,8 +587,25 @@ export function applyAgentProgressState(
     return current;
   }
 
-  const previousStreaming = current.streamingByMessageId[payload.message_id];
-  if (!previousStreaming) {
+  const existingStreaming = current.streamingByMessageId[payload.message_id];
+  const existingMessage = (current.messagesByConversation[payload.conversation_id] ?? []).find(
+    message => message.id === payload.message_id
+  );
+  if (
+    !existingStreaming &&
+    ['completed', 'error', 'stopped'].includes(existingMessage?.status ?? '')
+  ) {
+    return current;
+  }
+  const previousStreaming =
+    existingStreaming ?? {
+      conversation_id: payload.conversation_id,
+      message_id: payload.message_id,
+      answer: '',
+      status: 'streaming' as const,
+      timeline: [],
+    };
+  if (!previousStreaming.conversation_id) {
     return current;
   }
 
@@ -570,20 +704,79 @@ export function applyToolGovernanceDecisionState(
   if (!payload.conversation_id || !payload.message_id) {
     return current;
   }
+  const governanceInvocation = skillInvocationFromToolGovernanceDecision(payload);
+  const now = Math.floor(Date.now() / 1000);
+  const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  const nextMessages = messages.map(message => {
+    if (message.id !== payload.message_id) {
+      return message;
+    }
+    const skillInvocations = upsertSkillInvocation(
+      message.metadata?.skill_invocations ?? [],
+      governanceInvocation
+    );
+    return {
+      ...message,
+      metadata: {
+        ...(message.metadata ?? {}),
+        has_trace: true,
+        skill_invocations: skillInvocations,
+        selected_skill_ids: Array.from(
+          new Set(
+            skillInvocations
+              .filter(isVisibleSkillInvocation)
+              .map(item => item.skill_id)
+              .filter(Boolean)
+          )
+        ),
+        loaded_skill_ids: Array.from(
+          new Set(
+            skillInvocations
+              .filter(item => item.kind === 'skill_load' && item.status !== 'error')
+              .map(item => item.skill_id)
+              .filter(Boolean)
+          )
+        ),
+        skill_step_count: skillInvocations.filter(isVisibleSkillInvocation).length,
+        skill_call_count: skillInvocations.filter(isVisibleSkillInvocation).length,
+        skill_names: Array.from(
+          new Set(
+            skillInvocations
+              .filter(isVisibleSkillInvocation)
+              .map(item => item.skill_id)
+              .filter(Boolean)
+          )
+        ),
+        tool_call_count: skillInvocations.filter(item => item.kind === 'tool_call').length,
+        tool_names: Array.from(
+          new Set(
+            skillInvocations
+              .filter(item => item.kind === 'tool_call')
+              .map(item => item.tool_name)
+              .filter((toolName): toolName is string => Boolean(toolName))
+          )
+        ),
+      },
+      updated_at: now,
+    };
+  });
   const previousStreaming = current.streamingByMessageId[payload.message_id];
-  if (!previousStreaming) {
-    return current;
-  }
   return {
     ...current,
-    streamingByMessageId: {
-      ...current.streamingByMessageId,
-      [payload.message_id]: {
-        ...previousStreaming,
-        timeline: upsertToolGovernanceTimelineItem(previousStreaming.timeline, payload, eventId),
-        last_event_id: eventId ?? previousStreaming.last_event_id,
-      },
+    messagesByConversation: {
+      ...current.messagesByConversation,
+      [payload.conversation_id]: nextMessages,
     },
+    streamingByMessageId: previousStreaming
+      ? {
+          ...current.streamingByMessageId,
+          [payload.message_id]: {
+            ...previousStreaming,
+            timeline: upsertToolGovernanceTimelineItem(previousStreaming.timeline, payload, eventId),
+            last_event_id: eventId ?? previousStreaming.last_event_id,
+          },
+        }
+      : current.streamingByMessageId,
   };
 }
 

@@ -163,6 +163,7 @@ export interface AIChatSkillInvocation {
   path?: string;
   message?: string;
   error?: string;
+  approval_status?: AIChatToolGovernanceDecisionEventData['approval_status'];
   governance?: AIChatToolGovernanceDecision | null;
   asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;

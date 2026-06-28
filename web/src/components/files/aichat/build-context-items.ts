@@ -158,7 +158,11 @@ function buildVisibleFileIndexMetadata(files: VisibleFileContext[]) {
   return index ? compactAIChatContextText(index, 1800) : null;
 }
 
-function buildVisibleFileContextDescription(files: VisibleFileContext[]) {
+function buildVisibleFileContextDescription(files: VisibleFileContext[], contextReady: boolean) {
+  if (!contextReady) {
+    return 'The files list is still loading; do not treat the visible file count as final yet.';
+  }
+
   if (files.length === 0) return 'No files are visible with the current filters.';
 
   return compactAIChatContextText(
@@ -193,7 +197,16 @@ function buildVisibleFileContextDescription(files: VisibleFileContext[]) {
 function buildFilesPageContextDescription(
   visibleFileContexts: VisibleFileContext[],
   selectedFileIds: string[],
-  canUpload: boolean
+  canUpload: boolean,
+  contextReady: boolean,
+  pagination: {
+    currentPage: number;
+    totalPages: number;
+    total: number;
+    pageSize: number;
+    visibleRangeStart: number;
+    visibleRangeEnd: number;
+  }
 ) {
   const selectedFileNames = visibleFileContexts
     .filter(({ selected }) => selected)
@@ -210,10 +223,17 @@ function buildFilesPageContextDescription(
   const createScope = canUpload
     ? 'When the user explicitly asks to create, save, upload, import, or write a file into File Management or the current files page, first generate a temporary artifact when needed, then use file-manager/save_file_to_management. Otherwise generated files remain temporary artifacts. '
     : '';
+  const loadingScope = contextReady
+    ? ''
+    : 'The files query is not settled yet. Wait for page context readiness before answering file count or ordinal file questions. ';
+  const pageCountScope = contextReady
+    ? `File page count: total_file_count=${pagination.total}, current_page=${pagination.currentPage}/${pagination.totalPages}, page_size=${pagination.pageSize}, visible_range=${pagination.visibleRangeStart}-${pagination.visibleRangeEnd}, indexed_visible_files=${visibleFileContexts.length}. Use total_file_count for the page/table total; use indexed_visible_files only for ordinal references within the current visible page context. `
+    : '';
 
   return compactAIChatContextText(
-    `${selectedSummary}${ordinalScope}${createScope}Visible file index: ${buildVisibleFileContextDescription(
-      visibleFileContexts
+    `${loadingScope}${pageCountScope}${selectedSummary}${ordinalScope}${createScope}Visible file index: ${buildVisibleFileContextDescription(
+      visibleFileContexts,
+      contextReady
     )}`,
     1400
   );
@@ -304,6 +324,8 @@ export function buildFilesAIChatContextItems(
     currentWorkspace,
     isOrganizationMode,
     activeFolderName,
+    contextReady,
+    queryStatus,
     canManage,
     canUpload,
     presentation,
@@ -339,10 +361,23 @@ export function buildFilesAIChatContextItems(
       type: 'page',
       title: '文件管理',
       subtitle: `${scopeLabel} files page`,
-      description: buildFilesPageContextDescription(visibleFileContexts, selectedFileIds, canUpload),
+      description: buildFilesPageContextDescription(
+        visibleFileContexts,
+        selectedFileIds,
+        canUpload,
+        contextReady,
+        {
+          currentPage,
+          totalPages,
+          total,
+          pageSize,
+          visibleRangeStart,
+          visibleRangeEnd,
+        }
+      ),
       href: '/console/files',
       source: 'Files page',
-      status: 'available',
+      status: contextReady ? 'available' : 'loading',
       capabilities,
       hints: {
         handledAssetTypes: ['file'],
@@ -361,6 +396,9 @@ export function buildFilesAIChatContextItems(
         page: 'console.files',
         route: '/console/files',
         resource_kind: 'page',
+        context_ready: contextReady,
+        files_query_status: queryStatus,
+        files_query_settled: contextReady,
         ordered_visible_file_ids: orderedVisibleFileIds,
         selected_file_ids: selectedFileIdsMetadata,
         visible_file_index: visibleFileIndex,

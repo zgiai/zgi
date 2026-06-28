@@ -19,6 +19,15 @@ export function governanceStatusFromInvocation(invocation: AIChatSkillInvocation
   return String(invocation.governance?.status ?? invocation.status ?? '').toLowerCase();
 }
 
+function governanceApprovalStatusFromInvocation(invocation: AIChatSkillInvocation): string {
+  return String(
+    invocation.approval_status ??
+      invocation.governance?.approval_status ??
+      invocation.governance?.approval_result?.approval_status ??
+      ''
+  ).toLowerCase();
+}
+
 export function governanceCorrelationIdFromInvocation(
   invocation: AIChatSkillInvocation
 ): string | undefined {
@@ -38,6 +47,9 @@ export function governanceCorrelationIdFromInvocation(
 }
 
 export function isPendingToolGovernanceInvocation(invocation: AIChatSkillInvocation): boolean {
+  const approvalStatus = governanceApprovalStatusFromInvocation(invocation);
+  if (approvalStatus === 'approved' || approvalStatus === 'rejected') return false;
+  if (invocation.governance?.requires_approval === false) return false;
   return (
     Boolean(invocation.tool_name) &&
     (governanceStatusFromInvocation(invocation) === 'needs_approval' ||

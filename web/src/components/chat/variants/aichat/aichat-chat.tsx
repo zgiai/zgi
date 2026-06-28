@@ -34,6 +34,8 @@ import {
   selectIsRecoveringMessages,
   selectIsLoadingOlderMessages,
   selectIsStopping,
+  mergeRuntimeTimelineWithMessageTimeline,
+  timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
 import { Sidebar } from '@/components/chat/variants/common/sidebar';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
@@ -73,13 +75,20 @@ import {
   type AIChatUploadScope,
 } from '@/components/chat/variants/aichat/input-area';
 import { AIChatMessageList } from '@/components/chat/variants/aichat/message-list';
-import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
+import {
+  resolvePendingToolGovernanceApprovalFromTimeline,
+  type AIChatToolGovernanceDecisionSubmitPayload,
+} from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   buildAIChatSkillDisplayMap,
   isHiddenSystemSkill,
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillPreferenceDialog } from '@/components/chat/variants/aichat/skill-preference-dialog';
-import { ToolGovernancePendingApprovalScopeProvider } from '@/components/chat/variants/aichat/tool-governance-decision-card';
+import {
+  isToolGovernancePendingApprovalDismissed,
+  ToolGovernancePendingApprovalScopeProvider,
+  type ToolGovernancePendingApproval,
+} from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import { useAIChatScroll } from '@/components/chat/variants/aichat/use-aichat-scroll';
 import {
   getAIChatMessageErrorInput,
@@ -311,7 +320,8 @@ export function AIChatShell({
     setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
   }, [enableAIChatSkillPreference, skillPreference]);
   const enableToolGovernanceApprovals = Boolean(controller.continueToolGovernanceDecision);
-  const showToolGovernancePermissionControl = enableToolGovernance || surface !== 'agent-webapp';
+  const showToolGovernancePermissionControl =
+    surface === 'aichat' && (runtimeSurface === 'work_chat' || enableToolGovernance);
   useEffect(() => {
     if (!showToolGovernancePermissionControl) {
       setToolGovernancePermissionTierLoaded(false);
@@ -564,7 +574,7 @@ export function AIChatShell({
   const searchConversations = useCallback<ConversationSearchFn>(
     (query, limit) =>
       controller.search?.(query, limit, { surface: runtimeSurface }) ?? Promise.resolve([]),
-    [controller.search, runtimeSurface]
+    [controller, runtimeSurface]
   );
 
   const suggestions = useMemo<AIChatSuggestion[]>(() => {
@@ -802,6 +812,7 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: Boolean(message.metadata?.use_memory),
+        forceAdvanceLeaf: true,
         runtimeSurface,
         operationContext: toolGovernanceOperationContext,
       });
@@ -858,6 +869,53 @@ export function AIChatShell({
     },
     [controller]
   );
+  const activeToolGovernanceApprovalFallback = useMemo<ToolGovernancePendingApproval | null>(() => {
+    if (
+      !enableToolGovernanceApprovals ||
+      !activeConversation ||
+      activeConversation.runtime_status !== 'idle' ||
+      isSending ||
+      hasActiveStreamingMessage
+    ) {
+      return null;
+    }
+    const leafMessageId = activeConversation.current_leaf_message_id;
+    if (!leafMessageId) return null;
+    const leafMessage = activeMessages.find(message => message.id === leafMessageId) ?? null;
+    if (!leafMessage || leafMessage.status !== 'waiting_approval') return null;
+    const persistedTimeline = timelineFromAIChatMessage(leafMessage);
+    const streamingTimeline =
+      streamingByMessageId[leafMessage.id]?.conversation_id === activeConversation.id
+        ? streamingByMessageId[leafMessage.id]?.timeline
+        : undefined;
+    const timeline = mergeRuntimeTimelineWithMessageTimeline(persistedTimeline, streamingTimeline);
+    const approval = resolvePendingToolGovernanceApprovalFromTimeline(
+      timeline,
+      skillDisplayById,
+      locale,
+      t,
+      handleToolGovernanceDecision
+    );
+    if (
+      approval &&
+      isToolGovernancePendingApprovalDismissed(approval.id, toolGovernanceApprovalScopeId)
+    ) {
+      return null;
+    }
+    return approval;
+  }, [
+    activeConversation,
+    activeMessages,
+    enableToolGovernanceApprovals,
+    handleToolGovernanceDecision,
+    hasActiveStreamingMessage,
+    isSending,
+    locale,
+    skillDisplayById,
+    streamingByMessageId,
+    t,
+    toolGovernanceApprovalScopeId,
+  ]);
 
   const handleNewChat = useCallback(() => {
     if (isHome) {
@@ -1152,6 +1210,7 @@ export function AIChatShell({
             toolGovernancePermissionTier={toolGovernancePermissionTier}
             onToolGovernancePermissionTierChange={setToolGovernancePermissionTier}
             enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+            activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
           />
         </main>
       </ToolGovernancePendingApprovalScopeProvider>

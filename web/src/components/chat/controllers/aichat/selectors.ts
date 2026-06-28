@@ -44,12 +44,25 @@ function normalizeSkillInvocation(invocation: AIChatSkillInvocation): AIChatSkil
 
 function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
   const status = String(invocation.status ?? '').toLowerCase();
-  if (invocation.kind === 'client_action' && invocation.action_type === 'route_navigation') {
+  const result =
+    invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
+      ? (invocation.result as Record<string, unknown>)
+      : {};
+  const actionType =
+    invocation.action_type ||
+    (typeof result.action_type === 'string' ? result.action_type : undefined);
+  if (invocation.kind === 'guardrail') {
+    return false;
+  }
+  if (
+    invocation.kind === 'skill_load' &&
+    invocation.skill_id === 'console-navigator'
+  ) {
     return false;
   }
   if (
     invocation.kind === 'client_action' &&
-    invocation.action_type === 'asset_observation' &&
+    (actionType === 'asset_observation' || actionType === 'route_navigation') &&
     (status === 'success' || status === 'succeeded')
   ) {
     return false;
@@ -58,6 +71,19 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
     invocation.kind !== 'metadata_exposed' &&
     invocation.kind !== 'memory_planner' &&
     invocation.kind !== 'user_input_request'
+  );
+}
+
+function isTerminalGovernedSkillInvocation(invocation: AIChatSkillInvocation): boolean {
+  if (!invocation.governance || invocation.kind === 'tool_governance') return false;
+  const status = String(invocation.status ?? '').toLowerCase();
+  return (
+    status === 'success' ||
+    status === 'succeeded' ||
+    status === 'allowed' ||
+    status === 'error' ||
+    status === 'blocked' ||
+    status === 'denied'
   );
 }
 
@@ -374,6 +400,7 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     const hasGovernance = Boolean(invocation.governance);
     const shouldRenderAsGovernanceDecision =
       invocation.kind === 'tool_governance' ||
+      isTerminalGovernedSkillInvocation(invocation) ||
       (hasGovernance && !governanceCorrelationIds.has(correlationId)) ||
       (isPendingToolGovernanceInvocation(invocation) &&
         !governanceCorrelationIds.has(correlationId));
@@ -388,10 +415,12 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     }
     if (invocation.kind === 'intermediate_answer' && invocation.message) {
       return {
-        id: `history-intermediate-${message.id}-${index}`,
+        id: `history-intermediate-${message.id}-${invocation.answer_id ?? index}`,
         type: 'intermediate_answer',
+        answer_id: invocation.answer_id,
         title: invocation.title,
         content: invocation.message,
+        status: invocation.status === 'success' ? 'success' : undefined,
         created_at: invocation.created_at,
       };
     }
@@ -403,13 +432,17 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     };
   });
 
-  return dedupeTimelineItems([...skillTimeline, ...workflowTimelineFromMessage(message)]).sort(
-    (left, right) => {
-      const leftAt = left.created_at ?? Number.MAX_SAFE_INTEGER;
-      const rightAt = right.created_at ?? Number.MAX_SAFE_INTEGER;
-      return leftAt - rightAt || left.id.localeCompare(right.id);
-    }
+  return sortTimelineItems(
+    dedupeTimelineItems([...skillTimeline, ...workflowTimelineFromMessage(message)])
   );
+}
+
+function sortTimelineItems(timeline: AIChatAgenticTimelineItem[]): AIChatAgenticTimelineItem[] {
+  return [...timeline].sort((left, right) => {
+    const leftAt = left.created_at ?? Number.MAX_SAFE_INTEGER;
+    const rightAt = right.created_at ?? Number.MAX_SAFE_INTEGER;
+    return leftAt - rightAt || left.id.localeCompare(right.id);
+  });
 }
 
 function stableTimelineValue(value: unknown): string {
@@ -429,6 +462,23 @@ function timelineString(value: unknown): string {
   if (typeof value === 'string') return value.trim();
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return '';
+}
+
+function timelineRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function skillInvocationNavigationTarget(invocation: AIChatSkillInvocation): string {
+  const result = timelineRecord(invocation.result);
+  const args = timelineRecord(invocation.arguments);
+  const record = invocation as unknown as Record<string, unknown>;
+  const href =
+    timelineString(record.href) ||
+    timelineString(result.href) ||
+    timelineString(args.href);
+  return href.replace(/\/+$/, '') || href;
 }
 
 function governanceCorrelationId(value: unknown): string {
@@ -462,6 +512,14 @@ function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): str
   if (invocation.kind === 'client_action' && invocation.action_id) {
     return `skill:client_action:${invocation.action_id}`;
   }
+  if (
+    invocation.kind === 'tool_call' &&
+    invocation.skill_id === 'console-navigator' &&
+    invocation.tool_name === 'navigate'
+  ) {
+    const href = skillInvocationNavigationTarget(invocation);
+    if (href) return `skill:console-navigator:navigate:${href.toLowerCase()}`;
+  }
   if (invocation.kind === 'tool_governance') {
     const correlationId = governanceCorrelationId(invocation);
     if (correlationId) return `skill:tool_governance:${correlationId}`;
@@ -476,6 +534,17 @@ function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): str
     invocation.path ?? '',
     invocation.answer_id ?? '',
     argumentsKey,
+  ].join(':');
+}
+
+function timelineSkillInvocationBaseIdentity(invocation: AIChatSkillInvocation): string {
+  return [
+    'skill-base',
+    invocation.kind ?? 'tool_call',
+    invocation.skill_id ?? '',
+    invocation.tool_name ?? '',
+    invocation.path ?? '',
+    invocation.answer_id ?? '',
   ].join(':');
 }
 
@@ -535,23 +604,58 @@ function preferTimelineItem(
   return existing;
 }
 
+function pendingSkillTimelineBaseIdentity(item: AIChatAgenticTimelineItem): string {
+  if (item.type !== 'skill_event') return '';
+  const rank = timelineItemRank(item);
+  if (rank <= 0 || rank >= 30) return '';
+  return timelineSkillInvocationBaseIdentity(item.invocation);
+}
+
 export function dedupeTimelineItems(
   timeline: AIChatAgenticTimelineItem[] | undefined
 ): AIChatAgenticTimelineItem[] {
-  const items = timeline ?? [];
+  const items = (timeline ?? []).filter(item => {
+    if (item.type !== 'skill_event') return true;
+    return item.invocation.kind !== 'guardrail';
+  });
   if (items.length <= 1) return items;
 
   const indexByIdentity = new Map<string, number>();
+  const pendingIndexByBaseIdentity = new Map<string, number>();
   const out: AIChatAgenticTimelineItem[] = [];
   for (const item of items) {
     const identity = timelineItemIdentity(item);
     const existingIndex = indexByIdentity.get(identity);
-    if (existingIndex === undefined) {
-      indexByIdentity.set(identity, out.length);
-      out.push(item);
+    if (existingIndex !== undefined) {
+      const previousPendingBaseIdentity = pendingSkillTimelineBaseIdentity(out[existingIndex]);
+      out[existingIndex] = preferTimelineItem(out[existingIndex], item);
+      if (
+        previousPendingBaseIdentity &&
+        !pendingSkillTimelineBaseIdentity(out[existingIndex])
+      ) {
+        pendingIndexByBaseIdentity.delete(previousPendingBaseIdentity);
+      }
       continue;
     }
-    out[existingIndex] = preferTimelineItem(out[existingIndex], item);
+
+    const baseIdentity =
+      item.type === 'skill_event' ? timelineSkillInvocationBaseIdentity(item.invocation) : '';
+    const pendingIndex = baseIdentity ? pendingIndexByBaseIdentity.get(baseIdentity) : undefined;
+    if (pendingIndex !== undefined) {
+      out[pendingIndex] = preferTimelineItem(out[pendingIndex], item);
+      indexByIdentity.set(timelineItemIdentity(out[pendingIndex]), pendingIndex);
+      if (!pendingSkillTimelineBaseIdentity(out[pendingIndex])) {
+        pendingIndexByBaseIdentity.delete(baseIdentity);
+      }
+      continue;
+    }
+
+    indexByIdentity.set(identity, out.length);
+    const pendingBaseIdentity = pendingSkillTimelineBaseIdentity(item);
+    if (pendingBaseIdentity) {
+      pendingIndexByBaseIdentity.set(pendingBaseIdentity, out.length);
+    }
+    out.push(item);
   }
   return out;
 }
@@ -574,7 +678,10 @@ export function mergeRuntimeTimelineWithMessageTimeline(
   const merged = runtimeTimeline.map(item => {
     const identity = timelineItemIdentity(item);
     seen.add(identity);
-    return item.type === 'progress_text' ? item : (messageByIdentity.get(identity) ?? item);
+    const messageItem = messageByIdentity.get(identity);
+    return item.type === 'progress_text' || !messageItem
+      ? item
+      : preferTimelineItem(messageItem, item);
   });
 
   messageTimeline.forEach(item => {
@@ -584,7 +691,7 @@ export function mergeRuntimeTimelineWithMessageTimeline(
     }
   });
 
-  return dedupeTimelineItems(merged);
+  return sortTimelineItems(dedupeTimelineItems(merged));
 }
 
 export function seedStreamingTimelineFromMessages(

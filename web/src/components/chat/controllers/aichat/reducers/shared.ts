@@ -1,5 +1,6 @@
 import type {
   AIChatMessageFile,
+  AIChatGeneratedFile,
   AIChatMessageMetadata,
   AIChatSkillInvocation,
 } from '@/services/types/aichat';
@@ -28,15 +29,28 @@ export function mergeMessageMetadata(
 
   const existingFiles = existingMetadata?.files ?? [];
   const incomingFiles = incomingMetadata?.files ?? [];
-  const files = incomingFiles.length > 0 ? incomingFiles : existingFiles;
+  const files = mergeByIdentity(
+    existingFiles,
+    incomingFiles,
+    fileMetadataIdentity,
+    (existing, incoming) => ({ ...existing, ...incoming })
+  );
   const existingGeneratedFiles = existingMetadata?.generated_files ?? [];
   const incomingGeneratedFiles = incomingMetadata?.generated_files ?? [];
-  const generatedFiles =
-    incomingGeneratedFiles.length > 0 ? incomingGeneratedFiles : existingGeneratedFiles;
+  const generatedFiles = mergeByIdentity(
+    existingGeneratedFiles,
+    incomingGeneratedFiles,
+    generatedFileIdentity,
+    (existing, incoming) => ({ ...existing, ...incoming })
+  );
   const existingWorkflowRuns = existingMetadata?.workflow_runs ?? [];
   const incomingWorkflowRuns = incomingMetadata?.workflow_runs ?? [];
-  const workflowRuns =
-    incomingWorkflowRuns.length > 0 ? incomingWorkflowRuns : existingWorkflowRuns;
+  const workflowRuns = mergeByIdentity(
+    existingWorkflowRuns,
+    incomingWorkflowRuns,
+    workflowRunIdentity,
+    (existing, incoming) => ({ ...existing, ...incoming })
+  );
   const userInputRequest =
     incomingMetadata?.user_input_request ?? existingMetadata?.user_input_request;
   const existingSkillInvocations = visibleSkillInvocations(existingMetadata?.skill_invocations);
@@ -44,8 +58,12 @@ export function mergeMessageMetadata(
   const hasSkillInvocationMetadata = Boolean(
     existingMetadata?.skill_invocations || incomingMetadata?.skill_invocations
   );
-  const skillInvocations =
-    incomingSkillInvocations.length > 0 ? incomingSkillInvocations : existingSkillInvocations;
+  const skillInvocations = mergeByIdentity(
+    existingSkillInvocations,
+    incomingSkillInvocations,
+    skillInvocationIdentity,
+    mergeSkillInvocationByStatus
+  );
   const loadedSkillIds = uniqueStrings(
     skillInvocations
       .filter(item => item.kind === 'skill_load' && item.status !== 'error')
@@ -106,15 +124,200 @@ function visibleSkillInvocations(
 ): AIChatSkillInvocation[] {
   return (invocations ?? []).filter(invocation => {
     const status = String(invocation.status ?? '').toLowerCase();
+    const result =
+      invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
+        ? (invocation.result as Record<string, unknown>)
+        : {};
+    const actionType =
+      invocation.action_type ||
+      (typeof result.action_type === 'string' ? result.action_type : undefined);
+    if (
+      invocation.kind === 'skill_load' &&
+      invocation.skill_id === 'console-navigator'
+    ) {
+      return false;
+    }
     if (
       invocation.kind === 'client_action' &&
-      invocation.action_type === 'route_navigation' &&
+      (actionType === 'asset_observation' || actionType === 'route_navigation') &&
       (status === 'success' || status === 'succeeded')
     ) {
       return false;
     }
-    return invocation.kind !== 'metadata_exposed' && invocation.kind !== 'memory_planner';
+    return (
+      invocation.kind !== 'guardrail' &&
+      invocation.kind !== 'metadata_exposed' &&
+      invocation.kind !== 'memory_planner'
+    );
   });
+}
+
+function mergeByIdentity<T>(
+  existing: T[],
+  incoming: T[],
+  identity: (item: T, index: number) => string,
+  merge: (existing: T, incoming: T) => T
+): T[] {
+  if (existing.length === 0) return incoming;
+  if (incoming.length === 0) return existing;
+
+  const next = existing.slice();
+  const indexByIdentity = new Map<string, number>();
+  next.forEach((item, index) => {
+    const key = identity(item, index);
+    if (key) indexByIdentity.set(key, index);
+  });
+
+  incoming.forEach((item, incomingIndex) => {
+    const key = identity(item, next.length + incomingIndex);
+    const existingIndex = key ? indexByIdentity.get(key) : undefined;
+    if (existingIndex === undefined) {
+      if (key) indexByIdentity.set(key, next.length);
+      next.push(item);
+      return;
+    }
+    next[existingIndex] = merge(next[existingIndex], item);
+  });
+
+  return next;
+}
+
+function fileMetadataIdentity(file: AIChatMessageFile, index: number): string {
+  return file.id || `${file.name}:${file.extension}:${file.size}:${index}`;
+}
+
+function generatedFileIdentity(file: AIChatGeneratedFile, index: number): string {
+  return (
+    file.correlation_id ||
+    file.file_id ||
+    file.upload_file_id ||
+    file.tool_file_id ||
+    file.source_file_id ||
+    `${file.filename}:${file.extension}:${file.size}:${index}`
+  );
+}
+
+function workflowRunIdentity(run: { workflow_run_id?: string; task_id?: string; id?: string }, index: number): string {
+  return run.workflow_run_id || run.task_id || run.id || `workflow:${index}`;
+}
+
+function invocationRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function invocationString(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
+}
+
+function skillInvocationNavigationTarget(invocation: AIChatSkillInvocation): string {
+  const result = invocationRecord(invocation.result);
+  const args = invocationRecord(invocation.arguments);
+  const record = invocation as unknown as Record<string, unknown>;
+  const href =
+    invocationString(record.href) ||
+    invocationString(result.href) ||
+    invocationString(args.href);
+  return href.replace(/\/+$/, '') || href;
+}
+
+function skillInvocationGovernanceCorrelationId(invocation: AIChatSkillInvocation): string {
+  const record = invocation as unknown as Record<string, unknown>;
+  const governance = invocationRecord(record.governance);
+  const approvalEvent = invocationRecord(record.approval_event);
+  const audit = invocationRecord(record.asset_operation_audit);
+  return (
+    invocationString(record.correlation_id) ||
+    invocationString(governance.correlation_id) ||
+    invocationString(approvalEvent.correlation_id) ||
+    invocationString(audit.correlation_id)
+  );
+}
+
+export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocation): string {
+  if (invocation.kind === 'intermediate_answer' && invocation.answer_id) {
+    return `intermediate_answer:${invocation.answer_id}`;
+  }
+  if (invocation.kind === 'client_action' && invocation.action_id) {
+    return `client_action:${invocation.action_id}`;
+  }
+  if (
+    invocation.kind === 'tool_call' &&
+    invocation.skill_id === 'console-navigator' &&
+    invocation.tool_name === 'navigate'
+  ) {
+    const href = skillInvocationNavigationTarget(invocation);
+    if (href) return `tool_call:console-navigator:navigate:${href.toLowerCase()}`;
+  }
+  if (invocation.kind === 'tool_governance') {
+    const correlationId = skillInvocationGovernanceCorrelationId(invocation);
+    if (correlationId) return `tool_governance:${correlationId}`;
+  }
+  return '';
+}
+
+function skillInvocationIdentity(invocation: AIChatSkillInvocation, index: number): string {
+  const semanticIdentity = skillInvocationSemanticIdentity(invocation);
+  if (semanticIdentity) return semanticIdentity;
+  if (invocation.runtime_id) return invocation.runtime_id;
+  return [
+    invocation.kind ?? 'tool_call',
+    invocation.skill_id ?? '',
+    invocation.tool_name ?? '',
+    invocation.path ?? '',
+    invocation.answer_id ?? '',
+    stableMetadataValue(invocation.arguments ?? {}),
+    index,
+  ].join(':');
+}
+
+export function mergeSkillInvocationByStatus(
+  existing: AIChatSkillInvocation,
+  incoming: AIChatSkillInvocation
+): AIChatSkillInvocation {
+  if (skillInvocationStatusRank(incoming.status) < skillInvocationStatusRank(existing.status)) {
+    return { ...incoming, ...existing };
+  }
+  return { ...existing, ...incoming };
+}
+
+function skillInvocationStatusRank(status: string | undefined): number {
+  switch (String(status ?? '').toLowerCase()) {
+    case 'error':
+    case 'blocked':
+    case 'denied':
+      return 40;
+    case 'success':
+    case 'succeeded':
+    case 'allowed':
+    case 'completed':
+    case 'approved':
+      return 30;
+    case 'needs_approval':
+    case 'waiting_approval':
+    case 'waiting_client_action':
+    case 'waiting_question':
+      return 20;
+    case 'running':
+    case 'loading':
+      return 10;
+    default:
+      return 0;
+  }
+}
+
+function stableMetadataValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value !== 'object') return String(value);
+  if (Array.isArray(value)) return `[${value.map(stableMetadataValue).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map(key => `${key}:${stableMetadataValue(record[key])}`)
+    .join(',')}}`;
 }
 
 function uniqueStrings(values: Array<string | undefined>): string[] {

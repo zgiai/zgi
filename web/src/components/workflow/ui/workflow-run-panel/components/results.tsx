@@ -18,6 +18,8 @@ import {
 } from '@/components/workflow/question-answer/question-answer-transcript';
 import type { QuestionAnswerTranscriptItem } from '@/components/workflow/question-answer/runtime-events';
 
+const jsonViewLightTheme = lightTheme as React.CSSProperties;
+
 interface ResultsProps {
   mode: 'draft' | 'history';
   title?: string;
@@ -459,7 +461,7 @@ const Results: React.FC<ResultsProps> = ({
         {renderGeneratedFiles(generatedFiles)}
         <JsonView
           value={(value as unknown) ?? {}}
-          style={lightTheme}
+          style={jsonViewLightTheme}
           className="rounded-lg overflow-auto bg-muted/20 p-3 border border-border/40 font-mono text-sm leading-relaxed"
         />
       </>

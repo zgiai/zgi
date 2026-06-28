@@ -763,15 +763,28 @@ const FileManagementContent = ({
   const uploadAcceptExt = acceptExt.length > 0 ? acceptExt : [...FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT];
   const processingStatusParam = getProcessingStatusQueryParam(processingStatusFilter);
 
-  const { files, currentPage, totalPages, total, isLoading, isFetching, error, goToPage, reload } =
-    useFiles(FILES_PAGE_LIMIT, {
-      category: activeCategory,
-      keyword: debouncedSearchValue,
-      sort: FILES_PAGE_SORT,
-      extension: extensionParam,
-      processingStatus: processingStatusParam,
-      workspaceId: workspaceId,
-    });
+  const {
+    files,
+    currentPage,
+    totalPages,
+    total,
+    isLoading,
+    isFetching,
+    isFetched,
+    error,
+    goToPage,
+    reload,
+  } = useFiles(FILES_PAGE_LIMIT, {
+    category: activeCategory,
+    keyword: debouncedSearchValue,
+    sort: FILES_PAGE_SORT,
+    extension: extensionParam,
+    processingStatus: processingStatusParam,
+    workspaceId: workspaceId,
+  });
+  const filesQuerySettled = (isFetched && !isLoading && !isFetching) || Boolean(error);
+  const filesContextReady = filesQuerySettled;
+  const filesQueryStatus = error ? 'error' : filesContextReady ? 'ready' : 'loading';
   const activeFolderContextName = SYSTEM_FILE_CATEGORIES.has(activeCategory)
     ? undefined
     : activeFolderName || folders.find(folder => folder.id === activeCategory)?.name;
@@ -864,6 +877,8 @@ const FileManagementContent = ({
             currentWorkspace,
             isOrganizationMode,
             activeFolderName: activeFolderContextName,
+            contextReady: filesContextReady,
+            queryStatus: filesQueryStatus,
             canManage,
             canUpload,
             presentation: filesAIChatPresentation,
@@ -878,7 +893,9 @@ const FileManagementContent = ({
       enableAIChatContext,
       extensionParam,
       files,
+      filesContextReady,
       filesAIChatPresentation,
+      filesQueryStatus,
       isOrganizationMode,
       canManage,
       canUpload,

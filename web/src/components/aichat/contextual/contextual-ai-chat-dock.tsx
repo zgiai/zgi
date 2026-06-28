@@ -45,7 +45,11 @@ import {
   type ContextualAIChatClientActionRequest,
 } from './context-envelope';
 import { useContextualAIChat } from './contextual-ai-chat-context';
-import type { AIChatClientActionResultRequest } from '@/services/types/aichat';
+import type {
+  AIChatClientActionRequiredEventData,
+  AIChatClientActionResultRequest,
+  AIChatMessage,
+} from '@/services/types/aichat';
 import type {
   AIChatContextItem,
   AIChatContextPresentationHint,
@@ -65,8 +69,11 @@ const CLIENT_ACTION_ROUTE_CONTEXT_SETTLE_MS = 140;
 const CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS = 460;
 const CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS = 120;
 const CLIENT_ACTION_OBSERVATION_SETTLE_MS = 900;
+const CLIENT_ACTION_DEDUPE_TTL_MS = 60_000;
+const CLIENT_ACTION_FAILURE_DEDUPE_TTL_MS = 5_000;
 
 interface PendingClientActionContinuation {
+  key: string;
   conversationId: string;
   messageId: string;
   actionId: string;
@@ -79,7 +86,49 @@ interface PendingClientActionContinuation {
   assets?: Array<Record<string, unknown>>;
   requestedAt: number;
   completed: boolean;
+  timeoutId?: number;
   resuming?: boolean;
+}
+
+function clientActionContinuationKey(
+  conversationId: string,
+  messageId: string,
+  actionId: string
+) {
+  return `${conversationId}:${messageId}:${actionId}`;
+}
+
+function clientActionRequestKey(request: ContextualAIChatClientActionRequest) {
+  return clientActionContinuationKey(
+    request.conversationId,
+    request.messageId,
+    request.actionId
+  );
+}
+
+function routeClientActionRequestKey(request: ContextualAIChatClientActionRequest, href: string) {
+  return `${request.conversationId}:${request.messageId}:route_navigation:${href}`;
+}
+
+function pruneClientActionDedupe(cache: Map<string, number>, now: number) {
+  for (const [key, expiresAt] of cache.entries()) {
+    if (expiresAt <= now) {
+      cache.delete(key);
+    }
+  }
+}
+
+function markClientActionDedupe(
+  cache: Map<string, number>,
+  key: string,
+  ttlMs = CLIENT_ACTION_DEDUPE_TTL_MS
+) {
+  cache.set(key, Date.now() + ttlMs);
+}
+
+function hasClientActionDedupe(cache: Map<string, number>, key: string, now: number) {
+  const expiresAt = cache.get(key);
+  return Boolean(expiresAt && expiresAt > now);
 }
 
 function useIsDesktopPanelViewport() {
@@ -108,6 +157,13 @@ function clampDesktopPanelWidth(width: number) {
   );
   const maxWidth = Math.min(viewportMax, ratioMax);
   return Math.min(Math.max(Math.round(width), MIN_DESKTOP_PANEL_WIDTH), maxWidth);
+}
+
+function agentIdFromAgentDetailPath(pathname?: string | null) {
+  const href = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
+  if (!href) return null;
+  const match = href.match(/^\/console\/agents\/([^/]+)\/agent(?:\/.*)?$/);
+  return match?.[1] ?? null;
 }
 
 function getDefaultDesktopPanelWidth() {
@@ -230,13 +286,44 @@ function getContextTypeLabel(type: AIChatContextItem['type'], t: ContextualDockT
   }
 }
 
+function hasPageAdapterSignal(item: AIChatContextItem) {
+  if (item.type !== 'page') return false;
+  const metadataPage = metadataText(item, 'page');
+  return Boolean(
+    metadataPage ||
+      item.capabilities?.length ||
+      item.hints?.handledAssetTypes?.length ||
+      item.hints?.presentation ||
+      item.hints?.toolGovernance
+  );
+}
+
 function isGenericRoutePageItem(item: AIChatContextItem) {
-  return item.type === 'page' && item.title.trim().startsWith('/');
+  if (item.type !== 'page') return false;
+  if (hasPageAdapterSignal(item)) return false;
+
+  const title = item.title.trim();
+  return Boolean(
+    title.startsWith('/') ||
+      normalizeZGIConsoleNavigationHref(item.id) ||
+      normalizeZGIConsoleNavigationHref(item.href) ||
+      normalizeZGIConsoleNavigationHref(metadataText(item, 'route')) ||
+      normalizeZGIConsoleNavigationHref(metadataText(item, 'pathname')) ||
+      normalizeZGIConsoleNavigationHref(metadataText(item, 'path'))
+  );
 }
 
 function pickPrimaryContextItem(items: AIChatContextItem[]) {
   const selectedItem = items.find(item => item.metadata?.selected === true);
-  return selectedItem ?? items.find(item => !isGenericRoutePageItem(item)) ?? items[0];
+  if (selectedItem && !isGenericRoutePageItem(selectedItem)) return selectedItem;
+
+  const adaptedPageItem = items.find(item => item.type === 'page' && hasPageAdapterSignal(item));
+  return (
+    adaptedPageItem ??
+    selectedItem ??
+    items.find(item => !isGenericRoutePageItem(item)) ??
+    items[0]
+  );
 }
 
 function buildContextSummary(items: AIChatContextItem[], t: ContextualDockTranslator) {
@@ -288,6 +375,61 @@ function metadataText(item: AIChatContextItem, key: string) {
   return typeof value === 'string' ? value : undefined;
 }
 
+function metadataBoolean(item: AIChatContextItem, key: string) {
+  const value = item.metadata?.[key];
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'ready'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'loading', 'pending'].includes(normalized)) return false;
+  }
+  return undefined;
+}
+
+function isRouteContextItemReady(item: AIChatContextItem) {
+  return metadataBoolean(item, 'context_ready') !== false;
+}
+
+function routeContextQueryReady(
+  item: AIChatContextItem,
+  statusKey: string,
+  settledKey: string,
+  countKeys: string[]
+) {
+  const queryStatus = metadataText(item, statusKey)?.trim().toLowerCase();
+  if (queryStatus && ['error', 'unavailable', 'forbidden'].includes(queryStatus)) {
+    return true;
+  }
+
+  if (!isRouteContextItemReady(item)) return false;
+
+  if (queryStatus && queryStatus !== 'ready') return false;
+
+  const querySettled = metadataBoolean(item, settledKey);
+  if (querySettled === false) return false;
+
+  if (queryStatus === 'ready' || querySettled === true) return true;
+
+  return countKeys.some(key => metadataText(item, key) !== undefined);
+}
+
+function filesRouteContextItemReady(item: AIChatContextItem) {
+  return routeContextQueryReady(item, 'files_query_status', 'files_query_settled', [
+    'total_file_count',
+    'visible_file_count',
+    'indexed_visible_files',
+  ]);
+}
+
+function agentsRouteContextItemReady(item: AIChatContextItem) {
+  return routeContextQueryReady(item, 'agents_query_status', 'agents_query_settled', [
+    'loaded_agent_count',
+    'visible_agent_count',
+    'visible_runtime_agent_count',
+  ]);
+}
+
 function routeHrefFromContextItem(item: AIChatContextItem) {
   const candidates = [
     item.href,
@@ -311,10 +453,14 @@ function routeSpecificReadyContextItem(items: AIChatContextItem[], href: string)
       const metadataPage = metadataText(item, 'page');
       const metadataRoute = normalizeZGIConsoleNavigationHref(metadataText(item, 'route'));
       return (
-        item.id === 'console.files' ||
-        metadataPage === 'console.files' ||
-        (metadataRoute === href &&
-          item.hints?.handledAssetTypes?.some(assetType => normalizeHintToken(assetType) === 'file'))
+        item.type === 'page' &&
+        filesRouteContextItemReady(item) &&
+        (item.id === 'console.files' ||
+          metadataPage === 'console.files' ||
+          (metadataRoute === href &&
+            item.hints?.handledAssetTypes?.some(
+              assetType => normalizeHintToken(assetType) === 'file'
+            )))
       );
     });
   }
@@ -324,10 +470,14 @@ function routeSpecificReadyContextItem(items: AIChatContextItem[], href: string)
       const metadataPage = metadataText(item, 'page');
       const metadataRoute = normalizeZGIConsoleNavigationHref(metadataText(item, 'route'));
       return (
-        item.id === 'console.agents' ||
-        metadataPage === 'console.agents' ||
-        (metadataRoute === href &&
-          item.hints?.handledAssetTypes?.some(assetType => normalizeHintToken(assetType) === 'agent'))
+        item.type === 'page' &&
+        agentsRouteContextItemReady(item) &&
+        (item.id === 'console.agents' ||
+          metadataPage === 'console.agents' ||
+          (metadataRoute === href &&
+            item.hints?.handledAssetTypes?.some(
+              assetType => normalizeHintToken(assetType) === 'agent'
+            )))
       );
     });
   }
@@ -336,12 +486,34 @@ function routeSpecificReadyContextItem(items: AIChatContextItem[], href: string)
     return items.find(
       item =>
         item.type === 'agent' &&
+        isRouteContextItemReady(item) &&
         routeHrefFromContextItem(item) === href &&
         item.hints?.handledAssetTypes?.some(assetType => normalizeHintToken(assetType) === 'agent')
     );
   }
 
-  return items.find(item => routeHrefFromContextItem(item) === href && !isGenericRoutePageItem(item));
+  return items.find(
+    item =>
+      isRouteContextItemReady(item) &&
+      routeHrefFromContextItem(item) === href &&
+      !isGenericRoutePageItem(item)
+  );
+}
+
+function routeObservationContextItem(item: AIChatContextItem) {
+  return {
+    id: item.id,
+    type: item.type,
+    title: item.title,
+    href: item.href,
+    context_ready: metadataBoolean(item, 'context_ready'),
+    files_query_status: metadataText(item, 'files_query_status'),
+    agents_query_status: metadataText(item, 'agents_query_status'),
+    visible_file_count: metadataText(item, 'visible_file_count'),
+    total_file_count: metadataText(item, 'total_file_count'),
+    visible_agent_count: metadataText(item, 'visible_agent_count'),
+    loaded_agent_count: metadataText(item, 'loaded_agent_count'),
+  };
 }
 
 function routeContextObservation(items: AIChatContextItem[], href: string) {
@@ -356,12 +528,7 @@ function routeContextObservation(items: AIChatContextItem[], href: string) {
     ready_context_item_id: readyItem ? `${readyItem.type}:${readyItem.id}` : undefined,
     ready_context_title: readyItem?.title,
     context_item_count: items.length,
-    context_items: items.slice(0, 6).map(item => ({
-      id: item.id,
-      type: item.type,
-      title: item.title,
-      href: item.href,
-    })),
+    context_items: items.slice(0, 6).map(routeObservationContextItem),
   };
 }
 
@@ -384,6 +551,88 @@ function recordListValue(value: unknown): Array<Record<string, unknown>> {
     const record = recordValue(item);
     return record ? [record] : [];
   });
+}
+
+function waitingClientActionStatus(value: unknown) {
+  if (typeof value !== 'string') return false;
+  const status = value.trim().toLowerCase();
+  return status === 'waiting_client_action' || status === 'waiting';
+}
+
+function pendingClientActionRecordFromMessage(
+  message: AIChatMessage | null | undefined
+): Record<string, unknown> | null {
+  if (!message || message.status !== 'waiting_client_action') return null;
+
+  const metadata = message.metadata;
+  const continuation = recordValue(metadata?.client_action_continuation);
+  const continuationActionId = textFromRecord(continuation, ['action_id']);
+  const records = recordListValue(metadata?.client_actions);
+  const invocations = recordListValue(metadata?.skill_invocations).filter(
+    invocation => textFromRecord(invocation, ['kind']) === 'client_action'
+  );
+
+  const matchActionId = (record: Record<string, unknown>) =>
+    continuationActionId && textFromRecord(record, ['action_id']) === continuationActionId;
+  const waitingRecord = (record: Record<string, unknown>) =>
+    waitingClientActionStatus(record.status);
+
+  const matchedEvent = records.find(record => matchActionId(record) && waitingRecord(record));
+  const matchedInvocation = invocations.find(
+    record => matchActionId(record) && waitingRecord(record)
+  );
+  if (continuation && waitingRecord(continuation)) {
+    return {
+      ...continuation,
+      ...(matchedInvocation ?? {}),
+      ...(matchedEvent ?? {}),
+    };
+  }
+
+  return records.find(waitingRecord) ?? invocations.find(waitingRecord) ?? null;
+}
+
+function clientActionRequestFromWaitingMessage(
+  message: AIChatMessage | null | undefined
+): ContextualAIChatClientActionRequest | null {
+  const record = pendingClientActionRecordFromMessage(message);
+  if (!message || !record) return null;
+
+  const actionId = textFromRecord(record, ['action_id']);
+  const actionType = textFromRecord(record, ['action_type']);
+  if (!actionId || !actionType) return null;
+
+  const href =
+    actionType === 'route_navigation'
+      ? normalizeZGIConsoleNavigationHref(textFromRecord(record, ['href']))
+      : textFromRecord(record, ['href']);
+
+  const payload: AIChatClientActionRequiredEventData = {
+    conversation_id: message.conversation_id,
+    message_id: message.id,
+    action_id: actionId,
+    action_type: actionType,
+    status: 'waiting_client_action',
+    skill_id: textFromRecord(record, ['skill_id']),
+    tool_name: textFromRecord(record, ['tool_name']),
+    href: href || undefined,
+    label: textFromRecord(record, ['label']) || undefined,
+    reason: textFromRecord(record, ['reason']) || undefined,
+    effect: textFromRecord(record, ['effect']) || undefined,
+    asset_type: textFromRecord(record, ['asset_type']) || undefined,
+    assets: recordListValue(record.assets) as AIChatClientActionRequiredEventData['assets'],
+  };
+
+  return {
+    actionId,
+    actionType,
+    conversationId: message.conversation_id,
+    messageId: message.id,
+    href: href || undefined,
+    label: payload.label,
+    reason: payload.reason,
+    payload,
+  };
 }
 
 function textFromRecord(record: Record<string, unknown> | null | undefined, keys: string[]) {
@@ -681,8 +930,8 @@ export function ContextualAIChatDock() {
   const [desktopPanelWidth, setDesktopPanelWidth] = useState<number | null>(null);
   const itemsRef = useRef(items);
   const assetOperationRefreshRef = useRef<Map<string, number>>(new Map());
-  const pendingClientActionRef = useRef<PendingClientActionContinuation | null>(null);
-  const clientActionRouteTimeoutRef = useRef<number | null>(null);
+  const pendingClientActionsRef = useRef<Map<string, PendingClientActionContinuation>>(new Map());
+  const processedClientActionsRef = useRef<Map<string, number>>(new Map());
   const clientActionContinuationRef = useRef<
     ReturnType<typeof useAIChatController>['continueClientAction'] | null
   >(null);
@@ -692,19 +941,24 @@ export function ContextualAIChatDock() {
     itemsRef.current = items;
   }, [items]);
 
-  const clearClientActionRouteTimeout = useCallback(() => {
+  const clearClientActionTimeout = useCallback((pending: PendingClientActionContinuation) => {
     if (typeof window === 'undefined') return;
-    if (clientActionRouteTimeoutRef.current === null) return;
-    window.clearTimeout(clientActionRouteTimeoutRef.current);
-    clientActionRouteTimeoutRef.current = null;
+    if (pending.timeoutId === undefined) return;
+    window.clearTimeout(pending.timeoutId);
+    pending.timeoutId = undefined;
   }, []);
+
+  const clearAllClientActionTimeouts = useCallback(() => {
+    pendingClientActionsRef.current.forEach(pending => clearClientActionTimeout(pending));
+  }, [clearClientActionTimeout]);
 
   const completePendingClientAction = useCallback(
     (
       pending: PendingClientActionContinuation,
       payload: AIChatClientActionResultRequest
     ) => {
-      if (pendingClientActionRef.current?.actionId !== pending.actionId || pending.completed) {
+      const currentPending = pendingClientActionsRef.current.get(pending.key);
+      if (currentPending !== pending || pending.completed) {
         return;
       }
 
@@ -725,19 +979,27 @@ export function ContextualAIChatDock() {
         payload
       )
         .then(() => {
-          if (pendingClientActionRef.current?.actionId !== pending.actionId) return;
+          if (pendingClientActionsRef.current.get(pending.key) !== pending) return;
+          markClientActionDedupe(processedClientActionsRef.current, pending.key);
           pending.completed = true;
-          pendingClientActionRef.current = null;
-          clearClientActionRouteTimeout();
+          pendingClientActionsRef.current.delete(pending.key);
+          clearClientActionTimeout(pending);
           setPendingClientActionVersion(version => version + 1);
         })
         .catch(error => {
-          pending.resuming = false;
+          markClientActionDedupe(
+            processedClientActionsRef.current,
+            pending.key,
+            CLIENT_ACTION_FAILURE_DEDUPE_TTL_MS
+          );
+          pending.completed = true;
+          pendingClientActionsRef.current.delete(pending.key);
+          clearClientActionTimeout(pending);
           setPendingClientActionVersion(version => version + 1);
           console.error('AIChat client action continuation failed', error);
         });
     },
-    [clearClientActionRouteTimeout]
+    [clearClientActionTimeout]
   );
 
   const invalidateQueries = useCallback(
@@ -757,6 +1019,20 @@ export function ContextualAIChatDock() {
       }
       pruneAssetOperationRefreshDedupe(assetOperationRefreshRef.current, now);
       assetOperationRefreshRef.current.set(dedupeKey, now);
+
+      if (operation.assetType === 'agent' && operation.effect === 'delete') {
+        const deletedAgentId = operation.assetId?.trim();
+        if (deletedAgentId && agentIdFromAgentDetailPath(pathname) === deletedAgentId) {
+          router.replace('/console/agents');
+        }
+        if (deletedAgentId) {
+          void queryClient.cancelQueries({ queryKey: AGENT_KEYS.detail(deletedAgentId) });
+          queryClient.removeQueries({ queryKey: AGENT_KEYS.detail(deletedAgentId) });
+        }
+        invalidateQueries(AGENT_KEYS.lists());
+        invalidateQueries([...AGENT_KEYS.all, 'runnable-webapps']);
+        return;
+      }
 
       const { handledByAdapter, refreshHints } = getRefreshHintResolution(
         itemsRef.current,
@@ -804,22 +1080,25 @@ export function ContextualAIChatDock() {
           break;
       }
     },
-    [invalidateQueries]
+    [invalidateQueries, pathname, queryClient, router]
   );
 
   const handleClientActionRequired = useCallback(
     (request: ContextualAIChatClientActionRequest) => {
-      const existing = pendingClientActionRef.current;
-      if (existing?.actionId === request.actionId) return;
+      const now = Date.now();
+      const key = clientActionRequestKey(request);
+      pruneClientActionDedupe(processedClientActionsRef.current, now);
+      if (pendingClientActionsRef.current.has(key)) return;
+      if (hasClientActionDedupe(processedClientActionsRef.current, key, now)) return;
 
       if (request.actionType === 'asset_observation') {
-        clearClientActionRouteTimeout();
         const operation = assetOperationFromClientAction(request);
         if (operation) {
           handleAssetOperationSuccess(operation);
         }
 
         const pending: PendingClientActionContinuation = {
+          key,
           conversationId: request.conversationId,
           messageId: request.messageId,
           actionId: request.actionId,
@@ -833,11 +1112,11 @@ export function ContextualAIChatDock() {
           requestedAt: Date.now(),
           completed: false,
         };
-        pendingClientActionRef.current = pending;
+        pendingClientActionsRef.current.set(key, pending);
         setPendingClientActionVersion(version => version + 1);
 
         if (typeof window !== 'undefined') {
-          clientActionRouteTimeoutRef.current = window.setTimeout(() => {
+          pending.timeoutId = window.setTimeout(() => {
             completePendingClientAction(pending, {
               status: 'succeeded',
               result: {
@@ -854,9 +1133,18 @@ export function ContextualAIChatDock() {
       if (request.actionType !== 'route_navigation') return;
       const href = normalizeZGIConsoleNavigationHref(request.href);
       if (!href) return;
+      const routeKey = routeClientActionRequestKey(request, href);
+      if (pendingClientActionsRef.current.has(routeKey)) return;
+      const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
+      if (
+        hasClientActionDedupe(processedClientActionsRef.current, routeKey, now) &&
+        currentHref === href
+      ) {
+        return;
+      }
 
-      clearClientActionRouteTimeout();
       const pending: PendingClientActionContinuation = {
+        key: routeKey,
         conversationId: request.conversationId,
         messageId: request.messageId,
         actionId: request.actionId,
@@ -867,11 +1155,11 @@ export function ContextualAIChatDock() {
         requestedAt: Date.now(),
         completed: false,
       };
-      pendingClientActionRef.current = pending;
+      pendingClientActionsRef.current.set(routeKey, pending);
       setPendingClientActionVersion(version => version + 1);
 
       if (typeof window !== 'undefined') {
-        clientActionRouteTimeoutRef.current = window.setTimeout(() => {
+        pending.timeoutId = window.setTimeout(() => {
           completePendingClientAction(pending, {
             status: 'failed',
             error: `Route navigation to ${href} timed out.`,
@@ -887,8 +1175,25 @@ export function ContextualAIChatDock() {
         }, CLIENT_ACTION_ROUTE_TIMEOUT_MS);
       }
 
-      const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
-      if (currentHref === href) return;
+      if (currentHref === href) {
+        const observation = routeContextObservation(itemsRef.current, href);
+        if (!routeRequiresPageContextReady(href) || observation.page_context_ready) {
+          completePendingClientAction(pending, {
+            status: 'succeeded',
+            result: {
+              event_type: 'route_already_loaded',
+              action_type: pending.actionType,
+              href,
+              label: pending.label,
+              reason: pending.reason,
+              observed_path: currentHref,
+              elapsed_ms: Date.now() - pending.requestedAt,
+              ...observation,
+            },
+          });
+        }
+        return;
+      }
 
       try {
         router.push(href);
@@ -906,7 +1211,6 @@ export function ContextualAIChatDock() {
       }
     },
     [
-      clearClientActionRouteTimeout,
       completePendingClientAction,
       handleAssetOperationSuccess,
       pathname,
@@ -924,59 +1228,92 @@ export function ContextualAIChatDock() {
   );
   const controller = useAIChatController({ transport });
   const { init: initController } = controller;
+  const waitingClientActionRequest = useMemo(() => {
+    const activeConversation = controller.activeConversation;
+    if (!activeConversation) return null;
+
+    const leafMessageId =
+      activeConversation.current_leaf_message_id ?? activeConversation.active_message_id;
+    if (!leafMessageId) return null;
+
+    const leafMessage = controller.messages.find(message => message.id === leafMessageId);
+    return clientActionRequestFromWaitingMessage(leafMessage);
+  }, [controller.activeConversation, controller.messages]);
+
+  useEffect(() => {
+    if (!waitingClientActionRequest) return;
+    handleClientActionRequired(waitingClientActionRequest);
+  }, [handleClientActionRequired, waitingClientActionRequest]);
 
   useEffect(() => {
     clientActionContinuationRef.current = controller.continueClientAction ?? null;
-    const pending = pendingClientActionRef.current;
-    if (pending && !pending.completed && !pending.resuming && controller.continueClientAction) {
+    const hasContinuablePending = Array.from(pendingClientActionsRef.current.values()).some(
+      pending => !pending.completed && !pending.resuming
+    );
+    if (hasContinuablePending && controller.continueClientAction) {
       setPendingClientActionVersion(version => version + 1);
     }
   }, [controller.continueClientAction]);
 
   useEffect(() => {
-    return () => clearClientActionRouteTimeout();
-  }, [clearClientActionRouteTimeout]);
+    return () => clearAllClientActionTimeouts();
+  }, [clearAllClientActionTimeouts]);
 
   useEffect(() => {
-    const pending = pendingClientActionRef.current;
-    if (!pending || pending.completed) return;
-    if (pending.actionType !== 'route_navigation' || !pending.href) return;
-    const href = pending.href;
-
     const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
-    if (currentHref !== href) return;
+    const routePendings = Array.from(pendingClientActionsRef.current.values()).filter(
+      pending =>
+        !pending.completed &&
+        pending.actionType === 'route_navigation' &&
+        Boolean(pending.href) &&
+        pending.href === currentHref
+    );
+    if (routePendings.length === 0) return;
 
-    const observation = routeContextObservation(itemsRef.current, href);
-    if (routeRequiresPageContextReady(href) && !observation.page_context_ready) {
+    const pendingTimers: number[] = [];
+    let needsPoll = false;
+
+    routePendings.forEach(pending => {
+      const href = pending.href;
+      if (!href) return;
+
+      const observation = routeContextObservation(itemsRef.current, href);
+      if (routeRequiresPageContextReady(href) && !observation.page_context_ready) {
+        needsPoll = true;
+        return;
+      }
+
+      const delay = observation.page_context_ready
+        ? CLIENT_ACTION_ROUTE_CONTEXT_SETTLE_MS
+        : CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS;
+
+      const timer = window.setTimeout(() => {
+        const latestObservation = routeContextObservation(itemsRef.current, href);
+        completePendingClientAction(pending, {
+          status: 'succeeded',
+          result: {
+            event_type: 'route_loaded',
+            action_type: pending.actionType,
+            href,
+            label: pending.label,
+            reason: pending.reason,
+            observed_path: currentHref,
+            elapsed_ms: Date.now() - pending.requestedAt,
+            ...latestObservation,
+          },
+        });
+      }, delay);
+      pendingTimers.push(timer);
+    });
+
+    if (needsPoll) {
       const pollTimer = window.setTimeout(() => {
         setPendingClientActionVersion(version => version + 1);
       }, CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS);
-
-      return () => window.clearTimeout(pollTimer);
+      pendingTimers.push(pollTimer);
     }
 
-    const delay = observation.page_context_ready
-      ? CLIENT_ACTION_ROUTE_CONTEXT_SETTLE_MS
-      : CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS;
-
-    const timer = window.setTimeout(() => {
-      const latestObservation = routeContextObservation(itemsRef.current, href);
-      completePendingClientAction(pending, {
-        status: 'succeeded',
-        result: {
-          event_type: 'route_loaded',
-          action_type: pending.actionType,
-          href,
-          label: pending.label,
-          reason: pending.reason,
-          observed_path: currentHref,
-          elapsed_ms: Date.now() - pending.requestedAt,
-          ...latestObservation,
-        },
-      });
-    }, delay);
-
-    return () => window.clearTimeout(timer);
+    return () => pendingTimers.forEach(timer => window.clearTimeout(timer));
   }, [
     completePendingClientAction,
     items,

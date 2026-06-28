@@ -9,6 +9,8 @@ export interface FilesAIChatPresentation {
   suggestions: string[];
 }
 
+export type FilesAIChatQueryStatus = 'loading' | 'ready' | 'error';
+
 export interface FilesAIChatContextSnapshot {
   files: FileItem[];
   selectedFileIds: string[];
@@ -23,6 +25,8 @@ export interface FilesAIChatContextSnapshot {
   currentWorkspace: Workspace | null;
   isOrganizationMode: boolean;
   activeFolderName?: string;
+  contextReady: boolean;
+  queryStatus: FilesAIChatQueryStatus;
   canManage: boolean;
   canUpload: boolean;
   presentation?: FilesAIChatPresentation;
