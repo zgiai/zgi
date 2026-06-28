@@ -312,11 +312,13 @@ export default function AgentsPage() {
         agents={agents}
         pageSize={PAGE_SIZE}
         searchKeyword={debouncedSearchKeyword}
+        pageTitle={t('agents.title')}
         workspaceId={currentWorkspace?.id}
         workspaceName={currentWorkspace?.name}
         canView={canView}
         canManage={canManage}
         isLoading={isLoading}
+        isFetching={isFetching}
         hasNextPage={hasNextPage}
       />
       <div

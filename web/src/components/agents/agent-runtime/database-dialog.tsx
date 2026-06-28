@@ -23,6 +23,7 @@ import type { Db } from '@/services/types/db';
 
 interface AgentRuntimeDatabaseDialogProps {
   open: boolean;
+  workspaceId?: string;
   bindings: AgentDatabaseBinding[];
   onOpenChange: (open: boolean) => void;
   onConfirmDatabases: (dbIds: string[]) => void;
@@ -30,6 +31,7 @@ interface AgentRuntimeDatabaseDialogProps {
 
 export function AgentRuntimeDatabaseDialog({
   open,
+  workspaceId,
   bindings,
   onOpenChange,
   onConfirmDatabases,
@@ -37,13 +39,25 @@ export function AgentRuntimeDatabaseDialog({
   const t = useT('agents.agentRuntime');
   const [selectedDbIds, setSelectedDbIds] = useState<string[]>([]);
   const [dbSearch, setDbSearch] = useState('');
-  const { dbs, isLoading } = useDbsBasic({}, { enabled: open });
+  const { dbs, isLoading } = useDbsBasic(
+    { workspace_id: workspaceId },
+    { enabled: open && Boolean(workspaceId) }
+  );
 
   useEffect(() => {
     if (!open) return;
     setDbSearch('');
     setSelectedDbIds(bindings.map(binding => binding.data_source_id));
   }, [bindings, open]);
+
+  useEffect(() => {
+    if (!open || isLoading) return;
+    const scopedDbIds = new Set(dbs.map(db => db.id));
+    setSelectedDbIds(current => {
+      const next = current.filter(dbId => scopedDbIds.has(dbId));
+      return next.length === current.length ? current : next;
+    });
+  }, [dbs, isLoading, open]);
 
   const filteredDbs = useMemo(() => {
     const keyword = dbSearch.trim().toLowerCase();
@@ -121,9 +135,11 @@ export function AgentRuntimeDatabaseDialog({
           </Button>
           <Button
             type="button"
+            disabled={isLoading || !workspaceId}
             onClick={() => {
+              const scopedDbIds = new Set(dbs.map(db => db.id));
               onOpenChange(false);
-              onConfirmDatabases(selectedDbIds);
+              onConfirmDatabases(selectedDbIds.filter(dbId => scopedDbIds.has(dbId)));
             }}
           >
             {t('database.confirm')}

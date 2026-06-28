@@ -23,10 +23,12 @@ import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
 import { useT } from '@/i18n';
+import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
 import agentService from '@/services/agent.service';
 import { datasetService } from '@/services';
 import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import type {
+  AgentDetail,
   AgentDatabaseBinding,
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
@@ -38,7 +40,7 @@ import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { Dataset } from '@/services/types/dataset';
 import { getErrorMessage } from '@/utils/error-notifications';
 import type { AgentConfigSection, AgentPublishedVersionListItem } from '../types';
-import { toModelParams, validateAgentMemorySlots } from '../utils';
+import { buildAgentRuntimeSignature, toModelParams, validateAgentMemorySlots } from '../utils';
 import { useAgentRuntimeDraftPersistence } from '../use-agent-runtime-draft-persistence';
 import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
 import {
@@ -177,6 +179,16 @@ function compactSuggestedQuestionContextRef(value: string, maxLength = 180): str
   return `${text.slice(0, maxLength).trim()}...`;
 }
 
+function isDatasetInWorkspace(dataset: Dataset, workspaceId: string): boolean {
+  if (!workspaceId) return false;
+  const datasetWorkspaceId = dataset.workspace_id || dataset.workspace?.id;
+  return !datasetWorkspaceId || datasetWorkspaceId === workspaceId;
+}
+
+function agentDetailWorkspaceID(agent: AgentDetail | undefined): string {
+  return agent?.workspace?.id || agent?.workspace_id || agent?.tenant?.id || agent?.tenant_id || '';
+}
+
 function buildSuggestedQuestionContextRefs(params: {
   selectedKnowledgeDatasets: AgentKnowledgeDataset[];
   databaseBindings: AgentDatabaseBinding[];
@@ -258,6 +270,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   );
   const { models: availableChatModels } = useAvailableModels({ use_case: 'text-chat' });
   const agentDetail = agent?.data;
+  const agentWorkspaceId = agentDetailWorkspaceID(agentDetail);
   const defaultHomeTitle = agentDetail?.name?.trim() || t('defaultHomeTitle');
   const defaultInputPlaceholder = t('defaultInputPlaceholder');
 
@@ -309,6 +322,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     memory: true,
   });
   const hydratedAgentIdRef = useRef<string | null>(null);
+  const hydratedConfigSignatureRef = useRef<string | null>(null);
   const versionPreviewBackupRef = useRef<VersionPreviewBackup | null>(null);
 
   const selectableSkills = useMemo(
@@ -330,8 +344,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     })),
   });
   const { pages: knowledgeDialogPages, isLoading: isKnowledgeDialogDatasetsLoading } = useDatasets(
-    { keyword: knowledgeSearch.trim(), limit: 50 },
-    { enabled: knowledgeDialogOpen }
+    { keyword: knowledgeSearch.trim(), limit: 50, workspace_id: agentWorkspaceId },
+    { enabled: knowledgeDialogOpen && Boolean(agentWorkspaceId) }
   );
   const selectedKnowledgeDatasets = useMemo(() => {
     const byID = new Map<string, AgentKnowledgeDataset>();
@@ -369,6 +383,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     selectedKnowledgeDatasets.forEach(dataset => byID.set(dataset.id, dataset));
     knowledgeDialogPages.flat().forEach(dataset => byID.set(dataset.id, dataset));
     return Array.from(byID.values())
+      .filter(dataset => isDatasetInWorkspace(dataset, agentWorkspaceId))
       .filter(dataset => !showSelectedKnowledgeOnly || knowledgeDatasetIds.includes(dataset.id))
       .sort((left, right) => {
         const leftChecked = knowledgeDatasetIds.includes(left.id);
@@ -377,6 +392,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         return left.name.localeCompare(right.name, locale);
       });
   }, [
+    agentWorkspaceId,
     knowledgeDatasetIds,
     knowledgeDialogPages,
     locale,
@@ -465,7 +481,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       suggested_questions: suggestedQuestions
         .map(item => item.trim())
         .filter(Boolean)
-        .slice(0, 6),
+        .slice(0, SUGGESTED_QUESTIONS_LIMIT),
       knowledge_dataset_ids: knowledgeDatasetIds,
       knowledge_retrieval_config: {},
       database_bindings: databaseBindings,
@@ -492,11 +508,12 @@ export function useAgentRuntimePageModel(agentId: string) {
     () => (
       <AgentHomeBrand
         iconType={agentDetail?.icon_type}
+        icon={agentDetail?.icon}
         iconUrl={agentDetail?.icon_url}
         name={agentDetail?.name}
       />
     ),
-    [agentDetail?.icon_type, agentDetail?.icon_url, agentDetail?.name]
+    [agentDetail?.icon, agentDetail?.icon_type, agentDetail?.icon_url, agentDetail?.name]
   );
 
   useEffect(() => {
@@ -617,13 +634,31 @@ export function useAgentRuntimePageModel(agentId: string) {
 
   useEffect(() => {
     if (!config || !agentDetail) return;
-    if (hydratedAgentIdRef.current === agentId) return;
 
     const nextPayload = payloadFromRuntimeConfig(config);
+    const nextSignature = `${agentId}:${config.updated_at ?? ''}:${buildAgentRuntimeSignature(nextPayload)}`;
+    if (hydratedConfigSignatureRef.current === nextSignature) return;
+
+    const isFirstHydrationForAgent = hydratedAgentIdRef.current !== agentId;
+    const canApplyServerConfig =
+      isFirstHydrationForAgent || (!isDirty && saveState !== 'saving' && !isVersionPreviewing);
+    if (!canApplyServerConfig) return;
+
     applyRuntimePayload(nextPayload);
     hydratedAgentIdRef.current = agentId;
+    hydratedConfigSignatureRef.current = nextSignature;
     markHydrated(nextPayload, config.updated_at ?? null);
-  }, [agentDetail, agentId, applyRuntimePayload, config, markHydrated, payloadFromRuntimeConfig]);
+  }, [
+    agentDetail,
+    agentId,
+    applyRuntimePayload,
+    config,
+    isDirty,
+    isVersionPreviewing,
+    markHydrated,
+    payloadFromRuntimeConfig,
+    saveState,
+  ]);
 
   useEffect(() => {
     if (!workflowCandidatesResponse) return;
@@ -1066,6 +1101,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     },
     prompt: {
       systemPrompt,
+      agentWorkspaceId,
       selectedKnowledgeDatasets,
       selectedSkills,
       databaseBindings,
@@ -1076,6 +1112,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     },
     orchestration: {
       locale,
+      agentWorkspaceId,
       openSections,
       modelValue,
       homeTitle,

@@ -18,11 +18,13 @@ interface AgentsAIChatContextRegistrationProps {
   agents: Agent[];
   pageSize: number;
   searchKeyword: string;
+  pageTitle?: string;
   workspaceId?: string;
   workspaceName?: string;
   canView: boolean;
   canManage: boolean;
   isLoading: boolean;
+  isFetching: boolean;
   hasNextPage: boolean;
 }
 
@@ -125,15 +127,43 @@ function buildAgentListCapabilities(
     {
       id: 'agent.create_from_page',
       title: 'Create Agent from page',
-      description:
-        'The page UI can create Agents, but AIChat does not yet have a governed Agent creation tool in this MVP.',
+      description: 'Create a draft Agent in the current workspace through governed AIChat tools.',
       risk: 'medium',
       requiresConfirmation: true,
-      status: canManage ? 'unavailable' : 'disabled',
+      status: canManage ? 'available' : 'disabled',
       permissions: ['agent.manage'],
       metadata: {
-        supported_by_aichat_tool: false,
-        user_action_required: true,
+        supported_by_aichat_tool: true,
+        tool_skill_id: 'agent-management',
+        tool_name: 'create_agent',
+      },
+    },
+    {
+      id: 'agent.update_identity',
+      title: 'Edit visible Agent',
+      description: 'Update a visible Agent name, description, or icon through governed AIChat tools.',
+      risk: 'medium',
+      requiresConfirmation: true,
+      status: canManage ? 'available' : 'disabled',
+      permissions: ['agent.manage'],
+      metadata: {
+        supported_by_aichat_tool: true,
+        tool_skill_id: 'agent-management',
+        tool_name: 'update_agent_identity',
+      },
+    },
+    {
+      id: 'agent.delete_visible',
+      title: 'Delete visible Agent',
+      description: 'Delete a visible Agent through governed AIChat tools. Deletion always asks first.',
+      risk: 'high',
+      requiresConfirmation: true,
+      status: canManage ? 'available' : 'disabled',
+      permissions: ['agent.manage'],
+      metadata: {
+        supported_by_aichat_tool: true,
+        tool_skill_id: 'agent-management',
+        tool_name: 'delete_agent',
       },
     },
   ];
@@ -165,21 +195,26 @@ function buildAgentsAIChatContextItems({
   agents,
   pageSize,
   searchKeyword,
+  pageTitle,
   workspaceId,
   workspaceName,
   canView,
   canManage,
   isLoading,
+  isFetching,
   hasNextPage,
 }: AgentsAIChatContextRegistrationProps): AIChatPageContextItem[] {
   const visibleAgents = agents.slice(0, AGENTS_CONTEXT_VISIBLE_LIMIT);
   const capabilities = buildAgentListCapabilities(canView, canManage);
+  const contextReady = canView && !isLoading && !isFetching;
+  const queryStatus = !canView ? 'unavailable' : contextReady ? 'ready' : 'loading';
   const orderedVisibleAgentIds = visibleAgents.map(agent => agent.id).join(',');
   const visibleRuntimeAgents = visibleAgents.filter(isAgentRuntimeItem);
   const orderedVisibleRuntimeAgentIds = visibleRuntimeAgents.map(agent => agent.id).join(',');
   const firstRuntimeAgentIndex = visibleAgents.findIndex(isAgentRuntimeItem);
   const firstRuntimeAgent =
     firstRuntimeAgentIndex >= 0 ? visibleAgents[firstRuntimeAgentIndex] : undefined;
+  const resolvedPageTitle = pageTitle?.trim() || 'Agent Management';
   const agentTypeCounts = visibleAgents.reduce<Record<string, number>>((counts, agent) => {
     const key = agentTypeLabel(agent.agent_type);
     counts[key] = (counts[key] ?? 0) + 1;
@@ -190,11 +225,13 @@ function buildAgentsAIChatContextItems({
     {
       id: 'console.agents',
       type: 'page',
-      title: 'Agents',
-      subtitle: workspaceName ? `${workspaceName} Agents page` : 'Current workspace Agents page',
+      title: resolvedPageTitle,
+      subtitle: workspaceName
+        ? `${workspaceName} ${resolvedPageTitle}`
+        : `Current workspace ${resolvedPageTitle}`,
       description: buildAgentListDescription(visibleAgents, isLoading, hasNextPage),
       href: '/console/agents',
-      source: 'Agents page',
+      source: resolvedPageTitle,
       status: canView ? 'available' : 'readonly',
       capabilities,
       hints: {
@@ -208,6 +245,9 @@ function buildAgentsAIChatContextItems({
         page: 'console.agents',
         route: '/console/agents',
         resource_kind: 'page',
+        context_ready: contextReady,
+        agents_query_status: queryStatus,
+        agents_query_settled: contextReady,
         ordered_visible_agent_ids: orderedVisibleAgentIds || null,
         ordered_visible_runtime_agent_ids: orderedVisibleRuntimeAgentIds || null,
         visible_agent_count: visibleAgents.length,
@@ -266,6 +306,40 @@ function buildAgentsAIChatContextItems({
             risk: 'low' as const,
             status: 'available' as const,
           },
+          ...(isAgentRuntimeItem(agent)
+            ? [
+                {
+                  id: 'agent.update_identity',
+                  title: 'Edit Agent identity',
+                  description: 'Update this Agent name, description, or icon.',
+                  risk: 'medium' as const,
+                  requiresConfirmation: true,
+                  status: agent.can_edit && canManage ? ('available' as const) : ('disabled' as const),
+                  permissions: ['agent.manage'],
+                  metadata: {
+                    supported_by_aichat_tool: true,
+                    tool_skill_id: 'agent-management',
+                    tool_name: 'update_agent_identity',
+                    agent_id: agent.id,
+                  },
+                },
+                {
+                  id: 'agent.delete',
+                  title: 'Delete Agent',
+                  description: 'Delete this Agent. Deletion always asks first.',
+                  risk: 'high' as const,
+                  requiresConfirmation: true,
+                  status: agent.can_edit && canManage ? ('available' as const) : ('disabled' as const),
+                  permissions: ['agent.manage'],
+                  metadata: {
+                    supported_by_aichat_tool: true,
+                    tool_skill_id: 'agent-management',
+                    tool_name: 'delete_agent',
+                    agent_id: agent.id,
+                  },
+                },
+              ]
+            : []),
         ],
         permissions: agent.can_edit ? ['agent.view', 'agent.manage'] : ['agent.view'],
         metadata: buildVisibleAgentMetadata(agent, index + 1),
@@ -279,11 +353,13 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
     agents,
     pageSize,
     searchKeyword,
+    pageTitle,
     workspaceId,
     workspaceName,
     canView,
     canManage,
     isLoading,
+    isFetching,
     hasNextPage,
   } = props;
   const items = useMemo(
@@ -292,11 +368,13 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
         agents,
         pageSize,
         searchKeyword,
+        pageTitle,
         workspaceId,
         workspaceName,
         canView,
         canManage,
         isLoading,
+        isFetching,
         hasNextPage,
       }),
     [
@@ -304,8 +382,10 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
       canManage,
       canView,
       hasNextPage,
+      isFetching,
       isLoading,
       pageSize,
+      pageTitle,
       searchKeyword,
       workspaceId,
       workspaceName,

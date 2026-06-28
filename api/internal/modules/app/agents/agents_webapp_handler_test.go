@@ -226,7 +226,23 @@ func (s *stubWebAppStatusHandlerService) UpdateAgentConfig(context.Context, stri
 	return nil, nil
 }
 
-func (s *stubWebAppStatusHandlerService) ListAgentWorkflowBindingCandidates(context.Context, string, string) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
+func (s *stubWebAppStatusHandlerService) ListAgentSkillCandidates(context.Context, string, string, dto.AgentSkillCandidatesRequest) (*dto.AgentSkillCandidatesResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentKnowledgeCandidates(context.Context, string, string, dto.AgentKnowledgeCandidatesRequest) (*dto.AgentKnowledgeCandidatesResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentDatabaseCandidates(context.Context, string, string, dto.AgentDatabaseCandidatesRequest) (*dto.AgentDatabaseCandidatesResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentDatabaseTables(context.Context, string, string, dto.AgentDatabaseTablesRequest) (*dto.AgentDatabaseTablesResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentWorkflowBindingCandidates(context.Context, string, string, dto.AgentWorkflowBindingCandidatesRequest) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
 	return nil, nil
 }
 

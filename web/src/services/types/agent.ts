@@ -50,6 +50,8 @@ export interface Agent {
 // Agent detail interface (for detail response)
 export interface AgentDetail {
   id: string;
+  tenant_id?: string;
+  workspace_id?: string;
   web_app_id?: string;
   name: string;
   description: string;
@@ -61,7 +63,11 @@ export interface AgentDetail {
   is_editor: boolean;
   agent_config: AgentModelConfig;
   owner_account: OwnerAccount;
-  workspace: {
+  workspace?: {
+    id: string;
+    name: string;
+  };
+  tenant?: {
     id: string;
     name: string;
   };

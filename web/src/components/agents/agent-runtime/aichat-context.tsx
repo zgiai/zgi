@@ -18,7 +18,7 @@ import type {
 } from '@/services/types/agent';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { Dataset } from '@/services/types/dataset';
-import { AGENT_KEYS } from '@/hooks/query-keys';
+import { AGENT_KEYS, DATASET_KEYS, DB_KEYS, WORKFLOW_KEYS } from '@/hooks/query-keys';
 import type { AgentRuntimeSaveState } from './types';
 
 const PROMPT_SUMMARY_MAX_LENGTH = 1200;
@@ -207,28 +207,136 @@ function buildAgentRuntimeCapabilities(
       status: 'available',
     },
     {
-      id: 'update_agent_runtime_config',
-      title: 'Update agent runtime config',
-      description: 'Prepare or apply Agent Runtime configuration changes.',
+      id: 'agent.update_identity',
+      title: 'Update agent identity',
+      description: 'Update this Agent name, description, or icon through governed AIChat tools.',
       risk: 'medium',
       requiresConfirmation: true,
       status: capabilityStatus(canEdit),
       permissions: context.permissions.codes,
       metadata: {
+        supported_by_aichat_tool: true,
+        tool_skill_id: 'agent-management',
+        tool_name: 'update_agent_identity',
         can_edit_agent: canEdit,
-        is_dirty: context.publish.isDirty,
-        save_state: context.publish.saveState,
       },
     },
     {
-      id: 'publish_agent',
-      title: 'Publish agent',
-      description: 'Publish the Agent web app or promote the current runtime configuration.',
+      id: 'update_agent_runtime_config',
+      title: 'Update agent runtime config',
+      description:
+        'Update supported draft runtime config fields through governed AIChat tools. Skill, knowledge, database, and workflow bindings use dedicated replacement tools.',
+      risk: 'medium',
+      requiresConfirmation: true,
+      status: capabilityStatus(canEdit),
+      permissions: context.permissions.codes,
+      metadata: {
+        supported_by_aichat_tool: true,
+        tool_skill_id: 'agent-management',
+        tool_name: 'update_agent_config',
+        can_edit_agent: canEdit,
+        is_dirty: context.publish.isDirty,
+        save_state: context.publish.saveState,
+        is_version_previewing: context.publish.isVersionPreviewing,
+        supported_binding_tools:
+          'replace_agent_skill_bindings,replace_agent_knowledge_bindings,replace_agent_database_bindings,replace_agent_workflow_bindings',
+      },
+    },
+    {
+      id: 'agent.update_skill_bindings',
+      title: 'Update skill bindings',
+      description: 'Enable or disable Agent-supported skills for this draft Agent Runtime config.',
+      risk: 'medium',
+      requiresConfirmation: true,
+      status: capabilityStatus(canEdit),
+      permissions: context.permissions.codes,
+      metadata: {
+        supported_by_aichat_tool: true,
+        tool_skill_id: 'agent-management',
+        list_tool_name: 'list_agent_skill_candidates',
+        tool_name: 'replace_agent_skill_bindings',
+        can_edit_agent: canEdit,
+        current_binding_count: context.configuration.skills.length,
+      },
+    },
+    {
+      id: 'agent.update_knowledge_bindings',
+      title: 'Update knowledge bindings',
+      description: 'Bind or unbind knowledge bases for this draft Agent Runtime config.',
+      risk: 'medium',
+      requiresConfirmation: true,
+      status: capabilityStatus(canEdit),
+      permissions: context.permissions.codes,
+      metadata: {
+        supported_by_aichat_tool: true,
+        tool_skill_id: 'agent-management',
+        list_tool_name: 'list_agent_knowledge_candidates',
+        tool_name: 'replace_agent_knowledge_bindings',
+        can_edit_agent: canEdit,
+        current_binding_count: context.configuration.knowledge.length,
+      },
+    },
+    {
+      id: 'agent.update_database_bindings',
+      title: 'Update database bindings',
+      description: 'Bind or unbind databases and selected tables for this draft Agent Runtime config.',
+      risk: 'medium',
+      requiresConfirmation: true,
+      status: capabilityStatus(canEdit),
+      permissions: context.permissions.codes,
+      metadata: {
+        supported_by_aichat_tool: true,
+        tool_skill_id: 'agent-management',
+        list_tool_name: 'list_agent_database_candidates',
+        table_list_tool_name: 'list_agent_database_tables',
+        tool_name: 'replace_agent_database_bindings',
+        can_edit_agent: canEdit,
+        current_binding_count: context.configuration.databaseBindings.length,
+      },
+    },
+    {
+      id: 'agent.update_workflow_bindings',
+      title: 'Update workflow bindings',
+      description: 'Bind or unbind available workflows for this draft Agent Runtime config.',
+      risk: 'medium',
+      requiresConfirmation: true,
+      status: capabilityStatus(canEdit),
+      permissions: context.permissions.codes,
+      metadata: {
+        supported_by_aichat_tool: true,
+        tool_skill_id: 'agent-management',
+        list_tool_name: 'list_agent_workflow_binding_candidates',
+        tool_name: 'replace_agent_workflow_bindings',
+        can_edit_agent: canEdit,
+        current_binding_count: context.configuration.workflowBindings.length,
+      },
+    },
+    {
+      id: 'agent.delete',
+      title: 'Delete agent',
+      description: 'Delete this Agent through governed AIChat tools. Deletion always asks first.',
       risk: 'high',
       requiresConfirmation: true,
       status: capabilityStatus(canManage),
       permissions: context.permissions.codes,
       metadata: {
+        supported_by_aichat_tool: true,
+        tool_skill_id: 'agent-management',
+        tool_name: 'delete_agent',
+        can_manage_agent: canManage,
+      },
+    },
+    {
+      id: 'publish_agent',
+      title: 'Publish agent',
+      description: 'Publishing is not supported by the contextual AIChat Agent management MVP.',
+      risk: 'high',
+      requiresConfirmation: true,
+      status: 'unavailable',
+      permissions: context.permissions.codes,
+      metadata: {
+        supported_by_aichat_tool: false,
+        reason: 'not_in_agent_management_mvp',
         can_manage_agent: canManage,
         is_published: context.publish.isPublished,
         web_app_status: context.publish.webAppStatus,
@@ -237,27 +345,62 @@ function buildAgentRuntimeCapabilities(
     {
       id: 'invoke_agent',
       title: 'Invoke agent',
-      description: 'Run the Agent with the current runtime configuration.',
+      description: 'Invoking Agents is not supported by the contextual AIChat Agent management MVP.',
       risk: 'low',
-      status: 'available',
+      status: 'unavailable',
       metadata: {
+        supported_by_aichat_tool: false,
+        reason: 'not_in_agent_management_mvp',
         file_upload_enabled: context.configuration.fileUploadEnabled,
         memory_enabled: context.configuration.memory.enabled,
       },
     },
     {
-      id: 'bind_workflow_to_agent',
-      title: 'Bind workflow to agent',
-      description: 'Add or update workflow bindings for this Agent.',
-      risk: 'medium',
-      requiresConfirmation: true,
-      status: capabilityStatus(canEdit),
+      id: 'manage_agent_api_keys',
+      title: 'Manage agent API keys',
+      description: 'API key management is not supported by the contextual AIChat Agent management MVP.',
+      risk: 'high',
+      status: 'unavailable',
       permissions: context.permissions.codes,
       metadata: {
-        can_edit_agent: canEdit,
-        workflow_binding_count: context.configuration.workflowBindings.length,
+        supported_by_aichat_tool: false,
+        reason: 'not_in_agent_management_mvp',
+        can_manage_agent: canManage,
       },
     },
+  ];
+}
+
+function buildAgentRuntimeRefreshHints(
+  context: AgentRuntimeAIChatContext
+): NonNullable<AIChatPageContextItem['hints']>['refreshHints'] {
+  const agentRefreshHints: NonNullable<AIChatPageContextItem['hints']>['refreshHints'] = [
+    { assetType: 'agent', queryKey: AGENT_KEYS.lists() },
+    { assetType: 'agent', queryKey: AGENT_KEYS.detail(context.agent.id) },
+    { assetType: 'agent', queryKey: AGENT_KEYS.config(context.agent.id) },
+    { assetType: 'agent', queryKey: AGENT_KEYS.workflowBindingCandidates(context.agent.id) },
+    { assetType: 'agent', queryKey: AGENT_KEYS.runnable(context.agent.workspace?.id) },
+  ];
+  const bindingRefreshHints: NonNullable<AIChatPageContextItem['hints']>['refreshHints'] = [
+    'agent_skill',
+    'knowledge',
+    'database',
+    'workflow',
+  ].flatMap(assetType => [
+    { assetType, queryKey: AGENT_KEYS.detail(context.agent.id) },
+    { assetType, queryKey: AGENT_KEYS.config(context.agent.id) },
+    { assetType, queryKey: AGENT_KEYS.workflowBindingCandidates(context.agent.id) },
+  ]);
+  return [
+    ...agentRefreshHints,
+    ...bindingRefreshHints,
+    { assetType: 'knowledge', queryKey: DATASET_KEYS.lists() },
+    { assetType: 'database', queryKey: DB_KEYS.lists() },
+    { assetType: 'workflow', queryKey: WORKFLOW_KEYS.all },
+    ...context.configuration.databaseBindings.map(binding => ({
+      assetType: 'database' as const,
+      queryKey: DB_KEYS.tableList(binding.data_source_id, {}),
+    })),
   ];
 }
 
@@ -280,11 +423,14 @@ function buildWorkflowBindingCapabilities(
     {
       id: 'run_workflow',
       title: 'Run workflow',
-      description: 'Invoke this bound workflow through the Agent Runtime.',
+      description:
+        'Running bound workflows is not supported by the contextual AIChat Agent management MVP.',
       risk: 'medium',
       requiresConfirmation: true,
-      status: binding.workflow_id ? 'available' : 'unavailable',
+      status: 'unavailable',
       metadata: {
+        supported_by_aichat_tool: false,
+        reason: 'not_in_agent_management_mvp',
         binding_id: binding.binding_id,
         timeout_seconds: binding.timeout_seconds,
       },
@@ -311,6 +457,8 @@ export function buildAgentRuntimeAIChatContext({
   webAppUrl,
 }: BuildAgentRuntimeAIChatContextParams): AgentRuntimeAIChatContext | null {
   if (!agent) return null;
+  const agentWorkspace = agent.workspace ?? agent.tenant;
+  const agentWorkspaceID = agentWorkspace?.id || agent.workspace_id || agent.tenant_id || '';
 
   return {
     id: `agent-runtime:${agent.id}`,
@@ -320,10 +468,10 @@ export function buildAgentRuntimeAIChatContext({
       name: agent.name,
       description: agent.description,
       type: agent.agent_type,
-      workspace: agent.workspace
+      workspace: agentWorkspaceID
         ? {
-            id: agent.workspace.id,
-            name: agent.workspace.name,
+            id: agentWorkspaceID,
+            name: agentWorkspace?.name ?? '',
           }
         : null,
     },
@@ -405,10 +553,6 @@ function buildAgentRuntimeAIChatContextItems(
   const hasGovernedAgentOperations = agentCapabilities.some(
     capability => capability.status === 'available' && capability.requiresConfirmation
   );
-  const canAutoRefreshAgent =
-    !context.publish.isDirty &&
-    context.publish.saveState !== 'saving' &&
-    !context.publish.isVersionPreviewing;
   const workflowContextItems: AIChatPageContextItem[] = context.configuration.workflowBindings
     .filter(binding => binding.workflow_id || binding.binding_id)
     .map((binding, index) => ({
@@ -462,16 +606,9 @@ function buildAgentRuntimeAIChatContextItems(
       capabilities: agentCapabilities,
       permissions: context.permissions.codes,
       hints: {
-        handledAssetTypes: ['agent'],
+        handledAssetTypes: ['agent', 'agent_skill', 'knowledge', 'database', 'workflow'],
         toolGovernance: hasGovernedAgentOperations ? { enabled: true } : undefined,
-        refreshHints: canAutoRefreshAgent
-          ? [
-              { assetType: 'agent', queryKey: AGENT_KEYS.lists() },
-              { assetType: 'agent', queryKey: AGENT_KEYS.detail(context.agent.id) },
-              { assetType: 'agent', queryKey: AGENT_KEYS.config(context.agent.id) },
-              { assetType: 'agent', queryKey: AGENT_KEYS.runnable(context.agent.workspace?.id) },
-            ]
-          : undefined,
+        refreshHints: buildAgentRuntimeRefreshHints(context),
       },
       metadata: {
         agent_id: context.agent.id,

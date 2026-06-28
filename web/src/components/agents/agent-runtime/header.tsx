@@ -40,7 +40,7 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { WebAppStatus } from '@/services/types/agent';
 import type { AgentRuntimeAgent, AgentRuntimeSaveState } from './types';
-import { pickAgentInitials } from './utils';
+import { getAgentTextIconDisplay } from './utils';
 
 const WEB_APP_OFFLINE_REASON_MAX_LENGTH = 500;
 
@@ -104,6 +104,7 @@ export function AgentRuntimeHeader({
     : t('header.takeOffline');
   const offlineReasonLength = Array.from(offlineReason).length;
   const isOfflineReasonTooLong = offlineReasonLength > WEB_APP_OFFLINE_REASON_MAX_LENGTH;
+  const textIcon = getAgentTextIconDisplay(agent?.icon_type, agent?.icon, agent?.name);
 
   const handleOpenWebApp = () => {
     if (!webAppUrl || isWebAppOffline) return;
@@ -149,11 +150,16 @@ export function AgentRuntimeHeader({
     <>
       <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background px-4">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
+          <div
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary"
+            style={agent?.icon_type === 'text' ? { backgroundColor: textIcon.background } : undefined}
+          >
             {agent?.icon_type === 'image' && agent.icon_url ? (
               <img src={agent.icon_url} alt="" className="size-full rounded-lg object-cover" />
             ) : (
-              pickAgentInitials(agent?.name)
+              <span className={agent?.icon_type === 'text' ? 'text-white' : undefined}>
+                {textIcon.text}
+              </span>
             )}
           </div>
           <div className="min-w-0">

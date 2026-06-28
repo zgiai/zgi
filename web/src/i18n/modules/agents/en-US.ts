@@ -1713,6 +1713,8 @@ const messages = {
       manualAdd: 'Add manually',
       placeholder: 'For example: summarize this document',
       delete: 'Delete request example',
+      drag: 'Drag to reorder request examples',
+      count: '{count}/{max}',
     },
     files: {
       title: 'Allow file upload',

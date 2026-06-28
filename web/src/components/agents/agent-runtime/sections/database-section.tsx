@@ -17,9 +17,11 @@ import { AgentRuntimeDatabaseDialog } from '../database-dialog';
 import { AgentRuntimeDatabaseTableDialog } from '../database-table-dialog';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
+import { tablesForDataSource } from '../utils';
 
 interface AgentRuntimeDatabaseSectionProps {
   open: boolean;
+  workspaceId?: string;
   bindings: AgentDatabaseBinding[];
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeBindings: (value: AgentDatabaseBinding[]) => void;
@@ -27,6 +29,7 @@ interface AgentRuntimeDatabaseSectionProps {
 
 export function AgentRuntimeDatabaseSection({
   open,
+  workspaceId,
   bindings,
   onToggleSection,
   onChangeBindings,
@@ -35,7 +38,10 @@ export function AgentRuntimeDatabaseSection({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [tableDialogDbId, setTableDialogDbId] = useState('');
   const [pendingTableDialogDbIds, setPendingTableDialogDbIds] = useState<string[]>([]);
-  const { dbs, isLoading: isDbsLoading } = useDbsBasic({}, { enabled: open });
+  const { dbs, isLoading: isDbsLoading } = useDbsBasic(
+    { workspace_id: workspaceId },
+    { enabled: open && Boolean(workspaceId) }
+  );
   const { hasPermission } = useAccountPermissions();
   const canEditWritable =
     hasPermission('database.ai_query') &&
@@ -96,6 +102,7 @@ export function AgentRuntimeDatabaseSection({
   };
 
   const openTableDialog = (dataSourceID: string) => {
+    if (!dbsByID.has(dataSourceID)) return;
     setTableDialogDbId(dataSourceID);
   };
 
@@ -140,6 +147,7 @@ export function AgentRuntimeDatabaseSection({
               key={binding.data_source_id}
               dataSourceID={binding.data_source_id}
               dataSourceName={dbsByID.get(binding.data_source_id)?.name}
+              isScopedDatabase={dbsByID.has(binding.data_source_id)}
               tableIDs={binding.table_ids}
               writableTableIDs={binding.writable_table_ids ?? []}
               canEditWritable={canEditWritable}
@@ -154,6 +162,7 @@ export function AgentRuntimeDatabaseSection({
 
       <AgentRuntimeDatabaseDialog
         open={dialogOpen}
+        workspaceId={workspaceId}
         bindings={bindings}
         onOpenChange={setDialogOpen}
         onConfirmDatabases={handleConfirmDatabases}
@@ -176,6 +185,7 @@ export function AgentRuntimeDatabaseSection({
 function DatabaseBindingCard({
   dataSourceID,
   dataSourceName,
+  isScopedDatabase,
   tableIDs,
   writableTableIDs,
   canEditWritable,
@@ -186,6 +196,7 @@ function DatabaseBindingCard({
 }: {
   dataSourceID: string;
   dataSourceName?: string;
+  isScopedDatabase: boolean;
   tableIDs: string[];
   writableTableIDs: string[];
   canEditWritable: boolean;
@@ -196,16 +207,29 @@ function DatabaseBindingCard({
 }) {
   const writableSet = useMemo(() => new Set(writableTableIDs), [writableTableIDs]);
   const t = useT('agents.agentRuntime');
-  const { tables, isLoading, error } = useDbTables(dataSourceID, { enabled: true });
+  const { tables: rawTables, isLoading, error } = useDbTables(dataSourceID, {
+    enabled: isScopedDatabase,
+  });
+  const tables = useMemo(
+    () => tablesForDataSource(rawTables, dataSourceID),
+    [dataSourceID, rawTables]
+  );
   const tablesByID = useMemo(() => new Map(tables.map(table => [table.id, table])), [tables]);
   const databaseLabel = dataSourceName || t('database.databaseUnavailable');
+  const databaseUnavailable = !isScopedDatabase;
   const allWritable = tableIDs.length > 0 && tableIDs.every(tableID => writableSet.has(tableID));
 
   return (
     <AgentRuntimeResourceCard
-      icon={error ? <AlertCircle className="size-4" /> : <Database className="size-4" />}
+      icon={
+        error || databaseUnavailable ? (
+          <AlertCircle className="size-4" />
+        ) : (
+          <Database className="size-4" />
+        )
+      }
       title={databaseLabel}
-      error={Boolean(error)}
+      error={Boolean(error) || databaseUnavailable}
       action={
         <Tooltip>
           <TooltipTrigger asChild>
@@ -216,6 +240,7 @@ function DatabaseBindingCard({
               isIcon
               className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
               aria-label={t('database.addTableForDatabase', { name: databaseLabel })}
+              disabled={databaseUnavailable}
               onClick={() => onOpenTableDialog(dataSourceID)}
             >
               <Plus className="size-4" />
@@ -231,7 +256,7 @@ function DatabaseBindingCard({
           <span>{t('database.allowWriteAll')}</span>
           <Switch
             checked={allWritable}
-            disabled={!canEditWritable || tableIDs.length === 0}
+            disabled={databaseUnavailable || !canEditWritable || tableIDs.length === 0}
             onCheckedChange={checked => onChangeWritableDatabase(dataSourceID, checked)}
             aria-label={t('database.allowWriteAllForDatabase', { name: databaseLabel })}
           />
@@ -282,7 +307,7 @@ function DatabaseBindingCard({
                   </Badge>
                   <Switch
                     checked={writableSet.has(tableID)}
-                    disabled={!canEditWritable}
+                    disabled={databaseUnavailable || !canEditWritable}
                     onCheckedChange={checked =>
                       onChangeWritableTable(dataSourceID, tableID, checked)
                     }

@@ -1615,6 +1615,8 @@ const messages: AgentsMessages = {
       manualAdd: '手动添加',
       placeholder: '例如：总结这个文档',
       delete: '删除请求示例',
+      drag: '拖拽调整请求示例顺序',
+      count: '{count}/{max}',
     },
     files: {
       title: '允许文件上传',
