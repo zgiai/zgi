@@ -54,10 +54,9 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
   );
   const canViewAgentLogs = hasAnyPermission(AGENT_PERMISSION_ACTIONS.logsView);
   const canViewWorkflowLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
-  const canRunWorkflowBatchTest = hasAnyPermission([
-    ...WORKFLOW_PERMISSION_ACTIONS.debug,
-    ...WORKFLOW_PERMISSION_ACTIONS.logsView,
-  ]);
+  const canViewWorkflowTestLibrary = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.view);
+  const canViewWorkflowTestBatches = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
+  const canRunWorkflowBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
   const [editOpen, setEditOpen] = React.useState(false);
   const isDebugFocusMode = useWorkflowDebugFocusMode();
   const [isCollapsed, setIsCollapsed] = usePersistentSidebarCollapse(
@@ -92,6 +91,9 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
         canEditRuntime,
         canManageRuntimeAccess,
         canViewRuntimeLogs,
+        canViewBatchTest:
+          isWorkflowRuntime &&
+          (canViewWorkflowTestLibrary || canViewWorkflowTestBatches || canRunWorkflowBatchTest),
         canRunBatchTest: isWorkflowRuntime && canRunWorkflowBatchTest,
       }),
     [
@@ -100,6 +102,8 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       canEditRuntime,
       canManageRuntimeAccess,
       canRunWorkflowBatchTest,
+      canViewWorkflowTestBatches,
+      canViewWorkflowTestLibrary,
       canView,
       canViewRuntimeLogs,
       isWorkflowRuntime,
@@ -128,32 +132,49 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
     }
 
     if (routeAccess.canShowBatchTest) {
+      const batchTestHref = canViewWorkflowTestLibrary
+        ? `/console/agents/${agentId}/batch-test`
+        : `/console/agents/${agentId}/batch-test/batches`;
+      const batchTestChildren: ResourceSidebarNavItem[] = [];
+
+      if (canViewWorkflowTestLibrary) {
+        batchTestChildren.push({
+          title: t('agents.workflowTest.subnav.caseLibrary'),
+          href: `/console/agents/${agentId}/batch-test`,
+          icon: BookOpen,
+          isActive: currentPathname =>
+            currentPathname === `/console/agents/${agentId}/batch-test`,
+        });
+      }
+
+      if (canViewWorkflowTestBatches) {
+        batchTestChildren.push({
+          title: t('agents.workflowTest.subnav.batches'),
+          href: `/console/agents/${agentId}/batch-test/batches`,
+          icon: RotateCcw,
+          isActive: currentPathname =>
+            currentPathname === `/console/agents/${agentId}/batch-test/batches` ||
+            currentPathname.startsWith(`/console/agents/${agentId}/batch-test/`),
+        });
+      }
+
       items.push({
         title: t('agents.workflowTest.navTitle'),
-        href: `/console/agents/${agentId}/batch-test`,
+        href: batchTestHref,
         icon: ScanSearch,
-        children: [
-          {
-            title: t('agents.workflowTest.subnav.caseLibrary'),
-            href: `/console/agents/${agentId}/batch-test`,
-            icon: BookOpen,
-            isActive: currentPathname =>
-              currentPathname === `/console/agents/${agentId}/batch-test`,
-          },
-          {
-            title: t('agents.workflowTest.subnav.batches'),
-            href: `/console/agents/${agentId}/batch-test/batches`,
-            icon: RotateCcw,
-            isActive: currentPathname =>
-              currentPathname === `/console/agents/${agentId}/batch-test/batches` ||
-              currentPathname.startsWith(`/console/agents/${agentId}/batch-test/`),
-          },
-        ],
+        children: batchTestChildren,
       });
     }
 
     return items;
-  }, [agentData?.is_published, agentId, routeAccess, t]);
+  }, [
+    agentData?.is_published,
+    agentId,
+    canViewWorkflowTestBatches,
+    canViewWorkflowTestLibrary,
+    routeAccess,
+    t,
+  ]);
 
   const iconType = agentData?.icon_type;
   let textIcon = agentData?.name?.slice(0, 2).toUpperCase() || ICON_TEXT;

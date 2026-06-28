@@ -28,7 +28,8 @@ export default function BatchResultItemPage({ params }: BatchResultItemPageProps
   const { agentId, batchId, itemId } = use(params);
   const { agent, isLoading, error, refetch } = useAgent(agentId);
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canRunBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
+  const canDebugBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
+  const canViewBatchTestLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
 
   if (isLoading || isPermissionsLoading) {
     return (
@@ -75,7 +76,13 @@ export default function BatchResultItemPage({ params }: BatchResultItemPageProps
     );
   }
 
-  if (!canShowAgentBatchTest(agent.data.agent_type, { canView: true, canRunBatchTest })) {
+  if (
+    !canShowAgentBatchTest(agent.data.agent_type, {
+      canView: true,
+      canViewBatchTest: canViewBatchTestLogs,
+      canRunBatchTest: canDebugBatchTest,
+    })
+  ) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">

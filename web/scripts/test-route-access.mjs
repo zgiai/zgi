@@ -223,8 +223,12 @@ agentRouteSandbox.exports = agentRouteSandbox.module.exports;
 vm.runInNewContext(compiledAgentDetailRoutes, agentRouteSandbox, {
   filename: agentDetailRoutesPath,
 });
-const { canShowAgentApiKeys, canShowAgentRuntimeAccess, getAgentDetailRouteAccess } =
-  agentRouteSandbox.module.exports;
+const {
+  canShowAgentApiKeys,
+  canShowAgentBatchTest,
+  canShowAgentRuntimeAccess,
+  getAgentDetailRouteAccess,
+} = agentRouteSandbox.module.exports;
 
 const organizationRoutes = [
   '/console',
@@ -1033,6 +1037,26 @@ assert.match(
   /routeAccess\.canShowApiKeys/,
   'agent sidebar API entry should now be tied to workflow API key visibility'
 );
+assert.match(
+  agentSidebarSource,
+  /canViewBatchTest:/,
+  'agent sidebar should distinguish workflow batch-test visibility from execution permission'
+);
+assert.match(
+  agentSidebarSource,
+  /batchTestHref\s*=\s*canViewWorkflowTestLibrary[\s\S]*batch-test[\s\S]*batch-test\/batches/,
+  'agent sidebar should route logs-only batch-test users to the batches/results view'
+);
+assert.match(
+  agentSidebarSource,
+  /if\s*\(canViewWorkflowTestLibrary\)[\s\S]*subnav\.caseLibrary/,
+  'agent sidebar should show the case-library batch-test child only with workflow.view'
+);
+assert.match(
+  agentSidebarSource,
+  /if\s*\(canViewWorkflowTestBatches\)[\s\S]*subnav\.batches/,
+  'agent sidebar should show the batch results child only with workflow.logs.view'
+);
 assert.doesNotMatch(
   agentSidebarSource,
   /runtimeAccess\.navTitle/,
@@ -1202,6 +1226,36 @@ assert.equal(
   workflowRouteAccess.canShowRuntimeAccess,
   true,
   'Workflow mode should show publication access'
+);
+assert.equal(
+  canShowAgentBatchTest('WORKFLOW', { canView: true, canViewBatchTest: true }),
+  true,
+  'Workflow batch-test area should be visible to read-only batch/result users'
+);
+assert.equal(
+  canShowAgentBatchTest('WORKFLOW', { canView: true, canViewBatchTest: false, canRunBatchTest: true }),
+  false,
+  'Explicit batch-test visibility should not be widened by execution permission fallback'
+);
+assert.equal(
+  canShowAgentBatchTest('WORKFLOW', { canView: true, canRunBatchTest: true }),
+  true,
+  'Workflow batch-test area should remain visible when only execution permission is supplied'
+);
+const logsOnlyWorkflowRouteAccess = getAgentDetailRouteAccess('agent-1', 'WORKFLOW', {
+  canView: true,
+  canViewBatchTest: true,
+  canRunBatchTest: false,
+});
+assert.equal(
+  logsOnlyWorkflowRouteAccess.canShowBatchTest,
+  true,
+  'Workflow batch-test navigation should be visible with logs/view-only access'
+);
+assert.equal(
+  Object.hasOwn(logsOnlyWorkflowRouteAccess, 'canRunBatchTest'),
+  false,
+  'Workflow route access should expose batch-test visibility separately from execution-only state'
 );
 
 console.log('route access scope check passed.');

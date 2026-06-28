@@ -77,6 +77,14 @@ interface BatchTestOverviewProps {
   agentName?: string;
   agentDescription?: string;
   view?: 'case-library' | 'batches';
+  permissions?: WorkflowTestActionPermissions;
+}
+
+interface WorkflowTestActionPermissions {
+  canUpdate: boolean;
+  canDebug: boolean;
+  canStop: boolean;
+  canViewLogs: boolean;
 }
 
 type BatchStatusKey = 'queued' | 'running' | 'completed' | 'stopped' | 'canceled';
@@ -167,6 +175,7 @@ export function BatchTestOverview({
   agentName,
   agentDescription,
   view = 'case-library',
+  permissions,
 }: BatchTestOverviewProps) {
   const t = useT('agents.workflowTest.overview');
   const commonT = useT('agents.workflowTest.common');
@@ -270,6 +279,10 @@ export function BatchTestOverview({
           };
   const previousGenerationTaskStatusRef = React.useRef<string | null>(null);
   const previousScenarioRecognitionTaskStatusRef = React.useRef<string | null>(null);
+  const canUpdateTestAssets = Boolean(permissions?.canUpdate);
+  const canDebugTest = Boolean(permissions?.canDebug);
+  const canStopTestRun = Boolean(permissions?.canStop);
+  const canCreateAndRunBatch = canUpdateTestAssets && canDebugTest;
   const enabledCases = cases.filter(item => item.status === 'enabled');
   const disabledCases = cases.filter(item => item.status !== 'enabled');
   const coveredScenarioIds = new Set(cases.map(item => item.scenario_id).filter(Boolean));
@@ -369,6 +382,7 @@ export function BatchTestOverview({
   }, [agentId, queryClient, scenarioRecognitionTask]);
 
   const updateSelectedCaseStatus = async (status: 'enabled' | 'disabled') => {
+    if (!canUpdateTestAssets) return;
     await Promise.all(
       selectedCases.map(item =>
         workflowTestService.updateCase(agentId, item.id, {
@@ -391,10 +405,12 @@ export function BatchTestOverview({
   };
 
   const requestDeleteCases = (caseIds: string[]) => {
+    if (!canUpdateTestAssets) return;
     setDeletingCaseIds(Array.from(new Set(caseIds)));
   };
 
   const confirmDeleteCases = () => {
+    if (!canUpdateTestAssets) return;
     if (deletingCaseIds.length === 0) return;
     const ids = deletingCaseIds;
     deleteCases.mutate(
@@ -432,6 +448,7 @@ export function BatchTestOverview({
   );
 
   const confirmRetestBatch = () => {
+    if (!canDebugTest) return;
     if (!retestingBatch) return;
     retestBatch.mutate(
       {
@@ -476,29 +493,37 @@ export function BatchTestOverview({
             <div className="flex flex-wrap items-center justify-end gap-2">
               {view === 'batches' ? (
                 <>
-                  <Button variant="outline" onClick={() => setSettingsOpen(true)}>
-                    <Settings2 className="mr-2 size-4" />
-                    {t('actions.judgeSettings')}
-                  </Button>
-                  <Button className="bg-slate-950 text-white hover:bg-slate-800" asChild>
-                    <Link href={`/console/agents/${agentId}/batch-test/batches/new`}>
-                      <WandSparkles className="mr-2 size-4" />
-                      {t('actions.createBatch')}
-                    </Link>
-                  </Button>
+                  {canUpdateTestAssets ? (
+                    <Button variant="outline" onClick={() => setSettingsOpen(true)}>
+                      <Settings2 className="mr-2 size-4" />
+                      {t('actions.judgeSettings')}
+                    </Button>
+                  ) : null}
+                  {canCreateAndRunBatch ? (
+                    <Button className="bg-slate-950 text-white hover:bg-slate-800" asChild>
+                      <Link href={`/console/agents/${agentId}/batch-test/batches/new`}>
+                        <WandSparkles className="mr-2 size-4" />
+                        {t('actions.createBatch')}
+                      </Link>
+                    </Button>
+                  ) : null}
                 </>
               ) : scenarios.length > 0 ? (
                 <>
-                  <Button className="bg-slate-950 text-white hover:bg-slate-800" asChild>
-                    <Link href={`/console/agents/${agentId}/batch-test/batches/new`}>
-                      <PlayCircle className="mr-2 size-4" />
-                      {t('actions.goTest')}
-                    </Link>
-                  </Button>
-                  <Button variant="outline" onClick={() => setGenerateDialogOpen(true)}>
-                    <WandSparkles className="mr-2 size-4" />
-                    {t('actions.generateCases')}
-                  </Button>
+                  {canCreateAndRunBatch ? (
+                    <Button className="bg-slate-950 text-white hover:bg-slate-800" asChild>
+                      <Link href={`/console/agents/${agentId}/batch-test/batches/new`}>
+                        <PlayCircle className="mr-2 size-4" />
+                        {t('actions.goTest')}
+                      </Link>
+                    </Button>
+                  ) : null}
+                  {canDebugTest ? (
+                    <Button variant="outline" onClick={() => setGenerateDialogOpen(true)}>
+                      <WandSparkles className="mr-2 size-4" />
+                      {t('actions.generateCases')}
+                    </Button>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -536,18 +561,20 @@ export function BatchTestOverview({
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                   {sceneCards.length > 0 ? (
-                    <Button
-                      variant="outline"
-                      disabled={isScenarioRecognitionActive}
-                      onClick={() => setRecognizeScenariosOpen(true)}
-                    >
-                      <ScanSearch className="mr-2 size-4" />
-                      {isScenarioRecognitionActive
-                        ? t('actions.recognizingScenarios')
-                        : t('actions.rerecognizeScenarios')}
-                    </Button>
+                    canDebugTest ? (
+                      <Button
+                        variant="outline"
+                        disabled={isScenarioRecognitionActive}
+                        onClick={() => setRecognizeScenariosOpen(true)}
+                      >
+                        <ScanSearch className="mr-2 size-4" />
+                        {isScenarioRecognitionActive
+                          ? t('actions.recognizingScenarios')
+                          : t('actions.rerecognizeScenarios')}
+                      </Button>
+                    ) : null
                   ) : null}
-                  {canCancelScenarioRecognition ? (
+                  {canStopTestRun && canCancelScenarioRecognition ? (
                     <Button
                       variant="outline"
                       disabled={cancelScenarioRecognitionTask.isPending}
@@ -559,10 +586,12 @@ export function BatchTestOverview({
                       {t('actions.cancelRecognition')}
                     </Button>
                   ) : null}
-                  <Button variant="outline" onClick={() => setScenarioDialogOpen(true)}>
-                    <SquarePen className="mr-2 size-4" />
-                    {t('actions.editScenarios')}
-                  </Button>
+                  {canUpdateTestAssets ? (
+                    <Button variant="outline" onClick={() => setScenarioDialogOpen(true)}>
+                      <SquarePen className="mr-2 size-4" />
+                      {t('actions.editScenarios')}
+                    </Button>
+                  ) : null}
                 </div>
               </CardHeader>
               <CardContent>
@@ -584,17 +613,19 @@ export function BatchTestOverview({
                         ? t('scenarios.recognizingDescription')
                         : t('scenarios.emptyDescription')}
                     </p>
-                    <Button
-                      className="mt-5"
-                      disabled={isScenarioRecognitionActive}
-                      onClick={() => setRecognizeScenariosOpen(true)}
-                    >
-                      <ScanSearch className="mr-2 size-4" />
-                      {isScenarioRecognitionActive
-                        ? t('actions.recognizingScenarios')
-                        : t('actions.recognizeScenarios')}
-                    </Button>
-                    {canCancelScenarioRecognition ? (
+                    {canDebugTest ? (
+                      <Button
+                        className="mt-5"
+                        disabled={isScenarioRecognitionActive}
+                        onClick={() => setRecognizeScenariosOpen(true)}
+                      >
+                        <ScanSearch className="mr-2 size-4" />
+                        {isScenarioRecognitionActive
+                          ? t('actions.recognizingScenarios')
+                          : t('actions.recognizeScenarios')}
+                      </Button>
+                    ) : null}
+                    {canStopTestRun && canCancelScenarioRecognition ? (
                       <Button
                         className="mt-3"
                         variant="outline"
@@ -617,7 +648,7 @@ export function BatchTestOverview({
                             ? t('scenarios.cancelingDescription')
                             : t('scenarios.recognizingDescription')}
                         </p>
-                        {canCancelScenarioRecognition ? (
+                        {canStopTestRun && canCancelScenarioRecognition ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -671,10 +702,12 @@ export function BatchTestOverview({
                   <p className="text-sm text-slate-600">{t('cases.description')}</p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                  <Button variant="outline" onClick={() => setCaseDialogOpen(true)}>
-                    <Plus className="mr-2 size-4" />
-                    {t('actions.createCase')}
-                  </Button>
+                  {canUpdateTestAssets ? (
+                    <Button variant="outline" onClick={() => setCaseDialogOpen(true)}>
+                      <Plus className="mr-2 size-4" />
+                      {t('actions.createCase')}
+                    </Button>
+                  ) : null}
                 </div>
               </CardHeader>
               <CardContent className="p-0">
@@ -724,7 +757,7 @@ export function BatchTestOverview({
                             : t('cases.generatingTaskDescription')}
                       </div>
                     </div>
-                    {canCancelGeneration ? (
+                    {canStopTestRun && canCancelGeneration ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -785,17 +818,19 @@ export function BatchTestOverview({
                     <TableHeader className="bg-white">
                       <TableRow>
                         <TableHead className="sticky top-0 z-20 w-12 bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
-                          <Checkbox
-                            checked={allCasesSelected}
-                            onCheckedChange={checked => {
-                              const filteredIds = filteredCases.map(item => item.id);
-                              setSelectedCaseIds(prev =>
-                                checked
-                                  ? Array.from(new Set([...prev, ...filteredIds]))
-                                  : prev.filter(id => !filteredIds.includes(id))
-                              );
-                            }}
-                          />
+                          {canUpdateTestAssets ? (
+                            <Checkbox
+                              checked={allCasesSelected}
+                              onCheckedChange={checked => {
+                                const filteredIds = filteredCases.map(item => item.id);
+                                setSelectedCaseIds(prev =>
+                                  checked
+                                    ? Array.from(new Set([...prev, ...filteredIds]))
+                                    : prev.filter(id => !filteredIds.includes(id))
+                                );
+                              }}
+                            />
+                          ) : null}
                         </TableHead>
                         <TableHead className="sticky top-0 z-20 w-[44%] bg-white shadow-[inset_0_-1px_0_rgba(148,163,184,0.28)]">
                           {t('table.questionContent')}
@@ -845,16 +880,18 @@ export function BatchTestOverview({
                           return (
                           <TableRow key={item.id}>
                             <TableCell className="py-4">
-                              <Checkbox
-                                checked={selectedCaseIds.includes(item.id)}
-                                onCheckedChange={checked => {
-                                  setSelectedCaseIds(prev =>
-                                    checked
-                                      ? Array.from(new Set([...prev, item.id]))
-                                      : prev.filter(id => id !== item.id)
-                                  );
-                                }}
-                              />
+                              {canUpdateTestAssets ? (
+                                <Checkbox
+                                  checked={selectedCaseIds.includes(item.id)}
+                                  onCheckedChange={checked => {
+                                    setSelectedCaseIds(prev =>
+                                      checked
+                                        ? Array.from(new Set([...prev, item.id]))
+                                        : prev.filter(id => id !== item.id)
+                                    );
+                                  }}
+                                />
+                              ) : null}
                             </TableCell>
                             <TableCell className="min-w-0 whitespace-normal py-4 align-top">
                               <div className="line-clamp-2 break-words font-medium text-slate-950">
@@ -923,49 +960,53 @@ export function BatchTestOverview({
                               {new Date(item.updated_at).toLocaleString()}
                             </TableCell>
                             <TableCell className="py-3 text-right align-top">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setEditingCaseId(item.id)}
-                              >
-                                {commonT('edit')}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={updateCase.isPending}
-                                onClick={() =>
-                                  updateCase.mutate({
-                                    caseId: item.id,
-                                    data: {
-                                      content: item.content,
-                                      expected_result: item.expected_result,
-                                      scenario_id: item.scenario_id,
-                                      question_type: item.question_type,
-                                      status: item.status === 'enabled' ? 'disabled' : 'enabled',
-                                      turns: item.turns,
-                                    },
-                                  })
-                                }
-                              >
-                                {item.status === 'enabled' ? commonT('disable') : commonT('enable')}
-                              </Button>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                    <MoreHorizontal className="size-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem
-                                    className="text-red-600 focus:text-red-600"
-                                    onSelect={() => requestDeleteCases([item.id])}
+                              {canUpdateTestAssets ? (
+                                <>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setEditingCaseId(item.id)}
                                   >
-                                    <Trash2 className="mr-2 size-4" />
-                                    {commonT('delete')}
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                                    {commonT('edit')}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled={updateCase.isPending}
+                                    onClick={() =>
+                                      updateCase.mutate({
+                                        caseId: item.id,
+                                        data: {
+                                          content: item.content,
+                                          expected_result: item.expected_result,
+                                          scenario_id: item.scenario_id,
+                                          question_type: item.question_type,
+                                          status: item.status === 'enabled' ? 'disabled' : 'enabled',
+                                          turns: item.turns,
+                                        },
+                                      })
+                                    }
+                                  >
+                                    {item.status === 'enabled' ? commonT('disable') : commonT('enable')}
+                                  </Button>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                        <MoreHorizontal className="size-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem
+                                        className="text-red-600 focus:text-red-600"
+                                        onSelect={() => requestDeleteCases([item.id])}
+                                      >
+                                        <Trash2 className="mr-2 size-4" />
+                                        {commonT('delete')}
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </>
+                              ) : null}
                             </TableCell>
                           </TableRow>
                           );
@@ -974,7 +1015,7 @@ export function BatchTestOverview({
                     </TableBody>
                   </Table>
                 </div>
-                {selectedCaseIds.length > 0 ? (
+                {canUpdateTestAssets && selectedCaseIds.length > 0 ? (
                   <div className="sticky bottom-0 z-10 flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.08)]">
                     <div className="text-sm text-slate-600">
                       {t('cases.selectedCount', { count: selectedCaseIds.length })}
@@ -1078,15 +1119,17 @@ export function BatchTestOverview({
                             {t('batchActions.viewProgress')}
                           </Link>
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={cancelBatch.isPending}
-                          onClick={() => cancelBatch.mutate(runningBatch.id)}
-                        >
-                          <Ban className="mr-1 size-4" />
-                          {commonT('cancel')}
-                        </Button>
+                        {canStopTestRun ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={cancelBatch.isPending}
+                            onClick={() => cancelBatch.mutate(runningBatch.id)}
+                          >
+                            <Ban className="mr-1 size-4" />
+                            {commonT('cancel')}
+                          </Button>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -1135,7 +1178,7 @@ export function BatchTestOverview({
                         <TableCell>{batchResultText(batch, batchResultT)}</TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-2">
-                            {batch.status === 'queued' ? (
+                            {canDebugTest && batch.status === 'queued' ? (
                               <Button
                                 variant="link"
                                 size="sm"
@@ -1160,7 +1203,7 @@ export function BatchTestOverview({
                                 </Link>
                               </Button>
                             ) : null}
-                            {batch.status === 'queued' || batch.status === 'running' ? (
+                            {canStopTestRun && (batch.status === 'queued' || batch.status === 'running') ? (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1178,31 +1221,34 @@ export function BatchTestOverview({
                                 </Link>
                               </Button>
                             ) : null}
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                  <MoreHorizontal className="size-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                {batch.status === 'queued' || batch.status === 'running' ? (
-                                  <DropdownMenuItem
-                                    className="text-red-600"
-                                    disabled={cancelBatch.isPending}
-                                    onSelect={() => cancelBatch.mutate(batch.id)}
-                                  >
-                                    {commonT('cancelTest')}
-                                  </DropdownMenuItem>
-                                ) : (
-                                  <DropdownMenuItem
-                                    disabled={retestBatch.isPending}
-                                    onSelect={() => setRetestingBatch(batch)}
-                                  >
-                                    {commonT('retest')}
-                                  </DropdownMenuItem>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                            {(canStopTestRun && (batch.status === 'queued' || batch.status === 'running')) ||
+                            (canDebugTest && batch.status !== 'queued' && batch.status !== 'running') ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                    <MoreHorizontal className="size-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  {batch.status === 'queued' || batch.status === 'running' ? (
+                                    <DropdownMenuItem
+                                      className="text-red-600"
+                                      disabled={cancelBatch.isPending}
+                                      onSelect={() => cancelBatch.mutate(batch.id)}
+                                    >
+                                      {commonT('cancelTest')}
+                                    </DropdownMenuItem>
+                                  ) : (
+                                    <DropdownMenuItem
+                                      disabled={retestBatch.isPending}
+                                      onSelect={() => setRetestingBatch(batch)}
+                                    >
+                                      {commonT('retest')}
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : null}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1215,92 +1261,100 @@ export function BatchTestOverview({
         ) : null}
       </div>
 
-      <JudgePromptSettingsDialog
-        agentId={agentId}
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-      />
-      <ScenarioDialog
-        agentId={agentId}
-        scenarios={scenarios}
-        open={scenarioDialogOpen}
-        onOpenChange={setScenarioDialogOpen}
-      />
-      <RecognizeScenariosDialog
-        agentId={agentId}
-        defaultContext={defaultRecognitionContext}
-        open={recognizeScenariosOpen}
-        onOpenChange={setRecognizeScenariosOpen}
-      />
-      <CaseDialog
-        agentId={agentId}
-        scenarios={scenarioOptions}
-        open={caseDialogOpen}
-        onOpenChange={setCaseDialogOpen}
-        supportsAttachments={supportsAttachments}
-      />
-      <CaseDialog
-        agentId={agentId}
-        scenarios={scenarioOptions}
-        caseItem={editingCase}
-        open={!!editingCaseId}
-        onOpenChange={open => {
-          if (!open) setEditingCaseId(null);
-        }}
-        supportsAttachments={supportsAttachments}
-      />
-      <GenerateCasesDialog
-        agentId={agentId}
-        scenarios={scenarioOptions}
-        open={generateDialogOpen}
-        onOpenChange={setGenerateDialogOpen}
-        onGenerationStart={setPendingGenerationCount}
-        onGenerationCreateFailed={() => setPendingGenerationCount(null)}
-      />
-      <ConfirmDialog
-        variant="danger"
-        open={deletingCaseIds.length > 0}
-        onOpenChange={open => {
-          if (!open && !deleteCases.isPending) setDeletingCaseIds([]);
-        }}
-        title={
-          deletingCaseIds.length > 1
-            ? t('cases.batchDeleteConfirmTitle')
-            : t('cases.deleteConfirmTitle')
-        }
-        description={
-          deletingCaseIds.length > 1
-            ? t('cases.batchDeleteConfirmDescription', { count: deletingCaseIds.length })
-            : t('cases.deleteConfirmDescription')
-        }
-        confirmText={commonT('delete')}
-        cancelText={commonT('cancel')}
-        loading={deleteCases.isPending}
-        onConfirm={confirmDeleteCases}
-      />
-      <ConfirmDialog
-        open={Boolean(retestingBatch)}
-        onOpenChange={open => {
-          if (!open && !retestBatch.isPending) setRetestingBatch(null);
-        }}
-        title={t('batches.retestConfirmTitle')}
-        description={
-          retestingBatch
-            ? t('batches.retestConfirmDescription', {
-                name: retestingBatch.name,
-                count: retestingBatch.case_count,
-              })
-            : ''
-        }
-        confirmText={t('batches.retestConfirmButton')}
-        cancelText={commonT('cancel')}
-        loading={retestBatch.isPending}
-        contentClassName="max-w-2xl rounded-2xl"
-        footerClassName="justify-end bg-white px-8 py-6"
-        cancelClassName="border border-slate-200 bg-white hover:bg-slate-50"
-        confirmClassName="bg-slate-950 text-white hover:bg-slate-800"
-        onConfirm={confirmRetestBatch}
-      />
+      {canUpdateTestAssets ? (
+        <>
+          <JudgePromptSettingsDialog
+            agentId={agentId}
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+          />
+          <ScenarioDialog
+            agentId={agentId}
+            scenarios={scenarios}
+            open={scenarioDialogOpen}
+            onOpenChange={setScenarioDialogOpen}
+          />
+          <CaseDialog
+            agentId={agentId}
+            scenarios={scenarioOptions}
+            open={caseDialogOpen}
+            onOpenChange={setCaseDialogOpen}
+            supportsAttachments={supportsAttachments}
+          />
+          <CaseDialog
+            agentId={agentId}
+            scenarios={scenarioOptions}
+            caseItem={editingCase}
+            open={!!editingCaseId}
+            onOpenChange={open => {
+              if (!open) setEditingCaseId(null);
+            }}
+            supportsAttachments={supportsAttachments}
+          />
+          <ConfirmDialog
+            variant="danger"
+            open={deletingCaseIds.length > 0}
+            onOpenChange={open => {
+              if (!open && !deleteCases.isPending) setDeletingCaseIds([]);
+            }}
+            title={
+              deletingCaseIds.length > 1
+                ? t('cases.batchDeleteConfirmTitle')
+                : t('cases.deleteConfirmTitle')
+            }
+            description={
+              deletingCaseIds.length > 1
+                ? t('cases.batchDeleteConfirmDescription', { count: deletingCaseIds.length })
+                : t('cases.deleteConfirmDescription')
+            }
+            confirmText={commonT('delete')}
+            cancelText={commonT('cancel')}
+            loading={deleteCases.isPending}
+            onConfirm={confirmDeleteCases}
+          />
+        </>
+      ) : null}
+      {canDebugTest ? (
+        <>
+          <RecognizeScenariosDialog
+            agentId={agentId}
+            defaultContext={defaultRecognitionContext}
+            open={recognizeScenariosOpen}
+            onOpenChange={setRecognizeScenariosOpen}
+          />
+          <GenerateCasesDialog
+            agentId={agentId}
+            scenarios={scenarioOptions}
+            open={generateDialogOpen}
+            onOpenChange={setGenerateDialogOpen}
+            onGenerationStart={setPendingGenerationCount}
+            onGenerationCreateFailed={() => setPendingGenerationCount(null)}
+          />
+          <ConfirmDialog
+            open={Boolean(retestingBatch)}
+            onOpenChange={open => {
+              if (!open && !retestBatch.isPending) setRetestingBatch(null);
+            }}
+            title={t('batches.retestConfirmTitle')}
+            description={
+              retestingBatch
+                ? t('batches.retestConfirmDescription', {
+                    name: retestingBatch.name,
+                    count: retestingBatch.case_count,
+                  })
+                : ''
+            }
+            confirmText={t('batches.retestConfirmButton')}
+            cancelText={commonT('cancel')}
+            loading={retestBatch.isPending}
+            contentClassName="max-w-2xl rounded-2xl"
+            footerClassName="justify-end bg-white px-8 py-6"
+            cancelClassName="border border-slate-200 bg-white hover:bg-slate-50"
+            confirmClassName="bg-slate-950 text-white hover:bg-slate-800"
+            onConfirm={confirmRetestBatch}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

@@ -8,6 +8,7 @@ export interface AgentDetailRoutePermissions {
   canEditRuntime?: boolean;
   canManageRuntimeAccess?: boolean;
   canViewRuntimeLogs?: boolean;
+  canViewBatchTest?: boolean;
   canRunBatchTest?: boolean;
 }
 
@@ -90,7 +91,7 @@ export function canShowAgentBatchTest(
 ): boolean {
   return (
     supportsWorkflowDetailPages(agentType) &&
-    Boolean(permissions.canRunBatchTest ?? permissions.canManage)
+    Boolean(permissions.canViewBatchTest ?? permissions.canRunBatchTest ?? permissions.canManage)
   );
 }
 
@@ -106,6 +107,9 @@ export function getAgentDetailRouteAccess(
     permissions.canManageRuntimeAccess ?? permissions.canManage
   );
   const canViewRuntimeLogs = Boolean(permissions.canViewRuntimeLogs ?? permissions.canManage);
+  const canViewBatchTest = Boolean(
+    permissions.canViewBatchTest ?? permissions.canRunBatchTest ?? permissions.canManage
+  );
   const canRunBatchTest = Boolean(permissions.canRunBatchTest ?? permissions.canManage);
 
   return {
@@ -122,7 +126,7 @@ export function getAgentDetailRouteAccess(
     canShowApiKeys: supportsWorkflowPages && canManageRuntimeAccess,
     canShowRuntimeAccess: canShowAgentRuntimeAccess(agentType, permissions),
     canShowRuntimeLogs: supportsAgentRuntimeLogs(agentType) && canViewRuntimeLogs,
-    canShowBatchTest: supportsWorkflowPages && canRunBatchTest,
+    canShowBatchTest: supportsWorkflowPages && canViewBatchTest,
   };
 }
 

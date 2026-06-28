@@ -27,7 +27,8 @@ export default function BatchResultPage({ params }: BatchResultPageProps) {
   const { agentId, batchId } = use(params);
   const { agent, isLoading, error, refetch } = useAgent(agentId);
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canRunBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
+  const canDebugBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
+  const canViewBatchTestLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
 
   if (isLoading || isPermissionsLoading) {
     return (
@@ -74,7 +75,13 @@ export default function BatchResultPage({ params }: BatchResultPageProps) {
     );
   }
 
-  if (!canShowAgentBatchTest(agent.data.agent_type, { canView: true, canRunBatchTest })) {
+  if (
+    !canShowAgentBatchTest(agent.data.agent_type, {
+      canView: true,
+      canViewBatchTest: canViewBatchTestLogs,
+      canRunBatchTest: canDebugBatchTest,
+    })
+  ) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
@@ -90,5 +97,12 @@ export default function BatchResultPage({ params }: BatchResultPageProps) {
     );
   }
 
-  return <BatchResultDetail agentId={agentId} batchId={batchId} agentName={agent.data.name} />;
+  return (
+    <BatchResultDetail
+      agentId={agentId}
+      batchId={batchId}
+      agentName={agent.data.name}
+      canRetest={canDebugBatchTest}
+    />
+  );
 }

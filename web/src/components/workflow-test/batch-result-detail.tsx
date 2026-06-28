@@ -33,6 +33,7 @@ interface BatchResultDetailProps {
   agentId: string;
   batchId: string;
   agentName?: string;
+  canRetest?: boolean;
 }
 
 type BatchStatusKey = 'queued' | 'running' | 'completed' | 'stopped' | 'canceled';
@@ -107,7 +108,12 @@ function buildSummary(
   return t('hasIssues', { failed: batch.failed_count, review: reviewItems });
 }
 
-export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDetailProps) {
+export function BatchResultDetail({
+  agentId,
+  batchId,
+  agentName,
+  canRetest = false,
+}: BatchResultDetailProps) {
   const t = useT('agents.workflowTest.detail');
   const commonT = useT('agents.workflowTest.common');
   const batchStatusT = useT('agents.workflowTest.batchStatus');
@@ -242,17 +248,19 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
                   </div>
                 </div>
               </div>
-              <Button
-                variant="outline"
-                className="text-blue-600 hover:text-blue-700"
-                disabled={
-                  batch.status === 'queued' || batch.status === 'running' || retestBatch.isPending
-                }
-                onClick={() => setRetestConfirmOpen(true)}
-              >
-                <RefreshCcw className="mr-2 size-4" />
-                {commonT('retest')}
-              </Button>
+              {canRetest ? (
+                <Button
+                  variant="outline"
+                  className="text-blue-600 hover:text-blue-700"
+                  disabled={
+                    batch.status === 'queued' || batch.status === 'running' || retestBatch.isPending
+                  }
+                  onClick={() => setRetestConfirmOpen(true)}
+                >
+                  <RefreshCcw className="mr-2 size-4" />
+                  {commonT('retest')}
+                </Button>
+              ) : null}
             </div>
 
             <div className="mt-5 grid grid-cols-2 rounded-xl border border-slate-200 bg-white px-5 py-6 text-sm text-slate-700">
@@ -315,33 +323,35 @@ export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDe
             </div>
           </CardContent>
         </Card>
-        <ConfirmDialog
-          open={retestConfirmOpen}
-          onOpenChange={open => {
-            if (!open && !retestBatch.isPending) setRetestConfirmOpen(false);
-          }}
-          title={t('retestConfirmTitle')}
-          description={t('retestConfirmDescription', {
-            name: batch.name,
-            count: batch.case_count,
-          })}
-          confirmText={t('retestConfirmButton')}
-          cancelText={commonT('cancel')}
-          loading={retestBatch.isPending}
-          contentClassName="max-w-2xl rounded-2xl"
-          footerClassName="justify-end bg-white px-8 py-6"
-          cancelClassName="border border-slate-200 bg-white hover:bg-slate-50"
-          confirmClassName="bg-slate-950 text-white hover:bg-slate-800"
-          onConfirm={() =>
-            retestBatch.mutate(
-              {
-                batchId: batch.id,
-                data: { name: buildRetestName(batch.name) },
-              },
-              { onSuccess: () => setRetestConfirmOpen(false) }
-            )
-          }
-        />
+        {canRetest ? (
+          <ConfirmDialog
+            open={retestConfirmOpen}
+            onOpenChange={open => {
+              if (!open && !retestBatch.isPending) setRetestConfirmOpen(false);
+            }}
+            title={t('retestConfirmTitle')}
+            description={t('retestConfirmDescription', {
+              name: batch.name,
+              count: batch.case_count,
+            })}
+            confirmText={t('retestConfirmButton')}
+            cancelText={commonT('cancel')}
+            loading={retestBatch.isPending}
+            contentClassName="max-w-2xl rounded-2xl"
+            footerClassName="justify-end bg-white px-8 py-6"
+            cancelClassName="border border-slate-200 bg-white hover:bg-slate-50"
+            confirmClassName="bg-slate-950 text-white hover:bg-slate-800"
+            onConfirm={() =>
+              retestBatch.mutate(
+                {
+                  batchId: batch.id,
+                  data: { name: buildRetestName(batch.name) },
+                },
+                { onSuccess: () => setRetestConfirmOpen(false) }
+              )
+            }
+          />
+        ) : null}
 
         <Card className="rounded-2xl">
           <CardHeader>
