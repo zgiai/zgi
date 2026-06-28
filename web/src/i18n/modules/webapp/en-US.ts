@@ -603,6 +603,8 @@ const messages = {
         organizing: 'Organizing thoughts',
         preparing: 'Planning next step',
         checkingTools: 'Checking available tools',
+        clientAction: 'Updating the page',
+        clientActionResult: 'Page updated, continuing',
         callingTool: 'Calling {skill} {tool}',
         toolSucceeded: '{skill} {tool} completed',
         toolFailed: '{skill} {tool} failed',

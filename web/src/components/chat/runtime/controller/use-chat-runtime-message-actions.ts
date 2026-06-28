@@ -54,6 +54,8 @@ export function useChatRuntimeMessageActions({
     applySkillArtifactCreated,
     applyMemoryMutation,
     applyToolGovernanceDecision,
+    applyClientActionRequired,
+    applyClientActionResult,
     applyAgentProgress,
     applyIntermediateAnswer,
     applyUserInputRequested,
@@ -326,6 +328,14 @@ export function useChatRuntimeMessageActions({
             onToolGovernanceDecision: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyToolGovernanceDecision(payload, eventId);
+            },
+            onClientActionRequired: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyClientActionRequired(payload, eventId);
+            },
+            onClientActionResult: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyClientActionResult(payload, eventId);
             },
             onMemoryMutation: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -686,6 +696,14 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applyToolGovernanceDecision(payload, eventId);
             },
+            onClientActionRequired: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyClientActionRequired(payload, eventId);
+            },
+            onClientActionResult: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyClientActionResult(payload, eventId);
+            },
             onMemoryMutation: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyMemoryMutation(payload, eventId);
@@ -800,6 +818,8 @@ export function useChatRuntimeMessageActions({
       applySkillCallStart,
       applySkillArtifactCreated,
       applyToolGovernanceDecision,
+      applyClientActionRequired,
+      applyClientActionResult,
       applyMemoryMutation,
       applySkillLoadEnd,
       applySkillLoadStart,

@@ -342,11 +342,50 @@ function streamingOperationStatusFromInvocation(
   };
 }
 
+function streamingOperationStatusFromProgress(
+  item: Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>
+): StreamingOperationStatus | null {
+  if (item.phase !== 'client_action_result') return null;
+
+  const result = timelineRecord(item.result);
+  const status = timelineString(item.status) || timelineString(result.status);
+  if (status && !isSuccessfulTimelineStatus(status)) {
+    return null;
+  }
+  const actionType = (
+    timelineString(item.action_type) || timelineString(result.action_type)
+  ).toLowerCase();
+
+  if (actionType === 'route_navigation') {
+    return { key: 'pageChanged' };
+  }
+  if (actionType !== 'asset_observation') {
+    return null;
+  }
+
+  return streamingOperationStatusFromInvocation({
+    kind: 'client_action',
+    action_type: actionType,
+    status: item.status,
+    arguments: {
+      effect: item.effect,
+      asset_type: item.asset_type,
+      assets: item.assets,
+    },
+    result: item.result,
+  });
+}
+
 function streamingOperationStatus(
   timeline: AIChatAgenticTimelineItem[]
 ): StreamingOperationStatus | null {
   for (let index = timeline.length - 1; index >= 0; index -= 1) {
     const item = timeline[index];
+    if (item.type === 'progress_text') {
+      const progressStatus = streamingOperationStatusFromProgress(item);
+      if (progressStatus) return progressStatus;
+      continue;
+    }
     if (item.type !== 'skill_event') continue;
     const invocation = item.invocation as unknown as Record<string, unknown>;
     if (runningInvocationBlocksStreamingStatus(invocation)) return null;

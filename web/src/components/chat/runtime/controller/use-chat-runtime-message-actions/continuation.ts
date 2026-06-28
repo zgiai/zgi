@@ -49,6 +49,8 @@ export function useWorkflowContinuationActions({
     applySkillArtifactCreated,
     applyMemoryMutation,
     applyToolGovernanceDecision,
+    applyClientActionRequired,
+    applyClientActionResult,
     applyAgentProgress,
     applyIntermediateAnswer,
     applyUserInputRequested,
@@ -294,13 +296,15 @@ export function useWorkflowContinuationActions({
             streamStarted = true;
             applyToolGovernanceDecision(payload, eventId);
           },
-          onClientActionRequired: () => {
+          onClientActionRequired: (payload, eventId) => {
             if (abortController.signal.aborted) return;
             streamStarted = true;
+            applyClientActionRequired(payload, eventId);
           },
-          onClientActionResult: () => {
+          onClientActionResult: (payload, eventId) => {
             if (abortController.signal.aborted) return;
             streamStarted = true;
+            applyClientActionResult(payload, eventId);
           },
           onMemoryMutation: (payload, eventId) => {
             if (abortController.signal.aborted) return;
@@ -476,6 +480,8 @@ export function useWorkflowContinuationActions({
       applySkillLoadStart,
       applySkillReferenceRead,
       applyToolGovernanceDecision,
+      applyClientActionRequired,
+      applyClientActionResult,
       applyStreamError,
       applyUserInputRequested,
       eventAppliers,

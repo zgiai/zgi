@@ -832,10 +832,16 @@ export interface AIChatAgentProgressEventData {
   conversation_id: string;
   message_id: string;
   content?: string;
-  phase?: 'planning' | 'tool_planning';
+  phase?: 'planning' | 'tool_planning' | 'client_action' | 'client_action_result';
   meta_tool_name?: string;
   skill_id?: string;
   tool_name?: string;
+  action_type?: string;
+  status?: string;
+  effect?: string;
+  asset_type?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  result?: Record<string, unknown> | null;
   arguments_chars?: number;
   created_at?: number;
 }

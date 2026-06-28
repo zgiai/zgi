@@ -380,6 +380,9 @@ export function applyMessageChunkState(
   const messages = current.messagesByConversation[payload.conversation_id] ?? [];
   const existingMessage = messages.find(message => message.id === payload.message_id);
   const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (eventId && previousStreaming?.last_event_id === eventId) {
+    return current;
+  }
   const { appendChunk, replayBaseAnswer, replayOffset } = isSensitiveBlocked
     ? {
         appendChunk: answerChunk,
@@ -532,6 +535,9 @@ export function applyMessageRetractState(
 
   const messages = current.messagesByConversation[payload.conversation_id] ?? [];
   const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (eventId && previousStreaming?.last_event_id === eventId) {
+    return current;
+  }
   const nextMessages = messages.map(message =>
     message.id === payload.message_id
       ? {

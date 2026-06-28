@@ -590,6 +590,8 @@ const messages: WebappMessages = {
         organizing: '整理思路中',
         preparing: '规划下一步',
         checkingTools: '分析可用能力',
+        clientAction: '正在更新页面',
+        clientActionResult: '页面已更新，正在继续处理',
         callingTool: '调用 {skill} {tool}',
         toolSucceeded: '{skill} {tool} 调用成功',
         toolFailed: '{skill} {tool} 调用失败',

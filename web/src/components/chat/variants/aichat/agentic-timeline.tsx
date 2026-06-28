@@ -2343,6 +2343,12 @@ function buildTransientProgressText(
   locale: string,
   t: WebappTranslator
 ) {
+  if (item.phase === 'client_action') {
+    return t('consoleChat.skills.agentic.clientAction');
+  }
+  if (item.phase === 'client_action_result') {
+    return t('consoleChat.skills.agentic.clientActionResult');
+  }
   if (item.phase === 'tool_planning' && (item.skill_id || item.tool_name)) {
     return buildProgressText(item, skillDisplayById, locale, t);
   }

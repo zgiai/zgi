@@ -270,6 +270,14 @@ export function useChatRuntimeStreamRecovery({
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyToolGovernanceDecision(payload, eventId);
               },
+              onClientActionRequired: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyClientActionRequired(payload, eventId);
+              },
+              onClientActionResult: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyClientActionResult(payload, eventId);
+              },
               onMemoryMutation: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyMemoryMutation(payload, eventId);
