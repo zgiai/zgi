@@ -18,6 +18,58 @@ const workspaceStorePath = path.join(rootDir, 'src', 'store', 'workspace-store.t
 const workLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'work', 'layout.tsx');
 const workspaceLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'workspace', 'layout.tsx');
 const workspacePagePath = path.join(rootDir, 'src', 'app', 'console', 'workspace', 'page.tsx');
+const promptListPagePath = path.join(rootDir, 'src', 'app', 'console', 'prompts', 'page.tsx');
+const promptDetailPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'prompts',
+  '[promptId]',
+  'page.tsx'
+);
+const contentParsePagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'developer',
+  'content-parse',
+  'page.tsx'
+);
+const contentParsePlaygroundPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'content-parse',
+  'playground',
+  'content-parse-playground.tsx'
+);
+const taskPagePath = path.join(rootDir, 'src', 'app', 'console', 'work', 'task', 'page.tsx');
+const taskWorkbenchPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'automation',
+  'task-workbench.tsx'
+);
+const fileDetailPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'files',
+  '[fileId]',
+  'page.tsx'
+);
+const fileDetailShellPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'files',
+  'detail',
+  'file-detail-shell.tsx'
+);
 const defaultCustomerPath = path.join(rootDir, 'src', 'customer', 'default.tsx');
 const accountServicePath = path.join(rootDir, 'src', 'services', 'account.service.ts');
 const webAppServicePath = path.join(rootDir, 'src', 'services', 'webapp.service.ts');
@@ -432,6 +484,10 @@ const workspaceRoutes = [
   '/console/workspace/members',
   '/console/workspace/settings',
   '/console/developer/content-parse',
+  '/console/files',
+  '/console/files/file-1',
+  '/console/prompts',
+  '/console/prompts/prompt-1',
   '/console/dashboard',
 ];
 
@@ -478,6 +534,14 @@ assert.match(
 
 const workspaceLayoutSource = fs.readFileSync(workspaceLayoutPath, 'utf8');
 const workspacePageSource = fs.readFileSync(workspacePagePath, 'utf8');
+const promptListPageSource = fs.readFileSync(promptListPagePath, 'utf8');
+const promptDetailPageSource = fs.readFileSync(promptDetailPagePath, 'utf8');
+const contentParsePageSource = fs.readFileSync(contentParsePagePath, 'utf8');
+const contentParsePlaygroundSource = fs.readFileSync(contentParsePlaygroundPath, 'utf8');
+const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
+const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
+const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
+const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 assert.match(
@@ -544,6 +608,101 @@ assert.doesNotMatch(
   workspacePageSource,
   /redirect\(/,
   'workspace overview should render in place instead of redirecting to members'
+);
+assert.match(
+  promptListPageSource,
+  /useAccountPermissions\(\)/,
+  'prompt list should consume the shared workspace access contract'
+);
+assert.match(
+  promptListPageSource,
+  /hasWorkspaceAccess\(\)/,
+  'prompt list should gate retired prompt tools by workspace access, not prompt permissions'
+);
+assert.match(
+  promptListPageSource,
+  /usePrompts\([\s\S]*canView\s*\)/,
+  'prompt list should disable prompt queries when workspace access is unavailable'
+);
+assert.doesNotMatch(
+  promptListPageSource,
+  /['"]prompt\./,
+  'prompt list should not reintroduce prompt.* member permission codes'
+);
+assert.match(
+  promptDetailPageSource,
+  /useAccountPermissions\(\)/,
+  'prompt detail should consume the shared workspace access contract'
+);
+assert.match(
+  promptDetailPageSource,
+  /hasWorkspaceAccess\(\)/,
+  'prompt detail should gate retired prompt tools by workspace access, not prompt permissions'
+);
+assert.match(
+  promptDetailPageSource,
+  /usePrompt\(promptId,\s*canView\)/,
+  'prompt detail should disable prompt queries when workspace access is unavailable'
+);
+assert.match(
+  promptDetailPageSource,
+  /WorkspaceMismatchGuard[\s\S]*targetWorkspaceId=\{targetWorkspaceId\}/,
+  'prompt detail should keep workspace-owned prompts behind the workspace mismatch guard'
+);
+assert.doesNotMatch(
+  promptDetailPageSource,
+  /['"]prompt\./,
+  'prompt detail should not reintroduce prompt.* member permission codes'
+);
+assert.match(
+  contentParsePageSource,
+  /<ContentParsePlayground \/>/,
+  'content-parse route should delegate to the playground behind the workspace-scoped console guard'
+);
+assert.doesNotMatch(
+  contentParsePlaygroundSource,
+  /useAccountPermissions|hasPermission|hasAnyPermission|['"]content_parse\./,
+  'content-parse playground should not reintroduce content_parse.* member permission codes'
+);
+assert.match(
+  taskPageSource,
+  /<TaskWorkbench \/>/,
+  'scheduled-task route should delegate to the task workbench behind the workspace-scoped work guard'
+);
+assert.match(
+  taskWorkbenchSource,
+  /useAccountPermissions\(\)/,
+  'scheduled-task workbench should consume account permission helpers'
+);
+assert.match(
+  taskWorkbenchSource,
+  /const canManageTasks\s*=\s*Boolean\(workspaceId\)\s*&&\s*isWorkspaceManager\(\)/,
+  'scheduled-task mutation UI should use workspace manager authority'
+);
+assert.doesNotMatch(
+  taskWorkbenchSource,
+  /hasPermission\(['"]workspace\.|hasAnyPermission\(\[['"]workspace\./,
+  'scheduled-task workbench should not reintroduce ordinary workspace.* member permissions'
+);
+assert.match(
+  fileDetailPageSource,
+  /<FileDetailShell fileId=\{fileId\} \/>/,
+  'file direct page should render the shared file detail shell'
+);
+assert.match(
+  fileDetailShellSource,
+  /FILE_PERMISSION_ACTIONS\.metadataView[\s\S]*FILE_PERMISSION_ACTIONS\.preview[\s\S]*FILE_PERMISSION_ACTIONS\.download/,
+  'file detail access should be based on readable file action permissions'
+);
+assert.match(
+  fileDetailShellSource,
+  /const canUpdateFile\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.update\)/,
+  'file detail update action should use the exact file.update permission'
+);
+assert.doesNotMatch(
+  fileDetailShellSource,
+  /['"]file\.(?:view|manage|upload_create|move_create)['"]/,
+  'file detail should not consume legacy aggregate file permission codes'
 );
 assert.match(
   consoleRecentWorkSource,
