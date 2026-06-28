@@ -9,6 +9,7 @@ import (
 	"time"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 const (
@@ -405,6 +406,9 @@ func completionVerificationApplyPlanOnlySoftening(evidence map[string]interface{
 	if completionVerificationHasFailedEvidence(evidence) || !completionVerificationHasSuccessfulEvidence(evidence) {
 		return decision
 	}
+	if completionVerificationHasUnsatisfiedManagedFileSave(evidence) {
+		return decision
+	}
 	if !completionVerificationDecisionIsPlanOnly(evidence, decision) {
 		return decision
 	}
@@ -551,6 +555,125 @@ func completionVerificationPlanOnlyText(value string) bool {
 		}
 	}
 	return false
+}
+
+func completionVerificationHasUnsatisfiedManagedFileSave(evidence map[string]interface{}) bool {
+	if len(evidence) == 0 {
+		return false
+	}
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	if len(plan) == 0 || !completionVerificationPlanMentionsPendingManagedFileSave(plan) {
+		return false
+	}
+	return !completionVerificationHasManagedFileSaveEvidence(evidence)
+}
+
+func completionVerificationPlanMentionsPendingManagedFileSave(plan map[string]interface{}) bool {
+	pending := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["pending_next_action"])))
+	if completionVerificationTextMentionsManagedFileSave(pending) {
+		return true
+	}
+	stepStatus := evidenceMapFromAny(plan["step_status"])
+	for _, raw := range evidenceSliceFromAny(plan["steps"]) {
+		step := evidenceMapFromAny(raw)
+		if len(step) == 0 {
+			continue
+		}
+		id := strings.TrimSpace(evidenceStringFromAny(step["id"]))
+		status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["status"])))
+		if status == "" && id != "" {
+			status = strings.ToLower(strings.TrimSpace(evidenceStringFromAny(stepStatus[id])))
+		}
+		switch status {
+		case "completed", "complete", "success", "succeeded", "failed", "error", "skipped", "not_applicable":
+			continue
+		}
+		skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["skill_id"])))
+		toolName := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["tool_name"])))
+		if skillID == skills.SkillFileManager && toolName == "save_file_to_management" {
+			return true
+		}
+		if completionVerificationTextMentionsManagedFileSave(id) ||
+			completionVerificationTextMentionsManagedFileSave(evidenceStringFromAny(step["title"])) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationTextMentionsManagedFileSave(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "save_file_to_management") ||
+		strings.Contains(lower, "save_remaining_generated_files") ||
+		(strings.Contains(lower, "file_management") && strings.Contains(lower, "save")) ||
+		(strings.Contains(lower, "managed_file") && strings.Contains(lower, "save"))
+}
+
+func completionVerificationHasManagedFileSaveEvidence(evidence map[string]interface{}) bool {
+	for _, invocation := range completionVerificationEvidenceInvocations(evidence) {
+		if !completionVerificationInvocationSucceeded(invocation) {
+			continue
+		}
+		skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])))
+		toolName := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])))
+		if skillID == skills.SkillFileManager && toolName == "save_file_to_management" {
+			return true
+		}
+		result := evidenceMapFromAny(invocation["result"])
+		if len(result) == 0 {
+			result = evidenceMapFromAny(invocation["result_summary"])
+		}
+		if completionVerificationResultIsManagedFileSave(result) {
+			return true
+		}
+	}
+	for _, file := range evidenceMapsFromAny(evidence["generated_files"]) {
+		if completionVerificationGeneratedFileIsManaged(file) {
+			return true
+		}
+	}
+	if ledger := evidenceMapFromAny(evidence["execution_ledger"]); len(ledger) > 0 {
+		for _, file := range evidenceMapsFromAny(ledger["generated_files"]) {
+			if completionVerificationGeneratedFileIsManaged(file) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func completionVerificationResultIsManagedFileSave(result map[string]interface{}) bool {
+	if len(result) == 0 {
+		return false
+	}
+	target := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(result["target"])))
+	if target != "" && target != "managed_file" && target != "file_management" {
+		return false
+	}
+	return strings.TrimSpace(evidenceStringFromAny(firstNonEmptyEvidence(
+		result["managed_file_id"],
+		result["upload_file_id"],
+		result["file_id"],
+		result["id"],
+	))) != ""
+}
+
+func completionVerificationGeneratedFileIsManaged(file map[string]interface{}) bool {
+	if len(file) == 0 {
+		return false
+	}
+	target := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(file["target"])))
+	if target == "managed_file" || target == "file_management" {
+		return true
+	}
+	return strings.TrimSpace(evidenceStringFromAny(firstNonEmptyEvidence(
+		file["managed_file_id"],
+		file["upload_file_id"],
+		file["managed_filename"],
+	))) != ""
 }
 
 func completionVerificationMissingStepHasSuccessfulEvidence(evidence map[string]interface{}, missingStep string) bool {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestCompletionVerificationFallbackAnswerUsesReadableChinese(t *testing.T) {
@@ -359,6 +360,84 @@ func TestCompletionVerificationApplyPlanOnlySofteningKeepsRealMissingToolEvidenc
 
 	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
 		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+}
+
+func TestCompletionVerificationApplyPlanOnlySofteningKeepsPendingManagedFileSave(t *testing.T) {
+	decision := completionVerificationApplyPlanOnlySoftening(map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "save_remaining_generated_files_to_file_management",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:file-manager/save_file_to_management",
+					"status":    "pending",
+					"skill_id":  skills.SkillFileManager,
+					"tool_name": "save_file_to_management",
+				},
+			},
+		},
+		"generated_files": []interface{}{
+			map[string]interface{}{
+				"filename":     "draft.svg",
+				"tool_file_id": "tool-file-1",
+				"target":       "temporary_artifact",
+			},
+		},
+	}, completionVerificationDecision{
+		Status:       completionVerificationStatusNeedsAction,
+		Reason:       "operation plan still has a pending executable step",
+		MissingSteps: []string{"operation plan pending save step"},
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action for unsaved generated file; decision=%#v", got, decision)
+	}
+	if len(decision.MissingSteps) == 0 {
+		t.Fatalf("missing steps = %#v, want save step retained", decision.MissingSteps)
+	}
+}
+
+func TestCompletionVerificationApplyPlanOnlySofteningAllowsCompletedManagedFileSave(t *testing.T) {
+	decision := completionVerificationApplyPlanOnlySoftening(map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "save_remaining_generated_files_to_file_management",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:file-manager/save_file_to_management",
+					"status":    "pending",
+					"skill_id":  skills.SkillFileManager,
+					"tool_name": "save_file_to_management",
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillFileManager,
+				"tool_name": "save_file_to_management",
+				"result": map[string]interface{}{
+					"status":       "completed",
+					"target":       "managed_file",
+					"file_id":      "file-1",
+					"filename":     "draft.svg",
+					"tool_file_id": "tool-file-1",
+				},
+			},
+		},
+	}, completionVerificationDecision{
+		Status:       completionVerificationStatusNeedsAction,
+		Reason:       "operation plan still has a pending executable step",
+		MissingSteps: []string{"operation plan pending save step"},
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("decision status = %q, want pass once managed file save evidence exists; decision=%#v", got, decision)
+	}
+	if len(decision.MissingSteps) != 0 {
+		t.Fatalf("missing steps = %#v, want cleared plan-only save step", decision.MissingSteps)
 	}
 }
 
