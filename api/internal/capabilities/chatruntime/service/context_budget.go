@@ -25,6 +25,8 @@ const (
 	recentIntermediateAnswerBudgetChars = 4000
 	recentTraceArgumentBudgetChars      = 600
 	recentTraceResultBudgetChars        = 900
+	recentContinuationTurnLimit         = 5
+	recentContinuationBudgetChars       = 5000
 )
 
 type contextBudgetResult struct {
@@ -52,27 +54,36 @@ func (s *service) buildTokenBudgetMessages(
 ) (*contextBudgetResult, error) {
 	applyRecentAssetCandidatesFromBranch(parts, parentMessages)
 	applyRecentGeneratedArtifactsFromBranch(parts, parentMessages)
+	applyRecentOperationPlansFromBranch(parts, parentMessages)
+	recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessage(parentMessages)
+	continuationContext := buildContinuationTaskStateMessage(parts, parentMessages)
+	extraContextMessages := make([]adapter.Message, 0, 2)
+	if recentExecutionContext != nil {
+		extraContextMessages = append(extraContextMessages, *recentExecutionContext)
+	}
+	if continuationContext != nil {
+		extraContextMessages = append(extraContextMessages, *continuationContext)
+	}
+
 	baseMessages := []adapter.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: s.currentUserContent(parts, parts.Query)},
 	}
-	recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessage(parentMessages)
-	if recentExecutionContext != nil {
-		baseMessages = []adapter.Message{
-			{Role: "system", Content: systemPrompt},
-			*recentExecutionContext,
-			{Role: "user", Content: s.currentUserContent(parts, parts.Query)},
-		}
+	if len(extraContextMessages) > 0 {
+		baseMessages = make([]adapter.Message, 0, len(extraContextMessages)+2)
+		baseMessages = append(baseMessages, adapter.Message{Role: "system", Content: systemPrompt})
+		baseMessages = append(baseMessages, extraContextMessages...)
+		baseMessages = append(baseMessages, adapter.Message{Role: "user", Content: s.currentUserContent(parts, parts.Query)})
 	}
 	budget, err := s.computeContextBudget(spec, parts, baseMessages)
 	if err != nil {
 		return nil, err
 	}
-	recentExecutionTokens := 0
-	if recentExecutionContext != nil {
-		recentExecutionTokens = s.tokenEstimator.EstimateMessages([]adapter.Message{*recentExecutionContext}, parts.ModelName).Tokens
+	extraContextTokens := 0
+	if len(extraContextMessages) > 0 {
+		extraContextTokens = s.tokenEstimator.EstimateMessages(extraContextMessages, parts.ModelName).Tokens
 	}
-	currentContent, attachmentMetadata, estimatedPromptTokens := s.buildBudgetedCurrentUserContent(parts, systemPrompt, budget, recentExecutionTokens)
+	currentContent, attachmentMetadata, estimatedPromptTokens := s.buildBudgetedCurrentUserContent(parts, systemPrompt, budget, extraContextTokens)
 
 	groups := s.historyMessageGroups(ctx, parentMessages, parts.ModelSupportsVision)
 	historyBefore := countAdapterMessages(groups)
@@ -91,18 +102,22 @@ func (s *service) buildTokenBudgetMessages(
 	for i := len(selected) - 1; i >= 0; i-- {
 		messages = append(messages, selected[i]...)
 	}
-	if recentExecutionContext != nil {
-		messages = append(messages, *recentExecutionContext)
-	}
+	messages = append(messages, extraContextMessages...)
 	messages = append(messages, adapter.Message{Role: "user", Content: currentContent})
 
 	historyAfter := len(messages) - 2
 	if recentExecutionContext != nil {
 		historyAfter--
 	}
+	if continuationContext != nil {
+		historyAfter--
+	}
 	metadata := contextControlMetadata(spec, budget, estimatedPromptTokens, historyBefore, historyAfter)
 	mergeAttachmentContextMetadata(metadata, attachmentMetadata)
 	mergeRecentExecutionContextMetadata(metadata, recentExecutionMetadata)
+	if continuationContext != nil {
+		metadata["continuation_task_state_included"] = true
+	}
 	return &contextBudgetResult{
 		Messages: messages,
 		Metadata: metadata,
@@ -402,6 +417,8 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	builder.WriteString("Older turns are represented only by their final assistant answers in the conversation history.\n")
 	builder.WriteString("Use these notes as context; do not mention these storage rules to the user.\n")
 	builder.WriteString("Do not resubmit these notes as intermediate answers; reuse them directly for export, save, convert, or file-generation requests.\n")
+	builder.WriteString("For a new user request, do not recap or claim completion of prior generated files unless the user explicitly references them or asks to continue.\n")
+	builder.WriteString("Prior generated files are candidates for reuse only when the current request asks to reuse, save, convert, download, preview, or continue previous output.\n")
 
 	remaining := recentExecutionContextBudgetChars - builder.Len()
 	generatedSection, generatedStats := recentGeneratedFilesSection(branch, remaining)
@@ -439,6 +456,439 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 		return nil, stats
 	}
 	return &adapter.Message{Role: "system", Content: content}, stats
+}
+
+func buildContinuationTaskStateMessage(parts *chatRequestParts, branch []*runtimemodel.Message) *adapter.Message {
+	if parts == nil || !isContinuationIntent(parts.Query) || len(branch) == 0 {
+		return nil
+	}
+	goal := recentNonContinuationUserGoal(branch)
+	if goal == "" {
+		return nil
+	}
+
+	var builder strings.Builder
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "AIChat continuation task state.\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "The user is asking to continue the most recent unfinished task, not starting a new generic page Q&A turn.\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Use this compact state as authoritative continuity guidance; do not mention these internal notes to the user.\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Most recent non-continuation user goal: "+compactForPrompt(goal, 500)+"\n")
+	if activeGoals := continuationTaskGoals(goal, branch, 3); len(activeGoals) > 1 {
+		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nPrior active operation goals still relevant to this continuation:\n")
+		for _, activeGoal := range activeGoals[1:] {
+			appendBudgetedLine(&builder, recentContinuationBudgetChars, "- "+compactForPrompt(activeGoal, 500)+"\n")
+		}
+	}
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Rules for this continuation: do not repeat successful side-effecting tool calls; continue only missing requested steps; verify asset mutations from tool results or refreshed page context before claiming success.\n")
+
+	if planState := recentContinuationOperationPlanSection(branch, recentContinuationBudgetChars-builder.Len()); planState != "" {
+		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nAuthoritative operation plan state:\n")
+		appendBudgetedLine(&builder, recentContinuationBudgetChars, planState)
+	}
+	if toolState := recentContinuationToolStateSection(branch, recentContinuationBudgetChars-builder.Len()); toolState != "" {
+		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nRecent completed/blocked execution state:\n")
+		appendBudgetedLine(&builder, recentContinuationBudgetChars, toolState)
+	}
+	if pending := continuationPendingHints(goal, branch); len(pending) > 0 {
+		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nPending-step hints:\n")
+		for _, line := range pending {
+			appendBudgetedLine(&builder, recentContinuationBudgetChars, "- "+line+"\n")
+		}
+	}
+
+	content := strings.TrimSpace(builder.String())
+	if content == "" {
+		return nil
+	}
+	return &adapter.Message{Role: "system", Content: content}
+}
+
+func recentNonContinuationUserGoal(branch []*runtimemodel.Message) string {
+	for i := len(branch) - 1; i >= 0; i-- {
+		message := branch[i]
+		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
+			continue
+		}
+		query := strings.TrimSpace(message.Query)
+		if query == "" || isContinuationIntent(query) {
+			continue
+		}
+		return query
+	}
+	return ""
+}
+
+func recentContinuationToolStateSection(branch []*runtimemodel.Message, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	var builder strings.Builder
+	turns := 0
+	for i := len(branch) - 1; i >= 0 && turns < recentContinuationTurnLimit; i-- {
+		message := branch[i]
+		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
+			continue
+		}
+		invocations := continuationStateInvocations(message.Metadata)
+		if len(invocations) == 0 {
+			continue
+		}
+		turns++
+		if !appendBudgetedLine(&builder, budget, fmt.Sprintf("- Prior turn query: %s\n", compactForPrompt(message.Query, 240))) {
+			return builder.String()
+		}
+		for idx, invocation := range invocations {
+			line := formatToolHistoryInvocation(idx+1, invocation)
+			if !appendBudgetedLine(&builder, budget, line) {
+				return builder.String()
+			}
+		}
+	}
+	return builder.String()
+}
+
+func recentContinuationOperationPlanSection(branch []*runtimemodel.Message, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	plans := recentContinuationOperationPlans(branch, 2)
+	if len(plans) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	for idx, plan := range plans {
+		compact := compactOperationPlanForPrompt(plan)
+		if len(compact) == 0 {
+			continue
+		}
+		line := fmt.Sprintf("- Plan %d: %s\n", idx+1, compactJSONForPrompt(compact, minInt(1600, budget-builder.Len())))
+		if !appendBudgetedLine(&builder, budget, line) {
+			break
+		}
+	}
+	return builder.String()
+}
+
+func recentContinuationOperationPlans(branch []*runtimemodel.Message, limit int) []map[string]interface{} {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, limit)
+	seenTasks := map[string]struct{}{}
+	for i := len(branch) - 1; i >= 0 && len(out) < limit; i-- {
+		message := branch[i]
+		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
+			continue
+		}
+		plan := mapFromOperationContext(metadataValue(message.Metadata, "operation_plan"))
+		if len(plan) == 0 {
+			continue
+		}
+		taskID := strings.TrimSpace(stringFromAny(plan["task_id"]))
+		if taskID != "" {
+			if _, ok := seenTasks[taskID]; ok {
+				continue
+			}
+			seenTasks[taskID] = struct{}{}
+		}
+		out = append(out, plan)
+	}
+	return out
+}
+
+func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]interface{} {
+	if len(plan) == 0 {
+		return nil
+	}
+	out := map[string]interface{}{}
+	for _, key := range []string{"version", "task_id", "intent", "status", "pending_next_action", "original_user_goal"} {
+		if value := strings.TrimSpace(stringFromAny(plan[key])); value != "" {
+			out[key] = compactForPrompt(value, 500)
+		}
+	}
+	if target := mapFromOperationContext(plan["asset_target"]); len(target) > 0 {
+		out["asset_target"] = target
+	}
+	if stepStatus := mapFromOperationContext(plan["step_status"]); len(stepStatus) > 0 {
+		out["step_status"] = stepStatus
+	}
+	if result := mapFromOperationContext(plan["tool_result"]); len(result) > 0 {
+		out["tool_result"] = result
+	}
+	if assetState := mapFromOperationContext(plan["asset_state"]); len(assetState) > 0 {
+		out["asset_state"] = assetState
+	}
+	steps := mapSliceFromAny(plan["steps"])
+	if len(steps) > 0 {
+		promptSteps := operationPlanPromptSteps(steps, 8)
+		compacted := make([]interface{}, 0, len(promptSteps))
+		for _, step := range promptSteps {
+			item := map[string]interface{}{}
+			for _, key := range []string{"id", "title", "status", "skill_id", "tool_name"} {
+				if value := strings.TrimSpace(stringFromAny(step[key])); value != "" {
+					item[key] = compactForPrompt(value, 180)
+				}
+			}
+			if index := intValueFromAny(step["sequence_index"]); index > 0 {
+				item["sequence_index"] = index
+			}
+			if target := mapFromOperationContext(step["asset_target"]); len(target) > 0 {
+				item["asset_target"] = target
+			}
+			if len(item) > 0 {
+				compacted = append(compacted, item)
+			}
+		}
+		if len(compacted) > 0 {
+			out["steps"] = compacted
+		}
+	}
+	return out
+}
+
+func operationPlanPromptSteps(steps []map[string]interface{}, limit int) []map[string]interface{} {
+	if limit <= 0 || len(steps) == 0 {
+		return nil
+	}
+	if len(steps) <= limit {
+		return steps
+	}
+	selected := make([]map[string]interface{}, 0, limit)
+	used := map[int]struct{}{}
+	add := func(index int) bool {
+		if index < 0 || index >= len(steps) {
+			return false
+		}
+		if _, ok := used[index]; ok {
+			return len(selected) < limit
+		}
+		step := copyStringAnyMap(steps[index])
+		step["sequence_index"] = index + 1
+		selected = append(selected, step)
+		used[index] = struct{}{}
+		return len(selected) < limit
+	}
+	for index, step := range steps {
+		status := operationPlanNormalizeStepStatus(stringFromAny(step["status"]))
+		if status != operationPlanStepStatusCompleted {
+			if !add(index) {
+				return selected
+			}
+		}
+	}
+	for index := range steps {
+		if !add(index) {
+			return selected
+		}
+	}
+	return selected
+}
+
+func continuationStateInvocations(metadata map[string]interface{}) []map[string]interface{} {
+	invocations := skillInvocationMaps(metadata)
+	out := make([]map[string]interface{}, 0, len(invocations))
+	for _, invocation := range invocations {
+		switch strings.TrimSpace(stringFromAny(invocation["kind"])) {
+		case "tool_call", "client_action", "guardrail":
+			out = append(out, invocation)
+		}
+	}
+	return out
+}
+
+func continuationTaskGoals(goal string, branch []*runtimemodel.Message, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	goals := make([]string, 0, limit)
+	seen := map[string]struct{}{}
+	add := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || len(goals) >= limit {
+			return
+		}
+		key := strings.ToLower(candidate)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		goals = append(goals, candidate)
+	}
+	add(goal)
+	for _, plan := range recentContinuationOperationPlans(branch, recentContinuationTurnLimit) {
+		if !operationPlanHasIncompleteWork(plan) {
+			continue
+		}
+		add(stringFromAny(plan["original_user_goal"]))
+	}
+	return goals
+}
+
+func operationPlanHasIncompleteWork(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	status := strings.TrimSpace(stringFromAny(plan["status"]))
+	if status != "" && status != operationPlanStatusCompleted {
+		return true
+	}
+	if pending := strings.TrimSpace(stringFromAny(plan["pending_next_action"])); pending != "" && !strings.EqualFold(pending, "none") {
+		return true
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	blockingStepIDs := map[string]struct{}{}
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !operationPlanStepBlocksCompletion(step) {
+			continue
+		}
+		id := stringFromAny(step["id"])
+		blockingStepIDs[id] = struct{}{}
+		if operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id])) != operationPlanStepStatusCompleted {
+			return true
+		}
+	}
+	for id, value := range stepStatus {
+		if _, ok := blockingStepIDs[id]; !ok {
+			continue
+		}
+		if operationPlanNormalizeStepStatus(stringFromAny(value)) != operationPlanStepStatusCompleted {
+			return true
+		}
+	}
+	return false
+}
+
+func continuationPendingHints(goal string, branch []*runtimemodel.Message) []string {
+	hints := []string{}
+	addHint := func(hint string) {
+		for _, existing := range hints {
+			if existing == hint {
+				return
+			}
+		}
+		hints = append(hints, hint)
+	}
+	goals := continuationTaskGoals(goal, branch, recentContinuationTurnLimit)
+	if len(goals) == 0 && strings.TrimSpace(goal) != "" {
+		goals = []string{strings.TrimSpace(goal)}
+	}
+	hasGeneratedArtifact := continuationHasSuccessfulGeneratedArtifact(branch)
+	hasManagedSave := continuationHasSuccessfulTool(branch, skills.SkillFileManager, "save_file_to_management")
+	hasDelete := continuationHasSuccessfulTool(branch, skills.SkillFileManager, "delete_file")
+	hasManagedCreateGoal := false
+	hasDeleteGoal := continuationHasPendingOperationPlanTool(branch, skills.SkillFileManager, "delete_file")
+
+	for _, candidate := range goals {
+		if isManagedFileCreateIntent(candidate) {
+			hasManagedCreateGoal = true
+		}
+		if isFileDeleteIntent(candidate) {
+			hasDeleteGoal = true
+		}
+	}
+
+	if hasManagedCreateGoal {
+		if hasGeneratedArtifact && !hasManagedSave {
+			addHint("A temporary artifact has already been generated; save that artifact with file-manager/save_file_to_management instead of generating another one.")
+		}
+		if hasManagedSave {
+			addHint("At least one generated artifact has already been saved to File Management; do not repeat that save unless the original goal requires another distinct file.")
+		}
+	}
+	if hasDeleteGoal && !hasDelete {
+		addHint("The prior goal still appears to include a file deletion, and no successful file-manager/delete_file call is recorded; resolve the current visible target, call file-manager/delete_file, and wait for the governed tool result. Do not ask for a separate natural-language confirmation because tool governance handles the approval card.")
+	}
+	if len(hints) == 0 && hasGeneratedArtifact {
+		addHint("A generated artifact already exists in recent execution state; reuse it for save/export requests instead of regenerating the same file.")
+	}
+	return hints
+}
+
+func continuationHasPendingOperationPlanTool(branch []*runtimemodel.Message, skillID, toolName string) bool {
+	for _, plan := range recentContinuationOperationPlans(branch, recentContinuationTurnLimit) {
+		if operationPlanHasPendingToolStep(plan, skillID, toolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func operationPlanHasPendingToolStep(plan map[string]interface{}, skillID, toolName string) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !operationPlanStepMatchesExactTool(step, skillID, toolName) {
+			continue
+		}
+		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[stringFromAny(step["id"])]))
+		return status == operationPlanStepStatusPending
+	}
+	stepID := operationPlanToolStepID(skillID, toolName)
+	if stepID == "" {
+		return false
+	}
+	status, ok := stepStatus[stepID]
+	if !ok {
+		return false
+	}
+	return operationPlanNormalizeStepStatus(stringFromAny(status)) == operationPlanStepStatusPending
+}
+
+func operationPlanStepMatchesExactTool(step map[string]interface{}, skillID, toolName string) bool {
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skillID) {
+		return false
+	}
+	stepToolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
+	if toolName == "" {
+		return stepToolName == ""
+	}
+	if stepToolName != "" {
+		return strings.EqualFold(stepToolName, toolName)
+	}
+	return strings.EqualFold(strings.TrimSpace(stringFromAny(step["id"])), operationPlanToolStepID(skillID, toolName))
+}
+
+func continuationHasSuccessfulTool(branch []*runtimemodel.Message, skillID, toolName string) bool {
+	for _, message := range branch {
+		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
+			continue
+		}
+		for _, invocation := range skillInvocationMaps(message.Metadata) {
+			if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" ||
+				!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "success") {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skillID) &&
+				strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), toolName) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func continuationHasSuccessfulGeneratedArtifact(branch []*runtimemodel.Message) bool {
+	for _, message := range branch {
+		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
+			continue
+		}
+		for _, invocation := range skillInvocationMaps(message.Metadata) {
+			if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" ||
+				!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "success") {
+				continue
+			}
+			if isKnownArtifactGeneratorToolCall(stringFromAny(invocation["skill_id"]), stringFromAny(invocation["tool_name"])) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func recentGeneratedFilesSection(branch []*runtimemodel.Message, budget int) (string, recentExecutionContextStats) {
@@ -664,8 +1114,8 @@ func compactToolHistoryResultForPrompt(invocation map[string]interface{}) string
 		if skillID != skills.SkillFileReader {
 			return ""
 		}
-	case "delete_file":
-		if skillID != skills.SkillFileManager && skillID != skills.SkillFileReader {
+	case "delete_file", "save_file_to_management":
+		if skillID != skills.SkillFileManager {
 			return ""
 		}
 	default:

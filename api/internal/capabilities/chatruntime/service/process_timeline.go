@@ -335,8 +335,26 @@ func (r *processTimelineRecorder) nextRuntimeID(base string) string {
 	if strings.TrimSpace(base) == "" {
 		base = "event"
 	}
-	r.runtimeCounters[base]++
-	return fmt.Sprintf("%s#%d", base, r.runtimeCounters[base])
+	for {
+		r.runtimeCounters[base]++
+		runtimeID := fmt.Sprintf("%s#%d", base, r.runtimeCounters[base])
+		if !r.runtimeIDExists(runtimeID) {
+			return runtimeID
+		}
+	}
+}
+
+func (r *processTimelineRecorder) runtimeIDExists(runtimeID string) bool {
+	runtimeID = strings.TrimSpace(runtimeID)
+	if r == nil || r.prepared == nil || r.prepared.Message == nil || runtimeID == "" {
+		return false
+	}
+	for _, invocation := range skillInvocationsFromMetadata(r.prepared.Message.Metadata["skill_invocations"]) {
+		if strings.TrimSpace(stringFromAny(invocation["runtime_id"])) == runtimeID {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *processTimelineRecorder) persistInvocation(invocation map[string]interface{}) {

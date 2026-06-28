@@ -47,6 +47,17 @@ func TestSystemAssetToolsDeclareGovernance(t *testing.T) {
 		{SkillAgentWorkflow, "list_agent_workflows", toolgovernance.EffectRead, "workflow", toolgovernance.RiskLevelLow, false},
 		{SkillAgentWorkflow, "run_agent_workflow", toolgovernance.EffectInvoke, "workflow", toolgovernance.RiskLevelHigh, true},
 		{SkillAgentWorkflow, "get_workflow_run_status", toolgovernance.EffectRead, "workflow_run", toolgovernance.RiskLevelLow, true},
+		{SkillAgentManagement, "list_agent_skill_candidates", toolgovernance.EffectRead, "agent_skill", toolgovernance.RiskLevelLow, false},
+		{SkillAgentManagement, "list_agent_knowledge_candidates", toolgovernance.EffectRead, "knowledge_base", toolgovernance.RiskLevelLow, false},
+		{SkillAgentManagement, "list_agent_database_candidates", toolgovernance.EffectRead, "database_table", toolgovernance.RiskLevelLow, false},
+		{SkillAgentManagement, "list_agent_database_tables", toolgovernance.EffectRead, "database_table", toolgovernance.RiskLevelLow, false},
+		{SkillAgentManagement, "list_agent_workflow_binding_candidates", toolgovernance.EffectRead, "workflow", toolgovernance.RiskLevelLow, false},
+		{SkillAgentManagement, "delete_agent", toolgovernance.EffectDelete, "agent", toolgovernance.RiskLevelHigh, true},
+		{SkillAgentManagement, "delete_agents", toolgovernance.EffectDelete, "agent", toolgovernance.RiskLevelHigh, true},
+		{SkillAgentManagement, "replace_agent_skill_bindings", toolgovernance.EffectUpdate, "agent_skill", toolgovernance.RiskLevelMedium, true},
+		{SkillAgentManagement, "replace_agent_knowledge_bindings", toolgovernance.EffectUpdate, "knowledge_base", toolgovernance.RiskLevelMedium, true},
+		{SkillAgentManagement, "replace_agent_database_bindings", toolgovernance.EffectUpdate, "database_table", toolgovernance.RiskLevelHigh, true},
+		{SkillAgentManagement, "replace_agent_workflow_bindings", toolgovernance.EffectUpdate, "workflow", toolgovernance.RiskLevelHigh, true},
 	}
 
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), uniqueGovernanceSkillIDs(expected))
@@ -131,6 +142,97 @@ func TestGovernanceAssetRefsFromToolArguments(t *testing.T) {
 			},
 		},
 		{
+			name:     "agent batch targets",
+			manifest: toolgovernance.Manifest{AssetType: "agent"},
+			arguments: map[string]interface{}{
+				"agents": []interface{}{
+					map[string]interface{}{"agent_id": "agent-1", "name": "Agent One", "workspace_id": "workspace-1"},
+					map[string]interface{}{"agent_id": "agent-2", "name": "Agent Two", "workspace_id": "workspace-1"},
+				},
+			},
+			want: []toolgovernance.AssetRef{
+				{ID: "agent-1", Type: "agent", Name: "Agent One", WorkspaceID: "workspace-1", Source: "tool_arguments"},
+				{ID: "agent-2", Type: "agent", Name: "Agent Two", WorkspaceID: "workspace-1", Source: "tool_arguments"},
+			},
+		},
+		{
+			name:     "agent knowledge binding replacement",
+			manifest: toolgovernance.Manifest{AssetType: "knowledge_base"},
+			arguments: map[string]interface{}{
+				"agent_id":   "agent-1",
+				"agent_name": "Support Agent",
+				"dataset_ids": []interface{}{
+					"kb-1",
+					"kb-2",
+				},
+			},
+			want: []toolgovernance.AssetRef{
+				{ID: "agent-1", Type: "agent", Name: "Support Agent", Source: "tool_arguments", Metadata: map[string]interface{}{"binding_owner": true}},
+				{ID: "kb-1", Type: "knowledge_base", Source: "tool_arguments", Metadata: map[string]interface{}{"agent_id": "agent-1", "agent_name": "Support Agent"}},
+				{ID: "kb-2", Type: "knowledge_base", Source: "tool_arguments", Metadata: map[string]interface{}{"agent_id": "agent-1", "agent_name": "Support Agent"}},
+			},
+		},
+		{
+			name:     "agent skill binding replacement",
+			manifest: toolgovernance.Manifest{AssetType: "agent_skill"},
+			arguments: map[string]interface{}{
+				"agent_id":   "agent-1",
+				"agent_name": "Support Agent",
+				"skill_ids": []interface{}{
+					"chart-generator",
+					"toolkit",
+				},
+			},
+			want: []toolgovernance.AssetRef{
+				{ID: "agent-1", Type: "agent", Name: "Support Agent", Source: "tool_arguments", Metadata: map[string]interface{}{"binding_owner": true}},
+				{ID: "chart-generator", Type: "agent_skill", Source: "tool_arguments", Metadata: map[string]interface{}{"agent_id": "agent-1", "agent_name": "Support Agent"}},
+				{ID: "toolkit", Type: "agent_skill", Source: "tool_arguments", Metadata: map[string]interface{}{"agent_id": "agent-1", "agent_name": "Support Agent"}},
+			},
+		},
+		{
+			name:     "agent database binding replacement",
+			manifest: toolgovernance.Manifest{AssetType: "database_table"},
+			arguments: map[string]interface{}{
+				"agent_id":   "agent-1",
+				"agent_name": "Support Agent",
+				"bindings": []interface{}{map[string]interface{}{
+					"data_source_id":   "db-1",
+					"data_source_name": "CRM",
+					"table_ids":        []interface{}{"table-1", "table-2"},
+					"writable_table_ids": []interface{}{
+						"table-2",
+					},
+					"tables": []interface{}{
+						map[string]interface{}{"table_id": "table-1", "table_name": "customers"},
+						map[string]interface{}{"table_id": "table-2", "table_name": "orders"},
+					},
+				}},
+			},
+			want: []toolgovernance.AssetRef{
+				{ID: "agent-1", Type: "agent", Name: "Support Agent", Source: "tool_arguments", Metadata: map[string]interface{}{"binding_owner": true}},
+				{ID: "table-1", Type: "database_table", Name: "customers", Source: "tool_arguments", Metadata: map[string]interface{}{"agent_id": "agent-1", "data_source_id": "db-1", "database_name": "CRM"}},
+				{ID: "table-2", Type: "database_table", Name: "orders", Source: "tool_arguments", Metadata: map[string]interface{}{"agent_id": "agent-1", "data_source_id": "db-1", "database_name": "CRM", "writable": true}},
+			},
+		},
+		{
+			name:     "agent workflow binding replacement",
+			manifest: toolgovernance.Manifest{AssetType: "workflow"},
+			arguments: map[string]interface{}{
+				"agent_id":   "agent-1",
+				"agent_name": "Support Agent",
+				"bindings": []interface{}{map[string]interface{}{
+					"binding_id":       "binding-1",
+					"label":            "Approval Flow",
+					"workflow_id":      "workflow-1",
+					"version_strategy": "latest",
+				}},
+			},
+			want: []toolgovernance.AssetRef{
+				{ID: "agent-1", Type: "agent", Name: "Support Agent", Source: "tool_arguments", Metadata: map[string]interface{}{"binding_owner": true}},
+				{ID: "binding-1", Type: "workflow", Name: "Approval Flow", Source: "tool_arguments", Metadata: map[string]interface{}{"agent_id": "agent-1", "workflow_id": "workflow-1", "version_strategy": "latest"}},
+			},
+		},
+		{
 			name:     "generated chart file name",
 			manifest: toolgovernance.Manifest{AssetType: "file"},
 			arguments: map[string]interface{}{
@@ -139,6 +241,28 @@ func TestGovernanceAssetRefsFromToolArguments(t *testing.T) {
 			},
 			want: []toolgovernance.AssetRef{
 				{Name: "score-chart", Type: "file", Source: "tool_arguments", Metadata: map[string]interface{}{"format": "bar"}},
+			},
+		},
+		{
+			name:     "generated file name uses format extension",
+			manifest: toolgovernance.Manifest{AssetType: "file"},
+			arguments: map[string]interface{}{
+				"filename": "monthly-summary",
+				"format":   "svg",
+			},
+			want: []toolgovernance.AssetRef{
+				{Name: "monthly-summary.svg", Type: "file", Source: "tool_arguments", Metadata: map[string]interface{}{"format": "svg"}},
+			},
+		},
+		{
+			name:     "generated file name corrects mismatched extension",
+			manifest: toolgovernance.Manifest{AssetType: "file"},
+			arguments: map[string]interface{}{
+				"filename": "monthly-summary.txt",
+				"format":   "svg",
+			},
+			want: []toolgovernance.AssetRef{
+				{Name: "monthly-summary.svg", Type: "file", Source: "tool_arguments", Metadata: map[string]interface{}{"format": "svg"}},
 			},
 		},
 	}
@@ -160,6 +284,55 @@ func TestGovernanceAssetRefsFromToolArguments(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPolicyToolGovernanceEnrichesAgentBindingResourceNamesFromCandidates(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "agent.replace_knowledge_bindings",
+			SkillID:                 SkillAgentManagement,
+			Domain:                  "agents",
+			Effect:                  toolgovernance.EffectUpdate,
+			AssetType:               "knowledge_base",
+			RiskLevel:               toolgovernance.RiskLevelMedium,
+			RequiresAssetResolution: true,
+			PermissionScopes:        []string{"agent:manage", "knowledge:read"},
+			DefaultApprovalPolicy:   toolgovernance.ApprovalPolicyAutoByPermissionTier,
+			AllowedPermissionTiers:  []toolgovernance.PermissionTier{toolgovernance.PermissionTierAdvanced},
+			AuditRequired:           true,
+		},
+		SkillID:  SkillAgentManagement,
+		ToolName: "replace_agent_knowledge_bindings",
+		Arguments: map[string]interface{}{
+			"agent_id":   "agent-1",
+			"agent_name": "Support Agent",
+			"dataset_ids": []interface{}{
+				"kb-1",
+			},
+		},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance_permission_tier": "advanced",
+				"knowledge_binding_candidates": []map[string]interface{}{
+					{"dataset_id": "kb-1", "name": "Policies"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusAllowed {
+		t.Fatalf("decision status = %s, want allowed: %#v", decision.Status, decision)
+	}
+	if len(decision.Assets) != 2 {
+		t.Fatalf("assets = %#v, want owner Agent and knowledge base", decision.Assets)
+	}
+	if decision.Assets[1].ID != "kb-1" || decision.Assets[1].Name != "Policies" || decision.Assets[1].Type != "knowledge_base" {
+		t.Fatalf("knowledge asset = %#v, want named kb-1 Policies", decision.Assets[1])
 	}
 }
 

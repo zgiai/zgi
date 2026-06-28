@@ -2,9 +2,9 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/aichat"
-	aichatservice "github.com/zgiai/zgi/api/internal/modules/aichat/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
@@ -20,9 +20,9 @@ type AIChatRouteDeps struct {
 	DB                         *gorm.DB
 	LLMClient                  llmclient.LLMClient
 	DefaultModelService        llmdefaultservice.DefaultModelService
-	FileService                aichatservice.FileLookupService
-	ContentExtractor           aichatservice.ContentExtractionService
-	WorkspacePermissionService aichatservice.WorkspacePermissionService
+	FileService                runtimeservice.FileLookupService
+	ContentExtractor           runtimeservice.ContentExtractionService
+	WorkspacePermissionService runtimeservice.WorkspacePermissionService
 	MemoryService              *memorymodule.Service
 	AgentMemoryService         *agentmemory.Service
 	SkillRuntime               *skills.Runtime

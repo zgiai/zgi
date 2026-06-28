@@ -8,6 +8,19 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
+func TestBlockedSkillPlanningFeedbackTraceIsNotGuardrail(t *testing.T) {
+	trace := blockedSkillGuardrailTrace(skills.SkillFileReader, "read_file", "skill must be loaded before calling its tools")
+	if trace.Kind != "planner_feedback" {
+		t.Fatalf("Kind = %q, want planner_feedback", trace.Kind)
+	}
+	if trace.Status != "blocked" {
+		t.Fatalf("Status = %q, want blocked", trace.Status)
+	}
+	if trace.Arguments["next_step"] != "load_skill" {
+		t.Fatalf("next_step = %#v, want load_skill", trace.Arguments["next_step"])
+	}
+}
+
 func TestClientActionRequiredPayloadEmitsObservationForPublishEffect(t *testing.T) {
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
 	trace := skills.SkillTrace{
@@ -49,6 +62,191 @@ func TestClientActionRequiredPayloadEmitsObservationForPublishEffect(t *testing.
 	}
 	if payload["tool_id"] != "agent.publish" {
 		t.Fatalf("tool_id = %#v, want agent.publish", payload["tool_id"])
+	}
+}
+
+func TestClientActionRequiredPayloadEmitsAgentCreateNavigation(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"effect":   "created",
+			"agent_id": "agent-1",
+		},
+	}
+
+	payload := clientActionRequiredPayload(prepared, trace, "call-create")
+	if payload == nil {
+		t.Fatal("clientActionRequiredPayload() = nil, want route navigation payload")
+	}
+	if payload["action_type"] != "route_navigation" ||
+		payload["skill_id"] != skills.SkillConsoleNavigator ||
+		payload["tool_name"] != "navigate" ||
+		payload["href"] != "/console/agents/agent-1/agent" ||
+		payload["reason"] != "open_created_agent_detail" {
+		t.Fatalf("payload = %#v, want created Agent detail navigation", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadEmitsAgentDeleteNavigationFromDetailPage(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	prepared.CurrentRoute = "/console/agents/agent-1/agent"
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"effect":   "deleted",
+			"agent_id": "agent-1",
+		},
+	}
+
+	payload := clientActionRequiredPayload(prepared, trace, "call-delete")
+	if payload == nil {
+		t.Fatal("clientActionRequiredPayload() = nil, want route navigation payload")
+	}
+	if payload["action_type"] != "route_navigation" ||
+		payload["href"] != "/console/agents" ||
+		payload["reason"] != "leave_deleted_agent_detail" {
+		t.Fatalf("payload = %#v, want Agent list navigation after current detail delete", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadSkipsAgentDeleteNavigationFromListPage(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	prepared.CurrentRoute = "/console/agents"
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"effect":     "deleted",
+			"agent_id":   "agent-1",
+			"agent_name": "Old Agent",
+		},
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "agent.delete",
+				Effect:    toolgovernance.EffectDelete,
+				AssetType: "agent",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "agent.delete",
+				"effect":     "delete",
+				"asset_type": "agent",
+				"assets": []interface{}{
+					map[string]interface{}{"id": "agent-1", "type": "agent", "name": "Old Agent"},
+				},
+			},
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-delete"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for Agent list page deletion", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadSkipsFastPathAgentBatchDeleteObservation(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	prepared.CurrentRoute = "/console/agents"
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":         "completed",
+			"operation_type": "agent.delete.batch",
+			"target_count":   2,
+			"deleted_count":  2,
+			"operation_group": map[string]interface{}{
+				"operation":     "agent.delete.batch",
+				"success_count": 2,
+				"item_results": []interface{}{
+					map[string]interface{}{"status": "succeeded", "agent_name": "Agent A"},
+					map[string]interface{}{"status": "succeeded", "agent_name": "Agent B"},
+				},
+			},
+		},
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "agent.delete.batch",
+				Effect:    toolgovernance.EffectDelete,
+				AssetType: "agent",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "agent.delete.batch",
+				"effect":     "delete",
+				"asset_type": "agent",
+				"assets": []interface{}{
+					map[string]interface{}{"id": "agent-1", "type": "agent", "name": "Agent A"},
+					map[string]interface{}{"id": "agent-2", "type": "agent", "name": "Agent B"},
+				},
+			},
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-delete-agents"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil because batch item results are enough for fast-path completion", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadSkipsAgentMemorySlotClientAction(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "replace_agent_memory_slots",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"agent": map[string]interface{}{
+				"id": "agent-1",
+			},
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-memory"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for non-blocking Agent memory update", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadSkipsAgentBindingObservation(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "replace_agent_knowledge_bindings",
+		Status:   "success",
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "agent.replace_knowledge_bindings",
+				Effect:    toolgovernance.EffectUpdate,
+				AssetType: "knowledge_base",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "agent.replace_knowledge_bindings",
+				"effect":     "update",
+				"asset_type": "knowledge_base",
+				"assets": []interface{}{
+					map[string]interface{}{
+						"id":   "agent-1",
+						"type": "agent",
+						"name": "Support Agent",
+					},
+					map[string]interface{}{
+						"id":   "dataset-1",
+						"type": "knowledge_base",
+						"name": "Policies",
+					},
+				},
+			},
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-bind"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for non-blocking Agent binding update", payload)
 	}
 }
 

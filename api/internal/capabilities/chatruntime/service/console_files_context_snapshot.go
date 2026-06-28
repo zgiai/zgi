@@ -8,6 +8,36 @@ const (
 	consoleFilesContextSnapshotMaxFile = 20
 )
 
+var consoleFilesPageSnapshotMetadataKeys = []string{
+	"context_ready",
+	"files_query_status",
+	"files_query_settled",
+	"total_file_count",
+	"total_pages",
+	"current_page",
+	"page_size",
+	"visible_range_start",
+	"visible_range_end",
+	"more_pages_available",
+	"visible_file_count",
+	"selected_file_count",
+	"selected_visible_file_count",
+	"omitted_context_file_count",
+	"context_visible_limit",
+	"ordinal_scope",
+	"visible_order_basis",
+	"sort",
+	"sort_key",
+	"sort_direction",
+	"category",
+	"folder_name",
+	"search",
+	"extension_filter",
+	"workspace_id",
+	"workspace_name",
+	"organization_mode",
+}
+
 func consoleFilesContextSnapshot(parts *chatRequestParts) map[string]interface{} {
 	if parts == nil || !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		return nil
@@ -25,13 +55,65 @@ func consoleFilesContextSnapshot(parts *chatRequestParts) map[string]interface{}
 		return nil
 	}
 
-	return map[string]interface{}{
+	snapshot := map[string]interface{}{
 		"schema":        consoleFilesContextSnapshotSchema,
 		"page":          "console.files",
 		"route":         "/console/files",
 		"capabilities":  capabilities,
 		"visible_files": copyMapSlice(files),
 	}
+	for key, value := range consoleFilesPageSnapshotMetadata(parts) {
+		snapshot[key] = value
+	}
+	if _, ok := snapshot["visible_file_count"]; !ok {
+		snapshot["visible_file_count"] = len(files)
+	}
+	return snapshot
+}
+
+func consoleFilesPageSnapshotMetadata(parts *chatRequestParts) map[string]interface{} {
+	if parts == nil {
+		return nil
+	}
+	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		metadata := consoleFilesPageResourceMetadata(source)
+		if len(metadata) > 0 {
+			return metadata
+		}
+	}
+	return nil
+}
+
+func consoleFilesPageResourceMetadata(source map[string]interface{}) map[string]interface{} {
+	if len(source) == 0 {
+		return nil
+	}
+	metadata := make(map[string]interface{}, len(consoleFilesPageSnapshotMetadataKeys))
+	for _, resource := range mapSliceFromAny(source["resources"]) {
+		if !isConsoleFilesPageResource(resource) {
+			continue
+		}
+		rawMetadata := mapFromOperationContext(resource["metadata"])
+		if len(rawMetadata) == 0 {
+			continue
+		}
+		for _, key := range consoleFilesPageSnapshotMetadataKeys {
+			if _, exists := metadata[key]; exists {
+				continue
+			}
+			value, ok := rawMetadata[key]
+			if !ok {
+				continue
+			}
+			if sanitized, ok := sanitizedOperationScalar(value); ok {
+				metadata[key] = sanitized
+			}
+		}
+	}
+	if len(metadata) > 0 {
+		return metadata
+	}
+	return nil
 }
 
 func consoleFilesContextSnapshotCapabilities(parts *chatRequestParts) []interface{} {
@@ -99,6 +181,17 @@ func consoleFilesOperationContextFromSnapshot(snapshot map[string]interface{}) m
 		return nil
 	}
 
+	pageMetadata := map[string]interface{}{
+		"page":          "console.files",
+		"route":         "/console/files",
+		"resource_kind": "page",
+	}
+	for _, key := range consoleFilesPageSnapshotMetadataKeys {
+		if value, ok := snapshot[key]; ok && value != nil {
+			pageMetadata[key] = value
+		}
+	}
+
 	resources := make([]interface{}, 0, len(files)+1)
 	resources = append(resources, map[string]interface{}{
 		"resource_id":   "console.files",
@@ -106,11 +199,7 @@ func consoleFilesOperationContextFromSnapshot(snapshot map[string]interface{}) m
 		"type":          "page",
 		"title":         "console.files",
 		"href":          "/console/files",
-		"metadata": map[string]interface{}{
-			"page":          "console.files",
-			"route":         "/console/files",
-			"resource_kind": "page",
-		},
+		"metadata":      pageMetadata,
 	})
 	for _, file := range files {
 		fileID := strings.TrimSpace(firstNonEmptyString(file["file_id"], file["id"], file["resource_id"]))
@@ -215,9 +304,10 @@ func consoleFilesContextSnapshotFromApprovalEvent(event map[string]interface{}) 
 		return nil
 	}
 	return map[string]interface{}{
-		"schema": "zgi.aichat.console_files_context_snapshot.approval_fallback.v1",
-		"page":   "console.files",
-		"route":  "/console/files",
+		"schema":             "zgi.aichat.console_files_context_snapshot.approval_fallback.v1",
+		"page":               "console.files",
+		"route":              "/console/files",
+		"visible_file_count": len(files),
 		"capabilities": []interface{}{
 			map[string]interface{}{"id": "file.list_visible"},
 			map[string]interface{}{"id": "file.read"},

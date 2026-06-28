@@ -16,6 +16,7 @@ import (
 type userInputGuardState struct {
 	guard               UserInputGuard
 	toolCallGuard       ToolCallGuard
+	planToolGuard       ToolCallGuard
 	round               int
 	skillUsed           bool
 	toolCallCount       int
@@ -42,6 +43,18 @@ func (r *Runner) handleProgressiveSkillCall(
 	}
 	switch call.Function.Name {
 	case skills.MetaToolLoadSkill:
+		skillID := normalizedSkillArg(args, "skill_id")
+		if guardResult, blocked := runToolCallGuard(userInputGuard.planToolGuard, ToolCallGuardRequest{
+			SkillID:             skillID,
+			ToolName:            "",
+			Round:               userInputGuard.round,
+			SkillUsed:           userInputGuard.skillUsed,
+			ToolCallCount:       userInputGuard.toolCallCount,
+			AttemptedToolCalls:  append([]SkillToolCallRef{}, userInputGuard.attemptedToolCalls...),
+			SuccessfulToolCalls: append([]SkillToolCallRef{}, userInputGuard.successfulToolCalls...),
+		}); blocked {
+			return planToolGuardRecoverableStep(call.ID, skillID, "", nil, guardResult)
+		}
 		return r.handleLoadSkillCall(ctx, prepared, resolved, call.ID, args, loadedSkills, onEvent)
 	case skills.MetaToolReadSkillReference:
 		if _, ok := loadedSkills[normalizedSkillArg(args, "skill_id")]; !ok {
@@ -67,6 +80,18 @@ func (r *Runner) handleProgressiveSkillCall(
 		if doc, ok := resolved.Get(skillID); ok && len(doc.Tools) == 0 {
 			trace := blockedSkillGuardrailTrace(skillID, toolName, "skill does not provide callable tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false)
+		}
+		if guardResult, blocked := runToolCallGuard(userInputGuard.planToolGuard, ToolCallGuardRequest{
+			SkillID:             skillID,
+			ToolName:            toolName,
+			Arguments:           copyStringAnyMap(toolArgs),
+			Round:               userInputGuard.round,
+			SkillUsed:           userInputGuard.skillUsed,
+			ToolCallCount:       userInputGuard.toolCallCount,
+			AttemptedToolCalls:  append([]SkillToolCallRef{}, userInputGuard.attemptedToolCalls...),
+			SuccessfulToolCalls: append([]SkillToolCallRef{}, userInputGuard.successfulToolCalls...),
+		}); blocked {
+			return planToolGuardRecoverableStep(call.ID, skillID, toolName, toolArgs, guardResult)
 		}
 		if guardResult, blocked := runToolCallGuard(userInputGuard.toolCallGuard, ToolCallGuardRequest{
 			SkillID:             skillID,
@@ -101,6 +126,24 @@ func (r *Runner) handleProgressiveSkillCall(
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, or submit_intermediate_answer")), false, false)
 	}
+}
+
+func planToolGuardRecoverableStep(callID string, skillID string, toolName string, args map[string]interface{}, result FinalAnswerGuardResult) skillStepResult {
+	message := strings.TrimSpace(result.Message)
+	if message == "" {
+		message = "tool is outside the current operation plan"
+	}
+	err := fmt.Errorf("%w: %s", ErrInvalidInput, message)
+	trace := plannerFeedbackTrace(skillID, toolName, err)
+	if len(args) > 0 {
+		trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+		trace.Arguments["next_step"] = "continue_planning"
+	}
+	nextAction := strings.TrimSpace(result.SystemMessage)
+	if nextAction == "" {
+		nextAction = "continue with the pending tool from the current operation plan or answer from verified evidence"
+	}
+	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName)), false, false)
 }
 
 func (r *Runner) handleRequestUserInputCall(

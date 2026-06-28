@@ -55,10 +55,17 @@ func (s *service) persistToolGovernanceApprovalPending(ctx context.Context, prep
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
 		return metadata
 	}
-	if err := s.repos.Message.UpdateWaitingApproval(ctx, prepared.Message.ID, metadata); err != nil {
-		return metadata
-	}
-	_ = s.repos.Conversation.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+	s.persistPendingMessageAndFinishConversationBestEffort(
+		ctx,
+		prepared,
+		"tool governance approval",
+		func(repo repository.MessageRepository) error {
+			return repo.UpdateWaitingApproval(ctx, prepared.Message.ID, metadata)
+		},
+		func(repo repository.ConversationRepository) error {
+			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+		},
+	)
 	return metadata
 }
 
@@ -537,7 +544,7 @@ func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event ma
 	}
 	metadata["tool_governance_decisions"] = mapsToInterfaceSlice(records)
 
-	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	invocations := sanitizeSkillInvocationsForMetadata(skillInvocationsFromMetadata(metadata["skill_invocations"]))
 	for index, invocation := range invocations {
 		kind := strings.TrimSpace(stringFromAny(invocation["kind"]))
 		if kind == "tool_governance" {
@@ -564,6 +571,7 @@ func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event ma
 		}
 	}
 	applySkillInvocationSummary(metadata, invocations)
+	applyOperationPlanInvocationState(metadata, invocations)
 	return metadata
 }
 

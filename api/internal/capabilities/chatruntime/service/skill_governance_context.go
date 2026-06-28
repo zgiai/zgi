@@ -3,6 +3,7 @@ package service
 import (
 	"strings"
 
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -29,13 +30,15 @@ func applySkillToolGovernanceRuntimeParameters(params map[string]interface{}, pr
 		governance = map[string]interface{}{}
 	}
 	profile := buildToolGovernanceRuntimeProfile(params, prepared)
-	if strings.TrimSpace(stringMetadataValue(governance["permission_tier"])) == "" {
+	if !toolGovernancePermissionTierOverrideAllowed(prepared) {
+		governance["permission_tier"] = profile.PermissionTier
+	} else if strings.TrimSpace(stringMetadataValue(governance["permission_tier"])) == "" {
 		governance["permission_tier"] = profile.PermissionTier
 	}
-	if strings.TrimSpace(stringMetadataValue(governance["caller_type"])) == "" && profile.CallerType != "" {
+	if profile.CallerType != "" {
 		governance["caller_type"] = profile.CallerType
 	}
-	if strings.TrimSpace(stringMetadataValue(governance["runtime_surface"])) == "" && profile.RuntimeSurface != "" {
+	if profile.RuntimeSurface != "" {
 		governance["runtime_surface"] = profile.RuntimeSurface
 	}
 	if _, exists := governance["assets"]; !exists {
@@ -70,12 +73,15 @@ func buildToolGovernanceRuntimeProfile(params map[string]interface{}, prepared *
 	}
 	profile.CallerType = normalizeCallerType(prepared.Caller.Type)
 	if prepared.parts != nil {
-		profile.RuntimeSurface = normalizeAIChatSurface(prepared.parts.Surface)
+		profile.RuntimeSurface = normalizeRuntimeSurfaceForCaller(prepared.Caller, prepared.parts.Surface)
 	}
 	return profile
 }
 
 func skillToolGovernancePermissionTierFromPrepared(params map[string]interface{}, prepared *PreparedChat) string {
+	if !toolGovernancePermissionTierOverrideAllowed(prepared) {
+		return ""
+	}
 	if tier := normalizeSkillToolGovernancePermissionTier(params["tool_governance_permission_tier"]); tier != "" {
 		return tier
 	}
@@ -86,6 +92,24 @@ func skillToolGovernancePermissionTierFromPrepared(params map[string]interface{}
 		return tier
 	}
 	return skillToolGovernancePermissionTierFromOperationContext(prepared.parts.OperationContext)
+}
+
+func toolGovernancePermissionTierOverrideAllowed(prepared *PreparedChat) bool {
+	if prepared == nil {
+		return true
+	}
+	if normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAIChat {
+		return false
+	}
+	if prepared.parts == nil {
+		return true
+	}
+	switch normalizeAIChatSurface(prepared.parts.Surface) {
+	case aiChatSurfaceWorkChat, aiChatSurfaceContextualSidebar:
+		return true
+	default:
+		return false
+	}
 }
 
 func skillToolGovernancePermissionTierFromOperationContext(context map[string]interface{}) string {

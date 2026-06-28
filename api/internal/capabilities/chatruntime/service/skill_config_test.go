@@ -25,6 +25,7 @@ func (s *skillConfigWorkspacePermissionService) CheckWorkspacePermission(_ conte
 func contextualAIChatFileSkillCatalogForTest() []skills.SkillDiscoveryMetadata {
 	return []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillAgentManagement, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillFileGenerator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillFileManager, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
@@ -80,6 +81,58 @@ func contextualConsoleFilesAllCapabilityPartsForTest() *chatRequestParts {
 	return &chatRequestParts{
 		Surface:             aiChatSurfaceContextualSidebar,
 		RuntimeContext:      "route=/console/files",
+		RawOperationContext: operationContext,
+		OperationContext:    operationContext,
+	}
+}
+
+func contextualConsoleAgentsManageCapabilityPartsForTest() *chatRequestParts {
+	workspaceID := uuid.New().String()
+	operationContext := map[string]interface{}{
+		"schema":  "zgi.aichat.operation_context.v1",
+		"version": 1,
+		"resources": []interface{}{
+			map[string]interface{}{
+				"resource_type": "page",
+				"resource_id":   "console.agents",
+				"title":         "console.agents",
+				"href":          "/console/agents",
+				"capability_ids": []interface{}{
+					"agent.list_visible",
+					"agent.create_from_page",
+					"agent.update_identity",
+					"agent.delete_visible",
+				},
+				"metadata": map[string]interface{}{
+					"page":         "console.agents",
+					"route":        "/console/agents",
+					"workspace_id": workspaceID,
+				},
+			},
+			map[string]interface{}{
+				"resource_type": "agent",
+				"resource_id":   "agent-1",
+				"title":         "Support Bot",
+				"href":          "/console/agents/agent-1/agent",
+				"metadata": map[string]interface{}{
+					"resource_kind": "agent",
+					"agent_id":      "agent-1",
+					"name":          "Support Bot",
+					"agent_type":    "AGENT",
+					"workspace_id":  workspaceID,
+				},
+			},
+		},
+		"capabilities": []interface{}{
+			map[string]interface{}{"id": "agent.list_visible"},
+			map[string]interface{}{"id": "agent.create_from_page"},
+			map[string]interface{}{"id": "agent.update_identity"},
+			map[string]interface{}{"id": "agent.delete_visible"},
+		},
+	}
+	return &chatRequestParts{
+		Surface:             aiChatSurfaceContextualSidebar,
+		RuntimeContext:      "route=/console/agents",
 		RawOperationContext: operationContext,
 		OperationContext:    operationContext,
 	}
@@ -287,6 +340,22 @@ func TestAddContextualAIChatSkillIDsAddsConsoleNavigatorForSidebar(t *testing.T)
 	}
 }
 
+func TestAddContextualAIChatSkillIDsAddsAgentManagementForConsoleAgents(t *testing.T) {
+	catalog := contextualAIChatFileSkillCatalogForTest()
+	parts := contextualConsoleAgentsManageCapabilityPartsForTest()
+
+	got := addContextualAIChatSkillIDs(
+		[]string{skills.SkillCalculator},
+		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator},
+		catalog,
+		parts,
+	)
+	want := []string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("contextual agent skills = %#v, want %#v", got, want)
+	}
+}
+
 func TestAddContextualAIChatSkillIDsRespectsOrganizationDisabledUserSelectableSkill(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
@@ -312,6 +381,7 @@ func TestAddContextualAIChatSkillIDsRespectsOrganizationDisabledUserSelectableSk
 func TestAddContextualAIChatSkillIDsSkipsWorkChatSurface(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillAgentManagement, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillFileManager, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
@@ -330,6 +400,18 @@ func TestAddContextualAIChatSkillIDsSkipsWorkChatSurface(t *testing.T) {
 	want := []string{skills.SkillCalculator}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("contextual skills = %#v, want %#v", got, want)
+	}
+
+	agentParts := contextualConsoleAgentsManageCapabilityPartsForTest()
+	agentParts.Surface = aiChatSurfaceWorkChat
+	got = addContextualAIChatSkillIDs(
+		[]string{skills.SkillCalculator},
+		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator},
+		catalog,
+		agentParts,
+	)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("work chat agent skills = %#v, want %#v", got, want)
 	}
 }
 
@@ -415,6 +497,31 @@ func TestTrustedContextualAIChatSkillCapabilitiesUseWorkspacePermissions(t *test
 	}
 }
 
+func TestTrustedContextualAIChatSkillCapabilitiesUseAgentManagePermission(t *testing.T) {
+	workspaceID := uuid.New()
+	parts := contextualConsoleAgentsManageCapabilityPartsForTest()
+	resources := parts.RawOperationContext["resources"].([]interface{})
+	pageResource := resources[0].(map[string]interface{})
+	metadata := pageResource["metadata"].(map[string]interface{})
+	metadata["workspace_id"] = workspaceID.String()
+
+	permissionService := &skillConfigWorkspacePermissionService{
+		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
+			workspacemodel.WorkspacePermissionAgentView:   true,
+			workspacemodel.WorkspacePermissionAgentManage: true,
+		},
+	}
+	got := (&service{workspacePerms: permissionService}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
+		OrganizationID: uuid.New(),
+		AccountID:      uuid.New(),
+		WorkspaceID:    &workspaceID,
+	}, parts)
+	want := contextualAIChatSkillCapabilities{Navigation: true, AgentRead: true, AgentManage: true}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("trusted contextual agent capabilities = %#v, want %#v", got, want)
+	}
+}
+
 func TestTrustedContextualAIChatSkillCapabilitiesUsesOperationContextWorkspace(t *testing.T) {
 	workspaceID := uuid.New()
 	parts := contextualConsoleFilesAllCapabilityPartsForTest()
@@ -442,7 +549,7 @@ func TestTrustedContextualAIChatSkillCapabilitiesUsesOperationContextWorkspace(t
 
 func TestFilterAIChatSkillIDsForSurfaceRemovesNavigatorOutsideSidebar(t *testing.T) {
 	got := filterAIChatSkillIDsForSurface(
-		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileManager, skills.SkillFileReader},
+		[]string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileManager, skills.SkillFileReader},
 		&chatRequestParts{Surface: aiChatSurfaceWorkChat},
 	)
 	want := []string{skills.SkillCalculator, skills.SkillFileReader}
@@ -451,7 +558,7 @@ func TestFilterAIChatSkillIDsForSurfaceRemovesNavigatorOutsideSidebar(t *testing
 	}
 
 	contextual := filterAIChatSkillIDsForSurface(
-		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileManager},
+		[]string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileManager},
 		&chatRequestParts{Surface: aiChatSurfaceContextualSidebar},
 	)
 	wantContextual := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
@@ -460,7 +567,7 @@ func TestFilterAIChatSkillIDsForSurfaceRemovesNavigatorOutsideSidebar(t *testing
 	}
 
 	unknownSurface := filterAIChatSkillIDsForSurface(
-		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileManager, skills.SkillFileReader},
+		[]string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileManager, skills.SkillFileReader},
 		nil,
 	)
 	if !reflect.DeepEqual(unknownSurface, want) {
@@ -471,6 +578,7 @@ func TestFilterAIChatSkillIDsForSurfaceRemovesNavigatorOutsideSidebar(t *testing
 func TestFilterAIChatSkillIDsForSurfaceRemovesSystemAssetSkillsFromExternalPageChat(t *testing.T) {
 	got := filterAIChatSkillIDsForSurface(
 		[]string{
+			skills.SkillAgentManagement,
 			skills.SkillCalculator,
 			skills.SkillConsoleNavigator,
 			skills.SkillFileGenerator,
@@ -493,6 +601,24 @@ func TestNormalizeAIChatSurfaceMapsExternalPageAliases(t *testing.T) {
 		if got := normalizeAIChatSurface(raw); got != aiChatSurfaceExternalPageChat {
 			t.Fatalf("normalizeAIChatSurface(%q) = %q, want %q", raw, got, aiChatSurfaceExternalPageChat)
 		}
+	}
+}
+
+func TestNormalizeRuntimeSurfaceForCallerForcesAgentExternalPageChat(t *testing.T) {
+	got := normalizeRuntimeSurfaceForCaller(
+		Caller{Type: runtimemodel.ConversationCallerAgent},
+		aiChatSurfaceContextualSidebar,
+	)
+	if got != aiChatSurfaceExternalPageChat {
+		t.Fatalf("agent runtime surface = %q, want %q", got, aiChatSurfaceExternalPageChat)
+	}
+
+	aichat := normalizeRuntimeSurfaceForCaller(
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		aiChatSurfaceContextualSidebar,
+	)
+	if aichat != aiChatSurfaceContextualSidebar {
+		t.Fatalf("aichat runtime surface = %q, want %q", aichat, aiChatSurfaceContextualSidebar)
 	}
 }
 
@@ -774,6 +900,26 @@ func TestSkillRuntimeParametersForPreparedAddsConsoleFilesVisibleFiles(t *testin
 	}
 }
 
+func TestSkillRuntimeParametersForPreparedAddsConsoleAgentsVisibleAgents(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		parts:     contextualConsoleAgentsManageCapabilityPartsForTest(),
+	}
+
+	params := skillRuntimeParametersForPrepared(prepared)
+	if params["console_agents_page"] != true {
+		t.Fatalf("console_agents_page = %#v, want true", params["console_agents_page"])
+	}
+	agents, ok := params["console_agents_visible_agents"].([]map[string]interface{})
+	if !ok || len(agents) != 1 {
+		t.Fatalf("console_agents_visible_agents = %#v, want one visible agent", params["console_agents_visible_agents"])
+	}
+	if agents[0]["agent_id"] != "agent-1" || agents[0]["name"] != "Support Bot" || agents[0]["type"] != "agent" {
+		t.Fatalf("visible agent = %#v, want agent-1 named Support Bot", agents[0])
+	}
+}
+
 func TestSkillRuntimeParametersForPreparedAddsOrdinalFileGovernanceAsset(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},
@@ -895,14 +1041,38 @@ func TestSkillRuntimeParametersForPreparedIncludesToolGovernanceProfileScope(t *
 	}
 
 	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
-	if governance["permission_tier"] != "advanced" {
-		t.Fatalf("permission_tier = %#v, want advanced", governance["permission_tier"])
+	if governance["permission_tier"] != "basic" {
+		t.Fatalf("permission_tier = %#v, want basic", governance["permission_tier"])
 	}
 	if governance["caller_type"] != runtimemodel.ConversationCallerAgent {
 		t.Fatalf("caller_type = %#v, want agent", governance["caller_type"])
 	}
-	if governance["runtime_surface"] != aiChatSurfaceContextualSidebar {
-		t.Fatalf("runtime_surface = %#v, want contextual_sidebar", governance["runtime_surface"])
+	if governance["runtime_surface"] != aiChatSurfaceExternalPageChat {
+		t.Fatalf("runtime_surface = %#v, want external_page_chat", governance["runtime_surface"])
+	}
+}
+
+func TestSkillRuntimeParametersForPreparedForcesBasicPermissionTierForExternalPageChat(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		Caller:    Caller{Type: runtimemodel.ConversationCallerAIChat},
+		RunConfig: RunConfig{},
+		parts: &chatRequestParts{
+			Surface: aiChatSurfaceExternalPageChat,
+			RawOperationContext: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "full",
+				},
+			},
+		},
+	}
+
+	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
+	if governance["permission_tier"] != "basic" {
+		t.Fatalf("permission_tier = %#v, want basic", governance["permission_tier"])
+	}
+	if governance["runtime_surface"] != aiChatSurfaceExternalPageChat {
+		t.Fatalf("runtime_surface = %#v, want external_page_chat", governance["runtime_surface"])
 	}
 }
 
@@ -1008,15 +1178,19 @@ func TestAgentWorkflowAvailableBindingsMessageInjectsSafeContext(t *testing.T) {
 	}
 }
 
-func TestVisibleSkillMetadataHidesRuntimeManagedSkills(t *testing.T) {
+func TestVisibleSkillMetadataHidesNonUserSelectableSystemSkills(t *testing.T) {
 	metadata := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillInternalKnowledge},
+		{ID: skills.SkillInternalDatabase},
+		{ID: skills.SkillAgentManagement},
 		{ID: skills.SkillAgentKnowledge},
 		{ID: skills.SkillAgentDatabase},
 		{ID: skills.SkillAgentWorkflow},
 		{ID: skills.SkillAgentMemory},
 		{ID: skills.SkillUserMemory},
+		{ID: skills.SkillConsoleNavigator},
 		{ID: skills.SkillFileManager},
+		{ID: skills.SkillFileReader},
 		{ID: skills.SkillCalculator},
 	}
 
@@ -1025,7 +1199,7 @@ func TestVisibleSkillMetadataHidesRuntimeManagedSkills(t *testing.T) {
 	for _, item := range got {
 		gotIDs = append(gotIDs, item.ID)
 	}
-	want := []string{skills.SkillInternalKnowledge, skills.SkillCalculator}
+	want := []string{skills.SkillFileReader, skills.SkillCalculator}
 	if !reflect.DeepEqual(gotIDs, want) {
 		t.Fatalf("visibleSkillMetadata ids = %#v, want %#v", gotIDs, want)
 	}
@@ -1173,6 +1347,62 @@ func TestProcessTimelineRecorderDoesNotDuplicateStreamBackedTrace(t *testing.T) 
 	invocations, ok := prepared.Message.Metadata["skill_invocations"].([]interface{})
 	if !ok || len(invocations) != 1 {
 		t.Fatalf("skill_invocations = %#v, want one invocation", prepared.Message.Metadata["skill_invocations"])
+	}
+}
+
+func TestProcessTimelineRecorderAvoidsRuntimeIDCollisionAcrossContinuations(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	firstRecorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+	firstRecorder.RecordEvent(streamEventSkillCallStart, map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"skill_id":        skills.SkillConsoleNavigator,
+		"tool_name":       "navigate",
+		"created_at":      int64(100),
+	})
+	firstRecorder.RecordEvent(streamEventSkillCallEnd, map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"skill_id":        skills.SkillConsoleNavigator,
+		"tool_name":       "navigate",
+		"status":          "success",
+		"created_at":      int64(101),
+		"result":          map[string]interface{}{"href": "/console/files"},
+	})
+
+	continuationRecorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+	continuationRecorder.RecordEvent(streamEventSkillCallStart, map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"skill_id":        skills.SkillConsoleNavigator,
+		"tool_name":       "navigate",
+		"created_at":      int64(200),
+	})
+	continuationRecorder.RecordEvent(streamEventSkillCallEnd, map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"skill_id":        skills.SkillConsoleNavigator,
+		"tool_name":       "navigate",
+		"status":          "success",
+		"created_at":      int64(201),
+		"result":          map[string]interface{}{"href": "/console/agents"},
+	})
+
+	invocations := skillInvocationsFromMetadata(prepared.Message.Metadata["skill_invocations"])
+	if len(invocations) != 2 {
+		t.Fatalf("skill_invocations = %#v, want two separate navigate invocations", prepared.Message.Metadata["skill_invocations"])
+	}
+	if got := stringFromAny(invocations[0]["runtime_id"]); got != "tool_call:console-navigator:navigate::#1" {
+		t.Fatalf("first runtime_id = %q, want #1", got)
+	}
+	if got := stringFromAny(invocations[1]["runtime_id"]); got != "tool_call:console-navigator:navigate::#2" {
+		t.Fatalf("second runtime_id = %q, want #2", got)
+	}
+	if href := stringFromAny(governanceMapFromAny(invocations[0]["result"])["href"]); href != "/console/files" {
+		t.Fatalf("first href = %q, want /console/files", href)
+	}
+	if href := stringFromAny(governanceMapFromAny(invocations[1]["result"])["href"]); href != "/console/agents" {
+		t.Fatalf("second href = %q, want /console/agents", href)
 	}
 }
 

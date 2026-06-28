@@ -66,6 +66,13 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	}
 }
 
+func applyCallerRuntimeSurfacePolicy(caller Caller, parts *chatRequestParts) {
+	if parts == nil {
+		return
+	}
+	parts.Surface = normalizeRuntimeSurfaceForCaller(caller, parts.Surface)
+}
+
 func runConfigAllowsUserMemory(config RunConfig) bool {
 	return config.UseMemory && !strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent)
 }
@@ -250,6 +257,7 @@ func regenerateRequestSurface(req runtimedto.RegenerateMessageRequest, message *
 func replacementRootMessage(source *runtimemodel.Message, parts *chatRequestParts) *runtimemodel.Message {
 	message := newStreamingMessage(source.ConversationID, nil, parts)
 	message.ID = source.ID
+	message.Metadata = withOperationPlanTaskID(message.Metadata, source.ID.String())
 	message.CreatedAt = source.CreatedAt
 	message.UpdatedAt = time.Now()
 	return message
@@ -276,7 +284,9 @@ func newStreamingMessage(conversationID uuid.UUID, parentID *uuid.UUID, parts *c
 	if strings.TrimSpace(parts.BillingSource) != "" {
 		billingReasonSource = strings.TrimSpace(parts.BillingSource)
 	}
+	messageID := uuid.New()
 	return &runtimemodel.Message{
+		ID:                  messageID,
 		ConversationID:      conversationID,
 		ParentID:            parentID,
 		Query:               parts.Query,
@@ -285,11 +295,15 @@ func newStreamingMessage(conversationID uuid.UUID, parentID *uuid.UUID, parts *c
 		ModelName:           parts.ModelName,
 		BillingReasonSource: &billingReasonSource,
 		ModelParameters:     parts.Parameters,
-		Metadata:            streamingMessageMetadata(parts),
+		Metadata:            streamingMessageMetadataWithTaskID(parts, messageID.String()),
 	}
 }
 
 func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
+	return streamingMessageMetadataWithTaskID(parts, "")
+}
+
+func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) map[string]interface{} {
 	version := systemPromptVersion
 	if strings.TrimSpace(parts.SystemPromptVersion) != "" {
 		version = strings.TrimSpace(parts.SystemPromptVersion)
@@ -325,6 +339,9 @@ func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
 	}
 	if strategy := contextualAIChatTurnStrategyFromParts(parts); strategy != nil {
 		metadata["turn_strategy"] = strategy
+		if plan := operationPlanFromTurnStrategy(taskID, parts, strategy); len(plan) > 0 {
+			metadata["operation_plan"] = plan
+		}
 	}
 	if snapshot := consoleFilesContextSnapshot(parts); snapshot != nil {
 		metadata[consoleFilesContextSnapshotKey] = snapshot
@@ -347,6 +364,13 @@ func normalizeAIChatSurface(value string) string {
 	default:
 		return aiChatSurfaceWorkChat
 	}
+}
+
+func normalizeRuntimeSurfaceForCaller(caller Caller, surface string) string {
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+		return aiChatSurfaceExternalPageChat
+	}
+	return normalizeAIChatSurface(surface)
 }
 
 func isContextualAIChatSurface(value string) bool {

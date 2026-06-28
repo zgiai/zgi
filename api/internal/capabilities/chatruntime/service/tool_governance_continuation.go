@@ -79,10 +79,12 @@ func (s *service) failToolGovernanceContinuation(ctx context.Context, continuati
 	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil || cause == nil {
 		return
 	}
-	s.finalizePreparedError(ctx, &PreparedChat{
+	prepared := &PreparedChat{
 		Conversation: continuation.Conversation,
 		Message:      continuation.Message,
-	}, cause, onEvent)
+	}
+	s.finalizePreparedError(ctx, prepared, cause, onEvent)
+	s.emitPreparedEvent(ctx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, continuation.Message.Metadata, runtimemodel.MessageStatusError), onEvent)
 }
 
 func (s *service) beginToolGovernanceContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, correlationID string) (*ToolGovernanceContinuation, error) {
@@ -208,7 +210,7 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		return result, nil
 	}
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceApprovalContinuationMessage(event))
-	answer, usage, err := s.runPreparedSkillStreamWithFinalAnswerGuard(ctx, context.WithoutCancel(ctx), prepared, nil, onEvent, toolGovernanceApprovedFinalAnswerGuard(event))
+	answer, usage, err := s.runPreparedSkillStreamWithCompletionVerifier(ctx, context.WithoutCancel(ctx), prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
@@ -257,8 +259,9 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if prepared.parts == nil {
 		return nil, true, fmt.Errorf("%w: prepared chat parts are required", ErrInvalidInput)
 	}
-	if frozen.SkillID == skills.SkillFileManager {
-		prepared.parts.SkillIDs = ensureSkillID(prepared.parts.SkillIDs, skills.SkillFileManager)
+	prepared.parts.SkillIDs = ensureFrozenInvocationSkillID(prepared.parts.SkillIDs, frozen.SkillID)
+	if len(prepared.parts.SkillIDs) > 0 {
+		prepared.parts.SkillMode = skillModeAuto
 	}
 
 	custom, err := s.customSkillCatalogEntries(ctx, prepared.Scope.OrganizationID)
@@ -310,6 +313,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 			invocation = recoverableFrozenInvocationFailure(invocation, frozen, args, callID, executionErr)
 			timeline.RecordInvocationError(invocation.Trace)
 		} else {
+			invocation.Trace = enrichSkillTraceResultFromMessages(invocation.Trace, invocation.Messages)
 			timeline.RecordInvocationEnd(invocation.Trace)
 			for _, artifact := range skillArtifactsFromToolMessages(prepared, invocation.Trace, invocation.Messages) {
 				s.persistGeneratedArtifactBestEffort(persistCtx, prepared, artifact)
@@ -322,6 +326,49 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 				return &ChatResult{Answer: "", Metadata: metadata, Usage: nil, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
 			}
 		}
+	}
+
+	if invocation != nil {
+		ensureOperationPlanInvocationStep(prepared.Message.Metadata, skillInvocationFromTrace(invocation.Trace, 0))
+		if answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, invocation.Trace); ok {
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessage, map[string]interface{}{
+				"conversation_id": prepared.Conversation.ID.String(),
+				"message_id":      prepared.Message.ID.String(),
+				"answer":          answer,
+			}, onEvent)
+			metadata := preparedResultMetadata(prepared.Message.Metadata, nil)
+			if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
+				return nil, true, err
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: nil, Status: runtimemodel.MessageStatusCompleted}, true, nil
+		}
+	}
+
+	if toolGovernanceFrozenContinuationNeedsSkillLoop(prepared) {
+		prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr))
+		answer, usage, err := s.runPreparedSkillStreamWithCompletionVerifier(ctx, persistCtx, prepared, nil, onEvent)
+		if err != nil {
+			var pendingGovernance *skillloop.ToolGovernancePendingError
+			if errors.As(err, &pendingGovernance) {
+				metadata := s.persistToolGovernanceApprovalPending(persistCtx, prepared, pendingGovernance.Payload, usage)
+				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, true, nil
+			}
+			var pendingClientAction *skillloop.ClientActionPendingError
+			if errors.As(err, &pendingClientAction) {
+				metadata := s.persistClientActionPending(persistCtx, prepared, pendingClientAction.Payload, usage)
+				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
+			}
+			return nil, true, err
+		}
+		metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
+		if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
+			return nil, true, err
+		}
+		s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, true, nil
 	}
 
 	prepared.LLMRequest = toolGovernanceExecutionResultLLMRequest(prepared.Message, event, invocation, executionErr)
@@ -339,6 +386,23 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	}
 	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, true, nil
+}
+
+func toolGovernanceFrozenFastPathAnswer(prepared *PreparedChat, trace skills.SkillTrace) (string, bool) {
+	if prepared == nil || prepared.Message == nil {
+		return skillloop.FastPathFinalAnswerForToolTrace(trace)
+	}
+	return skillloop.FastPathFinalAnswerForToolTraceWithEvidence(trace, skillLoopCompletionEvidence(prepared)())
+}
+
+func toolGovernanceFrozenContinuationNeedsSkillLoop(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.parts == nil || prepared.Message == nil {
+		return false
+	}
+	if len(mapFromOperationContext(prepared.Message.Metadata["operation_plan"])) > 0 {
+		return true
+	}
+	return len(managedFileCreateMissingSaveTargets(prepared.parts, prepared.Message.Metadata, nil)) > 0
 }
 
 func remapLegacyFileDeleteFrozenInvocation(frozen toolgovernance.FrozenInvocation) toolgovernance.FrozenInvocation {
@@ -360,6 +424,10 @@ func ensureSkillID(skillIDs []string, skillID string) []string {
 	}
 	out := append(append([]string(nil), skillIDs...), id)
 	return out
+}
+
+func ensureFrozenInvocationSkillID(skillIDs []string, skillID string) []string {
+	return ensureSkillID(skillIDs, skillID)
 }
 
 func recoverableFrozenInvocationFailure(
@@ -506,6 +574,51 @@ func toolGovernanceExecutionResultLLMRequest(
 		applyModelParameters(chatReq, message.ModelParameters)
 	}
 	return chatReq
+}
+
+func toolGovernanceFrozenExecutionContinuationMessage(
+	message *runtimemodel.Message,
+	event map[string]interface{},
+	invocation *skills.ToolInvocationResult,
+	executionErr error,
+) adapter.Message {
+	userQuery := ""
+	if message != nil {
+		userQuery = strings.TrimSpace(message.Query)
+	}
+	operationSummary := toolGovernanceModelVisibleOperationSummary(event, invocation)
+	toolResult := toolGovernanceModelVisibleToolResult(event, invocation, executionErr)
+	outcome := "The user approved the pending governed tool call, and the runtime has already executed the frozen invocation exactly once."
+	systemPrompt := strings.Join([]string{
+		"You are continuing the same AIChat turn after a governed tool call was approved and executed by runtime.",
+		"Do not repeat the same approved tool call with the same arguments.",
+		"Treat the model-visible runtime result as authoritative completed state.",
+		"Continue any remaining user-requested steps using the available skills and current page context.",
+		"If all requested work is complete, answer in the user's language.",
+		"For successful file actions, mention only the file name and action result.",
+		"Do not expose internal IDs, UUIDs, workspace identifiers, correlation values, raw JSON field names, or tool count fields.",
+	}, " ")
+	if executionErr != nil {
+		outcome = "The user approved the pending governed tool call, and the runtime attempted to execute the frozen invocation exactly once, but it failed."
+		systemPrompt = strings.Join([]string{
+			"You are continuing the same AIChat turn after a governed tool call was approved and attempted by runtime.",
+			"Do not repeat the same side-effecting operation unless the failure feedback says it is safely retryable.",
+			"Treat the model-visible runtime result and failure feedback as authoritative.",
+			"Explain the failure plainly and decide the next safe step.",
+			"Do not claim the operation succeeded.",
+			"Do not expose internal IDs, UUIDs, workspace identifiers, correlation values, raw JSON field names, or tool count fields.",
+		}, " ")
+	}
+	contentParts := []string{
+		"Original user request:\n" + userQuery,
+		outcome,
+		"Approved operation summary JSON:\n" + compactJSON(operationSummary),
+		"Model-visible runtime result JSON:\n" + compactJSON(toolResult),
+	}
+	if executionErr != nil {
+		contentParts = append(contentParts, "Runtime failure feedback:\n"+toolGovernanceSafeErrorText(event, invocation, executionErr))
+	}
+	return adapter.Message{Role: "system", Content: systemPrompt + "\n\n" + strings.Join(contentParts, "\n\n")}
 }
 
 func toolGovernanceModelVisibleOperationSummary(event map[string]interface{}, invocation *skills.ToolInvocationResult) map[string]interface{} {
@@ -991,34 +1104,6 @@ func toolGovernanceApprovedAssetInstructions(event map[string]interface{}) []str
 		lines = append(lines, "For this approved governed operation, call "+skillID+"/"+toolName+" with "+targetIDInstruction+" before answering.")
 	}
 	return lines
-}
-
-func toolGovernanceApprovedFinalAnswerGuard(event map[string]interface{}) skillloop.FinalAnswerGuard {
-	approvalEvent := toolGovernanceApprovalEventFromEvent(event)
-	if len(approvalEvent) == 0 {
-		return nil
-	}
-	skillID, toolName, _ := toolGovernanceApprovedToolRef(event, approvalEvent)
-	if skillID == "" || toolName == "" {
-		return nil
-	}
-	targetSummary := approvedGovernanceAssetSummary(approvalEvent, event)
-	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		if finalAnswerGuardHasSuccessfulTool(req, skillID, toolName) ||
-			finalAnswerGuardHasAttemptedTool(req, skillID, toolName) {
-			return skillloop.FinalAnswerGuardResult{}, false
-		}
-		return skillloop.FinalAnswerGuardResult{
-			SkillID:  skillID,
-			ToolName: toolName,
-			Message: strings.Join([]string{
-				"The user approved the pending governed tool call, but approval is not the operation itself.",
-				"Before producing a final answer, retry the approved call with call_skill_tool using skill_id \"" + skillID + "\" and tool_name \"" + toolName + "\".",
-				"Use the approved asset id for " + targetSummary + " when the tool needs a target.",
-				"Only after " + toolName + " is attempted in this continuation may you report the actual outcome.",
-			}, " "),
-		}, true
-	}
 }
 
 func toolGovernanceApprovedToolRef(event map[string]interface{}, approvalEvent map[string]interface{}) (string, string, string) {

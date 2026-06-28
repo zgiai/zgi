@@ -92,9 +92,17 @@ Use this skill to list visible file context or read content from a file that has
 
 - `file_id`: required file ID from resolved context.
 - `max_chars`: optional maximum returned content characters. Defaults to 4000 and is capped at 12000.
+- Success evidence: the tool result must identify the resolved file and include `content_status`. Use `content` only when `content_status=extracted`. If `content_status=empty`, report that no extractable text was found. If `content_status=error`, report the actual read failure instead of summarizing from filename or page metadata.
 
 `list_visible_files` accepts no parameters and returns:
 
 - `count`: number of visible files supplied by the current page context.
 - `selected_count`: number of selected files.
 - `files`: ordered visible files with `visible_index`, `file_id`, `name`, `extension`, `mime_type`, optional `workspace_id`, and optional `selected`.
+- Success evidence: use the returned `files` list and `count` as the current visible-file state. Do not infer file contents from this list-only result.
+
+## Truthfulness Contract
+
+- Treat file-reader results as authoritative. Do not answer from stale visible page metadata when a `read_file` result is required.
+- If the target cannot be resolved or read, say so directly and ask for a narrower target only when the available context cannot identify the file.
+- Retry at most once with corrected `file_id` or `max_chars` when the tool result indicates a recoverable issue.

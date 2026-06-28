@@ -22,6 +22,7 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	builtinconsolenavigation "github.com/zgiai/zgi/api/internal/modules/tools/builtin/consolenavigation"
 	builtinfiles "github.com/zgiai/zgi/api/internal/modules/tools/builtin/files"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
@@ -326,11 +327,11 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if err != nil {
 		t.Fatalf("RunToolGovernanceDecisionStream() error = %v", err)
 	}
-	if result.Status != runtimemodel.MessageStatusWaitingClientAction {
-		t.Fatalf("result status = %q, want waiting_client_action", result.Status)
+	if result.Status != runtimemodel.MessageStatusCompleted {
+		t.Fatalf("result status = %q, want completed", result.Status)
 	}
-	if result.Answer != "" {
-		t.Fatalf("result answer = %q, want empty answer before client observation", result.Answer)
+	if result.Answer != "已删除文件「report.pdf」。" {
+		t.Fatalf("result answer = %q, want fast-path delete confirmation", result.Answer)
 	}
 	if len(fileService.deleted) != 1 || fileService.deleted[0] != "file-1" {
 		t.Fatalf("deleted files = %#v, want one delete for approved file-1", fileService.deleted)
@@ -342,7 +343,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 		t.Fatalf("AppChat requests = %d, want no model tool-planning calls", len(llm.appChatRequests))
 	}
 	if len(llm.streamRequests) != 0 {
-		t.Fatalf("AppChatStream requests = %d, want no summary call before client observation", len(llm.streamRequests))
+		t.Fatalf("AppChatStream requests = %d, want no summary call after fast path", len(llm.streamRequests))
 	}
 
 	metadataEvent, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, "corr-approve")
@@ -367,12 +368,9 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileManager, "delete_file", "success") {
 		t.Fatalf("metadata skill_invocations = %#v, want successful file-manager/delete_file tool call", message.Metadata["skill_invocations"])
 	}
-	if !toolGovernanceStreamHasInvocation(message.Metadata, "client_action", skills.SkillFileManager, "delete_file", "waiting_client_action") {
-		t.Fatalf("metadata skill_invocations = %#v, want waiting client action for delete_file", message.Metadata["skill_invocations"])
-	}
 	clientAction := governanceMapFromAny(message.Metadata["client_action_continuation"])
-	if clientAction["status"] != clientActionStatusWaiting || clientAction["action_type"] != "asset_observation" {
-		t.Fatalf("client_action_continuation = %#v, want waiting asset observation", clientAction)
+	if len(clientAction) != 0 {
+		t.Fatalf("client_action_continuation = %#v, want no asset observation when delete fast path completes", clientAction)
 	}
 	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
 	if continuation["status"] != "approved" || continuation["approval_status"] != "approved" {
@@ -381,7 +379,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	assertToolGovernanceApprovedStreamEvents(t, events)
 }
 
-func TestRunClientActionContinuationStreamAssetObservationFinalizesWithoutTools(t *testing.T) {
+func TestRunClientActionContinuationStreamAssetObservationUsesVerifierWithoutRepeatingTools(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -434,8 +432,12 @@ func TestRunClientActionContinuationStreamAssetObservationFinalizesWithoutTools(
 		UpdatedAt:       now,
 	}
 	runtime := newToolGovernanceStreamSkillRuntime(t, &toolGovernanceStreamFileService{}, &toolGovernanceStreamWorkspacePermissionService{allowed: true})
+	finalAnswer := "已确认 report.pdf 已从当前页面消失。"
 	llm := &toolGovernanceStreamLLM{
-		streamChunks: []string{"已确认 report.pdf 已从当前页面消失。"},
+		appChatResponses: []*adapter.ChatResponse{
+			toolGovernanceStreamChatResponse(finalAnswer),
+			toolGovernanceStreamChatResponse(`{"status":"pass","reason":"client action observation confirms the file is gone","unsupported_claims":[],"missing_steps":[],"next_action_hint":"","final_answer":"","final_answer_guidance":""}`),
+		},
 	}
 	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
 	conversationRepo := &toolGovernanceStreamConversationRepo{conversation: conversation}
@@ -483,21 +485,20 @@ func TestRunClientActionContinuationStreamAssetObservationFinalizesWithoutTools(
 	if result.Status != runtimemodel.MessageStatusCompleted {
 		t.Fatalf("result status = %q, want completed", result.Status)
 	}
-	if result.Answer != "已确认 report.pdf 已从当前页面消失。" {
+	if result.Answer != finalAnswer {
 		t.Fatalf("result answer = %q", result.Answer)
 	}
-	if len(llm.appChatRequests) != 0 {
-		t.Fatalf("AppChat planning requests = %d, want no skill loop replanning after asset observation", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 2 {
+		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))
 	}
-	if len(llm.streamRequests) != 1 {
-		t.Fatalf("AppChatStream requests = %d, want one final answer request", len(llm.streamRequests))
+	if len(llm.streamRequests) != 0 {
+		t.Fatalf("AppChatStream requests = %d, want completion-verifier skill loop to suppress direct final streaming", len(llm.streamRequests))
 	}
-	streamReq := llm.streamRequests[0]
-	if len(streamReq.Tools) != 0 || len(streamReq.Functions) != 0 || streamReq.ToolChoice != nil || streamReq.FunctionCall != nil {
-		t.Fatalf("client action final request tools = %#v functions = %#v tool_choice = %#v function_call = %#v, want none", streamReq.Tools, streamReq.Functions, streamReq.ToolChoice, streamReq.FunctionCall)
+	if !toolGovernanceStreamRequestContains(llm.appChatRequests[0], "do not repeat the same side-effecting tool") {
+		t.Fatalf("skill-loop continuation request missing client action safety instruction: %q", toolGovernanceStreamRequestText(llm.appChatRequests[0]))
 	}
-	if !toolGovernanceStreamRequestContains(streamReq, "do not repeat the same side-effecting tool") {
-		t.Fatalf("client action final request missing continuation safety instruction: %q", toolGovernanceStreamRequestText(streamReq))
+	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "completion post-verifier") {
+		t.Fatalf("second AppChat request = %q, want completion verifier", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
 	}
 	if !messageRepo.updateCompletedCalled {
 		t.Fatal("UpdateCompleted was not called")
@@ -511,6 +512,241 @@ func TestRunClientActionContinuationStreamAssetObservationFinalizesWithoutTools(
 	for _, event := range events {
 		if event.EventType == streamEventSkillCallStart {
 			t.Fatalf("events = %#v, want no skill call after asset observation", events)
+		}
+	}
+}
+
+func TestBeginClientActionContinuationRejectsDuplicateAfterClaim(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	provider := "deepseek"
+	actionID := "route_navigation:open-files"
+	now := time.Now().UTC()
+	event := map[string]interface{}{
+		"action_id":   actionID,
+		"action_type": "route_navigation",
+		"status":      clientActionStatusWaiting,
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+		"href":        "/console/files",
+	}
+	metadata := mergeClientActionMetadata(map[string]interface{}{
+		"surface": "contextual_sidebar",
+	}, event)
+	metadata["client_action_continuation"] = compactSkillInvocation(event)
+	conversation := &runtimemodel.Conversation{
+		ID:                   conversationID,
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		CallerType:           runtimemodel.ConversationCallerAIChat,
+		Title:                "Files",
+		Status:               runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
+		CurrentLeafMessageID: &messageID,
+		Metadata:             map[string]interface{}{},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	message := &runtimemodel.Message{
+		ID:              messageID,
+		ConversationID:  conversationID,
+		Query:           "Open files",
+		Status:          runtimemodel.MessageStatusWaitingClientAction,
+		ModelProvider:   &provider,
+		ModelName:       "deepseek-chat",
+		ModelParameters: map[string]interface{}{},
+		Metadata:        metadata,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Access:       toolGovernanceStreamAccessRepo{},
+			Conversation: &toolGovernanceStreamConversationRepo{conversation: conversation},
+			Message:      &toolGovernanceStreamMessageRepo{message: message},
+		},
+	}
+
+	first, err := svc.beginClientActionContinuation(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		actionID,
+	)
+	if err != nil {
+		t.Fatalf("first beginClientActionContinuation() error = %v", err)
+	}
+	if first == nil || message.Status != runtimemodel.MessageStatusStreaming {
+		t.Fatalf("first continuation did not claim message, status = %q", message.Status)
+	}
+
+	duplicate, err := svc.beginClientActionContinuation(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		actionID,
+	)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("duplicate beginClientActionContinuation() error = %v, want ErrInvalidInput", err)
+	}
+	if duplicate != nil {
+		t.Fatalf("duplicate continuation = %#v, want nil", duplicate)
+	}
+}
+
+func TestRunClientActionContinuationStreamAgentUpdatedRouteUsesVerifierWithoutRepeatingTools(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	provider := "deepseek"
+	now := time.Now().UTC()
+	actionID := "route_navigation:update-agent-config"
+	event := map[string]interface{}{
+		"action_id":   actionID,
+		"action_type": "route_navigation",
+		"status":      clientActionStatusWaiting,
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+		"href":        "/console/agents/agent-1/agent",
+		"label":       "Agent detail",
+		"reason":      "open_updated_agent_detail",
+		"result": map[string]interface{}{
+			"event_type": "page_navigation_requested",
+			"href":       "/console/agents/agent-1/agent",
+			"label":      "Agent detail",
+			"reason":     "open_updated_agent_detail",
+		},
+	}
+	metadata := mergeClientActionMetadata(map[string]interface{}{
+		"surface":              "contextual_sidebar",
+		"configured_skill_ids": []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"status":    "success",
+				"result": map[string]interface{}{
+					"agent_id":       "agent-1",
+					"agent_name":     "Test Agent",
+					"model_provider": "deepseek",
+					"model":          "deepseek-chat",
+					"href":           "/console/agents/agent-1/agent",
+				},
+			},
+		},
+	}, event)
+	metadata["client_action_continuation"] = compactSkillInvocation(event)
+
+	conversation := &runtimemodel.Conversation{
+		ID:                   conversationID,
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		CallerType:           runtimemodel.ConversationCallerAIChat,
+		Title:                "Agent",
+		Status:               runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
+		CurrentLeafMessageID: &messageID,
+		Metadata:             map[string]interface{}{},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	message := &runtimemodel.Message{
+		ID:              messageID,
+		ConversationID:  conversationID,
+		Query:           "Replace the current Agent model with DeepSeek-Chat (V3)",
+		Status:          runtimemodel.MessageStatusWaitingClientAction,
+		ModelProvider:   &provider,
+		ModelName:       "deepseek-chat",
+		ModelParameters: map[string]interface{}{},
+		Metadata:        metadata,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	finalAnswer := "已确认模型已更新为 DeepSeek-Chat (V3)。"
+	llm := &toolGovernanceStreamLLM{
+		appChatResponses: []*adapter.ChatResponse{
+			toolGovernanceStreamChatResponse(finalAnswer),
+			toolGovernanceStreamChatResponse(`{"status":"pass","reason":"agent update tool result and route refresh are present in the ledger","unsupported_claims":[],"missing_steps":[],"next_action_hint":"","final_answer":"","final_answer_guidance":""}`),
+		},
+	}
+	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
+	conversationRepo := &toolGovernanceStreamConversationRepo{conversation: conversation}
+	svc := NewServiceWithSkillRuntime(
+		&repository.Repositories{
+			Access:       toolGovernanceStreamAccessRepo{},
+			Conversation: conversationRepo,
+			Message:      messageRepo,
+			SkillConfig:  toolGovernanceStreamSkillConfigRepo{skillID: skills.SkillAgentManagement},
+		},
+		llm,
+		nil,
+		toolGovernanceStreamModelSpecResolver{},
+		nil,
+		nil,
+		nil,
+		newToolGovernanceStreamSkillRuntime(t, &toolGovernanceStreamFileService{}, &toolGovernanceStreamWorkspacePermissionService{allowed: true}),
+		nil,
+	).(*service)
+	svc.events = newStreamEventStore(nil)
+
+	var events []StreamEvent
+	result, err := svc.RunClientActionContinuationStream(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		actionID,
+		runtimedto.ClientActionResultRequest{
+			Status:         "succeeded",
+			Surface:        "contextual_sidebar",
+			RuntimeContext: "当前 Agent 详情页已经刷新，模型显示为 DeepSeek-Chat (V3)。",
+			Result: map[string]interface{}{
+				"loaded_href": "/console/agents/agent-1/agent",
+			},
+		},
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunClientActionContinuationStream() error = %v", err)
+	}
+	if result.Status != runtimemodel.MessageStatusCompleted {
+		t.Fatalf("result status = %q, want completed", result.Status)
+	}
+	if result.Answer != finalAnswer {
+		t.Fatalf("result answer = %q", result.Answer)
+	}
+	if len(llm.appChatRequests) != 2 {
+		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))
+	}
+	if len(llm.streamRequests) != 0 {
+		t.Fatalf("AppChatStream requests = %d, want completion-verifier skill loop to suppress direct final streaming", len(llm.streamRequests))
+	}
+	if !toolGovernanceStreamRequestContains(llm.appChatRequests[0], "do not call console-navigator/navigate again for the same route") {
+		t.Fatalf("skill-loop continuation request missing route continuation instruction: %q", toolGovernanceStreamRequestText(llm.appChatRequests[0]))
+	}
+	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "completion post-verifier") {
+		t.Fatalf("second AppChat request = %q, want completion verifier", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
+	}
+	if !messageRepo.updateCompletedCalled {
+		t.Fatal("UpdateCompleted was not called")
+	}
+	if !toolGovernanceStreamHasInvocation(message.Metadata, "client_action", skills.SkillConsoleNavigator, "navigate", clientActionStatusSucceeded) {
+		t.Fatalf("metadata skill_invocations = %#v, want succeeded route client action", message.Metadata["skill_invocations"])
+	}
+	for _, event := range events {
+		if event.EventType == streamEventSkillCallStart {
+			t.Fatalf("events = %#v, want no skill call after Agent route refresh", events)
 		}
 	}
 }
@@ -748,6 +984,184 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 	assertToolGovernanceApprovedFailureStreamEvents(t, events)
 }
 
+func TestRunToolGovernanceDecisionStreamApproveToolFailureWithOperationPlanUsesVerifier(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	provider := "deepseek"
+	now := time.Now().UTC()
+
+	metadata := pendingToolGovernanceDecisionMetadata("corr-approve")
+	metadata["configured_skill_ids"] = []interface{}{skills.SkillFileManager}
+	metadata["operation_plan"] = map[string]interface{}{
+		"version":             operationPlanVersion,
+		"intent":              "delete_visible_file",
+		"status":              operationPlanStatusRunning,
+		"pending_next_action": "Delete resolved file",
+		"steps": []interface{}{
+			map[string]interface{}{
+				"id":        operationPlanToolStepID(skills.SkillFileManager, "delete_file"),
+				"status":    operationPlanStepStatusPending,
+				"skill_id":  skills.SkillFileManager,
+				"tool_name": "delete_file",
+			},
+		},
+	}
+	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})
+	governance := invocation["governance"].(map[string]interface{})
+	approvalEvent := governance["approval_event"].(map[string]interface{})
+	approvalEvent["assets"] = []interface{}{
+		map[string]interface{}{
+			"id":           "file-1",
+			"type":         "file",
+			"name":         "report.pdf",
+			"workspace_id": "workspace-1",
+		},
+	}
+	approvalEvent["grant"] = map[string]interface{}{
+		"conversation_id": conversationID.String(),
+		"organization_id": organizationID.String(),
+		"user_id":         accountID.String(),
+		"skill_id":        skills.SkillFileManager,
+		"provider_type":   "builtin",
+		"provider_id":     "files",
+		"tool_id":         "file.delete",
+		"effect":          "delete",
+		"asset_type":      "file",
+		"risk_level":      "high",
+		"assets": []interface{}{
+			map[string]interface{}{"id": "file-1", "type": "file", "name": "report.pdf"},
+		},
+	}
+	approvalEvent["frozen_invocation"] = toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: "corr-approve",
+		Manifest: toolgovernance.Manifest{
+			ToolID:    "file.delete",
+			SkillID:   skills.SkillFileManager,
+			Effect:    toolgovernance.EffectDelete,
+			AssetType: "file",
+			RiskLevel: toolgovernance.RiskLevelHigh,
+		},
+		SkillID:      skills.SkillFileManager,
+		ToolName:     "delete_file",
+		ProviderType: "builtin",
+		ProviderID:   "files",
+		Arguments: map[string]interface{}{
+			"file_id": "file-1",
+		},
+		Assets: []toolgovernance.AssetRef{
+			{ID: "file-1", Type: "file", Name: "report.pdf", WorkspaceID: "workspace-1"},
+		},
+		Now: now,
+		TTL: 7 * 24 * time.Hour,
+	})
+	conversation := &runtimemodel.Conversation{
+		ID:                   conversationID,
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		CallerType:           runtimemodel.ConversationCallerAIChat,
+		Title:                "Files",
+		Status:               runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
+		CurrentLeafMessageID: &messageID,
+		Metadata:             map[string]interface{}{},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	message := &runtimemodel.Message{
+		ID:              messageID,
+		ConversationID:  conversationID,
+		Query:           "Delete report.pdf",
+		Status:          runtimemodel.MessageStatusWaitingApproval,
+		ModelProvider:   &provider,
+		ModelName:       "deepseek-chat",
+		ModelParameters: map[string]interface{}{},
+		Metadata:        metadata,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	fileService := &toolGovernanceStreamFileService{}
+	runtime := newToolGovernanceStreamSkillRuntime(t, fileService, &toolGovernanceStreamWorkspacePermissionService{allowed: true})
+	finalAnswer := "Deletion failed: report.pdf does not exist."
+	llm := &toolGovernanceStreamLLM{
+		appChatResponses: []*adapter.ChatResponse{
+			toolGovernanceStreamChatResponse(finalAnswer),
+			toolGovernanceStreamChatResponse(`{"status":"pass","reason":"tool result confirms delete failed","unsupported_claims":[],"missing_steps":[],"next_action_hint":"","final_answer":"","final_answer_guidance":""}`),
+		},
+	}
+	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
+	conversationRepo := &toolGovernanceStreamConversationRepo{conversation: conversation}
+	svc := NewServiceWithSkillRuntime(
+		&repository.Repositories{
+			Access:       toolGovernanceStreamAccessRepo{},
+			Conversation: conversationRepo,
+			Message:      messageRepo,
+			SkillConfig:  toolGovernanceStreamSkillConfigRepo{skillID: skills.SkillFileManager},
+		},
+		llm,
+		nil,
+		toolGovernanceStreamModelSpecResolver{},
+		nil,
+		nil,
+		nil,
+		runtime,
+		nil,
+	).(*service)
+	svc.events = newStreamEventStore(nil)
+
+	var events []StreamEvent
+	result, err := svc.RunToolGovernanceDecisionStream(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		"corr-approve",
+		runtimedto.ToolGovernanceDecisionRequest{Action: "approve"},
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunToolGovernanceDecisionStream() error = %v", err)
+	}
+	if result.Status != runtimemodel.MessageStatusCompleted {
+		t.Fatalf("result status = %q, want completed", result.Status)
+	}
+	if len(llm.appChatRequests) != 2 {
+		t.Fatalf("AppChat requests = %d, want failure answer plus completion verifier", len(llm.appChatRequests))
+	}
+	if len(llm.streamRequests) != 0 {
+		t.Fatalf("AppChatStream requests = %d, want operation-plan failure to use skill loop verifier", len(llm.streamRequests))
+	}
+	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "completion post-verifier") {
+		t.Fatalf("second AppChat request = %q, want completion verifier", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
+	}
+	if !strings.Contains(result.Answer, "没有被工具结果确认成功") ||
+		!strings.Contains(result.Answer, "file-manager/delete_file") ||
+		!strings.Contains(result.Answer, "file file-1 not found") {
+		t.Fatalf("result answer = %q, want verifier-backed failed-plan answer", result.Answer)
+	}
+	if strings.Contains(strings.ToLower(result.Answer), "success") {
+		t.Fatalf("result answer = %q, want no success claim after failed tool", result.Answer)
+	}
+	if len(fileService.deleted) != 0 {
+		t.Fatalf("deleted files = %#v, want none after execution failure", fileService.deleted)
+	}
+	if !messageRepo.updateCompletedCalled {
+		t.Fatal("UpdateCompleted was not called")
+	}
+	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileManager, "delete_file", "error") {
+		t.Fatalf("metadata skill_invocations = %#v, want failed file-manager/delete_file tool call", message.Metadata["skill_invocations"])
+	}
+	if !modelInvocationMetadataHasPhase(message.Metadata, "completion_verifier") {
+		t.Fatalf("metadata model_invocations = %#v, want completion_verifier trace", message.Metadata["model_invocations"])
+	}
+	assertToolGovernanceApprovedFailureStreamEvents(t, events)
+}
+
 func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversationGrant(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
@@ -944,7 +1358,7 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 	seen := map[string]bool{}
 	var approvedDecision bool
 	var runtimeAllowedDecision bool
-	var clientActionRequired bool
+	var finalMessage bool
 	for _, event := range events {
 		seen[event.EventType] = true
 		if event.EventType == streamEventToolGovernanceDecision && event.Payload["approval_status"] == "approved" {
@@ -963,7 +1377,10 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 			}
 		}
 		if event.EventType == streamEventClientActionRequired && event.Payload["action_type"] == "asset_observation" {
-			clientActionRequired = true
+			t.Fatalf("events = %#v, want no asset observation client action after delete fast path", events)
+		}
+		if event.EventType == streamEventMessage && strings.Contains(stringFromAny(event.Payload["answer"]), "已删除文件") {
+			finalMessage = true
 		}
 	}
 	for _, want := range []string{
@@ -971,7 +1388,7 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 		streamEventToolGovernanceDecision,
 		streamEventSkillCallStart,
 		streamEventSkillCallEnd,
-		streamEventClientActionRequired,
+		streamEventMessage,
 		streamEventMessageEnd,
 	} {
 		if !seen[want] {
@@ -984,8 +1401,8 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 	if !runtimeAllowedDecision {
 		t.Fatalf("events = %#v, want runtime allowed tool governance decision", events)
 	}
-	if !clientActionRequired {
-		t.Fatalf("events = %#v, want asset observation client action", events)
+	if !finalMessage {
+		t.Fatalf("events = %#v, want fast-path final message", events)
 	}
 }
 
@@ -1080,6 +1497,15 @@ func toolGovernanceStreamHasInvocation(metadata map[string]interface{}, kind str
 	return false
 }
 
+func modelInvocationMetadataHasPhase(metadata map[string]interface{}, phase string) bool {
+	for _, invocation := range modelInvocationsFromMetadata(metadata["model_invocations"]) {
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["phase"])), phase) {
+			return true
+		}
+	}
+	return false
+}
+
 func toolGovernanceStreamSkillToolCall(callID string, skillID string, toolName string, arguments map[string]interface{}) adapter.ToolCall {
 	payload, _ := json.Marshal(map[string]interface{}{
 		"skill_id":  skillID,
@@ -1092,6 +1518,19 @@ func toolGovernanceStreamSkillToolCall(callID string, skillID string, toolName s
 		Function: adapter.FunctionCall{
 			Name:      skills.MetaToolCallSkillTool,
 			Arguments: string(payload),
+		},
+	}
+}
+
+func toolGovernanceStreamChatResponse(content string) *adapter.ChatResponse {
+	return &adapter.ChatResponse{
+		Choices: []adapter.Choice{{
+			Message: adapter.Message{Role: "assistant", Content: content},
+		}},
+		Usage: &adapter.Usage{
+			PromptTokens:     10,
+			CompletionTokens: 5,
+			TotalTokens:      15,
 		},
 	}
 }
@@ -1139,9 +1578,57 @@ Use governed file tools.
 	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(skill), 0o644); err != nil {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
+	navigationRoot := filepath.Join(catalogDir, skills.SkillConsoleNavigator)
+	if err := os.MkdirAll(navigationRoot, 0o755); err != nil {
+		t.Fatalf("mkdir navigation skill root: %v", err)
+	}
+	navigationSkill := `---
+name: console-navigator
+description: Console navigation service test skill.
+when_to_use: Use when testing AIChat client-side route continuation.
+provider_type: builtin
+provider_id: console-navigation
+runtime_type: tool
+tools:
+  - navigate
+---
+
+# Console Navigation
+
+Use console navigation tools.
+`
+	if err := os.WriteFile(filepath.Join(navigationRoot, "SKILL.md"), []byte(navigationSkill), 0o644); err != nil {
+		t.Fatalf("write navigation SKILL.md: %v", err)
+	}
+	agentRoot := filepath.Join(catalogDir, skills.SkillAgentManagement)
+	if err := os.MkdirAll(agentRoot, 0o755); err != nil {
+		t.Fatalf("mkdir agent management skill root: %v", err)
+	}
+	agentSkill := `---
+name: agent-management
+description: Agent management service test skill.
+when_to_use: Use when testing AIChat Agent operation continuation.
+provider_type: builtin
+provider_id: agent-management
+runtime_type: tool
+tools:
+  - get_agent_config
+  - update_agent_config
+---
+
+# Agent Management
+
+Use agent management tools.
+`
+	if err := os.WriteFile(filepath.Join(agentRoot, "SKILL.md"), []byte(agentSkill), 0o644); err != nil {
+		t.Fatalf("write agent management SKILL.md: %v", err)
+	}
 	manager := tools.NewToolManager(nil)
 	if err := manager.RegisterProvider(builtinfiles.NewProvider(fileService, nil, workspacePerms)); err != nil {
 		t.Fatalf("register files provider: %v", err)
+	}
+	if err := manager.RegisterProvider(builtinconsolenavigation.NewProvider()); err != nil {
+		t.Fatalf("register console navigation provider: %v", err)
 	}
 	return skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir).
 		WithToolGovernanceGateway(skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))

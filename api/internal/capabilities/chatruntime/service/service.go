@@ -312,10 +312,11 @@ type PreparedChat struct {
 }
 
 type ChatResult struct {
-	Answer   string
-	Metadata map[string]interface{}
-	Usage    *adapter.Usage
-	Status   string
+	Answer            string
+	Metadata          map[string]interface{}
+	Usage             *adapter.Usage
+	Status            string
+	MessageEndEventID string
 }
 
 type StopConversationResult struct {
@@ -384,6 +385,7 @@ type chatRequestParts struct {
 	Attachments                  *attachmentBundle
 	RecentAssetCandidates        []ResourceCandidate
 	RecentGeneratedArtifacts     []map[string]interface{}
+	RecentOperationPlans         []map[string]interface{}
 	ModelSupportsVision          bool
 	FunctionCallingKnown         bool
 	ModelSupportsFunctionCalling bool

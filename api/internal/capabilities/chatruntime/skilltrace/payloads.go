@@ -189,6 +189,7 @@ var resultSummaryBuilders = map[string]resultSummaryBuilder{
 	skills.SkillInternalDatabase:  summarizeDatabaseResult,
 	skills.SkillAgentDatabase:     summarizeDatabaseResult,
 	skills.SkillAgentWorkflow:     summarizeWorkflowResult,
+	skills.SkillAgentManagement:   summarizeAgentManagementResult,
 	skills.SkillFileManager:       summarizeFileReaderResult,
 	skills.SkillFileReader:        summarizeFileReaderResult,
 }
@@ -252,6 +253,369 @@ func summarizeConsoleNavigatorResult(toolName string, payload map[string]interfa
 	return compactFields(payload, "status", "event_type", "href", "label", "reason")
 }
 
+func summarizeAgentManagementResult(toolName string, payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	switch strings.TrimSpace(toolName) {
+	case "list_agents":
+		result := compactFields(payload, "status", "count", "limit", "workspace_id")
+		result["agents_count"] = collectionLen(payload["agents"])
+		return result
+	case "list_available_models":
+		result := compactFields(payload, "status", "use_case", "provider", "count", "total", "truncated")
+		result["models_count"] = collectionLen(payload["models"])
+		return result
+	case "list_agent_knowledge_candidates", "list_agent_knowledge_binding_candidates":
+		return compactAgentBindingCandidateListResult(payload, "knowledge_bases", "datasets", "candidates")
+	case "list_agent_database_candidates", "list_agent_database_binding_candidates":
+		return compactAgentBindingCandidateListResult(payload, "database_bindings", "tables", "databases", "candidates")
+	case "list_agent_database_tables":
+		return compactAgentBindingCandidateListResult(payload, "tables", "database_tables", "candidates")
+	case "list_agent_workflow_binding_candidates":
+		return compactAgentBindingCandidateListResult(payload, "workflow_bindings", "workflows", "candidates")
+	case "get_agent", "create_agent", "update_agent_identity", "delete_agent", "delete_agents":
+		return compactAgentManagementOperationResult(payload)
+	case "get_agent_config", "update_agent_config":
+		result := compactAgentConfigOperationResult(payload)
+		copyCompactField(result, payload, "draft_updated")
+		return result
+	case "replace_agent_memory_slots":
+		return compactAgentConfigOperationResult(payload)
+	case "replace_agent_knowledge_bindings":
+		return compactAgentBindingOperationResult(payload, "knowledge_base")
+	case "replace_agent_database_bindings":
+		return compactAgentBindingOperationResult(payload, "database_table")
+	case "replace_agent_workflow_bindings":
+		return compactAgentBindingOperationResult(payload, "workflow")
+	default:
+		return nil
+	}
+}
+
+func compactAgentBindingCandidateListResult(payload map[string]interface{}, collectionKeys ...string) map[string]interface{} {
+	result := compactFields(payload, "status", "query", "count", "total", "limit", "truncated", "error")
+	count := 0
+	for _, key := range collectionKeys {
+		if count = collectionLen(payload[key]); count > 0 {
+			break
+		}
+	}
+	result["candidates_count"] = count
+	return result
+}
+
+func compactAgentBindingOperationResult(payload map[string]interface{}, bindingKind string) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	result := compactFields(payload,
+		"status",
+		"effect",
+		"agent_name",
+		"draft_updated",
+		"reversible",
+		"error",
+		"binding_kind",
+		"change_action",
+		"resource_count",
+		"resource_names",
+		"added_resource_count",
+		"added_resource_names",
+		"removed_resource_count",
+		"removed_resource_names",
+		"final_resource_count",
+		"final_resource_names",
+		"config_changes",
+		"binding_changes",
+	)
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	if agent := recordFromAny(payload["agent"]); len(agent) > 0 {
+		if name := firstNonEmptyString(agent["name"], agent["agent_name"]); name != "" {
+			result["agent_name"] = name
+		}
+	}
+	if _, ok := result["binding_kind"]; !ok {
+		result["binding_kind"] = bindingKind
+	}
+	if _, ok := result["resource_names"]; !ok {
+		names := bindingResourceNames(bindingKind, payload)
+		if len(names) > 0 {
+			result["resource_names"] = names
+		}
+	}
+	if _, ok := result["resource_count"]; !ok {
+		names := stringSliceFromAny(result["resource_names"])
+		result["resource_count"] = bindingResourceCount(bindingKind, payload, names)
+	}
+	return result
+}
+
+func bindingResourceNames(bindingKind string, payload map[string]interface{}) []string {
+	seen := map[string]struct{}{}
+	names := make([]string, 0)
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		names = append(names, name)
+	}
+	for _, name := range stringSliceFromAny(payload["resource_names"]) {
+		add(name)
+	}
+	for _, record := range bindingResourceRecords(bindingKind, payload) {
+		add(bindingResourceNameFromRecord(bindingKind, record))
+	}
+	return names
+}
+
+func bindingResourceRecords(bindingKind string, payload map[string]interface{}) []map[string]interface{} {
+	config := recordFromAny(payload["config"])
+	switch strings.TrimSpace(bindingKind) {
+	case "knowledge_base":
+		if records := firstNonEmptyRecords(payload, "knowledge_bases", "knowledge_bindings", "datasets", "resources", "assets"); len(records) > 0 {
+			return records
+		}
+		return firstNonEmptyRecords(config, "knowledge_bases", "knowledge_bindings", "datasets")
+	case "database_table":
+		records := firstNonEmptyRecords(payload, "database_resources", "tables", "resources", "assets")
+		if len(records) > 0 {
+			return records
+		}
+		return databaseBindingTableRecords(firstNonEmptyValue(payload["database_bindings"], payload["bindings"], config["database_bindings"], config["bindings"]))
+	case "workflow":
+		if records := firstNonEmptyRecords(payload, "workflow_bindings", "bindings", "workflows", "resources", "assets"); len(records) > 0 {
+			return records
+		}
+		return firstNonEmptyRecords(config, "workflow_bindings", "bindings", "workflows")
+	default:
+		return nil
+	}
+}
+
+func bindingResourceNameFromRecord(bindingKind string, record map[string]interface{}) string {
+	switch strings.TrimSpace(bindingKind) {
+	case "knowledge_base":
+		return firstNonEmptyString(record["dataset_name"], record["knowledge_base_name"], record["name"], record["title"], record["label"])
+	case "database_table":
+		tableName := firstNonEmptyString(record["table_name"], record["database_table_name"], record["name"], record["title"], record["label"])
+		databaseName := firstNonEmptyString(record["database_name"], record["data_source_name"], record["schema_name"])
+		if tableName != "" && databaseName != "" {
+			return databaseName + "." + tableName
+		}
+		return tableName
+	case "workflow":
+		return firstNonEmptyString(record["label"], record["binding_name"], record["workflow_name"], record["name"], record["title"])
+	default:
+		return firstNonEmptyString(record["name"], record["title"], record["label"])
+	}
+}
+
+func bindingResourceCount(bindingKind string, payload map[string]interface{}, names []string) int {
+	if len(names) > 0 {
+		return len(names)
+	}
+	config := recordFromAny(payload["config"])
+	switch strings.TrimSpace(bindingKind) {
+	case "knowledge_base":
+		if count := firstNonZeroCollectionLen(payload, "knowledge_dataset_ids", "dataset_ids", "knowledge_base_ids", "knowledge_bases", "knowledge_bindings", "datasets"); count > 0 {
+			return count
+		}
+		return firstNonZeroCollectionLen(config, "knowledge_dataset_ids", "dataset_ids", "knowledge_base_ids", "knowledge_bases", "knowledge_bindings", "datasets")
+	case "database_table":
+		if count := firstNonZeroCollectionLen(payload, "table_ids", "database_table_ids", "tables", "database_resources"); count > 0 {
+			return count
+		}
+		return databaseBindingTableCount(firstNonEmptyValue(payload["database_bindings"], payload["bindings"], config["database_bindings"], config["bindings"]))
+	case "workflow":
+		if count := firstNonZeroCollectionLen(payload, "workflow_bindings", "bindings", "binding_ids", "workflow_binding_ids", "workflows"); count > 0 {
+			return count
+		}
+		return firstNonZeroCollectionLen(config, "workflow_bindings", "bindings", "binding_ids", "workflow_binding_ids", "workflows")
+	default:
+		return 0
+	}
+}
+
+func firstNonZeroCollectionLen(payload map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		if count := collectionLen(payload[key]); count > 0 {
+			return count
+		}
+	}
+	return 0
+}
+
+func firstNonEmptyRecords(payload map[string]interface{}, keys ...string) []map[string]interface{} {
+	for _, key := range keys {
+		if records := recordsFromAny(payload[key]); len(records) > 0 {
+			return records
+		}
+	}
+	return nil
+}
+
+func databaseBindingTableRecords(value interface{}) []map[string]interface{} {
+	bindings := recordsFromAny(value)
+	if len(bindings) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0)
+	for _, binding := range bindings {
+		databaseName := firstNonEmptyString(binding["database_name"], binding["data_source_name"], binding["name"])
+		for _, table := range recordsFromAny(firstNonEmptyValue(binding["tables"], binding["database_tables"], binding["table_bindings"])) {
+			item := map[string]interface{}{}
+			for key, value := range recordFromAny(table) {
+				item[key] = value
+			}
+			if databaseName != "" {
+				item["database_name"] = databaseName
+			}
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func databaseBindingTableCount(value interface{}) int {
+	bindings := recordsFromAny(value)
+	if len(bindings) == 0 {
+		return 0
+	}
+	count := 0
+	for _, binding := range bindings {
+		if tables := recordsFromAny(firstNonEmptyValue(binding["tables"], binding["database_tables"], binding["table_bindings"])); len(tables) > 0 {
+			count += len(tables)
+			continue
+		}
+		if tableCount := collectionLen(firstNonEmptyValue(binding["table_ids"], binding["tableIds"], binding["database_table_ids"], binding["databaseTableIds"])); tableCount > 0 {
+			count += tableCount
+		}
+	}
+	return count
+}
+
+func stringSliceFromAny(value interface{}) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(stringFromAny(item)); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		if text := strings.TrimSpace(stringFromAny(value)); text != "" {
+			return []string{text}
+		}
+		return nil
+	}
+}
+
+func compactAgentManagementOperationResult(payload map[string]interface{}) map[string]interface{} {
+	result := compactFields(payload, "status", "effect", "agent_id", "agent_name", "href", "route_after_delete", "workspace_id", "updated_fields", "reversible", "operation_type", "operation_group_id", "target_count", "deleted_count", "failed_count", "requires_refresh", "refresh_target", "error")
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	if group := recordFromAny(payload["operation_group"]); len(group) > 0 {
+		result["operation_group"] = group
+	}
+	agent := recordFromAny(payload["agent"])
+	for _, field := range []string{"id", "name", "description", "icon_type", "icon", "workspace_id", "href"} {
+		if value, ok := agent[field]; ok && value != nil && value != "" {
+			result["agent_"+field] = value
+		}
+	}
+	if _, ok := result["agent_id"]; !ok {
+		if value, ok := agent["id"]; ok && value != nil && value != "" {
+			result["agent_id"] = value
+		}
+	}
+	if _, ok := result["agent_name"]; !ok {
+		if value, ok := agent["name"]; ok && value != nil && value != "" {
+			result["agent_name"] = value
+		}
+	}
+	if _, ok := result["href"]; !ok {
+		if value, ok := agent["href"]; ok && value != nil && value != "" {
+			result["href"] = value
+		}
+	}
+	return result
+}
+
+func compactAgentConfigOperationResult(payload map[string]interface{}) map[string]interface{} {
+	result := compactAgentManagementOperationResult(payload)
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	for _, field := range []string{
+		"binding_kind",
+		"change_action",
+		"resource_count",
+		"resource_names",
+		"added_resource_count",
+		"added_resource_names",
+		"removed_resource_count",
+		"removed_resource_names",
+		"final_resource_count",
+		"final_resource_names",
+		"config_changes",
+		"binding_changes",
+	} {
+		copyCompactField(result, payload, field)
+	}
+	config := recordFromAny(payload["config"])
+	if len(config) == 0 {
+		return result
+	}
+	for _, field := range []string{
+		"model_provider",
+		"model",
+		"home_title",
+		"input_placeholder",
+		"theme_color",
+	} {
+		copyCompactField(result, config, field)
+	}
+	for _, field := range []string{
+		"agent_memory_enabled",
+		"file_upload",
+		"file_upload_enabled",
+	} {
+		if value, ok := config[field]; ok && value != nil {
+			result[field] = value
+		}
+	}
+	counts := map[string]int{
+		"enabled_skill_count":       collectionLen(config["enabled_skill_ids"]),
+		"knowledge_dataset_count":   collectionLen(config["knowledge_dataset_ids"]),
+		"database_binding_count":    collectionLen(config["database_bindings"]),
+		"workflow_binding_count":    collectionLen(config["workflow_bindings"]),
+		"suggested_question_count":  collectionLen(config["suggested_questions"]),
+		"model_parameter_count":     len(recordFromAny(config["model_parameters"])),
+		"memory_slot_config_count":  collectionLen(firstPresent(config, "memory_slots", "agent_memory_slots")),
+		"knowledge_retrieval_count": len(recordFromAny(config["knowledge_retrieval_config"])),
+	}
+	for key, count := range counts {
+		if count > 0 {
+			result[key] = count
+		}
+	}
+	return result
+}
+
 func summarizeFileReaderResult(toolName string, payload map[string]interface{}) map[string]interface{} {
 	if len(payload) == 0 {
 		return nil
@@ -295,6 +659,9 @@ func summarizeFileReaderResult(toolName string, payload map[string]interface{}) 
 		return result
 	case "save_file_to_management":
 		result := compactFields(payload, "status", "target", "transfer_method", "source_type", "error")
+		for _, field := range []string{"file_id", "upload_file_id", "id", "filename", "name", "file_name"} {
+			copyCompactField(result, payload, field)
+		}
 		if file := recordFromAny(payload["file"]); len(file) > 0 {
 			for _, field := range []string{"id", "name", "workspace_id", "extension", "mime_type", "size"} {
 				if value, ok := file[field]; ok {
@@ -449,8 +816,28 @@ func recordFromAny(value interface{}) map[string]interface{} {
 	case map[string]interface{}:
 		return typed
 	default:
-		return map[string]interface{}{}
+		if value == nil {
+			return map[string]interface{}{}
+		}
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return map[string]interface{}{}
+		}
+		var record map[string]interface{}
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return map[string]interface{}{}
+		}
+		return record
 	}
+}
+
+func firstPresent(record map[string]interface{}, keys ...string) interface{} {
+	for _, key := range keys {
+		if value, ok := record[key]; ok {
+			return value
+		}
+	}
+	return nil
 }
 
 func recordsFromAny(value interface{}) []map[string]interface{} {
@@ -466,7 +853,22 @@ func recordsFromAny(value interface{}) []map[string]interface{} {
 		}
 		return out
 	default:
-		return nil
+		if value == nil {
+			return nil
+		}
+		reflected := reflect.ValueOf(value)
+		if reflected.Kind() != reflect.Array && reflected.Kind() != reflect.Slice {
+			return nil
+		}
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil
+		}
+		var out []map[string]interface{}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil
+		}
+		return out
 	}
 }
 

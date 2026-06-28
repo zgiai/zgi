@@ -13,6 +13,7 @@ var (
 	ErrConversationRunning         = errors.New("conversation is already streaming")
 	ErrConversationWaitingApproval = errors.New("conversation is waiting for workflow approval")
 	ErrConversationWaitingQuestion = errors.New("conversation is waiting for workflow question answer")
+	ErrConversationWaitingAction   = errors.New("conversation is waiting for client action")
 	ErrStreamEventsUnavailable     = errors.New("stream events are unavailable")
 	ErrMessageReplaceNotAllowed    = errors.New("message replacement is only allowed for the only root message")
 )

@@ -566,13 +566,17 @@ func writeChatError(c *gin.Context, prepared *runtimeservice.PreparedChat, err e
 func writeChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result *runtimeservice.ChatResult) {
 	metadata := map[string]interface{}{}
 	status := runtimemodel.MessageStatusCompleted
+	eventID := ""
 	if result != nil && result.Metadata != nil {
 		metadata = result.Metadata
 	}
 	if result != nil && strings.TrimSpace(result.Status) != "" {
 		status = strings.TrimSpace(result.Status)
 	}
-	_ = writeSSE(c, "message_end", gin.H{
+	if result != nil {
+		eventID = strings.TrimSpace(result.MessageEndEventID)
+	}
+	_ = writeSSEEvent(c, eventID, "message_end", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"status":          status,
@@ -660,7 +664,11 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		response.Fail(c, response.ErrNotFound)
 	case errors.Is(err, runtimeservice.ErrInvalidInput), errors.Is(err, runtimeservice.ErrInvalidModelParam):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
-	case errors.Is(err, runtimeservice.ErrConversationRunning), errors.Is(err, runtimeservice.ErrMessageReplaceNotAllowed):
+	case errors.Is(err, runtimeservice.ErrConversationRunning),
+		errors.Is(err, runtimeservice.ErrConversationWaitingApproval),
+		errors.Is(err, runtimeservice.ErrConversationWaitingQuestion),
+		errors.Is(err, runtimeservice.ErrConversationWaitingAction),
+		errors.Is(err, runtimeservice.ErrMessageReplaceNotAllowed):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	default:
 		logger.ErrorContext(c.Request.Context(), "aichat request failed", err)

@@ -53,8 +53,9 @@ Use this skill only to request safe internal ZGI console navigation. It does not
 2. If the user only asks what AIChat can do or what a module is for, answer directly from the site map instead of navigating.
 3. If the requested destination is ambiguous, ask one concise clarification.
 4. Do not navigate to external URLs or non-console paths.
-5. After navigation, pause for the frontend client action result. The sidebar will switch routes, wait for supported target page context, and continue this same AIChat turn with the updated page context when available.
-6. Never claim that navigation performed an asset operation. If the user asks to delete, publish, run, schedule, create, or modify assets, explain that those actions need a supported governed tool and user approval when available.
+5. If the current page context already matches the requested route, do not call `navigate` just to create proof. Continue from the current page context and visible resources.
+6. After navigation, pause for the frontend client action result. The sidebar will switch routes, wait for supported target page context, and continue this same AIChat turn with the updated page context when available.
+7. Never claim that navigation performed an asset operation. If the user asks to delete, publish, run, schedule, create, or modify assets, explain that those actions need a supported governed tool and user approval when available.
 
 ## Tool Usage
 
@@ -64,3 +65,15 @@ Use this skill only to request safe internal ZGI console navigation. It does not
 - `reason`: optional short reason for why that route is relevant.
 
 The tool returns a `page_navigation_requested` event for the sidebar frontend. The frontend performs a second whitelist check before calling Next Router.
+
+## Success Evidence
+
+- A `navigate` tool result means the route request was accepted, not that the target page is already loaded.
+- Final navigation success requires frontend client-action evidence such as `route_loaded`, `loaded_href`, `observed_path`, or an equivalent successful page-context continuation matching the requested `href`. If the current page context already matches the requested `href`, that current page context is already sufficient route evidence.
+- Do not answer from the old page context after a navigation request. If the route request succeeded but no loaded-page evidence is available yet, say that navigation is pending or wait for the continuation.
+
+## Truthfulness Contract
+
+- Treat client-action route evidence as authoritative for what page is currently visible.
+- If navigation fails, is blocked, or does not produce matching loaded-route evidence, do not claim the page is open. Report the actual navigation state.
+- Retry at most once with a corrected whitelisted `href` when the route error is recoverable. Do not repeat the same navigation request with identical arguments after a failure.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skilltrace"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -29,10 +30,36 @@ func clientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace
 	if payload := routeNavigationClientActionRequiredPayload(prepared, trace, callID); len(payload) > 0 {
 		return payload
 	}
+	if payload := agentManagementRouteNavigationClientActionRequiredPayload(prepared, trace, callID); len(payload) > 0 {
+		return payload
+	}
+	if isNonBlockingAgentManagementMutation(trace) {
+		return nil
+	}
+	if _, ok := skillloop.FastPathFinalAnswerForToolTrace(trace); ok {
+		return nil
+	}
 	if payload := assetObservationClientActionRequiredPayload(prepared, trace, callID); len(payload) > 0 {
 		return payload
 	}
 	return nil
+}
+
+func enrichSkillTraceResultFromMessages(trace skills.SkillTrace, messages []tools.ToolInvokeMessage) skills.SkillTrace {
+	summary := summarizeSkillToolResult(trace.SkillID, trace.ToolName, messages)
+	if len(summary) == 0 {
+		return trace
+	}
+	if trace.Result == nil {
+		trace.Result = summary
+		return trace
+	}
+	for key, value := range summary {
+		if _, exists := trace.Result[key]; !exists {
+			trace.Result[key] = value
+		}
+	}
+	return trace
 }
 
 func routeNavigationClientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace, callID string) map[string]interface{} {
@@ -73,6 +100,172 @@ func routeNavigationClientActionRequiredPayload(prepared *PreparedChat, trace sk
 		payload["reason"] = reason
 	}
 	return payload
+}
+
+func agentManagementRouteNavigationClientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace, callID string) map[string]interface{} {
+	if prepared == nil || prepared.parts == nil || !strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillAgentManagement) {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
+		return nil
+	}
+	href := ""
+	label := ""
+	reason := ""
+	switch strings.TrimSpace(trace.ToolName) {
+	case "create_agent":
+		if !createdAgentClientActionShouldOpenDetail(prepared) {
+			return nil
+		}
+		href = agentDetailHrefFromTrace(trace)
+		label = "Agent detail"
+		reason = "open_created_agent_detail"
+	case "delete_agent":
+		if !deletedAgentIsCurrentDetailPage(prepared, trace) {
+			return nil
+		}
+		href = normalizeConsoleNavigationGuardHref(firstNonEmptyString(
+			stringFromAny(trace.Result["route_after_delete"]),
+			stringFromAny(trace.Result["href"]),
+			"/console/agents",
+		))
+		label = "Agent list"
+		reason = "leave_deleted_agent_detail"
+	default:
+		return nil
+	}
+	if href == "" {
+		return nil
+	}
+	actionID := strings.TrimSpace(callID)
+	if actionID == "" {
+		actionID = strings.TrimSpace(trace.SkillID) + ":" + strings.TrimSpace(trace.ToolName) + ":" + href
+	}
+	actionID = "route_navigation:" + actionID
+	result := map[string]interface{}{
+		"event_type": "page_navigation_requested",
+		"href":       href,
+		"label":      label,
+		"reason":     reason,
+	}
+	return map[string]interface{}{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"action_id":       actionID,
+		"action_type":     "route_navigation",
+		"event_type":      "client_action_required",
+		"status":          "waiting_client_action",
+		"skill_id":        skills.SkillConsoleNavigator,
+		"tool_name":       "navigate",
+		"href":            href,
+		"label":           label,
+		"reason":          reason,
+		"result":          result,
+		"created_at":      time.Now().Unix(),
+	}
+}
+
+func createdAgentClientActionShouldOpenDetail(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.parts == nil {
+		return false
+	}
+	return wantsCreatedAgentDetailNavigation(prepared.parts.Query)
+}
+
+func deletedAgentIsCurrentDetailPage(prepared *PreparedChat, trace skills.SkillTrace) bool {
+	if prepared == nil || prepared.parts == nil {
+		return false
+	}
+	currentHref := normalizeAgentDetailHref(contextualTurnCurrentPage(prepared.parts))
+	if currentHref == "" {
+		return false
+	}
+	deletedHref := agentDetailHrefFromTrace(trace)
+	if deletedHref == "" {
+		if agentID := strings.TrimSpace(firstNonEmptyString(
+			stringFromAny(trace.Result["agent_id"]),
+			stringFromAny(trace.Result["id"]),
+			skillToolCallArgumentString(trace.Arguments, "agent_id"),
+			skillToolCallArgumentString(trace.Arguments, "id"),
+		)); agentID != "" {
+			deletedHref = "/console/agents/" + agentID + "/agent"
+		}
+	}
+	return deletedHref != "" && consoleNavigationLoadedHrefMatchesTarget(currentHref, deletedHref)
+}
+
+func isNonBlockingAgentManagementMutation(trace skills.SkillTrace) bool {
+	if !strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
+		return false
+	}
+	switch strings.TrimSpace(trace.ToolName) {
+	case "update_agent_identity", "update_agent_config", "replace_agent_memory_slots", "replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings":
+		return true
+	default:
+		return false
+	}
+}
+
+func agentDetailHrefFromTrace(trace skills.SkillTrace) string {
+	if href := agentDetailHrefFromTraceResult(trace.Result); href != "" {
+		return href
+	}
+	if trace.Governance != nil {
+		for _, asset := range trace.Governance.Assets {
+			if !strings.EqualFold(strings.TrimSpace(asset.Type), "agent") {
+				continue
+			}
+			if href := normalizeAgentDetailHref(firstNonEmptyString(
+				stringFromAny(asset.Metadata["href"]),
+				stringFromAny(asset.Metadata["detail_href"]),
+			)); href != "" {
+				return href
+			}
+			if agentID := strings.TrimSpace(asset.ID); agentID != "" {
+				return "/console/agents/" + agentID + "/agent"
+			}
+		}
+	}
+	if agentID := strings.TrimSpace(firstNonEmptyString(
+		stringFromAny(trace.Arguments["agent_id"]),
+		stringFromAny(trace.Arguments["agentId"]),
+	)); agentID != "" {
+		return "/console/agents/" + agentID + "/agent"
+	}
+	return ""
+}
+
+func agentDetailHrefFromTraceResult(result map[string]interface{}) string {
+	href := normalizeAgentDetailHref(firstNonEmptyString(
+		stringFromAny(result["href"]),
+		stringFromAny(result["detail_href"]),
+	))
+	if href != "" {
+		return href
+	}
+	if agent := governanceMapFromAny(result["agent"]); len(agent) > 0 {
+		href = normalizeAgentDetailHref(firstNonEmptyString(
+			stringFromAny(agent["href"]),
+			stringFromAny(agent["detail_href"]),
+		))
+		if href != "" {
+			return href
+		}
+		if agentID := strings.TrimSpace(firstNonEmptyString(
+			stringFromAny(agent["agent_id"]),
+			stringFromAny(agent["id"]),
+		)); agentID != "" {
+			return "/console/agents/" + agentID + "/agent"
+		}
+	}
+	if agentID := strings.TrimSpace(firstNonEmptyString(
+		stringFromAny(result["agent_id"]),
+		stringFromAny(result["id"]),
+	)); agentID != "" {
+		return "/console/agents/" + agentID + "/agent"
+	}
+	return ""
 }
 
 func assetObservationClientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace, callID string) map[string]interface{} {

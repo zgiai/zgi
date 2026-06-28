@@ -74,12 +74,14 @@ func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[
 			files[idx] = storedArtifact
 			metadata["generated_files"] = files
 			metadata["generated_file_count"] = len(files)
+			applyOperationPlanArtifactState(metadata, files)
 			return metadata
 		}
 	}
 	files = append(files, storedArtifact)
 	metadata["generated_files"] = files
 	metadata["generated_file_count"] = len(files)
+	applyOperationPlanArtifactState(metadata, files)
 	return metadata
 }
 
@@ -96,9 +98,14 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 		if !visibleSkillInvocationKind(trace.Kind) {
 			continue
 		}
-		invocations = upsertSkillInvocation(invocations, skillInvocationFromTrace(trace, index))
+		invocation := skillInvocationFromTrace(trace, index)
+		if internalPlannerFeedbackInvocation(invocation) {
+			continue
+		}
+		invocations = upsertSkillInvocation(invocations, invocation)
 	}
 	applySkillInvocationSummary(metadata, invocations)
+	applyOperationPlanInvocationState(metadata, invocations)
 	return metadata
 }
 
@@ -116,9 +123,13 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 		if !visibleSkillInvocationKind(stringFromAny(invocation["kind"])) {
 			continue
 		}
+		if internalPlannerFeedbackInvocation(invocation) {
+			continue
+		}
 		stored = upsertSkillInvocation(stored, invocation)
 	}
 	applySkillInvocationSummary(metadata, stored)
+	applyOperationPlanInvocationState(metadata, stored)
 	return metadata
 }
 
@@ -583,6 +594,7 @@ func jsonObjectPayload(value interface{}) map[string]interface{} {
 }
 
 func applySkillInvocationSummary(metadata map[string]interface{}, invocations []map[string]interface{}) {
+	invocations = sortSkillInvocationsForMetadata(invocations)
 	selected := make([]interface{}, 0)
 	loaded := make([]interface{}, 0)
 	toolsUsed := make([]interface{}, 0)
@@ -635,6 +647,78 @@ func applySkillInvocationSummary(metadata map[string]interface{}, invocations []
 	metadata["skill_names"] = selected
 	metadata["tool_names"] = toolsUsed
 	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(invocations)
+}
+
+func sortSkillInvocationsForMetadata(invocations []map[string]interface{}) []map[string]interface{} {
+	if len(invocations) <= 1 {
+		return invocations
+	}
+	sort.SliceStable(invocations, func(i, j int) bool {
+		leftAt, leftOK := skillInvocationTimelineUnix(invocations[i])
+		rightAt, rightOK := skillInvocationTimelineUnix(invocations[j])
+		if leftOK != rightOK {
+			return leftOK
+		}
+		if !leftOK {
+			return false
+		}
+		return leftAt < rightAt
+	})
+	return invocations
+}
+
+func skillInvocationTimelineUnix(invocation map[string]interface{}) (int64, bool) {
+	for _, key := range []string{"created_at", "resolved_at", "updated_at"} {
+		if at, ok := unixSecondsFromAny(invocation[key]); ok {
+			return at, true
+		}
+	}
+	return 0, false
+}
+
+func unixSecondsFromAny(value interface{}) (int64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), true
+	case int32:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case uint:
+		return int64(typed), true
+	case uint32:
+		return int64(typed), true
+	case uint64:
+		if typed > uint64(^uint64(0)>>1) {
+			return 0, false
+		}
+		return int64(typed), true
+	case float32:
+		return int64(typed), true
+	case float64:
+		return int64(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil {
+			return parsed, true
+		}
+		return 0, false
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return 0, false
+		}
+		parsed, err := strconv.ParseInt(text, 10, 64)
+		if err == nil {
+			return parsed, true
+		}
+		if timestamp, err := time.Parse(time.RFC3339, text); err == nil {
+			return timestamp.Unix(), true
+		}
+		return 0, false
+	default:
+		return 0, false
+	}
 }
 
 func skillInvocationsFromMetadata(value interface{}) []map[string]interface{} {
@@ -704,6 +788,9 @@ func skillInvocationFromTrace(trace skills.SkillTrace, index int) map[string]int
 func sanitizeSkillInvocationsForMetadata(invocations []map[string]interface{}) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(invocations))
 	for _, invocation := range invocations {
+		if internalPlannerFeedbackInvocation(invocation) {
+			continue
+		}
 		out = append(out, sanitizeSkillInvocationForMetadata(invocation))
 	}
 	return out
@@ -1003,11 +1090,18 @@ func countSkillActionInvocations(invocations []map[string]interface{}) int {
 
 func visibleSkillInvocationKind(kind string) bool {
 	switch strings.TrimSpace(kind) {
-	case "skill_load", "reference_read", "tool_call", "tool_governance", "intermediate_answer", "user_input_request", "guardrail":
+	case "skill_load", "reference_read", "tool_call", "tool_governance", "client_action", "intermediate_answer", "user_input_request", "guardrail":
 		return true
 	default:
 		return false
 	}
+}
+
+func internalPlannerFeedbackInvocation(invocation map[string]interface{}) bool {
+	if strings.TrimSpace(stringFromAny(invocation["kind"])) != "guardrail" {
+		return false
+	}
+	return operationPlanGuardrailIsPlanningFeedback(invocation)
 }
 
 func addConfiguredSkillIDs(metadata map[string]interface{}, seen map[string]struct{}, out *[]interface{}) {

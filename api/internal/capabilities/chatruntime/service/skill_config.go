@@ -305,6 +305,7 @@ func filterAIChatSkillIDsForSurface(enabled []string, parts *chatRequestParts) [
 	out := make([]string, 0, len(enabled))
 	allowNavigator := parts != nil && isContextualAIChatSurface(parts.Surface)
 	allowFileManager := allowAIChatFileManagerSkill(parts)
+	allowAgentManagement := allowAIChatAgentManagementSkill(parts)
 	externalPageChat := parts != nil && normalizeAIChatSurface(parts.Surface) == aiChatSurfaceExternalPageChat
 	for _, raw := range enabled {
 		id := strings.ToLower(strings.TrimSpace(raw))
@@ -318,6 +319,9 @@ func filterAIChatSkillIDsForSurface(enabled []string, parts *chatRequestParts) [
 			continue
 		}
 		if id == skills.SkillFileManager && !allowFileManager {
+			continue
+		}
+		if id == skills.SkillAgentManagement && !allowAgentManagement {
 			continue
 		}
 		out = append(out, id)
@@ -335,15 +339,26 @@ func allowAIChatFileManagerSkill(parts *chatRequestParts) bool {
 			hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext))
 }
 
+func allowAIChatAgentManagementSkill(parts *chatRequestParts) bool {
+	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
+		return false
+	}
+	return isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
+		(hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
+			hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext))
+}
+
 func addContextualAIChatSkillIDs(enabled []string, organizationEnabled []string, catalog []skills.SkillDiscoveryMetadata, parts *chatRequestParts) []string {
 	return addContextualAIChatSkillIDsWithCapabilities(enabled, organizationEnabled, catalog, parts, contextualAIChatSkillCapabilitiesFromClientContext(parts))
 }
 
 type contextualAIChatSkillCapabilities struct {
-	Navigation bool
-	FileRead   bool
-	FileDelete bool
-	FileCreate bool
+	Navigation  bool
+	FileRead    bool
+	FileDelete  bool
+	FileCreate  bool
+	AgentRead   bool
+	AgentManage bool
 }
 
 func addContextualAIChatSkillIDsWithCapabilities(enabled []string, organizationEnabled []string, catalog []skills.SkillDiscoveryMetadata, parts *chatRequestParts, capabilities contextualAIChatSkillCapabilities) []string {
@@ -352,6 +367,10 @@ func addContextualAIChatSkillIDsWithCapabilities(enabled []string, organizationE
 	}
 	if capabilities.Navigation {
 		enabled = addSkillIDIfAvailable(enabled, organizationEnabled, catalog, skills.SkillConsoleNavigator, runtimemodel.ConversationCallerAIChat)
+	}
+	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
+		(capabilities.AgentRead || capabilities.AgentManage) {
+		enabled = addRuntimeManagedSkillIDIfAvailable(enabled, catalog, skills.SkillAgentManagement, runtimemodel.ConversationCallerAIChat)
 	}
 	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
 		(!hasConsoleFilesAssetCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
@@ -376,10 +395,12 @@ func contextualAIChatSkillCapabilitiesFromClientContext(parts *chatRequestParts)
 		return contextualAIChatSkillCapabilities{}
 	}
 	return contextualAIChatSkillCapabilities{
-		Navigation: true,
-		FileRead:   hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
-		FileDelete: hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext),
-		FileCreate: hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
+		Navigation:  true,
+		FileRead:    hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
+		FileDelete:  hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext),
+		FileCreate:  hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
+		AgentRead:   hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
+		AgentManage: hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
 	}
 }
 
@@ -388,7 +409,8 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 		return contextualAIChatSkillCapabilities{}
 	}
 	capabilities := contextualAIChatSkillCapabilities{Navigation: true}
-	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
+		!isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		return capabilities
 	}
 	workspaceID := ""
@@ -399,6 +421,18 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 		workspaceID = contextualAIChatWorkspaceIDFromContext(parts)
 	}
 	if workspaceID == "" || s.workspacePerms == nil {
+		return capabilities
+	}
+	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		if hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+			capabilities.AgentRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentView) ||
+				s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentManage)
+		}
+		if hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+			capabilities.AgentManage = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentManage)
+		}
+	}
+	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		return capabilities
 	}
 	if hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
@@ -712,7 +746,7 @@ func defaultEnabledSkillIDs(catalog []skills.SkillDiscoveryMetadata) []string {
 func visibleSkillMetadata(metadata []skills.SkillDiscoveryMetadata) []skills.SkillDiscoveryMetadata {
 	out := make([]skills.SkillDiscoveryMetadata, 0, len(metadata))
 	for _, item := range metadata {
-		if skills.IsHiddenSystemSkill(item.ID) {
+		if !skills.IsUserSelectableSystemSkill(item.ID) {
 			continue
 		}
 		out = append(out, item)

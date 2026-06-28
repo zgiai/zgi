@@ -105,6 +105,7 @@ func persistentGeneratedArtifact(artifact map[string]interface{}) map[string]int
 	copyStringField(out, artifact, "file_id")
 	copyStringField(out, artifact, "tool_file_id")
 	copyStringField(out, artifact, "source_file_id")
+	copyStringField(out, artifact, "source_tool_file_id")
 	copyStringField(out, artifact, "filename")
 	copyStringField(out, artifact, "extension")
 	copyStringField(out, artifact, "mime_type")

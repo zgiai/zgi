@@ -35,6 +35,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 		return nil, err
 	}
 	applyRunConfigToParts(config, parts)
+	applyCallerRuntimeSurfacePolicy(caller, parts)
 	attachments, err := s.resolveChatAttachmentReferences(ctx, scope, req.FileIDs)
 	if err != nil {
 		return nil, err
@@ -136,6 +137,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 		return nil, err
 	}
 	applyRunConfigToParts(config, parts)
+	applyCallerRuntimeSurfacePolicy(caller, parts)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
@@ -230,6 +232,9 @@ func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Sco
 	}
 	if leafMessage.Status == runtimemodel.MessageStatusWaitingQuestion {
 		return ErrConversationWaitingQuestion
+	}
+	if leafMessage.Status == runtimemodel.MessageStatusWaitingClientAction {
+		return ErrConversationWaitingAction
 	}
 	return nil
 }
@@ -378,6 +383,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			}
 			applyRecentAssetCandidatesFromBranch(parts, branch)
 			applyRecentGeneratedArtifactsFromBranch(parts, branch)
+			applyRecentOperationPlansFromBranch(parts, branch)
 			result, err := s.buildTokenBudgetMessages(ctx, spec, parts, systemPrompt, branch)
 			if err != nil {
 				return nil, err
@@ -408,12 +414,20 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 				messages = append(messages, adapter.Message{Role: "assistant", Content: item.Answer})
 			}
 		}
+		applyRecentOperationPlansFromBranch(parts, branch)
 		if recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessage(branch); recentExecutionContext != nil {
 			messages = append(messages, *recentExecutionContext)
 			if contextMetadata == nil {
 				contextMetadata = map[string]interface{}{}
 			}
 			mergeRecentExecutionContextMetadata(contextMetadata, recentExecutionMetadata)
+		}
+		if continuationContext := buildContinuationTaskStateMessage(parts, branch); continuationContext != nil {
+			messages = append(messages, *continuationContext)
+			if contextMetadata == nil {
+				contextMetadata = map[string]interface{}{}
+			}
+			contextMetadata["continuation_task_state_included"] = true
 		}
 		applyRecentAssetCandidatesFromBranch(parts, branch)
 		applyRecentGeneratedArtifactsFromBranch(parts, branch)

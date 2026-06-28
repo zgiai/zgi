@@ -1,9 +1,11 @@
 package service
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -37,6 +39,353 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesToolGuidance(t *testin
 		if !strings.Contains(content, want) {
 			t.Fatalf("contextual guidance missing %q in:\n%s", want, content)
 		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksContinuationDeleteConfirmation(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", []consoleFilesTestFile{
+			{ID: "file-saved-svg", Name: "smoke-continue.svg", Extension: "svg", MimeType: "image/svg+xml"},
+			{ID: "file-saved-txt", Name: "smoke-continue.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-delete", Name: "old-third-file.txt", Extension: "txt", MimeType: "text/plain"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileGenerator}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
+	}
+	answer := strings.Join([]string{
+		"txt \u5df2\u4fdd\u5b58\uff1asmoke-continue.txt",
+		"svg \u5df2\u4fdd\u5b58\uff1asmoke-continue.svg",
+		"\u7b2c3\u4e2a\u6587\u4ef6\uff1aold-third-file.txt \u9700\u8981\u89c2\u5bdf\u51bb\u7ed3\u5e76\u5220\u9664\u3002",
+		"\u662f\u5426\u9700\u8981\u6211\u7ee7\u7eed\u6267\u884c\u5220\u9664\u64cd\u4f5c\uff1f",
+	}, "\n")
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
+	if !blocked {
+		t.Fatal("guard allowed a natural-language delete confirmation in a continuation task")
+	}
+	for _, want := range []string{"file-manager/delete_file", `"file_id":"file-delete"`, "old-third-file.txt"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("delete guard result missing %q: %#v", want, result)
+		}
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "old-third-file.txt \u5df2\u6210\u529f\u5220\u9664\u3002",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileManager,
+			ToolName: "delete_file",
+			Arguments: map[string]interface{}{
+				"file_id": "file-delete",
+			},
+		}},
+	})
+	if blocked {
+		t.Fatal("guard blocked after delete_file succeeded for the frozen target")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardAllowsContinuationDeleteSuccessFromMetadata(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind":      "tool_call",
+						"status":    "success",
+						"skill_id":  skills.SkillFileManager,
+						"tool_name": "delete_file",
+						"arguments": map[string]interface{}{
+							"file_id": "file-deleted",
+						},
+						"result": map[string]interface{}{
+							"file_name": "deleted-third.svg",
+						},
+					},
+				},
+			},
+		},
+		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", []consoleFilesTestFile{
+			{ID: "file-new-third", Name: "new-third-after-delete.txt", Extension: "txt", MimeType: "text/plain"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
+	}
+	_, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "TXT \u548c SVG \u5df2\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\uff0c\u5e76\u5df2\u5220\u9664\u9501\u5b9a\u7684\u7b2c\u4e09\u4e2a\u6587\u4ef6 deleted-third.svg\u3002",
+	})
+	if blocked {
+		t.Fatal("guard blocked a final answer after metadata recorded the successful frozen delete")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardAllowsGenericDeleteSuccessFromMetadata(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind":      "tool_call",
+						"status":    "success",
+						"skill_id":  skills.SkillFileManager,
+						"tool_name": "delete_file",
+						"arguments": map[string]interface{}{
+							"file_id": "file-deleted",
+						},
+						"result": map[string]interface{}{
+							"file_name": "deleted-third.svg",
+						},
+					},
+				},
+			},
+		},
+		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", []consoleFilesTestFile{
+			{ID: "file-new-third", Name: "new-third-after-delete.txt", Extension: "txt", MimeType: "text/plain"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
+	}
+	_, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "TXT \u548c SVG \u5df2\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\uff0c\u9501\u5b9a\u7684\u76ee\u6807\u6587\u4ef6\u4e5f\u5df2\u5220\u9664\u3002",
+	})
+	if blocked {
+		t.Fatal("guard blocked a generic final answer after metadata recorded the successful frozen delete")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksDeleteSuccessWithRefreshedThirdFileName(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind":      "tool_call",
+						"status":    "success",
+						"skill_id":  skills.SkillFileManager,
+						"tool_name": "delete_file",
+						"arguments": map[string]interface{}{
+							"file_id": "file-deleted",
+						},
+						"result": map[string]interface{}{
+							"file_name": "deleted-third.svg",
+						},
+					},
+				},
+			},
+		},
+		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", []consoleFilesTestFile{
+			{ID: "file-new-third", Name: "new-third-after-delete.txt", Extension: "txt", MimeType: "text/plain"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "\u5df2\u51bb\u7ed3\u5f53\u524d\u7b2c 3 \u4e2a\u6587\u4ef6\u4e3a\u5220\u9664\u5019\u9009\uff1anew-third-after-delete.txt\u3002\u5f53\u524d\u7ed3\u679c\uff1anew-third-after-delete.txt \u5df2\u5220\u9664\u3002",
+	})
+	if !blocked {
+		t.Fatal("guard allowed final answer to report the refreshed third file instead of the actual deleted file")
+	}
+	for _, want := range []string{"deleted-third.svg", "Do not re-resolve", "final user-visible answer"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("delete mismatch guard result missing %q: %#v", want, result)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksContinuationDeleteConfirmationFromAnswerFileID(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", nil),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
+	}
+	answer := "\u5f53\u524d\u7b2c3\u4e2a\u6587\u4ef6\u662f\uff1aold-third-file.txt\uff08file_id: dbd22092-b5ff-4f38-95ef-811a496e9066\uff09\u3002\u662f\u5426\u786e\u8ba4\u5220\u9664\uff1f"
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
+	if !blocked {
+		t.Fatal("guard allowed a delete confirmation when the answer already exposed a file_id")
+	}
+	for _, want := range []string{"file-manager/delete_file", `"file_id":"dbd22092-b5ff-4f38-95ef-811a496e9066"`, "old-third-file.txt"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("delete guard result missing %q: %#v", want, result)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardRequiresVisibleFilesRefreshForContinuationDeleteWithoutID(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", nil),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
+	}
+	answer := "\u5f53\u524d\u7b2c3\u4e2a\u6587\u4ef6\u662f old-third-file.txt\uff0c\u662f\u5426\u786e\u8ba4\u5220\u9664\uff1f"
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
+	if !blocked {
+		t.Fatal("guard allowed delete confirmation without a resolved file_id")
+	}
+	if result.SkillID != skills.SkillFileReader || result.ToolName != "list_visible_files" {
+		t.Fatalf("guard result = %#v, want file-reader/list_visible_files", result)
+	}
+
+	result, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: answer,
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileReader,
+			ToolName: "list_visible_files",
+			Result: map[string]interface{}{
+				"files": []interface{}{
+					map[string]interface{}{"file_id": "file-1", "name": "first.txt", "visible_index": 1},
+					map[string]interface{}{"file_id": "file-2", "name": "second.txt", "visible_index": 2},
+					map[string]interface{}{"file_id": "file-delete", "name": "old-third-file.txt", "visible_index": 3},
+				},
+			},
+		}},
+	})
+	if !blocked {
+		t.Fatal("guard allowed delete confirmation after list_visible_files resolved the target")
+	}
+	for _, want := range []string{skills.SkillFileManager, "delete_file", `"file_id":"file-delete"`, "old-third-file.txt"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("delete guard result missing %q: %#v", want, result)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksContinuationDeleteConfirmationFromNonFilesStart(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE",
+			RuntimeContext: "route=/console/agents capabilities=agent.list_visible",
+			SkillIDs:       []string{skills.SkillFileManager, skills.SkillFileReader, skills.SkillFileGenerator},
+			SkillMode:      skillModeAuto,
+		},
+	}
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want cross-page continuation delete guard")
+	}
+	answer := "\u5df2\u4fdd\u5b58 txt \u548c svg\u3002\u63a5\u4e0b\u6765\u6267\u884c\u6700\u540e\u4e00\u6b65\uff1a\u5f53\u524d\u7b2c3\u4e2a\u6587\u4ef6\u662f old-third-file.txt\u3002\u662f\u5426\u786e\u8ba4\u5220\u9664\uff1f"
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
+	if !blocked {
+		t.Fatal("guard allowed a cross-page continuation delete confirmation")
+	}
+	if result.SkillID != skills.SkillFileReader || result.ToolName != "list_visible_files" {
+		t.Fatalf("guard result = %#v, want file-reader/list_visible_files before deleting from cross-page continuation", result)
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksObservedContinuationDeleteConfirmation(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-FIX6",
+			RuntimeContext: "route=/console/agents capabilities=agent.list_visible",
+			SkillIDs:       []string{skills.SkillFileManager, skills.SkillFileReader, skills.SkillFileGenerator, skills.SkillConsoleNavigator},
+			SkillMode:      skillModeAuto,
+		},
+	}
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want observed continuation delete guard")
+	}
+	answer := strings.Join([]string{
+		"\u6839\u636e\u4efb\u52a1 SMOKE-CONTINUE-FIX6 \u7684\u8ba1\u5212\uff0c\u7b2c\u4e00\u6b65\u5df2\u5b8c\u6210\uff08\u5df2\u8bfb\u53d6\u667a\u80fd\u4f53\u9875\u9762\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u540d\u79f0\uff09\u3002",
+		"\u73b0\u5728\u57fa\u4e8e\u5f53\u524d\u6587\u4ef6\u9875\u9762\uff0c\u5f53\u524d**\u7b2c\u4e09\u4e2a\u6587\u4ef6**\uff08visible_index=3\uff09\u662f **SMOKE-CONTINUE-FIX5-1782317298269.svg**\u3002",
+		"\u9700\u8981\u5b8c\u6210\u6700\u540e\u4e00\u6b65\uff1a\u89c2\u5bdf\u8be5\u6587\u4ef6\uff0c\u7136\u540e\u5220\u9664\u5b83\u3002",
+		"\u5728\u5220\u9664\u524d\u9700\u8981\u60a8\u7684\u786e\u8ba4\uff08\u9ad8\u98ce\u9669\u64cd\u4f5c\uff09\u3002\u662f\u5426\u786e\u8ba4\u5220\u9664\u7b2c\u4e09\u4e2a\u6587\u4ef6 **SMOKE-CONTINUE-FIX5-1782317298269.svg**\uff1f",
+	}, "\n\n")
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
+	if !blocked {
+		t.Fatal("guard allowed the observed natural-language delete confirmation")
+	}
+	if result.SkillID != skills.SkillFileReader || result.ToolName != "list_visible_files" {
+		t.Fatalf("guard result = %#v, want file-reader/list_visible_files for observed confirmation without file_id", result)
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardResolvesArabicOrdinalContinuationDelete(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", []consoleFilesTestFile{
+			{ID: "file-first", Name: "first.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-second", Name: "second.txt", Extension: "txt", MimeType: "text/plain"},
+			{ID: "file-delete", Name: "old-third-file.txt", Extension: "txt", MimeType: "text/plain"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want ordinal delete guard")
+	}
+	answer := "\u5df2\u5b8c\u6210\u6587\u4ef6\u4fdd\u5b58\u3002\u63a5\u4e0b\u6765\u9700\u8981\u5220\u9664\u5f53\u524d\u7b2c3\u4e2a\u6587\u4ef6\uff0c\u662f\u5426\u786e\u8ba4\u5220\u9664\uff1f"
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
+	if !blocked {
+		t.Fatal("guard allowed a continuation delete confirmation with an Arabic ordinal target")
+	}
+	for _, want := range []string{skills.SkillFileManager, "delete_file", `"file_id":"file-delete"`} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("delete guard result missing %q: %#v", want, result)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardAllowsSecondConfirmationAfterFrozenContinuationDeleteSucceeds(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", []consoleFilesTestFile{
+			{ID: "file-new-third", Name: "new-third-after-delete.txt", Extension: "txt", MimeType: "text/plain"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
+	}
+	answer := "\u4e0a\u4e00\u4e2a .svg \u6587\u4ef6\u5df2\u7ecf\u5220\u9664\u3002\u5f53\u524d\u7b2c3\u4e2a\u6587\u4ef6\u53d8\u6210 new-third-after-delete.txt\uff0c\u662f\u5426\u786e\u8ba4\u5220\u9664\uff1f"
+	_, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: answer,
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileManager,
+			ToolName: "delete_file",
+			Arguments: map[string]interface{}{
+				"file_id": "file-deleted",
+			},
+			Result: map[string]interface{}{
+				"file_name": "deleted-third.svg",
+			},
+		}},
+	})
+	if blocked {
+		t.Fatal("guard blocked a second delete confirmation after the frozen target was already deleted")
 	}
 }
 
@@ -105,6 +454,55 @@ func TestSkillLoopAdditionalSystemMessagesResolvesRecentFileTarget(t *testing.T)
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("contextual recent guidance missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestSkillLoopAdditionalSystemMessagesResolvesRecentManagedFileDeleteTarget(t *testing.T) {
+	query := "\u8bf7\u5220\u9664\u521a\u521a\u521b\u5efa\u7684\u6587\u4ef6 aichat-plan-smoke.md\uff0c\u53ea\u5220\u9664\u8fd9\u4e2a\u6d4b\u8bd5\u6587\u4ef6\u3002"
+	prepared := &PreparedChat{
+		parts: consoleFilesSnapshotTestParts(query, nil),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.RecentAssetCandidates = []ResourceCandidate{{
+		Type:      resourceTypeFile,
+		ID:        "managed-file-other",
+		Name:      "other-recent.md",
+		Title:     "other-recent.md",
+		Source:    "recent_execution.save_file_to_management",
+		Extension: "md",
+		Recent:    true,
+	}, {
+		Type:      resourceTypeFile,
+		ID:        "managed-file-1",
+		Name:      "aichat-plan-smoke.md",
+		Title:     "aichat-plan-smoke.md",
+		Source:    "recent_execution.save_file_to_management",
+		Extension: "md",
+		Recent:    true,
+	}}
+
+	messages := skillLoopAdditionalSystemMessages(prepared)
+	if len(messages) != 1 {
+		t.Fatalf("additional messages = %d, want 1", len(messages))
+	}
+	content := messageContentText(messages[0].Content)
+	for _, want := range []string{
+		"resolved_targets_from_user_request",
+		`"file_id":"managed-file-1"`,
+		`"name":"aichat-plan-smoke.md"`,
+		"file-manager/delete_file",
+		"Tool governance handles the approval card",
+		"do not ask for a separate natural-language confirmation",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("contextual recent delete guidance missing %q in:\n%s", want, content)
+		}
+	}
+	for _, unwanted := range []string{`"file_id":"managed-file-other"`, `"name":"other-recent.md"`} {
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("contextual recent delete guidance included unintended target %q in:\n%s", unwanted, content)
 		}
 	}
 }
@@ -198,10 +596,15 @@ func TestContextualAIChatTurnStrategyPlansRouteBeforeManagedFileCreate(t *testin
 		skills.SkillFileManager,
 		"exactly one temporary artifact",
 		"asset_observation:file.create",
+		"preferred next route action",
+		"low-risk observe/read/list step",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("turn strategy missing %q in:\n%s", want, content)
 		}
+	}
+	if strings.Contains(content, "do not answer, ask a question, or call another business tool before required_next_tool") {
+		t.Fatalf("turn strategy still contains hard required_next_tool wording:\n%s", content)
 	}
 }
 
@@ -231,6 +634,164 @@ func TestContextualAIChatTurnStrategyUsesRecentArtifactWithoutRegeneration(t *te
 		if !strings.Contains(content, want) {
 			t.Fatalf("recent-artifact strategy missing %q in:\n%s", want, content)
 		}
+	}
+
+	strategy := contextualManagedFileCreateStrategy(prepared.parts, &AIChatTurnStrategy{
+		PrimarySkills: []string{skills.SkillFileGenerator},
+	})
+	strategy = enrichAIChatTurnStrategyPlannedTools(prepared.parts, strategy)
+	if containsString(strategy.PrimarySkills, skills.SkillFileGenerator) {
+		t.Fatalf("PrimarySkills = %#v, want recent-artifact save to remove producer skills", strategy.PrimarySkills)
+	}
+	if !containsString(strategy.PrimarySkills, skills.SkillFileManager) {
+		t.Fatalf("PrimarySkills = %#v, want file-manager", strategy.PrimarySkills)
+	}
+	for _, tool := range strategy.PlannedTools {
+		if tool.SkillID == skills.SkillFileGenerator {
+			t.Fatalf("PlannedTools = %#v, want no generator tool for recent-artifact save", strategy.PlannedTools)
+		}
+	}
+}
+
+func TestContextualAIChatTurnStrategyGeneratesNewManagedFileDespiteRecentArtifact(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("\u8bf7\u751f\u6210\u4e00\u4e2a SVG \u6587\u4ef6\u5e76\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406"),
+	}
+	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.RecentGeneratedArtifacts = []map[string]interface{}{{
+		"tool_file_id": "tool-recent-1",
+		"filename":     "previous.svg",
+	}}
+
+	strategy := contextualAIChatTurnStrategyFromParts(prepared.parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.ArtifactSource == "recent_generated_file" {
+		t.Fatalf("ArtifactSource = %q, want new artifact generation", strategy.ArtifactSource)
+	}
+	for _, want := range []string{skills.SkillFileGenerator, skills.SkillFileManager} {
+		if !containsString(strategy.PrimarySkills, want) {
+			t.Fatalf("PrimarySkills = %#v, want %s", strategy.PrimarySkills, want)
+		}
+	}
+
+	metadata := streamingMessageMetadataWithTaskID(prepared.parts, "task-new-managed")
+	plan := metadata["operation_plan"].(map[string]interface{})
+	stepStatus := plan["step_status"].(map[string]interface{})
+	for _, want := range []string{"skill:" + skills.SkillFileGenerator, "skill:" + skills.SkillFileManager} {
+		if _, ok := stepStatus[want]; !ok {
+			t.Fatalf("operation plan step_status = %#v, want %s", stepStatus, want)
+		}
+	}
+}
+
+func TestContextualAIChatTurnStrategyClassifiesTemporaryFileGeneration(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "\u7b2c\u4e00\u9636\u6bb5\u53ea\u751f\u6210\u4e00\u4e2a\u4e34\u65f6 SVG \u6587\u4ef6\uff0c\u7b49\u5f85\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\uff0c\u4e0d\u8981\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\u3002",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/files",
+			SkillIDs: []string{
+				skills.SkillConsoleNavigator,
+				skills.SkillFileGenerator,
+				skills.SkillFileManager,
+			},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	message, ok := contextualAIChatTurnStrategyMessage(prepared)
+	if !ok {
+		t.Fatal("contextualAIChatTurnStrategyMessage() ok = false, want true")
+	}
+	content := messageContentText(message.Content)
+	for _, want := range []string{
+		`"intent":"generate_temporary_file_artifact"`,
+		`"primary_skills":["file-generator"]`,
+		"do not call file-manager/save_file_to_management",
+		"generated_files metadata records the temporary artifact",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("temporary generation strategy missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestContextualAIChatTurnStrategyUsesFileGeneratorForGenericSVGWhenChartGeneratorEnabled(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:   "\u751f\u6210\u4e00\u4e2a\u4e34\u65f6 SVG \u6587\u4ef6\uff0c\u5185\u5bb9\u753b\u4e00\u4e2a\u7eff\u8272\u5706\u70b9\uff0c\u4e0d\u8981\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\u3002",
+			Surface: aiChatSurfaceContextualSidebar,
+			SkillIDs: []string{
+				skills.SkillFileGenerator,
+				skills.SkillChartGenerator,
+			},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(prepared.parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if got, want := strategy.PrimarySkills, []string{skills.SkillFileGenerator}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("PrimarySkills = %#v, want %#v", got, want)
+	}
+	metadata := streamingMessageMetadataWithTaskID(prepared.parts, "task-svg")
+	plan := metadata["operation_plan"].(map[string]interface{})
+	stepStatus := plan["step_status"].(map[string]interface{})
+	if _, ok := stepStatus["skill:"+skills.SkillChartGenerator]; ok {
+		t.Fatalf("operation plan step_status includes chart-generator for generic SVG: %#v", stepStatus)
+	}
+}
+
+func TestTemporaryFileGenerateIntentIgnoresReadOnlyNegativeOperations(t *testing.T) {
+	query := "SMOKE-ORDER: \u53ea\u56de\u7b54\u5f53\u524d\u6587\u4ef6\u7ba1\u7406\u9875\u53ef\u89c1\u6587\u4ef6\u603b\u6570\u548c\u524d\u4e24\u4e2a\u6587\u4ef6\u540d\uff0c\u4e0d\u8981\u521b\u5efa\u3001\u4fdd\u5b58\u3001\u5220\u9664\u6216\u5bfc\u822a\u3002"
+	if isTemporaryFileGenerateIntent(query) {
+		t.Fatal("isTemporaryFileGenerateIntent() = true, want false for read-only request with negative operations")
+	}
+}
+
+func TestTemporaryFileGenerateFinalAnswerGuardRequiresArtifactTool(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:   "\u53ea\u751f\u6210\u4e00\u4e2a\u4e34\u65f6 SVG \u6587\u4ef6\uff0c\u4e0d\u8981\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\u3002",
+			Surface: aiChatSurfaceContextualSidebar,
+			SkillIDs: []string{
+				skills.SkillFileGenerator,
+				skills.SkillFileManager,
+			},
+			SkillMode: skillModeAuto,
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{}},
+	}
+
+	guard := skillLoopTemporaryFileGenerateFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopTemporaryFileGenerateFinalAnswerGuard() = nil, want guard")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "\u5df2\u751f\u6210\u4e34\u65f6\u6587\u4ef6 temporary.svg",
+	})
+	if !blocked {
+		t.Fatal("guard allowed a temporary generation success claim before artifact tool success")
+	}
+	if result.SkillID != skills.SkillFileGenerator || result.ToolName != "generate_file" {
+		t.Fatalf("guard result = %#v, want file-generator/generate_file", result)
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "\u5df2\u751f\u6210\u4e34\u65f6\u6587\u4ef6 temporary.svg",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileGenerator,
+			ToolName: "generate_file",
+		}},
+	})
+	if blocked {
+		t.Fatal("guard blocked after file-generator/generate_file succeeded")
 	}
 }
 
@@ -285,7 +846,7 @@ func TestContextualAIChatTurnStrategyIsTypedAndRecordedInMetadata(t *testing.T) 
 		t.Fatalf("Intent = %q, want save_generated_file_to_file_management", strategy.Intent)
 	}
 	if strategy.TargetPage != "/console/files" || !strategy.RouteRequired {
-		t.Fatalf("target/route = %q/%v, want /console/files/true", strategy.TargetPage, strategy.RouteRequired)
+		t.Fatalf("target/route = %q/%v, want /console/files/true; strategy=%#v", strategy.TargetPage, strategy.RouteRequired, strategy)
 	}
 	if len(strategy.PrimarySkills) == 0 || strategy.PrimarySkills[0] != skills.SkillConsoleNavigator {
 		t.Fatalf("PrimarySkills = %#v, want console navigator first", strategy.PrimarySkills)
@@ -319,7 +880,521 @@ func TestContextualAIChatTurnStrategyResolvesChineseFilesRoute(t *testing.T) {
 		t.Fatalf("Intent = %q, want navigate_console_page", strategy.Intent)
 	}
 	if strategy.TargetPage != "/console/files" || !strategy.RouteRequired {
+		t.Fatalf("target/route = %q/%v, want /console/files/true; strategy=%#v", strategy.TargetPage, strategy.RouteRequired, strategy)
+	}
+}
+
+func TestContextualAIChatTurnStrategyDoesNotNavigateForCurrentFilesPageQuestion(t *testing.T) {
+	parts := consoleFilesSnapshotTestParts("show me the current files page table total count", []consoleFilesTestFile{
+		{ID: "file-1", Name: "report.txt", Extension: "txt", MimeType: "text/plain"},
+	})
+	parts.Surface = aiChatSurfaceContextualSidebar
+	parts.SkillIDs = []string{skills.SkillConsoleNavigator, skills.SkillFileReader}
+	parts.SkillMode = skillModeAuto
+	setConsoleFilesPageTestMetadata(parts, map[string]interface{}{
+		"total_file_count":   86,
+		"current_page":       1,
+		"total_pages":        9,
+		"visible_file_count": 1,
+		"files_query_status": "success",
+		"context_ready":      true,
+	})
+	prepared := &PreparedChat{parts: parts}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "answer_or_explain_zgi_context" {
+		t.Fatalf("Intent = %q, want answer_or_explain_zgi_context; strategy=%#v", strategy.Intent, strategy)
+	}
+	if strategy.RouteRequired {
+		t.Fatalf("RouteRequired = true, want false for already visible files page")
+	}
+	if strategy.RequiredNextTool != nil {
+		t.Fatalf("RequiredNextTool = %#v, want nil", strategy.RequiredNextTool)
+	}
+}
+
+func TestContextualAIChatTurnStrategyPrefersMultiRouteNavigationOverAgentManagement(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "\u8bf7\u5148\u5207\u5230\u667a\u80fd\u4f53\u9875\uff0c\u7136\u540e\u518d\u5207\u56de\u6587\u4ef6\u7ba1\u7406\u9875\uff1b\u5b8c\u6210\u540e\u53ea\u8bf4\u5df2\u56de\u5230\u6587\u4ef6\u7ba1\u7406\u9875\uff0c\u4e0d\u8981\u521b\u5efa\u3001\u4fdd\u5b58\u3001\u5220\u9664\u6587\u4ef6\u3002",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement, skills.SkillFileManager},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "navigate_console_page" {
+		t.Fatalf("Intent = %q, want navigate_console_page", strategy.Intent)
+	}
+	if strategy.TargetPage != "/console/agents" || !strategy.RouteRequired {
+		t.Fatalf("target/route = %q/%v, want /console/agents/true", strategy.TargetPage, strategy.RouteRequired)
+	}
+}
+
+func TestContextualAIChatTurnStrategyTreatsAutoContinueRouteSequenceAsNavigation(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "\u8bf7\u4f9d\u6b21\u5bfc\u822a\uff1a\u9996\u9875 -> \u6587\u4ef6\u7ba1\u7406 -> \u667a\u80fd\u4f53 -> \u6570\u636e\u5e93 -> \u6587\u4ef6\u7ba1\u7406\u3002\u6bcf\u6b21\u5bfc\u822a\u6210\u529f\u540e\u81ea\u52a8\u7ee7\u7eed\u4e0b\u4e00\u6b65\u3002",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents capabilities=agent.list_visible",
+			OperationContext: map[string]interface{}{
+				"resources": []interface{}{map[string]interface{}{
+					"resource_type": "page",
+					"resource_id":   "console.agents",
+					"title":         "Agents",
+					"href":          "/console/agents",
+					"metadata": map[string]interface{}{
+						"route": "/console/agents",
+					},
+				}},
+			},
+			SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillFileManager, skills.SkillFileGenerator},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "navigate_console_page" {
+		t.Fatalf("Intent = %q, want navigate_console_page", strategy.Intent)
+	}
+	if strategy.TargetPage != "/console" || !strategy.RouteRequired {
+		t.Fatalf("target/route = %q/%v, want /console/true", strategy.TargetPage, strategy.RouteRequired)
+	}
+	if strategy.RequiredNextTool == nil || strategy.RequiredNextTool.Arguments["href"] != "/console" {
+		t.Fatalf("RequiredNextTool = %#v, want navigate to /console", strategy.RequiredNextTool)
+	}
+	if len(strategy.RemainingRouteSequence) != 5 {
+		t.Fatalf("remaining route sequence = %#v, want five route steps", strategy.RemainingRouteSequence)
+	}
+	want := []string{"/console", "/console/files", "/console/agents", "/console/db", "/console/files"}
+	for idx, route := range strategy.RemainingRouteSequence {
+		if route.Href != want[idx] {
+			t.Fatalf("route[%d] = %s, want %s in %#v", idx, route.Href, want[idx], strategy.RemainingRouteSequence)
+		}
+	}
+
+	metadata := streamingMessageMetadataWithTaskID(prepared.parts, "task-nav-sequence")
+	plan := metadata["operation_plan"].(map[string]interface{})
+	if plan["intent"] != "navigate_console_page" {
+		t.Fatalf("operation plan intent = %#v, want navigate_console_page", plan["intent"])
+	}
+	if got := operationPlanRoutePagesForTest(plan); len(got) != len(want) {
+		t.Fatalf("operation plan route pages = %#v, want %#v", got, want)
+	} else {
+		for idx := range want {
+			if got[idx] != want[idx] {
+				t.Fatalf("operation plan route pages = %#v, want %#v", got, want)
+			}
+		}
+	}
+	stepStatus := plan["step_status"].(map[string]interface{})
+	for _, id := range []string{"route:/console/files", "route:/console/files#2"} {
+		if _, ok := stepStatus[id]; !ok {
+			t.Fatalf("operation plan step_status = %#v, missing %s", stepStatus, id)
+		}
+	}
+}
+
+func TestContextualAIChatTurnStrategyScopesStagedContinuationToCurrentPhase(t *testing.T) {
+	query := "\u7b2c\u4e00\u9636\u6bb5\u53ea\u5bfc\u822a\u5230\u667a\u80fd\u4f53\u9875\u5e76\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u540d\u79f0\uff0c\u7b49\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\u540e\u518d\u6267\u884c\uff1a\u5bfc\u822a\u5230\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58 smoke.txt \u548c smoke.svg\uff0c\u7136\u540e\u5220\u9664\u7b2c\u4e09\u4e2a\u6587\u4ef6"
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          query,
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/files",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
+			SkillMode:      skillModeAuto,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if !strategy.WaitForContinue || strategy.ExecutionScope != "current_turn_before_continue" {
+		t.Fatalf("strategy wait/scope = %v/%q, want current-turn staged wait", strategy.WaitForContinue, strategy.ExecutionScope)
+	}
+	if strategy.Intent != "navigate_console_page" {
+		t.Fatalf("Intent = %q, want navigate_console_page for the current phase", strategy.Intent)
+	}
+	if strategy.TargetPage != "/console/agents" {
+		t.Fatalf("TargetPage = %q, want /console/agents", strategy.TargetPage)
+	}
+	if strategy.RequiredNextTool == nil || strategy.RequiredNextTool.Arguments["href"] != "/console/agents" {
+		t.Fatalf("RequiredNextTool = %#v, want navigate to /console/agents", strategy.RequiredNextTool)
+	}
+	if len(strategy.RemainingRouteSequence) != 1 || strategy.RemainingRouteSequence[0].Href != "/console/agents" {
+		t.Fatalf("RemainingRouteSequence = %#v, want only /console/agents", strategy.RemainingRouteSequence)
+	}
+	for _, tool := range strategy.PlannedTools {
+		if tool.SkillID == skills.SkillFileGenerator || tool.SkillID == skills.SkillFileManager {
+			t.Fatalf("PlannedTools = %#v, want no deferred file tools in current phase", strategy.PlannedTools)
+		}
+	}
+
+	metadata := streamingMessageMetadataWithTaskID(prepared.parts, "task-staged")
+	plan := metadata["operation_plan"].(map[string]interface{})
+	if plan["status"] != operationPlanStatusRunning {
+		t.Fatalf("operation plan status = %#v, want running while waiting for continue", plan["status"])
+	}
+	if plan["pending_next_action"] != "Navigate to page" {
+		t.Fatalf("pending_next_action = %#v, want initial route before wait", plan["pending_next_action"])
+	}
+	stepStatus := plan["step_status"].(map[string]interface{})
+	if stepStatus["wait:continue"] != operationPlanStepStatusPending {
+		t.Fatalf("step_status = %#v, want wait:continue pending", stepStatus)
+	}
+	if _, ok := stepStatus["route:/console/files"]; ok {
+		t.Fatalf("step_status = %#v, want no deferred /console/files route", stepStatus)
+	}
+}
+
+func TestContextualAIChatTurnStrategyResumesStagedContinuationFromDeferredGoal(t *testing.T) {
+	originalGoal := "\u7b2c\u4e00\u9636\u6bb5\u53ea\u5bfc\u822a\u5230\u667a\u80fd\u4f53\u9875\u5e76\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u540d\u79f0\uff0c\u7b49\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\u540e\u518d\u6267\u884c\uff1a\u5bfc\u822a\u5230\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58 smoke.txt \u548c smoke.svg"
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "\u7ee7\u7eed",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
+			SkillMode:      skillModeAuto,
+			RecentOperationPlans: []map[string]interface{}{{
+				"original_user_goal":  originalGoal,
+				"status":              operationPlanStatusRunning,
+				"pending_next_action": "Wait for user continue",
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":     "wait:continue",
+						"title":  "Wait for user continue",
+						"status": operationPlanStepStatusPending,
+					},
+				},
+				"step_status": map[string]interface{}{"wait:continue": operationPlanStepStatusPending},
+			}},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.ExecutionScope != "staged_goal_after_continue" {
+		t.Fatalf("ExecutionScope = %q, want staged_goal_after_continue", strategy.ExecutionScope)
+	}
+	if strategy.TargetPage != "/console/files" || !strategy.RouteRequired {
 		t.Fatalf("target/route = %q/%v, want /console/files/true", strategy.TargetPage, strategy.RouteRequired)
+	}
+	if strategy.RequiredNextTool == nil || strategy.RequiredNextTool.Arguments["href"] != "/console/files" {
+		t.Fatalf("RequiredNextTool = %#v, want navigate to /console/files", strategy.RequiredNextTool)
+	}
+	foundSave := false
+	for _, tool := range strategy.PlannedTools {
+		if tool.SkillID == skills.SkillFileManager && tool.ToolName == "save_file_to_management" {
+			foundSave = true
+		}
+	}
+	if !foundSave {
+		t.Fatalf("PlannedTools = %#v, want file-manager save from deferred goal", strategy.PlannedTools)
+	}
+}
+
+func TestContextualAIChatTurnStrategyResumesStagedFileGoalWithoutAgentNameRoute(t *testing.T) {
+	originalGoal := "\u5148\u5207\u5230\u667a\u80fd\u4f53\u9875\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u540d\u79f0\uff0c\u7136\u540e\u6682\u505c\u5e76\u7b49\u5f85\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\u3002\u6211\u8bf4\u7ee7\u7eed\u540e\uff0c\u518d\u8fdb\u5165\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58 smoke.txt \u548c smoke.svg\uff1btxt \u5185\u5bb9\u5199\u5165\u8bfb\u53d6\u5230\u7684\u667a\u80fd\u4f53\u540d\u79f0\uff1b\u4fdd\u5b58\u540e\u5220\u9664\u7b2c\u4e09\u4e2a\u6587\u4ef6"
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "\u7ee7\u7eed",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
+			SkillMode:      skillModeAuto,
+			RecentOperationPlans: []map[string]interface{}{{
+				"original_user_goal":  originalGoal,
+				"status":              operationPlanStatusRunning,
+				"pending_next_action": "Wait for user continue",
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":     "wait:continue",
+						"title":  "Wait for user continue",
+						"status": operationPlanStepStatusPending,
+					},
+				},
+				"step_status": map[string]interface{}{"wait:continue": operationPlanStepStatusPending},
+			}},
+		},
+	}
+
+	scopedParts, stagedCurrent, stagedResume := stagedExecutionScopedParts(prepared.parts)
+	if scopedParts == nil || !stagedResume || stagedCurrent {
+		t.Fatalf("staged scoped parts = %#v current=%v resume=%v, want deferred resume", scopedParts, stagedCurrent, stagedResume)
+	}
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.ExecutionScope != "staged_goal_after_continue" {
+		t.Fatalf("ExecutionScope = %q, want staged_goal_after_continue", strategy.ExecutionScope)
+	}
+	if strategy.TargetPage != "/console/files" || !strategy.RouteRequired {
+		t.Fatalf("target/route = %q/%v, want /console/files/true; scoped query=%q agentIntent=%v managedIntent=%v strategy=%#v", strategy.TargetPage, strategy.RouteRequired, scopedParts.Query, isAgentManagementIntent(scopedParts.Query), isManagedFileCreateIntent(scopedParts.Query), strategy)
+	}
+	for _, route := range strategy.RemainingRouteSequence {
+		if route.Href == "/console/agents" {
+			t.Fatalf("RemainingRouteSequence = %#v, want no /console/agents from resource attribute mention", strategy.RemainingRouteSequence)
+		}
+	}
+	for _, want := range []struct {
+		skillID  string
+		toolName string
+	}{
+		{skills.SkillFileGenerator, "generate_file"},
+		{skills.SkillFileManager, "save_file_to_management"},
+		{skills.SkillFileManager, "delete_file"},
+	} {
+		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, want.skillID, want.toolName) {
+			t.Fatalf("PlannedTools = %#v, missing %s/%s", strategy.PlannedTools, want.skillID, want.toolName)
+		}
+	}
+}
+
+func TestContextualAIChatTurnStrategyKeepsStagedCurrentScopeDuringClientActionResume(t *testing.T) {
+	originalGoal := "\u7b2c\u4e00\u9636\u6bb5\u53ea\u5bfc\u822a\u5230\u667a\u80fd\u4f53\u9875\u5e76\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u540d\u79f0\uff0c\u7b49\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\u540e\u518d\u6267\u884c\uff1a\u5bfc\u822a\u5230\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58 smoke.txt \u548c smoke.svg"
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          originalGoal,
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
+			SkillMode:      skillModeAuto,
+			RecentOperationPlans: []map[string]interface{}{{
+				"original_user_goal":  originalGoal,
+				"status":              operationPlanStatusRunning,
+				"pending_next_action": "Wait for user continue",
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":     "wait:continue",
+						"title":  "Wait for user continue",
+						"status": operationPlanStepStatusPending,
+					},
+				},
+				"step_status": map[string]interface{}{"wait:continue": operationPlanStepStatusPending},
+			}},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.ExecutionScope != "current_turn_before_continue" || !strategy.WaitForContinue {
+		t.Fatalf("scope/wait = %q/%v, want current turn staged wait", strategy.ExecutionScope, strategy.WaitForContinue)
+	}
+	if strategy.TargetPage != "/console/agents" {
+		t.Fatalf("TargetPage = %q, want /console/agents instead of deferred /console/files", strategy.TargetPage)
+	}
+	for _, tool := range strategy.PlannedTools {
+		if tool.SkillID == skills.SkillFileGenerator || tool.SkillID == skills.SkillFileManager {
+			t.Fatalf("PlannedTools = %#v, want no deferred file tools during client action resume", strategy.PlannedTools)
+		}
+	}
+}
+
+func TestSkillLoopToolCallGuardBlocksDeferredStagedContinuationTools(t *testing.T) {
+	query := "\u7b2c\u4e00\u9636\u6bb5\u53ea\u5bfc\u822a\u5230\u667a\u80fd\u4f53\u9875\uff0c\u7b49\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\u540e\u518d\u6267\u884c\uff1a\u5bfc\u822a\u5230\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58 smoke.svg\uff0c\u7136\u540e\u5220\u9664\u7b2c\u4e09\u4e2a\u6587\u4ef6"
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     query,
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want staged continuation guard")
+	}
+	_, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillConsoleNavigator,
+		ToolName:  "navigate",
+		Arguments: map[string]interface{}{"href": "/console/agents"},
+	})
+	if blocked {
+		t.Fatal("guard blocked current-phase /console/agents navigation")
+	}
+	for _, req := range []skillloop.ToolCallGuardRequest{
+		{SkillID: skills.SkillConsoleNavigator, ToolName: "navigate", Arguments: map[string]interface{}{"href": "/console/files"}},
+		{SkillID: skills.SkillFileGenerator, ToolName: "generate_file", Arguments: map[string]interface{}{"filename": "smoke.svg"}},
+		{SkillID: skills.SkillFileManager, ToolName: "save_file_to_management", Arguments: map[string]interface{}{"filename": "smoke.svg"}},
+		{SkillID: skills.SkillFileManager, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-3"}},
+	} {
+		result, blocked := guard(req)
+		if !blocked {
+			t.Fatalf("guard allowed deferred tool call %#v", req)
+		}
+		if !strings.Contains(result.SystemMessage, "continue marker") {
+			t.Fatalf("guard message = %q, want staged continuation explanation", result.SystemMessage)
+		}
+	}
+}
+
+func TestResolveConsoleNavigationTargetForPartsUsesNextUnfinishedRoute(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "\u8bf7\u5148\u5207\u5230\u667a\u80fd\u4f53\u9875\uff0c\u7136\u540e\u518d\u5207\u56de\u6587\u4ef6\u7ba1\u7406\u9875",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillIDs:  []string{skills.SkillConsoleNavigator},
+		SkillMode: skillModeAuto,
+		OperationContext: map[string]interface{}{
+			"client_action_continuation": map[string]interface{}{
+				"action_type": "route_navigation",
+				"status":      clientActionStatusSucceeded,
+				"href":        "/console/agents",
+			},
+		},
+	}
+
+	target, ok := resolveConsoleNavigationTargetForParts(parts)
+	if !ok {
+		t.Fatal("resolveConsoleNavigationTargetForParts() ok = false, want true")
+	}
+	if target.Href != "/console/files" {
+		t.Fatalf("target = %#v, want /console/files as next unfinished route", target)
+	}
+}
+
+func TestContextualAIChatTurnStrategyResolvesShortChineseNavigation(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "帮我切到数据库",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillIDs:  []string{skills.SkillConsoleNavigator},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "navigate_console_page" {
+		t.Fatalf("Intent = %q, want navigate_console_page", strategy.Intent)
+	}
+	if strategy.TargetPage != "/console/db" || !strategy.RouteRequired {
+		t.Fatalf("target/route = %q/%v, want /console/db/true", strategy.TargetPage, strategy.RouteRequired)
+	}
+}
+
+func TestContextualAIChatTurnStrategyClassifiesContinuation(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("继续"),
+	}
+	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+	prepared.parts.SkillIDs = []string{
+		skills.SkillConsoleNavigator,
+		skills.SkillFileGenerator,
+		skills.SkillFileManager,
+	}
+	prepared.parts.SkillMode = skillModeAuto
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "continue_previous_task" {
+		t.Fatalf("Intent = %q, want continue_previous_task", strategy.Intent)
+	}
+	for _, want := range []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager} {
+		if !slices.Contains(strategy.SupportingSkills, want) {
+			t.Fatalf("SupportingSkills = %#v, missing %q", strategy.SupportingSkills, want)
+		}
+	}
+}
+
+func TestContextualAIChatTurnStrategyContinuationManagedCreateKeepsFilePlan(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u6267\u884c\u7b2c\u4e8c\u9636\u6bb5\uff1a\u5230\u6587\u4ef6\u7ba1\u7406\u521b\u5efa\u5e76\u4fdd\u5b58 smoke.txt \u548c smoke.svg"),
+	}
+	prepared.parts.RuntimeContext = "route=/console/agents"
+	prepared.parts.RawOperationContext = map[string]interface{}{
+		"resources": []interface{}{map[string]interface{}{
+			"resource_type": "page",
+			"href":          "/console/agents",
+		}},
+	}
+	prepared.parts.OperationContext = prepared.parts.RawOperationContext
+	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+	prepared.parts.SkillIDs = []string{
+		skills.SkillConsoleNavigator,
+		skills.SkillFileGenerator,
+		skills.SkillFileManager,
+	}
+	prepared.parts.SkillMode = skillModeAuto
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "continue_previous_task" {
+		t.Fatalf("Intent = %q, want continue_previous_task", strategy.Intent)
+	}
+	if strategy.TargetPage != "/console/files" || !strategy.RouteRequired {
+		t.Fatalf("target/route = %q/%v, want /console/files/true", strategy.TargetPage, strategy.RouteRequired)
+	}
+	if !slices.Contains(strategy.PrimarySkills, skills.SkillConsoleNavigator) {
+		t.Fatalf("PrimarySkills = %#v, missing %q", strategy.PrimarySkills, skills.SkillConsoleNavigator)
+	}
+	for _, want := range []string{skills.SkillFileGenerator, skills.SkillFileManager} {
+		if !slices.Contains(strategy.SupportingSkills, want) {
+			t.Fatalf("SupportingSkills = %#v, missing %q", strategy.SupportingSkills, want)
+		}
+	}
+	plan := operationPlanFromTurnStrategy("task-continuation-save", prepared.parts, strategy)
+	stepStatus := plan["step_status"].(map[string]interface{})
+	for _, want := range []string{
+		"tool:console-navigator/navigate",
+		"route:/console/files",
+		"skill:" + skills.SkillConsoleNavigator,
+	} {
+		if _, ok := stepStatus[want]; !ok {
+			t.Fatalf("step_status = %#v, missing %s", stepStatus, want)
+		}
+	}
+}
+
+func TestIsContinuationIntentAllowsTaskMarker(t *testing.T) {
+	query := "\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"
+	if !isContinuationIntent(query) {
+		t.Fatalf("isContinuationIntent(%q) = false, want true", query)
+	}
+}
+
+func TestIsContinuationIntentAllowsLongStagedContinuationCommand(t *testing.T) {
+	query := "\u7ee7\u7eed\u6267\u884c\u7b2c\u4e8c\u9636\u6bb5\uff1a\u5230\u6587\u4ef6\u7ba1\u7406\u521b\u5efa\u5e76\u4fdd\u5b58\u4e24\u4e2a\u6587\u4ef6\uff0ctxt \u5185\u5bb9\u5199\u4e0a\u4e00\u9636\u6bb5\u8bfb\u53d6\u5230\u7684\u667a\u80fd\u4f53\u540d\u79f0\uff0csvg \u5185\u5bb9\u753b\u4e00\u4e2a\u5c0f\u56fe\u6807\uff0c\u5b8c\u6210\u540e\u6682\u505c\u3002"
+	if !isContinuationIntent(query) {
+		t.Fatalf("isContinuationIntent(%q) = false, want true for a long staged continuation command", query)
+	}
+}
+
+func TestIsContinuationIntentDoesNotTreatStagedTaskDefinitionAsContinuation(t *testing.T) {
+	query := "\u5148\u5207\u5230\u667a\u80fd\u4f53\u9875\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u540d\u79f0\uff0c\u7136\u540e\u7b49\u5f85\u6211\u8bf4\u7ee7\u7eed\u540e\u518d\u8fdb\u5165\u6587\u4ef6\u7ba1\u7406\u521b\u5efa\u6587\u4ef6\u3002"
+	if isContinuationIntent(query) {
+		t.Fatalf("isContinuationIntent(%q) = true, want false for a staged task definition", query)
+	}
+}
+
+func TestIsContinuationIntentDoesNotTreatQuotedContinueInstructionAsContinuation(t *testing.T) {
+	query := "\u7b2c\u4e00\u9636\u6bb5\u5b8c\u6210\u540e\u8bf7\u6682\u505c\uff0c\u7b49\u5f85\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\u3002\u6ce8\u610f\uff1a\u7b2c\u4e00\u9636\u6bb5\u7edd\u5bf9\u4e0d\u8981\u5220\u9664\u4efb\u4f55\u6587\u4ef6\u3002"
+	if isContinuationIntent(query) {
+		t.Fatalf("isContinuationIntent(%q) = true, want false for a quoted continue instruction", query)
 	}
 }
 
@@ -516,6 +1591,26 @@ func TestSkillLoopFinalAnswerGuardBlocksManagedFileCreateWithoutToolCall(t *test
 	}
 }
 
+func TestSkillLoopFinalAnswerGuardAllowsReadOnlyFilesQuestionWithNegativeOperations(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("SMOKE-ORDER: \u53ea\u56de\u7b54\u5f53\u524d\u6587\u4ef6\u7ba1\u7406\u9875\u53ef\u89c1\u6587\u4ef6\u603b\u6570\u548c\u524d\u4e24\u4e2a\u6587\u4ef6\u540d\uff0c\u4e0d\u8981\u521b\u5efa\u3001\u4fdd\u5b58\u3001\u5220\u9664\u6216\u5bfc\u822a\u3002"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	if isManagedFileCreateIntent(prepared.parts.Query) {
+		t.Fatal("isManagedFileCreateIntent() = true, want false for read-only request with negative operations")
+	}
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		_, blocked := guard(skillloop.FinalAnswerGuardRequest{
+			Answer: "当前可见文件共有 41 个，前两个文件是 a.svg 和 b.txt。",
+		})
+		if blocked {
+			t.Fatal("skillLoopFinalAnswerGuard blocked read-only files-page answer with negative operations")
+		}
+	}
+}
+
 func TestSkillLoopFinalAnswerGuardUsesRecentGeneratedArtifactForReferencedSave(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesCreateCapabilityTestParts("\u5bfc\u822a\u540e\uff0c\u5982\u679c\u4e0d\u5728\u7ba1\u7406\u9875\u9762\uff0c\u5c31\u628a\u8fd9\u4e2a\u6587\u4ef6\u4e0a\u4f20\u5230\u7ba1\u7406\u91cc\u9762"),
@@ -554,7 +1649,7 @@ func TestSkillLoopFinalAnswerGuardUsesRecentGeneratedArtifactForReferencedSave(t
 	}
 }
 
-func TestSkillLoopToolCallGuardRoutesManagedFileCreateBeforeGeneration(t *testing.T) {
+func TestSkillLoopToolCallGuardAllowsManagedFileWorkBeforeOptionalFilesRoute(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:          "please create an svg file in File Management",
@@ -576,13 +1671,20 @@ func TestSkillLoopToolCallGuardRoutesManagedFileCreateBeforeGeneration(t *testin
 			"format":   "svg",
 		},
 	})
-	if !blocked {
-		t.Fatal("tool guard allowed file generation before Files page navigation")
+	if blocked {
+		t.Fatalf("tool guard blocked file generation only because Files route was not loaded; result=%#v", result)
 	}
-	for _, want := range []string{skills.SkillConsoleNavigator, "navigate", "/console/files"} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("guard result missing %q: %#v", want, result)
-		}
+	result, blocked = guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Arguments: map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": "tool-1",
+			"filename":     "hello.svg",
+		},
+	})
+	if blocked {
+		t.Fatalf("tool guard blocked file save only because Files route was not loaded; result=%#v", result)
 	}
 
 	_, blocked = guard(skillloop.ToolCallGuardRequest{
@@ -591,7 +1693,21 @@ func TestSkillLoopToolCallGuardRoutesManagedFileCreateBeforeGeneration(t *testin
 		Arguments: map[string]interface{}{"href": "/console/files"},
 	})
 	if blocked {
-		t.Fatal("tool guard blocked the required Files page navigation")
+		t.Fatal("tool guard blocked optional Files page navigation")
+	}
+
+	result, blocked = guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillConsoleNavigator,
+		ToolName:  "navigate",
+		Arguments: map[string]interface{}{"href": "/console/agents"},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed navigation away from Files during managed file creation")
+	}
+	for _, want := range []string{skills.SkillConsoleNavigator, "navigate", "/console/files"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("wrong-route guard result missing %q: %#v", want, result)
+		}
 	}
 
 	result, blocked = guard(skillloop.ToolCallGuardRequest{
@@ -603,11 +1719,11 @@ func TestSkillLoopToolCallGuardRoutesManagedFileCreateBeforeGeneration(t *testin
 		},
 	})
 	if !blocked {
-		t.Fatal("tool guard allowed chart generation before Files page navigation")
+		t.Fatal("tool guard allowed chart generation for a generic SVG request")
 	}
-	for _, want := range []string{skills.SkillConsoleNavigator, "navigate", "/console/files"} {
+	for _, want := range []string{skills.SkillFileGenerator, "generate_file", "generic SVG"} {
 		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("chart route guard result missing %q: %#v", want, result)
+			t.Fatalf("chart guard result missing %q: %#v", want, result)
 		}
 	}
 }
@@ -655,6 +1771,47 @@ func TestSkillLoopToolCallGuardPreventsDuplicateManagedFileGeneration(t *testing
 		t.Fatalf("guard user-visible message exposed tool file id: %s", result.Message)
 	}
 
+	savedFirstFile := []skillloop.SkillToolCallRef{
+		{
+			SkillID:  skills.SkillFileGenerator,
+			ToolName: "generate_file",
+			Arguments: map[string]interface{}{
+				"filename": "first",
+				"format":   "txt",
+			},
+			Result: map[string]interface{}{
+				"tool_file_id": "tool-1",
+				"filename":     "first.txt",
+			},
+		},
+		{
+			SkillID:  skills.SkillFileManager,
+			ToolName: "save_file_to_management",
+			Arguments: map[string]interface{}{
+				"source_type":  "tool_file",
+				"tool_file_id": "tool-1",
+				"filename":     "first.txt",
+			},
+			Result: map[string]interface{}{
+				"file_name":      "first.txt",
+				"source_file_id": "tool-1",
+				"target":         "managed_file",
+			},
+		},
+	}
+	_, blocked = guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "second",
+			"format":   "svg",
+		},
+		SuccessfulToolCalls: savedFirstFile,
+	})
+	if blocked {
+		t.Fatal("tool guard blocked generating a second requested file after the first artifact was saved")
+	}
+
 	_, blocked = guard(skillloop.ToolCallGuardRequest{
 		SkillID:  skills.SkillFileManager,
 		ToolName: "save_file_to_management",
@@ -693,6 +1850,1036 @@ func TestSkillLoopToolCallGuardPreventsDuplicateManagedFileGeneration(t *testing
 		if !strings.Contains(result.SystemMessage, want) {
 			t.Fatalf("chart duplicate guard system message missing %q in:\n%s", want, result.SystemMessage)
 		}
+	}
+}
+
+func TestSkillLoopToolCallGuardAllowsDistinctExplicitManagedFileTargets(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("please create and save aichat-one.txt and aichat-two.svg to File Management"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want managed-file duplicate generation guard")
+	}
+
+	generatedTXT := []skillloop.SkillToolCallRef{{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "aichat-one",
+			"format":   "txt",
+		},
+		Result: map[string]interface{}{
+			"tool_file_id": "tool-1",
+			"filename":     "aichat-one.txt",
+		},
+	}}
+
+	_, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "aichat-two",
+			"format":   "svg",
+		},
+		SuccessfulToolCalls: generatedTXT,
+	})
+	if blocked {
+		t.Fatal("tool guard blocked generating the second explicit target file")
+	}
+
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "aichat-one",
+			"format":   "txt",
+		},
+		SuccessfulToolCalls: generatedTXT,
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed duplicate generation for the same explicit target")
+	}
+	if !strings.Contains(result.SystemMessage, `"tool_file_id":"tool-1"`) {
+		t.Fatalf("duplicate guard should still point at the existing artifact, got:\n%s", result.SystemMessage)
+	}
+}
+
+func TestSkillLoopToolCallGuardAllowsNonFilesNavigationDuringManagedFileCreate(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("先切到智能体页读取第一个智能体，然后回到文件管理创建文件"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want route guard")
+	}
+	_, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillConsoleNavigator,
+		ToolName: "navigate",
+		Arguments: map[string]interface{}{
+			"href": "/console/agents",
+		},
+	})
+	if blocked {
+		t.Fatal("tool guard blocked navigation to agents while only duplicate Files navigation should be blocked")
+	}
+}
+
+func TestSkillLoopToolCallGuardBlocksReturningToCompletedPrecursorRoute(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"client_actions": []interface{}{
+					map[string]interface{}{
+						"action_type": "route_navigation",
+						"status":      clientActionStatusSucceeded,
+						"href":        "/console/agents",
+						"result": map[string]interface{}{
+							"href":          "/console/agents",
+							"observed_path": "/console/agents",
+						},
+					},
+					map[string]interface{}{
+						"action_type": "route_navigation",
+						"status":      clientActionStatusSucceeded,
+						"href":        "/console/files",
+						"result": map[string]interface{}{
+							"href":          "/console/files",
+							"observed_path": "/console/files",
+						},
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("先切到智能体页读取第一个智能体，然后到文件管理创建并保存 aichat-one.txt"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want route loop guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillConsoleNavigator,
+		ToolName: "navigate",
+		Arguments: map[string]interface{}{
+			"href": "/console/agents",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed returning to an already completed precursor route after Files was loaded")
+	}
+	if !strings.Contains(result.SystemMessage, "already loaded and observed") {
+		t.Fatalf("guard message missing route-loop explanation:\n%s", result.SystemMessage)
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardRequiresAllExplicitManagedFilesSaved(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("请创建并保存 aichat-one.txt 和 aichat-two.svg 到文件管理"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want managed file create guard")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "两个文件都已保存到文件管理。",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{
+				SkillID:  skills.SkillFileManager,
+				ToolName: "save_file_to_management",
+				Arguments: map[string]interface{}{
+					"source_type":  "tool_file",
+					"tool_file_id": "tool-1",
+					"filename":     "aichat-one.txt",
+				},
+				Result: map[string]interface{}{
+					"file_name":      "aichat-one.txt",
+					"source_file_id": "tool-1",
+					"target":         "managed_file",
+				},
+			},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard allowed final answer after only one explicit target file was saved")
+	}
+	if !strings.Contains(result.Message, "aichat-two.svg") {
+		t.Fatalf("guard message missing unsaved target in:\n%s", result.Message)
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "两个文件都已保存到文件管理。",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{
+				SkillID:  skills.SkillFileManager,
+				ToolName: "save_file_to_management",
+				Arguments: map[string]interface{}{
+					"source_type":  "tool_file",
+					"tool_file_id": "tool-1",
+					"filename":     "aichat-one.txt",
+				},
+				Result: map[string]interface{}{
+					"file_name":      "aichat-one.txt",
+					"source_file_id": "tool-1",
+					"target":         "managed_file",
+				},
+			},
+			{
+				SkillID:  skills.SkillFileManager,
+				ToolName: "save_file_to_management",
+				Arguments: map[string]interface{}{
+					"source_type":  "tool_file",
+					"tool_file_id": "tool-2",
+					"filename":     "aichat-two.svg",
+				},
+				Result: map[string]interface{}{
+					"file_name":      "aichat-two.svg",
+					"source_file_id": "tool-2",
+					"target":         "managed_file",
+				},
+			},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked final answer after all explicit target files were saved")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardUsesMessageMetadataForUnsavedExplicitTargetAfterApproval(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "aichat-one.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "aichat-two.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "aichat-one.txt",
+					},
+				},
+			},
+		},
+		parts: &chatRequestParts{
+			Query:     "please create and save aichat-one.txt and aichat-two.svg to File Management",
+			SkillIDs:  []string{skills.SkillFileGenerator, skills.SkillFileManager},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want managed file create guard without files page context")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The text file was saved. Next I will create the SVG file.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{
+				SkillID:  skills.SkillFileManager,
+				ToolName: "save_file_to_management",
+				Arguments: map[string]interface{}{
+					"source_type":  "tool_file",
+					"tool_file_id": "tool-1",
+					"filename":     "aichat-one.txt",
+				},
+				Result: map[string]interface{}{
+					"file_name":      "aichat-one.txt",
+					"source_file_id": "tool-1",
+					"target":         "managed_file",
+				},
+			},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard allowed completion while an explicit SVG target was still only a temporary artifact")
+	}
+	for _, want := range []string{"aichat-two.svg", `"tool_file_id":"tool-2"`, skills.SkillFileManager, "save_file_to_management"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardUsesMetadataSaveStateAfterAssetObservation(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "aichat-one.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "aichat-two.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "aichat-one.txt",
+					},
+				},
+			},
+		},
+		parts: &chatRequestParts{
+			Query:     "please create and save aichat-one.txt and aichat-two.svg to File Management",
+			SkillIDs:  []string{skills.SkillFileGenerator, skills.SkillFileManager},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want managed file create guard")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Both files were saved to File Management.",
+	})
+	if !blocked {
+		t.Fatal("guard allowed completion from asset observation metadata while SVG was still temporary")
+	}
+	for _, want := range []string{"aichat-two.svg", `"tool_file_id":"tool-2"`, skills.SkillFileManager, "save_file_to_management"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardUsesContinuationMetadataSaveFlow(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "smoke-continue.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "smoke-continue.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "smoke-continue.txt",
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation managed-file save guard")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "The files were saved.",
+	})
+	if !blocked {
+		t.Fatal("guard allowed completion while continuation metadata still had an unsaved SVG artifact")
+	}
+	for _, want := range []string{"smoke-continue.svg", `"tool_file_id":"tool-2"`, skills.SkillFileManager, "save_file_to_management"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileManager,
+			ToolName: "save_file_to_management",
+			Arguments: map[string]interface{}{
+				"source_type":  "tool_file",
+				"tool_file_id": "tool-2",
+				"filename":     "smoke-continue.svg",
+			},
+			Result: map[string]interface{}{
+				"file_name":      "smoke-continue.svg",
+				"source_file_id": "tool-2",
+				"target":         "managed_file",
+			},
+		}},
+	})
+	if blocked {
+		t.Fatal("guard blocked after the remaining continuation SVG artifact was saved")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardPrioritizesUnsavedArtifactBeforeContinuationDelete(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "smoke-continue.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "smoke-continue.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "smoke-continue.txt",
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("continue task marker SMOKE-CONTINUE: create and save smoke-continue.txt and smoke-continue.svg to File Management, then delete the current third file"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation guard")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "TXT \u5df2\u4fdd\u5b58\u3002\u63a5\u4e0b\u6765\u9700\u8981\u5220\u9664\u5f53\u524d\u7b2c3\u4e2a\u6587\u4ef6\uff0c\u662f\u5426\u786e\u8ba4\u5220\u9664\uff1f",
+	})
+	if !blocked {
+		t.Fatal("guard allowed continuation delete messaging while an SVG artifact was still unsaved")
+	}
+	for _, want := range []string{"smoke-continue.svg", `"tool_file_id":"tool-2"`, skills.SkillFileManager, "save_file_to_management", "not saved to File Management"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("guard result missing %q: %#v", want, result)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardDoesNotForceTemporaryContinuationArtifact(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "temporary-only.svg",
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-TEMP-1782312140380"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard != nil {
+		if _, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: "Temporary file generated."}); blocked {
+			t.Fatal("guard forced a File Management save for a continuation turn with only temporary artifacts")
+		}
+	}
+}
+
+func TestClientActionAssetObservationContinuesWhenExplicitManagedTargetUnsaved(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "aichat-one.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "aichat-two.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "aichat-one.txt",
+					},
+				},
+			},
+		},
+		parts: &chatRequestParts{
+			Query:     "please create and save aichat-one.txt and aichat-two.svg to File Management",
+			SkillIDs:  []string{skills.SkillFileGenerator, skills.SkillFileManager},
+			SkillMode: skillModeAuto,
+		},
+	}
+	if !managedFileCreateHasUnsavedExplicitTargets(prepared) {
+		t.Fatal("managedFileCreateHasUnsavedExplicitTargets() = false, want true while an explicit managed file target is still unsaved")
+	}
+
+	prepared.Message.Metadata["generated_files"] = append(prepared.Message.Metadata["generated_files"].([]interface{}), map[string]interface{}{
+		"target":         "managed_file",
+		"upload_file_id": "managed-2",
+		"source_file_id": "tool-2",
+		"filename":       "aichat-two.svg",
+	})
+	if managedFileCreateHasUnsavedExplicitTargets(prepared) {
+		t.Fatal("managedFileCreateHasUnsavedExplicitTargets() = true, want false after all explicit managed file targets are saved")
+	}
+}
+
+func TestClientActionAssetObservationContinuesWhenContinuationArtifactUnsaved(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "smoke-continue.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "smoke-continue.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "smoke-continue.txt",
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+	if !managedFileCreateHasUnsavedExplicitTargets(prepared) {
+		t.Fatal("managedFileCreateHasUnsavedExplicitTargets() = false, want true while continuation metadata still has an unsaved SVG artifact")
+	}
+
+	prepared.Message.Metadata["generated_files"] = append(prepared.Message.Metadata["generated_files"].([]interface{}), map[string]interface{}{
+		"target":         "managed_file",
+		"upload_file_id": "managed-2",
+		"source_file_id": "tool-2",
+		"filename":       "smoke-continue.svg",
+	})
+	if managedFileCreateHasUnsavedExplicitTargets(prepared) {
+		t.Fatal("managedFileCreateHasUnsavedExplicitTargets() = true, want false after continuation artifacts are all saved")
+	}
+}
+
+func TestSkillLoopToolCallGuardUsesMetadataArtifactInsteadOfRegeneratingMissingTarget(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "aichat-one.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "aichat-two.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "aichat-one.txt",
+					},
+				},
+			},
+		},
+		parts: &chatRequestParts{
+			Query:     "please create and save aichat-one.txt and aichat-two.svg to File Management",
+			SkillIDs:  []string{skills.SkillFileGenerator, skills.SkillFileManager},
+			SkillMode: skillModeAuto,
+		},
+	}
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want metadata artifact reuse guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "aichat-two",
+			"format":   "svg",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed regenerating a missing target that already exists as a temporary artifact")
+	}
+	for _, want := range []string{`"tool_file_id":"tool-2"`, `"filename":"aichat-two.svg"`, "save_file_to_management"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("tool guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+}
+
+func TestSkillLoopToolCallGuardUsesContinuationMetadataArtifactInsteadOfRegenerating(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "smoke-continue.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "smoke-continue.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "smoke-continue.txt",
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want continuation metadata artifact reuse guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "smoke-continue",
+			"format":   "svg",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed regenerating a continuation SVG artifact that already exists as a temporary artifact")
+	}
+	for _, want := range []string{`"tool_file_id":"tool-2"`, `"filename":"smoke-continue.svg"`, "save_file_to_management"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("tool guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+}
+
+func TestSkillLoopToolCallGuardBlocksMismatchedContinuationSaveArguments(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "smoke-continue.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "smoke-continue.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "smoke-continue.txt",
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want continuation metadata save argument guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Arguments: map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": "managed-1",
+			"filename":     "smoke-continue-step2.txt",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed save_file_to_management with a managed-file id and wrong filename")
+	}
+	for _, want := range []string{`"tool_file_id":"tool-2"`, `"filename":"smoke-continue.svg"`, "save_file_to_management"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("tool guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+
+	_, blocked = guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Arguments: map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": "tool-2",
+			"filename":     "smoke-continue.svg",
+		},
+	})
+	if blocked {
+		t.Fatal("tool guard blocked the correct continuation SVG save arguments")
+	}
+}
+
+func TestSkillLoopToolCallGuardBlocksDeleteUntilAllManagedFileArtifactsAreSaved(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "aichat-one.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "aichat-two.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "aichat-one.txt",
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("continue task marker SMOKE-CONTINUE: create and save aichat-one.txt and aichat-two.svg to File Management, then delete the current third file"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want save-before-delete guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "delete_file",
+		Arguments: map[string]interface{}{
+			"file_id": "file-third",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed delete_file before all generated artifacts were saved")
+	}
+	for _, want := range []string{"not saved to File Management", "save_file_to_management", `"tool_file_id":"tool-2"`, `"filename":"aichat-two.svg"`} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("save-before-delete guard result missing %q: %#v", want, result)
+		}
+	}
+}
+
+func TestSkillLoopToolCallGuardBlocksContinuationGenerationAfterArtifactsSaved(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "smoke-continue.txt",
+					},
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-2",
+						"filename": "smoke-continue.svg",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "smoke-continue.txt",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-2",
+						"source_file_id": "tool-2",
+						"filename":       "smoke-continue.svg",
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want continuation generated asset guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "smoke-continue",
+			"format":   "svg",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed regeneration after all continuation artifacts were already saved")
+	}
+	for _, want := range []string{"already has generated file artifacts", "Do not generate or save another file"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+}
+
+func TestSkillLoopToolCallGuardBlocksContinuationSaveAfterArtifactsSaved(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"generated_files": []interface{}{
+					map[string]interface{}{
+						"target":   "temporary_artifact",
+						"file_id":  "tool-1",
+						"filename": "smoke-continue.txt",
+					},
+					map[string]interface{}{
+						"target":         "managed_file",
+						"upload_file_id": "managed-1",
+						"source_file_id": "tool-1",
+						"filename":       "smoke-continue.txt",
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want continuation generated asset guard")
+	}
+	_, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Arguments: map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": "tool-1",
+			"filename":     "smoke-continue.txt",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed a duplicate save after all continuation artifacts were already saved")
+	}
+}
+
+func TestSkillLoopToolCallGuardBlocksSecondContinuationDeleteAfterSuccess(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want continuation delete guard")
+	}
+	_, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "delete_file",
+		Arguments: map[string]interface{}{
+			"file_id": "file-2",
+		},
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{
+				SkillID:  skills.SkillFileManager,
+				ToolName: "delete_file",
+				Arguments: map[string]interface{}{
+					"file_id": "file-1",
+				},
+				Result: map[string]interface{}{
+					"file_name": "frozen-third-file.txt",
+				},
+			},
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed a second delete_file after a continuation delete already succeeded")
+	}
+}
+
+func TestSkillLoopToolCallGuardBlocksContinuationDeleteFromMetadataAfterApprovalResume(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind":      "tool_call",
+						"status":    "success",
+						"skill_id":  skills.SkillFileManager,
+						"tool_name": "delete_file",
+						"arguments": map[string]interface{}{
+							"file_id": "file-1",
+						},
+						"result": map[string]interface{}{
+							"file_name": "frozen-third-file.txt",
+						},
+					},
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopToolCallGuard() = nil, want metadata-backed continuation delete guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "delete_file",
+		Arguments: map[string]interface{}{
+			"file_id": "file-2",
+		},
+	})
+	if !blocked {
+		t.Fatal("tool guard allowed a second delete_file after metadata recorded a successful delete")
+	}
+	if !strings.Contains(result.SystemMessage, "frozen-third-file.txt") {
+		t.Fatalf("guard result did not mention metadata deleted file: %#v", result)
+	}
+}
+
+func TestAnswerDeleteSuccessMentionsDifferentPriorSegmentFileName(t *testing.T) {
+	actualDeleted := "SMOKE-MANAGED-CLOSE-1782390783296.svg"
+	wrongObserved := "SMOKE-MANAGED-SVG-1782389757265.svg"
+
+	badAnswer := strings.Join([]string{
+		"\u5df2\u521b\u5efa\u5e76\u4fdd\u5b58 SMOKE-COMPLEX-CLOSE-1782390870915.txt \u548c SMOKE-COMPLEX-CLOSE-1782390870915.svg",
+		"\u5237\u65b0\u540e\u770b\u5230\u5f53\u524d\u7b2c 3 \u4e2a\u6587\u4ef6\u662f\uff1a" + wrongObserved,
+		"\u8be5\u6587\u4ef6\u540d\u4ee5 SMOKE \u5f00\u5934\uff0c\u56e0\u6b64\u5df2\u5220\u9664",
+		"\u5220\u9664\u540e\u5df2\u89c2\u5bdf\u5230\u5b83\u4e0d\u518d\u53ef\u89c1",
+	}, "\n")
+	if !answerDeleteSuccessMentionsDifferentFileName(badAnswer, actualDeleted) {
+		t.Fatal("answerDeleteSuccessMentionsDifferentFileName() = false, want true for prior-segment wrong name")
+	}
+
+	goodAnswer := strings.Join([]string{
+		"\u5df2\u521b\u5efa\u5e76\u4fdd\u5b58 SMOKE-COMPLEX-CLOSE-1782390870915.txt \u548c SMOKE-COMPLEX-CLOSE-1782390870915.svg",
+		"\u5237\u65b0\u540e\u770b\u5230\u5f53\u524d\u7b2c 3 \u4e2a\u6587\u4ef6\u662f\uff1a" + actualDeleted,
+		"\u8be5\u6587\u4ef6\u540d\u4ee5 SMOKE \u5f00\u5934\uff0c\u56e0\u6b64\u5df2\u5220\u9664",
+	}, "\n")
+	if answerDeleteSuccessMentionsDifferentFileName(goodAnswer, actualDeleted) {
+		t.Fatal("answerDeleteSuccessMentionsDifferentFileName() = true, want false for the actual deleted name")
+	}
+}
+
+func TestConsoleFilesContinuationDeleteFinalAnswerGuardBlocksPronounWrongDeletedFile(t *testing.T) {
+	actualDeleted := "SMOKE-MANAGED-CLOSE-1782390783296.svg"
+	wrongObserved := "SMOKE-MANAGED-SVG-1782389757265.svg"
+	parts := consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed")
+	parts.SkillIDs = []string{skills.SkillFileManager}
+	parts.SkillMode = skillModeAuto
+
+	guard := consoleFilesContinuationPendingDeleteFinalAnswerGuard(parts, nil)
+	if guard == nil {
+		t.Fatal("consoleFilesContinuationPendingDeleteFinalAnswerGuard() = nil")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: strings.Join([]string{
+			"\u5df2\u521b\u5efa\u5e76\u4fdd\u5b58 SMOKE-COMPLEX-CLOSE-1782390870915.txt \u548c SMOKE-COMPLEX-CLOSE-1782390870915.svg",
+			"\u5237\u65b0\u540e\u770b\u5230\u5f53\u524d\u7b2c 3 \u4e2a\u6587\u4ef6\u662f\uff1a" + wrongObserved,
+			"\u8be5\u6587\u4ef6\u540d\u4ee5 SMOKE \u5f00\u5934\uff0c\u56e0\u6b64\u5df2\u5220\u9664",
+		}, "\n"),
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileManager,
+			ToolName: "delete_file",
+			Result: map[string]interface{}{
+				"file_name": actualDeleted,
+			},
+		}},
+	})
+	if !blocked {
+		t.Fatal("guard allowed final answer to claim a different prior-segment file was deleted")
+	}
+	if !strings.Contains(result.SystemMessage, actualDeleted) {
+		t.Fatalf("guard result did not mention actual deleted file %q: %#v", actualDeleted, result)
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardDoesNotForceIntermediateNavigationForManagedFileCreate(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleFilesCreateCapabilityTestParts("先切到智能体页读取第一个智能体，然后到文件管理创建并保存 aichat-one.txt"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want managed file create guard")
+	}
+	_, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "文件 aichat-one.txt 已保存到文件管理。",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{
+				SkillID:  skills.SkillFileManager,
+				ToolName: "save_file_to_management",
+				Arguments: map[string]interface{}{
+					"source_type":  "tool_file",
+					"tool_file_id": "tool-1",
+					"filename":     "aichat-one.txt",
+				},
+				Result: map[string]interface{}{
+					"file_name":      "aichat-one.txt",
+					"source_file_id": "tool-1",
+					"target":         "managed_file",
+				},
+			},
+		},
+	})
+	if blocked {
+		t.Fatal("guard forced an intermediate navigation target after the managed file create succeeded")
 	}
 }
 
@@ -814,8 +3001,14 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testi
 	for _, want := range []string{
 		"ZGI console navigation guidance",
 		"console-navigator/navigate",
+		"required_next_tool",
+		"preferred next route action",
+		"not an immutable script",
+		"low-risk observe/read/list step",
+		"remaining_route_sequence",
 		"Do not use request_user_input",
-		"Do not say a page has been opened unless",
+		"current page context as successful page evidence",
+		"Do not say a different page has been opened unless",
 		`"href":"/console/work/task"`,
 		`"label":"定时任务"`,
 		"resolved_target_from_user_request",
@@ -827,6 +3020,136 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testi
 		if !strings.Contains(content, want) {
 			t.Fatalf("console navigation guidance missing %q in:\n%s", want, content)
 		}
+	}
+	if strings.Contains(content, "the next skill-loop action is constrained") ||
+		strings.Contains(content, "before answering, asking the user, or using another business tool") {
+		t.Fatalf("console navigation guidance still contains hard required_next_tool wording:\n%s", content)
+	}
+}
+
+func TestConsoleNavigationResolvedTargetsPreservesRepeatedRouteOrder(t *testing.T) {
+	targets := consoleNavigationResolvedTargets("\u8bf7\u4f9d\u6b21\u6253\u5f00\u6587\u4ef6\u7ba1\u7406\u3001\u667a\u80fd\u4f53\u3001\u6570\u636e\u5e93\u3001\u6587\u4ef6\u7ba1\u7406")
+	got := make([]string, 0, len(targets))
+	for _, target := range targets {
+		got = append(got, target.Href)
+	}
+	want := []string{"/console/files", "/console/agents", "/console/db", "/console/files"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("resolved targets = %#v, want %#v", got, want)
+	}
+}
+
+func TestConsoleNavigationResolvedTargetsDoesNotTreatNestedConsoleHrefAsHome(t *testing.T) {
+	targets := consoleNavigationResolvedTargets("open /console/files")
+	got := make([]string, 0, len(targets))
+	for _, target := range targets {
+		got = append(got, target.Href)
+	}
+	want := []string{"/console/files"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("resolved targets = %#v, want %#v", got, want)
+	}
+}
+
+func TestConsoleNavigationResolvedTargetsIgnoreResourceAttributeMentions(t *testing.T) {
+	targets := consoleNavigationResolvedTargets("\u518d\u8fdb\u5165\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58\u4e24\u4e2a\u6587\u4ef6\uff1btxt \u5185\u5bb9\u5199\u5165\u8bfb\u53d6\u5230\u7684\u667a\u80fd\u4f53\u540d\u79f0")
+	got := make([]string, 0, len(targets))
+	for _, target := range targets {
+		got = append(got, target.Href)
+	}
+	want := []string{"/console/files"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("resolved targets = %#v, want %#v", got, want)
+	}
+
+	targets = consoleNavigationResolvedTargets("\u6253\u5f00\u667a\u80fd\u4f53")
+	if len(targets) != 1 || targets[0].Href != "/console/agents" {
+		t.Fatalf("standalone agent navigation targets = %#v, want /console/agents", targets)
+	}
+}
+
+func TestResolveConsoleNavigationTargetForPartsConsumesCompletedRouteSequence(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "\u8bf7\u4f9d\u6b21\u6253\u5f00\u6587\u4ef6\u7ba1\u7406\u3001\u667a\u80fd\u4f53\u3001\u6570\u636e\u5e93\u3001\u6587\u4ef6\u7ba1\u7406",
+		SkillIDs:  []string{skills.SkillConsoleNavigator},
+		SkillMode: skillModeAuto,
+		Surface:   aiChatSurfaceContextualSidebar,
+		OperationContext: map[string]interface{}{
+			"completed_client_actions": []interface{}{
+				map[string]interface{}{
+					"action_type": "route_navigation",
+					"status":      clientActionStatusSucceeded,
+					"href":        "/console/files",
+				},
+				map[string]interface{}{
+					"action_type": "route_navigation",
+					"status":      clientActionStatusSucceeded,
+					"href":        "/console/agents",
+				},
+				map[string]interface{}{
+					"action_type": "route_navigation",
+					"status":      clientActionStatusSucceeded,
+					"href":        "/console/db",
+				},
+			},
+		},
+	}
+
+	target, ok := resolveConsoleNavigationTargetForParts(parts)
+	if !ok {
+		t.Fatal("resolveConsoleNavigationTargetForParts() returned no target")
+	}
+	if target.Href != "/console/files" {
+		t.Fatalf("target href = %s, want final repeated /console/files", target.Href)
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil || strategy.RequiredNextTool == nil {
+		t.Fatalf("strategy = %#v, want required next navigation tool", strategy)
+	}
+	if got := strategy.RequiredNextTool.Arguments["href"]; got != "/console/files" {
+		t.Fatalf("required href = %s, want /console/files", got)
+	}
+	if len(strategy.RemainingRouteSequence) != 1 || strategy.RemainingRouteSequence[0].Href != "/console/files" {
+		t.Fatalf("remaining route sequence = %#v, want only final /console/files", strategy.RemainingRouteSequence)
+	}
+}
+
+func TestStagedContinuationDeferredExecutionQueryCleansContinuePreamble(t *testing.T) {
+	got := stagedContinuationDeferredExecutionQuery("\u7b49\u5f85\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\u3002\u6211\u8bf4\u7ee7\u7eed\u540e\uff0c\u518d\u8fdb\u5165\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58 smoke.svg")
+	if !strings.HasPrefix(got, "\u518d\u8fdb\u5165\u6587\u4ef6\u7ba1\u7406") {
+		t.Fatalf("deferred query = %q, want cleaned file-management instruction", got)
+	}
+	for _, blocked := range []string{"\u7ee7\u7eed", "\u6211\u8bf4"} {
+		if strings.Contains(got, blocked) {
+			t.Fatalf("deferred query = %q, still contains %q", got, blocked)
+		}
+	}
+}
+
+func TestStagedContinuationResumeQueryUsesDeferredPhaseOnly(t *testing.T) {
+	originalGoal := "\u5148\u5207\u5230\u667a\u80fd\u4f53\u9875\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u540d\u79f0\uff0c\u7136\u540e\u6682\u505c\u5e76\u7b49\u5f85\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\u3002\u6211\u8bf4\u7ee7\u7eed\u540e\uff0c\u518d\u8fdb\u5165\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58 smoke.txt \u548c smoke.svg\uff1btxt \u5185\u5bb9\u5199\u5165\u8bfb\u53d6\u5230\u7684\u667a\u80fd\u4f53\u540d\u79f0"
+	parts := &chatRequestParts{
+		Query: "\u7ee7\u7eed",
+		RecentOperationPlans: []map[string]interface{}{{
+			"status":              operationPlanStatusRunning,
+			"original_user_goal":  originalGoal,
+			"pending_next_action": "Wait for user continue",
+		}},
+	}
+	got, ok := stagedContinuationResumeQuery(parts)
+	if !ok {
+		t.Fatal("stagedContinuationResumeQuery() ok = false, want true")
+	}
+	if !strings.HasPrefix(got, "\u518d\u8fdb\u5165\u6587\u4ef6\u7ba1\u7406") {
+		t.Fatalf("resume query = %q, want deferred file-management phase", got)
+	}
+	if strings.Contains(got, "\u667a\u80fd\u4f53\u9875") {
+		t.Fatalf("resume query = %q, still contains current-phase agent page instruction", got)
+	}
+	targets := consoleNavigationResolvedTargets(got)
+	if len(targets) != 1 || targets[0].Href != "/console/files" {
+		t.Fatalf("resume targets = %#v, want only /console/files; query=%q", targets, got)
 	}
 }
 
@@ -894,6 +3217,82 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleNavigationWithoutToolCall(t *test
 	}
 }
 
+func TestSkillLoopFinalAnswerGuardSkipsConsoleNavigationWhenTargetRouteAlreadyAvailable(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:          "open /console/agents",
+		RuntimeContext: "route=/console/agents",
+		SkillIDs:       []string{skills.SkillConsoleNavigator},
+		SkillMode:      skillModeAuto,
+		Surface:        aiChatSurfaceContextualSidebar,
+		RawOperationContext: map[string]interface{}{
+			"resources": []interface{}{
+				map[string]interface{}{
+					"resource_type": "page",
+					"resource_id":   "console.agents",
+					"title":         "console.agents",
+					"href":          "/console/agents",
+					"metadata": map[string]interface{}{
+						"route": "/console/agents",
+					},
+				},
+			},
+		},
+	}
+	parts.OperationContext = parts.RawOperationContext
+	prepared := &PreparedChat{parts: parts}
+
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		if result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: "Already on the Agents page."}); blocked {
+			t.Fatalf("navigation guard blocked current route answer: %#v", result)
+		}
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.RouteRequired {
+		t.Fatal("strategy.RouteRequired = true, want false for current route")
+	}
+	if strategy.RequiredNextTool != nil {
+		t.Fatalf("strategy.RequiredNextTool = %#v, want nil for current route", strategy.RequiredNextTool)
+	}
+
+	evidence := skillLoopCompletionEvidence(prepared)()
+	pageContext := mapFromOperationContext(evidence["page_context"])
+	if len(pageContext) == 0 {
+		t.Fatalf("page_context evidence = %#v, want current page evidence", evidence["page_context"])
+	}
+	if pageContext["target_route_already_available"] != true {
+		t.Fatalf("target_route_already_available = %#v, want true; page_context=%#v", pageContext["target_route_already_available"], pageContext)
+	}
+	if got := stringFromAny(pageContext["route_evidence"]); got != "current_page_context_matches_target" {
+		t.Fatalf("route_evidence = %q, want current_page_context_matches_target; page_context=%#v", got, pageContext)
+	}
+	if resources := operationItemsFromValue(pageContext["resources"]); len(resources) == 0 {
+		t.Fatalf("page_context.resources = %#v, want compact resources", pageContext["resources"])
+	}
+
+	messages := skillLoopAdditionalSystemMessages(prepared)
+	if len(messages) == 0 {
+		t.Fatal("skillLoopAdditionalSystemMessages() = 0, want current-route navigation guidance")
+	}
+	contents := make([]string, 0, len(messages))
+	for _, message := range messages {
+		contents = append(contents, messageContentText(message.Content))
+	}
+	content := strings.Join(contents, "\n")
+	for _, want := range []string{
+		"target_route_already_available",
+		"current_page_context_matches_target",
+		"do not call navigate only to create proof",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("current-route navigation guidance missing %q in:\n%s", want, content)
+		}
+	}
+}
+
 func TestSkillLoopFinalAnswerGuardAllowsAgentDetailRouteForAgentsModule(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
@@ -947,6 +3346,73 @@ func TestSkillLoopFinalAnswerGuardSkipsAfterClientActionLoadedAgentDetailRoute(t
 	}
 }
 
+func TestSkillLoopFinalAnswerGuardBlocksIncompleteAgentBindingMutations(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query: "bind database table test2 with replace_agent_database_bindings and bind workflow \u65b0\u529f\u80fd\u6d4b\u8bd5 with replace_agent_workflow_bindings for this Agent",
+			SkillIDs: []string{
+				skills.SkillAgentManagement,
+				skills.SkillConsoleNavigator,
+			},
+			SkillMode: skillModeAuto,
+			RawOperationContext: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"resource_type": "agent",
+						"resource_id":   "agent-1",
+						"title":         "Support Agent",
+						"selected":      true,
+						"can_edit":      true,
+					},
+				},
+			},
+		},
+	}
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for explicit Agent binding mutation request")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Database and workflow bindings are updated.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillAgentManagement, ToolName: "replace_agent_database_bindings"},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard allowed final answer after database binding without workflow binding")
+	}
+	if result.SkillID != skills.SkillAgentManagement ||
+		result.ToolName != "replace_agent_workflow_bindings" ||
+		!strings.Contains(result.SystemMessage, "replace_agent_database_bindings, replace_agent_workflow_bindings") {
+		t.Fatalf("guard result = %#v, want missing workflow binding instruction", result)
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Database and workflow bindings are updated.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillAgentManagement, ToolName: "replace_agent_database_bindings"},
+			{SkillID: skills.SkillAgentManagement, ToolName: "replace_agent_workflow_bindings"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after both requested binding mutation tools succeeded")
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Database updated, but workflow binding failed.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillAgentManagement, ToolName: "replace_agent_database_bindings"},
+		},
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillAgentManagement, ToolName: "replace_agent_workflow_bindings"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after workflow binding was attempted and can be explained")
+	}
+}
+
 func TestSkillLoopUserInputGuardBlocksConsoleNavigationClarification(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
@@ -978,6 +3444,108 @@ func TestSkillLoopUserInputGuardBlocksConsoleNavigationClarification(t *testing.
 		if !strings.Contains(result.Message, want) {
 			t.Fatalf("user input guard message missing %q in:\n%s", want, result.Message)
 		}
+	}
+}
+
+func TestSkillLoopUserInputGuardBlocksResolvedAgentBatchDeleteConfirmation(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleAgentsVisibleTargetsTestParts("delete the first two visible agents on this page"),
+	}
+
+	guard := skillLoopUserInputGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopUserInputGuard() = nil, want guard for resolved visible Agent delete")
+	}
+	result, blocked := guard(skillloop.UserInputGuardRequest{
+		Message: "I found two target Agents. Please confirm deletion.",
+		Questions: []map[string]interface{}{
+			{
+				"id":       "confirm_delete",
+				"question": "Confirm deleting these Agents?",
+				"options": []map[string]interface{}{
+					{"label": "Confirm delete"},
+				},
+			},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard did not block redundant Agent delete confirmation")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "delete_agents" {
+		t.Fatalf("guard result = %#v, want agent-management/delete_agents", result)
+	}
+	for _, want := range []string{
+		"Tool governance owns the approval card",
+		"Visible Agent One",
+		"Visible Agent Two",
+		"delete_agents",
+		"agent-1",
+		"agent-2",
+	} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("guard message missing %q in message:\n%s\nsystem:\n%s", want, result.Message, result.SystemMessage)
+		}
+	}
+}
+
+func TestSkillLoopUserInputGuardBlocksNamedAgentDeleteConfirmation(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleAgentsVisibleTargetsTestParts("delete Visible Agent One and Visible Agent Two"),
+	}
+
+	guard := skillLoopUserInputGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopUserInputGuard() = nil, want guard for named Agent delete")
+	}
+	result, blocked := guard(skillloop.UserInputGuardRequest{
+		Message: "These two Agents are resolved. Please confirm before I continue.",
+		Questions: []map[string]interface{}{
+			{
+				"id":       "confirm_delete",
+				"question": "Do you approve deleting Visible Agent One and Visible Agent Two?",
+				"options": []map[string]interface{}{
+					{"label": "Approve deletion"},
+				},
+			},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard did not block redundant named Agent delete confirmation")
+	}
+	if result.ToolName != "delete_agents" {
+		t.Fatalf("tool = %s, want delete_agents", result.ToolName)
+	}
+	for _, want := range []string{"Visible Agent One", "Visible Agent Two", "agent-1", "agent-2"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+}
+
+func TestSkillLoopUserInputGuardAllowsAmbiguousAgentDeleteClarification(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: consoleAgentsVisibleTargetsTestParts("delete an agent"),
+	}
+
+	guard := skillLoopUserInputGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopUserInputGuard() = nil, want guard shell for Agent delete")
+	}
+	_, blocked := guard(skillloop.UserInputGuardRequest{
+		Message: "Which Agent should I delete?",
+		Questions: []map[string]interface{}{
+			{
+				"id":       "which_agent",
+				"question": "Which Agent should I delete?",
+				"options": []map[string]interface{}{
+					{"label": "Visible Agent One"},
+					{"label": "Visible Agent Two"},
+				},
+			},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked an actually ambiguous Agent delete clarification")
 	}
 }
 
@@ -1247,6 +3815,143 @@ func TestSkillLoopFinalAnswerGuardAllowsConsoleFilesListWithoutToolCall(t *testi
 
 	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
 		t.Fatal("skillLoopFinalAnswerGuard() returned guard for file listing request, want nil")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardSkipsCompletedNavigationObservationOnFilesPage(t *testing.T) {
+	query := "\u8bf7\u6309\u987a\u5e8f\u8fde\u7eed\u5bfc\u822a\u5e76\u89c2\u5bdf\u9875\u9762\uff0c\u4e0d\u8981\u521b\u5efa\u6216\u5220\u9664\u4efb\u4f55\u8d44\u4ea7\uff1a\u5148\u5230\u9996\u9875\uff0c\u518d\u5230\u6587\u4ef6\u7ba1\u7406\uff0c\u518d\u5230\u667a\u80fd\u4f53\uff0c\u518d\u5230\u6570\u636e\u5e93\uff0c\u6700\u540e\u56de\u5230\u6587\u4ef6\u7ba1\u7406\u3002\u5b8c\u6210\u540e\u53ea\u603b\u7ed3\u6bcf\u4e00\u6b65\u662f\u5426\u6210\u529f\u3002"
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"intent":              "navigate_console_page",
+					"status":              operationPlanStatusCompleted,
+					"pending_next_action": "none",
+				},
+			},
+		},
+		parts: consoleFilesSemanticTestParts(query, []consoleFilesTestFile{
+			{ID: "file-1", Name: "SMOKE-BATCH-NO-GUARDRAIL-1782418200001.svg", Extension: "svg", MimeType: "image/svg+xml"},
+			{ID: "file-2", Name: "notes.md", Extension: "md", MimeType: "text/markdown"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillConsoleNavigator, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+			Answer: "\u9996\u9875\u3001\u6587\u4ef6\u7ba1\u7406\u3001\u667a\u80fd\u4f53\u3001\u6570\u636e\u5e93\u3001\u6587\u4ef6\u7ba1\u7406\u90fd\u5df2\u6210\u529f\u5bfc\u822a\u5e76\u89c2\u5bdf\u3002",
+		})
+		if blocked {
+			t.Fatalf("guard blocked pure navigation observation final answer: %#v", result)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardSkipsNavigationReadOfNonFileResourceOnFilesPage(t *testing.T) {
+	query := "\u8bf7\u5f00\u59cb\u4e00\u4e2a\u5206\u9636\u6bb5\u4efb\u52a1\uff1a\u5148\u5207\u5230\u667a\u80fd\u4f53\u9875\u9762\uff0c\u8bfb\u53d6\u5f53\u524d\u5217\u8868\u91cc\u7684\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u540d\u79f0\uff1b\u7136\u540e\u56de\u5230\u6587\u4ef6\u7ba1\u7406\u9875\u9762\u3002\u7b2c\u4e00\u9636\u6bb5\u53ea\u505a\u5230\u8fd9\u91cc\uff0c\u4e0d\u8981\u521b\u5efa\u6587\u4ef6\u3001\u4e0d\u8981\u5220\u9664\u6587\u4ef6\u3002"
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"intent":              "navigate_console_page",
+					"status":              operationPlanStatusCompleted,
+					"pending_next_action": "none",
+				},
+			},
+		},
+		parts: consoleFilesSemanticTestParts(query, []consoleFilesTestFile{
+			{ID: "file-1", Name: "SMOKE-MANAGED-GUARD-FIX-1782396486164.svg", Extension: "svg", MimeType: "image/svg+xml"},
+			{ID: "file-2", Name: "notes.md", Extension: "md", MimeType: "text/markdown"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillConsoleNavigator, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+			Answer: "\u5df2\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u540d\u79f0\uff0c\u5e76\u5df2\u56de\u5230\u6587\u4ef6\u7ba1\u7406\u3002\u7b49\u5f85\u7ee7\u7eed\u3002",
+		})
+		if blocked {
+			t.Fatalf("guard blocked navigation read of non-file resource as file read: %#v", result)
+		}
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardKeepsReadGuardWhenNavigationRequestsFileContent(t *testing.T) {
+	query := "\u5bfc\u822a\u5230\u6587\u4ef6\u7ba1\u7406\u540e\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u6587\u4ef6\u5185\u5bb9"
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"intent":              "navigate_console_page",
+					"status":              operationPlanStatusCompleted,
+					"pending_next_action": "none",
+				},
+			},
+		},
+		parts: consoleFilesSemanticTestParts(query, []consoleFilesTestFile{
+			{ID: "file-1", Name: "invoice.txt", Extension: "txt", MimeType: "text/plain"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillConsoleNavigator, skills.SkillFileReader}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want read guard for navigation plus file-content request")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "invoice.txt contains a short invoice note.",
+	})
+	if !blocked {
+		t.Fatal("guard allowed final answer for file-content request without read_file")
+	}
+	if result.SkillID != skills.SkillFileReader || result.ToolName != "read_file" || !strings.Contains(result.Message, "invoice.txt") {
+		t.Fatalf("guard result = %#v, want file-reader/read_file for invoice.txt", result)
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardBlocksPartialMultiFileManagementSave(t *testing.T) {
+	query := "\u7ee7\u7eed\u3002\u7b2c\u4e8c\u9636\u6bb5\uff1a\u8bf7\u5728\u6587\u4ef6\u7ba1\u7406\u4e2d\u521b\u5efa\u5e76\u4fdd\u5b58\u4e24\u4e2a\u6587\u4ef6\u5230\u6587\u4ef6\u7ba1\u7406\uff1a1\uff09SMOKE-COMPLEX-GUARD-FIX2-1782397301095.txt\uff1b2\uff09SMOKE-COMPLEX-GUARD-FIX2-1782397301095.svg\u3002\u8981\u6c42\u6bcf\u4e2a\u6587\u4ef6\u53ea\u751f\u6210\u4e00\u6b21\u3001\u53ea\u4fdd\u5b58\u4e00\u6b21\u3002"
+	prepared := &PreparedChat{
+		parts: consoleFilesSemanticTestParts(query, []consoleFilesTestFile{
+			{ID: "file-txt", Name: "SMOKE-COMPLEX-GUARD-FIX2-1782397301095.txt", Extension: "txt", MimeType: "text/plain"},
+		}),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+
+	guard := skillLoopFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopFinalAnswerGuard() = nil, want multi-file save guard")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "TXT \u5df2\u4fdd\u5b58\uff0cSVG \u672c\u56de\u5408\u6ca1\u6709\u53ef\u8bc1\u660e\u7684\u6210\u529f\u4fdd\u5b58\u7ed3\u679c\u3002\u7b49\u5f85\u7ee7\u7eed\u3002",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileManager,
+			ToolName: "save_file_to_management",
+			Arguments: map[string]interface{}{
+				"filename":     "SMOKE-COMPLEX-GUARD-FIX2-1782397301095.txt",
+				"source_type":  "tool_file",
+				"tool_file_id": "tool-txt",
+			},
+			Result: map[string]interface{}{
+				"file_name": "SMOKE-COMPLEX-GUARD-FIX2-1782397301095.txt",
+			},
+		}},
+	})
+	if !blocked {
+		t.Fatal("guard allowed final answer after only one of two requested files was saved")
+	}
+	for _, want := range []string{"smoke-complex-guard-fix2-1782397301095.svg", "multiple files", "save_file_to_management"} {
+		if !strings.Contains(result.Message, want) && !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard result missing %q: %#v", want, result)
+		}
 	}
 }
 

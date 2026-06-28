@@ -76,6 +76,18 @@ func recentAssetCandidatesFromInvocation(invocation map[string]interface{}, mess
 		if file := resourceCandidateFromRecentFileMap(result, source, messageID, toolName); file.ID != "" {
 			return []ResourceCandidate{file}
 		}
+	case "save_file_to_management":
+		if skillID != skills.SkillFileManager {
+			return nil
+		}
+		if file := resourceCandidateFromRecentFileMap(mapFromOperationContext(result["file"]), source, messageID, toolName); file.ID != "" {
+			file.Recent = true
+			return []ResourceCandidate{file}
+		}
+		if file := resourceCandidateFromRecentFileMap(result, source, messageID, toolName); file.ID != "" {
+			file.Recent = true
+			return []ResourceCandidate{file}
+		}
 	case "delete_file":
 		if skillID != skills.SkillFileManager && skillID != skills.SkillFileReader {
 			return nil

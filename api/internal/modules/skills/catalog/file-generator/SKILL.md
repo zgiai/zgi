@@ -105,7 +105,7 @@ display:
     zh_Hans: 文件生成器
   description:
     en_US: Creates downloadable TXT, Markdown, HTML, JSON, CSV, SVG, DOCX, XLSX, PDF, and PPTX files.
-    zh_Hans: 创建可下载的 TXT、Markdown、HTML、JSON、CSV、DOCX、XLSX、PDF 和 PPTX 文件。
+    zh_Hans: 创建可下载的 TXT、Markdown、HTML、JSON、CSV、SVG、DOCX、XLSX、PDF 和 PPTX 文件。
   when_to_use:
     en_US: Use when the answer should be delivered as a generated file.
     zh_Hans: 当回答需要以生成文件交付时启用。
@@ -181,6 +181,9 @@ Read exactly one reference after choosing the target format:
 - Generated file content must fit within the backend file size limit.
 - Do not include filesystem paths in filenames.
 - Do not claim a file was generated unless the tool call succeeded.
+- Treat the generated tool result as authoritative. A generated file is successful only when the result includes a file identity such as `file_id` or `tool_file_id`, plus a filename/format or an equivalent artifact record.
+- If the generation tool fails or returns no artifact identity, do not say the file was generated. Explain the actual failure or missing confirmation.
+- Retry at most once with corrected content or arguments when the tool error is recoverable. Do not repeat the same generation call with identical arguments after a failure.
 - If the user asks for advanced document features that the selected reference says are unsupported, generate the closest supported file only when that still satisfies the request.
 
 ## Tool Usage

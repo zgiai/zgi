@@ -31,6 +31,9 @@ func plannerResourceRefsFromConsoleFilesQuery(parts *chatRequestParts) []Planner
 		}}
 	}
 	if consoleFilesRecentReferenceFromQuery(parts.Query) {
+		if refs := plannerResourceRefsFromNamedRecentFiles(parts); len(refs) > 0 {
+			return refs
+		}
 		return []PlannerResourceRef{{
 			Type:     resourceTypeFile,
 			Selector: query,
@@ -56,6 +59,51 @@ func plannerResourceRefsFromConsoleFilesQuery(parts *chatRequestParts) []Planner
 		return []PlannerResourceRef{ref}
 	}
 	return plannerResourceRefsFromNamedVisibleFiles(parts)
+}
+
+func plannerResourceRefsFromNamedRecentFiles(parts *chatRequestParts) []PlannerResourceRef {
+	if parts == nil || len(parts.RecentAssetCandidates) == 0 {
+		return nil
+	}
+	collector := newUniqueStringCollector()
+	for _, candidate := range parts.RecentAssetCandidates {
+		if !candidate.Recent || strings.TrimSpace(candidate.ID) == "" {
+			continue
+		}
+		if queryMentionsResourceCandidateName(parts.Query, candidate) {
+			collector.add(candidate.ID)
+		}
+	}
+	ids := collector.values()
+	if len(ids) == 0 {
+		return nil
+	}
+	refs := make([]PlannerResourceRef, 0, len(ids))
+	for _, id := range ids {
+		refs = append(refs, PlannerResourceRef{
+			Type:   resourceTypeFile,
+			FileID: id,
+		})
+	}
+	return refs
+}
+
+func queryMentionsResourceCandidateName(query string, candidate ResourceCandidate) bool {
+	queryText := normalizeResourceSearchText(query)
+	if queryText == "" {
+		return false
+	}
+	for _, raw := range candidateSearchTexts(candidate) {
+		name := normalizeResourceSearchText(raw)
+		if name != "" && strings.Contains(queryText, name) {
+			return true
+		}
+		base := normalizeResourceSearchText(stripCandidateExtension(raw))
+		if base != "" && strings.Contains(queryText, base) {
+			return true
+		}
+	}
+	return false
 }
 
 func consoleFilesSelectedReferenceFromQuery(query string) bool {
@@ -96,10 +144,23 @@ func consoleFilesRecentReferenceFromQuery(query string) bool {
 		"last used asset",
 		"that file",
 		"that asset",
+		"just created file",
+		"just saved file",
+		"just generated file",
 		"\u521a\u624d\u90a3\u4e2a\u6587\u4ef6",
 		"\u521a\u624d\u90a3\u4e2a\u8d44\u4ea7",
 		"\u521a\u624d\u7684\u6587\u4ef6",
 		"\u521a\u624d\u7684\u8d44\u4ea7",
+		"\u521a\u521a\u90a3\u4e2a\u6587\u4ef6",
+		"\u521a\u521a\u7684\u6587\u4ef6",
+		"\u521a\u521a\u521b\u5efa\u7684\u6587\u4ef6",
+		"\u521a\u521a\u65b0\u5efa\u7684\u6587\u4ef6",
+		"\u521a\u521a\u751f\u6210\u7684\u6587\u4ef6",
+		"\u521a\u521a\u4fdd\u5b58\u7684\u6587\u4ef6",
+		"\u521a\u521b\u5efa\u7684\u6587\u4ef6",
+		"\u521a\u65b0\u5efa\u7684\u6587\u4ef6",
+		"\u521a\u751f\u6210\u7684\u6587\u4ef6",
+		"\u521a\u4fdd\u5b58\u7684\u6587\u4ef6",
 		"\u4e0a\u6b21\u90a3\u4e2a\u6587\u4ef6",
 		"\u4e0a\u6b21\u90a3\u4e2a\u8d44\u4ea7",
 		"\u4e0a\u4e00\u4e2a\u6587\u4ef6",

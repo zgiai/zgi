@@ -70,26 +70,26 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			var pendingGovernance *skillloop.ToolGovernancePendingError
 			if errors.As(err, &pendingGovernance) {
 				metadata := s.persistToolGovernanceApprovalPending(persistCtx, prepared, pendingGovernance.Payload, usage)
-				s.appendStreamEventBestEffort(persistCtx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
+				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval, MessageEndEventID: eventID}, nil
 			}
 			var pendingApproval *skillloop.WorkflowApprovalPendingError
 			if errors.As(err, &pendingApproval) {
 				metadata := s.persistWorkflowApprovalPending(persistCtx, prepared, pendingApproval.Payload, usage)
-				s.appendStreamEventBestEffort(persistCtx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
+				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval, MessageEndEventID: eventID}, nil
 			}
 			var pendingQuestion *skillloop.WorkflowQuestionPendingError
 			if errors.As(err, &pendingQuestion) {
 				metadata := s.persistWorkflowQuestionPending(persistCtx, prepared, pendingQuestion.Payload, usage)
-				s.appendStreamEventBestEffort(persistCtx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
+				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
 			}
 			var pendingClientAction *skillloop.ClientActionPendingError
 			if errors.As(err, &pendingClientAction) {
 				metadata := s.persistClientActionPending(persistCtx, prepared, pendingClientAction.Payload, usage)
-				s.appendStreamEventBestEffort(persistCtx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction))
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, nil
+				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction))
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction, MessageEndEventID: eventID}, nil
 			}
 			if errors.Is(err, ErrMessageStopped) {
 				_ = s.clearPreparedRuntime(persistCtx, prepared)
@@ -111,8 +111,8 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			_ = s.clearPreparedRuntime(persistCtx, prepared)
 			return nil, err
 		}
-		s.appendStreamEventBestEffort(persistCtx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, messageEndPayload(prepared, metadata))
-		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage}, nil
+		eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayload(prepared, metadata))
+		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
 	}
 
 	finalCallStartedAt := time.Now()
@@ -174,8 +174,8 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		_ = s.clearPreparedRuntime(persistCtx, prepared)
 		return nil, err
 	}
-	s.appendStreamEventBestEffort(persistCtx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, messageEndPayload(prepared, metadata))
-	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage}, nil
+	eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayload(prepared, metadata))
+	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
 }
 
 func (s *service) CleanupStaleActiveMessages(ctx context.Context) (int64, error) {
@@ -341,7 +341,7 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 	if err := s.extractPreparedAttachments(ctx, prepared, onEvent); err != nil {
 		return err
 	}
-	metadata := streamingMessageMetadata(prepared.parts)
+	metadata := streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String())
 	prepared.Message.Metadata = metadata
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
@@ -351,7 +351,7 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 		return err
 	}
 	prepared.parts.ContextControl = contextResult.Metadata
-	metadata = streamingMessageMetadata(prepared.parts)
+	metadata = streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String())
 	prepared.Message.Metadata = metadata
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
@@ -504,7 +504,7 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 		return
 	}
 	eventCallback := firstStreamEventCallback(onEvent)
-	if err := s.completePreparedError(ctx, prepared, cause.Error()); err != nil {
+	if err := s.completePreparedError(ctx, prepared, publicAichatErrorMessage(cause)); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			logger.WarnContext(ctx, "failed to finalize aichat message error", "message_id", prepared.Message.ID.String(), err)
 		}
@@ -565,6 +565,17 @@ func (s *service) appendStreamEventBestEffort(ctx context.Context, messageID uui
 		return nil
 	}
 	return event
+}
+
+func (s *service) appendPreparedMessageEndEvent(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}) string {
+	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
+		return ""
+	}
+	event := s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, payload)
+	if event == nil {
+		return ""
+	}
+	return event.ID
 }
 
 func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat, eventType string, payload map[string]interface{}, onEvent func(StreamEvent) error) {
@@ -668,18 +679,25 @@ func messageEndPayloadWithStatus(prepared *PreparedChat, metadata map[string]int
 
 // BuildStreamErrorPayload returns the public SSE error payload for an AIChat turn.
 func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]interface{} {
-	message := streamFallbackErrorMessage(err)
+	message := publicAichatErrorMessage(err)
 	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"message":         message,
 	}
-	if code, billingMessage, ok := aichatBillingErrorCodeAndMessage(err); ok {
-		payload["message"] = billingMessage
+	if code, publicMessage, ok := publicAichatErrorCodeAndMessage(err); ok {
+		payload["message"] = publicMessage
 		payload["code"] = code
 		payload["params"] = map[string]interface{}{}
 	}
 	return payload
+}
+
+func publicAichatErrorMessage(err error) string {
+	if _, message, ok := publicAichatErrorCodeAndMessage(err); ok {
+		return message
+	}
+	return streamFallbackErrorMessage(err)
 }
 
 func streamFallbackErrorMessage(err error) string {
@@ -687,6 +705,16 @@ func streamFallbackErrorMessage(err error) string {
 		return "unknown error"
 	}
 	return err.Error()
+}
+
+func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {
+	if code, message, ok := aichatBillingErrorCodeAndMessage(err); ok {
+		return code, message, true
+	}
+	if isProviderInsufficientBalanceError(err) {
+		return response.ErrWorkflowPrivateChannelBalanceInsufficient.Code, response.ErrWorkflowPrivateChannelBalanceInsufficient.Message, true
+	}
+	return 0, "", false
 }
 
 func aichatBillingErrorCodeAndMessage(err error) (int, string, bool) {
@@ -705,6 +733,40 @@ func aichatBillingErrorCodeAndMessage(err error) (int, string, bool) {
 	default:
 		return 0, "", false
 	}
+}
+
+func isProviderInsufficientBalanceError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, adapter.ErrInsufficientBalance) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "insufficient balance")
+}
+
+func hydrateMessagesPublicErrors(messages []*runtimemodel.Message) {
+	for _, message := range messages {
+		hydrateMessagePublicError(message)
+	}
+}
+
+func hydrateMessagePublicError(message *runtimemodel.Message) {
+	if message == nil || message.Error == nil {
+		return
+	}
+	publicMessage := publicAichatStoredErrorMessage(*message.Error)
+	message.Error = &publicMessage
+}
+
+func publicAichatStoredErrorMessage(message string) string {
+	if strings.TrimSpace(message) == "" {
+		return message
+	}
+	if isProviderInsufficientBalanceError(errors.New(message)) {
+		return response.ErrWorkflowPrivateChannelBalanceInsufficient.Message
+	}
+	return message
 }
 
 func completedStatusFromMetadata(metadata map[string]interface{}) string {
@@ -732,6 +794,7 @@ func preparedResultMetadata(source map[string]interface{}, usage *adapter.Usage)
 	}
 	metadata["usage"] = usageMetadata(usage)
 	metadata["system_prompt_version"] = systemPromptVersion
+	finalizeOperationPlanForResult(metadata)
 	return metadata
 }
 

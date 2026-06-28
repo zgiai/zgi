@@ -56,20 +56,20 @@ display:
   category: productivity
   label:
     en_US: File Manager
-    zh_Hans: File Manager
+    zh_Hans: 文件管理器
   description:
     en_US: Performs governed File Management asset operations such as saving generated files or deleting visible files.
-    zh_Hans: Governed File Management asset operations.
+    zh_Hans: 执行受治理保护的文件管理操作，例如保存生成文件或删除可见文件。
   when_to_use:
     en_US: Use when the user explicitly asks to change files in File Management and the target is resolved from page context.
-    zh_Hans: Use for explicit File Management changes.
+    zh_Hans: 当用户明确要求变更文件管理中的文件，且目标已从页面上下文解析时使用。
   tags:
     en_US:
       - File
       - Management
     zh_Hans:
-      - File
-      - Management
+      - 文件
+      - 管理
 supported_callers:
   - aichat
 ---
@@ -97,6 +97,7 @@ Use this skill for governed File Management asset operations. It is intentionall
 `delete_file` accepts:
 
 - `file_id`: required file ID from resolved context. Deletes exactly one file after governance allows execution.
+- Success evidence: the tool result must indicate success for the requested `file_id`, such as `deleted_count > 0`, `deleted=true`, or an equivalent successful status. If the tool returns an error, a missing file, or an approval rejection, do not say the file was deleted.
 
 `save_file_to_management` accepts:
 
@@ -105,3 +106,10 @@ Use this skill for governed File Management asset operations. It is intentionall
 - `url`: required when `source_type=url`; must be an absolute public HTTP or HTTPS URL supplied by the user.
 - `filename`: required destination filename shown in File Management. Include a suitable extension.
 - `workspace_id`: optional target workspace ID. Usually omit it so current AIChat workspace context is used. Do not invent IDs.
+- Success evidence: the tool result must include a managed File Management identity such as `managed_file_id`, `upload_file_id`, or a successful saved-file record plus the saved `filename`. If only a temporary artifact exists, do not say the file was saved into File Management.
+
+## Truthfulness Contract
+
+- Treat tool results as authoritative. A planned File Management operation is complete only when the matching tool result has success evidence for the exact target.
+- If the tool fails, approval is rejected, or success evidence is missing, state that the operation was not confirmed and include the short failure reason when useful.
+- Retry at most once with corrected arguments when the error is recoverable. Do not repeat the same mutating call with identical arguments after a failure.

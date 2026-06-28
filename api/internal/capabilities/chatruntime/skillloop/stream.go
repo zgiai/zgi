@@ -95,8 +95,9 @@ func (r *Runner) runSkillPlanningStream(
 				if text := streamChoiceText(choice); text != "" {
 					contentBuilder.WriteString(text)
 					if sawToolCall {
-						r.emitAgentProgress(ctx, prepared, text, onEvent)
-						naturalProgressStreamed = true
+						if !naturalProgressStreamed && r.emitAgentProgress(ctx, prepared, text, onEvent) {
+							naturalProgressStreamed = true
+						}
 					} else {
 						r.emitAnswerChunk(ctx, prepared, text, onEvent)
 						speculativeAnswer.WriteString(text)
@@ -110,8 +111,9 @@ func (r *Runner) runSkillPlanningStream(
 							r.emitAnswerRetract(ctx, prepared, speculative, onEvent)
 						}
 						if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
-							r.emitAgentProgress(ctx, prepared, progress, onEvent)
-							naturalProgressStreamed = true
+							if r.emitAgentProgress(ctx, prepared, progress, onEvent) {
+								naturalProgressStreamed = true
+							}
 						}
 					}
 					state := mergeStreamingToolCall(toolCallsByIndex, &toolCallOrder, delta)

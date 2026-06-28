@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 )
@@ -56,6 +57,63 @@ func TestListConversationsBySurfaceNormalizesSurface(t *testing.T) {
 	}
 }
 
+func TestUpdateConversationAllowsPausedRuntimeMessageAsCurrentLeaf(t *testing.T) {
+	for _, status := range []string{
+		runtimemodel.MessageStatusWaitingApproval,
+		runtimemodel.MessageStatusWaitingQuestion,
+		runtimemodel.MessageStatusWaitingClientAction,
+	} {
+		t.Run(status, func(t *testing.T) {
+			organizationID := uuid.New()
+			accountID := uuid.New()
+			conversationID := uuid.New()
+			messageID := uuid.New()
+			messageIDString := messageID.String()
+			conversationRepo := &capturingConversationRepo{
+				conversation: &runtimemodel.Conversation{
+					ID:             conversationID,
+					OrganizationID: organizationID,
+					AccountID:      accountID,
+					Status:         runtimemodel.ConversationStatusNormal,
+					RuntimeStatus:  runtimemodel.ConversationRuntimeStatusIdle,
+					Metadata:       map[string]interface{}{},
+				},
+			}
+			messageRepo := pausedLeafMessageRepo{
+				message: &runtimemodel.Message{
+					ID:             messageID,
+					ConversationID: conversationID,
+					Status:         status,
+					Metadata:       map[string]interface{}{},
+				},
+			}
+			svc := &service{
+				repos: &repository.Repositories{
+					Access:       surfaceAccessRepo{},
+					Conversation: conversationRepo,
+					Message:      messageRepo,
+				},
+			}
+
+			conversation, err := svc.UpdateConversation(context.Background(), Scope{
+				OrganizationID: organizationID,
+				AccountID:      accountID,
+			}, conversationID, runtimedto.UpdateConversationRequest{
+				CurrentLeafMessageID: &messageIDString,
+			})
+			if err != nil {
+				t.Fatalf("UpdateConversation() error = %v", err)
+			}
+			if conversation.CurrentLeafMessageID == nil || *conversation.CurrentLeafMessageID != messageID {
+				t.Fatalf("current leaf = %#v, want %s", conversation.CurrentLeafMessageID, messageID)
+			}
+			if updated, ok := conversationRepo.updated["current_leaf_message_id"].(uuid.UUID); !ok || updated != messageID {
+				t.Fatalf("updated current leaf = %#v, want %s", conversationRepo.updated["current_leaf_message_id"], messageID)
+			}
+		})
+	}
+}
+
 type surfaceAccessRepo struct {
 	repository.AccessRepository
 }
@@ -66,8 +124,10 @@ func (surfaceAccessRepo) IsOrganizationMember(context.Context, uuid.UUID, uuid.U
 
 type capturingConversationRepo struct {
 	repository.ConversationRepository
-	created     *runtimemodel.Conversation
-	listSurface string
+	created      *runtimemodel.Conversation
+	conversation *runtimemodel.Conversation
+	listSurface  string
+	updated      map[string]interface{}
 }
 
 func (r *capturingConversationRepo) Create(_ context.Context, conversation *runtimemodel.Conversation) error {
@@ -75,7 +135,31 @@ func (r *capturingConversationRepo) Create(_ context.Context, conversation *runt
 	return nil
 }
 
+func (r *capturingConversationRepo) GetScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*runtimemodel.Conversation, error) {
+	return r.conversation, nil
+}
+
 func (r *capturingConversationRepo) ListByCallerSurfaceScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ string, _ *uuid.UUID, surface string, _ int, _ int) ([]*runtimemodel.Conversation, int64, error) {
 	r.listSurface = surface
 	return nil, 0, nil
+}
+
+func (r *capturingConversationRepo) UpdateScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, updates map[string]interface{}) error {
+	r.updated = updates
+	if r.conversation == nil {
+		return nil
+	}
+	if leafID, ok := updates["current_leaf_message_id"].(uuid.UUID); ok {
+		r.conversation.CurrentLeafMessageID = &leafID
+	}
+	return nil
+}
+
+type pausedLeafMessageRepo struct {
+	repository.MessageRepository
+	message *runtimemodel.Message
+}
+
+func (r pausedLeafMessageRepo) GetScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*runtimemodel.Message, error) {
+	return r.message, nil
 }

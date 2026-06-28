@@ -4,16 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
+
+var managedFileTargetPattern = regexp.MustCompile(`(?i)([^\s，,。；;、：:（）()【】\[\]{}"'“”‘’<>]+?\.(?:txt|md|markdown|html|json|csv|svg|pdf|docx|xlsx|pptx))`)
+
+var runtimeContextRoutePattern = regexp.MustCompile(`(?i)(?:^|[\s,;])route=([^\s,;]+)`)
 
 func (p *PreparedChat) skillsEnabled() bool {
 	return p != nil && chatPartsSkillsEnabled(p.parts)
@@ -26,16 +35,15 @@ func (s *service) runPreparedSkillStream(
 	onChunk func(string) error,
 	onEvent func(StreamEvent) error,
 ) (string, *adapter.Usage, error) {
-	return s.runPreparedSkillStreamWithFinalAnswerGuard(ctx, persistCtx, prepared, onChunk, onEvent, nil)
+	return s.runPreparedSkillStreamWithCompletionVerifier(ctx, persistCtx, prepared, onChunk, onEvent)
 }
 
-func (s *service) runPreparedSkillStreamWithFinalAnswerGuard(
+func (s *service) runPreparedSkillStreamWithCompletionVerifier(
 	ctx context.Context,
 	persistCtx context.Context,
 	prepared *PreparedChat,
 	onChunk func(string) error,
 	onEvent func(StreamEvent) error,
-	extraFinalAnswerGuard skillloop.FinalAnswerGuard,
 ) (string, *adapter.Usage, error) {
 	if s.skillRuntime == nil {
 		return "", nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
@@ -50,6 +58,11 @@ func (s *service) runPreparedSkillStreamWithFinalAnswerGuard(
 	resolved, err := s.skillRuntime.ResolveEnabledSkillsWithCustom(ctx, prepared.parts.SkillIDs, custom)
 	if err != nil {
 		return "", nil, err
+	}
+	unrestrictedResolved := resolved
+	resolved = restrictResolvedSkillsForPreparedTurn(prepared, resolved)
+	if len(resolved.Skills) == 0 && skillLoopHasOperationPlan(prepared) {
+		resolved = unrestrictedResolved
 	}
 	if len(resolved.Skills) == 0 {
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
@@ -77,22 +90,1242 @@ func (s *service) runPreparedSkillStreamWithFinalAnswerGuard(
 			s.persistModelInvocationBestEffort(persistCtx, prepared, trace)
 		},
 	}
+	loopPrepared := skillloop.NewPreparedChat(
+		prepared.Conversation.ID.String(),
+		prepared.Message.ID.String(),
+		prepared.parts.Provider,
+		prepared.parts.SkillMode,
+		prepared.LLMRequest,
+	)
+	loopPrepared.CurrentRoute = contextualTurnCurrentPage(prepared.parts)
 	return runner.Run(ctx, skillloop.RunRequest{
-		Prepared: skillloop.NewPreparedChat(
-			prepared.Conversation.ID.String(),
-			prepared.Message.ID.String(),
-			prepared.parts.Provider,
-			prepared.parts.SkillMode,
-			prepared.LLMRequest,
-		),
+		Prepared:                 loopPrepared,
 		Resolved:                 resolved,
 		ExecutionContext:         s.skillExecutionContext(prepared),
 		AdditionalSystemMessages: skillLoopAdditionalSystemMessages(prepared),
-		FinalAnswerGuard:         combineFinalAnswerGuards(extraFinalAnswerGuard, skillLoopFinalAnswerGuard(prepared)),
-		UserInputGuard:           skillLoopUserInputGuard(prepared),
-		ToolCallGuard:            skillLoopToolCallGuard(prepared),
+		PlanToolGuard:            skillLoopPlanToolCallGuardWithResolved(prepared, resolved),
+		CompletionEvidence:       skillLoopCompletionEvidence(prepared),
 		OnChunk:                  onChunk,
 	})
+}
+
+func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvidenceFunc {
+	return func() map[string]interface{} {
+		evidence := map[string]interface{}{}
+		if prepared == nil || prepared.parts == nil {
+			return evidence
+		}
+		evidence["user_request"] = strings.TrimSpace(prepared.parts.Query)
+		evidence["surface"] = normalizeAIChatSurface(prepared.parts.Surface)
+		evidence["skill_mode"] = prepared.parts.SkillMode
+		if len(prepared.parts.SkillIDs) > 0 {
+			evidence["configured_skill_ids"] = append([]string{}, prepared.parts.SkillIDs...)
+		}
+		if pageContext := skillLoopCompletionPageContextEvidence(prepared.parts); len(pageContext) > 0 {
+			evidence["page_context"] = pageContext
+		}
+		if prepared.Message == nil {
+			return evidence
+		}
+		metadata := skillLoopCompletionEvidenceMetadata(prepared.Message.Metadata)
+		prepared.Message.Metadata = metadata
+		for _, key := range []string{
+			"turn_strategy",
+			"operation_plan",
+			"operation_ledger",
+			"skill_invocations",
+			"generated_files",
+			"client_actions",
+			"tool_governance",
+			consoleFilesContextSnapshotKey,
+		} {
+			if value, ok := metadata[key]; ok && value != nil {
+				evidence[key] = value
+			}
+		}
+		executionLedger := map[string]interface{}{}
+		for _, key := range []string{"operation_ledger", "skill_invocations", "generated_files", "client_actions", "tool_governance"} {
+			if value, ok := metadata[key]; ok && value != nil {
+				executionLedger[key] = value
+			}
+		}
+		if summary := skillLoopCompletionExecutionSummary(metadata); len(summary) > 0 {
+			evidence["execution_summary"] = summary
+			executionLedger["summary"] = summary
+		}
+		if len(executionLedger) > 0 {
+			evidence["execution_ledger"] = executionLedger
+		}
+		return evidence
+	}
+}
+
+func skillLoopCompletionPageContextEvidence(parts *chatRequestParts) map[string]interface{} {
+	if parts == nil {
+		return nil
+	}
+	out := map[string]interface{}{}
+	currentPage := contextualTurnCurrentPage(parts)
+	if currentPage != "" {
+		out["current_page"] = currentPage
+	}
+	if runtimeRoute := consoleRouteFromRuntimeContext(parts.RuntimeContext); runtimeRoute != "" {
+		out["runtime_route"] = runtimeRoute
+	}
+	if target, ok := resolveConsoleNavigationTargetForParts(parts); ok && strings.TrimSpace(target.Href) != "" {
+		resolved := map[string]interface{}{
+			"href": target.Href,
+		}
+		if target.Label != "" {
+			resolved["label"] = target.Label
+		}
+		out["resolved_target_from_user_request"] = resolved
+		if consoleNavigationRouteAlreadyAvailable(parts, target.Href) {
+			out["target_route_already_available"] = true
+			out["route_evidence"] = "current_page_context_matches_target"
+		}
+	}
+	if resources := skillLoopCompactPageContextResources(parts, 12); len(resources) > 0 {
+		out["resources"] = resources
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func skillLoopCompactPageContextResources(parts *chatRequestParts, limit int) []interface{} {
+	if parts == nil || limit <= 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]interface{}, 0, limit)
+	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		for _, item := range mapSliceFromAny(source["resources"]) {
+			if len(out) >= limit {
+				return out
+			}
+			compact := skillLoopCompactPageContextResource(item)
+			if len(compact) == 0 {
+				continue
+			}
+			key := strings.Join([]string{
+				strings.TrimSpace(firstNonEmptyString(compact["resource_type"], compact["type"], compact["asset_type"])),
+				strings.TrimSpace(firstNonEmptyString(compact["resource_id"], compact["id"], compact["agent_id"], compact["href"])),
+			}, ":")
+			if key != ":" {
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+			out = append(out, compact)
+		}
+	}
+	return out
+}
+
+func skillLoopCompactPageContextResource(item map[string]interface{}) map[string]interface{} {
+	if len(item) == 0 {
+		return nil
+	}
+	compact := map[string]interface{}{}
+	metadata := mapFromOperationContext(item["metadata"])
+	for _, key := range []string{
+		"index",
+		"resource_id",
+		"resource_type",
+		"id",
+		"agent_id",
+		"agent_name",
+		"name",
+		"title",
+		"type",
+		"asset_type",
+		"workspace_id",
+		"status",
+		"href",
+		"route",
+		"context_ready",
+		"files_query_status",
+		"agents_query_status",
+		"visible_file_count",
+		"total_file_count",
+		"visible_agent_count",
+		"loaded_agent_count",
+	} {
+		if value := firstNonEmptyString(item[key], metadata[key]); value != "" {
+			compact[key] = compactForPrompt(value, 240)
+			continue
+		}
+		if itemValue, ok := item[key]; ok && itemValue != nil {
+			if _, ok := compact[key]; !ok {
+				compact[key] = itemValue
+			}
+		}
+		if metadataValue, ok := metadata[key]; ok && metadataValue != nil {
+			if _, ok := compact[key]; !ok {
+				compact[key] = metadataValue
+			}
+		}
+	}
+	return compact
+}
+
+func skillLoopCompletionEvidenceMetadata(source map[string]interface{}) map[string]interface{} {
+	metadata := copyStringAnyMap(source)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	if invocations := mapSliceFromAny(metadata["skill_invocations"]); len(invocations) > 0 {
+		applyOperationPlanInvocationState(metadata, invocations)
+	}
+	if files := mapSliceFromAny(metadata["generated_files"]); len(files) > 0 {
+		applyOperationPlanArtifactState(metadata, files)
+	}
+	finalizeOperationPlanForResult(metadata)
+	return metadata
+}
+
+func skillLoopCompletionExecutionSummary(metadata map[string]interface{}) map[string]interface{} {
+	if len(metadata) == 0 {
+		return nil
+	}
+	summary := map[string]interface{}{}
+	if plan := skillLoopCompletionPlanSummary(mapFromOperationContext(metadata["operation_plan"])); len(plan) > 0 {
+		summary["operation_plan"] = plan
+	}
+	if toolResults := skillLoopCompletionToolResults(mapSliceFromAny(metadata["skill_invocations"]), 12); len(toolResults) > 0 {
+		summary["tool_results"] = toolResults
+	}
+	if clientActions := skillLoopCompletionToolResults(mapSliceFromAny(metadata["client_actions"]), 8); len(clientActions) > 0 {
+		summary["client_actions"] = clientActions
+	}
+	if groups := skillLoopCompletionOperationGroups(metadata, 6); len(groups) > 0 {
+		summary["operation_groups"] = groups
+	}
+	if files := operationPlanCompactOperationItems(metadata["generated_files"], 8); len(files) > 0 {
+		summary["generated_files"] = files
+	}
+	if len(summary) == 0 {
+		return nil
+	}
+	return summary
+}
+
+func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]interface{} {
+	if len(plan) == 0 {
+		return nil
+	}
+	summary := map[string]interface{}{}
+	for _, key := range []string{
+		"status",
+		"pending_next_action",
+		"current_page",
+		"original_user_goal",
+		"operation_group_status",
+	} {
+		if value, ok := plan[key]; ok && value != nil {
+			summary[key] = value
+		}
+	}
+	if toolResult := mapFromOperationContext(plan["tool_result"]); len(toolResult) > 0 {
+		summary["tool_result"] = toolResult
+	}
+	if group := mapFromOperationContext(plan["operation_group"]); len(group) > 0 {
+		summary["operation_group"] = operationPlanCompactOperationGroup(group)
+	}
+	if targetSet := operationPlanCompactOperationItems(plan["target_set"], 20); len(targetSet) > 0 {
+		summary["target_set"] = targetSet
+	}
+	if itemSteps := operationPlanCompactOperationItems(plan["item_steps"], 20); len(itemSteps) > 0 {
+		summary["item_steps"] = itemSteps
+	}
+	if deviations := skillLoopCompletionPlanDeviations(plan["deviations"], 8); len(deviations) > 0 {
+		summary["deviations"] = deviations
+	}
+	if len(summary) == 0 {
+		return nil
+	}
+	return summary
+}
+
+func skillLoopCompletionPlanDeviations(value interface{}, limit int) []interface{} {
+	deviations := mapSliceFromAny(value)
+	if len(deviations) == 0 || limit <= 0 {
+		return nil
+	}
+	out := make([]interface{}, 0, minInt(len(deviations), limit))
+	for _, item := range deviations {
+		if len(out) >= limit {
+			break
+		}
+		compact := map[string]interface{}{}
+		for _, key := range []string{"skill_id", "tool_name", "reason"} {
+			if value, ok := item[key]; ok && value != nil {
+				compact[key] = value
+			}
+		}
+		if target := mapFromOperationContext(item["asset_target"]); len(target) > 0 {
+			compact["asset_target"] = target
+		}
+		if len(compact) > 0 {
+			out = append(out, compact)
+		}
+	}
+	return out
+}
+
+func skillLoopCompletionToolResults(invocations []map[string]interface{}, limit int) []interface{} {
+	if len(invocations) == 0 || limit <= 0 {
+		return nil
+	}
+	out := make([]interface{}, 0, minInt(len(invocations), limit))
+	for i := len(invocations) - 1; i >= 0 && len(out) < limit; i-- {
+		invocation := invocations[i]
+		if !operationPlanInvocationIsActionable(invocation) {
+			continue
+		}
+		result := operationPlanToolResult(invocation)
+		if len(result) == 0 {
+			continue
+		}
+		if id := operationPlanInvocationPlanID(invocation); id != "" {
+			result["invocation_id"] = id
+		}
+		out = append(out, result)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func skillLoopCompletionOperationGroups(metadata map[string]interface{}, limit int) []interface{} {
+	if len(metadata) == 0 || limit <= 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]interface{}, 0, limit)
+	appendGroup := func(group map[string]interface{}) {
+		if len(group) == 0 || len(out) >= limit {
+			return
+		}
+		compact := operationPlanCompactOperationGroup(group)
+		if len(compact) == 0 {
+			return
+		}
+		key := firstNonEmptyString(compact["id"], compact["operation"], compact["asset_type"])
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				return
+			}
+			seen[key] = struct{}{}
+		}
+		out = append(out, compact)
+	}
+	if plan := mapFromOperationContext(metadata["operation_plan"]); len(plan) > 0 {
+		appendGroup(mapFromOperationContext(plan["operation_group"]))
+	}
+	for _, invocation := range mapSliceFromAny(metadata["skill_invocations"]) {
+		appendGroup(operationPlanOperationGroupFromInvocation(invocation))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func restrictResolvedSkillsForTurnStrategy(parts *chatRequestParts, resolved *skills.ResolvedSkills) *skills.ResolvedSkills {
+	return resolved
+}
+
+func restrictResolvedSkillsForPreparedTurn(prepared *PreparedChat, resolved *skills.ResolvedSkills) *skills.ResolvedSkills {
+	return resolved
+}
+
+func operationPlanAllowedSkillIDs(prepared *PreparedChat) map[string]struct{} {
+	if prepared == nil || prepared.Message == nil {
+		return nil
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return nil
+	}
+	allowed := map[string]struct{}{}
+	for _, step := range operationPlanPendingExecutableSteps(plan, 8) {
+		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
+		if skillID == "" {
+			continue
+		}
+		allowed[skillID] = struct{}{}
+		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
+		if skills.RequiresPromptProfessionalizerPreflight(skillID, toolName) {
+			allowed[skills.SkillPromptProfessionalizer] = struct{}{}
+		}
+		if operationPlanStepIsRoute(step) {
+			break
+		}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return allowed
+}
+
+func filterResolvedSkillsByAllowedIDs(resolved *skills.ResolvedSkills, allowed map[string]struct{}, strict bool) *skills.ResolvedSkills {
+	if resolved == nil || len(resolved.Skills) == 0 || len(allowed) == 0 {
+		return resolved
+	}
+	filtered := make([]skills.SkillDocument, 0, len(resolved.Skills))
+	for _, doc := range resolved.Skills {
+		skillID := strings.TrimSpace(doc.Metadata.ID)
+		if _, ok := allowed[skillID]; ok {
+			filtered = append(filtered, doc)
+		}
+	}
+	if len(filtered) == 0 {
+		if strict {
+			return &skills.ResolvedSkills{}
+		}
+		return resolved
+	}
+	return &skills.ResolvedSkills{Skills: filtered}
+}
+
+func turnStrategyAllowedSkillIDs(strategy *AIChatTurnStrategy) map[string]struct{} {
+	if strategy == nil {
+		return nil
+	}
+	allowed := map[string]struct{}{}
+	add := func(skillID string) {
+		skillID = strings.TrimSpace(skillID)
+		if skillID != "" {
+			allowed[skillID] = struct{}{}
+		}
+	}
+	addTool := func(tool AIChatTurnStrategyTool) {
+		skillID := strings.TrimSpace(tool.SkillID)
+		toolName := strings.TrimSpace(tool.ToolName)
+		add(skillID)
+		if skills.RequiresPromptProfessionalizerPreflight(skillID, toolName) {
+			add(skills.SkillPromptProfessionalizer)
+		}
+	}
+	if strategy.RequiredNextTool != nil {
+		addTool(*strategy.RequiredNextTool)
+		return allowed
+	}
+	for _, tool := range strategy.PlannedTools {
+		addTool(tool)
+	}
+	if len(allowed) > 0 {
+		return allowed
+	}
+	if !turnStrategyIntentShouldRestrictToPrimary(strategy.Intent) {
+		return nil
+	}
+	for _, skillID := range strategy.PrimarySkills {
+		add(skillID)
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return allowed
+}
+
+func turnStrategyIntentShouldRestrictToPrimary(intent string) bool {
+	intent = strings.TrimSpace(intent)
+	if strings.HasPrefix(intent, "continue_") {
+		return true
+	}
+	switch intent {
+	case "manage_agent_asset",
+		"save_generated_file_to_file_management",
+		"generate_temporary_file_artifact",
+		"delete_visible_file",
+		"read_visible_file_content",
+		"navigate_console_page":
+		return true
+	default:
+		return false
+	}
+}
+
+func skillLoopPlanToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard {
+	return skillLoopPlanToolCallGuardWithResolved(prepared, nil)
+}
+
+func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) skillloop.ToolCallGuard {
+	return func(req skillloop.ToolCallGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		allowed := skillLoopAllowedPlannedTools(prepared)
+		if len(allowed) == 0 && !skillLoopShouldRestrictToOperationPlan(prepared) {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		skillID := strings.TrimSpace(req.SkillID)
+		toolName := strings.TrimSpace(req.ToolName)
+		if skillID == "" {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if toolName == "" {
+			if skillLoopShouldAllowUnplannedSkillLoad(prepared, skillID) {
+				recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, "", "model_loaded_enabled_skill_for_context")
+				return skillloop.FinalAnswerGuardResult{}, false
+			}
+		}
+		if toolName == "" && skillLoopAllowedToolsContainSkill(allowed, skillID) {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopShouldBlockRepeatedLoadedNavigation(prepared, skillID, toolName, req.Arguments) {
+			return skillLoopRepeatedLoadedNavigationGuardResult(req.Arguments), true
+		}
+		if skillLoopToolAllowed(allowed, skillID, toolName) {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopShouldBlockDuplicateMutationToolCall(prepared, req) {
+			return skillLoopDuplicateMutationGuardResult(skillID, toolName), true
+		}
+		if skillLoopShouldAllowRepeatedPlannedMutation(prepared, req) {
+			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_repeated_planned_mutation_within_user_goal")
+			amendOperationPlanRepeatedToolStep(prepared.Message.Metadata, skillID, toolName, "model_repeated_planned_mutation_within_user_goal")
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopCanAmendOperationPlanForTool(prepared, skillID, toolName) {
+			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_amended_operation_plan_within_user_goal")
+			amendOperationPlanToolStep(prepared.Message.Metadata, skillID, toolName, "model_tool_call_within_user_goal")
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopShouldAllowUnplannedEvidenceTool(prepared, skillID, toolName) {
+			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_collected_additional_evidence_within_user_goal")
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopShouldAllowUnplannedObservationTool(prepared, skillID, toolName) {
+			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_collected_unplanned_readonly_evidence")
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopShouldAllowUnplannedNavigationTool(prepared, skillID, toolName, req.Arguments) {
+			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_navigated_for_page_context_within_user_goal")
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopShouldAllowUnplannedAdvisoryTool(prepared, skillID, toolName) {
+			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_used_unplanned_non_mutating_tool")
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopShouldAllowGovernedMutationDeviation(prepared, resolved, req) {
+			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_requested_governed_mutation_under_runtime_governance")
+			amendOperationPlanToolStep(prepared.Message.Metadata, skillID, toolName, "model_requested_governed_mutation_under_runtime_governance")
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_requested_unplanned_tool_without_safe_current_goal_match")
+		return skillLoopUnplannedToolGuardResult(skillID, toolName), true
+	}
+}
+
+func skillLoopShouldBlockDuplicateMutationToolCall(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	skillID := strings.TrimSpace(req.SkillID)
+	toolName := strings.TrimSpace(req.ToolName)
+	if skillID == "" || toolName == "" || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	if !skillLoopToolNameLooksAssetMutation(toolName) {
+		return false
+	}
+	if skillLoopToolCallAlreadyAttemptedWithSameArguments(req) {
+		return true
+	}
+	for _, call := range successfulMetadataToolCalls(prepared.Message.Metadata, skillID, toolName) {
+		if skillLoopToolArgumentsEqual(call.Arguments, req.Arguments) {
+			return true
+		}
+	}
+	return false
+}
+
+func skillLoopDuplicateMutationGuardResult(skillID string, toolName string) skillloop.FinalAnswerGuardResult {
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  strings.TrimSpace(skillID),
+		ToolName: strings.TrimSpace(toolName),
+		Message:  "the same mutating tool call was already attempted with matching arguments",
+		SystemMessage: strings.Join([]string{
+			"The same asset-changing tool call was already attempted with matching arguments.",
+			"Do not repeat the identical operation.",
+			"Use the existing tool result as evidence, adjust the arguments if a real retry is required, or provide a truthful answer from the ledger.",
+		}, " "),
+	}
+}
+
+func skillLoopUnplannedToolGuardResult(skillID string, toolName string) skillloop.FinalAnswerGuardResult {
+	message := "tool call is not covered by the current operation evidence"
+	if skillLoopToolNameLooksAssetMutation(toolName) {
+		message = "asset-changing tool call is not covered by the current operation evidence"
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  strings.TrimSpace(skillID),
+		ToolName: strings.TrimSpace(toolName),
+		Message:  message,
+		SystemMessage: strings.Join([]string{
+			"The operation plan is advisory, but tools still need to fit the enabled skill set, runtime governance, duplicate protection, available execution evidence, and a clear current-goal match.",
+			"This tool call is not a planned pending step, an allowed evidence/navigation/advisory deviation, or a governed mutation that can amend the active plan.",
+			"Do not run it automatically.",
+			"Use read/list/observe tools to collect evidence, ask the user if the goal changed, or continue from the current tool results.",
+		}, " "),
+	}
+}
+
+func skillLoopShouldBlockRepeatedLoadedNavigation(prepared *PreparedChat, skillID string, toolName string, args map[string]interface{}) bool {
+	if prepared == nil || prepared.parts == nil || !isConsoleNavigatorNavigateTool(skillID, toolName) {
+		return false
+	}
+	href := normalizeConsoleNavigationGuardHref(skillToolCallArgumentString(args, "href"))
+	if href == "" || !strings.HasPrefix(href, "/console") {
+		return false
+	}
+	return consoleNavigationRouteAlreadyAvailable(prepared.parts, href) ||
+		clientActionContinuationLoadedRoute(prepared.parts, href) ||
+		(prepared.Message != nil && clientActionMetadataHasCompletedRoute(prepared.Message.Metadata, href))
+}
+
+func skillLoopRepeatedLoadedNavigationGuardResult(args map[string]interface{}) skillloop.FinalAnswerGuardResult {
+	href := normalizeConsoleNavigationGuardHref(skillToolCallArgumentString(args, "href"))
+	message := "The requested console route is already loaded in the current page context."
+	if href != "" {
+		message = "The requested console route " + href + " is already loaded in the current page context."
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skills.SkillConsoleNavigator,
+		ToolName: "navigate",
+		Message:  message,
+		SystemMessage: strings.Join([]string{
+			message,
+			"Do not call console-navigator/navigate again for the same route.",
+			"Continue the user's task from the current page context and use available page evidence or the next relevant tool.",
+		}, " "),
+	}
+}
+
+func skillLoopShouldAllowGovernedMutationDeviation(prepared *PreparedChat, resolved *skills.ResolvedSkills, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil || resolved == nil {
+		return false
+	}
+	skillID := strings.TrimSpace(req.SkillID)
+	toolName := strings.TrimSpace(req.ToolName)
+	if skillID == "" || toolName == "" || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 || strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
+		return false
+	}
+	if !skillLoopToolHasGovernedMutationEffect(resolved, skillID, toolName) {
+		return false
+	}
+	return !skillLoopToolCallAlreadyAttemptedWithSameArguments(req)
+}
+
+func skillLoopToolHasGovernedMutationEffect(resolved *skills.ResolvedSkills, skillID string, toolName string) bool {
+	if resolved == nil {
+		return false
+	}
+	doc, ok := resolved.Get(skillID)
+	if !ok || doc == nil {
+		return false
+	}
+	for _, tool := range doc.Tools {
+		if !strings.EqualFold(strings.TrimSpace(tool.Name), strings.TrimSpace(toolName)) || tool.Governance == nil {
+			continue
+		}
+		manifest := toolgovernance.NormalizeManifest(*tool.Governance)
+		switch manifest.Effect {
+		case toolgovernance.EffectCreate,
+			toolgovernance.EffectUpdate,
+			toolgovernance.EffectDelete,
+			toolgovernance.EffectPublish,
+			toolgovernance.EffectInvoke,
+			toolgovernance.EffectSchedule,
+			toolgovernance.EffectExternalSend:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func skillLoopToolCallAlreadyAttemptedWithSameArguments(req skillloop.ToolCallGuardRequest) bool {
+	for _, call := range append(append([]skillloop.SkillToolCallRef{}, req.SuccessfulToolCalls...), req.AttemptedToolCalls...) {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), strings.TrimSpace(req.SkillID)) ||
+			!strings.EqualFold(strings.TrimSpace(call.ToolName), strings.TrimSpace(req.ToolName)) {
+			continue
+		}
+		if skillLoopToolArgumentsEqual(call.Arguments, req.Arguments) {
+			return true
+		}
+	}
+	return false
+}
+
+func skillLoopToolArgumentsEqual(left map[string]interface{}, right map[string]interface{}) bool {
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	if leftErr != nil || rightErr != nil {
+		return reflect.DeepEqual(left, right)
+	}
+	return string(leftJSON) == string(rightJSON)
+}
+
+func skillLoopShouldAllowRepeatedPlannedMutation(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	skillID := strings.TrimSpace(req.SkillID)
+	toolName := strings.TrimSpace(req.ToolName)
+	if skillID == "" || toolName == "" || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	if !skillLoopToolNameLooksAssetMutation(toolName) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 || !operationPlanHasToolStepWithStatus(plan, skillID, toolName, operationPlanStepStatusCompleted) {
+		return false
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if goal == "" {
+		return false
+	}
+	if !strings.EqualFold(skillID, skills.SkillAgentManagement) {
+		return false
+	}
+	if !strings.EqualFold(toolName, "create_agent") || !agentManagementCreateRequested(goal) {
+		return false
+	}
+	requestedCount := agentManagementCreateRequestedCount(goal)
+	if requestedCount <= 1 {
+		return false
+	}
+	calls := append(successfulMetadataToolCalls(prepared.Message.Metadata, skillID, toolName), matchingSkillToolCalls(req.SuccessfulToolCalls, skillID, toolName)...)
+	if agentManagementUniqueCreateTargetCount(calls) >= requestedCount {
+		return false
+	}
+	return !agentManagementCreateTargetAlreadySucceeded(calls, req.Arguments)
+}
+
+func agentManagementCreateRequestedCount(query string) int {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return 1
+	}
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bcreate\s+([0-9]+)\s+(?:draft\s+)?agents?\b`),
+		regexp.MustCompile(`(?i)\bnew\s+([0-9]+)\s+(?:draft\s+)?agents?\b`),
+		regexp.MustCompile(`([0-9]+)\s*(?:个|位)?\s*(?:临时|草稿|智能)?\s*智能体`),
+	} {
+		matches := pattern.FindStringSubmatch(text)
+		if len(matches) != 2 {
+			continue
+		}
+		if count, err := strconv.Atoi(matches[1]); err == nil && count > 1 {
+			return count
+		}
+	}
+	countWords := []struct {
+		markers []string
+		count   int
+	}{
+		{[]string{"two agents", "two draft agents", "两个智能体", "两个临时智能体", "两个草稿智能体", "两个临时草稿智能体", "两位智能体", "二个智能体"}, 2},
+		{[]string{"three agents", "three draft agents", "三个智能体", "三个临时智能体", "三个草稿智能体", "三位智能体"}, 3},
+		{[]string{"four agents", "four draft agents", "四个智能体", "四个临时智能体", "四个草稿智能体", "四位智能体"}, 4},
+		{[]string{"five agents", "five draft agents", "五个智能体", "五个临时智能体", "五个草稿智能体", "五位智能体"}, 5},
+	}
+	for _, item := range countWords {
+		if containsAnySubstring(text, item.markers) {
+			return item.count
+		}
+	}
+	return 1
+}
+
+func agentManagementUniqueCreateTargetCount(calls []skillloop.SkillToolCallRef) int {
+	seen := map[string]struct{}{}
+	unknown := 0
+	for _, call := range calls {
+		key := agentManagementCreateTargetKeyFromCall(call)
+		if key == "" {
+			unknown++
+			continue
+		}
+		seen[key] = struct{}{}
+	}
+	return len(seen) + unknown
+}
+
+func agentManagementCreateTargetKeyFromCall(call skillloop.SkillToolCallRef) string {
+	for _, value := range []interface{}{
+		call.Arguments["name"],
+		call.Arguments["agent_name"],
+		call.Result["name"],
+		call.Result["agent_name"],
+		call.Result["agent_id"],
+		call.Result["id"],
+	} {
+		if key := strings.ToLower(strings.TrimSpace(stringFromAny(value))); key != "" {
+			return key
+		}
+	}
+	if agent := governanceMapFromAny(call.Result["agent"]); len(agent) > 0 {
+		for _, value := range []interface{}{agent["name"], agent["agent_name"], agent["agent_id"], agent["id"]} {
+			if key := strings.ToLower(strings.TrimSpace(stringFromAny(value))); key != "" {
+				return key
+			}
+		}
+	}
+	return ""
+}
+
+func agentManagementCreateTargetAlreadySucceeded(calls []skillloop.SkillToolCallRef, args map[string]interface{}) bool {
+	name := strings.ToLower(strings.TrimSpace(firstNonEmptyString(args["name"], args["agent_name"])))
+	if name == "" {
+		return false
+	}
+	for _, call := range calls {
+		callName := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+			call.Arguments["name"],
+			call.Arguments["agent_name"],
+			call.Result["name"],
+			call.Result["agent_name"],
+		)))
+		if callName == name {
+			return true
+		}
+		if agent := governanceMapFromAny(call.Result["agent"]); len(agent) > 0 {
+			callName = strings.ToLower(strings.TrimSpace(firstNonEmptyString(agent["name"], agent["agent_name"])))
+			if callName == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func skillLoopShouldAllowUnplannedNavigationTool(prepared *PreparedChat, skillID string, toolName string, args map[string]interface{}) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	if !isConsoleNavigatorNavigateTool(skillID, toolName) || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	href := normalizeConsoleNavigationGuardHref(skillToolCallArgumentString(args, "href"))
+	if href == "" || !strings.HasPrefix(href, "/console") {
+		return false
+	}
+	return !operationPlanHasCompletedRouteTarget(plan, href)
+}
+
+func operationPlanHasCompletedRouteTarget(plan map[string]interface{}, href string) bool {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if len(plan) == 0 || href == "" {
+		return false
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !operationPlanStepIsRoute(step) {
+			continue
+		}
+		target := operationPlanStepTargetPage(step)
+		if target == "" || href != normalizeConsoleNavigationGuardHref(target) {
+			continue
+		}
+		id := strings.TrimSpace(stringFromAny(step["id"]))
+		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+		if status == operationPlanStepStatusCompleted {
+			return true
+		}
+	}
+	return false
+}
+
+func skillLoopShouldAllowUnplannedObservationTool(prepared *PreparedChat, skillID string, toolName string) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" || toolName == "" || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	return skillLoopToolNameLooksReadOnly(toolName)
+}
+
+func skillLoopShouldAllowUnplannedAdvisoryTool(prepared *PreparedChat, skillID string, toolName string) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" || toolName == "" || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	if isConsoleNavigatorNavigateTool(skillID, toolName) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	if target := operationPlanToolStepAssetTarget(skillID, toolName); len(target) > 0 {
+		effect := strings.ToLower(strings.TrimSpace(stringFromAny(target["effect"])))
+		if effect != "" && effect != "read" {
+			return false
+		}
+	}
+	return !skillLoopToolNameLooksAssetMutation(toolName)
+}
+
+func skillLoopToolNameLooksAssetMutation(toolName string) bool {
+	toolName = strings.ToLower(strings.TrimSpace(toolName))
+	if toolName == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"create", "delete", "remove", "update", "replace", "save", "write", "rename",
+		"bind", "unbind", "publish", "run", "execute", "send", "archive", "trash", "import",
+		"generate", "upload", "invoke", "schedule", "approve", "reject",
+	} {
+		if strings.Contains(toolName, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func skillLoopToolNameLooksReadOnly(toolName string) bool {
+	toolName = strings.ToLower(strings.TrimSpace(toolName))
+	if toolName == "" {
+		return false
+	}
+	if skillLoopToolNameLooksAssetMutation(toolName) {
+		return false
+	}
+	for _, prefix := range []string{"list_", "get_", "read_", "search_", "query_", "observe_"} {
+		if strings.HasPrefix(toolName, prefix) {
+			return true
+		}
+	}
+	for _, suffix := range []string{"_status", "_candidates", "_schema", "_summary"} {
+		if strings.HasSuffix(toolName, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func skillLoopShouldAllowUnplannedSkillLoad(prepared *PreparedChat, skillID string) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	skillID = strings.TrimSpace(skillID)
+	if skillID == "" || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	return true
+}
+
+func skillLoopShouldAllowUnplannedEvidenceTool(prepared *PreparedChat, skillID string, toolName string) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" || toolName == "" || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
+		return false
+	}
+	if !operationPlanToolIsReplayableEvidence(skillID, toolName) {
+		return false
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if strings.TrimSpace(goal) == "" {
+		return false
+	}
+	if strings.EqualFold(skillID, skills.SkillAgentManagement) {
+		return agentManagementToolMatchesUserGoal(goal, toolName)
+	}
+	if strings.EqualFold(skillID, skills.SkillFileReader) {
+		return strings.EqualFold(toolName, "list_visible_files") || strings.EqualFold(toolName, "read_file") && isFileReadIntent(goal)
+	}
+	return false
+}
+
+func skillLoopCanAmendOperationPlanForTool(prepared *PreparedChat, skillID string, toolName string) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" || toolName == "" {
+		return false
+	}
+	if !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	if operationPlanHasToolStepWithStatus(plan, skillID, toolName, operationPlanStepStatusCompleted) &&
+		!operationPlanToolIsReplayableEvidence(skillID, toolName) {
+		return false
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if goal == "" {
+		return false
+	}
+	if strings.EqualFold(skillID, skills.SkillAgentManagement) {
+		return agentManagementToolMatchesUserGoal(goal, toolName)
+	}
+	if strings.EqualFold(skillID, skills.SkillConsoleNavigator) && strings.EqualFold(toolName, "navigate") {
+		return isConsoleNavigationIntent(goal)
+	}
+	if strings.EqualFold(skillID, skills.SkillFileManager) {
+		if strings.EqualFold(toolName, "delete_file") {
+			return isFileDeleteIntent(goal)
+		}
+		if strings.EqualFold(toolName, "save_file_to_management") {
+			return isManagedFileCreateIntent(goal) || isContinuationIntent(goal)
+		}
+	}
+	if strings.EqualFold(skillID, skills.SkillFileReader) {
+		return strings.EqualFold(toolName, "read_file") && isFileReadIntent(goal)
+	}
+	return false
+}
+
+func operationPlanAmendmentGoal(prepared *PreparedChat) string {
+	if prepared == nil {
+		return ""
+	}
+	values := []string{}
+	if prepared.parts != nil {
+		values = append(values, prepared.parts.Query)
+	}
+	if prepared.Message != nil {
+		plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+		values = append(values, stringFromAny(plan["original_user_goal"]))
+	}
+	return strings.TrimSpace(strings.Join(values, "\n"))
+}
+
+func operationPlanHasToolStepWithStatus(plan map[string]interface{}, skillID string, toolName string, status string) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skillID) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), toolName) {
+			continue
+		}
+		id := strings.TrimSpace(stringFromAny(step["id"]))
+		stepState := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+		if stepState == status {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementToolMatchesUserGoal(goal string, toolName string) bool {
+	goal = strings.ToLower(strings.TrimSpace(goal))
+	toolName = strings.TrimSpace(toolName)
+	if goal == "" || toolName == "" {
+		return false
+	}
+	switch toolName {
+	case "list_agents":
+		return agentManagementReadRequested(goal) || containsAnySubstring(goal, []string{"agent", "\u667a\u80fd\u4f53"})
+	case "get_agent", "get_agent_config":
+		return agentManagementReadRequested(goal) || agentManagementConfigReadRequested(goal)
+	case "create_agent":
+		return agentManagementCreateRequested(goal)
+	case "delete_agent":
+		return agentManagementDeleteRequested(goal)
+	case "delete_agents":
+		return agentManagementDeleteRequested(goal)
+	case "update_agent_identity":
+		return agentManagementIdentityUpdateRequested(goal)
+	case "list_available_models":
+		return agentManagementModelSelectionRequested(goal)
+	case "update_agent_config":
+		return agentManagementConfigUpdateRequested(goal)
+	case "list_agent_skill_candidates", "replace_agent_skill_bindings":
+		return agentManagementSkillBindingRequested(goal)
+	case "list_agent_knowledge_candidates", "replace_agent_knowledge_bindings",
+		"list_agent_database_candidates", "list_agent_database_tables", "replace_agent_database_bindings",
+		"list_agent_workflow_binding_candidates", "replace_agent_workflow_bindings":
+		return len(requiredAgentBindingMutationTools(goal)) > 0
+	default:
+		return false
+	}
+}
+
+func skillLoopShouldRestrictToOperationPlan(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.Message == nil {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
+		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
+		if skillID != "" && toolName != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func skillLoopHasOperationPlan(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.Message == nil {
+		return false
+	}
+	return len(mapFromOperationContext(prepared.Message.Metadata["operation_plan"])) > 0
+}
+
+func skillLoopAllowedPlannedTools(prepared *PreparedChat) map[string]struct{} {
+	if prepared == nil || prepared.Message == nil {
+		return nil
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return nil
+	}
+	allowed := map[string]struct{}{}
+	for _, step := range operationPlanPendingExecutableSteps(plan, 8) {
+		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
+		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
+		if skillID == "" || toolName == "" {
+			continue
+		}
+		allowed[skillLoopToolAllowKey(skillID, toolName)] = struct{}{}
+		if skills.RequiresPromptProfessionalizerPreflight(skillID, toolName) {
+			allowed[skillLoopToolWildcardAllowKey(skills.SkillPromptProfessionalizer)] = struct{}{}
+		}
+		if operationPlanStepIsRoute(step) {
+			break
+		}
+	}
+	addOperationPlanReplayableTools(plan, allowed)
+	if len(allowed) == 0 {
+		return nil
+	}
+	return allowed
+}
+
+func addOperationPlanReplayableTools(plan map[string]interface{}, allowed map[string]struct{}) {
+	if len(plan) == 0 || allowed == nil {
+		return
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		id := strings.TrimSpace(stringFromAny(step["id"]))
+		if id == "" {
+			continue
+		}
+		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+		if status == operationPlanStepStatusFailed {
+			continue
+		}
+		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
+		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
+		if skillID == "" || toolName == "" || !operationPlanToolIsReplayableEvidence(skillID, toolName) {
+			continue
+		}
+		allowed[skillLoopToolAllowKey(skillID, toolName)] = struct{}{}
+		if skills.RequiresPromptProfessionalizerPreflight(skillID, toolName) {
+			allowed[skillLoopToolWildcardAllowKey(skills.SkillPromptProfessionalizer)] = struct{}{}
+		}
+	}
+}
+
+func operationPlanToolIsReplayableEvidence(skillID, toolName string) bool {
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" || toolName == "" {
+		return false
+	}
+	if strings.EqualFold(skillID, skills.SkillAgentManagement) {
+		switch toolName {
+		case "list_agents",
+			"get_agent",
+			"get_agent_config",
+			"list_agent_skill_candidates",
+			"list_agent_knowledge_candidates",
+			"list_agent_database_candidates",
+			"list_agent_database_tables",
+			"list_agent_workflow_binding_candidates",
+			"list_available_models":
+			return true
+		default:
+			return false
+		}
+	}
+	if strings.EqualFold(skillID, skills.SkillFileReader) {
+		return strings.EqualFold(toolName, "read_file") || strings.EqualFold(toolName, "list_visible_files")
+	}
+	return false
+}
+
+func skillLoopAllowedToolsContainSkill(allowed map[string]struct{}, skillID string) bool {
+	skillID = strings.ToLower(strings.TrimSpace(skillID))
+	if skillID == "" {
+		return false
+	}
+	prefix := skillID + "/"
+	for key := range allowed {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func skillLoopToolAllowed(allowed map[string]struct{}, skillID string, toolName string) bool {
+	if _, ok := allowed[skillLoopToolAllowKey(skillID, toolName)]; ok {
+		return true
+	}
+	_, ok := allowed[skillLoopToolWildcardAllowKey(skillID)]
+	return ok
+}
+
+func skillLoopToolAllowKey(skillID string, toolName string) string {
+	return strings.ToLower(strings.TrimSpace(skillID)) + "/" + strings.ToLower(strings.TrimSpace(toolName))
+}
+
+func skillLoopToolWildcardAllowKey(skillID string) string {
+	return strings.ToLower(strings.TrimSpace(skillID)) + "/*"
 }
 
 func combineFinalAnswerGuards(guards ...skillloop.FinalAnswerGuard) skillloop.FinalAnswerGuard {
@@ -151,6 +1384,12 @@ func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interf
 			params["console_files_visible_files"] = visibleFiles
 		}
 	}
+	if prepared != nil && prepared.parts != nil && isConsoleAgentsContext(prepared.parts.RuntimeContext, prepared.parts.RawOperationContext, prepared.parts.OperationContext) {
+		params["console_agents_page"] = true
+		if visibleAgents := consoleAgentsPromptVisibleAgents(prepared.parts); len(visibleAgents) > 0 {
+			params["console_agents_visible_agents"] = visibleAgents
+		}
+	}
 	if history := workflowConversationHistoryFromPrepared(prepared); len(history) > 0 {
 		params["workflow_context"] = map[string]interface{}{
 			"conversation_history": history,
@@ -176,7 +1415,7 @@ func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message
 	if prepared == nil {
 		return nil
 	}
-	messages := make([]adapter.Message, 0, 4)
+	messages := make([]adapter.Message, 0, 5)
 	if message, ok := agentWorkflowAvailableBindingsMessage(prepared.RunConfig.WorkflowBindings); ok {
 		messages = append(messages, message)
 	}
@@ -184,6 +1423,9 @@ func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message
 		messages = append(messages, message)
 	}
 	if message, ok := contextualConsoleNavigationSkillMessage(prepared); ok {
+		messages = append(messages, message)
+	}
+	if message, ok := contextualConsoleAgentsSkillMessage(prepared); ok {
 		messages = append(messages, message)
 	}
 	if message, ok := contextualConsoleFilesSkillMessage(prepared); ok {
@@ -227,7 +1469,25 @@ type AIChatTurnStrategy struct {
 	SuccessCriteria   []string `json:"success_criteria"`
 	ObservationPoints []string `json:"observation_points"`
 	ArtifactSource    string   `json:"artifact_source,omitempty"`
+	ExecutionScope    string   `json:"execution_scope,omitempty"`
+	WaitForContinue   bool     `json:"wait_for_continue,omitempty"`
 	Avoid             []string `json:"avoid,omitempty"`
+
+	RequiredNextTool       *AIChatTurnStrategyTool       `json:"required_next_tool,omitempty"`
+	RemainingRouteSequence []AIChatTurnStrategyRouteStep `json:"remaining_route_sequence,omitempty"`
+	PlannedTools           []AIChatTurnStrategyTool      `json:"planned_tools,omitempty"`
+}
+
+type AIChatTurnStrategyTool struct {
+	SkillID   string            `json:"skill_id"`
+	ToolName  string            `json:"tool_name"`
+	Arguments map[string]string `json:"arguments"`
+}
+
+type AIChatTurnStrategyRouteStep struct {
+	Href   string `json:"href"`
+	Label  string `json:"label,omitempty"`
+	Status string `json:"status"`
 }
 
 func contextualAIChatTurnStrategy(prepared *PreparedChat) *AIChatTurnStrategy {
@@ -240,6 +1500,10 @@ func contextualAIChatTurnStrategy(prepared *PreparedChat) *AIChatTurnStrategy {
 func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnStrategy {
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) || !chatPartsSkillsEnabled(parts) {
 		return nil
+	}
+	strategyParts, stagedCurrent, stagedResume := stagedExecutionScopedParts(parts)
+	if strategyParts != nil {
+		parts = strategyParts
 	}
 	currentPage := contextualTurnCurrentPage(parts)
 	strategy := &AIChatTurnStrategy{
@@ -256,11 +1520,27 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 		SuccessCriteria:   []string{"answer from the current ZGI page context and enabled skills"},
 		ObservationPoints: []string{"current_page_context"},
 	}
+	if stagedCurrent {
+		strategy.ExecutionScope = "current_turn_before_continue"
+		strategy.WaitForContinue = true
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"complete only the instructions before the user's continue marker in this turn",
+			"wait for the user's continue message before executing deferred instructions",
+		)
+		strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+			"do not execute instructions after the user's continue marker in this turn",
+		)
+	} else if stagedResume {
+		strategy.ExecutionScope = "staged_goal_after_continue"
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"execute the deferred instructions from the prior staged goal",
+		)
+	}
 
 	if target, ok := resolveConsoleNavigationTargetForParts(parts); ok {
 		strategy.TargetPage = target.Href
 		routeRequired := !clientActionContinuationLoadedRoute(parts, target.Href)
-		if consoleNavigationLoadedHrefMatchesTarget(target.Href, "/console/files") && consoleFilesRouteAlreadyAvailable(parts) {
+		if consoleNavigationRouteAlreadyAvailable(parts, target.Href) {
 			routeRequired = false
 		}
 		strategy.RouteRequired = routeRequired
@@ -270,26 +1550,626 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 	}
 
 	switch {
+	case isAgentManagementIntent(parts.Query):
+		strategy = contextualAgentManagementStrategy(parts, strategy)
+	case isConsoleNavigationIntent(parts.Query) && consoleNavigationResolvedTargetCount(parts.Query) > 1:
+		strategy = contextualNavigationStrategy(parts, strategy)
+	case isContinuationIntent(parts.Query):
+		strategy = contextualContinuationStrategy(parts, strategy)
 	case isManagedFileCreateIntent(parts.Query):
-		return contextualManagedFileCreateStrategy(parts, strategy)
+		strategy = contextualManagedFileCreateStrategy(parts, strategy)
+	case isTemporaryFileGenerateIntent(parts.Query):
+		strategy = contextualTemporaryFileGenerateStrategy(parts, strategy)
+	case strategy.RouteRequired && isConsoleNavigationIntent(parts.Query):
+		strategy = contextualNavigationStrategy(parts, strategy)
 	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
 		isFileDeleteIntent(parts.Query):
-		return contextualFileDeleteStrategy(parts, strategy)
+		strategy = contextualFileDeleteStrategy(parts, strategy)
 	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
 		isFileReadIntent(parts.Query):
-		return contextualFileReadStrategy(parts, strategy)
-	case isConsoleNavigationIntent(parts.Query):
-		return contextualNavigationStrategy(parts, strategy)
+		strategy = contextualFileReadStrategy(parts, strategy)
+	case shouldUseAvailableRouteNavigationStrategy(parts, strategy):
+		strategy = contextualNavigationStrategy(parts, strategy)
 	default:
 		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
 			strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
 		}
+	}
+	return finalizeAIChatTurnStrategy(parts, strategy)
+}
+
+func shouldUseAvailableRouteNavigationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) bool {
+	if parts == nil || strategy == nil || !isConsoleNavigationIntent(parts.Query) {
+		return false
+	}
+	if strategy.RouteRequired || consoleNavigationResolvedTargetCount(parts.Query) > 1 {
+		return true
+	}
+	target, ok := resolveConsoleNavigationTargetForParts(parts)
+	if !ok || strings.TrimSpace(target.Href) == "" {
+		return false
+	}
+	return !consoleNavigationRouteAlreadyAvailable(parts, target.Href) &&
+		!clientActionContinuationLoadedRoute(parts, target.Href)
+}
+
+func finalizeAIChatTurnStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	if parts == nil || strategy == nil || !strategy.RouteRequired ||
+		!skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+		return enrichAIChatTurnStrategyPlannedTools(parts, strategy)
+	}
+	target := consoleNavigationRouteHintForHref(strategy.TargetPage)
+	if target.Href == "" {
+		target = consoleNavigationRouteHint{Href: strategy.TargetPage, Label: "Console page"}
+	}
+	if strings.TrimSpace(target.Href) == "" {
+		return enrichAIChatTurnStrategyPlannedTools(parts, strategy)
+	}
+	strategy.RequiredNextTool = &AIChatTurnStrategyTool{
+		SkillID:  skills.SkillConsoleNavigator,
+		ToolName: "navigate",
+		Arguments: map[string]string{
+			"href": target.Href,
+		},
+	}
+	if target.Label != "" {
+		strategy.RequiredNextTool.Arguments["reason"] = "open " + target.Label + " for the current user request"
+	}
+	strategy.RemainingRouteSequence = remainingConsoleNavigationRouteSequence(parts, target)
+	strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+		"treat required_next_tool as the preferred next route action, but if current page evidence already satisfies the target or a low-risk observe/read/list step is needed, continue from evidence and record the deviation instead of forcing a redundant route",
+	)
+	return enrichAIChatTurnStrategyPlannedTools(parts, strategy)
+}
+
+func enrichAIChatTurnStrategyPlannedTools(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	if parts == nil || strategy == nil {
 		return strategy
 	}
+	if strategy.Intent == "manage_agent_asset" {
+		return appendAgentManagementPlannedTools(parts, strategy)
+	}
+	if strategy.Intent == "navigate_console_page" {
+		return strategy
+	}
+	if isManagedFileCreateIntent(parts.Query) {
+		if !shouldReuseRecentGeneratedArtifactForManagedCreate(parts) && len(parts.RecentGeneratedArtifacts) == 0 {
+			strategy = appendArtifactProducerPlannedTool(parts, strategy)
+		}
+		if skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
+			strategy = appendPlannedTool(strategy, skills.SkillFileManager, "save_file_to_management", nil)
+		}
+	} else if isTemporaryFileGenerateIntent(parts.Query) {
+		strategy = appendArtifactProducerPlannedTool(parts, strategy)
+	}
+	if isFileDeleteIntent(parts.Query) && skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
+		strategy = appendPlannedTool(strategy, skills.SkillFileManager, "delete_file", nil)
+	}
+	return strategy
+}
+
+func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	if parts == nil || strategy == nil || !skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+		return strategy
+	}
+	query := strings.ToLower(strings.TrimSpace(parts.Query))
+	if query == "" {
+		return strategy
+	}
+	if agentManagementCreateRequested(query) {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "create_agent", nil)
+	}
+	if agentManagementDeleteRequested(query) {
+		if agentManagementBatchDeleteRequested(query) {
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "delete_agents", nil)
+		} else {
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "delete_agent", nil)
+		}
+	}
+	if agentManagementConfigReadRequested(query) ||
+		agentManagementConfigUpdateRequested(query) ||
+		agentManagementSkillBindingRequested(query) ||
+		len(requiredAgentBindingMutationTools(query)) > 0 {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "get_agent_config", nil)
+	}
+	if agentManagementIdentityUpdateRequested(query) {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "update_agent_identity", nil)
+	}
+	if agentManagementModelSelectionRequested(query) {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_available_models", nil)
+	}
+	if agentManagementConfigUpdateRequested(query) {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "update_agent_config", nil)
+	}
+	if agentManagementSkillBindingRequested(query) {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates", nil)
+	}
+	requiredBindingTools := requiredAgentBindingMutationTools(query)
+	for _, toolName := range requiredBindingTools {
+		switch toolName {
+		case "replace_agent_knowledge_bindings":
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_knowledge_candidates", nil)
+		case "replace_agent_database_bindings":
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_database_candidates", nil)
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_database_tables", nil)
+		case "replace_agent_workflow_bindings":
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", nil)
+		}
+	}
+	if agentManagementSkillBindingRequested(query) || len(requiredBindingTools) > 0 {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "update_agent_config", nil)
+	}
+	if len(strategy.PlannedTools) == 0 {
+		if agentManagementReadRequested(query) {
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "get_agent", nil)
+		} else if !agentManagementVisibleContextResolvesUserTarget(parts, query) {
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agents", nil)
+		}
+	}
+	return strategy
+}
+
+func agentManagementVisibleContextResolvesUserTarget(parts *chatRequestParts, query string) bool {
+	if parts == nil || !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return false
+	}
+	if len(consoleAgentsPromptVisibleAgents(parts)) == 0 {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"current page",
+		"this page",
+		"visible",
+		"shown",
+		"listed",
+		"selected",
+		"first ",
+		"top ",
+		"these agents",
+		"current agent",
+		"this agent",
+		"\u5f53\u524d\u9875",
+		"\u8fd9\u4e2a\u9875",
+		"\u672c\u9875",
+		"\u53ef\u89c1",
+		"\u5217\u8868",
+		"\u9009\u4e2d",
+		"\u524d",
+		"\u8fd9\u4e9b\u667a\u80fd\u4f53",
+		"\u8fd9\u4e2a\u667a\u80fd\u4f53",
+		"\u5f53\u524d\u667a\u80fd\u4f53",
+	})
+}
+
+func agentManagementCreateRequested(query string) bool {
+	if strings.Contains(query, "create_agent") ||
+		containsAnySubstring(query, []string{"create agent", "new agent", "add agent", "\u521b\u5efa\u667a\u80fd\u4f53", "\u65b0\u5efa\u667a\u80fd\u4f53"}) {
+		return true
+	}
+	if !containsAnySubstring(query, []string{"agent", "\u667a\u80fd\u4f53"}) {
+		return false
+	}
+	for _, marker := range []string{"create", "new", "add", "\u521b\u5efa", "\u65b0\u5efa", "\u65b0\u589e"} {
+		if containsUnnegatedAgentManagementMutationMarker(query, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementDeleteRequested(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if agentManagementDeleteMentionIsOnlyDescriptive(text) {
+		return false
+	}
+	if strings.Contains(text, "delete_agent") ||
+		containsAnySubstring(text, []string{"delete agent", "delete agents", "remove agent", "remove agents", "\u5220\u9664\u667a\u80fd\u4f53", "\u5220\u6389\u667a\u80fd\u4f53"}) {
+		return true
+	}
+	if !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) {
+		return false
+	}
+	for _, marker := range []string{"delete", "remove", "\u5220\u9664", "\u5220\u6389", "\u79fb\u9664", "\u6e05\u7406"} {
+		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementDeleteMentionIsOnlyDescriptive(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" || !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) {
+		return false
+	}
+	if containsAnySubstring(text, []string{"create", "new", "add", "\u521b\u5efa", "\u65b0\u5efa", "\u65b0\u589e"}) &&
+		containsAnySubstring(text, []string{
+			"description", "desc", "write", "named", "called",
+			"\u63cf\u8ff0", "\u5199", "\u540d\u79f0", "\u53eb",
+		}) &&
+		containsAnySubstring(text, []string{
+			"deletable", "can be deleted", "ok to delete", "safe to delete",
+			"\u53ef\u5220\u9664", "\u53ef\u4ee5\u5220\u9664",
+		}) {
+		return true
+	}
+	return false
+}
+
+func agentManagementBatchDeleteRequested(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if !agentManagementDeleteRequested(text) {
+		return false
+	}
+	return strings.Contains(text, "delete_agents") ||
+		containsAnySubstring(text, []string{
+			"delete agents",
+			"remove agents",
+			"batch",
+			"multiple",
+			"first ",
+			"top ",
+			"these agents",
+			"selected agents",
+			"\u6279\u91cf",
+			"\u591a\u4e2a",
+			"\u8fd9\u4e9b",
+			"\u5168\u90e8",
+			"\u6240\u6709",
+			"\u524d",
+			"\u9009\u4e2d",
+		})
+}
+
+func agentManagementReadRequested(query string) bool {
+	return strings.Contains(query, "get_agent") ||
+		containsAnySubstring(query, []string{"inspect agent", "view agent", "\u67e5\u770b\u667a\u80fd\u4f53", "\u68c0\u67e5\u667a\u80fd\u4f53"})
+}
+
+func agentManagementConfigReadRequested(query string) bool {
+	return strings.Contains(query, "get_agent_config") ||
+		containsAnySubstring(query, []string{
+			"agent config", "agent configuration", "config", "configuration", "current model", "model name", "provider",
+			"\u667a\u80fd\u4f53\u914d\u7f6e", "\u914d\u7f6e", "\u5f53\u524d\u6a21\u578b", "\u6a21\u578b\u540d\u79f0", "\u4f9b\u5e94\u5546",
+		})
+}
+
+func agentManagementIdentityUpdateRequested(query string) bool {
+	return strings.Contains(query, "update_agent_identity") ||
+		(agentManagementMutationVerbRequested(query) &&
+			containsAnySubstring(query, []string{
+				"rename", "name", "description", "icon",
+				"\u6539\u540d", "\u540d\u79f0", "\u540d\u5b57", "\u63cf\u8ff0", "\u56fe\u6807",
+			}))
+}
+
+func agentManagementModelSelectionRequested(query string) bool {
+	return strings.Contains(query, "list_available_models") ||
+		(agentManagementMutationVerbRequested(query) &&
+			containsAnySubstring(query, []string{"model", "provider", "\u6a21\u578b", "\u4f9b\u5e94\u5546"}))
+}
+
+func agentManagementConfigUpdateRequested(query string) bool {
+	return strings.Contains(query, "update_agent_config") ||
+		(agentManagementMutationVerbRequested(query) &&
+			containsAnySubstring(query, []string{
+				"system prompt", "prompt", "model", "provider", "file upload", "memory", "home title", "placeholder",
+				"\u7cfb\u7edf\u63d0\u793a\u8bcd", "\u63d0\u793a\u8bcd", "\u6a21\u578b", "\u4f9b\u5e94\u5546", "\u6587\u4ef6\u4e0a\u4f20", "\u8bb0\u5fc6", "\u9996\u9875", "\u5360\u4f4d",
+			}))
+}
+
+func agentManagementMutationVerbRequested(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"update", "edit", "modify", "change", "set", "replace", "switch", "enable", "disable", "bind", "unbind", "save",
+		"\u4fee\u6539", "\u7f16\u8f91", "\u66f4\u65b0", "\u8bbe\u7f6e", "\u6539\u4e3a", "\u6362\u6210", "\u66ff\u6362", "\u5207\u6362", "\u542f\u7528", "\u7981\u7528", "\u7ed1\u5b9a", "\u89e3\u7ed1", "\u4fdd\u5b58",
+	} {
+		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsUnnegatedAgentManagementMutationMarker(text string, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if text == "" || marker == "" {
+		return false
+	}
+	searchFrom := 0
+	for {
+		idx := strings.Index(text[searchFrom:], marker)
+		if idx < 0 {
+			return false
+		}
+		absoluteIdx := searchFrom + idx
+		if !agentManagementMutationMarkerNegated(text, absoluteIdx) {
+			return true
+		}
+		searchFrom = absoluteIdx + len(marker)
+		if searchFrom >= len(text) {
+			return false
+		}
+	}
+}
+
+func agentManagementMutationMarkerNegated(text string, markerStart int) bool {
+	if markerStart <= 0 {
+		return false
+	}
+	prefixStart := markerStart - 48
+	if prefixStart < 0 {
+		prefixStart = 0
+	}
+	prefix := strings.TrimSpace(text[prefixStart:markerStart])
+	if prefix == "" {
+		return false
+	}
+	if containsAnySuffix(prefix, []string{
+		"do not", "don't", "dont", "without", "never", "no", "do not make any",
+	}) {
+		return true
+	}
+	compact := strings.NewReplacer(
+		" ", "",
+		"\t", "",
+		"\n", "",
+		"\r", "",
+		",", "",
+		".", "",
+		";", "",
+		":", "",
+		"\uff0c", "",
+		"\u3002", "",
+		"\uff1b", "",
+		"\uff1a", "",
+		"\u3001", "",
+	).Replace(prefix)
+	return containsAnySuffix(compact, []string{
+		"\u4e0d",
+		"\u522b",
+		"\u7981\u6b62",
+		"\u4e0d\u8981",
+		"\u4e0d\u7528",
+		"\u65e0\u9700",
+		"\u4e0d\u9700\u8981",
+		"\u4e0d\u53ef",
+		"\u4e0d\u505a",
+		"\u4e0d\u8981\u505a",
+		"\u4e0d\u505a\u4efb\u4f55",
+		"\u4e0d\u8981\u505a\u4efb\u4f55",
+	})
+}
+
+func containsAnySuffix(text string, suffixes []string) bool {
+	text = strings.TrimSpace(strings.ToLower(text))
+	if text == "" {
+		return false
+	}
+	for _, suffix := range suffixes {
+		suffix = strings.TrimSpace(strings.ToLower(suffix))
+		if suffix != "" && strings.HasSuffix(text, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementSkillBindingRequested(query string) bool {
+	return strings.Contains(query, "list_agent_skill_candidates") ||
+		strings.Contains(query, "replace_agent_skill_bindings") ||
+		(!agentManagementSkillBindingNoop(query) && containsAnySubstring(query, []string{
+			"agent skill", "skill binding", "enable skill", "disable skill", "add skill", "remove skill", "delete skill", "bind skill",
+			"\u6dfb\u52a0 skill", "\u6dfb\u52a0\u8fd9\u4e2a skill", "\u65b0\u589e skill", "\u542f\u7528 skill", "\u7981\u7528 skill", "\u7ed1\u5b9a skill", "\u79fb\u9664 skill", "\u5220\u9664 skill",
+			"\u6280\u80fd\u5019\u9009", "\u6dfb\u52a0\u6280\u80fd", "\u65b0\u589e\u6280\u80fd", "\u542f\u7528\u6280\u80fd", "\u7981\u7528\u6280\u80fd", "\u7ed1\u5b9a\u6280\u80fd", "\u79fb\u9664\u6280\u80fd", "\u5220\u9664\u6280\u80fd",
+		}))
+}
+
+func agentManagementSkillBindingNoop(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" || !containsAnySubstring(text, []string{"skill", "\u6280\u80fd"}) {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"do not add or remove", "don't add or remove", "dont add or remove", "without adding or removing",
+		"do not add skill", "don't add skill", "dont add skill", "do not remove skill", "don't remove skill", "dont remove skill",
+		"do not delete skill", "don't delete skill", "dont delete skill", "do not change skill", "don't change skill", "dont change skill",
+		"leave skill unchanged", "keep skill unchanged",
+		"\u4e0d\u8981\u6dfb\u52a0\u6216\u5220\u9664", "\u4e0d\u6dfb\u52a0\u6216\u5220\u9664", "\u65e0\u9700\u6dfb\u52a0\u6216\u5220\u9664",
+		"\u4e0d\u8981\u6dfb\u52a0 skill", "\u4e0d\u6dfb\u52a0 skill", "\u65e0\u9700\u6dfb\u52a0 skill", "\u4e0d\u8981\u5220\u9664 skill", "\u4e0d\u5220\u9664 skill",
+		"\u4e0d\u8981\u6dfb\u52a0\u6280\u80fd", "\u4e0d\u6dfb\u52a0\u6280\u80fd", "\u65e0\u9700\u6dfb\u52a0\u6280\u80fd", "\u4e0d\u8981\u5220\u9664\u6280\u80fd", "\u4e0d\u5220\u9664\u6280\u80fd",
+		"\u4e0d\u8981\u4fee\u6539 skill", "\u4e0d\u6539 skill", "\u4fdd\u6301 skill", "\u4e0d\u8981\u4fee\u6539\u6280\u80fd", "\u4e0d\u6539\u6280\u80fd", "\u4fdd\u6301\u6280\u80fd",
+	})
+}
+
+func appendArtifactProducerPlannedTool(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	skillID, toolName := temporaryFileGenerateRequiredTool(parts)
+	if skillID == "" || toolName == "" {
+		return strategy
+	}
+	return appendPlannedTool(strategy, skillID, toolName, nil)
+}
+
+func appendPlannedTool(strategy *AIChatTurnStrategy, skillID string, toolName string, arguments map[string]string) *AIChatTurnStrategy {
+	if strategy == nil {
+		return strategy
+	}
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" || toolName == "" {
+		return strategy
+	}
+	id := operationPlanToolStepID(skillID, toolName)
+	for _, existing := range strategy.PlannedTools {
+		if operationPlanToolStepID(existing.SkillID, existing.ToolName) == id {
+			return strategy
+		}
+	}
+	tool := AIChatTurnStrategyTool{
+		SkillID:  skillID,
+		ToolName: toolName,
+	}
+	if len(arguments) > 0 {
+		tool.Arguments = arguments
+	}
+	strategy.PlannedTools = append(strategy.PlannedTools, tool)
+	return strategy
 }
 
 func chatPartsSkillsEnabled(parts *chatRequestParts) bool {
 	return parts != nil && parts.SkillMode != skillModeDisabled && len(parts.SkillIDs) > 0
+}
+
+func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	strategy.Intent = "manage_agent_asset"
+	strategy.TargetPage = agentManagementTargetPage(parts, strategy)
+	strategy.AssetEffect = "agent_asset_change_or_inspection"
+	strategy.AssetRisk = "medium"
+	strategy.Approval = "agent-management mutations are governed; delete always requires approval"
+	strategy.SuccessCriteria = []string{
+		"Agent page or Agent detail context is available before mutating Agent assets",
+		"agent-management uses a resolved Agent ID for edit, config, or delete operations",
+		"only supported MVP fields are changed; publishing, rollback, invocation, API keys, and WebApp online/offline state are not attempted",
+		"binding and unbinding edits use supported draft config binding lists when exact current bindings and candidates are known",
+		"asset observation or refreshed page context confirms the Agent state",
+	}
+	strategy.ObservationPoints = []string{"route_loaded:" + firstNonEmptyString(strategy.TargetPage, "/console/agents"), "agent_page_context", "asset_observation:agent"}
+
+	primary := append([]string(nil), strategy.PrimarySkills...)
+	supporting := append([]string(nil), strategy.SupportingSkills...)
+	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		strategy.RouteRequired = false
+		if skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+			primary = appendUniqueStrings(primary, skills.SkillAgentManagement)
+		}
+		if agentManagementVisibleContextResolvesUserTarget(parts, parts.Query) {
+			strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+				"visible Agent targets from current page context are used directly when the user refers to visible, selected, current-page, or first-N Agents",
+			)
+			strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "console_agents_visible_agents")
+			strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+				"avoid redundant agent-management/list_agents before operating on visible, selected, current-page, or first-N Agents already present in page context",
+				"avoid navigation after an Agent list-page mutation unless the user explicitly asked to open a page or the current detail page was deleted",
+			)
+		}
+	} else {
+		strategy.RouteRequired = true
+		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+			primary = appendUniqueStrings(primary, skills.SkillConsoleNavigator)
+		}
+		if skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+			supporting = appendUniqueStrings(supporting, skills.SkillAgentManagement)
+		}
+	}
+	strategy.PrimarySkills = primary
+	strategy.SupportingSkills = supporting
+	return strategy
+}
+
+func agentManagementTargetPage(parts *chatRequestParts, strategy *AIChatTurnStrategy) string {
+	if parts != nil && agentManagementCreateRequested(strings.ToLower(strings.TrimSpace(parts.Query))) {
+		return "/console/agents"
+	}
+	for _, candidate := range []string{
+		stringFromAny(firstNonEmptyString(strategy.CurrentPage, "")),
+		consoleRouteFromRuntimeContext(firstNonEmptyString(parts.RuntimeContext, "")),
+	} {
+		if isConsoleAgentDetailRoute(candidate) {
+			return normalizeConsoleNavigationGuardHref(candidate)
+		}
+	}
+	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		agents := visibleAgentResources(source)
+		for _, agent := range agents {
+			if agent.Selected && isConsoleAgentDetailRoute(agent.Href) {
+				return normalizeConsoleNavigationGuardHref(agent.Href)
+			}
+		}
+		if len(agents) == 1 && isConsoleAgentDetailRoute(agents[0].Href) {
+			return normalizeConsoleNavigationGuardHref(agents[0].Href)
+		}
+	}
+	return "/console/agents"
+}
+
+func isConsoleAgentDetailRoute(value string) bool {
+	route := normalizeConsoleNavigationGuardHref(value)
+	return strings.HasPrefix(route, "/console/agents/") && strings.HasSuffix(route, "/agent")
+}
+
+func contextualContinuationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	strategy.Intent = "continue_previous_task"
+	strategy.RouteRequired = false
+	strategy.AssetEffect = "continue_prior_effect"
+	strategy.AssetRisk = "context_dependent"
+	strategy.Approval = "reuse the prior task's tool governance rules; do not skip approval for new asset mutations"
+	strategy.SuccessCriteria = []string{
+		"continue from the recent execution context instead of treating the request as a new generic question",
+		"do not repeat successful side-effecting tool calls from the recent task",
+		"perform only the remaining requested step and report the actual tool result",
+	}
+	strategy.ObservationPoints = []string{"recent_execution_context", "current_page_context", "remaining_task_step"}
+	if isManagedFileCreateIntent(parts.Query) {
+		strategy.TargetPage = consoleFilesRouteHint().Href
+		strategy.RouteRequired = !consoleNavigationRouteAlreadyAvailable(parts, consoleFilesRouteHint().Href) &&
+			!clientActionContinuationLoadedRoute(parts, consoleFilesRouteHint().Href)
+		strategy.AssetEffect = "create"
+		strategy.AssetRisk = "medium"
+		strategy.Approval = "continue the prior task while applying file-manager/save_file_to_management governance for each managed file"
+		strategy.SuccessCriteria = []string{
+			"continue from the recent execution context instead of treating the request as a new generic question",
+			"do not repeat successful side-effecting tool calls from the recent task",
+			"each requested destination file has exactly one temporary artifact selected",
+			"file-manager/save_file_to_management succeeds for each selected artifact",
+			"asset observation or refreshed page context confirms every created file is visible",
+		}
+		strategy.ObservationPoints = []string{"recent_execution_context", "route_loaded:/console/files", "asset_observation:file.create", "files_page_visible_list"}
+		if strategy.RouteRequired {
+			if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+				strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillConsoleNavigator)
+			}
+			if len(parts.RecentGeneratedArtifacts) == 0 {
+				strategy.SupportingSkills = appendArtifactProducerSkills(strategy.SupportingSkills, parts)
+			}
+			if skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
+				strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillFileManager)
+			}
+		} else {
+			if len(parts.RecentGeneratedArtifacts) == 0 {
+				strategy.PrimarySkills = appendArtifactProducerSkills(strategy.PrimarySkills, parts)
+			} else {
+				strategy.PrimarySkills = removeArtifactProducerSkills(strategy.PrimarySkills)
+				strategy.ArtifactSource = "recent_generated_file"
+			}
+			if skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
+				strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillFileManager)
+			}
+		}
+		strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+			"after a temporary artifact is generated, do not regenerate it; save each unsaved generated artifact with file-manager/save_file_to_management",
+		)
+	}
+	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
+	}
+	if isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		for _, skillID := range []string{skills.SkillFileReader, skills.SkillFileManager, skills.SkillFileGenerator, skills.SkillChartGenerator} {
+			if skillIDEnabled(parts.SkillIDs, skillID) {
+				strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skillID)
+			}
+		}
+	}
+	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) && skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillAgentManagement)
+	}
+	return applyRecentOperationPlanToContinuationStrategy(parts, strategy)
 }
 
 func contextualManagedFileCreateStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
@@ -300,8 +2180,8 @@ func contextualManagedFileCreateStrategy(parts *chatRequestParts, strategy *AICh
 	strategy.Approval = "file-manager/save_file_to_management is governed; approval depends on the user's permission tier"
 	strategy.SuccessCriteria = []string{
 		"Files page context is loaded before File Management mutation when needed",
-		"exactly one temporary artifact is selected for the request",
-		"file-manager/save_file_to_management succeeds for that artifact",
+		"each requested destination file has exactly one temporary artifact selected",
+		"file-manager/save_file_to_management succeeds for each selected artifact",
 		"asset observation or refreshed page context confirms the created file is visible",
 	}
 	strategy.ObservationPoints = []string{"route_loaded:/console/files", "asset_observation:file.create", "files_page_visible_list"}
@@ -311,11 +2191,12 @@ func contextualManagedFileCreateStrategy(parts *chatRequestParts, strategy *AICh
 	if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
 		strategy.RouteRequired = true
 		primary = appendUniqueStrings(primary, skills.SkillConsoleNavigator)
-		supporting = appendUniqueStrings(supporting, skills.SkillFileManager)
 		if len(parts.RecentGeneratedArtifacts) == 0 {
 			supporting = appendArtifactProducerSkills(supporting, parts)
 		}
-	} else if len(parts.RecentGeneratedArtifacts) > 0 {
+		supporting = appendUniqueStrings(supporting, skills.SkillFileManager)
+	} else if shouldReuseRecentGeneratedArtifactForManagedCreate(parts) {
+		primary = removeArtifactProducerSkills(primary)
 		primary = appendUniqueStrings(primary, skills.SkillFileManager)
 		strategy.ArtifactSource = "recent_generated_file"
 		strategy.Avoid = []string{"do not generate another file when the user refers to a recent generated file"}
@@ -325,6 +2206,28 @@ func contextualManagedFileCreateStrategy(parts *chatRequestParts, strategy *AICh
 	}
 	strategy.PrimarySkills = primary
 	strategy.SupportingSkills = supporting
+	return strategy
+}
+
+func contextualTemporaryFileGenerateStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	strategy.Intent = "generate_temporary_file_artifact"
+	strategy.AssetEffect = "create_temporary_artifact"
+	strategy.AssetRisk = "medium"
+	strategy.Approval = "artifact generation follows the producing skill manifest; do not save into File Management unless the user explicitly asks"
+	strategy.SuccessCriteria = []string{
+		"the appropriate artifact-producing skill creates exactly one requested temporary artifact per requested file",
+		"generated_files metadata records the temporary artifact",
+		"file-manager/save_file_to_management is not called unless the user explicitly asks to save or create in File Management",
+	}
+	strategy.ObservationPoints = []string{"generated_file_metadata", "message_file_card"}
+	strategy.PrimarySkills = appendArtifactProducerSkills(strategy.PrimarySkills, parts)
+	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
+	}
+	strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+		"do not answer that a temporary file was generated until an artifact-producing tool succeeds",
+		"do not call file-manager/save_file_to_management for temporary-only generation requests",
+	)
 	return strategy
 }
 
@@ -391,12 +2294,47 @@ func appendArtifactProducerSkills(values []string, parts *chatRequestParts) []st
 		return appendUniqueStrings(values, skills.SkillChartGenerator)
 	}
 	if skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) {
-		values = appendUniqueStrings(values, skills.SkillFileGenerator)
+		return appendUniqueStrings(values, skills.SkillFileGenerator)
 	}
 	if skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) {
-		values = appendUniqueStrings(values, skills.SkillChartGenerator)
+		return appendUniqueStrings(values, skills.SkillChartGenerator)
 	}
 	return values
+}
+
+func removeArtifactProducerSkills(values []string) []string {
+	if len(values) == 0 {
+		return values
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || value == skills.SkillFileGenerator || value == skills.SkillChartGenerator {
+			continue
+		}
+		out = appendUniqueStrings(out, value)
+	}
+	return out
+}
+
+func shouldReuseRecentGeneratedArtifactForManagedCreate(parts *chatRequestParts) bool {
+	if parts == nil || len(parts.RecentGeneratedArtifacts) == 0 || !isManagedFileCreateIntent(parts.Query) {
+		return false
+	}
+	if isRecentGeneratedArtifactReferenceIntent(parts.Query) {
+		return true
+	}
+	text := strings.ToLower(strings.TrimSpace(parts.Query))
+	if containsAnySubstring(text, []string{
+		"create", "generate", "write", "export", "make", "produce",
+		"\u521b\u5efa", "\u65b0\u5efa", "\u751f\u6210", "\u5199", "\u5199\u4e00\u4e2a", "\u5bfc\u51fa", "\u505a\u4e00\u4e2a",
+	}) {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"save", "upload", "import", "add", "put",
+		"\u4fdd\u5b58", "\u4e0a\u4f20", "\u5bfc\u5165", "\u6dfb\u52a0", "\u52a0\u5230", "\u653e\u5230", "\u5b58\u5230",
+	})
 }
 
 func contextualTurnCurrentPage(parts *chatRequestParts) string {
@@ -422,6 +2360,9 @@ func contextualTurnCurrentPage(parts *chatRequestParts) string {
 				return route
 			}
 		}
+	}
+	if route := consoleRouteFromRuntimeContext(parts.RuntimeContext); route != "" {
+		return route
 	}
 	if isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		return "/console/files"
@@ -480,6 +2421,11 @@ type consoleNavigationRouteHint struct {
 	Keywords []string `json:"keywords,omitempty"`
 }
 
+type resolvedConsoleNavigationTarget struct {
+	Hint     consoleNavigationRouteHint
+	Position int
+}
+
 var consoleNavigationRouteHints = []consoleNavigationRouteHint{
 	{Href: "/console", Label: "首页", Keywords: []string{"首页", "主页", "控制台首页", "home"}},
 	{Href: "/console/work/chat", Label: "对话", Keywords: []string{"对话页面", "聊天页面", "会话页面", "conversation", "chat page"}},
@@ -526,6 +2472,22 @@ func contextualConsoleNavigationSkillMessage(prepared *PreparedChat) (adapter.Me
 			"href":  target.Href,
 			"label": target.Label,
 		}
+		if consoleNavigationRouteAlreadyAvailable(prepared.parts, target.Href) {
+			payload["target_route_already_available"] = true
+			payload["route_evidence"] = "current_page_context_matches_target"
+		}
+		if !clientActionContinuationLoadedRoute(prepared.parts, target.Href) &&
+			!consoleNavigationRouteAlreadyAvailable(prepared.parts, target.Href) {
+			payload["required_next_tool"] = map[string]interface{}{
+				"skill_id":  skills.SkillConsoleNavigator,
+				"tool_name": "navigate",
+				"arguments": map[string]string{
+					"href":   target.Href,
+					"reason": "open " + target.Label + " for the current user request",
+				},
+			}
+			payload["remaining_route_sequence"] = remainingConsoleNavigationRouteSequence(prepared.parts, target)
+		}
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -535,13 +2497,102 @@ func contextualConsoleNavigationSkillMessage(prepared *PreparedChat) (adapter.Me
 	content := strings.Join([]string{
 		"ZGI console navigation guidance:",
 		"Use console-navigator/navigate when the user asks to open, go to, enter, switch to, or navigate to a known ZGI console module page.",
-		"When the user explicitly asks to create, save, upload, import, or write a file into File Management from another console page, navigate to /console/files before generating temporary files or saving into File Management.",
+		"When the user explicitly asks to save, upload, import, or write a file into File Management from another console page, navigate to /console/files only if the current page context is not already Files and the File Management page context is still needed for the save.",
+		"When required_next_tool is present in Console navigation JSON, treat it as the preferred next route action, not an immutable script: load console-navigator if needed and call navigate when the current page does not already match the target.",
+		"If current page evidence already satisfies the target, or a low-risk observe/read/list step is needed to complete the user's goal, continue from that evidence instead of forcing a redundant navigate call.",
+		"When remaining_route_sequence has more than one pending route, complete exactly one navigate call, wait for the frontend route_loaded continuation, then continue with the next pending route from the resumed context.",
 		"Do not use request_user_input when the destination is resolved from the site map.",
-		"Do not say a page has been opened unless console-navigator/navigate succeeded in this turn. If the navigate tool fails, report that failure plainly.",
+		"If the resolved target already matches the current page context, treat the current page context as successful page evidence, do not call navigate only to create proof, and answer or continue from the visible page context.",
+		"Do not say a different page has been opened unless console-navigator/navigate succeeded in this turn or the current page context already matches the requested target. If the navigate tool fails, report that failure plainly.",
 		"Navigation does not mutate user assets and must use only whitelisted internal /console routes.",
 		"Console navigation JSON: " + string(encoded),
 	}, "\n")
 	return adapter.Message{Role: "system", Content: content}, true
+}
+
+func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Message, bool) {
+	if prepared == nil || prepared.parts == nil {
+		return adapter.Message{}, false
+	}
+	parts := prepared.parts
+	if !skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) ||
+		!isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return adapter.Message{}, false
+	}
+	tools := []map[string]string{
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agents", "purpose": "list or search Agents when visible page context is missing or insufficient"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "get_agent", "purpose": "read one Agent's basic details"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "create_agent", "purpose": "create one draft AGENT in the current workspace"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "update_agent_identity", "purpose": "change one Agent's name, description, or icon"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "delete_agent", "purpose": "delete one resolved Agent after governance approval"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "delete_agents", "purpose": "delete multiple resolved visible/listed Agents as one governed frozen batch"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "get_agent_config", "purpose": "read one Agent's draft runtime config"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "update_agent_config", "purpose": "patch supported draft runtime config fields, including complete skill/knowledge/database/workflow binding lists when exact candidates are known"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "replace_agent_memory_slots", "purpose": "replace one Agent's draft memory slot list"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agent_knowledge_candidates", "purpose": "list knowledge bases in the target Agent workspace before binding"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agent_database_candidates", "purpose": "list databases in the target Agent workspace before binding tables"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agent_database_tables", "purpose": "list tables for one resolved database candidate before binding"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agent_workflow_binding_candidates", "purpose": "list published workflow candidates in the target Agent workspace before binding"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "replace_agent_knowledge_bindings", "purpose": "replace one Agent's complete draft knowledge binding list"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "replace_agent_database_bindings", "purpose": "replace one Agent's complete draft database table binding list"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "replace_agent_workflow_bindings", "purpose": "replace one Agent's complete draft workflow binding list"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_available_models", "purpose": "list user-available models by use_case before replacing an Agent model"},
+	}
+	navigationAllowed := agentManagementNavigationGuidanceAllowed(prepared)
+	if navigationAllowed {
+		tools = append(tools, map[string]string{"skill_id": skills.SkillConsoleNavigator, "tool_name": "navigate", "purpose": "open a resolved Agent detail href only when the goal still needs that page and current context is insufficient"})
+	}
+	payload := map[string]interface{}{
+		"page":                    "console.agents",
+		"preferred_skill":         skills.SkillAgentManagement,
+		"visible_agents":          consoleAgentsPromptVisibleAgents(parts),
+		"tools":                   tools,
+		"unsupported_in_this_mvp": []string{"publish_agent", "rollback_agent", "invoke_agent", "api_key", "webapp_online_offline"},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return adapter.Message{}, false
+	}
+	lines := []string{
+		"ZGI Agent management guidance:",
+		"Use agent-management for explicit Agent list, create, edit identity, delete, inspect draft config, update supported draft config, replace Agent memory slots, or edit knowledge/database/workflow bindings.",
+		"When Agent management JSON includes visible_agents and the user refers to visible Agents, selected Agents, the current page, the current Agent, first-N/top-N Agents, or these Agents, treat visible_agents as authoritative resolved targets. Use their agent_id/name/href directly; do not call list_agents only to rediscover the same visible targets.",
+		"Use list_agents only when visible_agents is missing or insufficient, the user asks to search/find Agents by name, asks what Agents exist beyond the visible page context, or gives a name without an exact visible match.",
+		"For binding edits, read current config or list exact candidates only when the needed current binding set or candidate IDs/names are not already present in page context or prior tool results. When exact data is known, prefer one update_agent_config call with the full desired skill/knowledge/database/workflow replacement lists. The replace_agent_*_bindings tools remain available for single-section compatibility. Never guess resource IDs and never bind resources from another workspace.",
+		"Do not publish, roll back, invoke Agents, manage API keys, or change WebApp online/offline state in this MVP. If the user asks for those, explain the limit.",
+		"For edits, deletes, and config updates, resolve the Agent first and pass the exact agent_id. Do not invent IDs.",
+		"When the user asks to create a new Agent, create_agent must succeed before any edit of that new Agent. If create_agent fails or is not allowed, do not update the currently visible Agent as a fallback; report the actual failure.",
+		"Before changing an Agent model, call agent-management/list_available_models with the appropriate use_case, then pass the returned provider/model pair to update_agent_config.",
+		"Tool governance owns approval for mutations. Do not ask for a separate natural-language confirmation when governance will pause the turn.",
+		"For plural, range, first-N, selected, or page-list Agent deletion requests, call delete_agents once with an agents array containing the exact frozen targets and visible names. Do not loop delete_agent for batch deletion.",
+		"After ordinary edit, binding, unbinding, or Agent list-page batch deletion succeeds, prefer refreshed page context or asset observation over navigation. Do not navigate only to prove the mutation happened.",
+		"Do not navigate after deleting Agents from the list page.",
+	}
+	if navigationAllowed {
+		lines = append(lines,
+			"If the current operation plan includes console-navigator/navigate, treat it as a route hint: call it only when the user goal still needs that page and current context has not already satisfied the step.",
+			"If delete_agent or delete_agents succeeds while the current route is a deleted Agent detail page and the operation plan requires returning to the list, call console-navigator/navigate with /console/agents before the final answer. Do not navigate after deleting Agents from the list page.",
+		)
+	} else {
+		lines = append(lines,
+			"Avoid console-navigator/navigate during Agent inspection, identity edit, or config edit turns unless the user explicitly asked to open another page or the current goal cannot proceed from current page evidence.",
+		)
+	}
+	lines = append(lines, "Agent management JSON: "+string(encoded))
+	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}, true
+}
+
+func agentManagementNavigationGuidanceAllowed(prepared *PreparedChat) bool {
+	allowed := skillLoopAllowedPlannedTools(prepared)
+	if skillLoopToolAllowed(allowed, skills.SkillConsoleNavigator, "navigate") {
+		return true
+	}
+	if prepared == nil || prepared.parts == nil {
+		return false
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(prepared.parts)
+	return strategy != nil && strategy.RouteRequired && strategy.RequiredNextTool != nil &&
+		isConsoleNavigatorNavigateTool(strategy.RequiredNextTool.SkillID, strategy.RequiredNextTool.ToolName)
 }
 
 func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message, bool) {
@@ -686,8 +2737,21 @@ func skillLoopFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuar
 	if prepared == nil || prepared.parts == nil {
 		return nil
 	}
-	guards := make([]skillloop.FinalAnswerGuard, 0, 3)
+	metadata := map[string]interface{}(nil)
+	if prepared.Message != nil {
+		metadata = prepared.Message.Metadata
+	}
+	guards := make([]skillloop.FinalAnswerGuard, 0, 5)
 	if guard := skillLoopConsoleNavigationFinalAnswerGuard(prepared); guard != nil {
+		guards = append(guards, guard)
+	}
+	if guard := skillLoopAgentManagementFinalAnswerGuard(prepared); guard != nil {
+		guards = append(guards, guard)
+	}
+	if guard := skillLoopTemporaryFileGenerateFinalAnswerGuard(prepared); guard != nil {
+		guards = append(guards, guard)
+	}
+	if guard := consoleFilesContinuationPendingDeleteFinalAnswerGuard(prepared.parts, metadata); guard != nil {
 		guards = append(guards, guard)
 	}
 	if guard := skillLoopConsoleFilesFinalAnswerGuard(prepared); guard != nil {
@@ -701,13 +2765,56 @@ func skillLoopToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard {
 		return nil
 	}
 	parts := prepared.parts
-	if !isManagedFileCreateIntent(parts.Query) && !isConsoleNavigationIntent(parts.Query) {
+	executionParts, stagedCurrent, _ := stagedExecutionScopedParts(parts)
+	if executionParts == nil {
+		executionParts = parts
+	}
+	metadata := map[string]interface{}(nil)
+	if prepared.Message != nil {
+		metadata = prepared.Message.Metadata
+	}
+	managedFileCreateIntent := isManagedFileCreateIntent(executionParts.Query)
+	managedFileContinuationFlow := managedFileCreateContinuationSaveFlowActive(parts, metadata)
+	continuationIntent := isContinuationIntent(parts.Query)
+	continuationGeneratedAssetFlow := continuationIntent && generatedFileMetadataHasAnyArtifact(metadata)
+	continuationFileManagerFlow := continuationIntent && skillIDEnabled(parts.SkillIDs, skills.SkillFileManager)
+	if !managedFileCreateIntent && !managedFileContinuationFlow && !continuationGeneratedAssetFlow && !continuationFileManagerFlow &&
+		!isConsoleNavigationIntent(executionParts.Query) && !stagedCurrent {
 		return nil
 	}
 	return func(req skillloop.ToolCallGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		if stagedCurrent {
+			if result, blocked := stagedContinuationToolCallGuardResult(executionParts, req); blocked {
+				return result, true
+			}
+		}
+		if continuationFileManagerFlow && isFileManagerDeleteToolCall(req.SkillID, req.ToolName) &&
+			(finalAnswerGuardHasToolForTargets(req.SuccessfulToolCalls, skills.SkillFileManager, "delete_file", nil) ||
+				len(successfulMetadataToolCalls(metadata, skills.SkillFileManager, "delete_file")) > 0) {
+			successfulDeletes := append(successfulMetadataToolCalls(metadata, skills.SkillFileManager, "delete_file"), matchingSkillToolCalls(req.SuccessfulToolCalls, skills.SkillFileManager, "delete_file")...)
+			return consoleFilesDeleteAlreadySucceededGuardResult(successfulDeletes), true
+		}
+		if continuationGeneratedAssetFlow {
+			if isKnownArtifactGeneratorToolCall(req.SkillID, req.ToolName) {
+				if saveArgs := latestUnsavedGeneratedArtifactSaveArgumentsFromMetadata(metadata, req.SuccessfulToolCalls); len(saveArgs) > 0 {
+					return fileManagerSaveRequiredToolGuardResult(saveArgs), true
+				}
+				if saveArgs := latestUnsavedGeneratedArtifactSaveArguments(req.SuccessfulToolCalls); len(saveArgs) > 0 {
+					return fileManagerSaveRequiredToolGuardResult(saveArgs), true
+				}
+				if generatedFileMetadataArtifactsAlreadySaved(metadata, req.SuccessfulToolCalls) {
+					return continuationGeneratedFilesAlreadySatisfiedGuardResult(), true
+				}
+			}
+			if isFileManagerSaveToolCall(req.SkillID, req.ToolName) &&
+				len(pendingGeneratedArtifactSaveArgumentCandidates(executionParts, metadata, req.SuccessfulToolCalls)) == 0 &&
+				generatedFileMetadataArtifactsAlreadySaved(metadata, req.SuccessfulToolCalls) {
+				return continuationGeneratedFilesAlreadySatisfiedGuardResult(), true
+			}
+		}
 		if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) {
-			if target, ok := resolveConsoleNavigationTargetForPrepared(prepared); ok &&
-				clientActionContinuationLoadedRoute(parts, target.Href) &&
+			if target, ok := resolveConsoleNavigationTargetForParts(executionParts); ok &&
+				clientActionContinuationLoadedRoute(executionParts, target.Href) &&
 				consoleNavigationLoadedHrefMatchesTarget(skillToolCallArgumentString(req.Arguments, "href"), target.Href) {
 				return skillloop.FinalAnswerGuardResult{
 					SkillID:  skills.SkillConsoleNavigator,
@@ -724,31 +2831,53 @@ func skillLoopToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard {
 				}, true
 			}
 		}
-		if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
+		if requiresConsoleFilesRouteBeforeManagedFileCreate(executionParts) {
 			target := consoleFilesRouteHint()
 			if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) &&
 				consoleNavigationLoadedHrefMatchesTarget(skillToolCallArgumentString(req.Arguments, "href"), target.Href) {
 				return skillloop.FinalAnswerGuardResult{}, false
 			}
-			if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) ||
-				isKnownArtifactGeneratorToolCall(req.SkillID, req.ToolName) ||
-				isFileManagerSaveToolCall(req.SkillID, req.ToolName) {
+			if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) {
 				result := consoleNavigationRequiredToolGuardResult(target)
 				result.Message = strings.Join([]string{
 					"The user asked to create or save a file in File Management from another console page.",
-					"Navigate to the Files page before generating temporary artifacts or saving into File Management.",
+					"Route to the Files page only when page context is still needed; do not navigate to a different page for this save.",
 				}, " ")
 				if result.SystemMessage != "" {
 					result.SystemMessage = result.Message + " " + result.SystemMessage
 				}
 				return result, true
 			}
-			return skillloop.FinalAnswerGuardResult{}, false
 		}
 
-		if isManagedFileCreateIntent(parts.Query) {
+		if managedFileCreateIntent || managedFileContinuationFlow {
+			if isFileManagerDeleteToolCall(req.SkillID, req.ToolName) {
+				pendingSaveArgs := pendingGeneratedArtifactSaveArgumentCandidates(executionParts, metadata, req.SuccessfulToolCalls)
+				if len(pendingSaveArgs) > 0 {
+					result := fileManagerSaveRequiredToolGuardResult(pendingSaveArgs[0])
+					prefix := "A generated temporary artifact is still not saved to File Management, so deletion cannot run yet."
+					result.Message = prefix + " " + result.Message
+					result.SystemMessage = prefix + " Save every requested generated artifact before delete_file or any destructive follow-up step. " + result.SystemMessage
+					return result, true
+				}
+			}
 			if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) &&
-				(consoleFilesRouteAlreadyAvailable(parts) || clientActionContinuationLoadedRoute(parts, consoleFilesRouteHint().Href)) {
+				managedFileCreateShouldBlockReturningToCompletedRoute(metadata, skillToolCallArgumentString(req.Arguments, "href")) {
+				message := strings.Join([]string{
+					"The requested route was already loaded and observed earlier in this same File Management creation task.",
+					"The Files page has also been loaded, so do not navigate back to a completed precursor page or restart earlier steps.",
+					"Use the completed client action context already provided for that page and continue the file generation/save flow from the current Files page.",
+				}, " ")
+				return skillloop.FinalAnswerGuardResult{
+					SkillID:       skills.SkillFileGenerator,
+					ToolName:      "generate_file",
+					Message:       message,
+					SystemMessage: message,
+				}, true
+			}
+			if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) &&
+				consoleNavigationLoadedHrefMatchesTarget(skillToolCallArgumentString(req.Arguments, "href"), consoleFilesRouteHint().Href) &&
+				(consoleFilesRouteAlreadyAvailable(executionParts) || clientActionContinuationLoadedRoute(executionParts, consoleFilesRouteHint().Href)) {
 				return skillloop.FinalAnswerGuardResult{
 					SkillID:  skills.SkillFileGenerator,
 					ToolName: "generate_file",
@@ -759,11 +2888,11 @@ func skillLoopToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard {
 					SystemMessage: strings.Join([]string{
 						"The Files page is already loaded for this File Management creation request.",
 						"Do not call console-navigator/navigate again.",
-						"Generate one temporary artifact with the appropriate artifact-producing skill if none exists, then call file-manager/save_file_to_management.",
+						"Generate the requested temporary artifact with the appropriate artifact-producing skill if none exists, then call file-manager/save_file_to_management.",
 					}, " "),
 				}, true
 			}
-			if isChartGeneratorToolCall(req.SkillID, req.ToolName) && !isChartVisualizationIntent(parts.Query) {
+			if isChartGeneratorToolCall(req.SkillID, req.ToolName) && !isChartVisualizationIntent(executionParts.Query) {
 				message := strings.Join([]string{
 					"The user asked to create a regular SVG or file in File Management, not a chart or data visualization.",
 					"Use file-generator/generate_file for generic SVG/vector file creation, then save the generated artifact with file-manager/save_file_to_management.",
@@ -775,11 +2904,36 @@ func skillLoopToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard {
 					SystemMessage: message,
 				}, true
 			}
+			if isFileManagerSaveToolCall(req.SkillID, req.ToolName) {
+				pendingSaveArgs := pendingGeneratedArtifactSaveArgumentCandidates(executionParts, metadata, req.SuccessfulToolCalls)
+				if len(pendingSaveArgs) > 0 && !fileManagerSaveArgumentsMatchAnyPendingArtifact(req.Arguments, pendingSaveArgs) {
+					saveArgs := pendingGeneratedArtifactSaveArgumentsForAttempt(req.Arguments, pendingSaveArgs)
+					result := fileManagerSaveRequiredToolGuardResult(saveArgs)
+					prefix := "The attempted file-manager/save_file_to_management arguments do not match any pending generated temporary artifact."
+					result.Message = prefix + " " + result.Message
+					result.SystemMessage = prefix + " Use the resolved generated-file save JSON exactly; do not substitute a managed file id, a previous save result id, or a different filename. " + result.SystemMessage
+					return result, true
+				}
+			}
 			if isKnownArtifactGeneratorToolCall(req.SkillID, req.ToolName) {
-				if saveArgs := latestGeneratedArtifactSaveArguments(req.SuccessfulToolCalls); len(saveArgs) > 0 {
+				if managedFileContinuationFlow {
+					if saveArgs := latestUnsavedGeneratedArtifactSaveArgumentsFromMetadata(metadata, req.SuccessfulToolCalls); len(saveArgs) > 0 {
+						return fileManagerSaveRequiredToolGuardResult(saveArgs), true
+					}
+				}
+				if saveArgs := latestUnsavedGeneratedArtifactSaveArgumentsForTargetsFromMetadata(
+					metadata,
+					managedFileCreateMissingSaveTargets(executionParts, metadata, req.SuccessfulToolCalls),
+				); len(saveArgs) > 0 {
 					return fileManagerSaveRequiredToolGuardResult(saveArgs), true
 				}
-				if saveArgs := latestRecentGeneratedArtifactSaveArguments(parts); len(saveArgs) > 0 {
+				if saveArgs := latestUnsavedGeneratedArtifactSaveArguments(req.SuccessfulToolCalls); len(saveArgs) > 0 {
+					if allowAdditionalRequestedManagedFileGeneration(executionParts, req, saveArgs) {
+						return skillloop.FinalAnswerGuardResult{}, false
+					}
+					return fileManagerSaveRequiredToolGuardResult(saveArgs), true
+				}
+				if saveArgs := latestRecentGeneratedArtifactSaveArguments(executionParts); len(saveArgs) > 0 {
 					return fileManagerSaveRequiredToolGuardResult(saveArgs), true
 				}
 			}
@@ -793,14 +2947,35 @@ func skillLoopConsoleFilesFinalAnswerGuard(prepared *PreparedChat) skillloop.Fin
 		return nil
 	}
 	parts := prepared.parts
-	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+	if executionParts, _, _ := stagedExecutionScopedParts(parts); executionParts != nil {
+		parts = executionParts
+	}
+	metadata := map[string]interface{}(nil)
+	if prepared.Message != nil {
+		metadata = prepared.Message.Metadata
+	}
+	isFilesContext := isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
+	managedCreateGuardActive := isManagedFileCreateIntent(parts.Query) || managedFileCreateContinuationSaveFlowActive(prepared.parts, metadata)
+	if !isFilesContext && !managedCreateGuardActive {
 		return nil
 	}
-	if hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
-		skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) &&
+	if skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) &&
 		(skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) || skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator)) &&
-		isManagedFileCreateIntent(parts.Query) {
-		return consoleFilesFileManagementCreateFinalAnswerGuard(parts)
+		managedCreateGuardActive {
+		createGuard := consoleFilesFileManagementCreateFinalAnswerGuard(parts, metadata)
+		if isFilesContext {
+			return combineFinalAnswerGuards(createGuard, consoleFilesContinuationPendingDeleteFinalAnswerGuard(parts, metadata))
+		}
+		return createGuard
+	}
+	if !isFilesContext {
+		return nil
+	}
+	if guard := consoleFilesContinuationPendingDeleteFinalAnswerGuard(parts, metadata); guard != nil {
+		return guard
+	}
+	if shouldSkipConsoleFilesFinalAnswerGuardForNavigationObservation(prepared, parts, metadata) {
+		return nil
 	}
 	targets := consoleFilesPromptResolvedTargets(parts)
 	if len(targets) == 0 {
@@ -834,10 +3009,332 @@ func skillLoopConsoleFilesFinalAnswerGuard(prepared *PreparedChat) skillloop.Fin
 	return nil
 }
 
-func consoleFilesFileManagementCreateFinalAnswerGuard(parts *chatRequestParts) skillloop.FinalAnswerGuard {
+func shouldSkipConsoleFilesFinalAnswerGuardForNavigationObservation(prepared *PreparedChat, parts *chatRequestParts, metadata map[string]interface{}) bool {
+	if parts == nil || !isConsoleNavigationIntent(parts.Query) {
+		return false
+	}
+	if isManagedFileCreateIntent(parts.Query) || isFileDeleteIntent(parts.Query) || consoleFilesQueryHasExplicitFileReadTarget(parts) {
+		return false
+	}
+	if completedConsoleNavigationOperationPlan(metadata) {
+		return true
+	}
+	if prepared != nil {
+		if strategy := contextualAIChatTurnStrategy(prepared); strategy != nil && strings.EqualFold(strategy.Intent, "navigate_console_page") {
+			return true
+		}
+	}
+	return false
+}
+
+func completedConsoleNavigationOperationPlan(metadata map[string]interface{}) bool {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	intent := strings.TrimSpace(stringFromAny(plan["intent"]))
+	if !strings.EqualFold(intent, "navigate_console_page") && !strings.EqualFold(intent, "continue_navigate_console_page") {
+		return false
+	}
+	return !operationPlanHasIncompleteWork(plan)
+}
+
+func consoleFilesQueryHasExplicitFileReadTarget(parts *chatRequestParts) bool {
+	if parts == nil {
+		return false
+	}
+	query := strings.TrimSpace(parts.Query)
+	text := strings.ToLower(query)
+	if text == "" {
+		return false
+	}
+	if consoleFilesSelectedReferenceFromQuery(query) || consoleFilesRecentReferenceFromQuery(query) {
+		return true
+	}
+	if len(plannerResourceRefsFromNamedVisibleFiles(parts)) > 0 {
+		return true
+	}
+	targetText := consoleFilesQueryFileTargetText(text)
+	targetText = consoleFilesQueryWithoutFileMutationNegations(targetText)
+	if consoleFilesQueryReadsNonFileResource(targetText) {
+		return false
+	}
+	if _, _, ok := consoleFilesOrdinalFromQuery(query); ok {
+		if strings.Contains(targetText, "\u8bfb\u53d6") || strings.Contains(targetText, "\u8bfb") ||
+			containsAnySubstring(targetText, []string{"read", "file", "\u6587\u4ef6", "\u5185\u5bb9", "pdf", "excel", "\u8868\u683c", "\u6587\u6863"}) {
+			return true
+		}
+	}
+	return containsAnySubstring(targetText, []string{
+		"read file",
+		"read the file",
+		"file content",
+		"contents of",
+		"summarize file",
+		"summarise file",
+		"translate file",
+		"preview file",
+		"analyze file",
+		"analyse file",
+		".pdf",
+		".xlsx",
+		".xls",
+		".csv",
+		".docx",
+		".pptx",
+		".md",
+		".txt",
+		".svg",
+		"读文件",
+		"读取文件",
+		"总结文件",
+		"摘要文件",
+		"翻译文件",
+		"分析文件",
+		"解释文件",
+		"预览文件",
+		"查看文件内容",
+		"文件内容",
+		"这个文件",
+		"该文件",
+	})
+}
+
+func consoleFilesQueryFileTargetText(text string) string {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return ""
+	}
+	for _, token := range []string{
+		"file management",
+		"files page",
+		"current files page",
+		"/console/files",
+		"\u6587\u4ef6\u7ba1\u7406",
+		"\u6587\u4ef6\u9875",
+		"\u5f53\u524d\u6587\u4ef6\u9875",
+		"\u6587\u4ef6\u6a21\u5757",
+	} {
+		text = strings.ReplaceAll(text, token, "")
+	}
+	return text
+}
+
+func consoleFilesQueryWithoutFileMutationNegations(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	for _, token := range []string{
+		"\u4e0d\u8981\u521b\u5efa\u6587\u4ef6",
+		"\u4e0d\u8981\u5220\u9664\u6587\u4ef6",
+		"\u4e0d\u8981\u521b\u5efa\u6216\u5220\u9664\u6587\u4ef6",
+		"\u4e0d\u8981\u521b\u5efa\u3001\u5220\u9664\u6587\u4ef6",
+		"\u4e0d\u9700\u8981\u521b\u5efa\u6587\u4ef6",
+		"\u4e0d\u9700\u8981\u5220\u9664\u6587\u4ef6",
+		"do not create files",
+		"do not delete files",
+		"do not create or delete files",
+		"don't create files",
+		"don't delete files",
+		"without creating files",
+		"without deleting files",
+	} {
+		text = strings.ReplaceAll(text, token, "")
+	}
+	return strings.TrimSpace(text)
+}
+
+func consoleFilesQueryReadsNonFileResource(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return false
+	}
+	if !containsAnySubstring(text, []string{
+		"\u8bfb",
+		"read",
+		"summarize",
+		"summarise",
+		"\u603b\u7ed3",
+		"\u6458\u8981",
+	}) {
+		return false
+	}
+	if containsAnySubstring(text, []string{
+		"file",
+		"\u6587\u4ef6",
+		"\u5185\u5bb9",
+		".pdf",
+		".xlsx",
+		".xls",
+		".csv",
+		".docx",
+		".pptx",
+		".md",
+		".txt",
+		".svg",
+		"pdf",
+		"excel",
+	}) {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"agent",
+		"\u667a\u80fd\u4f53",
+		"\u6570\u636e\u5e93",
+		"database",
+		"\u5de5\u4f5c\u6d41",
+		"workflow",
+		"\u77e5\u8bc6\u5e93",
+		"knowledge base",
+		"\u5e94\u7528",
+		"app",
+	})
+}
+
+func skillLoopTemporaryFileGenerateFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuard {
+	if prepared == nil || prepared.parts == nil {
+		return nil
+	}
+	parts := prepared.parts
+	if executionParts, _, _ := stagedExecutionScopedParts(parts); executionParts != nil {
+		parts = executionParts
+	}
+	if !isTemporaryFileGenerateIntent(parts.Query) {
+		return nil
+	}
+	skillID, toolName := temporaryFileGenerateRequiredTool(parts)
+	if skillID == "" || toolName == "" {
+		return nil
+	}
+	metadata := map[string]interface{}(nil)
+	if prepared.Message != nil {
+		metadata = prepared.Message.Metadata
+	}
 	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		if finalAnswerGuardHasSuccessfulFileManagerSaveTool(req) {
+		if generatedFileMetadataHasAnyArtifact(metadata) || finalAnswerGuardHasSuccessfulArtifactProducerTool(req) {
 			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if finalAnswerGuardHasAttemptedArtifactProducerTool(req) {
+			if answerClaimsTemporaryFileGenerated(req.Answer) {
+				return skillloop.FinalAnswerGuardResult{
+					SkillID:  skillID,
+					ToolName: toolName,
+					Message: strings.Join([]string{
+						"The requested temporary file generation tool has been attempted but has not succeeded.",
+						"Do not say the temporary file was generated.",
+						"Report the actual tool result or failure instead of claiming success.",
+					}, " "),
+					SystemMessage: strings.Join([]string{
+						"The previous candidate answer claimed temporary file generation succeeded, but no artifact-producing tool succeeded.",
+						"Do not retry the same generation with identical arguments unless the tool result indicates it is safely retryable.",
+						"Provide a user-visible failure or pending-status answer based on the actual tool result.",
+					}, " "),
+				}, true
+			}
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		return skillloop.FinalAnswerGuardResult{
+			SkillID:  skillID,
+			ToolName: toolName,
+			Message: strings.Join([]string{
+				"The user's current request asks to generate a temporary file artifact.",
+				"Do not finish by saying the file was generated before an artifact-producing tool succeeds.",
+				"Call the requested artifact-producing tool and keep the result temporary unless the user explicitly asks to save it to File Management.",
+			}, " "),
+			SystemMessage: strings.Join([]string{
+				"The candidate final answer is premature for this temporary file generation request.",
+				"Load the required skill if needed, then call call_skill_tool with skill_id \"" + skillID + "\" and tool_name \"" + toolName + "\".",
+				"Use the requested filename, format, and content. Keep lifecycle/target temporary and do not call file-manager/save_file_to_management.",
+				"Only after the artifact-producing tool succeeds may you tell the user the temporary file was generated.",
+			}, " "),
+		}, true
+	}
+}
+
+func temporaryFileGenerateRequiredTool(parts *chatRequestParts) (string, string) {
+	if parts == nil {
+		return "", ""
+	}
+	if isChartVisualizationIntent(parts.Query) && skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) {
+		return skills.SkillChartGenerator, "generate_chart"
+	}
+	if skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) {
+		return skills.SkillFileGenerator, "generate_file"
+	}
+	if skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) {
+		return skills.SkillChartGenerator, "generate_chart"
+	}
+	return "", ""
+}
+
+func finalAnswerGuardHasSuccessfulArtifactProducerTool(req skillloop.FinalAnswerGuardRequest) bool {
+	for _, call := range req.SuccessfulToolCalls {
+		if isKnownArtifactGeneratorToolCall(call.SkillID, call.ToolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func finalAnswerGuardHasAttemptedArtifactProducerTool(req skillloop.FinalAnswerGuardRequest) bool {
+	for _, call := range req.AttemptedToolCalls {
+		if isKnownArtifactGeneratorToolCall(call.SkillID, call.ToolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func answerClaimsTemporaryFileGenerated(answer string) bool {
+	text := normalizeConsoleNavigationQuery(answer)
+	if text == "" {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"generated", "created", "temporary file", "artifact",
+		"\u5df2\u751f\u6210", "\u751f\u6210\u4e86", "\u5df2\u521b\u5efa", "\u4e34\u65f6\u6587\u4ef6",
+	})
+}
+
+func consoleFilesFileManagementCreateFinalAnswerGuard(parts *chatRequestParts, metadata map[string]interface{}) skillloop.FinalAnswerGuard {
+	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		metadataSaveCalls := managedFileSaveCallsFromGeneratedFilesMetadata(metadata)
+		successfulSaveCalls := append([]skillloop.SkillToolCallRef{}, metadataSaveCalls...)
+		successfulSaveCalls = append(successfulSaveCalls, req.SuccessfulToolCalls...)
+		missingTargets := managedFileCreateMissingSaveTargets(parts, metadata, req.SuccessfulToolCalls)
+		hasSuccessfulSave := finalAnswerGuardHasSuccessfulFileManagerSaveTool(req) || len(metadataSaveCalls) > 0
+		if len(missingTargets) == 0 && hasSuccessfulSave {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if len(missingTargets) > 0 && hasSuccessfulSave {
+			message := strings.Join([]string{
+				"The user's current files-page request asks to create or save multiple files into File Management.",
+				"The following requested file targets have not been saved yet: " + strings.Join(missingTargets, ", ") + ".",
+				"Do not say all requested files were created or saved.",
+				"Continue the missing file generation/save flow and only report success after file-manager/save_file_to_management succeeds for each target.",
+			}, " ")
+			systemMessage := message
+			if saveArgs := latestUnsavedGeneratedArtifactSaveArgumentsForTargetsFromMetadata(metadata, missingTargets); len(saveArgs) > 0 {
+				if encoded, err := json.Marshal(map[string]interface{}{
+					"skill_id":  skills.SkillFileManager,
+					"tool_name": "save_file_to_management",
+					"arguments": saveArgs,
+				}); err == nil {
+					systemMessage = strings.Join([]string{
+						message,
+						"An unsaved generated artifact for a missing requested target already exists.",
+						"Do not regenerate it; call file-manager/save_file_to_management with the resolved arguments JSON below.",
+						"Resolved generated-file save JSON for tool arguments only; do not reveal internal IDs to the user: " + string(encoded),
+					}, " ")
+				}
+			}
+			return skillloop.FinalAnswerGuardResult{
+				SkillID:       skills.SkillFileManager,
+				ToolName:      "save_file_to_management",
+				Message:       message,
+				SystemMessage: systemMessage,
+			}, true
 		}
 		if finalAnswerGuardHasAttemptedFileManagerSaveTool(req) {
 			if !answerClaimsFileManagementSaveSuccess(req.Answer) {
@@ -861,7 +3358,7 @@ func consoleFilesFileManagementCreateFinalAnswerGuard(parts *chatRequestParts) s
 		messageLines := []string{
 			"The user's current files-page request explicitly asks to create or save a new file into File Management or the current Files page.",
 			"Do not finish by saying this is unsupported.",
-			"Load the appropriate artifact-producing skill and file-manager if needed. First create one temporary artifact, then call file-manager/save_file_to_management with source_type \"tool_file\", the generated tool_file_id/file_id, and the destination filename.",
+			"Load the appropriate artifact-producing skill and file-manager if needed. For each destination file, create one temporary artifact, then call file-manager/save_file_to_management with source_type \"tool_file\", the generated tool_file_id/file_id, and that destination filename.",
 			"Use file-generator for normal files and generic SVG/vector files. Use chart-generator only when the user explicitly asks for a chart, graph, data visualization, or a supported chart type.",
 			"Keep generated files temporary only when the user did not explicitly ask for File Management, current Files page, save, create, upload, or import as the target.",
 			"Only after file-manager/save_file_to_management succeeds may you say the File Management file was created. If approval is required, wait for tool governance instead of asking for a separate natural-language confirmation.",
@@ -922,22 +3419,342 @@ func fileManagerSaveRequiredToolGuardResult(saveArgs map[string]interface{}) ski
 	}
 }
 
+func continuationGeneratedFilesAlreadySatisfiedGuardResult() skillloop.FinalAnswerGuardResult {
+	message := strings.Join([]string{
+		"The continuation already has generated file artifacts recorded and no unsaved generated artifact remains.",
+		"Do not generate or save another file for the same continuation step.",
+		"Continue with the next planned non-generation action, such as refreshing visible files or deleting the frozen target, or provide the final answer if all steps are complete.",
+	}, " ")
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       skills.SkillFileGenerator,
+		ToolName:      "generate_file",
+		Message:       message,
+		SystemMessage: message,
+	}
+}
+
 func skillLoopConsoleNavigationFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuard {
 	if prepared == nil || prepared.parts == nil || !skillIDEnabled(prepared.parts.SkillIDs, skills.SkillConsoleNavigator) {
 		return nil
 	}
-	target, ok := resolveConsoleNavigationTargetForPrepared(prepared)
+	preparedForGuard := prepared
+	if parts, _, _ := stagedExecutionScopedParts(prepared.parts); parts != nil && parts != prepared.parts {
+		copyPrepared := *prepared
+		copyPrepared.parts = parts
+		preparedForGuard = &copyPrepared
+	}
+	if isManagedFileCreateIntent(preparedForGuard.parts.Query) {
+		return nil
+	}
+	if preparedForGuard.Message != nil {
+		if completedConsoleNavigationOperationPlan(preparedForGuard.Message.Metadata) {
+			return nil
+		}
+	}
+	target, ok := resolveConsoleNavigationTargetForPrepared(preparedForGuard)
 	if !ok {
 		return nil
 	}
 	if consoleNavigationLoadedHrefMatchesTarget("/console/files", target.Href) &&
-		consoleFilesRouteAlreadyAvailable(prepared.parts) {
+		consoleFilesRouteAlreadyAvailable(preparedForGuard.parts) {
 		return nil
 	}
-	if clientActionContinuationLoadedRoute(prepared.parts, target.Href) {
+	if consoleNavigationRouteAlreadyAvailable(preparedForGuard.parts, target.Href) {
+		return nil
+	}
+	if clientActionContinuationLoadedRoute(preparedForGuard.parts, target.Href) {
 		return nil
 	}
 	return consoleNavigationRequiredToolFinalAnswerGuard(target)
+}
+
+func skillLoopAgentManagementFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuard {
+	if prepared == nil || prepared.parts == nil ||
+		!skillIDEnabled(prepared.parts.SkillIDs, skills.SkillAgentManagement) ||
+		!skillIDEnabled(prepared.parts.SkillIDs, skills.SkillConsoleNavigator) {
+		return nil
+	}
+	currentAgentID := currentConsoleAgentID(prepared.parts)
+	deleteTarget := consoleNavigationRouteHint{Href: "/console/agents", Label: "Agent list"}
+	wantsCreatedDetail := wantsCreatedAgentDetailNavigation(prepared.parts.Query)
+	requiredBindingTools := requiredAgentBindingMutationTools(prepared.parts.Query)
+	if currentAgentID == "" && !wantsCreatedDetail {
+		return nil
+	}
+	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		if missingTool := firstMissingAgentManagementTool(req, requiredBindingTools); missingTool != "" {
+			return agentBindingRequiresMutationGuardResult(missingTool, requiredBindingTools), true
+		}
+		if wantsCreatedDetail {
+			if createdHref := createdAgentDetailHrefFromCalls(req.SuccessfulToolCalls); createdHref != "" &&
+				!clientActionContinuationLoadedRoute(prepared.parts, createdHref) &&
+				!finalAnswerGuardHasExactConsoleNavigateCall(req.SuccessfulToolCalls, createdHref) &&
+				!finalAnswerGuardHasExactConsoleNavigateCall(req.AttemptedToolCalls, createdHref) {
+				return createdAgentRequiresDetailNavigationGuardResult(consoleNavigationRouteHint{
+					Href:  createdHref,
+					Label: "Agent detail",
+				}), true
+			}
+		}
+		if currentAgentID == "" || !finalAnswerGuardHasAgentDeleteCall(req.SuccessfulToolCalls, currentAgentID) {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if finalAnswerGuardHasExactConsoleNavigateCall(req.SuccessfulToolCalls, deleteTarget.Href) ||
+			finalAnswerGuardHasExactConsoleNavigateCall(req.AttemptedToolCalls, deleteTarget.Href) {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		return agentDeleteRequiresListNavigationGuardResult(deleteTarget), true
+	}
+}
+
+func requiredAgentBindingMutationTools(query string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(query))
+	if normalized == "" || !hasAgentBindingMutationMarker(normalized) {
+		return nil
+	}
+	required := make([]string, 0, 3)
+	addIfMentioned := func(toolName string, resourceMarkers ...string) {
+		if strings.Contains(normalized, strings.ToLower(toolName)) {
+			required = appendUniqueStrings(required, toolName)
+			return
+		}
+		for _, marker := range resourceMarkers {
+			if marker != "" && strings.Contains(normalized, marker) {
+				required = appendUniqueStrings(required, toolName)
+				return
+			}
+		}
+	}
+	if !agentBindingResourceNoop(normalized, "knowledge") {
+		addIfMentioned("replace_agent_knowledge_bindings", "\u77e5\u8bc6\u5e93", "knowledge")
+	}
+	if !agentBindingResourceNoop(normalized, "database") {
+		addIfMentioned("replace_agent_database_bindings", "\u6570\u636e\u5e93", "database", "\u6570\u636e\u8868", "table")
+	}
+	if !agentBindingResourceNoop(normalized, "workflow") {
+		addIfMentioned("replace_agent_workflow_bindings", "\u5de5\u4f5c\u6d41", "workflow")
+	}
+	return required
+}
+
+func hasAgentBindingMutationMarker(query string) bool {
+	for _, marker := range []string{
+		"replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings",
+		"replace_agent_workflow_bindings",
+		"\u7ed1\u5b9a",
+		"\u89e3\u7ed1",
+		"\u5173\u8054",
+		"\u53d6\u6d88\u5173\u8054",
+		"\u66ff\u6362",
+		"\u6dfb\u52a0",
+		"\u79fb\u9664",
+		"\u6e05\u7a7a",
+		"bind",
+		"unbind",
+		"binding",
+		"associate",
+		"detach",
+		"replace",
+		"add",
+		"remove",
+		"clear",
+	} {
+		if strings.Contains(query, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentBindingResourceNoop(query string, resource string) bool {
+	resourceMarkers := map[string][]string{
+		"knowledge": {"\u77e5\u8bc6\u5e93", "knowledge"},
+		"database":  {"\u6570\u636e\u5e93", "database", "\u6570\u636e\u8868", "table"},
+		"workflow":  {"\u5de5\u4f5c\u6d41", "workflow"},
+	}
+	resourceMarkerFound := false
+	for _, resourceMarker := range resourceMarkers[resource] {
+		if strings.Contains(query, resourceMarker) {
+			resourceMarkerFound = true
+			break
+		}
+	}
+	if !resourceMarkerFound {
+		return false
+	}
+	noBindMarkers := []string{
+		"\u4e0d\u8981\u7ed1\u5b9a",
+		"\u4e0d\u8981\u5173\u8054",
+		"\u4e0d\u7ed1\u5b9a",
+		"\u4e0d\u5173\u8054",
+		"\u65e0\u9700\u7ed1\u5b9a",
+		"\u65e0\u9700\u5173\u8054",
+		"do not bind",
+		"don't bind",
+		"dont bind",
+		"do not associate",
+		"don't associate",
+		"dont associate",
+		"no binding",
+		"without binding",
+	}
+	if containsAnySubstring(query, noBindMarkers) {
+		return true
+	}
+	noopMarkers := []string{
+		"\u4fdd\u6301",
+		"\u4fdd\u7559",
+		"\u7ee7\u7eed\u4f7f\u7528",
+		"\u4e0d\u53d8",
+		"keep",
+		"preserve",
+		"unchanged",
+	}
+	for _, resourceMarker := range resourceMarkers[resource] {
+		for _, noopMarker := range noopMarkers {
+			if strings.Contains(query, resourceMarker+noopMarker) || strings.Contains(query, noopMarker+resourceMarker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func firstMissingAgentManagementTool(req skillloop.FinalAnswerGuardRequest, toolNames []string) string {
+	for _, toolName := range toolNames {
+		if toolName == "" {
+			continue
+		}
+		if finalAnswerGuardHasSuccessfulTool(req, skills.SkillAgentManagement, toolName) ||
+			finalAnswerGuardHasAttemptedTool(req, skills.SkillAgentManagement, toolName) {
+			continue
+		}
+		return toolName
+	}
+	return ""
+}
+
+func agentBindingRequiresMutationGuardResult(missingTool string, requiredTools []string) skillloop.FinalAnswerGuardResult {
+	toolList := strings.Join(requiredTools, ", ")
+	messageLines := []string{
+		"The user explicitly requested Agent binding changes, but at least one required binding update tool has not run yet.",
+		"Before claiming completion, call the missing agent-management tool.",
+	}
+	systemLines := []string{
+		"The candidate final answer is premature for this Agent binding request.",
+		"Required agent-management binding tools for this turn: " + toolList + ".",
+		"Call " + missingTool + " with the resolved candidate arguments before producing a final answer.",
+		"If a required tool fails, explain that failure; do not claim the binding was completed.",
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       skills.SkillAgentManagement,
+		ToolName:      missingTool,
+		Message:       strings.Join(messageLines, " "),
+		SystemMessage: strings.Join(systemLines, " "),
+	}
+}
+
+func currentConsoleAgentID(parts *chatRequestParts) string {
+	if parts == nil {
+		return ""
+	}
+	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		agents := visibleAgentResources(source)
+		for _, agent := range agents {
+			if agent.Selected && strings.TrimSpace(agent.ID) != "" {
+				return strings.TrimSpace(agent.ID)
+			}
+		}
+		if len(agents) == 1 && strings.TrimSpace(agents[0].ID) != "" {
+			return strings.TrimSpace(agents[0].ID)
+		}
+	}
+	return ""
+}
+
+func wantsCreatedAgentDetailNavigation(query string) bool {
+	normalized := normalizeConsoleNavigationQuery(query)
+	if normalized == "" {
+		return false
+	}
+	if createdAgentDetailNavigationNegated(normalized) {
+		return false
+	}
+	hasCreate := false
+	for _, marker := range []string{"创建", "新建", "create", "new agent"} {
+		if strings.Contains(normalized, marker) {
+			hasCreate = true
+			break
+		}
+	}
+	if !hasCreate {
+		return false
+	}
+	for _, marker := range []string{"打开", "进入", "详情", "open", "enter", "detail", "view"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func createdAgentDetailNavigationNegated(normalized string) bool {
+	return containsAnySubstring(normalized, []string{
+		"do not navigate", "don't navigate", "dont navigate",
+		"do not open", "don't open", "dont open",
+		"do not enter", "don't enter", "dont enter",
+		"without navigating", "without opening",
+		"stay on the list", "stay on current page",
+		"\u4e0d\u8981\u5bfc\u822a", "\u4e0d\u8981\u8df3\u8f6c", "\u4e0d\u8981\u6253\u5f00", "\u4e0d\u8981\u8fdb\u5165",
+		"\u4e0d\u7528\u5bfc\u822a", "\u4e0d\u7528\u8df3\u8f6c", "\u4e0d\u7528\u6253\u5f00", "\u4e0d\u7528\u8fdb\u5165",
+		"\u65e0\u9700\u5bfc\u822a", "\u65e0\u9700\u8df3\u8f6c", "\u65e0\u9700\u6253\u5f00", "\u65e0\u9700\u8fdb\u5165",
+		"\u7559\u5728\u5217\u8868", "\u7559\u5728\u5f53\u524d\u9875",
+	})
+}
+
+func createdAgentDetailHrefFromCalls(calls []skillloop.SkillToolCallRef) string {
+	for _, call := range calls {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(call.ToolName), "create_agent") {
+			continue
+		}
+		if href := normalizeAgentDetailHref(firstNonEmptyString(
+			stringFromAny(call.Result["href"]),
+			stringFromAny(call.Result["detail_href"]),
+		)); href != "" {
+			return href
+		}
+		if agent := governanceMapFromAny(call.Result["agent"]); len(agent) > 0 {
+			if href := normalizeAgentDetailHref(firstNonEmptyString(
+				stringFromAny(agent["href"]),
+				stringFromAny(agent["detail_href"]),
+			)); href != "" {
+				return href
+			}
+			if agentID := strings.TrimSpace(firstNonEmptyString(
+				stringFromAny(agent["agent_id"]),
+				stringFromAny(agent["id"]),
+			)); agentID != "" {
+				return "/console/agents/" + agentID + "/agent"
+			}
+		}
+		if agentID := strings.TrimSpace(firstNonEmptyString(
+			stringFromAny(call.Result["agent_id"]),
+			stringFromAny(call.Result["id"]),
+		)); agentID != "" {
+			return "/console/agents/" + agentID + "/agent"
+		}
+	}
+	return ""
+}
+
+func normalizeAgentDetailHref(href string) string {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if strings.HasPrefix(href, "/console/agents/") && strings.HasSuffix(href, "/agent") {
+		return href
+	}
+	return ""
 }
 
 func clientActionContinuationLoadedRoute(parts *chatRequestParts, href string) bool {
@@ -962,11 +3779,53 @@ func clientActionContinuationLoadedRoute(parts *chatRequestParts, href string) b
 		if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(continuation["href"]), href) {
 			return true
 		}
-		result := governanceMapFromAny(continuation["result"])
-		for _, key := range []string{"href", "observed_path"} {
-			if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(result[key]), href) {
-				return true
-			}
+		if consoleNavigationResultMatchesTarget(governanceMapFromAny(continuation["result"]), href) {
+			return true
+		}
+	}
+	return false
+}
+
+func managedFileCreateShouldBlockReturningToCompletedRoute(metadata map[string]interface{}, href string) bool {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if href == "" || consoleNavigationLoadedHrefMatchesTarget(href, consoleFilesRouteHint().Href) {
+		return false
+	}
+	if !clientActionMetadataHasCompletedRoute(metadata, consoleFilesRouteHint().Href) {
+		return false
+	}
+	return clientActionMetadataHasCompletedRoute(metadata, href)
+}
+
+func clientActionMetadataHasCompletedRoute(metadata map[string]interface{}, href string) bool {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if len(metadata) == 0 || href == "" {
+		return false
+	}
+	for _, action := range mapSliceFromAny(metadata["client_actions"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["status"])), clientActionStatusSucceeded) {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["action_type"])), "route_navigation") {
+			continue
+		}
+		if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(action["href"]), href) {
+			return true
+		}
+		if consoleNavigationResultMatchesTarget(governanceMapFromAny(action["result"]), href) {
+			return true
+		}
+	}
+	return false
+}
+
+func consoleNavigationResultMatchesTarget(result map[string]interface{}, href string) bool {
+	if len(result) == 0 {
+		return false
+	}
+	for _, key := range []string{"href", "observed_path", "loaded_href", "target_page"} {
+		if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(result[key]), href) {
+			return true
 		}
 	}
 	return false
@@ -977,6 +3836,68 @@ func consoleFilesRouteAlreadyAvailable(parts *chatRequestParts) bool {
 		return false
 	}
 	return isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
+}
+
+func consoleNavigationRouteAlreadyAvailable(parts *chatRequestParts, href string) bool {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if parts == nil || href == "" {
+		return false
+	}
+	if runtimeHref := consoleRouteFromRuntimeContext(parts.RuntimeContext); consoleNavigationLoadedHrefMatchesTarget(runtimeHref, href) {
+		return true
+	}
+	switch href {
+	case "/console/files":
+		if consoleFilesRouteAlreadyAvailable(parts) {
+			return true
+		}
+	case "/console/agents":
+		if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+			return true
+		}
+	}
+	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		if consoleNavigationContextContainsRoute(source, href) {
+			return true
+		}
+	}
+	return false
+}
+
+func consoleRouteFromRuntimeContext(runtimeContext string) string {
+	runtimeContext = strings.TrimSpace(runtimeContext)
+	if runtimeContext == "" {
+		return ""
+	}
+	matches := runtimeContextRoutePattern.FindStringSubmatch(runtimeContext)
+	if len(matches) < 2 {
+		return ""
+	}
+	return normalizeConsoleNavigationGuardHref(matches[1])
+}
+
+func consoleNavigationContextContainsRoute(context map[string]interface{}, href string) bool {
+	if len(context) == 0 || strings.TrimSpace(href) == "" {
+		return false
+	}
+	for _, item := range operationItemsFromValue(context["resources"]) {
+		resource, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		metadata := mapFromOperationContext(resource["metadata"])
+		for _, value := range []interface{}{
+			resource["href"],
+			resource["route"],
+			metadata["href"],
+			metadata["route"],
+		} {
+			if consoleNavigationLoadedHrefMatchesTarget(stringMetadataValue(value), href) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func requiresConsoleFilesRouteBeforeManagedFileCreate(parts *chatRequestParts) bool {
@@ -1006,7 +3927,150 @@ func resolveConsoleNavigationTargetForParts(parts *chatRequestParts) (consoleNav
 	if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
 		return consoleFilesRouteHint(), true
 	}
-	return resolveConsoleNavigationTarget(parts.Query)
+	targets := consoleNavigationResolvedTargets(parts.Query)
+	if len(targets) == 0 {
+		return consoleNavigationRouteHint{}, false
+	}
+	if len(targets) == 1 {
+		return targets[0], true
+	}
+	completedHrefs := completedConsoleNavigationHrefsFromParts(parts)
+	for _, target := range targets {
+		if consumeCompletedConsoleNavigationHref(&completedHrefs, target.Href) {
+			continue
+		}
+		if !clientActionContinuationLoadedRoute(parts, target.Href) {
+			return target, true
+		}
+	}
+	return targets[len(targets)-1], true
+}
+
+func remainingConsoleNavigationRouteSequence(parts *chatRequestParts, nextTarget consoleNavigationRouteHint) []AIChatTurnStrategyRouteStep {
+	if parts == nil {
+		return nil
+	}
+	targets := consoleNavigationResolvedTargets(parts.Query)
+	if len(targets) == 0 && strings.TrimSpace(nextTarget.Href) != "" {
+		targets = []consoleNavigationRouteHint{nextTarget}
+	}
+	sequence := make([]AIChatTurnStrategyRouteStep, 0, len(targets))
+	completedHrefs := completedConsoleNavigationHrefsFromParts(parts)
+	for _, target := range targets {
+		if strings.TrimSpace(target.Href) == "" {
+			continue
+		}
+		if consumeCompletedConsoleNavigationHref(&completedHrefs, target.Href) {
+			continue
+		}
+		status := "pending"
+		if consoleNavigationLoadedHrefMatchesTarget(target.Href, nextTarget.Href) {
+			status = "next"
+		}
+		sequence = append(sequence, AIChatTurnStrategyRouteStep{
+			Href:   target.Href,
+			Label:  target.Label,
+			Status: status,
+		})
+	}
+	if len(sequence) == 0 && strings.TrimSpace(nextTarget.Href) != "" {
+		sequence = append(sequence, AIChatTurnStrategyRouteStep{
+			Href:   nextTarget.Href,
+			Label:  nextTarget.Label,
+			Status: "next",
+		})
+	}
+	return sequence
+}
+
+func consoleNavigationRouteHintForHref(href string) consoleNavigationRouteHint {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if href == "" {
+		return consoleNavigationRouteHint{}
+	}
+	for _, route := range consoleNavigationRouteHints {
+		if consoleNavigationLoadedHrefMatchesTarget(route.Href, href) {
+			return route
+		}
+	}
+	return consoleNavigationRouteHint{Href: href, Label: "Console page"}
+}
+
+func completedConsoleNavigationHrefsFromParts(parts *chatRequestParts) []string {
+	if parts == nil {
+		return nil
+	}
+	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		completed := completedConsoleNavigationHrefsFromOperationContext(source)
+		if len(completed) > 0 {
+			return completed
+		}
+	}
+	return nil
+}
+
+func completedConsoleNavigationHrefsFromClientActionMetadata(metadata map[string]interface{}) []string {
+	actions := completedClientActionRecordsFromMetadata(metadata)
+	if len(actions) == 0 {
+		return nil
+	}
+	hrefs := make([]string, 0, len(actions))
+	for _, action := range actions {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["action_type"])), "route_navigation") {
+			continue
+		}
+		if href := clientActionRouteHref(action); href != "" {
+			hrefs = append(hrefs, href)
+		}
+	}
+	return hrefs
+}
+
+func completedConsoleNavigationHrefsFromOperationContext(source map[string]interface{}) []string {
+	if len(source) == 0 {
+		return nil
+	}
+	hrefs := make([]string, 0, 4)
+	for _, action := range mapSliceFromAny(source["completed_client_actions"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["status"])), clientActionStatusSucceeded) {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["action_type"])), "route_navigation") {
+			continue
+		}
+		if href := clientActionRouteHref(action); href != "" {
+			hrefs = append(hrefs, href)
+		}
+	}
+	continuation := governanceMapFromAny(source["client_action_continuation"])
+	if strings.EqualFold(strings.TrimSpace(stringFromAny(continuation["status"])), clientActionStatusSucceeded) &&
+		strings.EqualFold(strings.TrimSpace(stringFromAny(continuation["action_type"])), "route_navigation") {
+		if href := clientActionRouteHref(continuation); href != "" && !lastConsoleNavigationHrefMatches(hrefs, href) {
+			hrefs = append(hrefs, href)
+		}
+	}
+	return hrefs
+}
+
+func lastConsoleNavigationHrefMatches(hrefs []string, href string) bool {
+	if len(hrefs) == 0 {
+		return false
+	}
+	return consoleNavigationLoadedHrefMatchesTarget(hrefs[len(hrefs)-1], href)
+}
+
+func consumeCompletedConsoleNavigationHref(completed *[]string, targetHref string) bool {
+	if completed == nil || len(*completed) == 0 {
+		return false
+	}
+	for len(*completed) > 0 {
+		href := (*completed)[0]
+		*completed = (*completed)[1:]
+		if consoleNavigationLoadedHrefMatchesTarget(href, targetHref) {
+			return true
+		}
+	}
+	return false
 }
 
 func consoleFilesRouteHint() consoleNavigationRouteHint {
@@ -1049,12 +4113,23 @@ func isFileManagerSaveToolCall(skillID string, toolName string) bool {
 		strings.EqualFold(strings.TrimSpace(toolName), "save_file_to_management")
 }
 
+func isFileManagerDeleteToolCall(skillID string, toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillFileManager) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "delete_file")
+}
+
 func skillLoopUserInputGuard(prepared *PreparedChat) skillloop.UserInputGuard {
 	finalGuard := skillLoopFinalAnswerGuard(prepared)
-	if finalGuard == nil {
+	if finalGuard == nil && !skillLoopAgentManagementDeleteUserInputGuardEnabled(prepared) {
 		return nil
 	}
 	return func(req skillloop.UserInputGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		if result, blocked := skillLoopAgentManagementDeleteUserInputGuard(prepared, req); blocked {
+			return result, true
+		}
+		if finalGuard == nil {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
 		result, blocked := finalGuard(skillloop.FinalAnswerGuardRequest{
 			Answer:              req.Message,
 			Round:               req.Round,
@@ -1081,6 +4156,272 @@ func skillLoopUserInputGuard(prepared *PreparedChat) skillloop.UserInputGuard {
 		}
 		return result, true
 	}
+}
+
+func skillLoopAgentManagementDeleteUserInputGuardEnabled(prepared *PreparedChat) bool {
+	return prepared != nil &&
+		prepared.parts != nil &&
+		skillIDEnabled(prepared.parts.SkillIDs, skills.SkillAgentManagement) &&
+		agentManagementDeleteRequested(prepared.parts.Query)
+}
+
+func skillLoopAgentManagementDeleteUserInputGuard(prepared *PreparedChat, req skillloop.UserInputGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+	if !skillLoopAgentManagementDeleteUserInputGuardEnabled(prepared) ||
+		!agentManagementUserInputAsksDeleteConfirmation(req) ||
+		agentManagementDeleteToolAlreadyAttempted(req.AttemptedToolCalls) ||
+		agentManagementDeleteToolAlreadyAttempted(req.SuccessfulToolCalls) {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	targets := resolvedAgentDeleteTargetsForUserInputGuard(prepared.parts)
+	if len(targets) == 0 {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	toolName := "delete_agent"
+	arguments := map[string]interface{}{}
+	if len(targets) > 1 || agentManagementBatchDeleteRequested(prepared.parts.Query) {
+		toolName = "delete_agents"
+		arguments["agents"] = targets
+	} else {
+		arguments["agent_id"] = firstNonEmptyString(targets[0]["agent_id"], targets[0]["id"])
+		if name := strings.TrimSpace(stringFromAny(targets[0]["name"])); name != "" {
+			arguments["name"] = name
+		}
+	}
+	labels := agentDeleteGuardTargetLabels(targets)
+	message := strings.Join([]string{
+		"The request_user_input call was blocked because the user already gave a concrete Agent deletion request and the Agent target is resolved.",
+		"Tool governance owns the approval card for this destructive operation; do not ask for a separate natural-language confirmation.",
+		"Call agent-management/" + toolName + " with the resolved Agent target and wait for the governed tool result.",
+	}, " ")
+	if len(labels) > 0 {
+		message = strings.Replace(message, "the Agent target is resolved", "the Agent target is resolved: "+strings.Join(labels, ", "), 1)
+	}
+	payload := map[string]interface{}{
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": toolName,
+		"arguments": arguments,
+	}
+	systemMessage := message
+	if encoded, err := json.Marshal(payload); err == nil {
+		systemMessage = systemMessage + " Resolved Agent deletion tool JSON for arguments only; do not reveal internal IDs to the user: " + string(encoded)
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       skills.SkillAgentManagement,
+		ToolName:      toolName,
+		Message:       message,
+		SystemMessage: systemMessage,
+	}, true
+}
+
+func agentManagementUserInputAsksDeleteConfirmation(req skillloop.UserInputGuardRequest) bool {
+	text := strings.ToLower(strings.TrimSpace(req.Message + "\n" + userInputRequestQuestionsText(req.Questions)))
+	if text == "" {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"confirm",
+		"confirmation",
+		"approval",
+		"approve",
+		"whether",
+		"should i",
+		"shall i",
+		"high risk",
+		"irreversible",
+		"\u786e\u8ba4",
+		"\u662f\u5426",
+		"\u6279\u51c6",
+		"\u540c\u610f",
+		"\u9700\u8981\u4f60",
+		"\u9700\u8981\u60a8",
+		"\u7ee7\u7eed\u6267\u884c\u5220\u9664",
+		"\u9ad8\u98ce\u9669",
+		"\u4e0d\u53ef\u9006",
+	}) && (agentManagementDeleteRequested(text) || containsAnySubstring(text, []string{
+		"agent",
+		"\u667a\u80fd\u4f53",
+		"\u5220\u9664",
+		"\u5220\u6389",
+		"\u79fb\u9664",
+	}))
+}
+
+func userInputRequestQuestionsText(questions []map[string]interface{}) string {
+	parts := make([]string, 0, len(questions)*3)
+	for _, question := range questions {
+		parts = append(parts,
+			stringFromAny(question["id"]),
+			stringFromAny(question["question"]),
+			stringFromAny(question["label"]),
+			stringFromAny(question["description"]),
+		)
+		for _, option := range mapSliceFromAny(question["options"]) {
+			parts = append(parts,
+				stringFromAny(option["label"]),
+				stringFromAny(option["description"]),
+			)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func agentManagementDeleteToolAlreadyAttempted(calls []skillloop.SkillToolCallRef) bool {
+	for _, call := range calls {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillAgentManagement) {
+			continue
+		}
+		switch strings.TrimSpace(call.ToolName) {
+		case "delete_agent", "delete_agents":
+			return true
+		}
+	}
+	return false
+}
+
+func resolvedAgentDeleteTargetsForUserInputGuard(parts *chatRequestParts) []map[string]interface{} {
+	if parts == nil {
+		return nil
+	}
+	visible := consoleAgentsPromptVisibleAgents(parts)
+	if len(visible) == 0 {
+		return nil
+	}
+	query := strings.ToLower(strings.TrimSpace(parts.Query))
+	if query == "" {
+		return nil
+	}
+	if targets := agentDeleteTargetsMatchingQueryText(visible, query); len(targets) > 0 {
+		return targets
+	}
+	if n := agentDeleteVisiblePrefixCount(query, len(visible)); n > 0 {
+		return agentDeleteTargetsFromVisibleAgents(visible[:n])
+	}
+	if strings.Contains(query, "\u9009\u4e2d") || strings.Contains(query, "selected") {
+		selected := make([]map[string]interface{}, 0, len(visible))
+		for _, agent := range visible {
+			if boolMetadataValue(agent["selected"]) {
+				selected = append(selected, agentDeleteTargetFromVisibleAgent(agent))
+			}
+		}
+		return selected
+	}
+	currentAgentID := currentConsoleAgentID(parts)
+	if currentAgentID != "" && containsAnySubstring(query, []string{"current agent", "this agent", "\u5f53\u524d\u667a\u80fd\u4f53", "\u8fd9\u4e2a\u667a\u80fd\u4f53"}) {
+		for _, agent := range visible {
+			if strings.EqualFold(strings.TrimSpace(stringFromAny(agent["agent_id"])), currentAgentID) ||
+				strings.EqualFold(strings.TrimSpace(stringFromAny(agent["id"])), currentAgentID) {
+				return []map[string]interface{}{agentDeleteTargetFromVisibleAgent(agent)}
+			}
+		}
+	}
+	if agentManagementBatchDeleteRequested(query) && containsAnySubstring(query, []string{
+		"visible agents",
+		"listed agents",
+		"these agents",
+		"current page",
+		"this page",
+		"all agents",
+		"\u53ef\u89c1\u667a\u80fd\u4f53",
+		"\u5217\u8868\u91cc\u7684\u667a\u80fd\u4f53",
+		"\u8fd9\u4e9b\u667a\u80fd\u4f53",
+		"\u5f53\u524d\u9875",
+		"\u672c\u9875",
+		"\u5168\u90e8\u667a\u80fd\u4f53",
+	}) {
+		return agentDeleteTargetsFromVisibleAgents(visible)
+	}
+	return nil
+}
+
+func agentDeleteTargetsMatchingQueryText(visible []map[string]interface{}, query string) []map[string]interface{} {
+	targets := make([]map[string]interface{}, 0, len(visible))
+	for _, agent := range visible {
+		id := strings.ToLower(strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"])))
+		name := strings.ToLower(strings.TrimSpace(stringFromAny(agent["name"])))
+		if name != "" && strings.Contains(query, name) {
+			targets = append(targets, agentDeleteTargetFromVisibleAgent(agent))
+			continue
+		}
+		if id != "" && strings.Contains(query, id) {
+			targets = append(targets, agentDeleteTargetFromVisibleAgent(agent))
+		}
+	}
+	return targets
+}
+
+func agentDeleteVisiblePrefixCount(query string, maxCount int) int {
+	if maxCount <= 0 {
+		return 0
+	}
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(?:first|top)\s+([0-9]+)\b`),
+		regexp.MustCompile(`前\s*([0-9]+)\s*个`),
+	}
+	for _, pattern := range patterns {
+		matches := pattern.FindStringSubmatch(query)
+		if len(matches) != 2 {
+			continue
+		}
+		count, err := strconv.Atoi(matches[1])
+		if err == nil && count > 0 {
+			if count > maxCount {
+				return maxCount
+			}
+			return count
+		}
+	}
+	wordCounts := []struct {
+		markers []string
+		count   int
+	}{
+		{[]string{"first two", "top two", "\u524d\u4e24\u4e2a", "\u524d\u4e8c\u4e2a", "\u524d\u4e24\u4f4d", "\u8fd9\u4e24\u4e2a"}, 2},
+		{[]string{"first three", "top three", "\u524d\u4e09\u4e2a", "\u524d\u4e09\u4f4d", "\u8fd9\u4e09\u4e2a"}, 3},
+		{[]string{"first four", "top four", "\u524d\u56db\u4e2a", "\u524d\u56db\u4f4d", "\u8fd9\u56db\u4e2a"}, 4},
+		{[]string{"first five", "top five", "\u524d\u4e94\u4e2a", "\u524d\u4e94\u4f4d", "\u8fd9\u4e94\u4e2a"}, 5},
+	}
+	for _, item := range wordCounts {
+		if containsAnySubstring(query, item.markers) {
+			if item.count > maxCount {
+				return maxCount
+			}
+			return item.count
+		}
+	}
+	return 0
+}
+
+func agentDeleteTargetsFromVisibleAgents(visible []map[string]interface{}) []map[string]interface{} {
+	targets := make([]map[string]interface{}, 0, len(visible))
+	for _, agent := range visible {
+		targets = append(targets, agentDeleteTargetFromVisibleAgent(agent))
+	}
+	return targets
+}
+
+func agentDeleteTargetFromVisibleAgent(agent map[string]interface{}) map[string]interface{} {
+	target := map[string]interface{}{}
+	if id := strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"])); id != "" {
+		target["agent_id"] = id
+		target["id"] = id
+	}
+	if name := strings.TrimSpace(stringFromAny(agent["name"])); name != "" {
+		target["name"] = name
+	}
+	if href := strings.TrimSpace(stringFromAny(agent["href"])); href != "" {
+		target["href"] = href
+	}
+	return target
+}
+
+func agentDeleteGuardTargetLabels(targets []map[string]interface{}) []string {
+	labels := make([]string, 0, len(targets))
+	for _, target := range targets {
+		label := strings.TrimSpace(firstNonEmptyString(target["name"], target["agent_id"], target["id"]))
+		if label != "" {
+			labels = append(labels, label)
+		}
+	}
+	return labels
 }
 
 func consoleNavigationRequiredToolFinalAnswerGuard(target consoleNavigationRouteHint) skillloop.FinalAnswerGuard {
@@ -1123,6 +4464,62 @@ func consoleNavigationRequiredToolGuardResult(target consoleNavigationRouteHint)
 	}
 }
 
+func createdAgentRequiresDetailNavigationGuardResult(target consoleNavigationRouteHint) skillloop.FinalAnswerGuardResult {
+	message := strings.Join([]string{
+		fmt.Sprintf("The Agent was created successfully and the user asked to open its detail page (%s).", target.Href),
+		"Do not finish with a natural-language message saying the detail page is open yet.",
+		fmt.Sprintf("Call call_skill_tool with skill_id %q, tool_name %q, and href %q.", skills.SkillConsoleNavigator, "navigate", target.Href),
+		"Only after navigate succeeds in this turn may you tell the user that the Agent was created and opened.",
+	}, " ")
+	payload := map[string]interface{}{
+		"skill_id":  skills.SkillConsoleNavigator,
+		"tool_name": "navigate",
+		"arguments": map[string]interface{}{
+			"href": target.Href,
+		},
+		"label": target.Label,
+	}
+	encoded, err := json.Marshal(payload)
+	systemMessage := message
+	if err == nil {
+		systemMessage = systemMessage + " Resolved route JSON for tool arguments: " + string(encoded)
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       skills.SkillConsoleNavigator,
+		ToolName:      "navigate",
+		Message:       message,
+		SystemMessage: systemMessage,
+	}
+}
+
+func agentDeleteRequiresListNavigationGuardResult(target consoleNavigationRouteHint) skillloop.FinalAnswerGuardResult {
+	message := strings.Join([]string{
+		"The current Agent detail page was deleted successfully.",
+		"Do not finish with a natural-language message saying the Agent list is open yet.",
+		fmt.Sprintf("Call call_skill_tool with skill_id %q, tool_name %q, and href %q to navigate back to the Agent list.", skills.SkillConsoleNavigator, "navigate", target.Href),
+		"Only after navigate succeeds in this turn may you tell the user that the Agent was deleted and the list page is open.",
+	}, " ")
+	payload := map[string]interface{}{
+		"skill_id":  skills.SkillConsoleNavigator,
+		"tool_name": "navigate",
+		"arguments": map[string]interface{}{
+			"href": target.Href,
+		},
+		"label": target.Label,
+	}
+	encoded, err := json.Marshal(payload)
+	systemMessage := message
+	if err == nil {
+		systemMessage = systemMessage + " Resolved route JSON for tool arguments: " + string(encoded)
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       skills.SkillConsoleNavigator,
+		ToolName:      "navigate",
+		Message:       message,
+		SystemMessage: systemMessage,
+	}
+}
+
 func consoleFilesRequiredToolFinalAnswerGuard(skillID string, targets []map[string]interface{}, toolName string, messageTemplates []string) skillloop.FinalAnswerGuard {
 	targetSummary := consoleFilesGuardTargetSummary(targets)
 	targetFileIDs := consoleFilesGuardTargetFileIDs(targets)
@@ -1147,6 +4544,590 @@ func consoleFilesRequiredToolFinalAnswerGuard(skillID string, targets []map[stri
 			SystemMessage: strings.Join(systemLines, " "),
 		}, true
 	}
+}
+
+func consoleFilesContinuationPendingDeleteFinalAnswerGuard(parts *chatRequestParts, metadata map[string]interface{}) skillloop.FinalAnswerGuard {
+	if parts == nil || !isContinuationIntent(parts.Query) || !skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
+		return nil
+	}
+	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		if !answerMentionsPendingFileDelete(req.Answer) {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		pendingSaveArgs := pendingGeneratedArtifactSaveArgumentCandidates(parts, metadata, req.SuccessfulToolCalls)
+		if len(pendingSaveArgs) > 0 {
+			result := fileManagerSaveRequiredToolGuardResult(pendingSaveArgs[0])
+			prefix := "A generated temporary artifact is still not saved to File Management, so deletion cannot run yet."
+			result.Message = prefix + " " + result.Message
+			result.SystemMessage = prefix + " Save every requested generated artifact before delete_file or any destructive follow-up step. " + result.SystemMessage
+			return result, true
+		}
+		successfulDeleteCalls := append(successfulMetadataToolCalls(metadata, skills.SkillFileManager, "delete_file"), matchingSkillToolCalls(req.SuccessfulToolCalls, skills.SkillFileManager, "delete_file")...)
+		if len(successfulDeleteCalls) > 0 {
+			deletedName := latestSuccessfulDeleteFileName(successfulDeleteCalls)
+			if deletedName != "" && answerDeleteSuccessMentionsDifferentFileName(req.Answer, deletedName) {
+				return consoleFilesDeleteAlreadySucceededGuardResult(successfulDeleteCalls), true
+			}
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		targets := consoleFilesDeleteTargetsFromAnswerAndToolCalls(parts, req.Answer, req.SuccessfulToolCalls)
+		if len(targets) == 0 {
+			if skillIDEnabled(parts.SkillIDs, skills.SkillFileReader) &&
+				!finalAnswerGuardHasSuccessfulTool(req, skills.SkillFileReader, "list_visible_files") &&
+				!finalAnswerGuardHasAttemptedTool(req, skills.SkillFileReader, "list_visible_files") {
+				return consoleFilesListVisibleFilesRequiredForDeleteGuardResult(), true
+			}
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		return consoleFilesRequiredToolFinalAnswerGuard(skills.SkillFileManager, targets, "delete_file", []string{
+			"The continuation answer identifies {target} as the remaining file deletion target.",
+			"Do not ask for a separate natural-language confirmation and do not finish yet.",
+			"Call file-manager/delete_file with the resolved file_id for the target file and wait for the governed tool result.",
+			"Only after delete_file succeeds in this turn may you tell the user that the file was deleted. If the tool fails, report the actual tool result.",
+		})(req)
+	}
+}
+
+func consoleFilesDeleteAlreadySucceededGuardResult(successfulCalls []skillloop.SkillToolCallRef) skillloop.FinalAnswerGuardResult {
+	deletedName := latestSuccessfulDeleteFileName(successfulCalls)
+	message := "A file-manager/delete_file call has already succeeded for the frozen deletion target. Do not re-resolve the current third file after deletion and do not ask for another deletion confirmation."
+	if deletedName != "" {
+		message = "The frozen deletion target " + deletedName + " was already deleted successfully. Do not re-resolve the current third file after deletion and do not ask for another deletion confirmation."
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "delete_file",
+		Message:  message,
+		SystemMessage: strings.Join([]string{
+			message,
+			"Provide the final user-visible answer now.",
+			"Summarize the completed txt/svg save and the single completed deletion. Do not call another destructive tool unless the user makes a new explicit request.",
+		}, " "),
+	}
+}
+
+func latestSuccessfulDeleteFileName(calls []skillloop.SkillToolCallRef) string {
+	for idx := len(calls) - 1; idx >= 0; idx-- {
+		call := calls[idx]
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillFileManager) ||
+			!strings.EqualFold(strings.TrimSpace(call.ToolName), "delete_file") {
+			continue
+		}
+		if name := firstNonEmptyString(call.Result["file_name"], call.Result["filename"], call.Result["name"], call.Arguments["filename"], call.Arguments["name"]); name != "" {
+			return name
+		}
+		return strings.TrimSpace(stringFromAny(call.Arguments["file_id"]))
+	}
+	return ""
+}
+
+func answerClaimsFileDeleteSuccess(answer string) bool {
+	text := normalizeConsoleNavigationQuery(answer)
+	if text == "" || !isFileDeleteIntent(answer) {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"deleted",
+		"delete succeeded",
+		"delete completed",
+		"successfully deleted",
+		"\u5df2\u5220\u9664",
+		"\u5df2\u7ecf\u5220\u9664",
+		"\u5220\u9664\u6210\u529f",
+		"\u5220\u9664\u5b8c\u6210",
+		"\u5b8c\u6210\u5220\u9664",
+	})
+}
+
+func answerDeleteSuccessMentionsDifferentFileName(answer string, deletedName string) bool {
+	deletedName = strings.TrimSpace(deletedName)
+	if strings.TrimSpace(answer) == "" || deletedName == "" {
+		return false
+	}
+	names := answerDeleteSuccessFileNames(answer)
+	if len(names) == 0 {
+		return false
+	}
+	for _, name := range names {
+		if !strings.EqualFold(strings.TrimSpace(name), deletedName) {
+			return true
+		}
+	}
+	return false
+}
+
+func answerDeleteSuccessFileNames(answer string) []string {
+	segments := splitAnswerIntoDeleteCandidateSegments(answer)
+	names := []string{}
+	seen := map[string]struct{}{}
+	previousSegmentNames := []string{}
+	for _, segment := range segments {
+		segmentNames := answerSegmentFileNames(segment)
+		if !answerClaimsFileDeleteSuccess(segment) {
+			if len(segmentNames) > 0 {
+				previousSegmentNames = segmentNames
+			}
+			continue
+		}
+		addedDirectName := false
+		for _, name := range segmentNames {
+			if name == "" || !answerSegmentMarksFileAsDeleted(segment, name) {
+				continue
+			}
+			addedDirectName = appendUniqueDeleteSuccessFileName(&names, seen, name) || addedDirectName
+		}
+		if !addedDirectName && answerSegmentUsesPriorFileDeleteReference(segment) {
+			for _, name := range previousSegmentNames {
+				appendUniqueDeleteSuccessFileName(&names, seen, name)
+			}
+		}
+		if len(segmentNames) > 0 {
+			previousSegmentNames = segmentNames
+		}
+	}
+	return names
+}
+
+func answerSegmentFileNames(segment string) []string {
+	segment = strings.TrimSpace(segment)
+	if segment == "" {
+		return nil
+	}
+	matches := managedFileTargetPattern.FindAllString(segment, -1)
+	names := []string{}
+	seen := map[string]struct{}{}
+	for _, match := range matches {
+		name := cleanManagedFileTargetMatch(match)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		names = append(names, name)
+	}
+	return names
+}
+
+func cleanManagedFileTargetMatch(match string) string {
+	name := strings.TrimSpace(match)
+	if name == "" {
+		return ""
+	}
+	name = strings.Trim(name, " \t\r\n\"'`.,;:\uff1a\uff0c\u3002\uff1b\u3001()[]{}<>\u201c\u201d\u2018\u2019")
+	for _, sep := range []string{"\uff1a", ":", "\uff0c", ",", "\u3002", "\uff1b", ";", "\u3001", " ", "\t", "\n", "\r"} {
+		if idx := strings.LastIndex(name, sep); idx >= 0 {
+			name = strings.TrimSpace(name[idx+len(sep):])
+		}
+	}
+	return strings.Trim(name, " \t\r\n\"'`.,;:\uff1a\uff0c\u3002\uff1b\u3001()[]{}<>\u201c\u201d\u2018\u2019")
+}
+
+func appendUniqueDeleteSuccessFileName(names *[]string, seen map[string]struct{}, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	key := strings.ToLower(name)
+	if _, ok := seen[key]; ok {
+		return false
+	}
+	seen[key] = struct{}{}
+	*names = append(*names, name)
+	return true
+}
+
+func answerSegmentUsesPriorFileDeleteReference(segment string) bool {
+	segment = strings.TrimSpace(segment)
+	if segment == "" {
+		return false
+	}
+	if containsAnySubstring(segment, []string{
+		"\u8be5\u6587\u4ef6",
+		"\u8be5\u6587\u4ef6\u540d",
+		"\u8fd9\u4e2a\u6587\u4ef6",
+		"\u8fd9\u4e2a\u6587\u4ef6\u540d",
+		"\u4e0a\u8ff0\u6587\u4ef6",
+		"\u76ee\u6807\u6587\u4ef6",
+	}) {
+		return true
+	}
+	normalized := normalizeConsoleNavigationQuery(segment)
+	return containsAnySubstring(normalized, []string{
+		"the file",
+		"this file",
+		"that file",
+		"target file",
+	})
+}
+
+func splitAnswerIntoDeleteCandidateSegments(answer string) []string {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return nil
+	}
+	fields := strings.FieldsFunc(answer, func(r rune) bool {
+		switch r {
+		case '\n', '\r', '\u3002', '\uff1b', ';', '\uff01', '!', '\uff1f', '?':
+			return true
+		default:
+			return false
+		}
+	})
+	segments := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			segments = append(segments, field)
+		}
+	}
+	return segments
+}
+
+func answerSegmentMarksFileAsDeleted(segment string, filename string) bool {
+	segment = strings.TrimSpace(segment)
+	filename = strings.TrimSpace(filename)
+	if segment == "" || filename == "" {
+		return false
+	}
+	lowerSegment := strings.ToLower(segment)
+	lowerName := strings.ToLower(filename)
+	index := strings.Index(lowerSegment, lowerName)
+	if index < 0 {
+		return false
+	}
+	beforeStart := index - 32
+	if beforeStart < 0 {
+		beforeStart = 0
+	}
+	afterEnd := index + len(lowerName) + 32
+	if afterEnd > len(lowerSegment) {
+		afterEnd = len(lowerSegment)
+	}
+	before := lowerSegment[beforeStart:index]
+	after := lowerSegment[index+len(lowerName) : afterEnd]
+	return containsAnySubstring(after, []string{
+		"\u5df2\u5220\u9664",
+		"\u5df2\u7ecf\u5220\u9664",
+		"\u5df2\u6210\u529f\u5220\u9664",
+		"\u88ab\u5220\u9664",
+		"\u5220\u9664\u6210\u529f",
+		"\u5220\u9664\u5b8c\u6210",
+		"deleted",
+		"removed",
+	}) || containsAnySubstring(before, []string{
+		"\u5220\u9664\u4e86",
+		"\u5220\u9664",
+		"\u5220\u6389",
+		"\u79fb\u9664",
+		"deleted",
+		"removed",
+		"successfully deleted",
+	})
+}
+
+func answerAsksDeleteConfirmation(answer string) bool {
+	text := normalizeConsoleNavigationQuery(answer)
+	return isFileDeleteIntent(answer) && containsAnySubstring(text, []string{
+		"confirm", "confirmation", "approval", "whether", "should i", "shall i",
+		"\u786e\u8ba4", "\u662f\u5426", "\u9700\u8981\u4f60", "\u9700\u8981\u60a8", "\u7ee7\u7eed\u6267\u884c\u5220\u9664", "\u9ad8\u98ce\u9669",
+	})
+}
+
+func consoleFilesListVisibleFilesRequiredForDeleteGuardResult() skillloop.FinalAnswerGuardResult {
+	message := strings.Join([]string{
+		"The continuation answer identifies a remaining file deletion step but does not have a resolved file_id.",
+		"Do not ask for a separate natural-language confirmation.",
+		"Refresh the visible Files page assets before deletion.",
+	}, " ")
+	systemMessage := strings.Join([]string{
+		message,
+		"Call file-reader/list_visible_files now.",
+		"After it returns, resolve the current visible deletion target from the returned files list, then call file-manager/delete_file with that file_id and wait for tool governance.",
+	}, " ")
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       skills.SkillFileReader,
+		ToolName:      "list_visible_files",
+		Message:       message,
+		SystemMessage: systemMessage,
+	}
+}
+
+func answerMentionsPendingFileDelete(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	if answer == "" || !isFileDeleteIntent(answer) {
+		return false
+	}
+	text := normalizeConsoleNavigationQuery(answer)
+	return strings.Contains(text, "file") ||
+		strings.Contains(text, "\u6587\u4ef6") ||
+		strings.Contains(text, "visible_index") ||
+		strings.Contains(text, "\u7b2c")
+}
+
+func consoleFilesDeleteTargetsFromAnswerAndToolCalls(parts *chatRequestParts, answer string, successfulCalls []skillloop.SkillToolCallRef) []map[string]interface{} {
+	if targets := consoleFilesDeleteTargetsFromAnswer(parts, answer); len(targets) > 0 {
+		return targets
+	}
+	files := visibleFilesFromListVisibleFilesToolCalls(successfulCalls)
+	if len(files) == 0 {
+		return nil
+	}
+	if file, ok := visibleFileMentionedClosestToDelete(answer, files); ok {
+		return []map[string]interface{}{consoleFilesTargetFromVisibleFile(file)}
+	}
+	if visibleIndex := visibleFileOrdinalMentionedForDelete(answer); visibleIndex > 0 {
+		for _, file := range files {
+			if file.VisibleIndex == visibleIndex {
+				return []map[string]interface{}{consoleFilesTargetFromVisibleFile(file)}
+			}
+		}
+	}
+	return nil
+}
+
+func consoleFilesDeleteTargetsFromAnswer(parts *chatRequestParts, answer string) []map[string]interface{} {
+	files := visibleFilesForDeleteTargetResolution(parts)
+	if len(files) > 0 {
+		if file, ok := visibleFileMentionedClosestToDelete(answer, files); ok {
+			return []map[string]interface{}{consoleFilesTargetFromVisibleFile(file)}
+		}
+		if visibleIndex := visibleFileOrdinalMentionedForDelete(answer); visibleIndex > 0 {
+			for _, file := range files {
+				if file.VisibleIndex == visibleIndex {
+					return []map[string]interface{}{consoleFilesTargetFromVisibleFile(file)}
+				}
+			}
+		}
+	}
+	if target := consoleFilesDeleteTargetFromAnswerFileID(answer); len(target) > 0 {
+		return []map[string]interface{}{target}
+	}
+	return nil
+}
+
+func visibleFilesFromListVisibleFilesToolCalls(calls []skillloop.SkillToolCallRef) []visibleConsoleFileResource {
+	files := []visibleConsoleFileResource{}
+	for _, call := range calls {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillFileReader) ||
+			!strings.EqualFold(strings.TrimSpace(call.ToolName), "list_visible_files") {
+			continue
+		}
+		files = append(files, visibleFilesFromListVisibleFilesResult(call.Result)...)
+	}
+	return files
+}
+
+func visibleFilesFromListVisibleFilesResult(result map[string]interface{}) []visibleConsoleFileResource {
+	items := operationItemsFromValue(result["files"])
+	out := make([]visibleConsoleFileResource, 0, len(items))
+	for idx, item := range items {
+		fileMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id := firstNonEmptyString(fileMap["file_id"], fileMap["id"], fileMap["resource_id"])
+		if id == "" {
+			continue
+		}
+		title := firstNonEmptyString(fileMap["name"], fileMap["filename"], fileMap["title"])
+		extension := normalizedConsoleFileExtension(firstNonEmptyString(fileMap["extension"], fileMap["file_type"]))
+		visibleIndex := firstPositiveInt(intValueFromAny(firstMapValue(fileMap, "visible_index", "visible_ordinal", "visible_rank")), idx+1)
+		out = append(out, visibleConsoleFileResource{
+			ID:           id,
+			Title:        title,
+			Extension:    extension,
+			MimeType:     firstNonEmptyString(fileMap["mime_type"], fileMap["mimeType"]),
+			FileType:     firstNonEmptyString(fileMap["file_type"], fileMap["category"]),
+			WorkspaceID:  firstNonEmptyString(fileMap["workspace_id"], fileMap["workspaceId"]),
+			VisibleIndex: visibleIndex,
+			Selected:     boolMetadataValue(firstMapValue(fileMap, "selected", "is_selected")),
+		})
+	}
+	return out
+}
+
+func visibleFilesForDeleteTargetResolution(parts *chatRequestParts) []visibleConsoleFileResource {
+	if parts == nil {
+		return nil
+	}
+	files := append([]visibleConsoleFileResource{}, visibleFileResources(parts.OperationContext)...)
+	files = append(files, visibleFileResources(parts.RawOperationContext)...)
+	out := make([]visibleConsoleFileResource, 0, len(files))
+	seen := map[string]struct{}{}
+	for _, file := range files {
+		if strings.TrimSpace(file.ID) == "" {
+			continue
+		}
+		if _, ok := seen[file.ID]; ok {
+			continue
+		}
+		seen[file.ID] = struct{}{}
+		out = append(out, file)
+	}
+	return out
+}
+
+func consoleFilesTargetFromVisibleFile(file visibleConsoleFileResource) map[string]interface{} {
+	target := map[string]interface{}{"file_id": file.ID}
+	if file.Title != "" {
+		target["name"] = file.Title
+	}
+	if file.VisibleIndex > 0 {
+		target["visible_index"] = file.VisibleIndex
+	}
+	if file.Extension != "" {
+		target["extension"] = file.Extension
+	}
+	return target
+}
+
+func visibleFileMentionedClosestToDelete(answer string, files []visibleConsoleFileResource) (visibleConsoleFileResource, bool) {
+	text := strings.ToLower(answer)
+	deletePositions := substringPositions(text, []string{"delete", "remove", "\u5220\u9664", "\u5220\u6389", "\u5220\u4e86", "\u79fb\u9664", "\u6e05\u7406"})
+	if len(deletePositions) == 0 {
+		return visibleConsoleFileResource{}, false
+	}
+	bestDistance := -1
+	var best visibleConsoleFileResource
+	for _, file := range files {
+		name := strings.ToLower(strings.TrimSpace(file.Title))
+		if name == "" {
+			continue
+		}
+		for _, position := range substringPositions(text, []string{name}) {
+			distance := nearestPositionDistance(position, deletePositions)
+			if bestDistance < 0 || distance < bestDistance {
+				bestDistance = distance
+				best = file
+			}
+		}
+	}
+	if bestDistance < 0 {
+		return visibleConsoleFileResource{}, false
+	}
+	return best, true
+}
+
+func consoleFilesDeleteTargetFromAnswerFileID(answer string) map[string]interface{} {
+	match := regexp.MustCompile(`(?i)file[_\s-]*id\s*[:=]\s*([a-z0-9][a-z0-9-]{7,})`).FindStringSubmatch(answer)
+	if len(match) != 2 {
+		return nil
+	}
+	target := map[string]interface{}{"file_id": strings.TrimSpace(match[1])}
+	if name := fileNameMentionedClosestToDelete(answer); name != "" {
+		target["name"] = name
+	}
+	if visibleIndex := visibleFileOrdinalMentionedForDelete(answer); visibleIndex > 0 {
+		target["visible_index"] = visibleIndex
+	}
+	return target
+}
+
+func fileNameMentionedClosestToDelete(answer string) string {
+	matches := managedFileTargetPattern.FindAllString(answer, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	text := strings.ToLower(answer)
+	deletePositions := substringPositions(text, []string{"delete", "remove", "\u5220\u9664", "\u5220\u6389", "\u5220\u4e86", "\u79fb\u9664", "\u6e05\u7406"})
+	if len(deletePositions) == 0 {
+		return normalizeManagedFileTargetName(matches[len(matches)-1])
+	}
+	bestName := ""
+	bestDistance := -1
+	for _, match := range matches {
+		name := normalizeManagedFileTargetName(match)
+		if name == "" {
+			continue
+		}
+		for _, position := range substringPositions(text, []string{name}) {
+			distance := nearestPositionDistance(position, deletePositions)
+			if bestDistance < 0 || distance < bestDistance {
+				bestDistance = distance
+				bestName = name
+			}
+		}
+	}
+	return bestName
+}
+
+func visibleFileOrdinalMentionedForDelete(answer string) int {
+	text := normalizeConsoleNavigationQuery(answer)
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`\x{7b2c}\s*([0-9]+)\s*\x{4e2a}\s*\x{6587}\x{4ef6}`),
+		regexp.MustCompile(`第\s*([0-9]+)\s*个\s*文件`),
+		regexp.MustCompile(`第\s*([0-9]+)\s*个\s*文件`),
+		regexp.MustCompile(`visible[_\s-]*index\s*[:=]?\s*([0-9]+)`),
+	} {
+		match := pattern.FindStringSubmatch(text)
+		if len(match) == 2 {
+			if value, err := strconv.Atoi(match[1]); err == nil && value > 0 {
+				return value
+			}
+		}
+	}
+	chineseOrdinals := map[string]int{
+		"\u7b2c\u4e00\u4e2a\u6587\u4ef6": 1,
+		"\u7b2c\u4e8c\u4e2a\u6587\u4ef6": 2,
+		"\u7b2c\u4e09\u4e2a\u6587\u4ef6": 3,
+		"\u7b2c\u56db\u4e2a\u6587\u4ef6": 4,
+		"\u7b2c\u4e94\u4e2a\u6587\u4ef6": 5,
+	}
+	for token, value := range chineseOrdinals {
+		if strings.Contains(text, token) {
+			return value
+		}
+	}
+	englishOrdinals := map[string]int{
+		"first file":  1,
+		"second file": 2,
+		"third file":  3,
+		"fourth file": 4,
+		"fifth file":  5,
+	}
+	for token, value := range englishOrdinals {
+		if strings.Contains(text, token) {
+			return value
+		}
+	}
+	return 0
+}
+
+func substringPositions(text string, needles []string) []int {
+	positions := []int{}
+	for _, needle := range needles {
+		needle = strings.ToLower(strings.TrimSpace(needle))
+		if needle == "" {
+			continue
+		}
+		offset := 0
+		for {
+			idx := strings.Index(text[offset:], needle)
+			if idx < 0 {
+				break
+			}
+			positions = append(positions, offset+idx)
+			offset += idx + len(needle)
+		}
+	}
+	return positions
+}
+
+func nearestPositionDistance(position int, candidates []int) int {
+	best := -1
+	for _, candidate := range candidates {
+		distance := position - candidate
+		if distance < 0 {
+			distance = -distance
+		}
+		if best < 0 || distance < best {
+			best = distance
+		}
+	}
+	return best
 }
 
 func finalAnswerGuardHasSuccessfulTool(req skillloop.FinalAnswerGuardRequest, skillID string, toolName string) bool {
@@ -1207,6 +5188,58 @@ func latestGeneratedArtifactSaveArguments(calls []skillloop.SkillToolCallRef) ma
 	return nil
 }
 
+func latestUnsavedGeneratedArtifactSaveArguments(calls []skillloop.SkillToolCallRef) map[string]interface{} {
+	savedToolFileIDs := map[string]struct{}{}
+	for _, call := range calls {
+		if id := fileManagerSaveToolFileID(call); id != "" {
+			savedToolFileIDs[id] = struct{}{}
+		}
+	}
+	for idx := len(calls) - 1; idx >= 0; idx-- {
+		call := calls[idx]
+		args := generatedArtifactSaveArguments(call)
+		if len(args) == 0 {
+			continue
+		}
+		toolFileID := strings.TrimSpace(stringFromAny(args["tool_file_id"]))
+		if toolFileID == "" {
+			continue
+		}
+		if _, ok := savedToolFileIDs[toolFileID]; ok {
+			continue
+		}
+		return args
+	}
+	return nil
+}
+
+func allowAdditionalRequestedManagedFileGeneration(parts *chatRequestParts, req skillloop.ToolCallGuardRequest, pendingSaveArgs map[string]interface{}) bool {
+	if parts == nil {
+		return false
+	}
+	targets := requestedManagedFileTargetsFromQuery(parts.Query)
+	if len(targets) <= 1 {
+		return false
+	}
+	currentTarget := managedFileTargetFromArguments(req.Arguments)
+	if currentTarget.Filename == "" && currentTarget.Extension == "" {
+		return false
+	}
+	pendingTarget := managedFileTargetFromArguments(pendingSaveArgs)
+	if managedFileTargetsMatch(currentTarget, pendingTarget) {
+		return false
+	}
+	if !managedFileTargetMatchesAny(currentTarget, targets) {
+		return false
+	}
+	for _, call := range req.SuccessfulToolCalls {
+		if managedFileTargetsMatch(currentTarget, managedFileTargetFromSuccessfulCall(call)) {
+			return false
+		}
+	}
+	return true
+}
+
 func latestRecentGeneratedArtifactSaveArguments(parts *chatRequestParts) map[string]interface{} {
 	if parts == nil || !isRecentGeneratedArtifactReferenceIntent(parts.Query) {
 		return nil
@@ -1217,6 +5250,581 @@ func latestRecentGeneratedArtifactSaveArguments(parts *chatRequestParts) map[str
 		}
 	}
 	return nil
+}
+
+func pendingGeneratedArtifactSaveArgumentCandidates(parts *chatRequestParts, metadata map[string]interface{}, successfulCalls []skillloop.SkillToolCallRef) []map[string]interface{} {
+	candidates := []map[string]interface{}{}
+	seen := map[string]struct{}{}
+	addCandidate := func(args map[string]interface{}) {
+		if len(args) == 0 {
+			return
+		}
+		key := "id:" + fileManagerSaveArgumentsToolFileID(args)
+		if key == "id:" {
+			target := managedFileTargetFromArguments(args)
+			key = "target:" + target.Filename + ":" + target.Extension
+		}
+		if key == "target::" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, args)
+	}
+
+	for _, artifact := range unsavedGeneratedArtifactsFromMetadata(metadata, successfulCalls) {
+		addCandidate(generatedArtifactMapSaveArguments(artifact))
+	}
+	for _, args := range unsavedGeneratedArtifactSaveArguments(successfulCalls) {
+		addCandidate(args)
+	}
+	if len(candidates) == 0 {
+		addCandidate(latestRecentGeneratedArtifactSaveArguments(parts))
+	}
+	return candidates
+}
+
+func unsavedGeneratedArtifactSaveArguments(calls []skillloop.SkillToolCallRef) []map[string]interface{} {
+	savedToolFileIDs := map[string]struct{}{}
+	for _, call := range calls {
+		if id := fileManagerSaveToolFileID(call); id != "" {
+			savedToolFileIDs[id] = struct{}{}
+		}
+	}
+	candidates := []map[string]interface{}{}
+	for _, call := range calls {
+		args := generatedArtifactSaveArguments(call)
+		if len(args) == 0 {
+			continue
+		}
+		toolFileID := strings.TrimSpace(stringFromAny(args["tool_file_id"]))
+		if toolFileID == "" {
+			continue
+		}
+		if _, saved := savedToolFileIDs[toolFileID]; saved {
+			continue
+		}
+		candidates = append(candidates, args)
+	}
+	return candidates
+}
+
+func fileManagerSaveArgumentsMatchAnyPendingArtifact(args map[string]interface{}, candidates []map[string]interface{}) bool {
+	for _, candidate := range candidates {
+		if fileManagerSaveArgumentsMatchPendingArtifact(args, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func fileManagerSaveArgumentsMatchPendingArtifact(args map[string]interface{}, expected map[string]interface{}) bool {
+	if len(args) == 0 || len(expected) == 0 {
+		return false
+	}
+	expectedID := fileManagerSaveArgumentsToolFileID(expected)
+	if expectedID == "" || fileManagerSaveArgumentsToolFileID(args) != expectedID {
+		return false
+	}
+	sourceType := strings.ToLower(strings.TrimSpace(stringFromAny(args["source_type"])))
+	if sourceType != "" && sourceType != "tool_file" {
+		return false
+	}
+	expectedTarget := managedFileTargetFromArguments(expected)
+	actualTarget := managedFileTargetFromArguments(args)
+	if actualTarget.Filename != "" && expectedTarget.Filename != "" && actualTarget.Filename != expectedTarget.Filename {
+		return false
+	}
+	if actualTarget.Filename == "" && actualTarget.Extension != "" && expectedTarget.Extension != "" && actualTarget.Extension != expectedTarget.Extension {
+		return false
+	}
+	return true
+}
+
+func pendingGeneratedArtifactSaveArgumentsForAttempt(args map[string]interface{}, candidates []map[string]interface{}) map[string]interface{} {
+	if len(candidates) == 0 {
+		return nil
+	}
+	attemptedID := fileManagerSaveArgumentsToolFileID(args)
+	if attemptedID != "" {
+		for _, candidate := range candidates {
+			if fileManagerSaveArgumentsToolFileID(candidate) == attemptedID {
+				return candidate
+			}
+		}
+	}
+	attemptedTarget := managedFileTargetFromArguments(args)
+	if attemptedTarget.Filename != "" || attemptedTarget.Extension != "" {
+		for _, candidate := range candidates {
+			if managedFileTargetsMatch(attemptedTarget, managedFileTargetFromArguments(candidate)) {
+				return candidate
+			}
+		}
+	}
+	return candidates[len(candidates)-1]
+}
+
+func latestUnsavedGeneratedArtifactSaveArgumentsForTargetsFromMetadata(metadata map[string]interface{}, missingTargets []string) map[string]interface{} {
+	if len(metadata) == 0 || len(missingTargets) == 0 {
+		return nil
+	}
+	artifacts := generatedFilesFromMetadata(metadata["generated_files"])
+	if len(artifacts) == 0 {
+		return nil
+	}
+	savedToolFileIDs := map[string]struct{}{}
+	for _, artifact := range artifacts {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(artifact["target"])), "managed_file") &&
+			strings.TrimSpace(stringFromAny(artifact["upload_file_id"])) == "" {
+			continue
+		}
+		toolFileID := strings.TrimSpace(firstNonEmptyString(
+			artifact["source_tool_file_id"],
+			artifact["source_file_id"],
+			artifact["tool_file_id"],
+		))
+		if toolFileID != "" {
+			savedToolFileIDs[toolFileID] = struct{}{}
+		}
+	}
+	for idx := len(artifacts) - 1; idx >= 0; idx-- {
+		artifact := artifacts[idx]
+		args := generatedArtifactMapSaveArguments(artifact)
+		if len(args) == 0 {
+			continue
+		}
+		toolFileID := strings.TrimSpace(stringFromAny(args["tool_file_id"]))
+		if toolFileID == "" {
+			continue
+		}
+		if _, saved := savedToolFileIDs[toolFileID]; saved {
+			continue
+		}
+		if !managedFileTargetMatchesAny(managedFileTargetFromArguments(args), managedFileTargetsFromMissingTargetLabels(missingTargets)) {
+			continue
+		}
+		return args
+	}
+	return nil
+}
+
+func managedFileCreateHasUnsavedExplicitTargets(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.parts == nil {
+		return false
+	}
+	metadata := map[string]interface{}(nil)
+	if prepared.Message != nil {
+		metadata = prepared.Message.Metadata
+	}
+	if !isManagedFileCreateIntent(prepared.parts.Query) && !managedFileCreateContinuationSaveFlowActive(prepared.parts, metadata) {
+		return false
+	}
+	missingTargets := managedFileCreateMissingSaveTargets(prepared.parts, metadata, nil)
+	return len(missingTargets) > 0 &&
+		(len(latestUnsavedGeneratedArtifactSaveArgumentsForTargetsFromMetadata(metadata, missingTargets)) > 0 ||
+			len(latestUnsavedGeneratedArtifactSaveArgumentsFromMetadata(metadata, nil)) > 0)
+}
+
+func managedFileCreateMissingSaveTargets(parts *chatRequestParts, metadata map[string]interface{}, successfulCalls []skillloop.SkillToolCallRef) []string {
+	metadataSaveCalls := managedFileSaveCallsFromGeneratedFilesMetadata(metadata)
+	allSuccessfulCalls := append([]skillloop.SkillToolCallRef{}, metadataSaveCalls...)
+	allSuccessfulCalls = append(allSuccessfulCalls, successfulCalls...)
+	if missingTargets := missingRequestedManagedFileSaveTargets(parts, allSuccessfulCalls); len(missingTargets) > 0 {
+		return missingTargets
+	}
+	if !managedFileCreateContinuationSaveFlowActive(parts, metadata) {
+		return nil
+	}
+	return unsavedGeneratedArtifactTargetLabelsFromMetadata(metadata, successfulCalls)
+}
+
+func managedFileCreateContinuationSaveFlowActive(parts *chatRequestParts, metadata map[string]interface{}) bool {
+	if parts == nil || !isContinuationIntent(parts.Query) {
+		return false
+	}
+	return len(managedFileSaveCallsFromGeneratedFilesMetadata(metadata)) > 0 &&
+		len(unsavedGeneratedArtifactsFromMetadata(metadata, nil)) > 0
+}
+
+func generatedFileMetadataHasAnyArtifact(metadata map[string]interface{}) bool {
+	return len(generatedFilesFromMetadata(metadataValue(metadata, "generated_files"))) > 0
+}
+
+func generatedFileMetadataArtifactsAlreadySaved(metadata map[string]interface{}, successfulCalls []skillloop.SkillToolCallRef) bool {
+	if !generatedFileMetadataHasAnyArtifact(metadata) {
+		return false
+	}
+	return len(unsavedGeneratedArtifactsFromMetadata(metadata, successfulCalls)) == 0
+}
+
+func unsavedGeneratedArtifactTargetLabelsFromMetadata(metadata map[string]interface{}, successfulCalls []skillloop.SkillToolCallRef) []string {
+	artifacts := unsavedGeneratedArtifactsFromMetadata(metadata, successfulCalls)
+	if len(artifacts) == 0 {
+		return nil
+	}
+	labels := make([]string, 0, len(artifacts))
+	seen := map[string]struct{}{}
+	for _, artifact := range artifacts {
+		label := normalizeManagedFileTargetName(firstNonEmptyString(artifact["filename"], artifact["name"]))
+		if label == "" {
+			if ext := normalizeManagedFileTargetExtension(firstNonEmptyString(artifact["extension"], artifact["file_type"])); ext != "" {
+				label = "*." + ext
+			}
+		}
+		if label == "" {
+			continue
+		}
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		labels = append(labels, label)
+	}
+	return labels
+}
+
+func latestUnsavedGeneratedArtifactSaveArgumentsFromMetadata(metadata map[string]interface{}, successfulCalls []skillloop.SkillToolCallRef) map[string]interface{} {
+	artifacts := unsavedGeneratedArtifactsFromMetadata(metadata, successfulCalls)
+	for idx := len(artifacts) - 1; idx >= 0; idx-- {
+		if args := generatedArtifactMapSaveArguments(artifacts[idx]); len(args) > 0 {
+			return args
+		}
+	}
+	return nil
+}
+
+func unsavedGeneratedArtifactsFromMetadata(metadata map[string]interface{}, successfulCalls []skillloop.SkillToolCallRef) []map[string]interface{} {
+	if len(metadata) == 0 {
+		return nil
+	}
+	artifacts := generatedFilesFromMetadata(metadataValue(metadata, "generated_files"))
+	if len(artifacts) == 0 {
+		return nil
+	}
+	savedToolFileIDs := map[string]struct{}{}
+	for _, artifact := range artifacts {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(artifact["target"])), "managed_file") &&
+			strings.TrimSpace(stringFromAny(artifact["upload_file_id"])) == "" {
+			continue
+		}
+		toolFileID := strings.TrimSpace(firstNonEmptyString(
+			artifact["source_tool_file_id"],
+			artifact["source_file_id"],
+			artifact["tool_file_id"],
+		))
+		if toolFileID != "" {
+			savedToolFileIDs[toolFileID] = struct{}{}
+		}
+	}
+	for _, call := range successfulCalls {
+		if toolFileID := fileManagerSaveToolFileID(call); toolFileID != "" {
+			savedToolFileIDs[toolFileID] = struct{}{}
+		}
+	}
+	unsaved := make([]map[string]interface{}, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		args := generatedArtifactMapSaveArguments(artifact)
+		if len(args) == 0 {
+			continue
+		}
+		toolFileID := strings.TrimSpace(stringFromAny(args["tool_file_id"]))
+		if toolFileID == "" {
+			continue
+		}
+		if _, saved := savedToolFileIDs[toolFileID]; saved {
+			continue
+		}
+		unsaved = append(unsaved, artifact)
+	}
+	return unsaved
+}
+
+func managedFileSaveCallsFromGeneratedFilesMetadata(metadata map[string]interface{}) []skillloop.SkillToolCallRef {
+	artifacts := generatedFilesFromMetadata(metadataValue(metadata, "generated_files"))
+	if len(artifacts) == 0 {
+		return nil
+	}
+	calls := make([]skillloop.SkillToolCallRef, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(artifact["target"])), "managed_file") &&
+			strings.TrimSpace(stringFromAny(artifact["upload_file_id"])) == "" {
+			continue
+		}
+		filename := strings.TrimSpace(firstNonEmptyString(
+			artifact["filename"],
+			artifact["file_name"],
+			artifact["name"],
+		))
+		sourceFileID := strings.TrimSpace(firstNonEmptyString(
+			artifact["source_tool_file_id"],
+			artifact["source_file_id"],
+			artifact["tool_file_id"],
+		))
+		if filename == "" && sourceFileID == "" {
+			continue
+		}
+		calls = append(calls, skillloop.SkillToolCallRef{
+			SkillID:  skills.SkillFileManager,
+			ToolName: "save_file_to_management",
+			Arguments: map[string]interface{}{
+				"filename":     filename,
+				"tool_file_id": sourceFileID,
+				"source_type":  "tool_file",
+			},
+			Result: map[string]interface{}{
+				"file_name":      filename,
+				"filename":       filename,
+				"source_file_id": sourceFileID,
+				"target":         "managed_file",
+			},
+		})
+	}
+	return calls
+}
+
+type requestedManagedFileTarget struct {
+	Filename  string
+	Extension string
+}
+
+func managedFileTargetFromArguments(args map[string]interface{}) requestedManagedFileTarget {
+	filename := normalizeManagedFileTargetName(firstNonEmptyString(
+		args["filename"],
+		args["output_filename"],
+		args["name"],
+		args["file_name"],
+	))
+	extension := normalizeManagedFileTargetExtension(firstNonEmptyString(
+		args["format"],
+		args["extension"],
+		args["file_type"],
+	))
+	if extension == "" {
+		extension = managedFileTargetExtension(filename)
+	}
+	if filename != "" && managedFileTargetExtension(filename) == "" && extension != "" {
+		filename = filename + "." + extension
+	}
+	return requestedManagedFileTarget{
+		Filename:  filename,
+		Extension: extension,
+	}
+}
+
+func managedFileTargetFromSuccessfulCall(call skillloop.SkillToolCallRef) requestedManagedFileTarget {
+	if finalAnswerGuardHasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
+		return managedFileTargetFromArguments(map[string]interface{}{
+			"filename": firstNonEmptyString(
+				call.Result["file_name"],
+				call.Result["filename"],
+				call.Result["name"],
+				call.Arguments["filename"],
+			),
+			"extension": firstNonEmptyString(
+				call.Result["extension"],
+				call.Arguments["extension"],
+			),
+		})
+	}
+	return managedFileTargetFromArguments(generatedArtifactSaveArguments(call))
+}
+
+func managedFileTargetsMatch(left, right requestedManagedFileTarget) bool {
+	if left.Filename != "" && right.Filename != "" {
+		return left.Filename == right.Filename
+	}
+	return left.Extension != "" && right.Extension != "" && left.Extension == right.Extension
+}
+
+func managedFileTargetMatchesAny(target requestedManagedFileTarget, candidates []requestedManagedFileTarget) bool {
+	for _, candidate := range candidates {
+		if managedFileTargetsMatch(target, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func managedFileTargetsFromMissingTargetLabels(labels []string) []requestedManagedFileTarget {
+	targets := make([]requestedManagedFileTarget, 0, len(labels))
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
+		if strings.HasPrefix(label, "*.") {
+			extension := normalizeManagedFileTargetExtension(strings.TrimPrefix(label, "*."))
+			if extension != "" {
+				targets = append(targets, requestedManagedFileTarget{Extension: extension})
+			}
+			continue
+		}
+		filename := normalizeManagedFileTargetName(label)
+		if filename == "" {
+			continue
+		}
+		targets = append(targets, requestedManagedFileTarget{
+			Filename:  filename,
+			Extension: managedFileTargetExtension(filename),
+		})
+	}
+	return targets
+}
+
+func requestedManagedFileTargetsFromQuery(query string) []requestedManagedFileTarget {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	targets := []requestedManagedFileTarget{}
+	for _, match := range managedFileTargetPattern.FindAllString(query, -1) {
+		filename := normalizeManagedFileTargetName(match)
+		if filename == "" {
+			continue
+		}
+		key := "name:" + filename
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		targets = append(targets, requestedManagedFileTarget{
+			Filename:  filename,
+			Extension: managedFileTargetExtension(filename),
+		})
+	}
+	if len(targets) > 0 {
+		return targets
+	}
+	text := normalizeConsoleNavigationQuery(query)
+	if text == "" || !containsAnySubstring(text, []string{"two files", "2 files", "\u4e24\u4e2a\u6587\u4ef6", "2\u4e2a\u6587\u4ef6", "\u4e00\u4e2a\u6587\u672c", "\u4e00\u4e2asvg"}) {
+		return nil
+	}
+	if containsAnySubstring(text, []string{"txt", "text file", "\u6587\u672c\u6587\u4ef6"}) {
+		targets = append(targets, requestedManagedFileTarget{Extension: "txt"})
+	}
+	if containsAnySubstring(text, []string{"svg"}) {
+		targets = append(targets, requestedManagedFileTarget{Extension: "svg"})
+	}
+	return targets
+}
+
+func missingRequestedManagedFileSaveTargets(parts *chatRequestParts, calls []skillloop.SkillToolCallRef) []string {
+	if parts == nil {
+		return nil
+	}
+	targets := requestedManagedFileTargetsFromQuery(parts.Query)
+	if len(targets) <= 1 {
+		return nil
+	}
+	savedNames := map[string]int{}
+	savedExtensions := map[string]int{}
+	for _, call := range calls {
+		if !finalAnswerGuardHasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
+			continue
+		}
+		name := savedManagedFileName(call)
+		if name == "" {
+			continue
+		}
+		savedNames[name]++
+		if ext := managedFileTargetExtension(name); ext != "" {
+			savedExtensions[ext]++
+		}
+	}
+	missing := []string{}
+	for _, target := range targets {
+		if target.Filename != "" {
+			if savedNames[target.Filename] > 0 {
+				continue
+			}
+			missing = append(missing, target.Filename)
+			continue
+		}
+		if target.Extension != "" {
+			if savedExtensions[target.Extension] > 0 {
+				savedExtensions[target.Extension]--
+				continue
+			}
+			missing = append(missing, "*."+target.Extension)
+		}
+	}
+	return missing
+}
+
+func savedManagedFileName(call skillloop.SkillToolCallRef) string {
+	if !finalAnswerGuardHasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
+		return ""
+	}
+	return normalizeManagedFileTargetName(firstNonEmptyString(
+		call.Result["file_name"],
+		call.Result["filename"],
+		call.Result["name"],
+		call.Arguments["filename"],
+		call.Arguments["output_filename"],
+	))
+}
+
+func fileManagerSaveToolFileID(call skillloop.SkillToolCallRef) string {
+	if !finalAnswerGuardHasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
+		return ""
+	}
+	return strings.TrimSpace(firstNonEmptyString(
+		call.Arguments["tool_file_id"],
+		call.Arguments["file_id"],
+		call.Result["source_tool_file_id"],
+		call.Result["source_file_id"],
+		call.Result["tool_file_id"],
+	))
+}
+
+func fileManagerSaveArgumentsToolFileID(args map[string]interface{}) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(firstNonEmptyString(
+		args["tool_file_id"],
+		args["file_id"],
+		args["source_tool_file_id"],
+		args["source_file_id"],
+	))
+}
+
+func normalizeManagedFileTargetName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.Trim(name, " \t\r\n\"'`.,，。;；:：!！?？)）]】}》>“”‘’")
+	name = strings.ReplaceAll(name, "\\", "/")
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func managedFileTargetExtension(filename string) string {
+	filename = normalizeManagedFileTargetName(filename)
+	if filename == "" {
+		return ""
+	}
+	idx := strings.LastIndex(filename, ".")
+	if idx < 0 || idx == len(filename)-1 {
+		return ""
+	}
+	ext := strings.TrimPrefix(filename[idx+1:], ".")
+	if ext == "markdown" {
+		return "md"
+	}
+	return ext
+}
+
+func normalizeManagedFileTargetExtension(extension string) string {
+	extension = strings.ToLower(strings.TrimSpace(extension))
+	extension = strings.TrimPrefix(extension, ".")
+	if extension == "markdown" {
+		return "md"
+	}
+	return extension
 }
 
 func generatedArtifactSaveArguments(call skillloop.SkillToolCallRef) map[string]interface{} {
@@ -1363,6 +5971,40 @@ func finalAnswerGuardHasToolForTargets(calls []skillloop.SkillToolCallRef, skill
 	return len(matched) == len(required)
 }
 
+func successfulMetadataToolCalls(metadata map[string]interface{}, skillID string, toolName string) []skillloop.SkillToolCallRef {
+	invocations := skillInvocationsFromMetadata(metadataValue(metadata, "skill_invocations"))
+	if len(invocations) == 0 {
+		return nil
+	}
+	calls := make([]skillloop.SkillToolCallRef, 0)
+	for _, invocation := range invocations {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "success") ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skillID) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), toolName) {
+			continue
+		}
+		calls = append(calls, skillloop.SkillToolCallRef{
+			SkillID:   strings.TrimSpace(stringFromAny(invocation["skill_id"])),
+			ToolName:  strings.TrimSpace(stringFromAny(invocation["tool_name"])),
+			Arguments: governanceMapFromAny(invocation["arguments"]),
+			Result:    governanceMapFromAny(invocation["result"]),
+		})
+	}
+	return calls
+}
+
+func matchingSkillToolCalls(calls []skillloop.SkillToolCallRef, skillID string, toolName string) []skillloop.SkillToolCallRef {
+	matches := make([]skillloop.SkillToolCallRef, 0)
+	for _, call := range calls {
+		if strings.EqualFold(strings.TrimSpace(call.SkillID), skillID) &&
+			strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
+			matches = append(matches, call)
+		}
+	}
+	return matches
+}
+
 func finalAnswerGuardHasSuccessfulToolForConsoleHref(req skillloop.FinalAnswerGuardRequest, skillID string, toolName string, href string) bool {
 	return finalAnswerGuardHasToolForConsoleHref(req.SuccessfulToolCalls, skillID, toolName, href)
 }
@@ -1382,6 +6024,101 @@ func finalAnswerGuardHasToolForConsoleHref(calls []skillloop.SkillToolCallRef, s
 			continue
 		}
 		if consoleNavigationLoadedHrefMatchesTarget(skillToolCallArgumentString(call.Arguments, "href"), href) {
+			return true
+		}
+	}
+	return false
+}
+
+func finalAnswerGuardHasAgentDeleteCall(calls []skillloop.SkillToolCallRef, agentID string) bool {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return false
+	}
+	for _, call := range calls {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillAgentManagement) {
+			continue
+		}
+		switch strings.TrimSpace(call.ToolName) {
+		case "delete_agent":
+			if strings.TrimSpace(firstNonEmptyString(
+				skillToolCallArgumentString(call.Arguments, "agent_id"),
+				skillToolCallArgumentString(call.Arguments, "id"),
+				skillToolCallArgumentString(call.Arguments, "asset_id"),
+			)) == agentID {
+				return true
+			}
+		case "delete_agents":
+			if finalAnswerGuardBatchAgentDeleteHasTarget(call, agentID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func finalAnswerGuardBatchAgentDeleteHasTarget(call skillloop.SkillToolCallRef, agentID string) bool {
+	hasItemEvidence := false
+	for _, item := range mapSliceFromAny(call.Result["item_results"]) {
+		hasItemEvidence = true
+		if strings.TrimSpace(firstNonEmptyString(
+			item["agent_id"],
+			item["id"],
+			item["asset_id"],
+			item["resource_id"],
+		)) == agentID &&
+			finalAnswerGuardAgentDeleteItemSucceeded(item["status"]) {
+			return true
+		}
+	}
+	group := mapFromOperationContext(call.Result["operation_group"])
+	for _, item := range mapSliceFromAny(group["item_results"]) {
+		hasItemEvidence = true
+		if strings.TrimSpace(firstNonEmptyString(
+			item["agent_id"],
+			item["id"],
+			item["asset_id"],
+			item["resource_id"],
+		)) == agentID &&
+			finalAnswerGuardAgentDeleteItemSucceeded(item["status"]) {
+			return true
+		}
+	}
+	if hasItemEvidence {
+		return false
+	}
+	for _, item := range mapSliceFromAny(call.Arguments["agents"]) {
+		if strings.TrimSpace(firstNonEmptyString(
+			item["agent_id"],
+			item["id"],
+			item["asset_id"],
+			item["resource_id"],
+		)) == agentID {
+			return true
+		}
+	}
+	return false
+}
+
+func finalAnswerGuardAgentDeleteItemSucceeded(status interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(status))) {
+	case "succeeded", "success", "completed":
+		return true
+	default:
+		return false
+	}
+}
+
+func finalAnswerGuardHasExactConsoleNavigateCall(calls []skillloop.SkillToolCallRef, href string) bool {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if href == "" {
+		return false
+	}
+	for _, call := range calls {
+		if !isConsoleNavigatorNavigateTool(call.SkillID, call.ToolName) {
+			continue
+		}
+		if normalizeConsoleNavigationGuardHref(skillToolCallArgumentString(call.Arguments, "href")) == href {
 			return true
 		}
 	}
@@ -1440,22 +6177,195 @@ func normalizeConsoleNavigationGuardHref(rawHref string) string {
 }
 
 func resolveConsoleNavigationTarget(query string) (consoleNavigationRouteHint, bool) {
-	if !isConsoleNavigationIntent(query) {
+	targets := consoleNavigationResolvedTargets(query)
+	if len(targets) == 0 {
 		return consoleNavigationRouteHint{}, false
 	}
+	return targets[0], true
+}
+
+func consoleNavigationResolvedTargetCount(query string) int {
+	return len(consoleNavigationResolvedTargets(query))
+}
+
+func consoleNavigationResolvedTargets(query string) []consoleNavigationRouteHint {
+	if !isConsoleNavigationIntent(query) {
+		return nil
+	}
 	normalized := normalizeConsoleNavigationQuery(query)
+	if normalized == "" {
+		return nil
+	}
+	resolved := make([]resolvedConsoleNavigationTarget, 0, 4)
+	seen := map[string]struct{}{}
 	for _, route := range consoleNavigationRouteHints {
-		if strings.Contains(normalized, strings.ToLower(route.Href)) {
-			return route, true
+		href := strings.ToLower(route.Href)
+		for _, position := range consoleRouteHrefIndexes(normalized, href) {
+			key := route.Href + "\x00" + strconv.Itoa(position)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			resolved = append(resolved, resolvedConsoleNavigationTarget{Hint: route, Position: position})
 		}
-		for _, keyword := range route.Keywords {
+		for _, keyword := range consoleNavigationRouteKeywords(route) {
 			keyword = normalizeConsoleNavigationQuery(keyword)
-			if keyword != "" && strings.Contains(normalized, keyword) {
-				return route, true
+			if keyword == "" {
+				continue
+			}
+			for _, position := range allStringIndexes(normalized, keyword) {
+				if !consoleNavigationKeywordPositionAllowed(keyword, normalized, position) {
+					continue
+				}
+				key := route.Href + "\x00" + strconv.Itoa(position)
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				resolved = append(resolved, resolvedConsoleNavigationTarget{Hint: route, Position: position})
 			}
 		}
 	}
-	return consoleNavigationRouteHint{}, false
+	sort.SliceStable(resolved, func(i, j int) bool {
+		return resolved[i].Position < resolved[j].Position
+	})
+	targets := make([]consoleNavigationRouteHint, 0, len(resolved))
+	for _, item := range resolved {
+		if len(targets) > 0 && consoleNavigationLoadedHrefMatchesTarget(targets[len(targets)-1].Href, item.Hint.Href) {
+			continue
+		}
+		targets = append(targets, item.Hint)
+	}
+	return targets
+}
+
+func consoleRouteHrefIndexes(haystack string, href string) []int {
+	indexes := allStringIndexes(haystack, href)
+	if href != "/console" || len(indexes) == 0 {
+		return indexes
+	}
+	filtered := indexes[:0]
+	for _, position := range indexes {
+		next := position + len(href)
+		if next < len(haystack) && haystack[next] == '/' {
+			continue
+		}
+		filtered = append(filtered, position)
+	}
+	return filtered
+}
+
+func consoleNavigationKeywordPositionAllowed(keyword, normalized string, position int) bool {
+	if keyword == "" || normalized == "" || position < 0 || position+len(keyword) > len(normalized) {
+		return false
+	}
+	if consoleNavigationKeywordHasExplicitPageCue(keyword) {
+		return true
+	}
+	suffix := normalized[position+len(keyword):]
+	for _, blockedSuffix := range []string{
+		"\u540d\u79f0",
+		"\u540d\u5b57",
+		"id",
+		"\u7f16\u53f7",
+		"\u914d\u7f6e",
+		"\u5185\u5bb9",
+		"\u63cf\u8ff0",
+		"\u7ed3\u679c",
+		"\u8f93\u51fa",
+		"\u7ed1\u5b9a",
+		"\u6570\u91cf",
+		"\u72b6\u6001",
+	} {
+		if strings.HasPrefix(suffix, blockedSuffix) {
+			return false
+		}
+	}
+	return true
+}
+
+func consoleNavigationKeywordHasExplicitPageCue(keyword string) bool {
+	return containsAnySubstring(keyword, []string{
+		"/console",
+		"page",
+		"list",
+		"\u9875",
+		"\u9875\u9762",
+		"\u7ba1\u7406",
+		"\u6a21\u5757",
+		"\u9996\u9875",
+		"\u4e3b\u9875",
+		"\u63a7\u5236\u53f0",
+	})
+}
+
+func allStringIndexes(haystack string, needle string) []int {
+	if haystack == "" || needle == "" {
+		return nil
+	}
+	indexes := []int{}
+	offset := 0
+	for {
+		idx := strings.Index(haystack[offset:], needle)
+		if idx < 0 {
+			return indexes
+		}
+		position := offset + idx
+		indexes = append(indexes, position)
+		offset = position + len(needle)
+		if offset >= len(haystack) {
+			return indexes
+		}
+	}
+}
+
+func consoleNavigationRouteKeywords(route consoleNavigationRouteHint) []string {
+	keywords := append([]string(nil), route.Keywords...)
+	switch route.Href {
+	case "/console":
+		keywords = append(keywords, "\u9996\u9875", "\u4e3b\u9875", "\u63a7\u5236\u53f0\u9996\u9875")
+	case "/console/work/chat":
+		keywords = append(keywords, "\u5bf9\u8bdd", "\u804a\u5929", "\u4f1a\u8bdd", "\u5bf9\u8bdd\u9875", "\u804a\u5929\u9875")
+	case "/console/work/image":
+		keywords = append(keywords, "\u7ed8\u56fe", "\u56fe\u50cf\u751f\u6210", "\u56fe\u7247\u751f\u6210")
+	case "/console/work/app":
+		keywords = append(keywords, "\u5e94\u7528", "\u5e94\u7528\u9875", "\u5e94\u7528\u7ba1\u7406")
+	case "/console/work/task":
+		keywords = append(keywords, "\u5b9a\u65f6\u4efb\u52a1", "\u8ba1\u5212\u4efb\u52a1", "\u4efb\u52a1\u9875")
+	case "/console/agents":
+		keywords = append(keywords, "\u667a\u80fd\u4f53", "\u667a\u80fd\u4f53\u9875", "\u667a\u80fd\u4f53\u9875\u9762", "\u667a\u80fd\u4f53\u7ba1\u7406", "\u5de5\u4f5c\u6d41", "\u5de5\u4f5c\u6d41\u9875")
+	case "/console/dataset":
+		keywords = append(keywords, "\u77e5\u8bc6\u5e93", "\u77e5\u8bc6\u5e93\u9875", "\u6570\u636e\u96c6")
+	case "/console/db":
+		keywords = append(keywords, "\u6570\u636e\u5e93", "\u6570\u636e\u5e93\u9875", "\u6570\u636e\u8868")
+	case "/console/files":
+		keywords = append(keywords, "\u6587\u4ef6\u7ba1\u7406", "\u6587\u4ef6\u9875", "\u6587\u4ef6\u9875\u9762", "\u6587\u4ef6\u6a21\u5757")
+	case "/console/prompts":
+		keywords = append(keywords, "\u63d0\u793a\u8bcd", "\u63d0\u793a\u8bcd\u9875")
+	case "/console/developer/content-parse":
+		keywords = append(keywords, "\u6587\u4ef6\u8bc6\u522b", "\u5185\u5bb9\u89e3\u6790")
+	case "/console/workspace":
+		keywords = append(keywords, "\u5de5\u4f5c\u7a7a\u95f4")
+	case "/console/settings":
+		keywords = append(keywords, "\u7cfb\u7edf\u8bbe\u7f6e", "\u8bbe\u7f6e\u9875")
+	}
+	return keywords
+}
+
+func clientActionRouteHref(event map[string]interface{}) string {
+	if len(event) == 0 {
+		return ""
+	}
+	if href := normalizeConsoleNavigationGuardHref(stringFromAny(event["href"])); href != "" {
+		return href
+	}
+	result := governanceMapFromAny(event["result"])
+	for _, key := range []string{"observed_path", "href", "loaded_href", "target_page"} {
+		if href := normalizeConsoleNavigationGuardHref(stringFromAny(result[key])); href != "" {
+			return href
+		}
+	}
+	return ""
 }
 
 func isConsoleNavigationIntent(query string) bool {
@@ -1464,10 +6374,387 @@ func isConsoleNavigationIntent(query string) bool {
 		return false
 	}
 	for _, marker := range []string{
-		"带我去", "带我到", "打开", "跳转", "切换到", "进入", "前往", "导航到", "转到",
+		"带我去", "带我到", "打开", "跳转", "切换到", "切到", "进入", "前往", "导航到", "转到", "去到",
+		"\u5e26\u6211\u53bb", "\u5e26\u6211\u5230", "\u6253\u5f00", "\u8df3\u8f6c", "\u5207\u6362\u5230", "\u5207\u5230", "\u8fdb\u5165", "\u524d\u5f80", "\u5bfc\u822a", "\u5bfc\u822a\u5230", "\u8f6c\u5230", "\u53bb\u5230", "\u4f9d\u6b21\u5bfc\u822a",
 		"go to", "open", "switch to", "navigate to", "take me to", "show me",
 	} {
 		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isContinuationIntent(query string) bool {
+	normalized := normalizeConsoleNavigationQuery(query)
+	if normalized == "" {
+		return false
+	}
+	if isStagedContinuationInstruction(normalized) {
+		return false
+	}
+	if isWaitForFutureContinuationInstruction(normalized) {
+		return false
+	}
+	if isCanonicalChineseContinuationIntent(normalized) {
+		return true
+	}
+	runeCount := len([]rune(normalized))
+	if runeCount > 24 {
+		return isLongContinuationIntent(normalized, runeCount)
+	}
+	for _, exact := range []string{
+		"继续",
+		"继续吧",
+		"继续处理",
+		"继续执行",
+		"接着",
+		"接着做",
+		"下一步",
+		"继续上一步",
+		"继续刚才的任务",
+		"\u7ee7\u7eed",
+		"\u7ee7\u7eed\u5427",
+		"\u7ee7\u7eed\u5904\u7406",
+		"\u7ee7\u7eed\u6267\u884c",
+		"\u63a5\u7740",
+		"\u63a5\u7740\u505a",
+		"\u4e0b\u4e00\u6b65",
+		"\u7ee7\u7eed\u4e0a\u4e00\u6b65",
+		"\u7ee7\u7eed\u521a\u624d\u7684\u4efb\u52a1",
+		"continue",
+		"continue please",
+		"go on",
+		"keep going",
+		"next",
+		"next step",
+		"proceed",
+	} {
+		if normalized == exact {
+			return true
+		}
+	}
+	for _, marker := range []string{"继续", "接着", "下一步", "continue", "go on", "keep going", "next step"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCanonicalChineseContinuationIntent(normalized string) bool {
+	if normalized == "" {
+		return false
+	}
+	runeCount := len([]rune(normalized))
+	exact := map[string]struct{}{
+		"\u7ee7\u7eed":                               {},
+		"\u7ee7\u7eed\u5427":                         {},
+		"\u7ee7\u7eed\u5904\u7406":                   {},
+		"\u7ee7\u7eed\u6267\u884c":                   {},
+		"\u63a5\u7740":                               {},
+		"\u63a5\u7740\u505a":                         {},
+		"\u4e0b\u4e00\u6b65":                         {},
+		"\u7ee7\u7eed\u4e0a\u4e00\u6b65":             {},
+		"\u7ee7\u7eed\u521a\u624d\u7684\u4efb\u52a1": {},
+	}
+	if _, ok := exact[normalized]; ok {
+		return true
+	}
+	if runeCount <= 24 {
+		return containsAnySubstring(normalized, []string{"\u7ee7\u7eed", "\u63a5\u7740", "\u4e0b\u4e00\u6b65"})
+	}
+	return false
+}
+
+func isWaitForFutureContinuationInstruction(normalized string) bool {
+	if normalized == "" {
+		return false
+	}
+	compact := strings.NewReplacer(
+		" ", "",
+		"\u201c", "",
+		"\u201d", "",
+		"\"", "",
+		"'", "",
+		"`", "",
+	).Replace(normalized)
+	return containsAnySubstring(compact, []string{
+		"\u7b49\u5f85\u7ee7\u7eed",
+		"\u7b49\u7ee7\u7eed",
+		"\u7b49\u5f85\u7528\u6237\u7ee7\u7eed",
+		"\u7b49\u7528\u6237\u7ee7\u7eed",
+	}) || containsAnySubstring(normalized, []string{
+		"wait for continue",
+		"wait for the user to continue",
+		"wait for user continue",
+	})
+}
+
+func stagedExecutionScopedParts(parts *chatRequestParts) (*chatRequestParts, bool, bool) {
+	if parts == nil {
+		return nil, false, false
+	}
+	if isContinuationIntent(parts.Query) {
+		if current, ok := stagedContinuationResumeQuery(parts); ok {
+			return chatRequestPartsWithQuery(parts, current), false, true
+		}
+		return parts, false, false
+	}
+	current, _, ok := splitStagedContinuationQuery(parts.Query)
+	if ok {
+		if strings.TrimSpace(current) == "" {
+			return parts, true, false
+		}
+		return chatRequestPartsWithQuery(parts, current), true, false
+	}
+	return parts, false, false
+}
+
+func chatRequestPartsWithQuery(parts *chatRequestParts, query string) *chatRequestParts {
+	if parts == nil {
+		return nil
+	}
+	next := *parts
+	next.Query = strings.TrimSpace(query)
+	return &next
+}
+
+func stagedContinuationResumeQuery(parts *chatRequestParts) (string, bool) {
+	goal := recentOperationPlanOriginalGoal(parts)
+	if goal == "" {
+		return "", false
+	}
+	_, deferred, ok := splitStagedContinuationQuery(goal)
+	if !ok || strings.TrimSpace(deferred) == "" {
+		return "", false
+	}
+	return stagedContinuationDeferredExecutionQuery(deferred), true
+}
+
+func splitStagedContinuationQuery(query string) (string, string, bool) {
+	raw := strings.TrimSpace(query)
+	if raw == "" {
+		return "", "", false
+	}
+	lower := strings.ToLower(raw)
+	for _, marker := range stagedContinuationRawMarkers() {
+		if marker == "" {
+			continue
+		}
+		if idx := strings.Index(lower, marker); idx >= 0 {
+			return strings.TrimSpace(raw[:idx]), strings.TrimSpace(raw[idx:]), true
+		}
+	}
+	normalized := normalizeConsoleNavigationQuery(raw)
+	if !isStagedContinuationInstruction(normalized) {
+		return raw, "", false
+	}
+	if idx := strings.Index(lower, "\u7ee7\u7eed"); idx >= 0 {
+		return strings.TrimSpace(raw[:idx]), strings.TrimSpace(raw[idx:]), true
+	}
+	if idx := strings.Index(lower, "continue"); idx >= 0 {
+		return strings.TrimSpace(raw[:idx]), strings.TrimSpace(raw[idx:]), true
+	}
+	return raw, "", true
+}
+
+func stagedContinuationRawMarkers() []string {
+	return []string{
+		"\u7b49\u5f85\u6211\u8bf4",
+		"\u7b49\u6211\u8bf4",
+		"\u7b49\u6211\u8f93\u5165",
+		"\u7b49\u6211\u53d1",
+		"\u5f53\u6211\u8bf4",
+		"\u6211\u8bf4\u7ee7\u7eed\u540e",
+		"\u6211\u8bf4\u4e86\u7ee7\u7eed",
+		"\u8bf4\u7ee7\u7eed\u540e",
+		"wait for me to say continue",
+		"wait until i say continue",
+		"after i say continue",
+		"when i say continue",
+		"once i say continue",
+		"wait for my continue",
+	}
+}
+
+func stagedContinuationDeferredExecutionQuery(deferred string) string {
+	deferred = strings.TrimSpace(deferred)
+	if deferred == "" {
+		return ""
+	}
+	for _, separator := range []string{"\uff1a", ":"} {
+		if idx := strings.Index(deferred, separator); idx >= 0 && idx+len(separator) < len(deferred) {
+			return strings.TrimSpace(deferred[idx+len(separator):])
+		}
+	}
+	replacer := strings.NewReplacer(
+		"\u7b49\u5f85\u6211\u8bf4", "",
+		"\u7b49\u6211\u8bf4", "",
+		"\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\u540e", "",
+		"\u6211\u8bf4\u2018\u7ee7\u7eed\u2019\u540e", "",
+		"\u6211\u8bf4\u7ee7\u7eed\u540e", "",
+		"\u6211\u8bf4\u4e86\u7ee7\u7eed", "",
+		"\u8bf4\u7ee7\u7eed\u540e", "",
+		"\u201c\u7ee7\u7eed\u201d", "",
+		"\u2018\u7ee7\u7eed\u2019", "",
+		"\u7ee7\u7eed", "",
+		"\u540e\u518d\u6267\u884c", "",
+		"\u540e\u518d", "",
+	)
+	cleaned := strings.TrimSpace(replacer.Replace(deferred))
+	cleaned = strings.TrimLeftFunc(cleaned, func(r rune) bool {
+		if unicode.IsSpace(r) {
+			return true
+		}
+		switch r {
+		case '.', ',', ';', ':', '\uff0c', '\u3002', '\uff1b', '\uff1a', '\u3001':
+			return true
+		default:
+			return false
+		}
+	})
+	return strings.TrimSpace(cleaned)
+}
+
+func stagedContinuationToolCallGuardResult(parts *chatRequestParts, req skillloop.ToolCallGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+	if parts == nil {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) {
+		href := skillToolCallArgumentString(req.Arguments, "href")
+		if !consoleNavigationHrefAllowedForCurrentScope(href, consoleNavigationResolvedTargets(parts.Query)) {
+			return stagedContinuationDeferredToolGuardResult(req.SkillID, req.ToolName), true
+		}
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	if isKnownArtifactGeneratorToolCall(req.SkillID, req.ToolName) &&
+		!isTemporaryFileGenerateIntent(parts.Query) && !isManagedFileCreateIntent(parts.Query) {
+		return stagedContinuationDeferredToolGuardResult(req.SkillID, req.ToolName), true
+	}
+	if isFileManagerSaveToolCall(req.SkillID, req.ToolName) && !isManagedFileCreateIntent(parts.Query) {
+		return stagedContinuationDeferredToolGuardResult(req.SkillID, req.ToolName), true
+	}
+	if isFileManagerDeleteToolCall(req.SkillID, req.ToolName) && !isFileDeleteIntent(parts.Query) {
+		return stagedContinuationDeferredToolGuardResult(req.SkillID, req.ToolName), true
+	}
+	return skillloop.FinalAnswerGuardResult{}, false
+}
+
+func consoleNavigationHrefAllowedForCurrentScope(href string, targets []consoleNavigationRouteHint) bool {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if href == "" {
+		return false
+	}
+	for _, target := range targets {
+		if consoleNavigationLoadedHrefMatchesTarget(href, target.Href) {
+			return true
+		}
+	}
+	return false
+}
+
+func stagedContinuationDeferredToolGuardResult(skillID, toolName string) skillloop.FinalAnswerGuardResult {
+	message := strings.Join([]string{
+		"The user's message contains a staged continuation.",
+		"Only execute instructions before the continue marker in this turn.",
+		"Wait for the user to say continue before running deferred navigation, file generation, file management, or deletion steps.",
+	}, " ")
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       strings.TrimSpace(skillID),
+		ToolName:      strings.TrimSpace(toolName),
+		Message:       message,
+		SystemMessage: message,
+	}
+}
+
+func isStagedContinuationInstruction(normalized string) bool {
+	if normalized == "" {
+		return false
+	}
+	compact := strings.NewReplacer(
+		" ", "",
+		"\u201c", "",
+		"\u201d", "",
+		"\u2018", "",
+		"\u2019", "",
+		"\"", "",
+		"'", "",
+		"`", "",
+		"\u300c", "",
+		"\u300d", "",
+		"\u300e", "",
+		"\u300f", "",
+		"\u300a", "",
+		"\u300b", "",
+	).Replace(normalized)
+	if containsAnySubstring(compact, []string{
+		"\u7b49\u5f85\u6211\u8bf4\u7ee7\u7eed",
+		"\u7b49\u6211\u8bf4\u7ee7\u7eed",
+		"\u7b49\u6211\u8f93\u5165\u7ee7\u7eed",
+		"\u7b49\u6211\u53d1\u7ee7\u7eed",
+		"\u6211\u8bf4\u7ee7\u7eed\u540e",
+		"\u8bf4\u7ee7\u7eed\u540e",
+		"\u5f53\u6211\u8bf4\u7ee7\u7eed",
+		"\u6211\u8bf4\u4e86\u7ee7\u7eed\u518d",
+		"\u6211\u8bf4\u7ee7\u7eed\u518d",
+		"\u7b49\u5f85\u7ee7\u7eed\u6307\u4ee4",
+	}) {
+		return true
+	}
+	return containsAnySubstring(normalized, []string{
+		"wait for me to say continue",
+		"wait until i say continue",
+		"after i say continue",
+		"when i say continue",
+		"once i say continue",
+		"wait for my continue",
+	})
+}
+
+func isLongContinuationIntent(normalized string, runeCount int) bool {
+	if normalized == "" {
+		return false
+	}
+	if hasContinuationPrefix(normalized) {
+		return true
+	}
+	continuationMarkerFound := false
+	for _, marker := range []string{"\u7ee7\u7eed", "\u63a5\u7740", "\u4e0b\u4e00\u6b65", "continue", "go on", "keep going", "next step"} {
+		if strings.Contains(normalized, marker) {
+			continuationMarkerFound = true
+			break
+		}
+	}
+	if !continuationMarkerFound {
+		return false
+	}
+	if runeCount <= 64 {
+		return true
+	}
+	return containsAnySubstring(normalized, []string{
+		"\u4efb\u52a1\u6807\u8bb0",
+		"task marker",
+		"task tag",
+		"smoke-",
+	})
+}
+
+func hasContinuationPrefix(normalized string) bool {
+	normalized = strings.TrimSpace(normalized)
+	if normalized == "" {
+		return false
+	}
+	for _, prefix := range []string{
+		"\u7ee7\u7eed",
+		"\u63a5\u7740",
+		"\u4e0b\u4e00\u6b65",
+		"continue",
+		"go on",
+		"keep going",
+		"next step",
+	} {
+		if strings.HasPrefix(normalized, prefix) {
 			return true
 		}
 	}
@@ -1659,6 +6946,48 @@ func consoleFilesPromptVisibleFiles(parts *chatRequestParts) []map[string]interf
 		}
 		if strings.TrimSpace(file.WorkspaceID) != "" {
 			item["workspace_id"] = strings.TrimSpace(file.WorkspaceID)
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func consoleAgentsPromptVisibleAgents(parts *chatRequestParts) []map[string]interface{} {
+	if parts == nil {
+		return nil
+	}
+	agents := visibleAgentResources(parts.RawOperationContext)
+	if len(agents) == 0 {
+		agents = visibleAgentResources(parts.OperationContext)
+	}
+	out := make([]map[string]interface{}, 0, min(len(agents), 10))
+	for idx, agent := range agents {
+		if idx >= 10 {
+			break
+		}
+		item := map[string]interface{}{
+			"visible_index": agent.VisibleIndex,
+			"type":          "agent",
+			"asset_type":    "agent",
+			"agent_id":      agent.ID,
+			"id":            agent.ID,
+			"name":          agent.Title,
+			"href":          agent.Href,
+		}
+		if strings.TrimSpace(agent.Description) != "" {
+			item["description"] = strings.TrimSpace(agent.Description)
+		}
+		if strings.TrimSpace(agent.AgentType) != "" {
+			item["agent_type"] = strings.TrimSpace(agent.AgentType)
+		}
+		if strings.TrimSpace(agent.WorkspaceID) != "" {
+			item["workspace_id"] = strings.TrimSpace(agent.WorkspaceID)
+		}
+		if agent.Selected {
+			item["selected"] = true
+		}
+		if agent.CanEdit {
+			item["can_edit"] = true
 		}
 		out = append(out, item)
 	}

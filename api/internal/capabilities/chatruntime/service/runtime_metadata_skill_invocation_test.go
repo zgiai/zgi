@@ -133,3 +133,301 @@ func TestMergeSkillInvocationMetadataKeepsNonFileResultContent(t *testing.T) {
 		t.Fatalf("non-file skill result content was unexpectedly redacted: %s", string(encoded))
 	}
 }
+
+func TestMergeSkillInvocationMetadataSortsTimelineByCreatedAt(t *testing.T) {
+	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{
+		{
+			"kind":       "tool_call",
+			"skill_id":   "file-manager",
+			"tool_name":  "save_file_to_management",
+			"status":     "success",
+			"created_at": 300,
+			"runtime_id": "save-late",
+		},
+		{
+			"kind":       "client_action",
+			"skill_id":   "console-navigator",
+			"tool_name":  "navigate",
+			"status":     "succeeded",
+			"created_at": 100,
+			"runtime_id": "route-early",
+		},
+		{
+			"kind":       "reference_read",
+			"skill_id":   "file-generator",
+			"path":       "format-svg.md",
+			"status":     "success",
+			"created_at": "200",
+			"runtime_id": "read-middle",
+		},
+	})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 3 {
+		t.Fatalf("skill_invocations len = %d in %#v, want 3", len(invocations), metadata["skill_invocations"])
+	}
+	got := []string{
+		stringFromAny(invocations[0]["runtime_id"]),
+		stringFromAny(invocations[1]["runtime_id"]),
+		stringFromAny(invocations[2]["runtime_id"]),
+	}
+	want := []string{"route-early", "read-middle", "save-late"}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("runtime_id order = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestMergeSkillInvocationMetadataKeepsStableOrderForMissingCreatedAt(t *testing.T) {
+	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{
+		{
+			"kind":       "tool_call",
+			"skill_id":   "file-generator",
+			"tool_name":  "generate_file",
+			"status":     "success",
+			"created_at": 100,
+			"runtime_id": "dated",
+		},
+		{
+			"kind":       "guardrail",
+			"skill_id":   "file-manager",
+			"tool_name":  "save_file_to_management",
+			"status":     "blocked",
+			"runtime_id": "missing-one",
+		},
+		{
+			"kind":       "guardrail",
+			"skill_id":   "file-generator",
+			"tool_name":  "generate_file",
+			"status":     "blocked",
+			"runtime_id": "missing-two",
+		},
+	})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	got := []string{
+		stringFromAny(invocations[0]["runtime_id"]),
+		stringFromAny(invocations[1]["runtime_id"]),
+		stringFromAny(invocations[2]["runtime_id"]),
+	}
+	want := []string{"dated", "missing-one", "missing-two"}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("runtime_id order = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestMergeSkillInvocationMetadataOmitsInternalPlannerGuardrail(t *testing.T) {
+	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{
+		{
+			"kind":      "guardrail",
+			"skill_id":  skills.SkillFileGenerator,
+			"tool_name": "generate_file",
+			"status":    "blocked",
+			"error":     "use the existing temporary artifact",
+			"arguments": map[string]interface{}{
+				"next_step": "continue_planning",
+			},
+			"runtime_id": "internal-feedback",
+		},
+		{
+			"kind":       "guardrail",
+			"skill_id":   skills.SkillFileManager,
+			"tool_name":  "save_file_to_management",
+			"status":     "blocked",
+			"error":      "visible governance guardrail",
+			"runtime_id": "visible-guardrail",
+		},
+	})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want only the visible guardrail", invocations)
+	}
+	if got := stringFromAny(invocations[0]["runtime_id"]); got != "visible-guardrail" {
+		t.Fatalf("runtime_id = %q, want visible-guardrail", got)
+	}
+	if metadata["guardrail_count"] != 1 {
+		t.Fatalf("guardrail_count = %#v, want 1", metadata["guardrail_count"])
+	}
+}
+
+func TestMergeSkillTraceMetadataOmitsInternalPlannerGuardrail(t *testing.T) {
+	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
+		Kind:     "guardrail",
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Status:   "blocked",
+		Error:    "use the existing temporary artifact",
+		Arguments: map[string]interface{}{
+			"next_step": "continue_planning",
+		},
+	}})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 0 {
+		t.Fatalf("skill_invocations = %#v, want no user-visible planner feedback guardrail", invocations)
+	}
+	if metadata["guardrail_count"] != 0 {
+		t.Fatalf("guardrail_count = %#v, want 0", metadata["guardrail_count"])
+	}
+}
+
+func TestMergeSkillTraceMetadataOmitsPlannerFeedback(t *testing.T) {
+	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
+		Kind:     "planner_feedback",
+		SkillID:  skills.SkillFileReader,
+		ToolName: "read_file",
+		Status:   "blocked",
+		Error:    "skill must be loaded before calling its tools",
+		Arguments: map[string]interface{}{
+			"next_step": "load_skill",
+		},
+	}})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 0 {
+		t.Fatalf("skill_invocations = %#v, want no user-visible planner feedback", invocations)
+	}
+	if metadata["guardrail_count"] != 0 {
+		t.Fatalf("guardrail_count = %#v, want 0", metadata["guardrail_count"])
+	}
+}
+
+func TestMergeClientActionMetadataDoesNotReviveInternalPlannerGuardrail(t *testing.T) {
+	metadata := map[string]interface{}{
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "guardrail",
+				"skill_id":  skills.SkillFileGenerator,
+				"tool_name": "generate_file",
+				"status":    "blocked",
+				"error":     "generated artifact already exists",
+				"arguments": map[string]interface{}{
+					"next_step": "continue_planning",
+				},
+				"runtime_id": "internal-feedback",
+			},
+			map[string]interface{}{
+				"kind":       "tool_call",
+				"skill_id":   skills.SkillConsoleNavigator,
+				"tool_name":  "navigate",
+				"status":     "success",
+				"runtime_id": "route-tool",
+			},
+		},
+	}
+
+	metadata = mergeClientActionMetadata(metadata, map[string]interface{}{
+		"action_id":   "route_navigation:call-files",
+		"action_type": "route_navigation",
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+		"status":      "succeeded",
+		"href":        "/console/files",
+	})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	for _, invocation := range invocations {
+		if stringFromAny(invocation["runtime_id"]) == "internal-feedback" {
+			t.Fatalf("skill_invocations = %#v, want internal planner guardrail omitted", invocations)
+		}
+	}
+	if metadata["guardrail_count"] != 0 {
+		t.Fatalf("guardrail_count = %#v, want 0", metadata["guardrail_count"])
+	}
+}
+
+func TestMergeToolGovernanceDecisionMetadataDoesNotReviveInternalPlannerGuardrail(t *testing.T) {
+	metadata := map[string]interface{}{
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "guardrail",
+				"skill_id":  skills.SkillFileManager,
+				"tool_name": "save_file_to_management",
+				"status":    "blocked",
+				"error":     "continue with the existing generated artifact",
+				"arguments": map[string]interface{}{
+					"next_step": "continue_planning",
+				},
+				"runtime_id": "internal-feedback",
+			},
+			map[string]interface{}{
+				"kind":           "tool_call",
+				"skill_id":       skills.SkillFileManager,
+				"tool_name":      "save_file_to_management",
+				"status":         "waiting_approval",
+				"runtime_id":     "save-tool",
+				"correlation_id": "corr-save",
+			},
+		},
+	}
+
+	metadata = mergeToolGovernanceDecisionMetadata(metadata, map[string]interface{}{
+		"correlation_id":    "corr-save",
+		"skill_id":          skills.SkillFileManager,
+		"tool_name":         "save_file_to_management",
+		"approval_status":   "approved",
+		"status":            "allowed",
+		"requires_approval": true,
+	})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	for _, invocation := range invocations {
+		if stringFromAny(invocation["runtime_id"]) == "internal-feedback" {
+			t.Fatalf("skill_invocations = %#v, want internal planner guardrail omitted", invocations)
+		}
+	}
+	if metadata["guardrail_count"] != 0 {
+		t.Fatalf("guardrail_count = %#v, want 0", metadata["guardrail_count"])
+	}
+}
+
+func TestMergeToolGovernanceDecisionMetadataUpdatesOperationPlan(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"),
+					"status":    operationPlanStepStatusPending,
+					"skill_id":  skills.SkillFileManager,
+					"tool_name": "save_file_to_management",
+				},
+			},
+			"step_status": map[string]interface{}{
+				operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"): operationPlanStepStatusPending,
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":           "tool_call",
+				"skill_id":       skills.SkillFileManager,
+				"tool_name":      "save_file_to_management",
+				"status":         "waiting_approval",
+				"runtime_id":     "save-tool",
+				"correlation_id": "corr-save",
+			},
+		},
+	}
+
+	metadata = mergeToolGovernanceDecisionMetadata(metadata, map[string]interface{}{
+		"correlation_id":  "corr-save",
+		"skill_id":        skills.SkillFileManager,
+		"tool_name":       "save_file_to_management",
+		"approval_status": "approved",
+		"status":          "allowed",
+	})
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
+		t.Fatalf("operation_plan.status = %q, want %q until save result evidence arrives; plan=%#v", got, operationPlanStatusRunning, plan)
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	stepID := operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")
+	if got := stringFromAny(stepStatus[stepID]); got != operationPlanStepStatusPending {
+		t.Fatalf("step_status[%s] = %q, want %q until save result evidence arrives; plan=%#v", stepID, got, operationPlanStepStatusPending, plan)
+	}
+}

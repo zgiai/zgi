@@ -121,6 +121,8 @@ type RunRequest struct {
 	FinalAnswerGuard         FinalAnswerGuard
 	UserInputGuard           UserInputGuard
 	ToolCallGuard            ToolCallGuard
+	PlanToolGuard            ToolCallGuard
+	CompletionEvidence       CompletionEvidenceFunc
 	OnChunk                  func(string) error
 }
 
@@ -129,6 +131,8 @@ type FinalAnswerGuard func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, boo
 type UserInputGuard func(UserInputGuardRequest) (FinalAnswerGuardResult, bool)
 
 type ToolCallGuard func(ToolCallGuardRequest) (FinalAnswerGuardResult, bool)
+
+type CompletionEvidenceFunc func() map[string]interface{}
 
 type FinalAnswerGuardRequest struct {
 	Answer              string
@@ -189,6 +193,7 @@ type ModelInvocationTrace struct {
 type PreparedChat struct {
 	Conversation *Conversation
 	Message      *Message
+	CurrentRoute string
 	parts        *chatParts
 	LLMRequest   *adapter.ChatRequest
 }

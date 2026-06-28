@@ -61,10 +61,17 @@ func (s *service) persistClientActionPending(ctx context.Context, prepared *Prep
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
 		return metadata
 	}
-	if err := s.repos.Message.UpdateWaitingClientAction(ctx, prepared.Message.ID, metadata); err != nil {
-		return metadata
-	}
-	_ = s.repos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+	s.persistPendingMessageAndFinishConversationBestEffort(
+		ctx,
+		prepared,
+		"client action",
+		func(repo repository.MessageRepository) error {
+			return repo.UpdateWaitingClientAction(ctx, prepared.Message.ID, metadata)
+		},
+		func(repo repository.ConversationRepository) error {
+			return repo.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+		},
+	)
 	return metadata
 }
 
@@ -121,50 +128,38 @@ func (s *service) RunClientActionContinuationStream(
 
 	var answer string
 	var usage *adapter.Usage
-	if shouldFinalizeClientActionWithoutSkillLoop(continuation.Event, req) {
-		answer, usage, err = s.runClientActionFinalAnswerStream(runCtx, prepared, onEvent)
-		if err != nil {
-			if errors.Is(err, ErrMessageStopped) {
-				_ = s.clearPreparedRuntime(context.WithoutCancel(ctx), prepared)
-				return nil, err
-			}
-			s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
-			return nil, newFinalizedStreamError(err)
+	answer, usage, err = s.runPreparedSkillStream(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
+	if err != nil {
+		var pendingGovernance *skillloop.ToolGovernancePendingError
+		if errors.As(err, &pendingGovernance) {
+			metadata := s.persistToolGovernanceApprovalPending(context.WithoutCancel(ctx), prepared, pendingGovernance.Payload, usage)
+			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
 		}
-	} else {
-		answer, usage, err = s.runPreparedSkillStream(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
-		if err != nil {
-			var pendingGovernance *skillloop.ToolGovernancePendingError
-			if errors.As(err, &pendingGovernance) {
-				metadata := s.persistToolGovernanceApprovalPending(context.WithoutCancel(ctx), prepared, pendingGovernance.Payload, usage)
-				s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
-			}
-			var pendingApproval *skillloop.WorkflowApprovalPendingError
-			if errors.As(err, &pendingApproval) {
-				metadata := s.persistWorkflowApprovalPending(context.WithoutCancel(ctx), prepared, pendingApproval.Payload, usage)
-				s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
-			}
-			var pendingQuestion *skillloop.WorkflowQuestionPendingError
-			if errors.As(err, &pendingQuestion) {
-				metadata := s.persistWorkflowQuestionPending(context.WithoutCancel(ctx), prepared, pendingQuestion.Payload, usage)
-				s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
-			}
-			var pendingClientAction *skillloop.ClientActionPendingError
-			if errors.As(err, &pendingClientAction) {
-				metadata := s.persistClientActionPending(context.WithoutCancel(ctx), prepared, pendingClientAction.Payload, usage)
-				s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, nil
-			}
-			if errors.Is(err, ErrMessageStopped) {
-				_ = s.clearPreparedRuntime(context.WithoutCancel(ctx), prepared)
-				return nil, err
-			}
-			s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
-			return nil, newFinalizedStreamError(err)
+		var pendingApproval *skillloop.WorkflowApprovalPendingError
+		if errors.As(err, &pendingApproval) {
+			metadata := s.persistWorkflowApprovalPending(context.WithoutCancel(ctx), prepared, pendingApproval.Payload, usage)
+			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
 		}
+		var pendingQuestion *skillloop.WorkflowQuestionPendingError
+		if errors.As(err, &pendingQuestion) {
+			metadata := s.persistWorkflowQuestionPending(context.WithoutCancel(ctx), prepared, pendingQuestion.Payload, usage)
+			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
+		}
+		var pendingClientAction *skillloop.ClientActionPendingError
+		if errors.As(err, &pendingClientAction) {
+			metadata := s.persistClientActionPending(context.WithoutCancel(ctx), prepared, pendingClientAction.Payload, usage)
+			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, nil
+		}
+		if errors.Is(err, ErrMessageStopped) {
+			_ = s.clearPreparedRuntime(context.WithoutCancel(ctx), prepared)
+			return nil, err
+		}
+		s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
+		return nil, newFinalizedStreamError(err)
 	}
 	if s.streams.IsStopped(message.ID) {
 		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
@@ -179,26 +174,6 @@ func (s *service) RunClientActionContinuationStream(
 	}
 	s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
-}
-
-func shouldFinalizeClientActionWithoutSkillLoop(event map[string]interface{}, req runtimedto.ClientActionResultRequest) bool {
-	return strings.EqualFold(strings.TrimSpace(stringFromAny(event["action_type"])), "asset_observation") &&
-		strings.EqualFold(strings.TrimSpace(req.Status), clientActionStatusSucceeded)
-}
-
-func (s *service) runClientActionFinalAnswerStream(ctx context.Context, prepared *PreparedChat, onEvent func(StreamEvent) error) (string, *adapter.Usage, error) {
-	if prepared == nil || prepared.LLMRequest == nil {
-		return "", nil, fmt.Errorf("%w: prepared chat is required", ErrInvalidInput)
-	}
-	prepared.LLMRequest.Tools = nil
-	prepared.LLMRequest.ToolChoice = nil
-	prepared.LLMRequest.Functions = nil
-	prepared.LLMRequest.FunctionCall = nil
-	stream, err := s.openChatStream(ctx, prepared)
-	if err != nil {
-		return "", nil, err
-	}
-	return s.collectStreamAnswerWithEvents(ctx, prepared, stream, onEvent, nil)
 }
 
 func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {
@@ -292,7 +267,10 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if err != nil {
 		return nil, err
 	}
-	injectClientActionContinuationContext(parts, continuation.Event, req)
+	if actionID := clientActionID(continuation.Event); actionID != "" {
+		message.Metadata = resolveClientActionContinuationMetadata(message.Metadata, actionID, req)
+	}
+	injectClientActionContinuationContext(parts, continuation.Event, req, message.Metadata)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
@@ -303,6 +281,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if err := s.applySkillConfig(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, nil, parts); err != nil {
 		return nil, err
 	}
+	ensureClientActionContinuationSkill(parts, continuation.Event)
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
 	if err != nil {
 		return nil, err
@@ -321,7 +300,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	}, nil
 }
 
-func injectClientActionContinuationContext(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest) {
+func injectClientActionContinuationContext(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) {
 	if parts == nil {
 		return
 	}
@@ -334,6 +313,149 @@ func injectClientActionContinuationContext(parts *chatRequestParts, event map[st
 	}
 	parts.RawOperationContext["client_action_continuation"] = record
 	parts.OperationContext["client_action_continuation"] = record
+	appendClientActionContinuationResources(parts.RawOperationContext, record)
+	appendClientActionContinuationResources(parts.OperationContext, record)
+	if completed := completedClientActionRecordsFromMetadata(metadata); len(completed) > 0 {
+		parts.RawOperationContext["completed_client_actions"] = completed
+		parts.OperationContext["completed_client_actions"] = completed
+	}
+}
+
+func appendClientActionContinuationResources(context map[string]interface{}, record map[string]interface{}) {
+	if len(context) == 0 || len(record) == 0 {
+		return
+	}
+	result := governanceMapFromAny(record["result"])
+	resources := mapSliceFromAny(context["resources"])
+	seen := map[string]struct{}{}
+	for _, resource := range resources {
+		key := clientActionContinuationResourceKey(resource)
+		if key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+	appendResource := func(resource map[string]interface{}) {
+		if len(resource) == 0 {
+			return
+		}
+		key := clientActionContinuationResourceKey(resource)
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				return
+			}
+			seen[key] = struct{}{}
+		}
+		resources = append(resources, resource)
+	}
+	for _, item := range mapSliceFromAny(result["context_items"]) {
+		appendResource(clientActionContextItemResource(item))
+	}
+	if strings.TrimSpace(stringFromAny(record["action_type"])) == "route_navigation" {
+		appendResource(clientActionRouteResource(record))
+	}
+	if len(resources) > 0 {
+		context["resources"] = mapsToInterfaceSlice(resources)
+	}
+}
+
+func clientActionContinuationResourceKey(resource map[string]interface{}) string {
+	if len(resource) == 0 {
+		return ""
+	}
+	metadata := mapFromOperationContext(resource["metadata"])
+	resourceType := strings.TrimSpace(firstNonEmptyString(resource["resource_type"], resource["type"], metadata["resource_type"], metadata["type"]))
+	resourceID := strings.TrimSpace(firstNonEmptyString(resource["resource_id"], resource["id"], resource["href"], metadata["resource_id"], metadata["id"], metadata["href"], metadata["route"]))
+	if resourceType == "" && resourceID == "" {
+		return ""
+	}
+	return resourceType + ":" + resourceID
+}
+
+func clientActionContextItemResource(item map[string]interface{}) map[string]interface{} {
+	if len(item) == 0 {
+		return nil
+	}
+	resourceType := strings.TrimSpace(firstNonEmptyString(item["resource_type"], item["type"]))
+	resourceID := strings.TrimSpace(firstNonEmptyString(item["resource_id"], item["id"]))
+	title := strings.TrimSpace(firstNonEmptyString(item["title"], item["name"]))
+	if resourceType == "" || (resourceID == "" && title == "") {
+		return nil
+	}
+	resource := map[string]interface{}{
+		"resource_type": resourceType,
+	}
+	if resourceID != "" {
+		resource["resource_id"] = resourceID
+	}
+	if title != "" {
+		resource["title"] = title
+	}
+	if href := normalizeConsoleNavigationGuardHref(firstNonEmptyString(item["href"], item["route"], item["observed_path"], item["loaded_href"])); href != "" {
+		resource["href"] = href
+	}
+	metadata := map[string]interface{}{}
+	for _, key := range []string{
+		"context_ready",
+		"files_query_status",
+		"agents_query_status",
+		"visible_file_count",
+		"total_file_count",
+		"visible_agent_count",
+		"loaded_agent_count",
+	} {
+		if value, ok := item[key]; ok && value != nil {
+			metadata[key] = value
+		}
+	}
+	if len(metadata) > 0 {
+		resource["metadata"] = metadata
+	}
+	return resource
+}
+
+func clientActionRouteResource(record map[string]interface{}) map[string]interface{} {
+	if len(record) == 0 {
+		return nil
+	}
+	result := governanceMapFromAny(record["result"])
+	href := normalizeConsoleNavigationGuardHref(firstNonEmptyString(
+		record["href"],
+		result["href"],
+		result["observed_path"],
+		result["loaded_href"],
+		result["target_page"],
+	))
+	if href == "" {
+		return nil
+	}
+	resource := map[string]interface{}{
+		"resource_id":   href,
+		"resource_type": "page",
+		"title":         firstNonEmptyString(record["label"], result["label"], href),
+		"href":          href,
+	}
+	metadata := map[string]interface{}{"route": href}
+	if ready, ok := result["page_context_ready"]; ok && ready != nil {
+		metadata["context_ready"] = ready
+	}
+	resource["metadata"] = metadata
+	return resource
+}
+
+func ensureClientActionContinuationSkill(parts *chatRequestParts, event map[string]interface{}) {
+	if parts == nil {
+		return
+	}
+	skillID := strings.TrimSpace(stringFromAny(event["skill_id"]))
+	if skillID == "" {
+		return
+	}
+	if !skillIDEnabled(parts.SkillIDs, skillID) {
+		parts.SkillIDs = append(parts.SkillIDs, skillID)
+	}
+	if !skillIDEnabled(parts.ConfiguredSkillIDs, skillID) {
+		parts.ConfiguredSkillIDs = append(parts.ConfiguredSkillIDs, skillID)
+	}
 }
 
 func clientActionContinuationMessage(message *runtimemodel.Message, event map[string]interface{}, req runtimedto.ClientActionResultRequest) adapter.Message {
@@ -342,21 +464,151 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 		userQuery = strings.TrimSpace(message.Query)
 	}
 	result := clientActionObservationRecord(event, req)
-	content := strings.Join([]string{
+	contentParts := []string{
 		"Original user request:\n" + userQuery,
 		"The frontend completed a client-side action for this same AIChat message.",
 		"Client action result JSON:\n" + compactJSON(result),
-	}, "\n\n")
+	}
+	if preceding := clientActionPrecedingSuccessfulToolInvocation(message, event); len(preceding) > 0 {
+		contentParts = append(contentParts, "Current-turn tool result immediately before this frontend action JSON:\n"+compactJSON(preceding))
+	}
+	if completedActions := completedClientActionsForContinuation(message); len(completedActions) > 0 {
+		contentParts = append(contentParts, "Completed client actions in this same AIChat turn JSON:\n"+compactJSON(completedActions))
+	}
+	content := strings.Join(contentParts, "\n\n")
 	system := strings.Join([]string{
 		"You are continuing the same AIChat turn after a frontend client action.",
 		"Use the updated transient ZGI page context already included in this request.",
 		"If the client action status is succeeded and it loaded a route, do not call console-navigator/navigate again for the same route.",
+		"Treat completed client actions listed below as authoritative completed steps. Continue from the next unfinished step instead of restarting the original plan or returning to an earlier completed route.",
+		"For event_type=route_loaded, phrase route success from the user's point of view, for example that the target page has been opened or switched to.",
+		"For event_type=route_already_loaded, say the requested page is already current only when useful, then continue the user's real task from the current page context.",
 		"If the client action status is succeeded and observed a resource mutation, use the observation result and updated page context to confirm whether the changed resource is visible; do not repeat the same side-effecting tool only to verify it.",
+		"If a current-turn tool result is provided, treat it as authoritative evidence for the current user request. If it completed the requested mutation, summarize that result as completed in this request and do not describe it as a previous round, previous conversation, last turn, earlier request, 上一轮, 上次, 之前, or 先前 unless the user explicitly asks about history.",
 		"Continue the user's original task from the new page context.",
 		"If the client action failed or timed out, treat that as recoverable feedback and decide whether to retry, choose another route, or explain the limitation.",
 		"Do not expose internal action ids, message ids, UUIDs, or raw JSON field names in the final user-visible answer.",
 	}, " ")
 	return adapter.Message{Role: "system", Content: system + "\n\n" + content}
+}
+
+func completedClientActionsForContinuation(message *runtimemodel.Message) []map[string]interface{} {
+	if message == nil {
+		return nil
+	}
+	return completedClientActionRecordsFromMetadata(message.Metadata)
+}
+
+func completedClientActionRecordsFromMetadata(metadata map[string]interface{}) []map[string]interface{} {
+	actions := mapSliceFromAny(metadataValue(metadata, "client_actions"))
+	if len(actions) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, min(len(actions), 8))
+	for _, action := range actions {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["status"])), clientActionStatusSucceeded) {
+			continue
+		}
+		item := map[string]interface{}{
+			"action_type": stringFromAny(action["action_type"]),
+			"status":      clientActionStatusSucceeded,
+		}
+		for _, key := range []string{"href", "label", "reason", "skill_id", "tool_name", "resolved_at"} {
+			if value := strings.TrimSpace(stringFromAny(action[key])); value != "" {
+				item[key] = value
+			}
+		}
+		if result := governanceMapFromAny(action["result"]); len(result) > 0 {
+			if href := strings.TrimSpace(stringFromAny(result["href"])); href != "" {
+				item["href"] = href
+			}
+			if contextItems := compactClientActionContextItems(result["context_items"]); len(contextItems) > 0 {
+				item["context_items"] = contextItems
+			}
+			if contextItemCount := stringFromAny(result["context_item_count"]); strings.TrimSpace(contextItemCount) != "" {
+				item["context_item_count"] = contextItemCount
+			}
+			if visibleCount := stringFromAny(result["visible_count"]); strings.TrimSpace(visibleCount) != "" {
+				item["visible_count"] = visibleCount
+			}
+		}
+		out = append(out, item)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	return out
+}
+
+func compactClientActionContextItems(value interface{}) []map[string]interface{} {
+	items := operationItemsFromValue(value)
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, min(len(items), 8))
+	for _, item := range items {
+		source, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		compact := map[string]interface{}{}
+		for _, key := range []string{"type", "title", "id", "href"} {
+			if value := strings.TrimSpace(stringFromAny(source[key])); value != "" {
+				compact[key] = value
+			}
+		}
+		if len(compact) == 0 {
+			continue
+		}
+		out = append(out, compact)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	return out
+}
+
+func clientActionPrecedingSuccessfulToolInvocation(message *runtimemodel.Message, event map[string]interface{}) map[string]interface{} {
+	if message == nil {
+		return nil
+	}
+	invocations := skillInvocationsFromMetadata(metadataValue(message.Metadata, "skill_invocations"))
+	if len(invocations) == 0 {
+		return nil
+	}
+	actionID := clientActionID(event)
+	var last map[string]interface{}
+	for _, invocation := range invocations {
+		kind := strings.TrimSpace(stringFromAny(invocation["kind"]))
+		if kind == "client_action" && actionID != "" && clientActionID(invocation) == actionID {
+			break
+		}
+		if kind == "tool_call" && strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "success") {
+			last = invocation
+		}
+	}
+	if len(last) == 0 {
+		for index := len(invocations) - 1; index >= 0; index-- {
+			invocation := invocations[index]
+			if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "success") {
+				last = invocation
+				break
+			}
+		}
+	}
+	if len(last) == 0 {
+		return nil
+	}
+	return compactSkillInvocation(map[string]interface{}{
+		"kind":      "tool_call",
+		"skill_id":  last["skill_id"],
+		"tool_name": last["tool_name"],
+		"status":    last["status"],
+		"result":    governanceMapFromAny(last["result"]),
+	})
 }
 
 func clientActionResultPayload(prepared *PreparedChat, event map[string]interface{}, req runtimedto.ClientActionResultRequest) map[string]interface{} {
@@ -404,10 +656,12 @@ func (s *service) failClientActionContinuation(ctx context.Context, continuation
 	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil || cause == nil {
 		return
 	}
-	s.finalizePreparedError(ctx, &PreparedChat{
+	prepared := &PreparedChat{
 		Conversation: continuation.Conversation,
 		Message:      continuation.Message,
-	}, cause, onEvent)
+	}
+	s.finalizePreparedError(ctx, prepared, cause, onEvent)
+	s.emitPreparedEvent(ctx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, continuation.Message.Metadata, runtimemodel.MessageStatusError), onEvent)
 }
 
 func mergeClientActionMetadata(source map[string]interface{}, event map[string]interface{}) map[string]interface{} {
@@ -433,7 +687,7 @@ func mergeClientActionMetadata(source map[string]interface{}, event map[string]i
 	}
 	metadata["client_actions"] = mapsToInterfaceSlice(records)
 
-	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	invocations := sanitizeSkillInvocationsForMetadata(skillInvocationsFromMetadata(metadata["skill_invocations"]))
 	invocationReplaced := false
 	for index, invocation := range invocations {
 		if strings.TrimSpace(stringFromAny(invocation["kind"])) != "client_action" {
@@ -461,6 +715,7 @@ func mergeClientActionMetadata(source map[string]interface{}, event map[string]i
 		))
 	}
 	applySkillInvocationSummary(metadata, invocations)
+	applyOperationPlanInvocationState(metadata, invocations)
 	return metadata
 }
 

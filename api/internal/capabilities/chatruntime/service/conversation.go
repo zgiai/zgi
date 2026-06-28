@@ -409,7 +409,12 @@ func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, c
 		return fmt.Errorf("%w: current leaf message belongs to another conversation", ErrInvalidInput)
 	}
 	switch message.Status {
-	case runtimemodel.MessageStatusCompleted, runtimemodel.MessageStatusStopped, runtimemodel.MessageStatusError:
+	case runtimemodel.MessageStatusCompleted,
+		runtimemodel.MessageStatusStopped,
+		runtimemodel.MessageStatusError,
+		runtimemodel.MessageStatusWaitingApproval,
+		runtimemodel.MessageStatusWaitingQuestion,
+		runtimemodel.MessageStatusWaitingClientAction:
 		return nil
 	case runtimemodel.MessageStatusStreaming:
 		if conversation.RuntimeStatus == runtimemodel.ConversationRuntimeStatusStreaming &&
@@ -441,6 +446,7 @@ func (s *service) ListMessages(ctx context.Context, scope Scope, conversationID 
 		return nil, 0, err
 	}
 	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
 
@@ -455,6 +461,7 @@ func (s *service) ListMessagesByCaller(ctx context.Context, scope Scope, caller 
 		return nil, 0, err
 	}
 	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
 
@@ -473,6 +480,7 @@ func (s *service) ListMessagesByCallerSource(ctx context.Context, scope Scope, c
 		return nil, 0, err
 	}
 	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
 
@@ -487,6 +495,7 @@ func (s *service) ListMessagesByCallerLogFilters(ctx context.Context, scope Scop
 		return nil, 0, err
 	}
 	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
 
@@ -501,6 +510,7 @@ func (s *service) ListMessagesByCallerRuntimeLogFilters(ctx context.Context, sco
 		return nil, 0, err
 	}
 	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
 
@@ -517,6 +527,7 @@ func (s *service) GetMessageByCaller(ctx context.Context, scope Scope, caller Ca
 		return nil, nil, err
 	}
 	hydrateMessageGeneratedFileURLs(message)
+	hydrateMessagePublicError(message)
 	return message, conversation, nil
 }
 
@@ -535,6 +546,7 @@ func (s *service) GetMessageByCallerRuntimeLog(ctx context.Context, scope Scope,
 		return nil, nil, mapRepoError(err)
 	}
 	hydrateMessageGeneratedFileURLs(message)
+	hydrateMessagePublicError(message)
 	return message, conversation, nil
 }
 

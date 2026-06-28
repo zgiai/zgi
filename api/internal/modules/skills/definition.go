@@ -12,6 +12,7 @@ const (
 	SkillTime                   = "time"
 	SkillCalculator             = "calculator"
 	SkillConsoleNavigator       = "console-navigator"
+	SkillAgentManagement        = "agent-management"
 	SkillFileGenerator          = "file-generator"
 	SkillFileManager            = "file-manager"
 	SkillFileReader             = "file-reader"
@@ -87,7 +88,7 @@ type SkillExposureProfile struct {
 
 func IsHiddenSystemSkill(skillID string) bool {
 	switch normalizeSkillID(skillID) {
-	case SkillFileManager, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory:
+	case SkillAgentManagement, SkillFileManager, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory:
 		return true
 	default:
 		return false
@@ -106,6 +107,15 @@ func SystemSkillExposureProfile(skillID string) SkillExposureProfile {
 			GovernanceRisk:      SkillGovernanceRiskLow,
 		}
 	case SkillFileManager:
+		return SkillExposureProfile{
+			Category:            SkillExposureSidebarManaged,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         true,
+			PageContextRequired: true,
+			GovernanceRisk:      SkillGovernanceRiskHigh,
+		}
+	case SkillAgentManagement:
 		return SkillExposureProfile{
 			Category:            SkillExposureSidebarManaged,
 			UserSelectable:      false,

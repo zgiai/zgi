@@ -11,7 +11,6 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
-	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -1192,115 +1191,6 @@ func TestToolGovernanceApprovalContinuationMessageScopesRetryToGrant(t *testing.
 		if strings.Contains(content, hidden) {
 			t.Fatalf("approval continuation prompt exposed %q in %q", hidden, content)
 		}
-	}
-}
-
-func TestToolGovernanceApprovedFinalAnswerGuardBlocksUntilDeleteToolAttempted(t *testing.T) {
-	event := map[string]interface{}{
-		"correlation_id":  "corr-1",
-		"approval_status": "approved",
-		"tool_name":       "delete_file",
-		"governance": map[string]interface{}{
-			"approval_event": map[string]interface{}{
-				"tool_id":    "file.delete",
-				"skill_id":   "file-reader",
-				"effect":     "delete",
-				"asset_type": "file",
-				"assets": []interface{}{
-					map[string]interface{}{
-						"id":   "file-1",
-						"type": "file",
-						"name": "smoke.txt",
-					},
-				},
-			},
-		},
-	}
-
-	guard := toolGovernanceApprovedFinalAnswerGuard(event)
-	if guard == nil {
-		t.Fatal("toolGovernanceApprovedFinalAnswerGuard() = nil, want guard")
-	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "The file was deleted.",
-	})
-	if !blocked {
-		t.Fatal("guard did not block final answer before delete_file was attempted")
-	}
-	for _, want := range []string{
-		"approval is not the operation itself",
-		"delete_file",
-		"smoke.txt",
-	} {
-		if !strings.Contains(result.Message, want) {
-			t.Fatalf("guard message missing %q in %q", want, result.Message)
-		}
-	}
-	if strings.Contains(result.Message, "file-1") {
-		t.Fatalf("guard message exposed internal file id in %q", result.Message)
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "The delete_file tool failed because the file was already missing.",
-		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileManager, ToolName: "delete_file"},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after delete_file was attempted")
-	}
-}
-
-func TestToolGovernanceApprovedFinalAnswerGuardBlocksGenericApprovedTool(t *testing.T) {
-	guard := toolGovernanceApprovedFinalAnswerGuard(map[string]interface{}{
-		"tool_name": "publish_agent",
-		"governance": map[string]interface{}{
-			"approval_event": map[string]interface{}{
-				"tool_id":    "agent.publish",
-				"skill_id":   "agent-manager",
-				"effect":     "publish",
-				"asset_type": "agent",
-				"assets": []interface{}{
-					map[string]interface{}{
-						"id":   "agent-1",
-						"type": "agent",
-						"name": "Support Agent",
-					},
-				},
-			},
-		},
-	})
-	if guard == nil {
-		t.Fatal("toolGovernanceApprovedFinalAnswerGuard() = nil, want generic approved tool guard")
-	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "The agent has been published.",
-	})
-	if !blocked {
-		t.Fatal("guard did not block final answer before approved tool was attempted")
-	}
-	for _, want := range []string{
-		"approval is not the operation itself",
-		"agent-manager",
-		"publish_agent",
-		"Support Agent",
-	} {
-		if !strings.Contains(result.Message, want) {
-			t.Fatalf("guard message missing %q in %q", want, result.Message)
-		}
-	}
-	if strings.Contains(result.Message, "agent-1") {
-		t.Fatalf("guard message exposed internal agent id in %q", result.Message)
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "The publish_agent tool failed.",
-		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: "agent-manager", ToolName: "publish_agent"},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after approved tool was attempted")
 	}
 }
 

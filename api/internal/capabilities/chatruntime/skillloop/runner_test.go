@@ -54,6 +54,721 @@ func TestGovernedReadFileTargetSystemMessageAnchorsResolvedAsset(t *testing.T) {
 	}
 }
 
+func TestFastPathFinalAnswerForAgentBatchDelete(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":        "partial_failed",
+			"target_count":  3,
+			"deleted_count": 2,
+			"failed_count":  1,
+			"operation_group": map[string]interface{}{
+				"operation": "agent.delete",
+				"item_results": []map[string]interface{}{
+					{"status": "succeeded", "agent_name": "Agent One"},
+					{"status": "succeeded", "agent_name": "Agent Two"},
+					{"status": "failed", "agent_name": "Agent Three", "error": "agent is locked"},
+				},
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
+	}
+	for _, want := range []string{"成功删除 2 个智能体", "Agent One", "Agent Two", "1 个删除失败", "Agent Three（agent is locked）"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer missing %q in %q", want, answer)
+		}
+	}
+}
+
+func TestFastPathFinalAnswerForAgentDelete(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"effect":   "deleted",
+			"agent_id": "agent-1",
+			"agent": map[string]interface{}{
+				"name": "Agent One",
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
+	}
+	if answer != "已删除智能体：Agent One。" {
+		t.Fatalf("answer = %q, want delete confirmation with visible Agent name", answer)
+	}
+}
+
+func TestFastPathFinalAnswerForAgentConfigUpdateUsesBindingEvidence(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"effect":   "updated",
+			"agent_id": "agent-1",
+			"updated_fields": []interface{}{
+				"knowledge_dataset_ids",
+				"database_bindings",
+				"model_provider",
+				"model",
+			},
+			"agent": map[string]interface{}{
+				"id":   "agent-1",
+				"name": "客服智能体",
+			},
+			"binding_changes": []interface{}{
+				map[string]interface{}{
+					"field":                  "knowledge_dataset_ids",
+					"binding_kind":           "knowledge_base",
+					"change_action":          "unbind",
+					"resource_count":         1,
+					"removed_resource_count": 1,
+					"resource_names":         []interface{}{"测试知识库"},
+				},
+				map[string]interface{}{
+					"field":                "database_bindings",
+					"binding_kind":         "database_table",
+					"change_action":        "bind",
+					"resource_count":       2,
+					"added_resource_count": 2,
+				},
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
+	}
+	for _, want := range []string{"智能体「客服智能体」", "解绑知识库（测试知识库）", "绑定 2 个数据表", "更新模型"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer missing %q in %q", want, answer)
+		}
+	}
+	for _, unwanted := range []string{"agent-1", "替换资源绑定"} {
+		if strings.Contains(answer, unwanted) {
+			t.Fatalf("answer contains %q, want hidden in %q", unwanted, answer)
+		}
+	}
+}
+
+func TestFastPathFinalAnswerForAgentConfigUpdateRequiresEvidence(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"agent_id": "agent-1",
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = true, want false without update evidence")
+	}
+}
+
+func TestFastPathFinalAnswerForFileManagementSave(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":         "completed",
+			"target":         "managed_file",
+			"file_id":        "managed-file-1",
+			"upload_file_id": "managed-file-1",
+			"filename":       "星空小猫.svg",
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
+	}
+	if answer != "文件「星空小猫.svg」已保存到文件管理。" {
+		t.Fatalf("answer = %q, want file save confirmation", answer)
+	}
+}
+
+func TestFastPathFinalAnswerForFileManagementSaveRequiresManagedFileID(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"target":   "managed_file",
+			"filename": "星空小猫.svg",
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = true, want false without managed file id")
+	}
+}
+
+func TestFastPathFinalAnswerForFileManagementDelete(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileManager,
+		ToolName: "delete_file",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":        "completed",
+			"deleted_count": 1,
+			"file_name":     "aichat-plan-smoke.md",
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
+	}
+	if answer != "已删除文件「aichat-plan-smoke.md」。" {
+		t.Fatalf("answer = %q, want file delete confirmation", answer)
+	}
+}
+
+func TestFastPathFinalAnswerForFileManagementDeleteRequiresDeletedEvidence(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileManager,
+		ToolName: "delete_file",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":    "completed",
+			"file_name": "aichat-plan-smoke.md",
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = true, want false without deleted evidence")
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceBlocksDifferentPendingPlanAction(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":        "completed",
+			"operation":     "agent.delete.batch",
+			"target_count":  1,
+			"deleted_count": 1,
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "create_agent",
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want false for a different pending action")
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceBlocksRemainingPendingPlanMutation(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":         "completed",
+			"agent_name":     "客服智能体",
+			"updated_fields": []interface{}{"system_prompt"},
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "none",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/replace_agent_memory_slots",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "replace_agent_memory_slots",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config":        "completed",
+				"tool:agent-management/replace_agent_memory_slots": "pending",
+			},
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want false while another mutation step remains pending")
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceAllowsPostVerificationPendingAction(t *testing.T) {
+	for _, pending := range []string{
+		"console-navigator/navigate",
+		"agent-management/list_agents",
+		"asset_observation",
+	} {
+		answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+			Kind:     "tool_call",
+			SkillID:  skills.SkillAgentManagement,
+			ToolName: "delete_agents",
+			Status:   "success",
+			Result: map[string]interface{}{
+				"status":        "completed",
+				"operation":     "agent.delete.batch",
+				"target_count":  1,
+				"deleted_count": 1,
+				"item_results": []interface{}{
+					map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+				},
+			},
+		}, map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status":              "running",
+				"pending_next_action": pending,
+			},
+		})
+		if !ok {
+			t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want true for post-verification pending action %q", pending)
+		}
+		if !strings.Contains(answer, "Agent One") {
+			t.Fatalf("answer = %q, want deleted item name for pending action %q", answer, pending)
+		}
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceAllowsRemainingPostVerificationPlanStep(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":        "completed",
+			"operation":     "agent.delete.batch",
+			"target_count":  2,
+			"deleted_count": 2,
+			"item_results": []interface{}{
+				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+				map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+			},
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "none",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/delete_agents",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agents",
+				},
+				map[string]interface{}{
+					"id":        "tool:console-navigator/navigate",
+					"status":    "pending",
+					"skill_id":  skills.SkillConsoleNavigator,
+					"tool_name": "navigate",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/delete_agents": "completed",
+				"tool:console-navigator/navigate":     "pending",
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want true when only post-verification route remains")
+	}
+	if !strings.Contains(answer, "Agent One") || !strings.Contains(answer, "Agent Two") {
+		t.Fatalf("answer = %q, want deleted item names", answer)
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceAllowsCurrentPendingTool(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"target":   "managed_file",
+			"file_id":  "managed-file-1",
+			"filename": "星空小猫.svg",
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "file-manager/save_file_to_management",
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want true for current pending tool")
+	}
+	if answer != "文件「星空小猫.svg」已保存到文件管理。" {
+		t.Fatalf("answer = %q, want file management save fast-path answer", answer)
+	}
+}
+
+func TestRunnerFastPathsAgentBatchDeleteAfterToolResult(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
+name: agent-management
+description: Manage Agent assets.
+when_to_use: Use when testing agent management.
+provider_type: builtin
+provider_id: agent_management
+runtime_type: tool
+tools:
+  - delete_agents
+max_calls_per_turn: 20
+---
+
+# Agent Management
+
+Use delete_agents to delete several agents in one operation.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"agent-management"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall(
+								"call_delete_agents",
+								skills.SkillAgentManagement,
+								"delete_agents",
+								map[string]interface{}{
+									"agents": []interface{}{
+										map[string]interface{}{"agent_id": "agent-1", "name": "Agent One"},
+										map[string]interface{}{"agent_id": "agent-2", "name": "Agent Two"},
+									},
+								},
+							),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "model final answer should not be used"},
+				}},
+			},
+		},
+	}
+	deleteTool := &runnerAgentManagementDeleteAgentsTool{}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerAgentManagementProvider{tool: deleteTool}); err != nil {
+		t.Fatalf("register agent management provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "删除前两个智能体"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "running"},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(answer, "成功删除 2 个智能体") || !strings.Contains(answer, "Agent One") || !strings.Contains(answer, "Agent Two") {
+		t.Fatalf("answer = %q, want fast-path batch delete summary", answer)
+	}
+	if strings.Contains(answer, "model final answer should not be used") {
+		t.Fatalf("answer = %q, want no model final answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want load plus delete planning only", fakeLLM.appChatCalls)
+	}
+	if deleteTool.calls != 1 {
+		t.Fatalf("delete calls = %d, want one batch call", deleteTool.calls)
+	}
+	if findRunnerTestEvent(events, EventMessage) == nil {
+		t.Fatalf("events = %#v, want final message event", events)
+	}
+}
+
+func TestRunnerFastPathsFileManagementSaveAfterToolResult(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillFileManager, `---
+name: file-manager
+description: Manage files.
+when_to_use: Use when testing file management saves.
+provider_type: builtin
+provider_id: files
+runtime_type: tool
+tools:
+  - save_file_to_management
+max_calls_per_turn: 20
+---
+
+# File Manager
+
+Use save_file_to_management to save generated files into File Management.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"file-manager"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall(
+								"call_save_file",
+								skills.SkillFileManager,
+								"save_file_to_management",
+								map[string]interface{}{
+									"source_type":  "tool_file",
+									"tool_file_id": "tool-file-1",
+									"filename":     "星空小猫.svg",
+								},
+							),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "model final answer should not be used"},
+				}},
+			},
+		},
+	}
+	saveTool := &runnerFileManagerSaveTool{}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerFilesProvider{saveTool: saveTool}); err != nil {
+		t.Fatalf("register files provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillFileManager})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "把生成的 SVG 保存到文件管理"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "running"},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "文件「星空小猫.svg」已保存到文件管理。" {
+		t.Fatalf("answer = %q, want file management save fast-path answer", answer)
+	}
+	if strings.Contains(answer, "model final answer should not be used") {
+		t.Fatalf("answer = %q, want no model final answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want load plus save planning only", fakeLLM.appChatCalls)
+	}
+	if saveTool.calls != 1 {
+		t.Fatalf("save calls = %d, want one save call", saveTool.calls)
+	}
+	if findRunnerTestEvent(events, EventMessage) == nil {
+		t.Fatalf("events = %#v, want final message event", events)
+	}
+}
+
+func TestRunnerFastPathsFileManagementDeleteAfterToolResult(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillFileManager, `---
+name: file-manager
+description: Manage files.
+when_to_use: Use when testing file management deletes.
+provider_type: builtin
+provider_id: files
+runtime_type: tool
+tools:
+  - delete_file
+max_calls_per_turn: 20
+---
+
+# File Manager
+
+Use delete_file to delete a managed file.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"file-manager"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall(
+								"call_delete_file",
+								skills.SkillFileManager,
+								"delete_file",
+								map[string]interface{}{
+									"file_id": "managed-file-1",
+								},
+							),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "model final answer should not be used"},
+				}},
+			},
+		},
+	}
+	deleteTool := &runnerFileManagerDeleteTool{}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerFilesProvider{deleteTool: deleteTool}); err != nil {
+		t.Fatalf("register files provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillFileManager})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "删除刚刚创建的文件 aichat-plan-smoke.md"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "running"},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "已删除文件「aichat-plan-smoke.md」。" {
+		t.Fatalf("answer = %q, want file delete fast-path answer", answer)
+	}
+	if strings.Contains(answer, "model final answer should not be used") {
+		t.Fatalf("answer = %q, want no model final answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want load plus delete planning only", fakeLLM.appChatCalls)
+	}
+	if deleteTool.calls != 1 {
+		t.Fatalf("delete calls = %d, want one delete call", deleteTool.calls)
+	}
+	if findRunnerTestEvent(events, EventMessage) == nil {
+		t.Fatalf("events = %#v, want final message event", events)
+	}
+}
+
 func TestRunnerAllowsBatchRecoverableSkillToolFailures(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
@@ -144,6 +859,305 @@ Use the calculator tool.
 	}
 	if fakeLLM.appChatCalls != 3 {
 		t.Fatalf("AppChat calls = %d, want 3", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerBlocksRepeatedIdenticalFailedToolCallAndReplans(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a tool that can fail.
+when_to_use: Use when testing repeated failed tool calls.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"limited-calculator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_bad_1", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1/",
+							}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_bad_2", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1/",
+							}),
+						},
+					},
+				}},
+			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I cannot evaluate that expression without corrected input."}}}},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "calculate an invalid expression"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "I cannot evaluate that expression without corrected input." {
+		t.Fatalf("answer = %q, want replanned final answer", answer)
+	}
+	starts := 0
+	for _, event := range events {
+		if event.Type == EventSkillCallStart {
+			starts++
+		}
+	}
+	if starts != 1 {
+		t.Fatalf("skill call start events = %d, want only the first failed tool execution", starts)
+	}
+	foundFeedback := false
+	for _, trace := range traces {
+		if trace.Kind == "planner_feedback" &&
+			trace.SkillID == "limited-calculator" &&
+			trace.ToolName == "evaluate_expression" &&
+			strings.Contains(trace.Error, "same tool call with the same arguments already failed") {
+			foundFeedback = true
+			break
+		}
+	}
+	if !foundFeedback {
+		t.Fatalf("traces = %#v, want repeated failed tool call planner feedback", traces)
+	}
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want load, first failure, blocked retry, final answer", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerCompletionEvidenceTurnsRepeatedRecoverableFailuresIntoTruthfulAnswer(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a tool that can fail.
+when_to_use: Use when testing repeated recoverable tool failures.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	responses := []*adapter.ChatResponse{
+		{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{{
+						ID:   "call_load",
+						Type: "function",
+						Function: adapter.FunctionCall{
+							Name:      skills.MetaToolLoadSkill,
+							Arguments: `{"skill_id":"limited-calculator"}`,
+						},
+					}},
+				},
+			}},
+		},
+	}
+	for i := 0; i < defaultMaxConsecutiveRecoverableFailureRounds+1; i++ {
+		responses = append(responses, &adapter.ChatResponse{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{
+						runnerTestSkillToolCall(
+							fmt.Sprintf("call_bad_%d", i),
+							"limited-calculator",
+							"evaluate_expression",
+							map[string]interface{}{"expression": "1/"},
+						),
+					},
+				},
+			}},
+		})
+	}
+	fakeLLM := &runnerTestLLMClient{appChatResponses: responses}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "calculate an invalid expression"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "running"},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want truthful failed answer", err)
+	}
+	if !strings.Contains(answer, "这一步没有被工具结果确认成功") ||
+		!strings.Contains(answer, "limited-calculator/evaluate_expression") {
+		t.Fatalf("answer = %q, want failed-answer evidence for calculator tool", answer)
+	}
+	if findRunnerTestEvent(events, EventSkillCallError) == nil {
+		t.Fatalf("events = %#v, want skill error event for failed tool evidence", events)
+	}
+}
+
+func TestRunnerCompletionEvidenceTurnsPlanningRoundExhaustionIntoTruthfulAnswer(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a tool.
+when_to_use: Use when testing planning exhaustion.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	responses := make([]*adapter.ChatResponse, 0, defaultMaxSkillPlanningRounds)
+	for i := 0; i < defaultMaxSkillPlanningRounds; i++ {
+		responses = append(responses, &adapter.ChatResponse{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{{
+						ID:   fmt.Sprintf("call_load_%d", i),
+						Type: "function",
+						Function: adapter.FunctionCall{
+							Name:      skills.MetaToolLoadSkill,
+							Arguments: `{"skill_id":"limited-calculator"}`,
+						},
+					}},
+				},
+			}},
+		})
+	}
+	fakeLLM := &runnerTestLLMClient{appChatResponses: responses}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "calculate without finishing"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "running"},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want truthful exhausted-plan answer", err)
+	}
+	if !strings.Contains(answer, "这一步没有被工具结果确认成功") ||
+		!strings.Contains(answer, "执行规划轮次已达到上限") {
+		t.Fatalf("answer = %q, want planning-exhaustion failure answer", answer)
+	}
+	if fakeLLM.appChatCalls != defaultMaxSkillPlanningRounds {
+		t.Fatalf("AppChat calls = %d, want %d", fakeLLM.appChatCalls, defaultMaxSkillPlanningRounds)
 	}
 }
 
@@ -934,6 +1948,107 @@ Use the calculator tool.
 	}
 }
 
+func TestRunnerCompletionEvidenceKeepsUserInputGuardForRedundantClarification(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a required tool.
+when_to_use: Use when testing user input guard behavior.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_ask",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolRequestUserInput,
+								Arguments: `{"message":"I need your preferred target file before continuing.","questions":[{"id":"file","question":"Which file should I read?","options":[{"label":"first.xlsx"},{"label":"second.xlsx"}]}]}`,
+							},
+						}},
+					},
+				}},
+			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I will continue from the resolved evidence instead of asking again."}}}},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "read a file after I choose it"}},
+	})
+	guardCalls := 0
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		UserInputGuard: func(req UserInputGuardRequest) (FinalAnswerGuardResult, bool) {
+			guardCalls++
+			if req.Message != "I need your preferred target file before continuing." || len(req.Questions) != 1 {
+				t.Fatalf("guard request = %#v, want normalized user input request", req)
+			}
+			return FinalAnswerGuardResult{
+				SkillID:  "legacy-guard",
+				ToolName: "read_file",
+				Message:  "target already resolved; continue from evidence instead of asking",
+			}, true
+		},
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "running"},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "I will continue from the resolved evidence instead of asking again." {
+		t.Fatalf("answer = %q, want replanned answer", answer)
+	}
+	if guardCalls != 1 {
+		t.Fatalf("user input guard calls = %d, want 1", guardCalls)
+	}
+	if findRunnerTestEvent(events, EventUserInputRequested) != nil {
+		t.Fatalf("events = %#v, want no user_input_requested event after guard block", events)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want guard-triggered replan", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) < 2 || !runnerTestRequestContains(fakeLLM.appChatRequests[1], "target already resolved; continue from evidence instead of asking") {
+		t.Fatalf("second planning request did not include user input guard feedback")
+	}
+}
+
 func TestRunnerToolCallGuardBlocksToolBeforeExecutionAndReplans(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
@@ -1058,6 +2173,248 @@ Use the calculator tool.
 	}
 	if !foundGuardrail {
 		t.Fatalf("traces = %#v, want tool call guardrail trace", traces)
+	}
+}
+
+func TestRunnerCompletionEvidenceDisablesLegacyToolCallGuard(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a required tool.
+when_to_use: Use when testing tool call guards.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"limited-calculator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_eval", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1+1",
+							}),
+						},
+					},
+				}},
+			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The result is 2."}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"calculator tool succeeded"}`}}}},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "calculate 1+1"}},
+	})
+	guardCalls := 0
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		ToolCallGuard: func(req ToolCallGuardRequest) (FinalAnswerGuardResult, bool) {
+			guardCalls++
+			return FinalAnswerGuardResult{
+				SkillID:  "legacy-guard",
+				ToolName: req.ToolName,
+				Message:  "legacy tool-call guard should not run when post verification is configured",
+			}, true
+		},
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "completed"},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "The result is 2." {
+		t.Fatalf("answer = %q, want verifier-approved tool result answer", answer)
+	}
+	if guardCalls != 0 {
+		t.Fatalf("tool call guard calls = %d, want 0", guardCalls)
+	}
+	if findRunnerTestEvent(events, EventSkillCallStart) == nil {
+		t.Fatalf("events = %#v, want skill call to execute", events)
+	}
+	progressEvent := findRunnerTestEvent(events, EventAgentProgress)
+	if progressEvent == nil {
+		t.Fatalf("events = %#v, want finalizing progress after tool result", events)
+	}
+	if content := fmt.Sprint(progressEvent.Payload["content"]); !strings.Contains(content, "Reviewing the tool results") {
+		t.Fatalf("agent progress content = %q, want finalizing tool-result progress", content)
+	}
+}
+
+func TestRunnerCompletionEvidenceKeepsPlanToolGuard(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a required tool.
+when_to_use: Use when testing plan tool guards.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"limited-calculator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_eval", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1+1",
+							}),
+						},
+					},
+				}},
+			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I cannot run that unplanned tool."}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"reported the blocked tool honestly"}`}}}},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	var events []Event
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "calculate 1+1"}},
+	})
+	blockedPlanCalls := 0
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		PlanToolGuard: func(req ToolCallGuardRequest) (FinalAnswerGuardResult, bool) {
+			if req.ToolName == "" {
+				return FinalAnswerGuardResult{}, false
+			}
+			blockedPlanCalls++
+			return FinalAnswerGuardResult{
+				SkillID:       req.SkillID,
+				ToolName:      req.ToolName,
+				Message:       "tool is not part of the current operation plan",
+				SystemMessage: "answer from existing evidence instead of running the unplanned tool",
+			}, true
+		},
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "running"},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "I cannot run that unplanned tool." {
+		t.Fatalf("answer = %q, want plan-guard-aware answer", answer)
+	}
+	if blockedPlanCalls != 1 {
+		t.Fatalf("blocked plan calls = %d, want 1", blockedPlanCalls)
+	}
+	if findRunnerTestEvent(events, EventSkillCallStart) != nil {
+		t.Fatalf("events = %#v, want no skill tool execution for plan-blocked call", events)
+	}
+	if findRunnerTestEvent(events, EventSkillCallError) != nil {
+		t.Fatalf("events = %#v, want no user-visible error for internal plan feedback", events)
+	}
+	foundPlannerFeedback := false
+	for _, trace := range traces {
+		if trace.Kind == "guardrail" {
+			t.Fatalf("trace kind = guardrail for plan tool guard; traces=%#v", traces)
+		}
+		if trace.Kind == "planner_feedback" &&
+			trace.SkillID == "limited-calculator" &&
+			trace.ToolName == "evaluate_expression" {
+			foundPlannerFeedback = true
+		}
+	}
+	if !foundPlannerFeedback {
+		t.Fatalf("traces = %#v, want internal planner feedback trace for blocked plan tool", traces)
 	}
 }
 
@@ -1259,6 +2616,432 @@ Prepare professional prompts.
 	}
 }
 
+func TestRunnerCompletionVerifierReplansNeedsAction(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I saved the file."}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"needs_action","reason":"save step missing","missing_steps":["save_file_to_management"],"next_action_hint":"call file-manager/save_file_to_management"}`}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I could not confirm the save yet, so I will not claim it is saved."}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"candidate is truthful"}`}}}},
+		},
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "save the generated file"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status":              "running",
+					"pending_next_action": "save_file_to_management",
+				},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(answer, "could not confirm") {
+		t.Fatalf("answer = %q, want verifier-driven truthful replanning answer", answer)
+	}
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want planning/verifier/replan/verifier", fakeLLM.appChatCalls)
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Runtime completion verification feedback") {
+		t.Fatalf("third request missing completion verifier feedback")
+	}
+}
+
+func TestRunnerCompletionVerifierRetriesReasoningOnlyResponse(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "已删除前四个智能体。"}}}},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:             "assistant",
+						Content:          "",
+						ReasoningContent: "I should verify the ledger first, but I never emitted JSON before the token budget ended.",
+					},
+				}},
+				Usage: &adapter.Usage{PromptTokens: 2800, CompletionTokens: 700, TotalTokens: 3500},
+			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"candidate is supported by completed delete evidence"}`}}}},
+		},
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "delete the first four agents on this page"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status": "completed",
+					"steps": []interface{}{map[string]interface{}{
+						"id":        "tool:agent-management/delete_agent",
+						"status":    "completed",
+						"skill_id":  "agent-management",
+						"tool_name": "delete_agent",
+					}},
+				},
+				"skill_invocations": []interface{}{map[string]interface{}{
+					"kind":      "tool_call",
+					"skill_id":  "agent-management",
+					"tool_name": "delete_agent",
+					"status":    "success",
+				}},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "已删除前四个智能体。" {
+		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want planning plus verifier retry", fakeLLM.appChatCalls)
+	}
+	for _, index := range []int{1, 2} {
+		if fakeLLM.appChatRequests[index].MaxTokens == nil || *fakeLLM.appChatRequests[index].MaxTokens != completionVerifierMaxTokens {
+			t.Fatalf("verifier request %d max_tokens = %#v, want %d", index, fakeLLM.appChatRequests[index].MaxTokens, completionVerifierMaxTokens)
+		}
+		if !runnerTestRequestContains(fakeLLM.appChatRequests[index], "Do not include reasoning") {
+			t.Fatalf("verifier request %d missing no-reasoning instruction", index)
+		}
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "previous verification attempt returned no parseable JSON content") {
+		t.Fatalf("strict retry request missing parse-failure instruction")
+	}
+}
+
+func TestRunnerCompletionVerifierStopsAfterNeedsActionRetryBudget(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I saved the file."}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"needs_action","reason":"save evidence is missing","missing_steps":["file-manager/save_file_to_management"],"unsupported_claims":["I saved the file"],"next_action_hint":"call file-manager/save_file_to_management"}`}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I saved the file now."}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"needs_action","reason":"save evidence is still missing","missing_steps":["file-manager/save_file_to_management"],"unsupported_claims":["I saved the file now"],"next_action_hint":"call file-manager/save_file_to_management"}`}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The file is saved."}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"needs_action","reason":"same save evidence is still missing","missing_steps":["file-manager/save_file_to_management"],"unsupported_claims":["The file is saved"],"next_action_hint":"call file-manager/save_file_to_management"}`}}}},
+		},
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "save the generated file"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status":              "running",
+					"pending_next_action": "save_file_to_management",
+					"steps": []interface{}{map[string]interface{}{
+						"id":        "tool:file-manager/save_file_to_management",
+						"status":    "pending",
+						"skill_id":  "file-manager",
+						"tool_name": "save_file_to_management",
+					}},
+				},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(answer, completionVerificationFallbackUnknown) {
+		t.Fatalf("answer = %q, want conservative fallback after retry budget", answer)
+	}
+	if !strings.Contains(answer, "file-manager/save_file_to_management") {
+		t.Fatalf("answer = %q, want missing save evidence", answer)
+	}
+	if !strings.Contains(answer, "\u5019\u9009\u7b54\u590d\u4e2d\u6709\u672a\u88ab\u5de5\u5177\u7ed3\u679c\u652f\u6301\u7684\u8bf4\u6cd5\uff1aThe file is saved") {
+		t.Fatalf("answer = %q, want unsupported candidate claim to be called out", answer)
+	}
+	if fakeLLM.appChatCalls != 6 {
+		t.Fatalf("AppChat calls = %d, want three planning/verifier attempts", fakeLLM.appChatCalls)
+	}
+	for _, index := range []int{2, 4} {
+		if !runnerTestRequestContains(fakeLLM.appChatRequests[index], "Runtime completion verification feedback") {
+			t.Fatalf("request %d missing completion verifier feedback", index)
+		}
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Post-verification retry 1 of 2") ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[4], "Post-verification retry 2 of 2") {
+		t.Fatalf("retry feedback missing budget markers")
+	}
+}
+
+func TestCompletionVerifierTreatsPendingPlanStepAsAdvisory(t *testing.T) {
+	decision := completionVerificationApplyPlanOverride(map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "pending",
+					"skill_id":  "agent-management",
+					"tool_name": "update_agent_config",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config": "pending",
+			},
+		},
+	}, completionVerificationDecision{Status: completionVerificationStatusPass, Reason: "truthful incomplete answer"})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("decision status = %q, want pass; decision=%#v", got, decision)
+	}
+	if decision.NextActionHint != "" {
+		t.Fatalf("NextActionHint = %q, want empty hint for advisory pending plan", decision.NextActionHint)
+	}
+	if len(decision.MissingSteps) != 0 {
+		t.Fatalf("MissingSteps = %#v, want no forced missing steps", decision.MissingSteps)
+	}
+}
+
+func TestCompletionVerifierKeepsPassForCompletedPlan(t *testing.T) {
+	decision := completionVerificationApplyPlanOverride(map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "completed",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "completed",
+					"skill_id":  "agent-management",
+					"tool_name": "update_agent_config",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config": "completed",
+			},
+		},
+	}, completionVerificationDecision{Status: completionVerificationStatusPass, Reason: "done"})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("decision status = %q, want pass; decision=%#v", got, decision)
+	}
+}
+
+func TestRunnerCompletionEvidenceDisablesLegacyFinalAnswerGuard(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The operation is complete."}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"candidate is supported by evidence"}`}}}},
+		},
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "complete the operation"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+		FinalAnswerGuard: func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool) {
+			return FinalAnswerGuardResult{
+				ToolName:      "legacy_guard",
+				Message:       "legacy guard should not run when post verification is configured",
+				SystemMessage: "legacy guard should not be visible",
+			}, true
+		},
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "completed"},
+				"skill_invocations": []interface{}{map[string]interface{}{
+					"kind": "tool_call", "status": "success", "skill_id": "test-skill", "tool_name": "test_tool",
+				}},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "The operation is complete." {
+		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want planning and verifier only", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerCompletionVerifierUsesFailedReplacementAnswer(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Done, the Agent was updated."}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"failed","reason":"update_agent_config failed","unsupported_claims":["Agent was updated"],"final_answer":"\u6211\u6ca1\u6709\u786e\u8ba4\u667a\u80fd\u4f53\u914d\u7f6e\u66f4\u65b0\u6210\u529f\uff1aupdate_agent_config \u8c03\u7528\u5931\u8d25\u3002"}`}}}},
+		},
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "update agent config"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "failed"},
+				"skill_invocations": []interface{}{map[string]interface{}{
+					"kind": "tool_call", "skill_id": "agent-management", "tool_name": "update_agent_config", "status": "error",
+				}},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "\u6211\u6ca1\u6709\u786e\u8ba4\u667a\u80fd\u4f53\u914d\u7f6e\u66f4\u65b0\u6210\u529f\uff1aupdate_agent_config \u8c03\u7528\u5931\u8d25\u3002" {
+		t.Fatalf("answer = %q, want verifier replacement final answer", answer)
+	}
+}
+
+func TestRunnerCompletionVerifierFailedPlanOverrideStopsRetry(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Done, the file was saved to File Management."}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"candidate appears supported"}`}}}},
+		},
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "save file to management"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status": "failed",
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        "tool:file-manager/save_file_to_management",
+							"status":    "failed",
+							"skill_id":  "file-manager",
+							"tool_name": "save_file_to_management",
+						},
+					},
+				},
+				"execution_ledger": map[string]interface{}{
+					"skill_invocations": []interface{}{map[string]interface{}{
+						"kind":      "tool_call",
+						"status":    "error",
+						"skill_id":  "file-manager",
+						"tool_name": "save_file_to_management",
+						"error":     "permission denied",
+					}},
+				},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(answer, completionVerificationFallbackFailed) ||
+		!strings.Contains(answer, "file-manager/save_file_to_management") {
+		t.Fatalf("answer = %q, want conservative failed-plan answer", answer)
+	}
+	if !strings.Contains(answer, "permission denied") {
+		t.Fatalf("answer = %q, want ledger failure detail", answer)
+	}
+	if strings.Contains(answer, "Done") || strings.Contains(answer, "saved to File Management") {
+		t.Fatalf("answer = %q, should not preserve unsupported success claim", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want planning and verifier only", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerCompletionVerifierSkipsWithoutEvidence(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "plain answer"}}}},
+		},
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "hello"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared:           prepared,
+		Resolved:           runnerTestResolvedSkills(),
+		CompletionEvidence: func() map[string]interface{} { return map[string]interface{}{} },
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "plain answer" {
+		t.Fatalf("answer = %q, want plain answer", answer)
+	}
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want no verifier call", fakeLLM.appChatCalls)
+	}
+}
+
+func runnerTestResolvedSkills() *skills.ResolvedSkills {
+	return &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{
+			ID:          "test-skill",
+			Name:        "Test Skill",
+			Description: "Test skill metadata",
+			WhenToUse:   "Use in runner tests.",
+			RuntimeType: "prompt",
+		},
+		Instructions: "# Test Skill\n",
+	}}}
+}
+
 func writeRunnerTestSkill(t *testing.T, catalogDir string, skillID string, content string) {
 	t.Helper()
 
@@ -1405,6 +3188,367 @@ func (t *runnerGovernedFilesDeleteTool) ForkToolRuntime(*tools.ToolRuntime) tool
 }
 
 func (t *runnerGovernedFilesDeleteTool) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerAgentManagementProvider struct {
+	tool *runnerAgentManagementDeleteAgentsTool
+}
+
+func (p *runnerAgentManagementProvider) GetEntity() tools.ToolProviderEntity {
+	return tools.ToolProviderEntity{
+		Identity: tools.ToolProviderIdentity{
+			Name:        "agent_management",
+			Label:       tools.I18nText{"en_US": "Agent Management"},
+			Description: tools.I18nText{"en_US": "Agent management test provider"},
+		},
+		ProviderType: tools.ToolProviderTypeBuiltin,
+	}
+}
+
+func (p *runnerAgentManagementProvider) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (p *runnerAgentManagementProvider) GetTool(name string) (tools.Tool, error) {
+	if name != "delete_agents" {
+		return nil, tools.ErrToolNotFound
+	}
+	return p.tool, nil
+}
+
+func (p *runnerAgentManagementProvider) GetTools() []tools.Tool {
+	return []tools.Tool{p.tool}
+}
+
+func (p *runnerAgentManagementProvider) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerAgentManagementDeleteAgentsTool struct {
+	calls int
+}
+
+func (t *runnerAgentManagementDeleteAgentsTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "delete_agents",
+			Provider: "agent_management",
+			Label:    tools.I18nText{"en_US": "Delete Agents"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Delete several agents"},
+			LLM:   "Delete several agents in one batch operation.",
+		},
+		Parameters: []tools.ToolParameter{
+			{
+				Name:     "agents",
+				Label:    tools.I18nText{"en_US": "Agents"},
+				Type:     tools.ToolParameterTypeString,
+				Form:     tools.ToolParameterFormLLM,
+				Required: true,
+			},
+		},
+	}
+}
+
+func (t *runnerAgentManagementDeleteAgentsTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *runnerAgentManagementDeleteAgentsTool) GetTenantID() string {
+	return ""
+}
+
+func (t *runnerAgentManagementDeleteAgentsTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = toolParameters
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	t.calls++
+	itemResults := []map[string]interface{}{
+		{"index": 0, "status": "succeeded", "agent_name": "Agent One", "effect": "deleted"},
+		{"index": 1, "status": "succeeded", "agent_name": "Agent Two", "effect": "deleted"},
+	}
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":             "completed",
+			"effect":             "deleted",
+			"operation_type":     "agent.delete.batch",
+			"operation_group_id": "agent.delete.batch:test",
+			"target_count":       2,
+			"deleted_count":      2,
+			"failed_count":       0,
+			"item_results":       itemResults,
+			"requires_refresh":   true,
+			"refresh_target":     "/console/agents",
+			"operation_group": map[string]interface{}{
+				"id":            "agent.delete.batch:test",
+				"type":          "batch",
+				"operation":     "agent.delete",
+				"asset_type":    "agent",
+				"status":        "completed",
+				"target_count":  2,
+				"success_count": 2,
+				"failed_count":  0,
+				"item_results":  itemResults,
+			},
+		},
+	}}, nil
+}
+
+func (t *runnerAgentManagementDeleteAgentsTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *runnerAgentManagementDeleteAgentsTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *runnerAgentManagementDeleteAgentsTool) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerFilesProvider struct {
+	saveTool   *runnerFileManagerSaveTool
+	deleteTool *runnerFileManagerDeleteTool
+}
+
+func (p *runnerFilesProvider) GetEntity() tools.ToolProviderEntity {
+	return tools.ToolProviderEntity{
+		Identity: tools.ToolProviderIdentity{
+			Name:        "files",
+			Label:       tools.I18nText{"en_US": "Files"},
+			Description: tools.I18nText{"en_US": "File management test provider"},
+		},
+		ProviderType: tools.ToolProviderTypeBuiltin,
+	}
+}
+
+func (p *runnerFilesProvider) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (p *runnerFilesProvider) GetTool(name string) (tools.Tool, error) {
+	switch name {
+	case "save_file_to_management":
+		if p.saveTool != nil {
+			return p.saveTool, nil
+		}
+	case "delete_file":
+		if p.deleteTool != nil {
+			return p.deleteTool, nil
+		}
+	}
+	return nil, tools.ErrToolNotFound
+}
+
+func (p *runnerFilesProvider) GetTools() []tools.Tool {
+	out := make([]tools.Tool, 0, 2)
+	if p.saveTool != nil {
+		out = append(out, p.saveTool)
+	}
+	if p.deleteTool != nil {
+		out = append(out, p.deleteTool)
+	}
+	return out
+}
+
+func (p *runnerFilesProvider) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerFileManagerSaveTool struct {
+	calls int
+}
+
+func (t *runnerFileManagerSaveTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "save_file_to_management",
+			Provider: "files",
+			Label:    tools.I18nText{"en_US": "Save File to Management"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Save generated file"},
+			LLM:   "Save a generated file into File Management.",
+		},
+		Parameters: []tools.ToolParameter{
+			{
+				Name:     "source_type",
+				Label:    tools.I18nText{"en_US": "Source type"},
+				Type:     tools.ToolParameterTypeString,
+				Form:     tools.ToolParameterFormLLM,
+				Required: true,
+			},
+			{
+				Name:     "tool_file_id",
+				Label:    tools.I18nText{"en_US": "Tool file ID"},
+				Type:     tools.ToolParameterTypeString,
+				Form:     tools.ToolParameterFormLLM,
+				Required: true,
+			},
+			{
+				Name:     "filename",
+				Label:    tools.I18nText{"en_US": "Filename"},
+				Type:     tools.ToolParameterTypeString,
+				Form:     tools.ToolParameterFormLLM,
+				Required: true,
+			},
+		},
+	}
+}
+
+func (t *runnerFileManagerSaveTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *runnerFileManagerSaveTool) GetTenantID() string {
+	return ""
+}
+
+func (t *runnerFileManagerSaveTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	t.calls++
+	filename := strings.TrimSpace(fmt.Sprint(toolParameters["filename"]))
+	if filename == "" {
+		filename = "saved.svg"
+	}
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":          "completed",
+			"effect":          "created",
+			"target":          "managed_file",
+			"file_id":         "managed-file-1",
+			"upload_file_id":  "managed-file-1",
+			"filename":        filename,
+			"transfer_method": "local_file",
+		},
+	}}, nil
+}
+
+func (t *runnerFileManagerSaveTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *runnerFileManagerSaveTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *runnerFileManagerSaveTool) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerFileManagerDeleteTool struct {
+	calls int
+}
+
+func (t *runnerFileManagerDeleteTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "delete_file",
+			Provider: "files",
+			Label:    tools.I18nText{"en_US": "Delete File"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Delete managed file"},
+			LLM:   "Delete a managed file from File Management.",
+		},
+		Parameters: []tools.ToolParameter{
+			{
+				Name:     "file_id",
+				Label:    tools.I18nText{"en_US": "File ID"},
+				Type:     tools.ToolParameterTypeString,
+				Form:     tools.ToolParameterFormLLM,
+				Required: true,
+			},
+		},
+	}
+}
+
+func (t *runnerFileManagerDeleteTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *runnerFileManagerDeleteTool) GetTenantID() string {
+	return ""
+}
+
+func (t *runnerFileManagerDeleteTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	t.calls++
+	fileID, _ := toolParameters["file_id"].(string)
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":        "completed",
+			"deleted_count": 1,
+			"file": map[string]interface{}{
+				"id":        fileID,
+				"name":      "aichat-plan-smoke.md",
+				"extension": "md",
+			},
+		},
+	}}, nil
+}
+
+func (t *runnerFileManagerDeleteTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *runnerFileManagerDeleteTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *runnerFileManagerDeleteTool) ValidateCredentials(context.Context, map[string]interface{}) error {
 	return nil
 }
 

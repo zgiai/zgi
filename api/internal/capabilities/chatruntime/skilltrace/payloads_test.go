@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -352,6 +353,292 @@ func TestSummarizeToolResultCompactsAgentWorkflowPayload(t *testing.T) {
 	}
 }
 
+func TestSummarizeToolResultPreservesAgentConfigUpdatedFields(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "update_agent_config", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":         "completed",
+			"effect":         "updated",
+			"agent_id":       "agent-1",
+			"workspace_id":   "workspace-1",
+			"updated_fields": []string{"model_provider", "model", "home_title"},
+			"config": map[string]interface{}{
+				"system_prompt":        "full prompt should stay out of compact trace",
+				"model_provider":       "deepseek",
+				"model":                "deepseek-chat",
+				"home_title":           "Home",
+				"agent_memory_enabled": true,
+				"file_upload":          true,
+				"enabled_skill_ids":    []interface{}{"time"},
+			},
+		},
+	}})
+
+	if result["agent_id"] != "agent-1" || result["workspace_id"] != "workspace-1" {
+		t.Fatalf("summary identity = %#v, want agent/workspace evidence", result)
+	}
+	fields, ok := result["updated_fields"].([]string)
+	if !ok || len(fields) != 3 || fields[0] != "model_provider" || fields[1] != "model" || fields[2] != "home_title" {
+		t.Fatalf("updated_fields = %#v, want exact field evidence", result["updated_fields"])
+	}
+	if _, ok := result["config"]; ok {
+		t.Fatalf("config should not be included in compact trace result: %#v", result)
+	}
+	if result["model_provider"] != "deepseek" || result["model"] != "deepseek-chat" {
+		t.Fatalf("model evidence = %#v/%#v, want deepseek/deepseek-chat; summary=%#v", result["model_provider"], result["model"], result)
+	}
+	if result["agent_memory_enabled"] != true || result["file_upload"] != true || result["enabled_skill_count"] != 1 {
+		t.Fatalf("config evidence = %#v, want compact switches/counts", result)
+	}
+}
+
+func TestSummarizeToolResultPreservesAgentConfigReadModelEvidence(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "get_agent_config", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":       "completed",
+			"agent_id":     "agent-1",
+			"workspace_id": "workspace-1",
+			"config": map[string]interface{}{
+				"model_provider": "deepseek",
+				"model":          "deepseek-chat",
+			},
+		},
+	}})
+
+	if result["status"] != "completed" || result["agent_id"] != "agent-1" || result["workspace_id"] != "workspace-1" {
+		t.Fatalf("summary identity = %#v, want completed agent/workspace evidence", result)
+	}
+	if result["model_provider"] != "deepseek" || result["model"] != "deepseek-chat" {
+		t.Fatalf("model evidence = %#v/%#v, want deepseek/deepseek-chat; summary=%#v", result["model_provider"], result["model"], result)
+	}
+	if _, ok := result["config"]; ok {
+		t.Fatalf("config should not be included in compact trace result: %#v", result)
+	}
+}
+
+func TestSummarizeToolResultPreservesAgentConfigReadModelEvidenceFromStruct(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "get_agent_config", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":       "completed",
+			"agent_id":     "agent-1",
+			"workspace_id": "workspace-1",
+			"config": struct {
+				ModelProvider     string                   `json:"model_provider"`
+				Model             string                   `json:"model"`
+				FileUploadEnabled bool                     `json:"file_upload_enabled"`
+				AgentMemorySlots  []map[string]interface{} `json:"agent_memory_slots"`
+				ModelParameters   map[string]interface{}   `json:"model_parameters"`
+			}{
+				ModelProvider:     "deepseek",
+				Model:             "deepseek-chat",
+				FileUploadEnabled: true,
+				AgentMemorySlots: []map[string]interface{}{
+					{"slot": "preference"},
+				},
+				ModelParameters: map[string]interface{}{"temperature": 0.7},
+			},
+		},
+	}})
+
+	if result["model_provider"] != "deepseek" || result["model"] != "deepseek-chat" {
+		t.Fatalf("model evidence = %#v/%#v, want deepseek/deepseek-chat; summary=%#v", result["model_provider"], result["model"], result)
+	}
+	if result["file_upload_enabled"] != true || result["memory_slot_config_count"] != 1 || result["model_parameter_count"] != 1 {
+		t.Fatalf("config evidence = %#v, want compact switches/counts from struct config", result)
+	}
+	if _, ok := result["config"]; ok {
+		t.Fatalf("config should not be included in compact trace result: %#v", result)
+	}
+}
+
+func TestSummarizeToolResultPreservesAgentMemorySlotReplacementEvidence(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "replace_agent_memory_slots", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":   "completed",
+			"effect":   "updated",
+			"agent_id": "agent-1",
+			"href":     "/console/agents/agent-1/agent",
+			"config": map[string]interface{}{
+				"agent_memory_slots": []interface{}{
+					map[string]interface{}{"key": "preference", "description": "User preferences", "enabled": true},
+					map[string]interface{}{"key": "constraints", "description": "Important constraints", "enabled": true},
+				},
+			},
+		},
+	}})
+
+	if result["status"] != "completed" || result["effect"] != "updated" || result["agent_id"] != "agent-1" {
+		t.Fatalf("summary identity = %#v, want completed updated agent evidence", result)
+	}
+	if result["href"] != "/console/agents/agent-1/agent" {
+		t.Fatalf("href = %#v, want Agent detail href; summary=%#v", result["href"], result)
+	}
+	if result["memory_slot_config_count"] != 2 {
+		t.Fatalf("memory_slot_config_count = %#v, want 2; summary=%#v", result["memory_slot_config_count"], result)
+	}
+	if _, ok := result["config"]; ok {
+		t.Fatalf("config should not be included in compact trace result: %#v", result)
+	}
+	if _, ok := result["agent_memory_slots"]; ok {
+		t.Fatalf("agent_memory_slots should stay out of compact trace result: %#v", result)
+	}
+}
+
+func TestSummarizeToolResultCompactsAgentManagementBindingPayloads(t *testing.T) {
+	tests := []struct {
+		name         string
+		toolName     string
+		payload      map[string]interface{}
+		bindingKind  string
+		resourceName string
+		forbidden    []string
+	}{
+		{
+			name:     "knowledge binding replacement",
+			toolName: "replace_agent_knowledge_bindings",
+			payload: map[string]interface{}{
+				"status":      "completed",
+				"effect":      "updated",
+				"agent_id":    "agent-1",
+				"agent_name":  "Support Agent",
+				"dataset_ids": []interface{}{"kb-1"},
+				"knowledge_bases": []interface{}{
+					map[string]interface{}{"dataset_id": "kb-1", "name": "Policies"},
+				},
+			},
+			bindingKind:  "knowledge_base",
+			resourceName: "Policies",
+			forbidden:    []string{"agent-1", "kb-1"},
+		},
+		{
+			name:     "database binding replacement",
+			toolName: "replace_agent_database_bindings",
+			payload: map[string]interface{}{
+				"status":     "completed",
+				"effect":     "updated",
+				"agent_id":   "agent-1",
+				"agent_name": "Support Agent",
+				"bindings": []interface{}{map[string]interface{}{
+					"data_source_id":   "db-1",
+					"data_source_name": "CRM",
+					"table_ids":        []interface{}{"table-1"},
+					"tables": []interface{}{
+						map[string]interface{}{"table_id": "table-1", "table_name": "customers"},
+					},
+				}},
+			},
+			bindingKind:  "database_table",
+			resourceName: "CRM.customers",
+			forbidden:    []string{"agent-1", "db-1", "table-1"},
+		},
+		{
+			name:     "workflow binding replacement",
+			toolName: "replace_agent_workflow_bindings",
+			payload: map[string]interface{}{
+				"status":     "completed",
+				"effect":     "updated",
+				"agent_id":   "agent-1",
+				"agent_name": "Support Agent",
+				"bindings": []interface{}{map[string]interface{}{
+					"binding_id":  "binding-1",
+					"workflow_id": "workflow-1",
+					"label":       "Approval Flow",
+				}},
+			},
+			bindingKind:  "workflow",
+			resourceName: "Approval Flow",
+			forbidden:    []string{"agent-1", "binding-1", "workflow-1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := SummarizeToolResult(skills.SkillAgentManagement, tt.toolName, []tools.ToolInvokeMessage{{
+				Type: tools.ToolInvokeMessageTypeJSON,
+				Data: tt.payload,
+			}})
+			if result["binding_kind"] != tt.bindingKind || result["resource_count"] != 1 || result["agent_name"] != "Support Agent" {
+				t.Fatalf("summary = %#v, want binding kind/count/agent name", result)
+			}
+			names, ok := result["resource_names"].([]string)
+			if !ok || len(names) != 1 || names[0] != tt.resourceName {
+				t.Fatalf("resource_names = %#v, want %q", result["resource_names"], tt.resourceName)
+			}
+			for _, key := range []string{"agent_id", "dataset_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings", "bindings"} {
+				if _, ok := result[key]; ok {
+					t.Fatalf("%s should not be included in compact binding trace result: %#v", key, result)
+				}
+			}
+			for _, rawID := range tt.forbidden {
+				if summaryContainsString(result, rawID) {
+					t.Fatalf("summary contains raw id %q: %#v", rawID, result)
+				}
+			}
+		})
+	}
+}
+
+func TestSummarizeToolResultCountsAgentDatabaseBindingsFromConfig(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "replace_agent_database_bindings", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":     "completed",
+			"effect":     "updated",
+			"agent_name": "Support Agent",
+			"config": &dto.AgentConfigResponse{
+				DatabaseBindings: []dto.AgentDatabaseBinding{{
+					DataSourceID: "db-1",
+					TableIDs:     []string{"table-1", "table-2"},
+				}},
+			},
+		},
+	}})
+
+	if result["binding_kind"] != "database_table" || result["resource_count"] != 2 {
+		t.Fatalf("summary = %#v, want database binding count from typed config", result)
+	}
+	if summaryContainsString(result, "table-1") || summaryContainsString(result, "table-2") {
+		t.Fatalf("summary should not expose raw table ids: %#v", result)
+	}
+	if _, ok := result["config"]; ok {
+		t.Fatalf("config should not be included in compact trace result: %#v", result)
+	}
+}
+
+func TestSummarizeToolResultPreservesAgentBindingDiffAction(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "replace_agent_workflow_bindings", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":                 "completed",
+			"effect":                 "updated",
+			"agent_id":               "agent-1",
+			"agent_name":             "Support Agent",
+			"binding_kind":           "workflow",
+			"change_action":          "unbind",
+			"resource_count":         1,
+			"removed_resource_count": 1,
+			"removed_resource_names": []string{"Approval Flow"},
+			"config": &dto.AgentConfigResponse{
+				WorkflowBindings: nil,
+			},
+		},
+	}})
+
+	if result["change_action"] != "unbind" || result["resource_count"] != 1 || result["removed_resource_count"] != 1 {
+		t.Fatalf("summary = %#v, want unbind diff counts preserved", result)
+	}
+	names, ok := result["removed_resource_names"].([]string)
+	if !ok || len(names) != 1 || names[0] != "Approval Flow" {
+		t.Fatalf("removed_resource_names = %#v, want Approval Flow", result["removed_resource_names"])
+	}
+	if summaryContainsString(result, "agent-1") {
+		t.Fatalf("summary contains raw agent id: %#v", result)
+	}
+}
+
 func TestSummarizeToolResultCompactsConsoleNavigationPayload(t *testing.T) {
 	result := SummarizeToolResult(skills.SkillConsoleNavigator, "navigate", []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,
@@ -378,6 +665,38 @@ func TestSummarizeToolResultCompactsConsoleNavigationPayload(t *testing.T) {
 	if _, ok := result["internal_id"]; ok {
 		t.Fatalf("internal_id should not be included in compact trace result: %#v", result)
 	}
+}
+
+func summaryContainsString(value interface{}, needle string) bool {
+	switch typed := value.(type) {
+	case string:
+		return typed == needle
+	case map[string]interface{}:
+		for _, item := range typed {
+			if summaryContainsString(item, needle) {
+				return true
+			}
+		}
+	case []string:
+		for _, item := range typed {
+			if summaryContainsString(item, needle) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if summaryContainsString(item, needle) {
+				return true
+			}
+		}
+	case []map[string]interface{}:
+		for _, item := range typed {
+			if summaryContainsString(item, needle) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestSummarizeToolResultCompactsFileDeletePayload(t *testing.T) {
@@ -418,6 +737,38 @@ func TestSummarizeToolResultCompactsFileDeletePayload(t *testing.T) {
 	}
 	if _, ok := result["file_created_by"]; ok {
 		t.Fatalf("file_created_by should not be included in compact trace result: %#v", result)
+	}
+}
+
+func TestSummarizeToolResultCompactsFileManagerSavePayload(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillFileManager, "save_file_to_management", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":          "completed",
+			"target":          "managed_file",
+			"transfer_method": "local_file",
+			"source_type":     "tool_file",
+			"file_id":         "managed-file-1",
+			"upload_file_id":  "managed-file-1",
+			"filename":        "星空小猫.svg",
+			"temporary_url":   "https://example.invalid/temp.svg",
+		},
+	}})
+	for key, want := range map[string]interface{}{
+		"status":          "completed",
+		"target":          "managed_file",
+		"transfer_method": "local_file",
+		"source_type":     "tool_file",
+		"file_id":         "managed-file-1",
+		"upload_file_id":  "managed-file-1",
+		"filename":        "星空小猫.svg",
+	} {
+		if result[key] != want {
+			t.Fatalf("%s = %#v, want %#v in %#v", key, result[key], want, result)
+		}
+	}
+	if _, ok := result["temporary_url"]; ok {
+		t.Fatalf("temporary_url should not be included in compact trace result: %#v", result)
 	}
 }
 

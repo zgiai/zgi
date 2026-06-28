@@ -199,6 +199,42 @@ func TestRecentAssetCandidatesFromReadFileTrace(t *testing.T) {
 	}
 }
 
+func TestRecentAssetCandidatesFromSaveFileToManagementTrace(t *testing.T) {
+	messageID := uuid.New()
+	parts := &chatRequestParts{}
+	applyRecentAssetCandidatesFromBranch(parts, []*runtimemodel.Message{{
+		ID:     messageID,
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{map[string]interface{}{
+				"kind":      "tool_call",
+				"skill_id":  skills.SkillFileManager,
+				"tool_name": "save_file_to_management",
+				"status":    "success",
+				"result": map[string]interface{}{
+					"status":         "success",
+					"target":         "managed_file",
+					"upload_file_id": "managed-file-1",
+					"filename":       "aichat-plan-smoke.md",
+					"extension":      "md",
+					"workspace_id":   "workspace-1",
+				},
+			}},
+		},
+	}})
+
+	if len(parts.RecentAssetCandidates) != 1 {
+		t.Fatalf("recent candidates = %#v, want one", parts.RecentAssetCandidates)
+	}
+	candidate := parts.RecentAssetCandidates[0]
+	if candidate.ID != "managed-file-1" || candidate.Name != "aichat-plan-smoke.md" || candidate.Extension != "md" || !candidate.Recent {
+		t.Fatalf("candidate = %#v, want recent managed file", candidate)
+	}
+	if candidate.Metadata["recent_tool_name"] != "save_file_to_management" || candidate.Metadata["recent_message_id"] != messageID.String() {
+		t.Fatalf("metadata = %#v, want save_file_to_management provenance", candidate.Metadata)
+	}
+}
+
 func TestResourceResolverResolvesRecentCandidateFromChatParts(t *testing.T) {
 	parts := &chatRequestParts{
 		Query: "read the previous file",
