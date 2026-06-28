@@ -267,7 +267,13 @@ function skillInvocationNavigationTarget(invocation: AIChatSkillInvocation): str
   const record = invocation as unknown as Record<string, unknown>;
   const href =
     invocationString(record.href) ||
+    invocationString(record.loaded_href) ||
+    invocationString(record.current_href) ||
+    invocationString(record.target_href) ||
     invocationString(result.href) ||
+    invocationString(result.loaded_href) ||
+    invocationString(result.current_href) ||
+    invocationString(result.target_href) ||
     invocationString(args.href);
   return href.replace(/\/+$/, '') || href;
 }

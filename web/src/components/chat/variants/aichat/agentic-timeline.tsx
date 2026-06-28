@@ -2080,9 +2080,16 @@ function invocationStatusIsSuccessful(invocation: AIChatSkillInvocation): boolea
 function invocationNavigationTarget(invocation: AIChatSkillInvocation): string {
   const result = invocationRecord(invocation.result);
   const args = invocationRecord(invocation.arguments);
+  const record = invocation as unknown as Record<string, unknown>;
   const href =
-    invocationString(invocation.href) ||
+    invocationString(record.href) ||
+    invocationString(record.loaded_href) ||
+    invocationString(record.current_href) ||
+    invocationString(record.target_href) ||
     invocationString(result.href) ||
+    invocationString(result.loaded_href) ||
+    invocationString(result.current_href) ||
+    invocationString(result.target_href) ||
     invocationString(args.href);
   return href.replace(/\/+$/, '') || href;
 }
@@ -2160,8 +2167,7 @@ function completedClientActionKey(invocation: AIChatSkillInvocation): string | n
   const href = invocationNavigationTarget(invocation);
   if (!href) return null;
   return [
-    invocation.skill_id,
-    invocation.tool_name ?? '',
+    'route_navigation',
     href,
   ]
     .map(value => value.trim().toLowerCase())
@@ -2175,8 +2181,7 @@ function toolCallClientActionKey(invocation: AIChatSkillInvocation): string | nu
   const href = invocationNavigationTarget(invocation);
   if (!href) return null;
   return [
-    invocation.skill_id,
-    invocation.tool_name ?? '',
+    'route_navigation',
     href,
   ]
     .map(value => value.trim().toLowerCase())
