@@ -639,6 +639,38 @@ func TestSummarizeToolResultPreservesAgentBindingDiffAction(t *testing.T) {
 	}
 }
 
+func TestSummarizeToolResultPreservesAgentSkillBindingEvidence(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "replace_agent_skill_bindings", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":               "completed",
+			"effect":               "updated",
+			"agent_id":             "agent-1",
+			"agent_name":           "Support Agent",
+			"binding_kind":         "agent_skill",
+			"change_action":        "bind",
+			"resource_count":       1,
+			"final_resource_count": 1,
+			"config": &dto.AgentConfigResponse{
+				EnabledSkillIDs: []string{"chart-generator"},
+			},
+		},
+	}})
+
+	if result["binding_kind"] != "agent_skill" || result["change_action"] != "bind" || result["resource_count"] != 1 {
+		t.Fatalf("summary = %#v, want agent skill binding evidence", result)
+	}
+	if result["agent_name"] != "Support Agent" {
+		t.Fatalf("agent_name = %#v, want Support Agent", result["agent_name"])
+	}
+	if summaryContainsString(result, "agent-1") || summaryContainsString(result, "chart-generator") {
+		t.Fatalf("summary should not expose raw ids: %#v", result)
+	}
+	if _, ok := result["config"]; ok {
+		t.Fatalf("config should not be included in compact trace result: %#v", result)
+	}
+}
+
 func TestSummarizeToolResultCompactsConsoleNavigationPayload(t *testing.T) {
 	result := SummarizeToolResult(skills.SkillConsoleNavigator, "navigate", []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,

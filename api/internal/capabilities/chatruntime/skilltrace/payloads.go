@@ -282,6 +282,8 @@ func summarizeAgentManagementResult(toolName string, payload map[string]interfac
 		return result
 	case "replace_agent_memory_slots":
 		return compactAgentConfigOperationResult(payload)
+	case "replace_agent_skill_bindings":
+		return compactAgentBindingOperationResult(payload, "agent_skill")
 	case "replace_agent_knowledge_bindings":
 		return compactAgentBindingOperationResult(payload, "knowledge_base")
 	case "replace_agent_database_bindings":
@@ -380,6 +382,11 @@ func bindingResourceNames(bindingKind string, payload map[string]interface{}) []
 func bindingResourceRecords(bindingKind string, payload map[string]interface{}) []map[string]interface{} {
 	config := recordFromAny(payload["config"])
 	switch strings.TrimSpace(bindingKind) {
+	case "agent_skill":
+		if records := firstNonEmptyRecords(payload, "skills", "agent_skills", "resources", "assets"); len(records) > 0 {
+			return records
+		}
+		return firstNonEmptyRecords(config, "skills", "agent_skills")
 	case "knowledge_base":
 		if records := firstNonEmptyRecords(payload, "knowledge_bases", "knowledge_bindings", "datasets", "resources", "assets"); len(records) > 0 {
 			return records
@@ -403,6 +410,8 @@ func bindingResourceRecords(bindingKind string, payload map[string]interface{}) 
 
 func bindingResourceNameFromRecord(bindingKind string, record map[string]interface{}) string {
 	switch strings.TrimSpace(bindingKind) {
+	case "agent_skill":
+		return firstNonEmptyString(record["skill_name"], record["display_name"], record["name"], record["title"], record["label"])
 	case "knowledge_base":
 		return firstNonEmptyString(record["dataset_name"], record["knowledge_base_name"], record["name"], record["title"], record["label"])
 	case "database_table":
@@ -425,6 +434,11 @@ func bindingResourceCount(bindingKind string, payload map[string]interface{}, na
 	}
 	config := recordFromAny(payload["config"])
 	switch strings.TrimSpace(bindingKind) {
+	case "agent_skill":
+		if count := firstNonZeroCollectionLen(payload, "enabled_skill_ids", "skill_ids", "skills", "agent_skills"); count > 0 {
+			return count
+		}
+		return firstNonZeroCollectionLen(config, "enabled_skill_ids", "skill_ids", "skills", "agent_skills")
 	case "knowledge_base":
 		if count := firstNonZeroCollectionLen(payload, "knowledge_dataset_ids", "dataset_ids", "knowledge_base_ids", "knowledge_bases", "knowledge_bindings", "datasets"); count > 0 {
 			return count

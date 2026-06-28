@@ -152,7 +152,7 @@ func isNonBlockingAgentManagementMutation(trace skills.SkillTrace) bool {
 		return false
 	}
 	switch strings.TrimSpace(trace.ToolName) {
-	case "update_agent_identity", "update_agent_config", "replace_agent_memory_slots", "replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings":
+	case "update_agent_identity", "update_agent_config", "replace_agent_memory_slots", "replace_agent_skill_bindings", "replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings":
 		return true
 	default:
 		return false
