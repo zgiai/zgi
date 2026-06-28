@@ -100,6 +100,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	recoverableFailureCallCount := 0
 	finalAnswerGuardBlockCount := 0
 	completionVerificationRetryCount := 0
+	evidenceContinuationRetryCount := 0
 	finalizingProgressEmitted := false
 	skillToolCallCounts := map[string]int{}
 	attemptedToolCalls := []SkillToolCallRef{}
@@ -172,6 +173,16 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 		}
 		if len(toolCalls) == 0 && postVerificationConfigured {
+			if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(completionEvidenceForFastPath(req), evidenceContinuationRetryCount); shouldContinue {
+				evidenceContinuationRetryCount++
+				if evidenceContinuationRetryCount <= defaultMaxCompletionVerificationRetries {
+					if planningResult.answerStreamed && text != "" {
+						r.emitAnswerRetract(ctx, prepared, text, nil)
+					}
+					messages = append(messages, feedback)
+					continue
+				}
+			}
 			if !finalizingProgressEmitted && (toolCallCount > 0 || len(attemptedToolCalls) > 0 || len(successfulToolCalls) > 0) {
 				if r.emitAgentProgress(ctx, prepared, completionVerificationFinalizingProgressText(prepared, completionEvidenceForFastPath(req)), nil) {
 					finalizingProgressEmitted = true
@@ -336,6 +347,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						Result:    copyStringAnyMap(result.toolResult),
 					})
 					finalAnswerGuardBlockCount = 0
+					evidenceContinuationRetryCount = 0
 				}
 			}
 			if result.pendingApproval != nil {
@@ -423,6 +435,72 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return answerBuilder.String(), usage, nil
 	}
 	return answerBuilder.String(), usage, err
+}
+
+func completionEvidenceContinuationSystemMessage(evidence map[string]interface{}, retryCount int) (adapter.Message, bool) {
+	progress := evidenceMapFromAny(evidence["agent_create_progress"])
+	if len(progress) == 0 {
+		return adapter.Message{}, false
+	}
+	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(progress["status"])))
+	missingTargets := evidenceStringSliceFromAny(progress["missing_targets"])
+	missingCount := firstNonNegativeInt(progress["missing_count"])
+	if len(missingTargets) == 0 && missingCount <= 0 {
+		return adapter.Message{}, false
+	}
+	if status != "" && status != "partial" && status != "missing" && status != "incomplete" && status != "needs_action" {
+		return adapter.Message{}, false
+	}
+	payload := map[string]interface{}{
+		"operation":         "agent.create",
+		"missing_targets":   missingTargets,
+		"missing_count":     firstPositiveInt(missingCount, len(missingTargets)),
+		"completed_targets": evidenceStringSliceFromAny(progress["completed_targets"]),
+	}
+	if description := strings.TrimSpace(evidenceStringFromAny(progress["requested_description"])); description != "" {
+		payload["requested_description"] = description
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		payloadJSON = []byte(fmt.Sprint(payload))
+	}
+	content := strings.Join([]string{
+		fmt.Sprintf("Runtime execution evidence requires continued tool use before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
+		"The current user goal is still missing one or more exact Agent creation targets.",
+		"Call agent-management/create_agent once for each exact missing target name. Use requested_description if present and the user did not provide per-target descriptions.",
+		"Do not answer as complete until successful create_agent tool evidence and the required frontend observation evidence exist for every requested target.",
+		"Do not treat a similar existing visible Agent with a different exact name as satisfying a missing target.",
+		"Agent creation progress JSON:\n" + string(payloadJSON),
+	}, "\n")
+	return adapter.Message{Role: "system", Content: content}, true
+}
+
+func evidenceStringSliceFromAny(value interface{}) []string {
+	switch typed := value.(type) {
+	case []string:
+		return dedupeStrings(typed)
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(evidenceStringFromAny(item)); text != "" {
+				out = append(out, text)
+			}
+		}
+		return dedupeStrings(out)
+	case []map[string]interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(firstNonEmptyString(item["name"], item["agent_name"], item["title"])); text != "" {
+				out = append(out, text)
+			}
+		}
+		return dedupeStrings(out)
+	default:
+		if text := strings.TrimSpace(evidenceStringFromAny(value)); text != "" {
+			return []string{text}
+		}
+		return nil
+	}
 }
 
 func repeatedFailedToolCallKeyForCall(call adapter.ToolCall) (string, string, map[string]interface{}, string) {

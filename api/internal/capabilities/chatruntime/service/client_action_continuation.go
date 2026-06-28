@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/gorm"
 )
 
@@ -132,6 +133,21 @@ func (s *service) RunClientActionContinuationStream(
 	s.emitPreparedEvent(ctx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
 	s.emitPreparedEvent(ctx, prepared, streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req), onEvent)
 
+	if answer, ok := clientActionContinuationFastPathAnswer(prepared); ok {
+		s.emitPreparedEvent(ctx, prepared, streamEventMessage, map[string]interface{}{
+			"conversation_id": prepared.Conversation.ID.String(),
+			"message_id":      prepared.Message.ID.String(),
+			"answer":          answer,
+		}, onEvent)
+		metadata := preparedResultMetadata(prepared.Message.Metadata, nil)
+		prepared.Message.Metadata = metadata
+		if err := s.completePreparedChat(context.WithoutCancel(ctx), prepared, answer, metadata); err != nil {
+			return nil, err
+		}
+		s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+		return &ChatResult{Answer: answer, Metadata: metadata, Status: runtimemodel.MessageStatusCompleted}, nil
+	}
+
 	var answer string
 	var usage *adapter.Usage
 	answer, usage, err = s.runPreparedSkillStream(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
@@ -180,6 +196,13 @@ func (s *service) RunClientActionContinuationStream(
 	}
 	s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func clientActionContinuationFastPathAnswer(prepared *PreparedChat) (string, bool) {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return "", false
+	}
+	return skillloop.FastPathFinalAnswerForCompletionEvidence(skillLoopCompletionEvidence(prepared)())
 }
 
 func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {
@@ -481,6 +504,9 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 	if completedActions := completedClientActionsForContinuation(message); len(completedActions) > 0 {
 		contentParts = append(contentParts, "Completed client actions in this same AIChat turn JSON:\n"+compactJSON(completedActions))
 	}
+	if progress := clientActionAgentCreateProgress(message); len(progress) > 0 {
+		contentParts = append(contentParts, "Current-turn agent creation progress JSON:\n"+compactJSON(progress))
+	}
 	content := strings.Join(contentParts, "\n\n")
 	system := strings.Join([]string{
 		"You are continuing the same AIChat turn after a frontend client action.",
@@ -491,11 +517,216 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 		"For event_type=route_already_loaded, say the requested page is already current only when useful, then continue the user's real task from the current page context.",
 		"If the client action status is succeeded and observed a resource mutation, use the observation result and updated page context to confirm whether the changed resource is visible; do not repeat the same side-effecting tool only to verify it.",
 		"If a current-turn tool result is provided, treat it as authoritative evidence for the current user request. If it completed the requested mutation, summarize that result as completed in this request and do not describe it as a previous round, previous conversation, last turn, earlier request, 上一轮, 上次, 之前, or 先前 unless the user explicitly asks about history.",
+		"If Current-turn agent creation progress is present and missing_targets is non-empty, do not give a final completion answer yet. Continue by calling agent-management/create_agent for each exact missing target name. Do not treat a similar visible Agent with a different exact name as satisfying the missing target.",
 		"Continue the user's original task from the new page context.",
 		"If the client action failed or timed out, treat that as recoverable feedback and decide whether to retry, choose another route, or explain the limitation.",
 		"Do not expose internal action ids, message ids, UUIDs, or raw JSON field names in the final user-visible answer.",
 	}, " ")
 	return adapter.Message{Role: "system", Content: system + "\n\n" + content}
+}
+
+func clientActionAgentCreateProgress(message *runtimemodel.Message) map[string]interface{} {
+	if message == nil {
+		return nil
+	}
+	goal := strings.TrimSpace(message.Query)
+	if goal == "" {
+		plan := mapFromOperationContext(metadataValue(message.Metadata, "operation_plan"))
+		goal = strings.TrimSpace(stringFromAny(plan["original_user_goal"]))
+	}
+	if goal == "" || !agentManagementCreateRequested(goal) {
+		return nil
+	}
+	requestedTargets := agentCreateTargetNamesFromText(goal)
+	requestedCount := agentManagementCreateRequestedCount(goal)
+	completedTargets := agentCreateCompletedTargetNames(message.Metadata)
+	if requestedCount <= 1 && len(requestedTargets) <= 1 {
+		return nil
+	}
+	if len(requestedTargets) > 0 && requestedCount < len(requestedTargets) {
+		requestedCount = len(requestedTargets)
+	}
+	missingTargets := missingAgentCreateTargets(requestedTargets, completedTargets)
+	if len(requestedTargets) == 0 && requestedCount > len(completedTargets) {
+		for index := len(completedTargets); index < requestedCount; index++ {
+			missingTargets = append(missingTargets, fmt.Sprintf("target_%d", index+1))
+		}
+	}
+	out := map[string]interface{}{
+		"operation":         "agent.create",
+		"requested_count":   requestedCount,
+		"completed_count":   len(completedTargets),
+		"completed_targets": completedTargets,
+		"missing_count":     len(missingTargets),
+		"missing_targets":   missingTargets,
+	}
+	if len(requestedTargets) > 0 {
+		out["requested_targets"] = requestedTargets
+	}
+	if description := agentCreateSharedDescriptionFromText(goal); description != "" {
+		out["requested_description"] = description
+	}
+	if len(missingTargets) == 0 && requestedCount > 0 && len(completedTargets) >= requestedCount {
+		out["status"] = "completed"
+	} else {
+		out["status"] = "partial"
+	}
+	return out
+}
+
+func agentCreateCompletedTargetNames(metadata map[string]interface{}) []string {
+	calls := successfulMetadataToolCalls(metadata, skills.SkillAgentManagement, "create_agent")
+	out := make([]string, 0, len(calls))
+	seen := map[string]struct{}{}
+	for _, call := range calls {
+		name := strings.TrimSpace(firstNonEmptyString(call.Result["agent_name"], call.Result["name"], call.Arguments["name"]))
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
+func missingAgentCreateTargets(requested []string, completed []string) []string {
+	if len(requested) == 0 {
+		return nil
+	}
+	done := map[string]struct{}{}
+	for _, name := range completed {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			done[strings.ToLower(name)] = struct{}{}
+		}
+	}
+	missing := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, name := range requested {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, ok := done[key]; ok {
+			continue
+		}
+		missing = append(missing, name)
+	}
+	return missing
+}
+
+func agentCreateTargetNamesFromText(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	lower := strings.ToLower(text)
+	markers := []string{"名称分别为", "名字分别为", "名称为", "名字为", "named ", "names are "}
+	start := -1
+	markerLen := 0
+	for _, marker := range markers {
+		if index := strings.Index(lower, marker); index >= 0 && (start < 0 || index < start) {
+			start = index
+			markerLen = len(marker)
+		}
+	}
+	if start < 0 {
+		return nil
+	}
+	segment := strings.TrimSpace(text[start+markerLen:])
+	stop := len(segment)
+	for _, marker := range []string{
+		"，描述", ", 描述", "，都写", ", 都写", "，描述都写", ", description", " with description",
+		"，不要", ", 不要", "。不要", ". do not", "。完成", ". after", "完成后", "不要导航", "不要打开",
+	} {
+		if index := strings.Index(strings.ToLower(segment), strings.ToLower(marker)); index >= 0 && index < stop {
+			stop = index
+		}
+	}
+	segment = strings.TrimSpace(segment[:stop])
+	return splitAgentCreateTargetNames(segment)
+}
+
+func splitAgentCreateTargetNames(segment string) []string {
+	replacer := strings.NewReplacer(
+		"、", ",",
+		"，", ",",
+		"；", ",",
+		";", ",",
+		" 和 ", ",",
+		" 和", ",",
+		"和 ", ",",
+		" and ", ",",
+		"\n", ",",
+	)
+	segment = replacer.Replace(segment)
+	parts := strings.Split(segment, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		name := strings.Trim(part, " \t\r\n\"'`“”‘’[]()（）{}<>:：.。")
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
+func agentCreateSharedDescriptionFromText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	lower := strings.ToLower(text)
+	for _, marker := range []string{"描述都写", "描述写成", "描述为", "description is ", "description: "} {
+		index := strings.Index(lower, strings.ToLower(marker))
+		if index < 0 {
+			continue
+		}
+		segment := strings.TrimSpace(text[index+len(marker):])
+		segment = strings.Trim(segment, " \t\r\n:：")
+		if segment == "" {
+			return ""
+		}
+		runes := []rune(segment)
+		if len(runes) > 0 {
+			quote := runes[0]
+			endQuote := quote
+			if quote == '“' {
+				endQuote = '”'
+			}
+			if quote == '“' || quote == '"' || quote == '\'' || quote == '`' {
+				rest := runes[1:]
+				for index, char := range rest {
+					if char == endQuote {
+						return strings.TrimSpace(string(rest[:index]))
+					}
+				}
+			}
+		}
+		for _, stop := range []string{"。", ".", "，不要", ", do not", "不要", "完成后"} {
+			if index := strings.Index(segment, stop); index >= 0 {
+				segment = segment[:index]
+			}
+		}
+		return strings.Trim(segment, " \t\r\n\"'`“”‘’")
+	}
+	return ""
 }
 
 func completedClientActionsForContinuation(message *runtimemodel.Message) []map[string]interface{} {

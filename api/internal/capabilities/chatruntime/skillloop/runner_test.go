@@ -425,6 +425,163 @@ func TestFastPathFinalAnswerWithEvidenceAllowsCurrentPendingTool(t *testing.T) {
 	}
 }
 
+func TestFastPathFinalAnswerDoesNotShortCircuitAgentCreateBeforeObservation(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"effect":     "created",
+			"agent_id":   "agent-1",
+			"agent_name": "Agent One",
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = true, want false so create_agent still gets asset observation")
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceBlocksMultiAgentCreateUntilAllTargetsCreated(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "client_action",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Status:   "succeeded",
+	}, map[string]interface{}{
+		"user_request": "请创建两个草稿智能体，名称分别为 Agent One 和 Agent Two。",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"effect":     "created",
+					"agent_id":   "agent-1",
+					"agent_name": "Agent One",
+				},
+			},
+		},
+		"client_actions": []interface{}{
+			map[string]interface{}{
+				"status":    "succeeded",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+			},
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want false until both requested Agents are created")
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceSummarizesMultiAgentCreateAfterObservation(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "client_action",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Status:   "succeeded",
+	}, map[string]interface{}{
+		"user_request": "请创建两个草稿智能体，名称分别为 Agent One 和 Agent Two。",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"effect":     "created",
+					"agent_id":   "agent-1",
+					"agent_name": "Agent One",
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"effect":     "created",
+					"agent_id":   "agent-2",
+					"agent_name": "Agent Two",
+				},
+			},
+		},
+		"client_actions": []interface{}{
+			map[string]interface{}{
+				"status":    "succeeded",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want true after all requested Agents are created and observed")
+	}
+	for _, want := range []string{"已创建 2 个智能体", "Agent One", "Agent Two"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, missing %q", answer, want)
+		}
+	}
+	if strings.Contains(answer, "已存在") || strings.Contains(answer, "无需重复创建") {
+		t.Fatalf("answer = %q, want create evidence wording instead of pre-existing wording", answer)
+	}
+}
+
+func TestFastPathFinalAnswerForCompletionEvidenceSummarizesAgentCreateAfterObservation(t *testing.T) {
+	evidence := map[string]interface{}{
+		"user_request": "请创建两个草稿智能体，名称分别为 Agent One 和 Agent Two。",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"effect":     "created",
+					"agent_id":   "agent-1",
+					"agent_name": "Agent One",
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"effect":     "created",
+					"agent_id":   "agent-2",
+					"agent_name": "Agent Two",
+				},
+			},
+		},
+		"client_actions": []interface{}{
+			map[string]interface{}{
+				"status":    "succeeded",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want true")
+	}
+	for _, want := range []string{"已创建 2 个智能体", "Agent One", "Agent Two"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, missing %q", answer, want)
+		}
+	}
+}
+
 func TestRunnerFastPathsAgentBatchDeleteAfterToolResult(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
@@ -538,6 +695,183 @@ Use delete_agents to delete several agents in one operation.
 	}
 	if findRunnerTestEvent(events, EventMessage) == nil {
 		t.Fatalf("events = %#v, want final message event", events)
+	}
+}
+
+func TestRunnerCompletionEvidenceContinuesMissingAgentCreateBeforeFinalAnswer(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
+name: agent-management
+description: Manage Agent assets.
+when_to_use: Use when testing agent creation.
+provider_type: builtin
+provider_id: agent_management
+runtime_type: tool
+tools:
+  - create_agent
+max_calls_per_turn: 20
+---
+
+# Agent Management
+
+Use create_agent to create an Agent.
+`)
+	createTool := &runnerAgentManagementCreateAgentTool{}
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Only Agent One was created; Agent Two is still missing."},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load_agent_management",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"agent-management"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall(
+								"call_create_agent_two",
+								skills.SkillAgentManagement,
+								"create_agent",
+								map[string]interface{}{
+									"name":        "Agent Two",
+									"description": "Smoke agent",
+								},
+							),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "model final answer should not be used"},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerAgentManagementProvider{createTool: createTool}); err != nil {
+		t.Fatalf("register agent management provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "create two draft agents named Agent One and Agent Two"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			invocations := []interface{}{
+				map[string]interface{}{
+					"kind":      "tool_call",
+					"status":    "success",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+					"result": map[string]interface{}{
+						"status":     "completed",
+						"effect":     "created",
+						"agent_id":   "agent-1",
+						"agent_name": "Agent One",
+					},
+				},
+			}
+			actions := []interface{}{
+				map[string]interface{}{
+					"status":    "succeeded",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+				},
+			}
+			progress := map[string]interface{}{
+				"operation":         "agent.create",
+				"status":            "partial",
+				"requested_count":   2,
+				"completed_count":   1,
+				"completed_targets": []string{"Agent One"},
+				"missing_count":     1,
+				"missing_targets":   []string{"Agent Two"},
+			}
+			if createTool.calls > 0 {
+				invocations = append(invocations, map[string]interface{}{
+					"kind":      "tool_call",
+					"status":    "success",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+					"result": map[string]interface{}{
+						"status":     "completed",
+						"effect":     "created",
+						"agent_id":   "agent-2",
+						"agent_name": "Agent Two",
+					},
+				})
+				actions = append(actions, map[string]interface{}{
+					"status":    "succeeded",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+				})
+				progress = map[string]interface{}{
+					"operation":         "agent.create",
+					"status":            "completed",
+					"requested_count":   2,
+					"completed_count":   2,
+					"completed_targets": []string{"Agent One", "Agent Two"},
+					"missing_count":     0,
+				}
+			}
+			return map[string]interface{}{
+				"user_request":          "create two draft agents named Agent One and Agent Two",
+				"skill_invocations":     invocations,
+				"client_actions":        actions,
+				"agent_create_progress": progress,
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if createTool.calls != 1 {
+		t.Fatalf("create_agent calls = %d, want one missing target creation", createTool.calls)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want partial answer, load skill, create missing Agent", fakeLLM.appChatCalls)
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "Runtime execution evidence requires continued tool use") ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "Agent Two") {
+		t.Fatalf("second request missing evidence continuation feedback")
+	}
+	if strings.Contains(answer, "model final answer should not be used") || strings.Contains(answer, "Only Agent One") {
+		t.Fatalf("answer = %q, want evidence fast-path answer instead of partial/model final text", answer)
+	}
+	for _, want := range []string{"Agent One", "Agent Two"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, missing %q", answer, want)
+		}
 	}
 }
 
@@ -3212,7 +3546,8 @@ func (t *runnerGovernedFilesDeleteTool) ValidateCredentials(context.Context, map
 }
 
 type runnerAgentManagementProvider struct {
-	tool *runnerAgentManagementDeleteAgentsTool
+	tool       *runnerAgentManagementDeleteAgentsTool
+	createTool *runnerAgentManagementCreateAgentTool
 }
 
 func (p *runnerAgentManagementProvider) GetEntity() tools.ToolProviderEntity {
@@ -3231,14 +3566,28 @@ func (p *runnerAgentManagementProvider) GetProviderType() tools.ToolProviderType
 }
 
 func (p *runnerAgentManagementProvider) GetTool(name string) (tools.Tool, error) {
-	if name != "delete_agents" {
-		return nil, tools.ErrToolNotFound
+	switch name {
+	case "delete_agents":
+		if p.tool != nil {
+			return p.tool, nil
+		}
+	case "create_agent":
+		if p.createTool != nil {
+			return p.createTool, nil
+		}
 	}
-	return p.tool, nil
+	return nil, tools.ErrToolNotFound
 }
 
 func (p *runnerAgentManagementProvider) GetTools() []tools.Tool {
-	return []tools.Tool{p.tool}
+	out := make([]tools.Tool, 0, 2)
+	if p.tool != nil {
+		out = append(out, p.tool)
+	}
+	if p.createTool != nil {
+		out = append(out, p.createTool)
+	}
+	return out
 }
 
 func (p *runnerAgentManagementProvider) ValidateCredentials(context.Context, map[string]interface{}) error {
@@ -3341,6 +3690,95 @@ func (t *runnerAgentManagementDeleteAgentsTool) ForkToolRuntime(*tools.ToolRunti
 }
 
 func (t *runnerAgentManagementDeleteAgentsTool) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerAgentManagementCreateAgentTool struct {
+	calls int
+	names []string
+}
+
+func (t *runnerAgentManagementCreateAgentTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "create_agent",
+			Provider: "agent_management",
+			Label:    tools.I18nText{"en_US": "Create Agent"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Create an agent"},
+			LLM:   "Create an Agent with the provided name and description.",
+		},
+		Parameters: []tools.ToolParameter{
+			{
+				Name:     "name",
+				Label:    tools.I18nText{"en_US": "Name"},
+				Type:     tools.ToolParameterTypeString,
+				Form:     tools.ToolParameterFormLLM,
+				Required: true,
+			},
+			{
+				Name:  "description",
+				Label: tools.I18nText{"en_US": "Description"},
+				Type:  tools.ToolParameterTypeString,
+				Form:  tools.ToolParameterFormLLM,
+			},
+		},
+	}
+}
+
+func (t *runnerAgentManagementCreateAgentTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *runnerAgentManagementCreateAgentTool) GetTenantID() string {
+	return ""
+}
+
+func (t *runnerAgentManagementCreateAgentTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	t.calls++
+	name, _ := toolParameters["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		name = fmt.Sprintf("Agent %d", t.calls)
+	}
+	t.names = append(t.names, name)
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":     "completed",
+			"effect":     "created",
+			"agent_id":   fmt.Sprintf("agent-created-%d", t.calls),
+			"agent_name": name,
+		},
+	}}, nil
+}
+
+func (t *runnerAgentManagementCreateAgentTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *runnerAgentManagementCreateAgentTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *runnerAgentManagementCreateAgentTool) ValidateCredentials(context.Context, map[string]interface{}) error {
 	return nil
 }
 

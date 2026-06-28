@@ -150,6 +150,10 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 				executionLedger[key] = value
 			}
 		}
+		if progress := clientActionAgentCreateProgress(prepared.Message); len(progress) > 0 {
+			evidence["agent_create_progress"] = progress
+			executionLedger["agent_create_progress"] = progress
+		}
 		if summary := skillLoopCompletionExecutionSummary(metadata); len(summary) > 0 {
 			if operationSummary := skillLoopCompletionOperationResultSummary(summary); len(operationSummary) > 0 {
 				summary["operation_result_summary"] = operationSummary

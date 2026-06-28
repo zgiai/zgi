@@ -47,6 +47,9 @@ func FastPathFinalAnswerForToolTrace(trace skills.SkillTrace) (string, bool) {
 // a longer user turn when the operation plan still names a different pending
 // action.
 func FastPathFinalAnswerForToolTraceWithEvidence(trace skills.SkillTrace, evidence map[string]interface{}) (string, bool) {
+	if answer, ok := agentCreateFastPathAnswerWithEvidence(trace, evidence); ok {
+		return answer, true
+	}
 	answer, ok := FastPathFinalAnswerForToolTrace(trace)
 	if !ok {
 		return "", false
@@ -55,6 +58,17 @@ func FastPathFinalAnswerForToolTraceWithEvidence(trace skills.SkillTrace, eviden
 		return "", false
 	}
 	return answer, true
+}
+
+// FastPathFinalAnswerForCompletionEvidence returns a final answer when the
+// accumulated execution evidence is already enough to close the turn. This is
+// used after client-side observations, where there may be no new tool trace for
+// Runner to fast-path on.
+func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (string, bool) {
+	if answer, ok := agentCreateFastPathAnswerFromEvidence(evidence); ok {
+		return answer, true
+	}
+	return "", false
 }
 
 func completionEvidenceForFastPath(req RunRequest) map[string]interface{} {
@@ -222,6 +236,181 @@ func fastPathAuthoritativeMutation(trace skills.SkillTrace) bool {
 		return toolName == "save_file_to_management" || toolName == "delete_file"
 	}
 	return false
+}
+
+func agentCreateFastPathAnswerWithEvidence(trace skills.SkillTrace, evidence map[string]interface{}) (string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(trace.ToolName), "create_agent") {
+		return "", false
+	}
+	status := strings.ToLower(strings.TrimSpace(trace.Status))
+	if status != "success" && status != "succeeded" && status != "completed" {
+		return "", false
+	}
+	if !agentCreateEvidenceObservationSucceeded(evidence) {
+		return "", false
+	}
+	return agentCreateFastPathAnswerFromEvidence(evidence)
+}
+
+func agentCreateFastPathAnswerFromEvidence(evidence map[string]interface{}) (string, bool) {
+	if !agentCreateEvidenceObservationSucceeded(evidence) {
+		return "", false
+	}
+	results := agentCreateSuccessfulResultsFromEvidence(evidence)
+	if len(results) == 0 {
+		return "", false
+	}
+	expectedCount := agentCreateExpectedCountFromEvidence(evidence)
+	if expectedCount > 0 && len(results) < expectedCount {
+		return "", false
+	}
+	trace := skills.SkillTrace{
+		Kind:     "client_action",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Status:   "succeeded",
+	}
+	if fastPathBlockedByPendingPlanAction(trace, evidence) {
+		return "", false
+	}
+
+	names := make([]string, 0, len(results))
+	for _, result := range results {
+		if name := agentCreateResultName(result); name != "" {
+			names = append(names, name)
+		}
+	}
+	names = dedupeStrings(names)
+	if len(names) == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("已创建 %d 个智能体%s。", len(names), formatNameList(names)), true
+}
+
+func agentCreateEvidenceObservationSucceeded(evidence map[string]interface{}) bool {
+	for _, action := range evidenceClientActions(evidence) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(action["tool_name"])), "create_agent") {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(stringFromAny(action["status"])))
+		if status == "succeeded" || status == "success" || status == "completed" {
+			return true
+		}
+	}
+	return false
+}
+
+func evidenceClientActions(evidence map[string]interface{}) []map[string]interface{} {
+	if len(evidence) == 0 {
+		return nil
+	}
+	if actions := mapSliceFromAny(evidence["client_actions"]); len(actions) > 0 {
+		return actions
+	}
+	ledger := evidenceMapFromAny(evidence["execution_ledger"])
+	return mapSliceFromAny(ledger["client_actions"])
+}
+
+func agentCreateSuccessfulResultsFromEvidence(evidence map[string]interface{}) []map[string]interface{} {
+	invocations := evidenceSkillInvocations(evidence)
+	if len(invocations) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0)
+	seen := map[string]struct{}{}
+	for _, invocation := range invocations {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), "create_agent") ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "success") {
+			continue
+		}
+		result := evidenceMapFromAny(invocation["result"])
+		if !agentCreateResultSucceeded(result) {
+			continue
+		}
+		key := firstNonEmptyString(result["agent_id"], result["id"], result["href"], result["agent_name"], result["name"])
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		out = append(out, result)
+	}
+	return out
+}
+
+func evidenceSkillInvocations(evidence map[string]interface{}) []map[string]interface{} {
+	if len(evidence) == 0 {
+		return nil
+	}
+	if invocations := mapSliceFromAny(evidence["skill_invocations"]); len(invocations) > 0 {
+		return invocations
+	}
+	ledger := evidenceMapFromAny(evidence["execution_ledger"])
+	return mapSliceFromAny(ledger["skill_invocations"])
+}
+
+func agentCreateResultSucceeded(result map[string]interface{}) bool {
+	if len(result) == 0 {
+		return false
+	}
+	status := strings.ToLower(strings.TrimSpace(stringFromAny(result["status"])))
+	if status != "" && status != "completed" && status != "success" && status != "succeeded" {
+		return false
+	}
+	effect := strings.ToLower(strings.TrimSpace(firstNonEmptyString(result["effect"], result["operation"])))
+	if effect != "" && effect != "created" && effect != "create" && effect != "agent.create" {
+		return false
+	}
+	return strings.TrimSpace(firstNonEmptyString(result["agent_id"], result["id"], result["href"], result["agent_name"], result["name"])) != ""
+}
+
+func agentCreateResultName(result map[string]interface{}) string {
+	if len(result) == 0 {
+		return ""
+	}
+	if name := strings.TrimSpace(firstNonEmptyString(result["agent_name"], result["name"])); name != "" {
+		return name
+	}
+	agent := payloadMap(result, "agent")
+	return strings.TrimSpace(firstNonEmptyString(agent["name"], agent["agent_name"]))
+}
+
+func agentCreateExpectedCountFromEvidence(evidence map[string]interface{}) int {
+	text := strings.ToLower(strings.TrimSpace(firstNonEmptyString(evidence["user_request"])))
+	if text == "" {
+		plan := evidenceMapFromAny(evidence["operation_plan"])
+		text = strings.ToLower(strings.TrimSpace(firstNonEmptyString(plan["original_user_goal"])))
+	}
+	if text == "" {
+		return 0
+	}
+	for _, candidate := range []struct {
+		count   int
+		markers []string
+	}{
+		{10, []string{"10个", "10 个", "ten agents"}},
+		{9, []string{"9个", "9 个", "nine agents", "九个", "九 个"}},
+		{8, []string{"8个", "8 个", "eight agents", "八个", "八 个"}},
+		{7, []string{"7个", "7 个", "seven agents", "七个", "七 个"}},
+		{6, []string{"6个", "6 个", "six agents", "六个", "六 个"}},
+		{5, []string{"5个", "5 个", "five agents", "五个", "五 个"}},
+		{4, []string{"4个", "4 个", "four agents", "四个", "四 个"}},
+		{3, []string{"3个", "3 个", "three agents", "三个", "三 个"}},
+		{2, []string{"2个", "2 个", "two agents", "两个", "两 个"}},
+		{1, []string{"1个", "1 个", "one agent", "一个", "一 个"}},
+	} {
+		for _, marker := range candidate.markers {
+			if strings.Contains(text, marker) {
+				return candidate.count
+			}
+		}
+	}
+	return 0
 }
 
 func fastPathPendingActionIsPostVerification(pending string) bool {
