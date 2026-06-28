@@ -1891,11 +1891,14 @@ func agentManagementDeleteRequested(query string) bool {
 	if agentManagementDeleteMentionIsOnlyDescriptive(text) {
 		return false
 	}
+	originalText := text
+	text = stripQuotedIntentPayloads(text)
 	if strings.Contains(text, "delete_agent") ||
 		containsAnySubstring(text, []string{"delete agent", "delete agents", "remove agent", "remove agents", "\u5220\u9664\u667a\u80fd\u4f53", "\u5220\u6389\u667a\u80fd\u4f53"}) {
 		return true
 	}
-	if !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) {
+	if !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) &&
+		!containsAnySubstring(originalText, []string{"agent", "\u667a\u80fd\u4f53"}) {
 		return false
 	}
 	for _, marker := range []string{"delete", "remove", "\u5220\u9664", "\u5220\u6389", "\u79fb\u9664", "\u6e05\u7406"} {
@@ -1930,6 +1933,7 @@ func agentManagementBatchDeleteRequested(query string) bool {
 	if !agentManagementDeleteRequested(text) {
 		return false
 	}
+	text = stripQuotedIntentPayloads(text)
 	return strings.Contains(text, "delete_agents") ||
 		containsAnySubstring(text, []string{
 			"delete agents",
@@ -2023,6 +2027,50 @@ func containsUnnegatedAgentManagementMutationMarker(text string, marker string) 
 			return false
 		}
 	}
+}
+
+func stripQuotedIntentPayloads(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	var b strings.Builder
+	var closing rune
+	for _, r := range text {
+		if closing != 0 {
+			if r == closing {
+				closing = 0
+				b.WriteRune(' ')
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			closing = '"'
+			b.WriteRune(' ')
+		case '\'':
+			closing = '\''
+			b.WriteRune(' ')
+		case '\u201c':
+			closing = '\u201d'
+			b.WriteRune(' ')
+		case '\u2018':
+			closing = '\u2019'
+			b.WriteRune(' ')
+		case '\u300c':
+			closing = '\u300d'
+			b.WriteRune(' ')
+		case '\u300e':
+			closing = '\u300f'
+			b.WriteRune(' ')
+		case '\u300a':
+			closing = '\u300b'
+			b.WriteRune(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func agentManagementMutationMarkerNegated(text string, markerStart int) bool {

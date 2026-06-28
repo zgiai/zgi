@@ -2213,6 +2213,58 @@ func TestAgentManagementCreateDescriptionDoesNotPlanDelete(t *testing.T) {
 	}
 }
 
+func TestAgentManagementCreateQuotedChineseDescriptionDoesNotPlanDelete(t *testing.T) {
+	query := "\u5192\u70df\u51c6\u5907\uff1a\u8bf7\u521b\u5efa\u4e24\u4e2a\u8349\u7a3f\u667a\u80fd\u4f53\uff0c\u540d\u79f0\u5206\u522b\u4e3a PLAN-A \u548c PLAN-B\uff0c\u63cf\u8ff0\u90fd\u5199\u201cAIChat \u6279\u91cf\u5220\u9664\u56de\u5f52\u6d4b\u8bd5\u201d\u3002\u4e0d\u8981\u5bfc\u822a\u5230\u8be6\u60c5\u9875\u3002\u5b8c\u6210\u540e\u544a\u8bc9\u6211\u521b\u5efa\u7ed3\u679c\u3002"
+	if !agentManagementCreateRequested(query) {
+		t.Fatalf("agentManagementCreateRequested(%q) = false, want true", query)
+	}
+	if agentManagementDeleteRequested(query) {
+		t.Fatalf("agentManagementDeleteRequested(%q) = true, want false for quoted description payload", query)
+	}
+	if agentManagementBatchDeleteRequested(query) {
+		t.Fatalf("agentManagementBatchDeleteRequested(%q) = true, want false for quoted description payload", query)
+	}
+	if wantsCreatedAgentDetailNavigation(query) {
+		t.Fatalf("wantsCreatedAgentDetailNavigation(%q) = true, want false for explicit no-navigation request", query)
+	}
+
+	parts := &chatRequestParts{
+		Query:     query,
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement},
+	}
+	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "create_agent") {
+		t.Fatalf("planned_tools = %#v, missing create_agent", strategy.PlannedTools)
+	}
+	for _, unexpected := range []string{"delete_agent", "delete_agents"} {
+		if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, unexpected) {
+			t.Fatalf("planned_tools = %#v, want no %s for quoted description payload", strategy.PlannedTools, unexpected)
+		}
+	}
+
+	plan := operationPlanFromTurnStrategy("task-agent-create-quoted-description", parts, strategy)
+	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")); got != operationPlanStepStatusPending {
+		t.Fatalf("create_agent step status = %q, want pending; plan=%#v", got, plan)
+	}
+	for _, unexpected := range []string{"delete_agent", "delete_agents"} {
+		if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, unexpected)); got != "" {
+			t.Fatalf("%s step status = %q, want absent; plan=%#v", unexpected, got, plan)
+		}
+	}
+}
+
+func TestAgentManagementDeleteQuotedTargetStillWorks(t *testing.T) {
+	query := "\u8bf7\u5220\u9664\u540d\u4e3a\u201cPLAN-A\u201d\u7684\u667a\u80fd\u4f53"
+	if !agentManagementDeleteRequested(query) {
+		t.Fatalf("agentManagementDeleteRequested(%q) = false, want true", query)
+	}
+	if agentManagementBatchDeleteRequested(query) {
+		t.Fatalf("agentManagementBatchDeleteRequested(%q) = true, want false for single target", query)
+	}
+}
+
 func TestWantsCreatedAgentDetailNavigationHonorsChineseNegation(t *testing.T) {
 	query := "\u521b\u5efa 2 \u4e2a\u667a\u80fd\u4f53\uff0c\u4e0d\u8981\u5bfc\u822a\u5230\u8be6\u60c5\u9875"
 	if wantsCreatedAgentDetailNavigation(query) {
