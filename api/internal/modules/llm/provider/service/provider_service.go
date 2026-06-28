@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/llm/internal/urlguard"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
@@ -330,7 +331,11 @@ func validateProviderBaseURL(ctx context.Context, fieldName, raw string) error {
 	if raw == "" {
 		return nil
 	}
-	if err := urlguard.ValidateBaseURL(ctx, raw, urlguard.Policy{}); err != nil {
+	llmConfig := appconfig.Current().LLM
+	if !llmConfig.OutboundURLGuardEnabled() {
+		return nil
+	}
+	if err := urlguard.ValidateBaseURL(ctx, raw, urlguard.Policy{GuardDNS: llmConfig.GuardOutboundDNS}); err != nil {
 		return fmt.Errorf("invalid %s: %w", fieldName, err)
 	}
 	return nil

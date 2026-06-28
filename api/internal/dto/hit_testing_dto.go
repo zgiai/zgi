@@ -12,6 +12,7 @@ type HitTestingRequest struct {
 	Query                  string                 `json:"query" binding:"required"`
 	ExternalRetrievalModel map[string]interface{} `json:"external_retrieval_model,omitempty"`
 	RetrievalMode          string                 `json:"retrieval_mode,omitempty"`
+	RecordHistory          *bool                  `json:"record_history,omitempty"`
 }
 
 const (

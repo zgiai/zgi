@@ -48,8 +48,8 @@ func (a *Adapter) Parse(ctx context.Context, req contracts.ParseRequest) (*contr
 	if a == nil || a.llmClient == nil || a.defaultModelSvc == nil {
 		return nil, fmt.Errorf("system VLM adapter is not initialized")
 	}
-	if req.SourceType != contracts.ParseSourceTypeBytes {
-		return nil, fmt.Errorf("system VLM adapter requires byte input for source type %q", req.SourceType)
+	if req.SourceType != contracts.ParseSourceTypeBytes && req.SourceType != contracts.ParseSourceTypeUploadFile {
+		return nil, fmt.Errorf("system VLM adapter requires byte data for source type %q", req.SourceType)
 	}
 	if strings.TrimSpace(req.FileName) == "" {
 		return nil, fmt.Errorf("system VLM adapter requires file_name")

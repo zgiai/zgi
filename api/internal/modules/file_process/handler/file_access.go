@@ -11,6 +11,14 @@ import (
 )
 
 func authorizeFileDownloadAccess(c *gin.Context, fileService interfaces.FileService, enterpriseService interfaces.OrganizationService, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFileWorkspaceAccess(c, fileService, enterpriseService, fileID, workspace_model.WorkspacePermissionFileDownload)
+}
+
+func authorizeFileManageAccess(c *gin.Context, fileService interfaces.FileService, enterpriseService interfaces.OrganizationService, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFileWorkspaceAccess(c, fileService, enterpriseService, fileID, workspace_model.WorkspacePermissionFileManage)
+}
+
+func authorizeFileWorkspaceAccess(c *gin.Context, fileService interfaces.FileService, enterpriseService interfaces.OrganizationService, fileID string, permission workspace_model.WorkspacePermissionCode) (*dto.UploadFile, bool) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
@@ -45,7 +53,7 @@ func authorizeFileDownloadAccess(c *gin.Context, fileService interfaces.FileServ
 	if workspaceID == "" {
 		return uploadFile, true
 	}
-	if !checkWorkspaceFileDownloadPermission(c, enterpriseService, organizationID, accountID, workspaceID) {
+	if !checkWorkspaceFilePermission(c, enterpriseService, organizationID, accountID, workspaceID, permission) {
 		return nil, false
 	}
 
@@ -53,6 +61,10 @@ func authorizeFileDownloadAccess(c *gin.Context, fileService interfaces.FileServ
 }
 
 func checkWorkspaceFileDownloadPermission(c *gin.Context, enterpriseService interfaces.OrganizationService, organizationID, accountID, workspaceID string) bool {
+	return checkWorkspaceFilePermission(c, enterpriseService, organizationID, accountID, workspaceID, workspace_model.WorkspacePermissionFileDownload)
+}
+
+func checkWorkspaceFilePermission(c *gin.Context, enterpriseService interfaces.OrganizationService, organizationID, accountID, workspaceID string, permission workspace_model.WorkspacePermissionCode) bool {
 	if enterpriseService == nil {
 		response.Fail(c, response.ErrSystemError)
 		return false
@@ -63,7 +75,7 @@ func checkWorkspaceFileDownloadPermission(c *gin.Context, enterpriseService inte
 		organizationID,
 		workspaceID,
 		accountID,
-		workspace_model.WorkspacePermissionFileDownload,
+		permission,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)

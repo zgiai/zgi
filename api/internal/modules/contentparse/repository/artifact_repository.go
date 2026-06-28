@@ -13,6 +13,7 @@ type ArtifactRepository interface {
 	Create(ctx context.Context, item *model.Artifact) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Artifact, error)
 	GetBySignature(ctx context.Context, sourceContentHash, profile, canonicalIRVersion, providerSignature string) (*model.Artifact, error)
+	UpdateStorageKeyAndSummary(ctx context.Context, id uuid.UUID, storageKey string, summary map[string]any) error
 	Upsert(ctx context.Context, item *model.Artifact) error
 }
 
@@ -52,6 +53,16 @@ func (r *artifactRepository) GetBySignature(ctx context.Context, sourceContentHa
 		return nil, err
 	}
 	return &item, nil
+}
+
+func (r *artifactRepository) UpdateStorageKeyAndSummary(ctx context.Context, id uuid.UUID, storageKey string, summary map[string]any) error {
+	return r.db.WithContext(ctx).Model(&model.Artifact{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"artifact_storage_key": storageKey,
+			"summary_json":         summary,
+			"updated_at":           gorm.Expr("CURRENT_TIMESTAMP"),
+		}).Error
 }
 
 func (r *artifactRepository) Upsert(ctx context.Context, item *model.Artifact) error {

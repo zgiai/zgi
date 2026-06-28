@@ -173,7 +173,11 @@ function normalizeHashHref(href: string): string {
   return `#${normalizeAnchorId(hash)}`;
 }
 
-const MINERU_IMAGE_ENDPOINT = '/console/api/files/mineru-images';
+const DOCUMENT_IMAGE_ENDPOINTS = [
+  '/console/api/files/mineru-images',
+  '/console/api/files/document-images',
+];
+const MINERU_IMAGE_ENDPOINT = DOCUMENT_IMAGE_ENDPOINTS[0];
 const MARKDOWN_IMAGE_PATTERN = /!\[([^\]\r\n]*)\]\(([^)\r\n]+)\)/g;
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|bmp|svg)$/i;
 
@@ -215,7 +219,7 @@ function normalizeMinerUImageSource(src: string): string {
   const value = stripMarkdownLinkBrackets(src);
   if (!value) return src;
 
-  if (value.startsWith(MINERU_IMAGE_ENDPOINT)) {
+  if (DOCUMENT_IMAGE_ENDPOINTS.some((endpoint) => value.startsWith(endpoint))) {
     return `${normalizeApiBaseUrl()}${value}`;
   }
 

@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -20,6 +22,8 @@ const (
 	// RecentFilesLimit is the maximum number of recent files to return
 	RecentFilesLimit = 20
 )
+
+var ErrFolderNameConflict = errors.New("folder name already exists in the same directory")
 
 // FileFolderService defines the interface for file folder operations
 type FileFolderService interface {
@@ -39,8 +43,8 @@ type FileFolderService interface {
 	AddFileToFolder(ctx context.Context, fileID, folderID, accountID string) error
 	RemoveFileFromFolder(ctx context.Context, fileID, folderID string) error
 	ListFilesInFolder(ctx context.Context, folderID string, page, limit int) ([]*file_model.UploadFile, int64, error)
-	ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
-	ListAllFilesWithFilters(ctx context.Context, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
+	ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
+	ListAllFilesWithFilters(ctx context.Context, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	ListFavoriteFiles(ctx context.Context, accountID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	MoveFileToFolder(ctx context.Context, fileID, fromFolderID, toFolderID, accountID string) error
 	MoveFilesToFolder(ctx context.Context, fileIDs []string, toFolderID, accountID string) error
@@ -109,10 +113,64 @@ func (s *fileResourceService) CreateFolder(ctx context.Context, folder *file_mod
 		return nil, fmt.Errorf("invalid folder permission: %s", folder.Permission)
 	}
 
+	folder.Name = strings.TrimSpace(folder.Name)
+	if err := s.ensureSiblingFolderNameAvailable(ctx, folder.OrganizationID, folder.WorkspaceID, folder.ParentID, folder.Name, nil); err != nil {
+		return nil, err
+	}
+
 	if err := s.fileFolderRepo.CreateFolder(ctx, folder); err != nil {
 		return nil, fmt.Errorf("failed to create folder: %w", err)
 	}
 	return folder, nil
+}
+
+func needsFolderNameConflictCheck(updates map[string]interface{}) bool {
+	_, hasName := updates["name"]
+	_, hasParentID := updates["parent_id"]
+	_, hasWorkspaceID := updates["workspace_id"]
+	return hasName || hasParentID || hasWorkspaceID
+}
+
+func normalizeFolderIDUpdate(value interface{}) (*string, bool) {
+	switch v := value.(type) {
+	case nil:
+		return nil, true
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return nil, true
+		}
+		return &trimmed, true
+	case *string:
+		if v == nil {
+			return nil, true
+		}
+		trimmed := strings.TrimSpace(*v)
+		if trimmed == "" {
+			return nil, true
+		}
+		return &trimmed, true
+	default:
+		return nil, false
+	}
+}
+
+func folderIDUpdateValue(id *string) interface{} {
+	if id == nil {
+		return nil
+	}
+	return *id
+}
+
+func (s *fileResourceService) ensureSiblingFolderNameAvailable(ctx context.Context, organizationID string, workspaceID *string, parentID *string, name string, excludeFolderID *string) error {
+	exists, err := s.fileFolderRepo.FolderNameExists(ctx, organizationID, workspaceID, parentID, name, excludeFolderID)
+	if err != nil {
+		return fmt.Errorf("failed to check folder name: %w", err)
+	}
+	if exists {
+		return ErrFolderNameConflict
+	}
+	return nil
 }
 
 // GetFolderByID gets a folder by its ID
@@ -232,6 +290,47 @@ func (s *fileResourceService) UpdateFolder(ctx context.Context, id string, updat
 		}
 	}
 
+	if needsFolderNameConflictCheck(updates) {
+		existingFolder, err := s.fileFolderRepo.GetFolderByID(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get folder: %w", err)
+		}
+
+		nextName := existingFolder.Name
+		if rawName, ok := updates["name"]; ok {
+			name, ok := rawName.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid folder name type: %T", rawName)
+			}
+			nextName = strings.TrimSpace(name)
+			updates["name"] = nextName
+		}
+
+		nextParentID := existingFolder.ParentID
+		if rawParentID, ok := updates["parent_id"]; ok {
+			parentID, ok := normalizeFolderIDUpdate(rawParentID)
+			if !ok {
+				return nil, fmt.Errorf("invalid parent folder type: %T", rawParentID)
+			}
+			nextParentID = parentID
+			updates["parent_id"] = folderIDUpdateValue(parentID)
+		}
+
+		nextWorkspaceID := existingFolder.WorkspaceID
+		if rawWorkspaceID, ok := updates["workspace_id"]; ok {
+			workspaceID, ok := normalizeFolderIDUpdate(rawWorkspaceID)
+			if !ok {
+				return nil, fmt.Errorf("invalid workspace type: %T", rawWorkspaceID)
+			}
+			nextWorkspaceID = workspaceID
+			updates["workspace_id"] = folderIDUpdateValue(workspaceID)
+		}
+
+		if err := s.ensureSiblingFolderNameAvailable(ctx, existingFolder.OrganizationID, nextWorkspaceID, nextParentID, nextName, &existingFolder.ID); err != nil {
+			return nil, err
+		}
+	}
+
 	folder, err := s.fileFolderRepo.UpdateFolder(ctx, id, updates)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update folder: %w", err)
@@ -342,12 +441,12 @@ func (s *fileResourceService) ListFilesInFolder(ctx context.Context, folderID st
 }
 
 // ListFilesInFolderWithFilters lists files in a folder with additional filters
-func (s *fileResourceService) ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
+func (s *fileResourceService) ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
 	if len(visibleWorkspaceIDs) == 0 {
 		return []*file_model.UploadFile{}, 0, nil
 	}
 
-	files, total, err := s.fileFolderRepo.ListFilesInFolderWithFiltersAndTenant(ctx, folderID, page, limit, keyword, sort, extension, startTime, endTime, tenantID, visibleWorkspaceIDs)
+	files, total, err := s.fileFolderRepo.ListFilesInFolderWithFiltersAndTenant(ctx, folderID, page, limit, keyword, sort, extension, processingStatus, startTime, endTime, tenantID, visibleWorkspaceIDs)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to list files in folder with filters: %w", err)
 	}
@@ -355,7 +454,7 @@ func (s *fileResourceService) ListFilesInFolderWithFilters(ctx context.Context, 
 }
 
 // ListAllFilesWithFilters lists all files with additional filters
-func (s *fileResourceService) ListAllFilesWithFilters(ctx context.Context, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
+func (s *fileResourceService) ListAllFilesWithFilters(ctx context.Context, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
 	if len(visibleWorkspaceIDs) == 0 {
 		return []*file_model.UploadFile{}, 0, nil
 	}
@@ -369,7 +468,7 @@ func (s *fileResourceService) ListAllFilesWithFilters(ctx context.Context, page,
 		allowAllFolders = isAdmin
 	}
 
-	files, total, err := s.fileFolderRepo.ListAllFilesWithFiltersAndTenant(ctx, page, limit, keyword, sort, extension, startTime, endTime, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	files, total, err := s.fileFolderRepo.ListAllFilesWithFiltersAndTenant(ctx, page, limit, keyword, sort, extension, processingStatus, startTime, endTime, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to list all files with filters",
 			err,
@@ -531,6 +630,14 @@ func (s *fileResourceService) MoveFolderToFolder(ctx context.Context, folderID, 
 		}
 	}
 
+	var targetParentID *string
+	if targetID != "" {
+		targetParentID = &targetID
+	}
+	if err := s.ensureSiblingFolderNameAvailable(ctx, tenantID, folder.WorkspaceID, targetParentID, folder.Name, &folder.ID); err != nil {
+		return err
+	}
+
 	// Update the folder's parent ID
 	updates := map[string]interface{}{}
 
@@ -654,13 +761,14 @@ func (s *fileResourceService) ClearPartialWorkspaceList(ctx context.Context, fol
 
 // GetRelatedDocumentCount gets the count of documents associated with a file
 func (s *fileResourceService) GetRelatedDocumentCount(ctx context.Context, fileID string) (int, error) {
-	// Use the FileID field to query the count of associated documents, which can better utilize database indexes
-	// Need to create a corresponding index in the database:
-	// CREATE INDEX idx_documents_file_id ON documents (file_id);
 	var count int64
 	err := s.documentRepo.(*dataset_repo.DocumentRepositoryImpl).GetDB().WithContext(ctx).
-		Model(&dataset_model.Document{}).
-		Where("file_id = ?", fileID).
+		Table("data_library_document_assets AS assets").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.asset_id = assets.id AND refs.deleted_at IS NULL").
+		Joins("JOIN datasets ON datasets.id = refs.dataset_id").
+		Joins("JOIN documents ON documents.id = refs.dataset_document_id").
+		Where("assets.source_file_id = ? AND assets.deleted_at IS NULL", fileID).
+		Distinct("refs.dataset_document_id").
 		Count(&count).Error
 
 	if err != nil {
@@ -676,12 +784,13 @@ func (s *fileResourceService) GetRelatedDocumentCount(ctx context.Context, fileI
 
 // GetRelatedDatasetCount gets the count of datasets associated with a file through its documents
 func (s *fileResourceService) GetRelatedDatasetCount(ctx context.Context, fileID string) (int, error) {
-	// First get the count of distinct dataset IDs associated with the file through documents
 	var count int64
 	err := s.documentRepo.(*dataset_repo.DocumentRepositoryImpl).GetDB().WithContext(ctx).
-		Model(&dataset_model.Document{}).
-		Distinct("dataset_id").
-		Where("file_id = ?", fileID).
+		Table("data_library_document_assets AS assets").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.asset_id = assets.id AND refs.deleted_at IS NULL").
+		Joins("JOIN datasets ON datasets.id = refs.dataset_id").
+		Where("assets.source_file_id = ? AND assets.deleted_at IS NULL", fileID).
+		Distinct("refs.dataset_id").
 		Count(&count).Error
 
 	if err != nil {
@@ -697,13 +806,14 @@ func (s *fileResourceService) GetRelatedDatasetCount(ctx context.Context, fileID
 
 // GetRelatedDocuments gets information about documents associated with a file
 func (s *fileResourceService) GetRelatedDocuments(ctx context.Context, fileID string) ([]*dataset_model.Document, error) {
-	// Use the FileID field to query associated documents, which can better utilize database indexes
-	// Need to create a corresponding index in the database:
-	// CREATE INDEX idx_documents_file_id ON documents (file_id);
 	var documents []*dataset_model.Document
 	err := s.documentRepo.(*dataset_repo.DocumentRepositoryImpl).GetDB().WithContext(ctx).
-		Model(&dataset_model.Document{}).
-		Where("file_id = ?", fileID).
+		Table("documents").
+		Select("DISTINCT documents.*").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.dataset_document_id = documents.id AND refs.deleted_at IS NULL").
+		Joins("JOIN datasets ON datasets.id = refs.dataset_id").
+		Joins("JOIN data_library_document_assets AS assets ON assets.id = refs.asset_id AND assets.deleted_at IS NULL").
+		Where("assets.source_file_id = ?", fileID).
 		Find(&documents).Error
 
 	if err != nil {
@@ -739,20 +849,14 @@ func (s *fileResourceService) GetRelatedDocuments(ctx context.Context, fileID st
 
 // GetRelatedDatasets gets information about datasets associated with a file through its documents
 func (s *fileResourceService) GetRelatedDatasets(ctx context.Context, fileID string) ([]*dataset_model.Dataset, error) {
-	// First get the distinct dataset IDs associated with the file through documents
-	var datasetIDs []string
+	var datasets []*dataset_model.Dataset
 	err := s.documentRepo.(*dataset_repo.DocumentRepositoryImpl).GetDB().WithContext(ctx).
-		Model(&dataset_model.Document{}).
-		Where("file_id = ?", fileID).
-		Distinct("dataset_id").
-		Pluck("dataset_id", &datasetIDs).Error
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to get related dataset IDs: %w", err)
-	}
-
-	// Get the dataset information
-	datasets, err := s.datasetRepo.GetByIDs(ctx, datasetIDs)
+		Table("datasets").
+		Select("DISTINCT datasets.*").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.dataset_id = datasets.id AND refs.deleted_at IS NULL").
+		Joins("JOIN data_library_document_assets AS assets ON assets.id = refs.asset_id AND assets.deleted_at IS NULL").
+		Where("assets.source_file_id = ?", fileID).
+		Find(&datasets).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get related datasets: %w", err)
 	}
@@ -810,7 +914,7 @@ func (s *fileResourceService) GetArchivedFileCount(ctx context.Context, tenantID
 	return s.fileFolderRepo.GetArchivedFileCount(ctx, tenantID)
 }
 
-// BatchGetRelatedDatasetCount gets the count of datasets associated with multiple files through their documents
+// BatchGetRelatedDatasetCount gets the count of datasets associated with multiple files through active knowledge-base asset refs.
 func (s *fileResourceService) BatchGetRelatedDatasetCount(ctx context.Context, fileIDs []string) (map[string]int, error) {
 	logger.DebugContext(ctx, "batch get related dataset count started",
 		zap.Int("file_count", len(fileIDs)),
@@ -828,13 +932,14 @@ func (s *fileResourceService) BatchGetRelatedDatasetCount(ctx context.Context, f
 		DatasetCount int
 	}
 
-	// Execute batch query to get dataset counts for all files
 	var results []result
 	err := s.documentRepo.(*dataset_repo.DocumentRepositoryImpl).GetDB().WithContext(ctx).
-		Model(&dataset_model.Document{}).
-		Select("file_id, COUNT(DISTINCT dataset_id) as dataset_count").
-		Where("file_id IN ?", fileIDs).
-		Group("file_id").
+		Table("data_library_document_assets AS assets").
+		Select("assets.source_file_id AS file_id, COUNT(DISTINCT refs.dataset_id) AS dataset_count").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.asset_id = assets.id AND refs.deleted_at IS NULL").
+		Joins("JOIN datasets ON datasets.id = refs.dataset_id").
+		Where("assets.source_file_id IN ? AND assets.deleted_at IS NULL", fileIDs).
+		Group("assets.source_file_id").
 		Scan(&results).Error
 
 	if err != nil {

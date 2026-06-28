@@ -14,6 +14,7 @@ import { useT } from '@/i18n';
 import { uploadService } from '@/services';
 import { UploadCloudIcon } from 'lucide-react';
 import type { UploadedFile } from '@/services/types/dataset';
+import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
 import {
   buildFileInputAcceptAttribute,
   filterLowercaseExtensions,
@@ -21,6 +22,7 @@ import {
 } from '@/utils/file-helpers';
 import { generateClientId } from '@/utils/client-id';
 import { FileList } from '@/components/common/file-upload/file-list';
+import { Button } from '@/components/ui/button';
 import {
   calculateFileHash,
   getExistingFileKeys,
@@ -39,6 +41,10 @@ export interface ManualFileUploadProps {
   maxSizeMB?: number;
   /** Allowed extensions like ['.jpg', '.png'] (case-insensitive) */
   acceptExt?: string[];
+  /** Whether to show the allowed extensions hint below the upload button */
+  showAllowedTypesHint?: boolean;
+  /** Whether to set the native file input accept attribute */
+  useNativeAccept?: boolean;
   /** Additional class for outer container */
   containerClassName?: string;
   /** Additional class for table wrapper */
@@ -49,12 +55,25 @@ export interface ManualFileUploadProps {
   dropContent?: React.ReactNode;
   /** Callback when files are selected (before upload) */
   onFilesChange?: (files: File[]) => void;
+  /** Callback when queue status counts change */
+  onQueueStateChange?: (state: {
+    failedCount: number;
+    pendingCount: number;
+    totalCount: number;
+    uploadingCount: number;
+  }) => void;
   /** Callback after files are successfully uploaded */
   onUploadComplete?: (files: UploadedFile[]) => void;
+  /** Translation namespace for the selected-file queue summary */
+  queueSummaryNamespace?: 'files' | 'ui';
   /** Folder ID to upload files to */
   folderId?: string;
   /** Workspace id */
   workspaceId?: string;
+  /** File asset processing mode for uploaded documents */
+  processingMode?: FileUploadProcessingMode;
+  /** Content parse provider for uploaded documents */
+  parseProvider?: FileParseProviderKey;
 }
 
 export interface ManualFileUploadRef {
@@ -62,10 +81,14 @@ export interface ManualFileUploadRef {
   uploadAll: () => Promise<UploadedFile[]>;
   /** Get all pending files (not yet uploaded) */
   getPendingFiles: () => File[];
+  /** Get all failed files */
+  getFailedFiles: () => File[];
   /** Get all successfully uploaded files */
   getUploadedFiles: () => UploadedFile[];
   /** Clear all files */
   clearAll: () => void;
+  /** Abort all in-flight uploads and remove them from the queue */
+  cancelUploading: () => void;
   /** Check if upload is in progress */
   getIsUploading: () => boolean;
 }
@@ -92,14 +115,20 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
       maxCount = 5,
       maxSizeMB = 15,
       acceptExt = [],
+      showAllowedTypesHint = true,
+      useNativeAccept = true,
       containerClassName,
       tableWrapperClassName,
       dropZoneClassName,
       dropContent,
       onFilesChange,
+      onQueueStateChange,
       onUploadComplete,
+      queueSummaryNamespace,
       folderId,
       workspaceId,
+      processingMode,
+      parseProvider,
     },
     ref
   ) => {
@@ -108,16 +137,22 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
 
     const [items, setItems] = useState<UploadItem[]>([]);
     const [isUploading, setIsUploading] = useState(false);
+    const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
     const isFull = items.length >= maxCount;
-    const inputAccept = buildFileInputAcceptAttribute(acceptExt);
+    const inputAccept = useNativeAccept ? buildFileInputAcceptAttribute(acceptExt) : undefined;
 
     // Keep latest callbacks in ref to avoid effect dependency loop
     const onFilesChangeRef = useRef<typeof onFilesChange>();
+    const onQueueStateChangeRef = useRef<typeof onQueueStateChange>();
     const onUploadCompleteRef = useRef<typeof onUploadComplete>();
 
     useEffect(() => {
       onFilesChangeRef.current = onFilesChange;
     }, [onFilesChange]);
+
+    useEffect(() => {
+      onQueueStateChangeRef.current = onQueueStateChange;
+    }, [onQueueStateChange]);
 
     useEffect(() => {
       onUploadCompleteRef.current = onUploadComplete;
@@ -129,6 +164,12 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
         const files = items.map(it => it.file);
         onFilesChangeRef.current(files);
       }
+      onQueueStateChangeRef.current?.({
+        failedCount: items.filter(it => it.status === 'error').length,
+        pendingCount: items.filter(it => it.status === 'pending').length,
+        totalCount: items.length,
+        uploadingCount: items.filter(it => it.status === 'uploading').length,
+      });
     }, [items]);
 
     // Expose methods to parent via ref
@@ -148,6 +189,8 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             // Start upload for all pending items
             const uploadPromises = pendingItems.map(item => {
               return new Promise<UploadedFile | null>(resolve => {
+                const controller = new AbortController();
+                uploadControllersRef.current.set(item.id, controller);
                 setItems(prev =>
                   prev.map(it => (it.id === item.id ? { ...it, status: 'uploading' as const } : it))
                 );
@@ -156,6 +199,9 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
                   .uploadSingle(item.file, {
                     folder_id: folderId,
                     workspace_id: workspaceId,
+                    processing_mode: processingMode,
+                    parse_provider: parseProvider,
+                    signal: controller.signal,
                     onProgress: p =>
                       setItems(prev =>
                         prev.map(it => (it.id === item.id ? { ...it, progress: p } : it))
@@ -190,6 +236,11 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
                     resolve(uploaded);
                   })
                   .catch((err: Error) => {
+                    if (controller.signal.aborted) {
+                      resolve(null);
+                      return;
+                    }
+
                     setItems(prev =>
                       prev.map(it =>
                         it.id === item.id
@@ -198,6 +249,9 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
                       )
                     );
                     resolve(null);
+                  })
+                  .finally(() => {
+                    uploadControllersRef.current.delete(item.id);
                   });
               });
             });
@@ -220,6 +274,10 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
           return items.filter(it => it.status === 'pending').map(it => it.file);
         },
 
+        getFailedFiles: () => {
+          return items.filter(it => it.status === 'error').map(it => it.file);
+        },
+
         getUploadedFiles: () => {
           return items
             .filter(it => it.status === 'success' && it.serverFile)
@@ -228,14 +286,22 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
         },
 
         clearAll: () => {
+          uploadControllersRef.current.forEach(controller => controller.abort());
+          uploadControllersRef.current.clear();
           setItems([]);
+        },
+
+        cancelUploading: () => {
+          uploadControllersRef.current.forEach(controller => controller.abort());
+          uploadControllersRef.current.clear();
+          setItems(prev => prev.filter(it => it.status !== 'uploading'));
         },
 
         getIsUploading: () => {
           return isUploading || items.some(it => it.status === 'uploading');
         },
       }),
-      [items, folderId, workspaceId, isUploading]
+      [items, folderId, workspaceId, processingMode, parseProvider, isUploading]
     );
 
     const inputRef = useRef<HTMLInputElement>(null);
@@ -348,6 +414,8 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
     );
 
     const removeItem = (id: string) => {
+      uploadControllersRef.current.get(id)?.abort();
+      uploadControllersRef.current.delete(id);
       setItems(prev => {
         const next = prev.filter(it => it.id !== id);
         return next as UploadItem[];
@@ -420,7 +488,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
           onDragLeave={handleDrag}
           onDrop={handleDrop}
           className={cn(
-            'flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 text-center transition-colors',
+            'flex flex-col items-center justify-center border-2 border-dashed rounded-md px-6 py-4 text-center transition-colors',
             dragActive ? 'border-primary bg-primary/5' : 'border-border',
             dropZoneClassName,
             isFull ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
@@ -436,6 +504,8 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             hidden
             accept={inputAccept}
             disabled={isFull}
+            aria-label={t('fileUpload.uploadAria')}
+            data-testid="local-file-input"
             onChange={e => {
               if (e.target.files) {
                 enqueueFiles(e.target.files);
@@ -447,7 +517,19 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             <div className="text-center select-none flex flex-col items-center">
               <UploadCloudIcon className="w-9 h-9 text-primary mb-2" />
               <p className="text-base text-muted-foreground">{t('fileUpload.dropHere')}</p>
-              {acceptExt.length > 0 && (
+              <Button
+                type="button"
+                className="mt-3 px-6"
+                disabled={isFull}
+                onClick={event => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!isFull) inputRef.current?.click();
+                }}
+              >
+                {t('fileUpload.clickUpload')}
+              </Button>
+              {showAllowedTypesHint && acceptExt.length > 0 && (
                 <p className="text-sm text-muted-foreground mt-1">
                   {t('fileUpload.allowedTypesLabel')}
                   <span className="font-semibold text-primary">
@@ -484,6 +566,7 @@ export const ManualFileUpload = forwardRef<ManualFileUploadRef, ManualFileUpload
             }))}
             onRetry={retryItem}
             onRemove={removeItem}
+            queueSummaryNamespace={queueSummaryNamespace}
             tableWrapperClassName={tableWrapperClassName}
           />
         )}

@@ -10,6 +10,11 @@ import (
 const (
 	KnowledgeBaseAssetRefStatusActive   = "active"
 	KnowledgeBaseAssetRefStatusDisabled = "disabled"
+
+	KnowledgeBaseAssetRefSyncStatusPending = "pending"
+	KnowledgeBaseAssetRefSyncStatusSyncing = "syncing"
+	KnowledgeBaseAssetRefSyncStatusSynced  = "synced"
+	KnowledgeBaseAssetRefSyncStatusFailed  = "failed"
 )
 
 type KnowledgeBaseAssetRef struct {
@@ -18,10 +23,17 @@ type KnowledgeBaseAssetRef struct {
 	WorkspaceID        *string        `gorm:"type:varchar(255);index:idx_data_library_kb_asset_refs_workspace;column:workspace_id" json:"workspace_id,omitempty"`
 	DatasetID          string         `gorm:"type:uuid;not null;index:idx_data_library_kb_asset_refs_org_dataset,priority:2;column:dataset_id" json:"dataset_id"`
 	AssetID            uuid.UUID      `gorm:"type:uuid;not null;index:idx_data_library_kb_asset_refs_asset;column:asset_id" json:"asset_id"`
-	VersionID          uuid.UUID      `gorm:"type:uuid;not null;index:idx_data_library_kb_asset_refs_version;column:version_id" json:"version_id"`
+	VersionID          *uuid.UUID     `gorm:"type:uuid;index:idx_data_library_kb_asset_refs_version;column:version_id" json:"version_id,omitempty"`
+	DatasetDocumentID  *uuid.UUID     `gorm:"type:uuid;index:idx_data_library_kb_asset_refs_document;column:dataset_document_id" json:"dataset_document_id,omitempty"`
 	ChunkArtifactSetID *uuid.UUID     `gorm:"type:uuid;index:idx_data_library_kb_asset_refs_chunk_set;column:chunk_artifact_set_id" json:"chunk_artifact_set_id,omitempty"`
 	VectorArtifactID   *uuid.UUID     `gorm:"type:uuid;index:idx_data_library_kb_asset_refs_vector;column:vector_artifact_id" json:"vector_artifact_id,omitempty"`
 	Status             string         `gorm:"type:varchar(32);not null;default:'active';index:idx_data_library_kb_asset_refs_status;column:status" json:"status"`
+	SyncStatus         string         `gorm:"type:varchar(32);not null;default:'pending';index:idx_data_library_kb_asset_refs_sync_status;column:sync_status" json:"sync_status"`
+	SyncedGenerationNo *int64         `gorm:"column:synced_generation_no" json:"synced_generation_no,omitempty"`
+	SyncRunID          *uuid.UUID     `gorm:"type:uuid;index:idx_data_library_kb_asset_refs_sync_run;column:sync_run_id" json:"sync_run_id,omitempty"`
+	LastSyncedAt       *time.Time     `gorm:"column:last_synced_at" json:"last_synced_at,omitempty"`
+	SyncErrorCode      *string        `gorm:"type:varchar(128);column:sync_error_code" json:"sync_error_code,omitempty"`
+	SyncErrorMessage   *string        `gorm:"type:text;column:sync_error_message" json:"sync_error_message,omitempty"`
 	MetadataJSON       map[string]any `gorm:"type:jsonb;serializer:json;not null;default:'{}';column:metadata_json" json:"metadata_json,omitempty"`
 	CreatedBy          string         `gorm:"type:varchar(255);column:created_by" json:"created_by,omitempty"`
 	CreatedAt          time.Time      `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
@@ -39,6 +51,9 @@ func (m *KnowledgeBaseAssetRef) BeforeCreate(tx *gorm.DB) error {
 	}
 	if m.Status == "" {
 		m.Status = KnowledgeBaseAssetRefStatusActive
+	}
+	if m.SyncStatus == "" {
+		m.SyncStatus = KnowledgeBaseAssetRefSyncStatusPending
 	}
 	if m.MetadataJSON == nil {
 		m.MetadataJSON = map[string]any{}

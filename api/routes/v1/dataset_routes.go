@@ -13,6 +13,10 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	contentparseRepo "github.com/zgiai/zgi/api/internal/modules/contentparse/repository"
 	contentparseService "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	datalibHandler "github.com/zgiai/zgi/api/internal/modules/datalibrary/handler"
+	datalibRepo "github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
+	datalibService "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	datalibWorker "github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
 	graphflow "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	graphflow_model "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	graphflow_repo "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
@@ -120,6 +124,41 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	segmentServiceObj := datasetService.NewSegmentService(chunkServiceObj, datasetRepoObj, documentRepoObj, deps.DefaultModelService, deps.DB, vectorClient, deps.LLMClient, graphFlowTaskRepoObj, taskManager)
 	folderRepo := datasetRepo.NewDatasetFolderRepository(deps.DB)
 	folderService := datasetService.NewDatasetFolderService(folderRepo, deps.AccountService, deps.WorkspaceManagementService)
+	dataLibraryAssetRepo := datalibRepo.NewDocumentAssetRepository(deps.DB)
+	dataLibraryChunkRepo := datalibRepo.NewDocumentChunkRepository(deps.DB)
+	dataLibraryEmbeddingRepo := datalibRepo.NewDocumentChunkEmbeddingRepository(deps.DB)
+	dataLibraryKBRefRepo := datalibRepo.NewKnowledgeBaseAssetRefRepository(deps.DB)
+	dataLibraryProcessingRequestRepo := datalibRepo.NewProcessingRequestRepository(deps.DB)
+	dataLibraryProcessingRequestService := datalibService.NewProcessingRequestService(dataLibraryProcessingRequestRepo)
+	dataLibraryFileRefEmbeddingService := datalibService.NewDocumentChunkEmbeddingService(
+		dataLibraryAssetRepo,
+		dataLibraryEmbeddingRepo,
+		deps.LLMClient,
+		deps.DefaultModelService,
+	)
+	dataLibraryFileRefService := datalibService.NewKnowledgeBaseFileRefService(
+		dataLibraryAssetRepo,
+		dataLibraryChunkRepo,
+		dataLibraryEmbeddingRepo,
+		dataLibraryKBRefRepo,
+		fileRepo,
+		datasetRepoObj,
+		documentRepoObj,
+		dataLibraryFileRefEmbeddingService,
+		dataLibraryProcessingRequestService,
+	)
+	dataLibraryTaskDispatcher := datalibWorker.NewFileProcessTaskDispatcher(deps.TaskManager)
+	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, dataLibraryTaskDispatcher, deps.AccountService, documentServiceObj, datasetServiceObj, deps.OrganizationService, dataLibraryProcessingRequestService)
+	dataLibraryFileCandidateEmbeddingRunner := datalibWorker.NewFileCandidateEmbeddingRunner(dataLibraryFileRefService, dataLibraryProcessingRequestService)
+	dataLibraryDatasetRefSyncRunner := datalibWorker.NewDatasetRefSyncRunner(datalibWorker.DatasetRefSyncRunnerDeps{
+		Refs:       dataLibraryKBRefRepo,
+		Assets:     dataLibraryAssetRepo,
+		Datasets:   datasetRepoObj,
+		Documents:  documentRepoObj,
+		Chunks:     dataLibraryChunkRepo,
+		Embeddings: dataLibraryEmbeddingRepo,
+		VectorDB:   vectorClient,
+	})
 
 	// Create BatchHitTestingTaskRepository instance
 	batchHitTestingTaskRepo := datasetRepo.NewBatchHitTestingTaskRepository(deps.DB)
@@ -162,6 +201,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	documentHandlerObj.RegisterRoutes(router)
 	segmentHandlerObj.RegisterRoutes(router)
 	folderHandler.RegisterRoutes(router)
+	dataLibraryFileRefHandler.RegisterDatasetRoutes(router)
 
 	// Get the task type with prefix
 	documentIndexingTaskType := task.TypeDocumentIndexing
@@ -176,6 +216,8 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 			"task_type": documentIndexingTaskType,
 		})
 	}
+	datalibWorker.RegisterDatasetRefSyncTaskHandler(deps.TaskHandlerRegistry, dataLibraryDatasetRefSyncRunner, taskManager)
+	datalibWorker.RegisterFileCandidateEmbeddingTaskHandler(deps.TaskHandlerRegistry, dataLibraryFileCandidateEmbeddingRunner, taskManager)
 
 	// Register Graph API endpoint for knowledge graph visualization
 	router.GET("/datasets/:dataset_id/graph", middleware.JWTWithOrganizationAndService(deps.AccountService), newDatasetGraphHandler(datasetServiceObj, graphFlowServiceObj))

@@ -112,64 +112,15 @@ func (h *DocumentHandler) GetDocumentList(c *gin.Context) {
 
 // CreateDocument handles POST /datasets/:dataset_id/documents
 func (h *DocumentHandler) CreateDocument(c *gin.Context) {
-	datasetID := c.Param("dataset_id")
-
 	accountID := c.GetString("account_id")
 	organizationID := c.GetString("tenant_id")
-	groupID := c.GetString("group_id")
 
 	if accountID == "" || organizationID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	if groupID == "" {
-		groupID = organizationID
-	}
-
-	var datasetTenantID string
-	if h.datasetService != nil {
-		dataset, err := h.datasetService.GetDatasetByID(c.Request.Context(), datasetID)
-		if err != nil || dataset == nil {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		datasetTenantID = dataset.WorkspaceID
-	} else {
-		datasetTenantID = organizationID
-	}
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			groupID,
-			datasetTenantID,
-			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
-	}
-
-	var req dto.DocumentCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-
-	result, err := h.documentService.CreateDocument(c.Request.Context(), datasetID, &req, accountID, organizationID)
-	if err != nil {
-		response.FailWithMessage(c, response.ErrDocumentCreateFailed, err.Error())
-		return
-	}
-
-	response.Success(c, result)
+	response.FailWithMessage(c, response.ErrDocumentCreateFailed, "dataset documents must be added from ready file assets")
 }
 
 // DeleteDocuments handles DELETE /datasets/:dataset_id/documents

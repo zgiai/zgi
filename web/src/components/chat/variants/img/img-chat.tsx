@@ -152,6 +152,7 @@ export function ImgChat({
                 model_config: {
                   provider: modelSelectorValue.provider,
                   model: modelSelectorValue.model,
+                  name: modelSelectorValue.model,
                 },
               }
             : {}),

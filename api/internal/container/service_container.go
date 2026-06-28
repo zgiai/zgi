@@ -9,6 +9,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	hyperparsesdk "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/hyperparse_sdk"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
@@ -22,6 +23,7 @@ import (
 	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
@@ -604,7 +606,11 @@ func (c *ServiceContainer) GetFileFolderService() file_service.FileFolderService
 
 func (c *ServiceContainer) GetContentParseService() contracts.ContentParseService {
 	if c.contentParseService == nil {
-		c.contentParseService = contentparsecap.NewModule().Service
+		c.contentParseService = contentparsecap.NewModule(
+			contentparsecap.WithFigureSummaryEnhancer(
+				hyperparsesdk.NewDefaultChatFigureSummaryLocalizer(c.GetLLMClient(), c.GetDefaultModelService()),
+			),
+		).Service
 	}
 	return c.contentParseService
 }
@@ -710,7 +716,17 @@ func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
 
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
 	if c.dataLibraryModule == nil {
-		c.dataLibraryModule = datalibrarymodule.NewModule(c.db)
+		contentParseModule := contentparsemodule.NewModule(
+			c.db,
+			contentparsemodule.WithSystemVisionModel(c.GetLLMClient(), c.GetDefaultModelService()),
+		)
+		c.dataLibraryModule = datalibrarymodule.NewModuleWithContentParseModule(
+			c.db,
+			storage.GetStorage(),
+			contentParseModule,
+			c.GetLLMClient(),
+			c.GetDefaultModelService(),
+		)
 	}
 	return c.dataLibraryModule
 }

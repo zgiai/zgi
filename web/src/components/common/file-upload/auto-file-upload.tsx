@@ -35,6 +35,7 @@ import {
   getUploadedFileKeys,
   hasAnyFileKey,
 } from './file-dedup';
+import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
 
 const FileSelectorDialog = dynamic(() => import('@/components/files/file-selector-dialog'), {
   ssr: false,
@@ -51,6 +52,10 @@ export interface AutoFileUploadProps {
   maxSizeMB?: number;
   /** Allowed extensions like ['.jpg', '.png'] (case-insensitive) */
   acceptExt?: string[];
+  /** Whether to show the allowed extensions hint below the upload button */
+  showAllowedTypesHint?: boolean;
+  /** Whether to set the native file input accept attribute */
+  useNativeAccept?: boolean;
   /** Additional class for outer container */
   containerClassName?: string;
   /** Additional class for table wrapper */
@@ -69,6 +74,10 @@ export interface AutoFileUploadProps {
   folderId?: string;
   /** Workspace id */
   workspaceId?: string;
+  /** File asset processing mode for uploaded documents */
+  processingMode?: FileUploadProcessingMode;
+  /** Content parse provider for uploaded documents */
+  parseProvider?: FileParseProviderKey;
   /** Whether to show the system file selector button */
   showSystemSelect?: boolean;
   /** Whether to mark files as temporary */
@@ -86,6 +95,8 @@ export interface AutoFileUploadRef {
   getUploadedFiles: () => UploadedFile[];
   /** Clear all files */
   clearAll: () => void;
+  /** Abort all in-flight uploads and remove them from the queue */
+  cancelUploading: () => void;
 }
 
 interface UploadItem {
@@ -118,6 +129,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
       maxCount = 5,
       maxSizeMB = 15,
       acceptExt = [],
+      showAllowedTypesHint = true,
+      useNativeAccept = true,
       containerClassName,
       tableWrapperClassName,
       dropZoneClassName,
@@ -127,6 +140,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
       controlled = false,
       folderId,
       workspaceId,
+      processingMode,
+      parseProvider,
       showSystemSelect = false,
       isTemporary = false,
       allowWorkspaceSwitch = false,
@@ -140,11 +155,12 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     const isAuthenticated = useAuthStore.use.isAuthenticated();
 
     const [items, setItems] = useState<UploadItem[]>([]);
+    const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
     const itemsRef = useRef(items);
     const isFull = items.length >= maxCount;
     const [isSystemSelectOpen, setIsSystemSelectOpen] = useState(false);
     const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
-    const inputAccept = buildFileInputAcceptAttribute(acceptExt);
+    const inputAccept = useNativeAccept ? buildFileInputAcceptAttribute(acceptExt) : undefined;
 
     const handleSystemSelectConfirm = useCallback(
       (files: FileItem[]) => {
@@ -232,9 +248,21 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           return getSuccessfulUploadFiles(itemsRef.current);
         },
         clearAll: () => {
+          uploadControllersRef.current.forEach(controller => controller.abort());
+          uploadControllersRef.current.clear();
           itemsRef.current = [];
           latestSuccessFilesRef.current = [];
           setItems([]);
+        },
+        cancelUploading: () => {
+          uploadControllersRef.current.forEach(controller => controller.abort());
+          uploadControllersRef.current.clear();
+          setItems(prev => {
+            const next = prev.filter(it => it.status !== 'uploading');
+            itemsRef.current = next;
+            latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
+            return next;
+          });
         },
       }),
       []
@@ -367,6 +395,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     /* ------------------------------- uploading ------------------------------- */
 
     const startUpload = useCallback((item: UploadItem) => {
+      const controller = new AbortController();
+      uploadControllersRef.current.set(item.id, controller);
       setItems(prev => {
         const next: UploadItem[] = prev.map(it =>
           it.id === item.id ? { ...it, status: 'uploading' as const } : it
@@ -381,6 +411,9 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           folder_id: folderId,
           workspace_id: workspaceId,
           is_temporary: isTemporary,
+          processing_mode: processingMode,
+          parse_provider: parseProvider,
+          signal: controller.signal,
           onProgress: p =>
             setItems(prev => {
               const next = prev.map(it => (it.id === item.id ? { ...it, progress: p } : it));
@@ -426,6 +459,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           });
         })
         .catch((err: Error) => {
+          if (controller.signal.aborted) return;
+
           setItems(prev => {
             const next: UploadItem[] = prev.map(it =>
               it.id === item.id
@@ -436,8 +471,11 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             latestSuccessFilesRef.current = getSuccessfulUploadFiles(next);
             return next;
           });
+        })
+        .finally(() => {
+          uploadControllersRef.current.delete(item.id);
         });
-    }, [folderId, isTemporary, workspaceId]);
+    }, [folderId, isTemporary, processingMode, parseProvider, workspaceId]);
 
     const enqueueFiles = useCallback(
       async (files: FileList | File[]) => {
@@ -518,6 +556,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
     );
 
     const removeItem = (id: string) => {
+      uploadControllersRef.current.get(id)?.abort();
+      uploadControllersRef.current.delete(id);
       setItems(prev => {
         const next = prev.filter(it => it.id !== id);
         itemsRef.current = next;
@@ -613,7 +653,7 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
           onDragLeave={handleDrag}
           onDrop={handleDrop}
           className={cn(
-            'flex flex-col items-center justify-center border-2 border-dashed rounded-md px-5 py-4 text-center transition-colors',
+            'flex flex-col items-center justify-center border-2 border-dashed rounded-md px-5 py-3 text-center transition-colors',
             dragActive ? 'border-primary bg-primary/5' : 'border-border',
             dropZoneClassName,
             isFull ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
@@ -629,6 +669,8 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             hidden
             accept={inputAccept}
             disabled={isFull}
+            aria-label={t('fileUpload.uploadAria')}
+            data-testid="local-file-input"
             onChange={e => {
               if (e.target.files) {
                 enqueueFiles(e.target.files);
@@ -640,7 +682,20 @@ export const AutoFileUpload = forwardRef<AutoFileUploadRef, AutoFileUploadProps>
             <div className="text-center select-none flex flex-col items-center">
               <UploadCloudIcon className="w-8 h-8 text-primary mb-2" />
               <p className="text-sm text-muted-foreground">{t('fileUpload.dropHere')}</p>
-              {acceptExt.length > 0 && (
+              <Button
+                type="button"
+                size="sm"
+                className="mt-3 px-5"
+                disabled={isFull}
+                onClick={event => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!isFull) inputRef.current?.click();
+                }}
+              >
+                {t('fileUpload.clickUpload')}
+              </Button>
+              {showAllowedTypesHint && acceptExt.length > 0 && (
                 <p className="text-xs text-muted-foreground mt-1">
                   {t('fileUpload.allowedTypesLabel')}
                   <span className="font-semibold text-primary">

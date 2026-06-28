@@ -94,6 +94,14 @@ export const DATASET_KEYS = {
   documents: (datasetId: string) => [...DATASET_KEYS.all, 'documents', datasetId] as const,
   documentList: (datasetId: string, params: unknown) =>
     [...DATASET_KEYS.documents(datasetId), params] as const,
+  fileCandidates: (datasetId: string, params: unknown) =>
+    [...DATASET_KEYS.all, 'file-candidates', datasetId, params] as const,
+  fileCandidateEmbeddingTask: (datasetId: string, assetId: string, requestId: string) =>
+    [...DATASET_KEYS.all, 'file-candidate-embedding-task', datasetId, assetId, requestId] as const,
+  fileRefs: (datasetId: string, params?: unknown) =>
+    params === undefined
+      ? ([...DATASET_KEYS.all, 'file-refs', datasetId] as const)
+      : ([...DATASET_KEYS.all, 'file-refs', datasetId, params] as const),
   extractionStrategies: () => [...DATASET_KEYS.all, 'extraction-strategies'] as const,
   documentDetails: (datasetId: string) => [...DATASET_KEYS.all, 'document', datasetId] as const,
   documentDetail: (datasetId: string, documentId: string) =>

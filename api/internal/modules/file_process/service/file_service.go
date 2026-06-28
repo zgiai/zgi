@@ -18,6 +18,7 @@ import (
 
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
+	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/repository"
@@ -41,6 +42,16 @@ type fileService struct {
 	quotaService      interfaces.QuotaService
 	enterpriseService interfaces.OrganizationService
 	extractGroup      singleflight.Group
+	assetDeletion     datalibraryservice.FileAssetDeletionService
+}
+
+type UploadFileOptions struct {
+	StartLegacyContentExtraction bool
+}
+
+func isAssetProcessableExtension(ext string) bool {
+	normalized := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+	return model.IsDocumentExtension(normalized) || model.IsImageExtension(normalized)
 }
 
 // NewFileService creates file service instance
@@ -80,6 +91,10 @@ func NewFileServiceWithVision(
 	}
 }
 
+func (s *fileService) SetFileAssetDeletionService(assetDeletion datalibraryservice.FileAssetDeletionService) {
+	s.assetDeletion = assetDeletion
+}
+
 // GetUploadConfig gets file upload configuration
 func (s *fileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
 	cfg := config.Current()
@@ -97,6 +112,155 @@ func (s *fileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
 
 // UploadFile upload file
 func (s *fileService) UploadFile(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool) (*dto.UploadFile, error) {
+	return s.UploadFileWithOptions(ctx, filename, content, mimeType, userID, organizationID, userRole, source, workspaceID, isTemporary, isIcon, UploadFileOptions{
+		StartLegacyContentExtraction: true,
+	})
+}
+
+func (s *fileService) ReplaceFileContent(ctx context.Context, fileID string, filename string, content []byte, mimeType string, userID, organizationID string) (*dto.UploadFile, error) {
+	current, err := s.fileRepo.GetByTenantAndID(ctx, organizationID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if current.IsTemporary {
+		return nil, model.ErrUnsupportedFileType
+	}
+
+	extension := strings.ToLower(filepath.Ext(filename))
+	if extension != "" {
+		extension = extension[1:]
+	}
+	if len(filename) > 200 {
+		nameWithoutExt := strings.TrimSuffix(filename, filepath.Ext(filename))
+		if len(nameWithoutExt) > 200 {
+			nameWithoutExt = nameWithoutExt[:200]
+		}
+		filename = nameWithoutExt + "." + extension
+	}
+	if !isAssetProcessableExtension(extension) {
+		return nil, model.ErrUnsupportedFileType
+	}
+
+	fileSize := int64(len(content))
+	if !s.IsFileSizeWithinLimit(extension, fileSize) {
+		return nil, model.ErrFileTooLarge
+	}
+
+	delta := fileSize - current.Size
+	var groupID *uuid.UUID
+	parsedGroupID, parseErr := uuid.Parse(organizationID)
+	if parseErr == nil {
+		groupID = &parsedGroupID
+	}
+	if delta > 0 && groupID != nil && s.quotaService != nil {
+		canProceed, currentUsage, limit, err := s.quotaService.CheckQuota(ctx, *groupID, quota_model.ResourceTypeStorage, delta)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check storage quota: %w", err)
+		}
+		if !canProceed {
+			currentGB := float64(currentUsage) / (1024 * 1024 * 1024)
+			limitGB := float64(limit) / (1024 * 1024 * 1024)
+			attemptGB := float64(delta) / (1024 * 1024 * 1024)
+			return nil, fmt.Errorf("storage quota exceeded: current=%.2fGB, limit=%.2fGB, attempt=%.2fGB",
+				currentGB, limitGB, attemptGB)
+		}
+	}
+
+	storageType := config.Current().Storage.Type
+	newKey := fmt.Sprintf("upload_files/%s/%s.%s", organizationID, uuid.New().String(), extension)
+	hash := fmt.Sprintf("%x", sha256.Sum256(content))
+	oldKey := current.Key
+
+	if err := s.storage.Save(newKey, content); err != nil {
+		return nil, fmt.Errorf("failed to save replacement file to storage: %w", err)
+	}
+
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		updates := map[string]interface{}{
+			"storage_type": storageType,
+			"key":          newKey,
+			"name":         filename,
+			"size":         fileSize,
+			"extension":    extension,
+			"mime_type":    mimeType,
+			"created_by":   userID,
+			"created_at":   time.Now(),
+			"hash":         hash,
+			"source_url":   "",
+			"content_text": nil,
+		}
+		if err := s.fileRepo.WithTx(tx).Update(ctx, fileID, updates); err != nil {
+			return fmt.Errorf("failed to update file record: %w", err)
+		}
+		if err := s.fileRepo.WithTx(tx).DeleteExtractionCaches(ctx, fileID); err != nil {
+			return fmt.Errorf("failed to clear file extraction caches: %w", err)
+		}
+
+		if delta != 0 && groupID != nil && s.quotaService != nil {
+			accountUUID, err := uuid.Parse(userID)
+			if err != nil {
+				return fmt.Errorf("failed to parse user ID: %w", err)
+			}
+			tenantUUID, err := uuid.Parse(organizationID)
+			if err != nil {
+				return fmt.Errorf("failed to parse tenant ID: %w", err)
+			}
+			operation := quota_model.OperationTypeIncrease
+			if delta < 0 {
+				operation = quota_model.OperationTypeDecrease
+			}
+			resourceName := filename
+			usageRecord := &quota_model.QuotaUsageHistory{
+				ID:            uuid.New().String(),
+				GroupID:       *groupID,
+				AccountID:     accountUUID,
+				TenantID:      &tenantUUID,
+				ResourceType:  quota_model.ResourceTypeStorage,
+				OperationType: operation,
+				Delta:         delta,
+				ResourceID:    &fileID,
+				ResourceName:  &resourceName,
+				Metadata: &quota_model.JSONMap{
+					"file_id":       fileID,
+					"file_name":     filename,
+					"old_file_size": current.Size,
+					"new_file_size": fileSize,
+					"old_key":       oldKey,
+					"new_key":       newKey,
+					"operation":     "replace_file_content",
+				},
+			}
+			if err := s.quotaService.RecordUsageInTx(ctx, tx, usageRecord); err != nil {
+				return fmt.Errorf("failed to record replacement storage usage: %w", err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		if deleteErr := s.storage.Delete(newKey); deleteErr != nil {
+			logger.Warn("Failed to delete replacement file after DB rollback", "key", newKey, "error", deleteErr.Error())
+		}
+		return nil, err
+	}
+
+	if oldKey != "" && oldKey != newKey {
+		if err := s.storage.Delete(oldKey); err != nil {
+			logger.Warn("Failed to delete old file content after replacement", "file_id", fileID, "key", oldKey, "error", err.Error())
+		}
+	}
+
+	replaced, err := s.fileRepo.GetByTenantAndID(ctx, organizationID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertToInterfaceUploadFile(replaced), nil
+}
+
+func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool, options UploadFileOptions) (*dto.UploadFile, error) {
 	// If isIcon is true, resize the image to max 200x200
 	if isIcon {
 		processedContent, err := image.ProcessIconImage(content)
@@ -124,7 +288,7 @@ func (s *fileService) UploadFile(ctx context.Context, filename string, content [
 
 	// Check file type (if from datasets source)
 	if source != nil && *source == interfaces.FileSourceDatasets {
-		if !model.IsDocumentExtension(extension) {
+		if !isAssetProcessableExtension(extension) {
 			return nil, model.ErrUnsupportedFileType
 		}
 	}
@@ -280,8 +444,10 @@ func (s *fileService) UploadFile(ctx context.Context, filename string, content [
 		return nil, err
 	}
 
-	// Start asynchronous file parsing
-	go s.ParseFileContent(context.Background(), localUploadFile.ID)
+	if options.StartLegacyContentExtraction {
+		// Start asynchronous file parsing
+		go s.ParseFileContent(context.Background(), localUploadFile.ID)
+	}
 
 	return s.convertToInterfaceUploadFile(localUploadFile), nil
 }
@@ -783,8 +949,17 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 				return fmt.Errorf("failed to delete file %s from storage: %w", fileID, err)
 			}
 
+			if s.assetDeletion != nil {
+				if err := s.assetDeletion.DeleteBySourceFileInTx(ctx, tx, file.OrganizationID, fileID); err != nil {
+					if errors.Is(err, datalibraryservice.ErrFileAssetDeletionBlocked) {
+						return fmt.Errorf("file %s is used by documents and cannot be deleted: %w", fileID, err)
+					}
+					return fmt.Errorf("failed to delete file %s asset data: %w", fileID, err)
+				}
+			}
+
 			// Delete file record from database
-			if err := s.fileRepo.Delete(ctx, fileID); err != nil {
+			if err := s.fileRepo.WithTx(tx).Delete(ctx, fileID); err != nil {
 				return fmt.Errorf("failed to delete file %s record: %w", fileID, err)
 			}
 
