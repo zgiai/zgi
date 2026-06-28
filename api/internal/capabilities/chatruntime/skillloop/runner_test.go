@@ -2288,6 +2288,26 @@ Use the calculator tool.
 	}
 }
 
+func TestCompletionVerificationFinalizingProgressTextUsesOperationSummary(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "\u5220\u9664\u524d\u4e24\u4e2a\u667a\u80fd\u4f53", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "\u5220\u9664\u524d\u4e24\u4e2a\u667a\u80fd\u4f53"}},
+	})
+	text := completionVerificationFinalizingProgressText(prepared, map[string]interface{}{
+		"operation_result_summary": map[string]interface{}{
+			"status":        "completed",
+			"operation":     "agent.delete",
+			"asset_type":    "agent",
+			"target_count":  2,
+			"success_count": 2,
+			"failed_count":  0,
+		},
+	})
+
+	if !strings.Contains(text, "\u5df2\u5220\u9664 2 \u4e2a\u667a\u80fd\u4f53") {
+		t.Fatalf("progress text = %q, want concrete agent delete progress", text)
+	}
+}
+
 func TestRunnerCompletionEvidenceKeepsPlanToolGuard(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()

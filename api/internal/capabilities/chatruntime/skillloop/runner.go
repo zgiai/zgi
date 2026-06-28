@@ -173,7 +173,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		if len(toolCalls) == 0 && postVerificationConfigured {
 			if !finalizingProgressEmitted && (toolCallCount > 0 || len(attemptedToolCalls) > 0 || len(successfulToolCalls) > 0) {
-				if r.emitAgentProgress(ctx, prepared, completionVerificationFinalizingProgressText(prepared), nil) {
+				if r.emitAgentProgress(ctx, prepared, completionVerificationFinalizingProgressText(prepared, completionEvidenceForFastPath(req)), nil) {
 					finalizingProgressEmitted = true
 				}
 			}
@@ -762,11 +762,93 @@ func (r *Runner) emitAgentProgress(ctx context.Context, prepared *PreparedChat, 
 	return true
 }
 
-func completionVerificationFinalizingProgressText(prepared *PreparedChat) string {
+func completionVerificationFinalizingProgressText(prepared *PreparedChat, evidence map[string]interface{}) string {
+	if text := completionVerificationOperationProgressText(prepared, evidence); text != "" {
+		return text
+	}
 	if containsCJK(preparedUserText(prepared)) {
 		return "\u6b63\u5728\u6839\u636e\u5de5\u5177\u7ed3\u679c\u6574\u7406\u56de\u590d..."
 	}
 	return "Reviewing the tool results before the final reply..."
+}
+
+func completionVerificationOperationProgressText(prepared *PreparedChat, evidence map[string]interface{}) string {
+	summary := completionVerificationProgressOperationSummary(evidence)
+	if len(summary) == 0 {
+		return ""
+	}
+	chinese := containsCJK(preparedUserText(prepared))
+	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(summary["status"])))
+	operation := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(summary["operation"])))
+	assetType := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(summary["asset_type"])))
+	effect := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(summary["effect"])))
+	successCount := firstPositiveInt(
+		completionVerificationNumericEvidence(summary["success_count"]),
+		completionVerificationNumericEvidence(summary["deleted_count"]),
+	)
+	targetCount := completionVerificationNumericEvidence(summary["target_count"])
+	failedCount := completionVerificationNumericEvidence(summary["failed_count"])
+	generatedFileCount := completionVerificationNumericEvidence(summary["generated_file_count"])
+
+	if chinese {
+		switch {
+		case failedCount > 0 && successCount > 0:
+			return fmt.Sprintf("\u5df2\u5b8c\u6210 %d \u9879\u64cd\u4f5c\uff0c%d \u9879\u5931\u8d25\uff0c\u6b63\u5728\u6574\u7406\u7ed3\u679c...", successCount, failedCount)
+		case isDeleteOperation(operation, effect) && assetType == "agent" && successCount > 0:
+			return fmt.Sprintf("\u5df2\u5220\u9664 %d \u4e2a\u667a\u80fd\u4f53\uff0c\u6b63\u5728\u786e\u8ba4\u7ed3\u679c...", successCount)
+		case isDeleteOperation(operation, effect) && targetCount > 0:
+			return fmt.Sprintf("\u5df2\u5904\u7406 %d \u4e2a\u5220\u9664\u76ee\u6807\uff0c\u6b63\u5728\u6574\u7406\u7ed3\u679c...", targetCount)
+		case generatedFileCount > 0:
+			return "\u6587\u4ef6\u5df2\u751f\u6210\uff0c\u6b63\u5728\u6574\u7406\u7ed3\u679c..."
+		case status == "success" || status == "succeeded" || status == "completed":
+			return "\u5de5\u5177\u5df2\u6267\u884c\uff0c\u6b63\u5728\u6574\u7406\u7ed3\u679c..."
+		}
+		return ""
+	}
+
+	switch {
+	case failedCount > 0 && successCount > 0:
+		return fmt.Sprintf("Completed %d item(s), %d failed; reviewing the result...", successCount, failedCount)
+	case isDeleteOperation(operation, effect) && assetType == "agent" && successCount > 0:
+		return fmt.Sprintf("Deleted %d agent(s); confirming the result...", successCount)
+	case isDeleteOperation(operation, effect) && targetCount > 0:
+		return fmt.Sprintf("Processed %d delete target(s); reviewing the result...", targetCount)
+	case generatedFileCount > 0:
+		return "File generated; reviewing the result..."
+	case status == "success" || status == "succeeded" || status == "completed":
+		return "Tool completed; reviewing the result..."
+	default:
+		return ""
+	}
+}
+
+func completionVerificationProgressOperationSummary(evidence map[string]interface{}) map[string]interface{} {
+	if len(evidence) == 0 {
+		return nil
+	}
+	if summary := evidenceMapFromAny(evidence["operation_result_summary"]); len(summary) > 0 {
+		return summary
+	}
+	if summary := evidenceMapFromAny(evidence["execution_summary"]); len(summary) > 0 {
+		if operationSummary := evidenceMapFromAny(summary["operation_result_summary"]); len(operationSummary) > 0 {
+			return operationSummary
+		}
+	}
+	if ledger := evidenceMapFromAny(evidence["execution_ledger"]); len(ledger) > 0 {
+		if operationSummary := evidenceMapFromAny(ledger["operation_result_summary"]); len(operationSummary) > 0 {
+			return operationSummary
+		}
+		if summary := evidenceMapFromAny(ledger["summary"]); len(summary) > 0 {
+			if operationSummary := evidenceMapFromAny(summary["operation_result_summary"]); len(operationSummary) > 0 {
+				return operationSummary
+			}
+		}
+	}
+	return nil
+}
+
+func isDeleteOperation(operation string, effect string) bool {
+	return strings.Contains(operation, "delete") || strings.EqualFold(effect, "delete")
 }
 
 func preparedUserText(prepared *PreparedChat) string {
