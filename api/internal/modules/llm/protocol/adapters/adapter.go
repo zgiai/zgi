@@ -464,6 +464,7 @@ type AdapterConfig struct {
 	Organization string                 `json:"organization,omitempty"` // OpenAI specific
 
 	GuardOutboundURL    bool `json:"-"`
+	GuardOutboundDNS    bool `json:"-"`
 	AllowPrivateBaseURL bool `json:"-"`
 
 	// ProviderConfig carries provider-specific parameters, such as cloud project or signing metadata.
