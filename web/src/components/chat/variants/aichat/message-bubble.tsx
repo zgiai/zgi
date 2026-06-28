@@ -1234,7 +1234,10 @@ export function AIChatMessageBubble({
             </div>
           ) : waitingMessage ? (
             <div className="text-sm text-muted-foreground">{waitingMessage}</div>
-          ) : isStreaming && !hasTimeline && !userInputRequest && !hasGeneratedImagePreviews ? (
+          ) : isStreaming &&
+            !streamingStatusLabel &&
+            !userInputRequest &&
+            !hasGeneratedImagePreviews ? (
             <div className="space-y-2 pt-1">
               <Skeleton className="h-4 w-2/3" />
               <Skeleton className="h-4 w-1/2" />
