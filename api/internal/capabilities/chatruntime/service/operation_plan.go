@@ -1592,14 +1592,15 @@ func operationPlanBatchOperationResultHasEvidence(result map[string]interface{})
 	if len(result) == 0 {
 		return false
 	}
+	group := mapFromOperationContext(result["operation_group"])
 	items := mapSliceFromAny(result["item_results"])
 	if len(items) == 0 {
-		group := mapFromOperationContext(result["operation_group"])
 		items = mapSliceFromAny(group["item_results"])
 	}
 	if len(items) == 0 {
 		return false
 	}
+	targetCount := firstPositiveIntValue(result["target_count"], group["target_count"])
 	counted := 0
 	for _, item := range items {
 		status := strings.ToLower(strings.TrimSpace(stringFromAny(item["status"])))
@@ -1608,7 +1609,19 @@ func operationPlanBatchOperationResultHasEvidence(result map[string]interface{})
 			counted++
 		}
 	}
-	return counted > 0
+	if targetCount > 0 {
+		return counted >= targetCount
+	}
+	return counted == len(items)
+}
+
+func firstPositiveIntValue(values ...interface{}) int {
+	for _, value := range values {
+		if parsed := intValueFromAny(value); parsed > 0 {
+			return parsed
+		}
+	}
+	return 0
 }
 
 func operationPlanAgentResultID(result map[string]interface{}) string {

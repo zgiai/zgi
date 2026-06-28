@@ -2428,6 +2428,63 @@ func TestOperationPlanBatchDeleteCompletesSingleDeleteStep(t *testing.T) {
 	}
 }
 
+func TestOperationPlanBatchDeleteRequiresEvidenceForEveryTarget(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "delete the first two visible agents",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement},
+	}
+	strategy := &AIChatTurnStrategy{
+		Intent: "manage_agent_asset",
+		PlannedTools: []AIChatTurnStrategyTool{
+			{SkillID: skills.SkillAgentManagement, ToolName: "delete_agents"},
+		},
+	}
+	metadata := map[string]interface{}{
+		"operation_plan": operationPlanFromTurnStrategy("task-agent-incomplete-batch-delete", parts, strategy),
+	}
+
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "delete_agents",
+		"result": map[string]interface{}{
+			"status":        "running",
+			"target_count":  2,
+			"deleted_count": 1,
+			"failed_count":  0,
+			"item_results": []interface{}{
+				map[string]interface{}{"agent_id": "agent-1", "agent_name": "Agent One", "status": "succeeded"},
+			},
+			"operation_group": map[string]interface{}{
+				"id":            "agent.delete.batch:test",
+				"type":          "batch",
+				"operation":     "agent.delete",
+				"asset_type":    "agent",
+				"status":        "running",
+				"target_count":  2,
+				"success_count": 1,
+				"failed_count":  0,
+				"item_results": []interface{}{
+					map[string]interface{}{"agent_id": "agent-1", "agent_name": "Agent One", "status": "succeeded"},
+				},
+			},
+		},
+	}})
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got == operationPlanStatusCompleted {
+		t.Fatalf("plan status = %q, want running while batch evidence covers only one of two targets; plan=%#v", got, plan)
+	}
+	stepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
+	step := operationPlanStepForTest(plan, stepID)
+	if got := stringFromAny(step["status"]); got == operationPlanStepStatusCompleted {
+		t.Fatalf("delete_agents step status = %q, want pending until every target has an item result; step=%#v", got, step)
+	}
+}
+
 func TestOperationPlanUpdatesFromGeneratedArtifactMetadata(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "\u751f\u6210\u4e00\u4e2a\u4e34\u65f6 SVG \u6587\u4ef6",

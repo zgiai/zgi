@@ -24,7 +24,10 @@ func TestCreateConversationForChatStoresSurfaceMetadata(t *testing.T) {
 		OrganizationID: uuid.New(),
 		AccountID:      uuid.New(),
 		WorkspaceID:    &workspaceID,
-	}, Caller{Type: runtimemodel.ConversationCallerAIChat}, "hello from the sidebar", aiChatSurfaceContextualSidebar)
+	}, Caller{Type: runtimemodel.ConversationCallerAIChat}, &chatRequestParts{
+		Query:   "hello from the sidebar",
+		Surface: aiChatSurfaceContextualSidebar,
+	})
 	if err != nil {
 		t.Fatalf("createConversationForChat: %v", err)
 	}
