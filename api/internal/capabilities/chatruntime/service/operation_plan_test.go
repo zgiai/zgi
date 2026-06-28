@@ -342,7 +342,7 @@ func TestAgentConfigNoopSkillInstructionDoesNotPlanSkillBindings(t *testing.T) {
 			t.Fatalf("PlannedTools = %#v, missing agent-management/%s", strategy.PlannedTools, want)
 		}
 	}
-	for _, unexpected := range []string{"list_agent_skill_candidates", "replace_agent_skill_bindings", "replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings"} {
+	for _, unexpected := range []string{"delete_agent", "delete_agents", "list_agent_skill_candidates", "replace_agent_skill_bindings", "replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings"} {
 		if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, unexpected) {
 			t.Fatalf("PlannedTools = %#v, want no agent-management/%s", strategy.PlannedTools, unexpected)
 		}
@@ -2164,6 +2164,25 @@ func TestAgentManagementDeleteIntentAllowsSeparatedChineseDeleteVerb(t *testing.
 	}
 	if got := operationPlanStepAssetTargetForTest(plan, stepID, "operation_mode"); got != "batch" {
 		t.Fatalf("delete_agents operation_mode = %#v, want batch; plan=%#v", got, plan)
+	}
+}
+
+func TestAgentManagementDeleteIntentDoesNotPlanEditsFromTargetNames(t *testing.T) {
+	query := "\u8bf7\u5220\u9664\u5f53\u524d\u667a\u80fd\u4f53\u9875\u9762\u524d\u4e24\u4e2a\u53ef\u89c1\u667a\u80fd\u4f53\uff1aGOAL-CONFIG-AGENT-1782403819308-EDITED9 \u548c AIChat\u914d\u7f6e\u9a8c\u8bc106231035-\u5df2\u7f16\u8f91"
+	parts := &chatRequestParts{
+		Query:     query,
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement},
+	}
+	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agents") {
+		t.Fatalf("planned_tools = %#v, missing delete_agents", strategy.PlannedTools)
+	}
+	for _, unexpected := range []string{"get_agent_config", "update_agent_identity", "update_agent_config"} {
+		if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, unexpected) {
+			t.Fatalf("planned_tools = %#v, want no %s from target-name keywords", strategy.PlannedTools, unexpected)
+		}
 	}
 }
 

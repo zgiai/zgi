@@ -1759,14 +1759,18 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 	if query == "" {
 		return strategy
 	}
+	deleteRequested := agentManagementDeleteRequested(query)
 	if agentManagementCreateRequested(query) {
 		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "create_agent", nil)
 	}
-	if agentManagementDeleteRequested(query) {
+	if deleteRequested {
 		if agentManagementBatchDeleteRequested(query) {
 			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "delete_agents", nil)
 		} else {
 			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "delete_agent", nil)
+		}
+		if !agentManagementDeleteHasExplicitFollowupMutation(query) {
+			return strategy
 		}
 	}
 	if agentManagementConfigReadRequested(query) ||
@@ -1810,6 +1814,24 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 		}
 	}
 	return strategy
+}
+
+func agentManagementDeleteHasExplicitFollowupMutation(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	for _, phrase := range []string{
+		"after deleting", "after delete", "then edit", "then update", "then modify", "and edit", "and update", "and modify",
+		"\u5220\u9664\u540e", "\u5220\u5b8c\u540e", "\u7136\u540e\u4fee\u6539", "\u7136\u540e\u7f16\u8f91", "\u7136\u540e\u66f4\u65b0",
+		"\u518d\u4fee\u6539", "\u518d\u7f16\u8f91", "\u518d\u66f4\u65b0", "\u540c\u65f6\u4fee\u6539", "\u540c\u65f6\u7f16\u8f91", "\u540c\u65f6\u66f4\u65b0",
+		"\u5e76\u4fee\u6539", "\u5e76\u7f16\u8f91", "\u5e76\u66f4\u65b0",
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func agentManagementVisibleContextResolvesUserTarget(parts *chatRequestParts, query string) bool {
@@ -2048,6 +2070,10 @@ func agentManagementMutationMarkerNegated(text string, markerStart int) bool {
 		"\u4e0d\u8981\u505a",
 		"\u4e0d\u505a\u4efb\u4f55",
 		"\u4e0d\u8981\u505a\u4efb\u4f55",
+		"\u4e0d\u8981\u6dfb\u52a0\u6216",
+		"\u4e0d\u7528\u6dfb\u52a0\u6216",
+		"\u65e0\u9700\u6dfb\u52a0\u6216",
+		"\u4e0d\u9700\u8981\u6dfb\u52a0\u6216",
 	})
 }
 
