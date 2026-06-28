@@ -193,6 +193,7 @@ type ModelInvocationTrace struct {
 type PreparedChat struct {
 	Conversation *Conversation
 	Message      *Message
+	Query        string
 	CurrentRoute string
 	parts        *chatParts
 	LLMRequest   *adapter.ChatRequest

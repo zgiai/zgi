@@ -65,8 +65,27 @@ func TestClientActionRequiredPayloadEmitsObservationForPublishEffect(t *testing.
 	}
 }
 
-func TestClientActionRequiredPayloadEmitsAgentCreateNavigation(t *testing.T) {
+func TestClientActionRequiredPayloadSkipsPlainAgentCreateNavigation(t *testing.T) {
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":   "completed",
+			"effect":   "created",
+			"agent_id": "agent-1",
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-create"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for plain Agent create", payload)
+	}
+}
+
+func TestClientActionRequiredPayloadEmitsAgentCreateNavigationWhenRequested(t *testing.T) {
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
+	prepared.Query = "\u521b\u5efa\u4e00\u4e2a\u667a\u80fd\u4f53\u5e76\u6253\u5f00\u8be6\u60c5\u9875"
 	trace := skills.SkillTrace{
 		SkillID:  skills.SkillAgentManagement,
 		ToolName: "create_agent",

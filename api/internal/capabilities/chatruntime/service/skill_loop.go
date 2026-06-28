@@ -97,6 +97,7 @@ func (s *service) runPreparedSkillStreamWithCompletionVerifier(
 		prepared.parts.SkillMode,
 		prepared.LLMRequest,
 	)
+	loopPrepared.Query = strings.TrimSpace(prepared.parts.Query)
 	loopPrepared.CurrentRoute = contextualTurnCurrentPage(prepared.parts)
 	return runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                 loopPrepared,
