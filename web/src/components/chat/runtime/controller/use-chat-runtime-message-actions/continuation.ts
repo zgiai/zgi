@@ -421,6 +421,7 @@ export function useWorkflowContinuationActions({
             callbacks,
             abortController.signal
           );
+          if (startError) throw startError;
         } else if (questionInputs) {
           if (!continueWorkflowQuestionStream) return;
           await continueWorkflowQuestionStream(
@@ -445,7 +446,7 @@ export function useWorkflowContinuationActions({
           if (!streamStarted) {
             const errorMessage = getErrorMessage(error);
             restoreWorkflowApprovalContinuation(errorMessage);
-            if (clientActionResult) {
+            if (clientActionResult || toolGovernanceDecision) {
               throw error instanceof Error ? error : new Error(errorMessage);
             }
             return;
