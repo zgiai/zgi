@@ -38,6 +38,7 @@ import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import { embeddedControlButtonClassName } from '@/components/chat/variants/aichat/embedded-conversation-controls';
+import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 import {
   createContextualAIChatTransport,
   normalizeZGIConsoleNavigationHref,
@@ -71,6 +72,7 @@ const CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS = 120;
 const CLIENT_ACTION_OBSERVATION_SETTLE_MS = 900;
 const CLIENT_ACTION_DEDUPE_TTL_MS = 60_000;
 const CLIENT_ACTION_FAILURE_DEDUPE_TTL_MS = 5_000;
+const ACTIVE_CONVERSATION_STORAGE_KEY = 'consoleChat.contextualActiveConversationId';
 
 interface PendingClientActionContinuation {
   key: string;
@@ -129,6 +131,45 @@ function markClientActionDedupe(
 function hasClientActionDedupe(cache: Map<string, number>, key: string, now: number) {
   const expiresAt = cache.get(key);
   return Boolean(expiresAt && expiresAt > now);
+}
+
+function contextualStorageKey(baseKey: string, userId?: string | null) {
+  const normalizedUserId = userId?.trim();
+  return normalizedUserId ? `${baseKey}:${normalizedUserId}` : baseKey;
+}
+
+function readStoredActiveConversationId(userId?: string | null) {
+  if (typeof window === 'undefined') return null;
+  try {
+    const value = window.sessionStorage.getItem(
+      contextualStorageKey(ACTIVE_CONVERSATION_STORAGE_KEY, userId)
+    );
+    return value?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function storeActiveConversationId(conversationId: string, userId?: string | null) {
+  if (typeof window === 'undefined') return;
+  if (isDraftAIChatConversationId(conversationId)) return;
+  try {
+    window.sessionStorage.setItem(
+      contextualStorageKey(ACTIVE_CONVERSATION_STORAGE_KEY, userId),
+      conversationId
+    );
+  } catch {
+    // Session storage can be unavailable in restricted browser contexts.
+  }
+}
+
+function clearStoredActiveConversationId(userId?: string | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.removeItem(contextualStorageKey(ACTIVE_CONVERSATION_STORAGE_KEY, userId));
+  } catch {
+    // Session storage can be unavailable in restricted browser contexts.
+  }
 }
 
 function useIsDesktopPanelViewport() {
@@ -1228,6 +1269,38 @@ export function ContextualAIChatDock() {
   );
   const controller = useAIChatController({ transport });
   const { init: initController } = controller;
+
+  useEffect(() => {
+    initController(readStoredActiveConversationId(user?.id) ?? undefined);
+  }, [initController, user?.id]);
+
+  useEffect(() => {
+    const activeConversationId = controller.activeConversationId;
+    if (!activeConversationId) return;
+    storeActiveConversationId(activeConversationId, user?.id);
+  }, [controller.activeConversationId, user?.id]);
+
+  const contextualController = useMemo(
+    () => ({
+      ...controller,
+      select: async (conversationId: string) => {
+        storeActiveConversationId(conversationId, user?.id);
+        await controller.select(conversationId);
+      },
+      startNew: () => {
+        clearStoredActiveConversationId(user?.id);
+        controller.startNew();
+      },
+      remove: async (conversationId: string) => {
+        if (conversationId === controller.activeConversationId) {
+          clearStoredActiveConversationId(user?.id);
+        }
+        await controller.remove(conversationId);
+      },
+    }),
+    [controller, user?.id]
+  );
+
   const waitingClientActionRequest = useMemo(() => {
     const activeConversation = controller.activeConversation;
     if (!activeConversation) return null;
@@ -1320,10 +1393,6 @@ export function ContextualAIChatDock() {
     pathname,
     pendingClientActionVersion,
   ]);
-
-  useEffect(() => {
-    initController();
-  }, [initController]);
 
   const [modelSelectorValue, setModelSelectorValue] = useState<AIChatModelValue>(() => {
     if (!user?.id) return { provider: '', model: '', params: {} };
@@ -1487,7 +1556,7 @@ export function ContextualAIChatDock() {
 
   const panel = (
     <ContextualAIChatPanel
-      controller={controller}
+      controller={contextualController}
       isModelInitializing={isModelInitializing}
       items={items}
       modelSelectorValue={modelSelectorValue}

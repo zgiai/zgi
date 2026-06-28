@@ -18,6 +18,29 @@ import type {
   AIChatContextRelation,
 } from './types';
 
+const CONTEXTUAL_AICHAT_OPEN_STORAGE_KEY = 'consoleChat.contextualDockOpen';
+
+function readStoredOpenState() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.sessionStorage.getItem(CONTEXTUAL_AICHAT_OPEN_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function storeOpenState(isOpen: boolean) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(
+      CONTEXTUAL_AICHAT_OPEN_STORAGE_KEY,
+      isOpen ? 'true' : 'false'
+    );
+  } catch {
+    // Session storage can be unavailable in restricted browser contexts.
+  }
+}
+
 interface ContextualAIChatRegisteredGroup {
   items: AIChatContextItem[];
   priority: number;
@@ -134,8 +157,12 @@ function visibleGroups(groups: Record<string, ContextualAIChatRegisteredGroup>) 
 }
 
 export function ContextualAIChatProvider({ children }: { children: ReactNode }) {
-  const [isOpen, setOpen] = useState(false);
+  const [isOpen, setOpen] = useState(readStoredOpenState);
   const [groups, setGroups] = useState<Record<string, ContextualAIChatRegisteredGroup>>({});
+
+  useEffect(() => {
+    storeOpenState(isOpen);
+  }, [isOpen]);
 
   const registerItems = useCallback(
     (items: AIChatContextItem[], options?: AIChatContextRegistrationOptions) => {
