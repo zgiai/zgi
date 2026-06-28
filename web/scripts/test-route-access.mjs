@@ -175,6 +175,22 @@ function routeFromPageFile(routeRoot, routePrefix, filePath) {
   return [routePrefix, ...segments].join('/');
 }
 
+function regexpEscape(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function collectStringLiterals(sourceText) {
+  return [...sourceText.matchAll(/['"]([^'"]+)['"]/g)].map(match => match[1]);
+}
+
+function sourceSliceBetween(sourceText, startMarker, endMarker) {
+  const start = sourceText.indexOf(startMarker);
+  assert.notEqual(start, -1, `missing source marker: ${startMarker}`);
+  const end = sourceText.indexOf(endMarker, start);
+  assert.notEqual(end, -1, `missing source marker: ${endMarker}`);
+  return sourceText.slice(start, end);
+}
+
 const source = fs.readFileSync(accessPath, 'utf8');
 const compiled = ts.transpileModule(source, {
   compilerOptions: {
@@ -581,6 +597,41 @@ assert.doesNotMatch(
 
 const consoleSidebarSource = fs.readFileSync(consoleSidebarPath, 'utf8');
 const permissionConstantsSource = fs.readFileSync(permissionConstantsPath, 'utf8');
+const permissionAllCodesSource = sourceSliceBetween(
+  permissionConstantsSource,
+  'export const ALL_PERMISSION_CODES = [',
+  '] as const;'
+);
+const permissionActionMatrixSource = sourceSliceBetween(
+  permissionConstantsSource,
+  'export const AGENT_PERMISSION_ACTIONS = {',
+  'const permissionItem = (code: PermissionCode)'
+);
+const frontendSourceFiles = listFiles(path.join(rootDir, 'src')).filter(filePath =>
+  /\.(?:ts|tsx)$/.test(filePath)
+);
+const permissionActionAggregateNames = [
+  'AGENT_MANAGE_PERMISSION_CODES',
+  'WORKFLOW_MANAGE_PERMISSION_CODES',
+  'KNOWLEDGE_BASE_MANAGE_PERMISSION_CODES',
+  'DATABASE_MANAGE_PERMISSION_CODES',
+  'FILE_MANAGE_PERMISSION_CODES',
+];
+const retiredPermissionPrefixes = ['workspace.', 'prompt.', 'content_parse.', 'dashboard.'];
+const legacyAggregatePermissionCodes = [
+  'agent.view',
+  'agent.manage',
+  'knowledge_base.view',
+  'knowledge_base.manage',
+  'database.view',
+  'database.manage',
+  'database.data_edit',
+  'database.ai_query',
+  'file.view',
+  'file.manage',
+  'file.upload_create',
+  'file.move_create',
+];
 assert.match(
   consoleSidebarSource,
   /getConsoleRouteAccess/,
@@ -608,6 +659,11 @@ assert.match(
 );
 assert.match(
   permissionConstantsSource,
+  /!isRetiredWorkspacePermissionCode\(code\)/,
+  'selectable permission list should exclude retired workspace tool/governance permission prefixes'
+);
+assert.match(
+  permissionConstantsSource,
   /COMPATIBILITY_PERMISSION_EXPANSIONS[\s\S]*'database\.data_edit'[\s\S]*'database\.record\.create'[\s\S]*'database\.record\.update'[\s\S]*'database\.record\.delete'[\s\S]*'database\.import\.execute'[\s\S]*'database\.import\.errors\.view'/,
   'role/member permission normalization should preserve database.data_edit by expanding it to exact action permissions'
 );
@@ -621,6 +677,30 @@ assert.doesNotMatch(
   /legacyDataEdit|legacyAiQuery|uploadCreate|moveCreate/,
   'frontend action matrix should not expose compatibility-only aggregate permissions as action groups'
 );
+for (const code of collectStringLiterals(permissionAllCodesSource)) {
+  assert.ok(
+    !retiredPermissionPrefixes.some(prefix => code.startsWith(prefix)),
+    `ALL_PERMISSION_CODES should not contain retired or governance permission ${code}`
+  );
+}
+for (const code of legacyAggregatePermissionCodes) {
+  assert.doesNotMatch(
+    permissionActionMatrixSource,
+    new RegExp(`['"]${regexpEscape(code)}['"]`),
+    `frontend action matrix should not use legacy aggregate permission ${code}`
+  );
+}
+for (const filePath of frontendSourceFiles) {
+  if (filePath === permissionConstantsPath) continue;
+  const fileSource = fs.readFileSync(filePath, 'utf8');
+  for (const aggregateName of permissionActionAggregateNames) {
+    assert.doesNotMatch(
+      fileSource,
+      new RegExp(`\\b${aggregateName}\\b`),
+      `${path.relative(rootDir, filePath)} should not use aggregate manage permission group ${aggregateName} for UI actions`
+    );
+  }
+}
 
 const consolePageSource = fs.readFileSync(consolePagePath, 'utf8');
 const workspaceStoreSource = fs.readFileSync(workspaceStorePath, 'utf8');

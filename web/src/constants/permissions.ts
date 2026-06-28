@@ -466,6 +466,7 @@ const isRetiredWorkspacePermissionCode = (permission: string) =>
 
 export const SELECTABLE_PERMISSION_CODES = ALL_PERMISSION_CODES.filter(
   code =>
+    !isRetiredWorkspacePermissionCode(code) &&
     !DEPRECATED_ASSET_PERMISSION_CODE_VALUES.has(code) &&
     !COMPATIBILITY_PERMISSION_CODE_VALUES.has(code) &&
     !GOVERNANCE_PERMISSION_CODE_VALUES.has(code)
