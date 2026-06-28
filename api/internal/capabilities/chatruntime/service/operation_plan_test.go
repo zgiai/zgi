@@ -1028,6 +1028,85 @@ func TestSkillLoopPlanToolGuardAllowsGovernedReadToolWithMutationLikeName(t *tes
 	}
 }
 
+func TestSkillLoopPlanToolGuardAllowsGovernedReadAfterCompletedPlan(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "summarize the workflow run result",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentWorkflow},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusCompleted,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillAgentWorkflow, "run_agent_workflow"),
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentWorkflow,
+						"tool_name": "run_agent_workflow",
+					},
+				},
+				"step_status": map[string]interface{}{
+					operationPlanToolStepID(skills.SkillAgentWorkflow, "run_agent_workflow"): operationPlanStepStatusCompleted,
+				},
+				"original_user_goal": "summarize the workflow run result",
+			},
+		}},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentWorkflow},
+		Tools: []skills.SkillToolDefinition{
+			{
+				Name: "get_workflow_run_status",
+				Governance: &toolgovernance.Manifest{
+					Effect:    toolgovernance.EffectRead,
+					AssetType: "workflow_run",
+					RiskLevel: toolgovernance.RiskLevelLow,
+				},
+			},
+			{
+				Name: "run_agent_workflow",
+				Governance: &toolgovernance.Manifest{
+					Effect:    toolgovernance.EffectInvoke,
+					AssetType: "workflow",
+					RiskLevel: toolgovernance.RiskLevelHigh,
+				},
+			},
+		},
+	}}}
+
+	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillAgentWorkflow,
+		ToolName:  "get_workflow_run_status",
+		Arguments: map[string]interface{}{"workflow_run_id": "run-1"},
+	}); blocked {
+		t.Fatal("get_workflow_run_status was blocked after completed plan, want read-effect verification allowed")
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	deviations := mapSliceFromAny(plan["deviations"])
+	if len(deviations) != 1 {
+		t.Fatalf("deviations = %#v, want one read-effect verification deviation", deviations)
+	}
+	if got := stringFromAny(deviations[0]["reason"]); got != "model_collected_manifest_read_evidence" {
+		t.Fatalf("deviation reason = %q, want manifest read reason; plan=%#v", got, plan)
+	}
+
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillAgentWorkflow,
+		ToolName:  "run_agent_workflow",
+		Arguments: map[string]interface{}{"binding_id": "binding-1"},
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:   skills.SkillAgentWorkflow,
+			ToolName:  "run_agent_workflow",
+			Arguments: map[string]interface{}{"binding_id": "binding-1"},
+		}},
+	}); !blocked {
+		t.Fatal("run_agent_workflow was allowed after completed plan, want invoke mutation duplicate protection preserved")
+	}
+}
+
 func TestSkillLoopPlanToolGuardAllowsArtifactGenerationWithinManagedFileGoal(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
