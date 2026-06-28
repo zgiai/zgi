@@ -420,7 +420,7 @@ const messages = {
   },
   appCenter: {
     title: 'App Center',
-    subtitle: 'Apps available in the current workspace. Choose one to chat or run.',
+    subtitle: 'Apps published to you appear here. Choose one to chat or run.',
     sidebarSubtitle: 'Quick app switcher',
     allApps: 'All Apps',
     appList: 'App List',
@@ -445,9 +445,10 @@ const messages = {
     recentFallbackDescription: 'Open this app to continue where you last left off.',
     quickStartFallbackDescription: 'Start here if you want to jump into the first available app.',
     noAppsTitle: 'No runnable app available',
-    noAppsDescription: 'No app can be run in the current context.',
+    noAppsDescription: 'No runnable app has been published to you in this organization yet.',
     appUnavailableTitle: 'App is unavailable',
-    appUnavailableDescription: 'This app is not runnable in your current workspace.',
+    appUnavailableDescription:
+      'This app has not been published to you, or its App Center entry has been disabled.',
     loadAppFailed: 'Failed to load app configuration',
   },
   appLogs: {

@@ -404,7 +404,7 @@ const messages: WebappMessages = {
   },
   appCenter: {
     title: '应用中心',
-    subtitle: '当前工作空间可直接使用的应用，选择一个应用开始对话或运行。',
+    subtitle: '发布给你的应用会在这里展示，选择一个应用开始对话或运行。',
     sidebarSubtitle: '快速切换应用',
     allApps: '全部应用',
     appList: '应用列表',
@@ -429,9 +429,9 @@ const messages: WebappMessages = {
     recentFallbackDescription: '打开这个应用，继续你上一次中断的工作。',
     quickStartFallbackDescription: '如果还没有使用记录，可以先从第一个可用应用开始。',
     noAppsTitle: '暂无可运行应用',
-    noAppsDescription: '当前上下文没有可直接运行的应用。',
+    noAppsDescription: '当前组织范围内暂无发布给你的可运行应用。',
     appUnavailableTitle: '应用不可用',
-    appUnavailableDescription: '该应用在你当前工作区下不可运行。',
+    appUnavailableDescription: '该应用未发布给你，或已经关闭应用中心入口。',
     loadAppFailed: '加载应用配置失败',
   },
   appLogs: {

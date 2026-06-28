@@ -1212,8 +1212,8 @@ for (const webAppI18nPath of webAppI18nPaths) {
   const webAppI18nSource = fs.readFileSync(webAppI18nPath, 'utf8');
   assert.doesNotMatch(
     webAppI18nSource,
-    /not joined any workspace|未加入任何工作空间/,
-    `${path.relative(rootDir, webAppI18nPath)} runtime workspace error copy should not block no-workspace app-center audiences by wording`
+    /not joined any workspace|未加入任何工作空间|Apps available in the current workspace|not runnable in your current workspace|当前工作空间可直接使用的应用|当前工作区下不可运行/,
+    `${path.relative(rootDir, webAppI18nPath)} App Center and runtime copy should not block no-workspace app-center audiences by wording`
   );
 }
 
