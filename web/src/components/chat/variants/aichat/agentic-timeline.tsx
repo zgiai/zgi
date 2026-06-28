@@ -2300,7 +2300,7 @@ function isSupersededResolvedApprovalGovernanceItem(
 function isTransientProgressItem(
   item: Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>
 ) {
-  return item.transient === true || Boolean(item.phase && !item.content.trim());
+  return !item.content.trim() && (item.transient === true || Boolean(item.phase));
 }
 
 function stableIndex(value: string, length: number): number {
