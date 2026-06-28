@@ -582,6 +582,80 @@ func TestFastPathFinalAnswerForCompletionEvidenceSummarizesAgentCreateAfterObser
 	}
 }
 
+func TestFastPathFinalAnswerForCompletionEvidenceUsesLatestToolResultAfterObservation(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "completed",
+			"pending_next_action": "observe",
+		},
+		"operation_result_summary": map[string]interface{}{
+			"latest_tool_result": map[string]interface{}{
+				"status":    "success",
+				"skill_id":  skills.SkillFileManager,
+				"tool_name": "save_file_to_management",
+				"result_summary": map[string]interface{}{
+					"status":          "completed",
+					"target":          "managed_file",
+					"managed_file_id": "file-1",
+					"filename":        "report.svg",
+				},
+			},
+		},
+		"client_actions": []interface{}{
+			map[string]interface{}{
+				"status":     "succeeded",
+				"event_type": "asset_observed",
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want true")
+	}
+	if !strings.Contains(answer, "report.svg") {
+		t.Fatalf("answer = %q, want saved filename", answer)
+	}
+}
+
+func TestFastPathFinalAnswerForCompletionEvidenceRespectsPendingDifferentPlanAction(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config": "pending",
+			},
+		},
+		"execution_summary": map[string]interface{}{
+			"tool_results": []interface{}{
+				map[string]interface{}{
+					"status":    "success",
+					"skill_id":  skills.SkillFileManager,
+					"tool_name": "save_file_to_management",
+					"result_summary": map[string]interface{}{
+						"status":          "completed",
+						"target":          "managed_file",
+						"managed_file_id": "file-1",
+						"filename":        "report.svg",
+					},
+				},
+			},
+		},
+	}
+
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by pending Agent config update", answer)
+	}
+}
+
 func TestRunnerFastPathsAgentBatchDeleteAfterToolResult(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()

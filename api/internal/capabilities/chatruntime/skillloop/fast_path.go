@@ -68,6 +68,9 @@ func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (
 	if answer, ok := agentCreateFastPathAnswerFromEvidence(evidence); ok {
 		return answer, true
 	}
+	if answer, ok := latestToolResultFastPathAnswerFromEvidence(evidence); ok {
+		return answer, true
+	}
 	return "", false
 }
 
@@ -440,6 +443,88 @@ func fastPathPendingActionIsPostVerification(pending string) bool {
 	return false
 }
 
+func latestToolResultFastPathAnswerFromEvidence(evidence map[string]interface{}) (string, bool) {
+	for _, result := range fastPathLatestToolResultCandidates(evidence) {
+		trace, ok := fastPathTraceFromToolResult(result)
+		if !ok {
+			continue
+		}
+		if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(trace, evidence); ok {
+			return answer, true
+		}
+	}
+	return "", false
+}
+
+func fastPathLatestToolResultCandidates(evidence map[string]interface{}) []map[string]interface{} {
+	if len(evidence) == 0 {
+		return nil
+	}
+	candidates := make([]map[string]interface{}, 0, 4)
+	appendLatest := func(source map[string]interface{}) {
+		if latest := evidenceMapFromAny(source["latest_tool_result"]); len(latest) > 0 {
+			candidates = append(candidates, latest)
+		}
+	}
+	appendToolResults := func(source map[string]interface{}) {
+		for _, result := range mapSliceFromAny(source["tool_results"]) {
+			if len(result) > 0 {
+				candidates = append(candidates, result)
+			}
+		}
+	}
+	appendLatest(evidenceMapFromAny(evidence["operation_result_summary"]))
+	executionSummary := evidenceMapFromAny(evidence["execution_summary"])
+	appendLatest(evidenceMapFromAny(executionSummary["operation_result_summary"]))
+	appendToolResults(executionSummary)
+	executionLedger := evidenceMapFromAny(evidence["execution_ledger"])
+	appendLatest(evidenceMapFromAny(executionLedger["operation_result_summary"]))
+	appendToolResults(evidenceMapFromAny(executionLedger["summary"]))
+	return candidates
+}
+
+func fastPathTraceFromToolResult(result map[string]interface{}) (skills.SkillTrace, bool) {
+	if len(result) == 0 {
+		return skills.SkillTrace{}, false
+	}
+	skillID := strings.TrimSpace(firstNonEmptyString(result["skill_id"], result["skillID"]))
+	toolName := strings.TrimSpace(firstNonEmptyString(result["tool_name"], result["toolName"]))
+	status := strings.TrimSpace(firstNonEmptyString(result["status"], result["latest_tool_status"]))
+	if skillID == "" || toolName == "" || status == "" {
+		return skills.SkillTrace{}, false
+	}
+	payload := copyFastPathResultMap(evidenceMapFromAny(result["result_summary"]))
+	if len(payload) == 0 {
+		payload = copyFastPathResultMap(result)
+	}
+	if _, ok := payload["status"]; !ok {
+		payload["status"] = status
+	}
+	return skills.SkillTrace{
+		Kind:     "tool_call",
+		Status:   status,
+		SkillID:  skillID,
+		ToolName: toolName,
+		Result:   payload,
+	}, true
+}
+
+func copyFastPathResultMap(source map[string]interface{}) map[string]interface{} {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(source))
+	for key, value := range source {
+		switch key {
+		case "kind", "skill_id", "skillID", "tool_name", "toolName", "invocation_id":
+			continue
+		default:
+			out[key] = value
+		}
+	}
+	return out
+}
+
 func agentDeleteFastPathAnswer(result map[string]interface{}) (string, bool) {
 	if len(result) == 0 {
 		return "", false
@@ -576,7 +661,7 @@ func fileManagementSaveFastPathAnswer(result map[string]interface{}) (string, bo
 	if target != "" && target != "managed_file" && target != "file_management" {
 		return "", false
 	}
-	fileID := strings.TrimSpace(firstNonEmptyString(result["file_id"], result["upload_file_id"], result["id"]))
+	fileID := strings.TrimSpace(firstNonEmptyString(result["file_id"], result["upload_file_id"], result["managed_file_id"], result["id"]))
 	if fileID == "" {
 		return "", false
 	}
