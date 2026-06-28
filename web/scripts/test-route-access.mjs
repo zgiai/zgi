@@ -137,6 +137,14 @@ const consoleSidebarPath = path.join(
   'console-sidebar.tsx'
 );
 const permissionConstantsPath = path.join(rootDir, 'src', 'constants', 'permissions.ts');
+const commonI18nPaths = [
+  path.join(rootDir, 'src', 'i18n', 'modules', 'common', 'zh-Hans.ts'),
+  path.join(rootDir, 'src', 'i18n', 'modules', 'common', 'en-US.ts'),
+];
+const webAppI18nPaths = [
+  path.join(rootDir, 'src', 'i18n', 'modules', 'webapp', 'zh-Hans.ts'),
+  path.join(rootDir, 'src', 'i18n', 'modules', 'webapp', 'en-US.ts'),
+];
 const appCenterPaths = [
   path.join(rootDir, 'src', 'app', 'console', 'work', 'app', 'page.tsx'),
   path.join(rootDir, 'src', 'app', 'console', 'work', 'app', 'layout.tsx'),
@@ -1188,6 +1196,24 @@ for (const productPagePath of organizationProductPagePaths) {
     productPageSource,
     /enabled:\s*!!workspace/,
     `${path.relative(rootDir, productPagePath)} should not disable product data loading when workspace is empty`
+  );
+}
+
+for (const commonI18nPath of commonI18nPaths) {
+  const commonI18nSource = fs.readFileSync(commonI18nPath, 'utf8');
+  assert.doesNotMatch(
+    commonI18nSource,
+    /chats,\s*apps,\s*image generation|对话、应用、绘图/,
+    `${path.relative(rootDir, commonI18nPath)} workspace-required copy should not describe organization product entries as workspace-only`
+  );
+}
+
+for (const webAppI18nPath of webAppI18nPaths) {
+  const webAppI18nSource = fs.readFileSync(webAppI18nPath, 'utf8');
+  assert.doesNotMatch(
+    webAppI18nSource,
+    /not joined any workspace|未加入任何工作空间/,
+    `${path.relative(rootDir, webAppI18nPath)} runtime workspace error copy should not block no-workspace app-center audiences by wording`
   );
 }
 

@@ -128,16 +128,16 @@ const messages = {
   workspaceRequired: {
     title: 'Select a workspace to continue',
     description:
-      'The workbench runs inside a specific workspace. Select a workspace before starting chats, apps, image generation, or tasks.',
+      'Asset management and scheduled tasks run inside a specific workspace. Select a workspace to continue.',
     noWorkspacesTitle: 'No workspace is available',
     memberNoWorkspacesDescription:
       'You have joined the organization, but you have not been assigned to any workspace yet.',
     adminNoWorkspacesDescription:
-      'The workbench needs a concrete workspace before chats, apps, image generation, or tasks can be used.',
+      'Asset management and scheduled tasks need a concrete workspace. Create a workspace or assign members first.',
     memberNoWorkspacesHint:
-      'Ask an organization administrator to add you to a workspace before using the workbench.',
+      'Ask an organization administrator to add you to the right workspace before managing assets or scheduled tasks.',
     adminNoWorkspacesHint:
-      'Create a workspace or assign members in workspace management, then return to the workbench.',
+      'Create a workspace or assign members in workspace management, then return here.',
     loadingWorkspaces: 'Loading workspaces...',
     manageWorkspaces: 'Manage workspaces',
     refreshWorkspaces: 'Refresh workspaces',

@@ -71,7 +71,7 @@ const messages: WebappMessages = {
     workflowRunFailed: '执行失败',
     workflowRunFailedWithReason: '执行失败：{reason}',
     workspaceRequiredForConversation:
-      '当前账户未加入任何工作空间，请至少加入一个工作空间后再进行对话。',
+      '暂时无法确定该应用的运行空间，请联系管理员检查应用所属工作空间或组织运行空间配置。',
     imageHomeTitle: 'AI 图像生成',
     imageHomeSubtitle: '描述您的想象，让 AI 为您创造。',
     imageInput: {

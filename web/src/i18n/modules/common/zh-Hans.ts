@@ -129,13 +129,13 @@ const messages: CommonMessages = {
   workspaceRequired: {
     title: '请选择一个工作空间后继续',
     description:
-      '工作台需要在具体工作空间内使用。请先选择工作空间，再开始对话、应用、绘图或定时任务。',
+      '资产管理和定时任务需要在具体工作空间内使用。请先选择工作空间后继续。',
     noWorkspacesTitle: '暂无可用工作空间',
     memberNoWorkspacesDescription: '您已加入组织，但尚未被分配到任何工作空间。',
     adminNoWorkspacesDescription:
-      '工作台需要在具体工作空间内使用。请先创建工作空间或完成成员分配。',
-    memberNoWorkspacesHint: '请联系组织管理员，将您加入至少一个工作空间后再使用工作台。',
-    adminNoWorkspacesHint: '请前往工作空间管理创建工作空间或分配成员，然后返回工作台继续使用。',
+      '资产管理和定时任务需要具体工作空间。请先创建工作空间或完成成员分配。',
+    memberNoWorkspacesHint: '如需管理资产或使用定时任务，请联系组织管理员加入对应工作空间。',
+    adminNoWorkspacesHint: '请前往工作空间管理创建工作空间或分配成员，然后返回继续使用。',
     loadingWorkspaces: '正在加载工作空间...',
     manageWorkspaces: '管理工作空间',
     refreshWorkspaces: '刷新工作空间',

@@ -74,7 +74,7 @@ const messages = {
     workflowRunFailed: 'Workflow run failed',
     workflowRunFailedWithReason: 'Workflow run failed: {reason}',
     workspaceRequiredForConversation:
-      'Your account has not joined any workspace. Please join at least one workspace before starting a conversation.',
+      'The app runtime workspace could not be resolved. Ask an administrator to check the app workspace or organization runtime workspace configuration.',
     imageHomeTitle: 'AI Image Generation',
     imageHomeSubtitle: 'Describe your imagination and let AI create it for you.',
     imageInput: {
