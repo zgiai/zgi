@@ -6,6 +6,54 @@ import type {
 } from '@/services/types/aichat';
 import { type AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat/types';
 
+type RedisStreamEventIdParts = {
+  timestamp: number;
+  sequence: number;
+};
+
+function redisStreamEventIdParts(eventId?: string | null): RedisStreamEventIdParts | null {
+  if (!eventId) return null;
+  const match = /^(\d+)-(\d+)(?::|$)/.exec(eventId.trim());
+  if (!match) return null;
+
+  const timestamp = Number(match[1]);
+  const sequence = Number(match[2]);
+  if (!Number.isSafeInteger(timestamp) || !Number.isSafeInteger(sequence)) {
+    return null;
+  }
+
+  return { timestamp, sequence };
+}
+
+export function compareAIChatStreamEventIds(
+  left?: string | null,
+  right?: string | null
+): number | null {
+  if (!left || !right) return null;
+  if (left === right) return 0;
+
+  const leftParts = redisStreamEventIdParts(left);
+  const rightParts = redisStreamEventIdParts(right);
+  if (!leftParts || !rightParts) return null;
+
+  if (leftParts.timestamp !== rightParts.timestamp) {
+    return leftParts.timestamp > rightParts.timestamp ? 1 : -1;
+  }
+  if (leftParts.sequence !== rightParts.sequence) {
+    return leftParts.sequence > rightParts.sequence ? 1 : -1;
+  }
+  return 0;
+}
+
+export function isStaleAIChatStreamEvent(
+  incomingEventId?: string | null,
+  lastEventId?: string | null
+): boolean {
+  if (!incomingEventId || !lastEventId) return false;
+  const comparison = compareAIChatStreamEventIds(incomingEventId, lastEventId);
+  return comparison !== null ? comparison <= 0 : incomingEventId === lastEventId;
+}
+
 export function createAIChatFileMetadata(
   files?: AIChatMessageFile[]
 ): AIChatMessageMetadata | undefined {

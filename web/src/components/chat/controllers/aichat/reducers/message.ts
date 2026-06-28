@@ -35,6 +35,7 @@ import {
   createAIChatFileMetadata,
   mergeMessageMetadata,
   clearRuntimeMessageMetadata,
+  isStaleAIChatStreamEvent,
   removeTransientProgressItems
 } from './shared';
 import { updateSkillInvocationMetadata } from './skill';
@@ -153,6 +154,10 @@ export function applyUserInputRequestedState(
     created_at: payload.created_at,
   };
   const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
+    return current;
+  }
   const nextMessages = messages.map(message =>
     message.id === payload.message_id
       ? {
@@ -165,8 +170,6 @@ export function applyUserInputRequestedState(
         }
       : message
   );
-  const previousStreaming = current.streamingByMessageId[payload.message_id];
-
   return {
     ...current,
     messagesByConversation: {
@@ -256,6 +259,9 @@ export function applyMessageStartState(
       }
     : createdMessage;
   const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
+    return current;
+  }
   const migratedMessages =
     shouldMigrateDraftConversation && context.previousConversationId
       ? messages.filter(message => message.conversation_id !== context.previousConversationId)
@@ -380,7 +386,7 @@ export function applyMessageChunkState(
   const messages = current.messagesByConversation[payload.conversation_id] ?? [];
   const existingMessage = messages.find(message => message.id === payload.message_id);
   const previousStreaming = current.streamingByMessageId[payload.message_id];
-  if (eventId && previousStreaming?.last_event_id === eventId) {
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
   }
   const { appendChunk, replayBaseAnswer, replayOffset } = isSensitiveBlocked
@@ -535,7 +541,7 @@ export function applyMessageRetractState(
 
   const messages = current.messagesByConversation[payload.conversation_id] ?? [];
   const previousStreaming = current.streamingByMessageId[payload.message_id];
-  if (eventId && previousStreaming?.last_event_id === eventId) {
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
   }
   const nextMessages = messages.map(message =>
@@ -575,6 +581,9 @@ export function applyMessageEndState(
   const messages = current.messagesByConversation[payload.conversation_id] ?? [];
   const endedMessage = messages.find(message => message.id === payload.message_id);
   const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
+    return current;
+  }
   const nextTimeline = removeTransientProgressItems(previousStreaming?.timeline);
   const nextMessages = messages.map(message =>
     message.id === payload.message_id

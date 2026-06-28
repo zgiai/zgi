@@ -7,6 +7,7 @@ import type {
   AIChatSkillArtifactCreatedEventData
 } from '@/services/types/aichat';
 import { type AIChatControllerState } from '@/components/chat/controllers/aichat/types';
+import { isStaleAIChatStreamEvent } from './shared';
 
 function inferExtension(filename: string): string {
   return filename.split('.').pop()?.toLowerCase() ?? '';
@@ -58,6 +59,10 @@ function updateMessageFileMetadata(
   eventId: string | null | undefined,
   updater: (file: AIChatMessageFile) => AIChatMessageFile
 ): AIChatControllerState {
+  const previousStreaming = current.streamingByMessageId[messageId];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
+    return current;
+  }
   const messages = current.messagesByConversation[conversationId] ?? [];
   const nextMessages = messages.map(message => {
     if (message.id !== messageId) {
@@ -76,8 +81,6 @@ function updateMessageFileMetadata(
       updated_at: Math.floor(Date.now() / 1000),
     };
   });
-  const previousStreaming = current.streamingByMessageId[messageId];
-
   return {
     ...current,
     messagesByConversation: {
@@ -176,6 +179,10 @@ export function applySkillArtifactCreatedState(
     return current;
   }
 
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
+    return current;
+  }
   const messages = current.messagesByConversation[payload.conversation_id] ?? [];
   const nextMessages = messages.map(message => {
     if (message.id !== payload.message_id) {
@@ -197,8 +204,6 @@ export function applySkillArtifactCreatedState(
       updated_at: Math.floor(Date.now() / 1000),
     };
   });
-  const previousStreaming = current.streamingByMessageId[payload.message_id];
-
   return {
     ...current,
     messagesByConversation: {

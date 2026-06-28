@@ -16,6 +16,7 @@ import {
   type AIChatAgenticTimelineItem,
 } from '@/components/chat/controllers/aichat/types';
 import {
+  isStaleAIChatStreamEvent,
   mergeSkillInvocationByStatus,
   removeTransientProgressItems,
   skillInvocationSemanticIdentity,
@@ -499,6 +500,10 @@ export function updateSkillInvocationMetadata(
   if (!isVisibleSkillInvocation(invocation)) {
     return current;
   }
+  const previousStreaming = current.streamingByMessageId[messageId];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
+    return current;
+  }
   const messages = current.messagesByConversation[conversationId] ?? [];
   const now = Math.floor(Date.now() / 1000);
   const nextMessages = messages.map(message => {
@@ -556,8 +561,6 @@ export function updateSkillInvocationMetadata(
       updated_at: now,
     };
   });
-  const previousStreaming = current.streamingByMessageId[messageId];
-
   return {
     ...current,
     messagesByConversation: {
@@ -595,6 +598,9 @@ export function applyAgentProgressState(
     !existingStreaming &&
     ['completed', 'error', 'stopped'].includes(existingMessage?.status ?? '')
   ) {
+    return current;
+  }
+  if (isStaleAIChatStreamEvent(eventId, existingStreaming?.last_event_id)) {
     return current;
   }
   const previousStreaming =
@@ -689,6 +695,9 @@ export function applyMemoryMutationState(
   if (!previousStreaming) {
     return current;
   }
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming.last_event_id)) {
+    return current;
+  }
   return {
     ...current,
     streamingByMessageId: {
@@ -708,6 +717,10 @@ export function applyToolGovernanceDecisionState(
   eventId?: string | null
 ): AIChatControllerState {
   if (!payload.conversation_id || !payload.message_id) {
+    return current;
+  }
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
   }
   const governanceInvocation = skillInvocationFromToolGovernanceDecision(payload);
@@ -766,7 +779,6 @@ export function applyToolGovernanceDecisionState(
       updated_at: now,
     };
   });
-  const previousStreaming = current.streamingByMessageId[payload.message_id];
   return {
     ...current,
     messagesByConversation: {
