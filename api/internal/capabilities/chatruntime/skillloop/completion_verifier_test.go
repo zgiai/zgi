@@ -437,6 +437,40 @@ func TestCompletionVerificationEvidenceInvocationsIncludesExecutionSummary(t *te
 	}
 }
 
+func TestCompletionVerificationEvidenceInvocationsIncludesOperationResultSummary(t *testing.T) {
+	invocations := completionVerificationEvidenceInvocations(map[string]interface{}{
+		"operation_result_summary": map[string]interface{}{
+			"status":    "partial_failed",
+			"skill_id":  "agent-management",
+			"tool_name": "delete_agents",
+			"operation_group": map[string]interface{}{
+				"operation":     "agent.delete",
+				"asset_type":    "agent",
+				"target_count":  2,
+				"success_count": 1,
+				"failed_count":  1,
+				"item_results": []interface{}{
+					map[string]interface{}{"agent_name": "Agent OK", "status": "succeeded"},
+					map[string]interface{}{"agent_name": "Agent Locked", "status": "failed", "error": "locked"},
+				},
+			},
+		},
+	})
+
+	if len(invocations) != 1 {
+		t.Fatalf("invocations = %#v, want one operation summary invocation", invocations)
+	}
+	if completionVerificationInvocationSucceeded(invocations[0]) {
+		t.Fatalf("operation summary invocation = %#v, want failed item to prevent success classification", invocations[0])
+	}
+	if !completionVerificationInvocationFailed(invocations[0]) {
+		t.Fatalf("operation summary invocation = %#v, want failed item to be failed evidence", invocations[0])
+	}
+	if detail := completionVerificationInvocationFailureDetail(invocations[0]); !strings.Contains(detail, "1 item") {
+		t.Fatalf("failure detail = %q, want failed count evidence", detail)
+	}
+}
+
 func TestCompletionVerificationFailedPlanAnswerUsesClientActionError(t *testing.T) {
 	decision := completionVerificationApplyPlanOverride(map[string]interface{}{
 		"operation_plan": map[string]interface{}{

@@ -256,7 +256,7 @@ func completionVerificationRequest(base *adapter.ChatRequest, payloadJSON string
 	verificationReq.ResponseFormat = &adapter.ResponseFormat{Type: "json_object"}
 	systemLines := []string{
 		"You are the AIChat completion post-verifier.",
-		"Verify whether the candidate final answer is faithful to the provided evidence: page context, ledger, tool calls, tool results, generated files, client actions, and governance decisions.",
+		"Verify whether the candidate final answer is faithful to the provided evidence: page context, operation_result_summary, ledger, tool calls, tool results, generated files, client actions, and governance decisions.",
 		"Treat operation_plan and turn_strategy as advisory strategy snapshots only. They can explain intended work, but they are not proof of completion and must not override successful or failed execution evidence.",
 		"Do not invent facts. Current page context, tool results, ledger evidence, client actions, and governance outcomes are authoritative.",
 		"If page_context.target_route_already_available is true, current page context is sufficient route evidence for that target; do not require a redundant navigate tool call.",
@@ -347,7 +347,7 @@ func completionVerificationContract() map[string]interface{} {
 		"rules": []string{
 			"Return pass only when the candidate answer makes no unsupported completion claims.",
 			"Treat operation_plan and turn_strategy as advisory strategy snapshots, not as authoritative proof that every pending step must still run.",
-			"Use page_context, tool results, generated_files, client_actions, tool_governance, and execution_ledger as the authoritative facts.",
+			"Use page_context, operation_result_summary, tool results, generated_files, client_actions, tool_governance, and execution_ledger as the authoritative facts.",
 			"Return needs_action when the user's current goal still requires an incomplete tool/action and a clear safe next attempt remains.",
 			"Return failed when a tool/action failed or required evidence is missing and no safe retry remains.",
 			"Return ask_user only when user input is truly required.",
@@ -660,18 +660,53 @@ func completionVerificationEvidenceInvocations(evidence map[string]interface{}) 
 	out = append(out, evidenceMapsFromAny(evidence["skill_invocations"])...)
 	out = append(out, evidenceMapsFromAny(evidence["client_actions"])...)
 	out = append(out, evidenceMapsFromAny(evidence["tool_governance"])...)
+	if operationSummary := evidenceMapFromAny(evidence["operation_result_summary"]); len(operationSummary) > 0 {
+		out = append(out, completionVerificationOperationSummaryInvocations(operationSummary)...)
+	}
 	if summary := evidenceMapFromAny(evidence["execution_summary"]); len(summary) > 0 {
 		out = append(out, evidenceMapsFromAny(summary["tool_results"])...)
 		out = append(out, evidenceMapsFromAny(summary["client_actions"])...)
+		if operationSummary := evidenceMapFromAny(summary["operation_result_summary"]); len(operationSummary) > 0 {
+			out = append(out, completionVerificationOperationSummaryInvocations(operationSummary)...)
+		}
 	}
 	if ledger := evidenceMapFromAny(evidence["execution_ledger"]); len(ledger) > 0 {
 		out = append(out, evidenceMapsFromAny(ledger["skill_invocations"])...)
 		out = append(out, evidenceMapsFromAny(ledger["client_actions"])...)
 		out = append(out, evidenceMapsFromAny(ledger["tool_governance"])...)
+		if operationSummary := evidenceMapFromAny(ledger["operation_result_summary"]); len(operationSummary) > 0 {
+			out = append(out, completionVerificationOperationSummaryInvocations(operationSummary)...)
+		}
 		if summary := evidenceMapFromAny(ledger["summary"]); len(summary) > 0 {
 			out = append(out, evidenceMapsFromAny(summary["tool_results"])...)
 			out = append(out, evidenceMapsFromAny(summary["client_actions"])...)
+			if operationSummary := evidenceMapFromAny(summary["operation_result_summary"]); len(operationSummary) > 0 {
+				out = append(out, completionVerificationOperationSummaryInvocations(operationSummary)...)
+			}
 		}
+	}
+	return out
+}
+
+func completionVerificationOperationSummaryInvocations(summary map[string]interface{}) []map[string]interface{} {
+	if len(summary) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, 2)
+	if latest := evidenceMapFromAny(summary["latest_tool_result"]); len(latest) > 0 {
+		out = append(out, latest)
+	}
+	if group := evidenceMapFromAny(summary["operation_group"]); len(group) > 0 {
+		invocation := map[string]interface{}{
+			"kind":      "operation_result_summary",
+			"status":    firstNonEmptyEvidence(summary["status"], group["status"]),
+			"skill_id":  summary["skill_id"],
+			"tool_name": summary["tool_name"],
+			"result_summary": map[string]interface{}{
+				"operation_group": group,
+			},
+		}
+		out = append(out, invocation)
 	}
 	return out
 }

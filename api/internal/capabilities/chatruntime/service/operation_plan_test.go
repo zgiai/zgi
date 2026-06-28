@@ -572,9 +572,31 @@ func TestSkillLoopCompletionEvidenceBuildsExecutionSummaryForBatchAndDeviations(
 	if groupSummary["failed_count"] != 1 {
 		t.Fatalf("tool result summary operation_group = %#v, want failed_count=1", groupSummary)
 	}
+	operationSummary := mapFromOperationContext(evidence["operation_result_summary"])
+	if len(operationSummary) == 0 {
+		t.Fatalf("operation_result_summary = %#v, want stable operation facts", evidence["operation_result_summary"])
+	}
+	if got := operationSummary["status"]; got != "partial_failed" {
+		t.Fatalf("operation_result_summary.status = %#v, want partial_failed; summary=%#v", got, operationSummary)
+	}
+	if got := operationSummary["operation"]; got != "agent.delete" {
+		t.Fatalf("operation_result_summary.operation = %#v, want agent.delete; summary=%#v", got, operationSummary)
+	}
+	if got := operationSummary["target_count"]; got != 2 {
+		t.Fatalf("operation_result_summary.target_count = %#v, want 2; summary=%#v", got, operationSummary)
+	}
+	if got := operationSummary["failed_count"]; got != 1 {
+		t.Fatalf("operation_result_summary.failed_count = %#v, want 1; summary=%#v", got, operationSummary)
+	}
+	if latest := mapFromOperationContext(operationSummary["latest_tool_result"]); latest["tool_name"] != "delete_agents" {
+		t.Fatalf("operation_result_summary.latest_tool_result = %#v, want delete_agents", latest)
+	}
 	ledger := mapFromOperationContext(evidence["execution_ledger"])
 	if got := mapFromOperationContext(ledger["summary"]); len(got) == 0 {
 		t.Fatalf("execution_ledger.summary = %#v, want mirrored summary", ledger["summary"])
+	}
+	if got := mapFromOperationContext(ledger["operation_result_summary"]); len(got) == 0 {
+		t.Fatalf("execution_ledger.operation_result_summary = %#v, want mirrored operation facts", ledger["operation_result_summary"])
 	}
 }
 

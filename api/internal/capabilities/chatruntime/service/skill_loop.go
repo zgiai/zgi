@@ -150,6 +150,11 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 			}
 		}
 		if summary := skillLoopCompletionExecutionSummary(metadata); len(summary) > 0 {
+			if operationSummary := skillLoopCompletionOperationResultSummary(summary); len(operationSummary) > 0 {
+				summary["operation_result_summary"] = operationSummary
+				evidence["operation_result_summary"] = operationSummary
+				executionLedger["operation_result_summary"] = operationSummary
+			}
 			evidence["execution_summary"] = summary
 			executionLedger["summary"] = summary
 		}
@@ -311,6 +316,103 @@ func skillLoopCompletionExecutionSummary(metadata map[string]interface{}) map[st
 		return nil
 	}
 	return summary
+}
+
+func skillLoopCompletionOperationResultSummary(summary map[string]interface{}) map[string]interface{} {
+	if len(summary) == 0 {
+		return nil
+	}
+	out := map[string]interface{}{}
+	if plan := mapFromOperationContext(summary["operation_plan"]); len(plan) > 0 {
+		if status := strings.TrimSpace(stringFromAny(plan["status"])); status != "" {
+			out["plan_status"] = status
+		}
+		copyOperationResultSummaryFields(out, plan, "pending_next_action", "current_page")
+		if group := mapFromOperationContext(plan["operation_group"]); len(group) > 0 {
+			out["operation_group"] = operationPlanCompactOperationGroup(group)
+			copyOperationResultSummaryFields(out, group, "status", "operation", "asset_type", "target_count", "success_count", "failed_count")
+		}
+		if result := mapFromOperationContext(plan["tool_result"]); len(result) > 0 {
+			out["latest_tool_result"] = result
+			copyOperationResultSummaryFields(out, result, "skill_id", "tool_name")
+			if status := strings.TrimSpace(stringFromAny(result["status"])); status != "" {
+				out["latest_tool_status"] = status
+				if _, ok := out["status"]; !ok {
+					out["status"] = status
+				}
+			}
+			if resultSummary := mapFromOperationContext(result["result_summary"]); len(resultSummary) > 0 {
+				copyOperationResultSummaryFields(out, resultSummary,
+					"effect",
+					"agent_id",
+					"agent_name",
+					"filename",
+					"file_name",
+					"managed_filename",
+					"target_count",
+					"deleted_count",
+					"failed_count",
+					"requires_refresh",
+					"refresh_target",
+					"error",
+				)
+			}
+		}
+	}
+	if groups := mapSliceFromAny(summary["operation_groups"]); len(groups) > 0 {
+		if _, ok := out["operation_group"]; !ok {
+			if group := mapFromOperationContext(groups[0]); len(group) > 0 {
+				out["operation_group"] = operationPlanCompactOperationGroup(group)
+				copyOperationResultSummaryFields(out, group, "status", "operation", "asset_type", "target_count", "success_count", "failed_count")
+			}
+		}
+	}
+	if toolResults := mapSliceFromAny(summary["tool_results"]); len(toolResults) > 0 {
+		if _, ok := out["latest_tool_result"]; !ok {
+			if result := mapFromOperationContext(toolResults[0]); len(result) > 0 {
+				out["latest_tool_result"] = result
+				copyOperationResultSummaryFields(out, result, "skill_id", "tool_name")
+				if status := strings.TrimSpace(stringFromAny(result["status"])); status != "" {
+					out["latest_tool_status"] = status
+					if _, ok := out["status"]; !ok {
+						out["status"] = status
+					}
+				}
+			}
+		}
+		out["tool_result_count"] = len(toolResults)
+	}
+	if clientActions := mapSliceFromAny(summary["client_actions"]); len(clientActions) > 0 {
+		out["client_action_count"] = len(clientActions)
+		if action := mapFromOperationContext(clientActions[0]); len(action) > 0 {
+			out["latest_client_action"] = action
+		}
+	}
+	if files := mapSliceFromAny(summary["generated_files"]); len(files) > 0 {
+		out["generated_file_count"] = len(files)
+		out["generated_files"] = files
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	out["source"] = "execution_summary"
+	return out
+}
+
+func copyOperationResultSummaryFields(dst map[string]interface{}, src map[string]interface{}, keys ...string) {
+	if dst == nil || len(src) == 0 {
+		return
+	}
+	for _, key := range keys {
+		value, ok := src[key]
+		if !ok || value == nil {
+			continue
+		}
+		if _, exists := dst[key]; exists {
+			continue
+		}
+		dst[key] = value
+	}
 }
 
 func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]interface{} {
