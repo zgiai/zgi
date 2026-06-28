@@ -591,6 +591,10 @@ const (
 	envOfficialModelSyncStrictMode = "OFFICIAL_MODEL_SYNC_STRICT_MODE"
 	// envLLMEncryptionKey sets the AES key used for LLM provider credentials. Default: empty.
 	envLLMEncryptionKey = "LLM_ENCRYPTION_KEY"
+	// envLLMGuardOutboundURL controls literal outbound URL safety checks. Default: true.
+	envLLMGuardOutboundURL = "LLM_GUARD_OUTBOUND_URL"
+	// envLLMGuardOutboundDNS controls DNS-resolved outbound address checks. Default: false.
+	envLLMGuardOutboundDNS = "LLM_GUARD_OUTBOUND_DNS"
 	// envLLMAllowPrivateBaseURL allows Ollama to target private or localhost base URLs. Default: false.
 	envLLMAllowPrivateBaseURL = "LLM_ALLOW_PRIVATE_BASE_URL"
 

@@ -15,10 +15,13 @@ func (r fakeResolver) LookupIPAddr(_ context.Context, host string) ([]net.IPAddr
 func TestValidateBaseURLRejectsUnsafeTargets(t *testing.T) {
 	tests := []string{
 		"http://127.0.0.1:11434",
+		"http://127.0.0.1.:11434",
 		"http://localhost:11434",
+		"http://localhost.:11434",
 		"http://10.0.0.1:8000",
 		"http://192.168.1.10:8000",
 		"http://169.254.169.254/latest/meta-data",
+		"http://198.18.0.159/v1",
 		"http://[::ffff:127.0.0.1]:8080",
 		"file:///etc/passwd",
 		"https://safe.example.com@127.0.0.1",
@@ -47,6 +50,7 @@ func TestValidateBaseURLAllowsPublicTargets(t *testing.T) {
 
 func TestValidateBaseURLRejectsDomainResolvingToPrivateIP(t *testing.T) {
 	policy := Policy{
+		GuardDNS: true,
 		Resolver: fakeResolver{
 			"evil.example.com": {{IP: net.ParseIP("127.0.0.1")}},
 		},
@@ -55,6 +59,32 @@ func TestValidateBaseURLRejectsDomainResolvingToPrivateIP(t *testing.T) {
 	err := ValidateBaseURL(context.Background(), "https://evil.example.com/v1", policy)
 	if err == nil {
 		t.Fatal("ValidateBaseURL(domain resolving to loopback) error = nil, want rejection")
+	}
+}
+
+func TestValidateBaseURLAllowsFakeIPDNSWhenDNSGuardDisabled(t *testing.T) {
+	policy := Policy{
+		Resolver: fakeResolver{
+			"api.deepseek.com": {{IP: net.ParseIP("198.18.0.159")}},
+		},
+	}
+
+	if err := ValidateBaseURL(context.Background(), "https://api.deepseek.com/v1", policy); err != nil {
+		t.Fatalf("ValidateBaseURL(fake-ip DNS) error = %v, want nil", err)
+	}
+}
+
+func TestValidateBaseURLRejectsFakeIPDNSWhenDNSGuardEnabled(t *testing.T) {
+	policy := Policy{
+		GuardDNS: true,
+		Resolver: fakeResolver{
+			"api.deepseek.com": {{IP: net.ParseIP("198.18.0.159")}},
+		},
+	}
+
+	err := ValidateBaseURL(context.Background(), "https://api.deepseek.com/v1", policy)
+	if err == nil {
+		t.Fatal("ValidateBaseURL(fake-ip DNS) error = nil, want rejection")
 	}
 }
 

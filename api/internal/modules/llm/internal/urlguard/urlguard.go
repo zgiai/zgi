@@ -17,6 +17,7 @@ type Resolver interface {
 
 type Policy struct {
 	AllowPrivate bool
+	GuardDNS     bool
 	Resolver     Resolver
 }
 
@@ -67,7 +68,7 @@ func ValidateURL(ctx context.Context, parsed *url.URL, policy Policy) error {
 		return fmt.Errorf("base_url fragment is not allowed")
 	}
 
-	if _, err := safeHostAddrs(ctx, parsed.Hostname(), policy, policy.Resolver != nil); err != nil {
+	if _, err := safeHostAddrs(ctx, parsed.Hostname(), policy, policy.GuardDNS); err != nil {
 		return err
 	}
 	return nil
@@ -112,7 +113,7 @@ func safeHostAddrs(ctx context.Context, host string, policy Policy, resolveDNS b
 		return nil, fmt.Errorf("blocked unsafe target %q: localhost is not allowed", host)
 	}
 
-	if addr, err := netip.ParseAddr(host); err == nil {
+	if addr, err := netip.ParseAddr(normalizedHost); err == nil {
 		if err := validateAddr(addr, policy); err != nil {
 			return nil, fmt.Errorf("blocked unsafe target %q: %w", host, err)
 		}
@@ -126,7 +127,7 @@ func safeHostAddrs(ctx context.Context, host string, policy Policy, resolveDNS b
 	if resolver == nil {
 		resolver = net.DefaultResolver
 	}
-	resolved, err := resolver.LookupIPAddr(ctx, host)
+	resolved, err := resolver.LookupIPAddr(ctx, normalizedHost)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q: %w", host, err)
 	}
