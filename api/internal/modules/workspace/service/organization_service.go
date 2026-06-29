@@ -2756,15 +2756,20 @@ func organizationAdminWorkspacePermissionsResponse(
 	}
 
 	return &shared_dto.WorkspaceMemberPermissionsResponse{
-		OrganizationID:           organizationID,
-		WorkspaceID:              workspaceID,
-		WorkspaceName:            workspaceName,
-		AccountID:                accountID,
-		OrganizationRole:         string(organizationRole),
-		WorkspaceRole:            string(workspaceRole),
-		WorkspaceRoleID:          &workspaceRoleID,
-		WorkspaceRoleName:        builtinWorkspaceRoleSummary(workspaceRoleID).Name,
-		Permissions:              model.WorkspacePermissionStringsFromCodes(model.AllWorkspacePermissionCodes()),
+		OrganizationID:    organizationID,
+		WorkspaceID:       workspaceID,
+		WorkspaceName:     workspaceName,
+		AccountID:         accountID,
+		OrganizationRole:  string(organizationRole),
+		WorkspaceRole:     string(workspaceRole),
+		WorkspaceRoleID:   &workspaceRoleID,
+		WorkspaceRoleName: builtinWorkspaceRoleSummary(workspaceRoleID).Name,
+		Permissions: workspaceMemberDisplayPermissionStrings(
+			workspaceRole,
+			&workspaceRoleID,
+			nil,
+			permissionSource,
+		),
 		PermissionSource:         permissionSource,
 		PermissionTemplateRoleID: &workspaceRoleID,
 	}

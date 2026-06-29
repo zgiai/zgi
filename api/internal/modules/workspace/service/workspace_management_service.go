@@ -967,6 +967,13 @@ func workspaceMemberDisplayPermissionStrings(
 	permissions []string,
 	permissionSource model.WorkspaceMemberPermissionSource,
 ) []string {
+	if role == model.WorkspaceRoleOwner || role == model.WorkspaceRoleAdmin {
+		roleID := model.DefaultWorkspaceRoleID(role)
+		return model.CanonicalAssignableWorkspacePermissionSnapshotStrings(
+			model.DefaultWorkspaceMemberPermissionStrings(role, &roleID),
+		)
+	}
+
 	effective := model.EffectiveWorkspaceMemberPermissionStrings(role, roleID, permissions, permissionSource)
 	return model.CanonicalAssignableWorkspacePermissionSnapshotStrings(effective)
 }

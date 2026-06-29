@@ -366,6 +366,11 @@ func TestGetWorkspaceMemberPermissionsReturnsRawWorkspaceRole(t *testing.T) {
 	require.Equal(t, adminRoleID, *resp.WorkspaceRoleID)
 	require.NotEmpty(t, resp.WorkspaceRoleName)
 	require.NotEqual(t, resp.WorkspaceRoleName, resp.WorkspaceRole)
+	require.Contains(t, resp.Permissions, string(model.WorkspacePermissionAgentCreate))
+	require.Contains(t, resp.Permissions, string(model.WorkspacePermissionKnowledgeBaseDocumentCreate))
+	require.Contains(t, resp.Permissions, string(model.WorkspacePermissionDatabaseDelete))
+	require.Contains(t, resp.Permissions, string(model.WorkspacePermissionFileUpload))
+	requireDisplayableWorkspaceAssetPermissions(t, resp.Permissions)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -465,6 +470,7 @@ func TestGetWorkspaceMemberPermissionsOrganizationAdminDoesNotRequireWorkspaceMe
 	require.Equal(t, string(model.WorkspaceRoleAdmin), resp.WorkspaceRole)
 	require.Equal(t, model.WorkspaceBuiltinRoleAdminID, *resp.WorkspaceRoleID)
 	require.Contains(t, resp.Permissions, string(model.WorkspacePermissionDatabaseDelete))
+	requireDisplayableWorkspaceAssetPermissions(t, resp.Permissions)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -645,6 +651,20 @@ func (s *workspaceMemberPermissionsManagementService) GetByWorkspaceAndMember(co
 		return nil, gorm.ErrRecordNotFound
 	}
 	return s.join, nil
+}
+
+func requireDisplayableWorkspaceAssetPermissions(t *testing.T, permissions []string) {
+	t.Helper()
+
+	for _, permission := range permissions {
+		code := model.WorkspacePermissionCode(permission)
+		require.False(t, model.IsWorkspaceCompatibilityPermission(code), "permission should not expose compatibility-only code: %s", permission)
+		require.False(t, model.IsWorkspaceGovernancePermission(code), "permission should not expose workspace governance code: %s", permission)
+		require.False(t, strings.HasPrefix(permission, "workspace."), "permission should not expose retired workspace code: %s", permission)
+		require.False(t, strings.HasPrefix(permission, "dashboard."), "permission should not expose retired dashboard code: %s", permission)
+		require.False(t, strings.HasPrefix(permission, "prompt."), "permission should not expose retired prompt code: %s", permission)
+		require.False(t, strings.HasPrefix(permission, "content_parse."), "permission should not expose retired content parse code: %s", permission)
+	}
 }
 
 func (s *applyTemplateWorkspaceManagementService) GetWorkspaceByID(ctx context.Context, id string) (*model.Workspace, error) {
