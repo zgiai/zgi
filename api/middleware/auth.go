@@ -468,8 +468,9 @@ func CheckAdminOrOwnerRole(ctx context.Context, tenantService interfaces.Workspa
 	return tenantService.CheckPermission(ctx, tenantID, accountID), nil
 }
 
-// CheckAdminOrOwnerRoleWithEnterpriseGroup is kept for legacy callers. It no
-// longer grants access from organization admin/owner alone.
+// CheckAdminOrOwnerRoleWithEnterpriseGroup is kept for legacy callers. It uses
+// the workspace management permission contract, including organization
+// owner/admin workspace authority when the underlying service supports it.
 func CheckAdminOrOwnerRoleWithEnterpriseGroup(ctx context.Context, tenantService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, accountID, tenantID string) (bool, error) {
 	logger.Info("Checking permissions", map[string]interface{}{
 		"account_id": accountID,
@@ -481,11 +482,11 @@ func CheckAdminOrOwnerRoleWithEnterpriseGroup(ctx context.Context, tenantService
 		"allowed": hasPermission,
 	})
 	if hasPermission {
-		logger.Info("Permission granted via workspace permission snapshot", nil)
+		logger.Info("Permission granted via workspace management permission contract", nil)
 		return true, nil
 	}
 
-	logger.Info("Permission denied - no workspace management permission found", nil)
+	logger.Info("Permission denied - no workspace management authority found", nil)
 	return false, nil
 }
 
