@@ -73,9 +73,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
       : [];
   const exportPermissionCodes = isWorkflowRuntime
     ? WORKFLOW_PERMISSION_ACTIONS.export
-    : isAgentRuntime
-      ? AGENT_PERMISSION_ACTIONS.export
-      : [];
+    : [];
   const deletePermissionCodes = isWorkflowRuntime
     ? WORKFLOW_PERMISSION_ACTIONS.delete
     : isAgentRuntime

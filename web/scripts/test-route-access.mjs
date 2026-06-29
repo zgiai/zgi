@@ -162,6 +162,7 @@ const createAgentDialogPath = path.join(
   'agent-dialog',
   'create-dialog.tsx'
 );
+const agentCardPath = path.join(rootDir, 'src', 'components', 'agents', 'agent-card.tsx');
 const templateGalleryDialogPath = path.join(
   rootDir,
   'src',
@@ -919,6 +920,7 @@ const agentRuntimeOrchestrationPanelSource = fs.readFileSync(
 );
 const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
+const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
@@ -1351,6 +1353,16 @@ assert.match(
   createAgentDialogSource,
   /isAgentTypeAllowed/,
   'create dialog should validate the selected runtime type before submitting'
+);
+assert.match(
+  agentCardSource,
+  /const exportPermissionCodes = isWorkflowRuntime[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.export[\s\S]*:\s*\[\];/,
+  'agent cards should expose YAML export only for workflow runtimes because the backend export endpoint requires workflow.export'
+);
+assert.doesNotMatch(
+  agentCardSource,
+  /AGENT_PERMISSION_ACTIONS\.export/,
+  'agent cards should not wire agent.export to the workflow YAML export endpoint'
 );
 assert.match(
   agentSidebarSource,
