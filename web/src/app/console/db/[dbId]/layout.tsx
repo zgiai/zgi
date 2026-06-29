@@ -59,6 +59,16 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const canView = hasAnyPermission(DATABASE_VISIBLE_PERMISSION_CODES);
   const canUpdateDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.update);
   const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
+  const canOpenRecords = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.recordView,
+    ...DATABASE_PERMISSION_ACTIONS.recordCreate,
+    ...DATABASE_PERMISSION_ACTIONS.recordUpdate,
+    ...DATABASE_PERMISSION_ACTIONS.recordDelete,
+  ]);
+  const canOpenSchema = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.schemaView,
+    ...DATABASE_PERMISSION_ACTIONS.schemaManage,
+  ]);
   const canAiQuery = hasAnyPermission([
     ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
     ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
@@ -244,25 +254,44 @@ export default function DbLayout({ children, params }: LayoutProps) {
                       const tableId = String(table.id || '');
                       const tableKey =
                         tableId || `${table.table_name || label || 'table'}-${index}`;
-                      const href = tableId ? `/console/db/${dbId}/table/${tableId}` : '#';
-                      const active = itemActive(href) || pathname.startsWith(href + '/');
+                      const tableRootHref = tableId ? `/console/db/${dbId}/table/${tableId}` : '';
+                      const href = canOpenRecords
+                        ? tableRootHref
+                        : canOpenSchema && tableRootHref
+                          ? `${tableRootHref}/structure`
+                          : '';
+                      const active =
+                        Boolean(tableRootHref) &&
+                        (itemActive(tableRootHref) || pathname.startsWith(tableRootHref + '/'));
                       return (
                         <div
                           key={tableKey}
                           className="w-full flex items-center justify-center gap-1 group relative"
                         >
-                          <Link
-                            href={href}
-                            className={cn(
-                              'block h-7 grow cursor-pointer truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-secondary-foreground overflow-hidden',
-                              active
-                                ? 'bg-primary/10 text-primary'
-                                : 'hover:bg-primary/5 hover:text-primary'
-                            )}
-                            title={label}
-                          >
-                            {label}
-                          </Link>
+                          {href ? (
+                            <Link
+                              href={href}
+                              className={cn(
+                                'block h-7 grow cursor-pointer truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-secondary-foreground overflow-hidden',
+                                active
+                                  ? 'bg-primary/10 text-primary'
+                                  : 'hover:bg-primary/5 hover:text-primary'
+                              )}
+                              title={label}
+                            >
+                              {label}
+                            </Link>
+                          ) : (
+                            <span
+                              className={cn(
+                                'block h-7 grow cursor-default truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-muted-foreground overflow-hidden',
+                                active && 'bg-primary/10 text-primary'
+                              )}
+                              title={label}
+                            >
+                              {label}
+                            </span>
+                          )}
                           {/* Actions dropdown replacing edit button */}
                           {canManageSchema && (
                             <DropdownMenu>

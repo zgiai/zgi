@@ -2284,6 +2284,16 @@ assert.match(
 );
 assert.match(
   dbLayoutSource,
+  /const canOpenRecords\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordCreate[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordUpdate[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordDelete/,
+  'database table-list record links should use the same record-readable permission group as the table record direct page'
+);
+assert.match(
+  dbLayoutSource,
+  /const canOpenSchema\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaView[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaManage/,
+  'database table-list schema fallback links should use the same schema permission group as the structure direct page'
+);
+assert.match(
+  dbLayoutSource,
   /useDbTables\(dbId,\s*\{[\s\S]*enabled:\s*canViewTableMetadata && !isMismatch/,
   'database detail layout should not fetch tables for users without table metadata permissions'
 );
@@ -2291,6 +2301,11 @@ assert.match(
   dbLayoutSource,
   /\{canViewTableMetadata && \([\s\S]*<button[\s\S]*\{t\('dbs\.tables'\)\}/,
   'database detail layout should hide the table navigation group without table metadata permissions'
+);
+assert.match(
+  dbLayoutSource,
+  /const href = canOpenRecords[\s\S]*\? tableRootHref[\s\S]*: canOpenSchema && tableRootHref[\s\S]*\? `\$\{tableRootHref\}\/structure`[\s\S]*: ''/,
+  'database table-list links should route to record pages first, then structure pages, and otherwise be non-navigable'
 );
 assert.match(
   dbOverviewSource,
