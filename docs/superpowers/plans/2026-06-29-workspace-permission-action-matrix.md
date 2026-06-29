@@ -34,6 +34,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-30: `pnpm test:route-access` now compares frontend `DATABASE_READ_BINDING_PERMISSION_CODES` with backend `requireDatabaseReadBindingPermission`. Agent/workflow database binding UI remains locked to the same `database.ai_query.read` plus `database.record.view` pair that backend save validation requires.
 - 2026-06-30: `pnpm test:route-access` now compares frontend knowledge-base read/file-detail readable permission groups with backend `knowledgeBaseReadPermissionCodes` and `fileReadablePermissionCodes`. Runtime knowledge binding and file detail direct access therefore stay aligned with backend readable-resource authorization instead of relying on weaker regex presence checks.
 - 2026-06-30: `pnpm test:route-access` now also compares backend `agentAssetVisiblePermissionCodes` with the frontend combined agent/workflow page-visible groups. Direct agent/workflow detail pages can keep resolving runtime type through the shared visible scope without drifting from frontend entry visibility.
 - 2026-06-30: `pnpm test:route-access` now includes a cross-layer guard that parses frontend `*_PERMISSION_ACTIONS.page` groups and backend dashboard visible-scope helpers, then requires the agent, workflow, knowledge-base, database, and file permission sets to match exactly. This keeps overview stats/recent-work workspace scopes aligned with entry visibility when future fine permissions are added.

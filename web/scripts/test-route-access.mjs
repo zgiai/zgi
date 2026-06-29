@@ -42,6 +42,15 @@ const agentsWorkspacePermissionCodesPath = path.join(
   'agents',
   'workspace_permission_codes.go'
 );
+const agentsRuntimeBindingsPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'app',
+  'agents',
+  'runtime_bindings.go'
+);
 const consolePagePath = path.join(rootDir, 'src', 'app', 'console', 'page.tsx');
 const workspaceStorePath = path.join(rootDir, 'src', 'store', 'workspace-store.ts');
 const workLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'work', 'layout.tsx');
@@ -1041,6 +1050,27 @@ function collectGoWorkspacePermissionHelperCodes(
   const helperSource = sourceText.slice(bodyStart, end);
   const permissionRefPattern = new RegExp(`${packageName}\\.(WorkspacePermission[A-Za-z0-9]+)`, 'g');
   return [...helperSource.matchAll(permissionRefPattern)]
+    .map(match => permissionConstants.get(match[1]))
+    .filter(Boolean);
+}
+
+function collectGoFunctionWorkspacePermissionCodes(
+  sourceText,
+  permissionConstants,
+  functionName,
+  packageName
+) {
+  const functionPattern = new RegExp(`func [^{\\n]*\\b${regexpEscape(functionName)}\\s*\\(`);
+  const functionMatch = functionPattern.exec(sourceText);
+  assert.ok(functionMatch, `missing go function: ${functionName}`);
+  const start = functionMatch.index;
+  const bodyStart = sourceText.indexOf('{', start);
+  assert.notEqual(bodyStart, -1, `missing go function body: ${functionName}`);
+  const end = sourceText.indexOf('\n}', bodyStart);
+  assert.notEqual(end, -1, `missing go function end: ${functionName}`);
+  const functionSource = sourceText.slice(bodyStart, end);
+  const permissionRefPattern = new RegExp(`${packageName}\\.(WorkspacePermission[A-Za-z0-9]+)`, 'g');
+  return [...functionSource.matchAll(permissionRefPattern)]
     .map(match => permissionConstants.get(match[1]))
     .filter(Boolean);
 }
@@ -2156,6 +2186,7 @@ const agentsWorkspacePermissionCodesSource = fs.readFileSync(
   agentsWorkspacePermissionCodesPath,
   'utf8'
 );
+const agentsRuntimeBindingsSource = fs.readFileSync(agentsRuntimeBindingsPath, 'utf8');
 assert.match(
   permissionConstantsSource,
   /export const DATABASE_TABLE_METADATA_PERMISSION_CODES = \[[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaView[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView[\s\S]*DATABASE_PERMISSION_ACTIONS\.importAnalyze[\s\S]*DATABASE_PERMISSION_ACTIONS\.tablePromptView[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead/,
@@ -2264,6 +2295,33 @@ assert.deepEqual(
   fileReadableBackendCodes,
   fileDetailReadableFrontendCodes,
   'file detail readable frontend gate should match backend fileReadablePermissionCodes helper'
+);
+const databaseReadBindingFrontendCodes = [
+  ...new Set(
+    collectPermissionActionSpreadCodes(
+      sourceSliceBetween(
+        permissionConstantsSource,
+        'export const DATABASE_READ_BINDING_PERMISSION_CODES = [',
+        '] as const satisfies readonly PermissionCode[];'
+      ),
+      permissionConstantsSource
+    )
+  ),
+].sort();
+const databaseReadBindingBackendCodes = [
+  ...new Set(
+    collectGoFunctionWorkspacePermissionCodes(
+      agentsRuntimeBindingsSource,
+      workspacePermissionConstants,
+      'requireDatabaseReadBindingPermission',
+      'workspacemodel'
+    )
+  ),
+].sort();
+assert.deepEqual(
+  databaseReadBindingBackendCodes,
+  databaseReadBindingFrontendCodes,
+  'database read-binding frontend group should match backend requireDatabaseReadBindingPermission'
 );
 const frontendSourceFiles = listFiles(path.join(rootDir, 'src')).filter(filePath =>
   /\.(?:ts|tsx)$/.test(filePath)
