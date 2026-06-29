@@ -76,6 +76,15 @@ const organizationWorkspaceDetailPagePath = path.join(
   '[workspaceId]',
   'page.tsx'
 );
+const workspaceManagementServicePath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'workspace',
+  'service',
+  'workspace_management_service.go'
+);
 const promptListPagePath = path.join(rootDir, 'src', 'app', 'console', 'prompts', 'page.tsx');
 const promptDetailPagePath = path.join(
   rootDir,
@@ -1201,6 +1210,7 @@ const organizationWorkspaceDetailPageSource = fs.readFileSync(
   organizationWorkspaceDetailPagePath,
   'utf8'
 );
+const workspaceManagementServiceSource = fs.readFileSync(workspaceManagementServicePath, 'utf8');
 const promptListPageSource = fs.readFileSync(promptListPagePath, 'utf8');
 const promptDetailPageSource = fs.readFileSync(promptDetailPagePath, 'utf8');
 const promptUsageSummarySource = fs.readFileSync(promptUsageSummaryPath, 'utf8');
@@ -1464,6 +1474,26 @@ assert.doesNotMatch(
   organizationWorkspaceDetailPageSource,
   /role\.(id|name)\.toLowerCase\(\)\s*!==\s*'owner'/,
   'organization workspace detail page should not rely on owner-only string filtering for role templates'
+);
+assert.match(
+  workspaceManagementServiceSource,
+  /func \(s \*WorkspaceManagementServiceImpl\) TransferOwner[\s\S]*isWorkspaceOrganizationAdminOrOwner/,
+  'workspace owner transfer should allow organization owner/admin authority without requiring workspace membership'
+);
+assert.match(
+  workspaceManagementServiceSource,
+  /func \(s \*WorkspaceManagementServiceImpl\) TransferOwner[\s\S]*GetJoinsByWorkspaceID/,
+  'workspace owner transfer should inspect every workspace member so historical multiple owners are normalized'
+);
+assert.match(
+  workspaceManagementServiceSource,
+  /join\.Role != model\.WorkspaceRoleOwner \|\| join\.AccountID == targetJoin\.AccountID[\s\S]*join\.Role = model\.WorkspaceRoleAdmin[\s\S]*join\.RoleID = &adminRoleID[\s\S]*join\.PermissionSource = model\.WorkspaceMemberPermissionSourceRoleTemplate[\s\S]*join\.PermissionTemplateRoleID = &adminRoleID/,
+  'workspace owner transfer should demote every non-target owner to the builtin admin template'
+);
+assert.match(
+  workspaceManagementServiceSource,
+  /targetJoin\.Role = model\.WorkspaceRoleOwner[\s\S]*ownerRoleID := model\.WorkspaceBuiltinRoleOwnerID[\s\S]*targetJoin\.PermissionSource = model\.WorkspaceMemberPermissionSourceOwner[\s\S]*targetJoin\.PermissionTemplateRoleID = &ownerRoleID/,
+  'workspace owner transfer target should be the sole owner with owner permission source'
 );
 assert.match(
   promptListPageSource,
