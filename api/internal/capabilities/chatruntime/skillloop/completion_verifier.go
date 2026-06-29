@@ -998,7 +998,8 @@ func completionVerificationPendingExecutablePlanStep(evidence map[string]interfa
 		return nil, false
 	}
 	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["status"])))
-	if status == "completed" || status == "failed" {
+	switch status {
+	case "completed", "complete", "success", "succeeded", "failed", "error", "skipped", "not_applicable":
 		return nil, false
 	}
 	stepStatus := evidenceMapFromAny(plan["step_status"])
@@ -1017,7 +1018,8 @@ func completionVerificationPendingExecutablePlanStep(evidence map[string]interfa
 		if stepState == "" && id != "" {
 			stepState = strings.ToLower(strings.TrimSpace(evidenceStringFromAny(stepStatus[id])))
 		}
-		if stepState == "completed" || stepState == "failed" {
+		switch stepState {
+		case "completed", "complete", "success", "succeeded", "failed", "error", "skipped", "not_applicable":
 			continue
 		}
 		return step, true

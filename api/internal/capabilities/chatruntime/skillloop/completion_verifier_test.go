@@ -344,6 +344,39 @@ func TestCompletionVerificationApplyPlanOnlySofteningPassesStalePendingRoutePlan
 	}
 }
 
+func TestCompletionVerificationPendingExecutablePlanStepSkipsSuccessfulStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		planStatus string
+		stepStatus string
+	}{
+		{name: "plan success", planStatus: "success", stepStatus: "pending"},
+		{name: "plan succeeded", planStatus: "succeeded", stepStatus: "pending"},
+		{name: "step success", planStatus: "running", stepStatus: "success"},
+		{name: "step succeeded", planStatus: "running", stepStatus: "succeeded"},
+		{name: "step skipped", planStatus: "running", stepStatus: "skipped"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ok := completionVerificationPendingExecutablePlanStep(map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status": tc.planStatus,
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        "tool:agent-management/update_agent_config",
+							"status":    tc.stepStatus,
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "update_agent_config",
+						},
+					},
+				},
+			})
+			if ok {
+				t.Fatalf("pending executable step = true, want false for plan status %q step status %q", tc.planStatus, tc.stepStatus)
+			}
+		})
+	}
+}
+
 func TestCompletionVerificationApplyPlanOnlySofteningKeepsRealMissingToolEvidence(t *testing.T) {
 	decision := completionVerificationApplyPlanOnlySoftening(map[string]interface{}{
 		"generated_files": []interface{}{
