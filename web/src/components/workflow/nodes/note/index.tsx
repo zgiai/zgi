@@ -19,6 +19,9 @@ export interface NoteNodeData {
 const NoteNode: React.FC<NodePropsCompat<NoteNodeData>> = ({ id, data, selected }) => {
   const t = useT('nodes');
   const updateNodeData = useWorkflowStore.use.updateNodeData();
+  const mode = useWorkflowStore.use.mode();
+  const canEdit = useWorkflowStore.use.canEdit();
+  const isReadOnly = mode === 'history' || !canEdit;
   const [text, setText] = useState(data.text || '');
 
   // Sync local state with data prop
@@ -36,21 +39,27 @@ const NoteNode: React.FC<NodePropsCompat<NoteNodeData>> = ({ id, data, selected 
     }
   }, [text]);
 
-  const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setText(e.target.value);
-  }, []);
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      if (isReadOnly) return;
+      setText(e.target.value);
+    },
+    [isReadOnly]
+  );
 
   const handleBlur = useCallback(() => {
+    if (isReadOnly) return;
     if (text !== data.text) {
       updateNodeData(id as string, { text });
     }
-  }, [id, text, data.text, updateNodeData]);
+  }, [id, isReadOnly, text, data.text, updateNodeData]);
 
   const handleThemeChange = useCallback(
     (theme: NoteNodeData['theme']) => {
+      if (isReadOnly) return;
       updateNodeData(id as string, { theme });
     },
-    [id, updateNodeData]
+    [id, isReadOnly, updateNodeData]
   );
 
   const themeClasses: Record<string, string> = {
@@ -104,6 +113,7 @@ const NoteNode: React.FC<NodePropsCompat<NoteNodeData>> = ({ id, data, selected 
           placeholder={t('catalog.note.placeholder')}
           onKeyDown={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
+          disabled={isReadOnly}
           rows={1}
           style={{ height: 'auto', minHeight: '24px', maxHeight: '100%' }}
         />
@@ -111,36 +121,38 @@ const NoteNode: React.FC<NodePropsCompat<NoteNodeData>> = ({ id, data, selected 
       </div>
 
       {/* Controls Overlay - Only visible on hover or select */}
-      <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-        {/* Color Picker */}
-        <Popover>
-          <PopoverTrigger asChild>
-            <div className="w-5 h-5 rounded-full bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/20 cursor-pointer flex items-center justify-center backdrop-blur-sm border border-black/5">
-              <div className={cn('w-2.5 h-2.5 rounded-full', themeColors[currentTheme])} />
-            </div>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-2" side="top" align="end">
-            <div className="flex gap-2">
-              {Object.keys(themeClasses).map(theme => (
-                <button
-                  key={theme}
-                  onClick={() => handleThemeChange(theme as NoteNodeData['theme'])}
-                  className={cn(
-                    'w-5 h-5 rounded-full hover:scale-110 transition-transform border border-black/10',
-                    themeColors[theme],
-                    currentTheme === theme && 'ring-2 ring-offset-2 ring-black/20'
-                  )}
-                />
-              ))}
-            </div>
-          </PopoverContent>
-        </Popover>
+      {!isReadOnly && (
+        <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+          {/* Color Picker */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <div className="w-5 h-5 rounded-full bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/20 cursor-pointer flex items-center justify-center backdrop-blur-sm border border-black/5">
+                <div className={cn('w-2.5 h-2.5 rounded-full', themeColors[currentTheme])} />
+              </div>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-2" side="top" align="end">
+              <div className="flex gap-2">
+                {Object.keys(themeClasses).map(theme => (
+                  <button
+                    key={theme}
+                    onClick={() => handleThemeChange(theme as NoteNodeData['theme'])}
+                    className={cn(
+                      'w-5 h-5 rounded-full hover:scale-110 transition-transform border border-black/10',
+                      themeColors[theme],
+                      currentTheme === theme && 'ring-2 ring-offset-2 ring-black/20'
+                    )}
+                  />
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
 
-        {/* Drag Handle Removed - using whole node drag */}
-      </div>
+          {/* Drag Handle Removed - using whole node drag */}
+        </div>
+      )}
 
       {/* Custom Resize Handle */}
-      {selected && <ManualResizeHandle minWidth={160} minHeight={100} />}
+      {selected && !isReadOnly && <ManualResizeHandle minWidth={160} minHeight={100} />}
     </div>
   );
 };

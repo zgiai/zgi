@@ -381,6 +381,24 @@ const workflowContainerNodePath = path.join(
   'container',
   'index.tsx'
 );
+const workflowNodeResizeHandlePath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'custom',
+  'node-resize-handle.tsx'
+);
+const workflowNoteNodePath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'note',
+  'index.tsx'
+);
 const workflowCreateNodeModalHostPath = path.join(
   rootDir,
   'src',
@@ -877,6 +895,8 @@ const workflowGlobalContainerOverlaySource = fs.readFileSync(
 );
 const workflowCustomHandleSource = fs.readFileSync(workflowCustomHandlePath, 'utf8');
 const workflowContainerNodeSource = fs.readFileSync(workflowContainerNodePath, 'utf8');
+const workflowNodeResizeHandleSource = fs.readFileSync(workflowNodeResizeHandlePath, 'utf8');
+const workflowNoteNodeSource = fs.readFileSync(workflowNoteNodePath, 'utf8');
 const workflowCreateNodeModalHostSource = fs.readFileSync(
   workflowCreateNodeModalHostPath,
   'utf8'
@@ -2439,6 +2459,31 @@ assert.match(
   workflowContainerNodeSource,
   /\{onlyHasStart && !isReadOnly && \(/,
   'workflow container empty-state add button should not render without workflow.update'
+);
+assert.match(
+  workflowNodeResizeHandleSource,
+  /const isReadOnly = mode === 'history' \|\| !canEdit;/,
+  'workflow manual resize handles should derive read-only state from permission edit authority as well as history mode'
+);
+assert.match(
+  workflowNodeResizeHandleSource,
+  /if \(isReadOnly\) return;/,
+  'workflow manual resize handles should not update node dimensions without workflow.update'
+);
+assert.match(
+  workflowNoteNodeSource,
+  /const isReadOnly = mode === 'history' \|\| !canEdit;/,
+  'workflow note nodes should derive read-only state from permission edit authority as well as history mode'
+);
+assert.match(
+  workflowNoteNodeSource,
+  /disabled=\{isReadOnly\}/,
+  'workflow note textarea should be disabled without workflow.update'
+);
+assert.match(
+  workflowNoteNodeSource,
+  /\{selected && !isReadOnly && <ManualResizeHandle/,
+  'workflow note resize handle should not render without workflow.update'
 );
 assert.match(
   workflowCreateNodeModalHostSource,
