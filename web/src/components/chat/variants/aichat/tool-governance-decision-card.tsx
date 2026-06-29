@@ -153,6 +153,18 @@ export function isToolGovernancePendingApprovalDismissed(
   return dismissedPendingApprovalKeys.has(pendingApprovalEntryKey(scopeId, approvalId));
 }
 
+function toolGovernanceContinuationLikelyStarted(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('invalid current leaf message status') ||
+    normalized.includes('continuation is already running') ||
+    normalized.includes('continuation has already resolved') ||
+    normalized.includes('conversation is already streaming')
+  );
+}
+
 export function useActiveToolGovernancePendingApproval() {
   const scopeId = useToolGovernancePendingApprovalScope();
   return useSyncExternalStore(
@@ -522,19 +534,24 @@ export function ToolGovernanceApprovalPanel({
     if (!submitEnabled || !approval.onSubmitDecision) return;
     setSubmittingAction(action);
     setSubmitError(null);
+    let restoreDismissedApproval: (() => void) | null = null;
     try {
       setResolvedAction(action);
-      const continuation = Promise.resolve(
-        approval.onSubmitDecision(action, action === 'approve' ? rememberForSession : false)
+      restoreDismissedApproval = dismissToolGovernancePendingApproval(
+        approval,
+        pendingApprovalScopeId
       );
       toast.success(
         action === 'approve'
           ? t('consoleChat.governance.approveSucceeded')
           : t('consoleChat.governance.rejectSucceeded')
       );
-      await continuation;
-      dismissToolGovernancePendingApproval(approval, pendingApprovalScopeId);
+      await approval.onSubmitDecision(action, action === 'approve' ? rememberForSession : false);
     } catch (error) {
+      if (toolGovernanceContinuationLikelyStarted(error)) {
+        return;
+      }
+      restoreDismissedApproval?.();
       const message =
         error instanceof Error && error.message
           ? error.message
