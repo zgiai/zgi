@@ -274,6 +274,88 @@ func TestAgentsService_GetRunnableWebApps_NoWorkspaceMemberCanSeeAccountGrantedA
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestAgentsService_GetRunnableWebApps_NoWorkspaceMemberCanSeeOrganizationGrantedAppCenterApp(t *testing.T) {
+	ctx := t.Context()
+	db, mock := newRunnableWebAppsMockDB(t)
+
+	orgID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	agentID := uuid.New()
+	surfaceID := uuid.New()
+	now := time.Now()
+	orgIDString := orgID.String()
+
+	repo := &stubAgentsRepository{
+		items: []runnableWebAppItem{{
+			AgentID:      agentID.String(),
+			WorkspaceID:  workspaceID.String(),
+			WebAppID:     "webapp-visible",
+			WebAppStatus: string(AgentWebAppStatusActive),
+			AgentName:    "Visible",
+			AgentType:    "CONVERSATIONAL_WORKFLOW",
+		}},
+	}
+	tenantService := &stubWorkspaceManagementService{
+		currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: orgIDString,
+			AccountID:      accountID.String(),
+			Role:           workspace_model.OrganizationRoleNormal,
+		},
+	}
+	orgService := &stubOrganizationService{
+		permissionWorkspaceIDs: []string{},
+		workspaces: []*workspace_model.Workspace{
+			{ID: workspaceID.String(), Status: workspace_model.WorkspaceStatusNormal, OrganizationID: &orgIDString},
+		},
+	}
+	service := &agentsService{
+		db:                db,
+		agentsRepo:        repo,
+		tenantService:     tenantService,
+		enterpriseService: orgService,
+	}
+
+	mock.ExpectQuery(`SELECT department_members\.department_id FROM "department_members" JOIN departments ON departments\.id = department_members\.department_id WHERE`).
+		WillReturnRows(sqlmock.NewRows([]string{"department_id"}))
+	mock.ExpectQuery(`SELECT "resource_id" FROM "published_runtime_surfaces" WHERE resource_type = .* AND surface = .* AND organization_id = .* AND resource_id IN`).
+		WillReturnRows(sqlmock.NewRows([]string{"resource_id"}).AddRow(agentID.String()))
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surfaces" WHERE resource_type = .* AND surface = .* AND organization_id = .* AND resource_id IN`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"resource_type",
+			"resource_id",
+			"organization_id",
+			"workspace_id",
+			"surface",
+			"enabled",
+			"compatibility_source",
+			"created_at",
+			"updated_at",
+			"deleted_at",
+		}).AddRow(surfaceID.String(), string(runtimeauth.PublishedRuntimeResourceAgent), agentID.String(), orgID.String(), workspaceID.String(), string(runtimeauth.PublishedRuntimeSurfaceAppCenter), true, runtimeauth.PublishedRuntimeSourceGrant, now, now, nil))
+	mock.ExpectQuery(`SELECT \* FROM "published_runtime_surface_grants" WHERE surface_id IN`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"surface_id",
+			"subject_type",
+			"subject_id",
+			"enabled",
+			"created_at",
+			"updated_at",
+			"deleted_at",
+		}).AddRow(uuid.New().String(), surfaceID.String(), string(runtimeauth.PublishedRuntimeSubjectOrganization), orgID.String(), true, now, now, nil))
+
+	resp, err := service.GetRunnableWebApps(ctx, accountID.String(), dto.GetRunnableWebAppsRequest{})
+	require.NoError(t, err)
+	require.True(t, orgService.listWorkspaceIDsByPermissionCalled)
+	require.True(t, orgService.getOrganizationWorkspacesListCalled)
+	require.Equal(t, []string{workspaceID.String()}, repo.lastWorkspaceIDs)
+	require.Len(t, resp.Items, 1)
+	require.Equal(t, agentID.String(), resp.Items[0].AgentID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAgentsService_GetRunnableWebApps_AllowsWorkspaceViewWithoutAgentView(t *testing.T) {
 	ctx := t.Context()
 	orgID := "org-1"
