@@ -350,6 +350,20 @@ const workflowLifecyclePath = path.join(
   'hooks',
   'use-workflow-lifecycle.ts'
 );
+const workflowCanvasWithDndPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'canvas-with-dnd.tsx'
+);
+const workflowGlobalContainerOverlayPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'global-container-overlay.tsx'
+);
 const workflowDatabasePickerPath = path.join(
   rootDir,
   'src',
@@ -811,6 +825,11 @@ const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 const workflowEditorSource = fs.readFileSync(workflowEditorPath, 'utf8');
 const workflowLifecycleSource = fs.readFileSync(workflowLifecyclePath, 'utf8');
+const workflowCanvasWithDndSource = fs.readFileSync(workflowCanvasWithDndPath, 'utf8');
+const workflowGlobalContainerOverlaySource = fs.readFileSync(
+  workflowGlobalContainerOverlayPath,
+  'utf8'
+);
 assert.match(
   workspaceLayoutSource,
   /useAccountCapabilities/,
@@ -2332,6 +2351,21 @@ assert.match(
   workflowLifecycleSource,
   /if \(!canEditDraft\) return;[\s\S]*hasInitializedModelsRef/,
   'workflow lifecycle should not inject default node models in read-only workflow detail'
+);
+assert.match(
+  workflowCanvasWithDndSource,
+  /<GlobalContainerOverlay isReadOnly=\{isReadOnly\} \/>/,
+  'workflow canvas should pass read-only state to container drop overlays'
+);
+assert.match(
+  workflowGlobalContainerOverlaySource,
+  /if \(isReadOnly \|\| isNestingBlocked\) \{/,
+  'workflow container drop overlay should not create nested nodes in read-only mode'
+);
+assert.match(
+  workflowGlobalContainerOverlaySource,
+  /if \(isReadOnly \|\| !draggingNodeType\) return null;/,
+  'workflow container drop overlay should not render active drop targets in read-only mode'
 );
 
 for (const appCenterPath of appCenterPaths) {
