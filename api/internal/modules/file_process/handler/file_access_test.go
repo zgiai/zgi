@@ -243,6 +243,11 @@ func TestAuthorizeFileActionAccessUsesFinePermissions(t *testing.T) {
 		permissionCode workspace_model.WorkspacePermissionCode
 	}{
 		{
+			name:           "preview",
+			authorize:      authorizeFilePreviewAccess,
+			permissionCode: workspace_model.WorkspacePermissionFilePreview,
+		},
+		{
 			name:           "delete",
 			authorize:      authorizeFileDeleteAccess,
 			permissionCode: workspace_model.WorkspacePermissionFileDelete,

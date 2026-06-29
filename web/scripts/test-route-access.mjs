@@ -222,6 +222,24 @@ const fileHandlerPath = path.join(
   'handler',
   'file_handler.go'
 );
+const imagePreviewHandlerPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'file_process',
+  'handler',
+  'image_preview_handler.go'
+);
+const fileSpreadsheetPreviewPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'file_process',
+  'handler',
+  'file_spreadsheet_preview.go'
+);
 const fileAccessPath = path.join(
   repoRootDir,
   'api',
@@ -1424,6 +1442,8 @@ const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
 const automationTaskHandlerSource = fs.readFileSync(automationTaskHandlerPath, 'utf8');
 const fileHandlerSource = fs.readFileSync(fileHandlerPath, 'utf8');
+const imagePreviewHandlerSource = fs.readFileSync(imagePreviewHandlerPath, 'utf8');
+const fileSpreadsheetPreviewSource = fs.readFileSync(fileSpreadsheetPreviewPath, 'utf8');
 const fileAccessSource = fs.readFileSync(fileAccessPath, 'utf8');
 const filePageSource = fs.readFileSync(filePagePath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
@@ -1988,6 +2008,36 @@ assert.match(
   fileHandlerSource,
   /func \(h \*FileHandler\) getAuthorizedFileForManage[\s\S]*authorizeFileUpdateAccess/,
   'file processing, replacement, chunk edits, and parse confirmations should require file.update'
+);
+assert.match(
+  fileHandlerSource,
+  /func \(h \*FileHandler\) GetFilePreview[\s\S]*authorizeFilePreviewAccess/,
+  'legacy file preview content endpoint should require file.preview'
+);
+assert.match(
+  fileHandlerSource,
+  /func \(h \*FileHandler\) GetFileOriginalPreviewURL[\s\S]*getAuthorizedFileForPreview/,
+  'file original preview URL endpoint should require file.preview'
+);
+assert.match(
+  fileHandlerSource,
+  /func \(h \*FileHandler\) GetFileSourcePreviewPages[\s\S]*getAuthorizedFileForPreview/,
+  'file source preview pages endpoint should require file.preview'
+);
+assert.match(
+  fileSpreadsheetPreviewSource,
+  /func \(h \*FileHandler\) GetFileSpreadsheetPreview[\s\S]*getAuthorizedFileForPreview/,
+  'file spreadsheet preview endpoint should require file.preview'
+);
+assert.match(
+  imagePreviewHandlerSource,
+  /uploadFile,\s*ok\s*=\s*authorizeFilePreviewAccess/,
+  'file image/original preview stream should require file.preview for JWT access'
+);
+assert.doesNotMatch(
+  imagePreviewHandlerSource.match(/} else \{[\s\S]*?if !ok \{/g)?.[0] ?? '',
+  /authorizeFileDownloadAccess/,
+  'file image/original preview stream should not require file.download for JWT access'
 );
 assert.match(
   relatedResourcesPopoverSource,

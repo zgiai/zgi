@@ -105,7 +105,7 @@ func (h *ImagePreviewHandler) GetFilePreview(c *gin.Context) {
 		}
 	} else {
 		var ok bool
-		uploadFile, ok = authorizeFileDownloadAccess(c, h.fileService, h.enterpriseService, fileID)
+		uploadFile, ok = authorizeFilePreviewAccess(c, h.fileService, h.enterpriseService, fileID)
 		if !ok {
 			return
 		}

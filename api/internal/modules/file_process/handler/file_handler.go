@@ -1739,7 +1739,7 @@ func (h *FileHandler) GetFilePreview(c *gin.Context) {
 		return
 	}
 
-	if _, ok := authorizeFileViewAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+	if _, ok := authorizeFilePreviewAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 		return
 	}
 
@@ -1797,7 +1797,7 @@ func (h *FileHandler) GetFileOriginalPreviewURL(c *gin.Context) {
 		return
 	}
 
-	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	uploadFile, ok := h.getAuthorizedFileForPreview(c, fileID)
 	if !ok {
 		return
 	}
@@ -1830,7 +1830,7 @@ func (h *FileHandler) GetFileSourcePreviewPages(c *gin.Context) {
 		return
 	}
 
-	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	uploadFile, ok := h.getAuthorizedFileForPreview(c, fileID)
 	if !ok {
 		return
 	}
@@ -2125,6 +2125,10 @@ func (h *FileHandler) DownloadFile(c *gin.Context) {
 
 func (h *FileHandler) getAuthorizedFileForDownload(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileDownloadAccess(c, h.fileService, h.enterpriseService, fileID)
+}
+
+func (h *FileHandler) getAuthorizedFileForPreview(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFilePreviewAccess(c, h.fileService, h.enterpriseService, fileID)
 }
 
 func (h *FileHandler) getAuthorizedFileForView(c *gin.Context, fileID string) (*dto.UploadFile, bool) {

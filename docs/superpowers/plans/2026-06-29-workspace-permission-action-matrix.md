@@ -34,6 +34,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-30: File preview authorization now uses `file.preview` instead of `file.download`. The legacy preview-content endpoint, original preview URL, source preview pages, spreadsheet preview, and JWT original-preview stream all align with the frontend preview button, while direct download remains gated by `file.download`.
 - 2026-06-30: Existing-file processing actions were narrowed to `file.update`. Reparse, stored-only parse start, file replacement, chunk edits, and parse-confirmation mutations now use the backend `authorizeFileUpdateAccess` path, while the frontend file list/detail only exposes parse/reparse controls for `FILE_PERMISSION_ACTIONS.update`; `file.upload` remains limited to adding new files.
 - 2026-06-30: `pnpm test:route-access` now compares frontend `DATABASE_TABLE_METADATA_PERMISSION_CODES` with backend `databaseTableMetadataPermissions`. Database table list/detail/columns/template metadata gates must stay aligned across the database detail layout and datasource handler when schema, record, import, table-prompt, or AI-query permissions change.
 - 2026-06-30: `pnpm test:route-access` now compares frontend `DATABASE_READ_BINDING_PERMISSION_CODES` with backend `requireDatabaseReadBindingPermission`. Agent/workflow database binding UI remains locked to the same `database.ai_query.read` plus `database.record.view` pair that backend save validation requires.
