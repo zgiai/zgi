@@ -656,6 +656,13 @@ const agentBatchTestPagePath = path.join(
   'batch-test',
   'page.tsx'
 );
+const workflowBatchTestOverviewPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow-test',
+  'batch-test-overview.tsx'
+);
 const agentBatchTestBatchesPagePath = path.join(
   rootDir,
   'src',
@@ -2771,6 +2778,10 @@ const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
 const workflowEditorPageSource = fs.readFileSync(workflowEditorPagePath, 'utf8');
 const agentBatchTestPageSource = fs.readFileSync(agentBatchTestPagePath, 'utf8');
+const workflowBatchTestOverviewSource = fs.readFileSync(
+  workflowBatchTestOverviewPath,
+  'utf8'
+);
 const agentBatchTestBatchesPageSource = fs.readFileSync(
   agentBatchTestBatchesPagePath,
   'utf8'
@@ -4093,6 +4104,41 @@ assert.match(
   agentBatchTestPageSource,
   /const canOpenBatchTestOverview\s*=\s*canViewBatchTestLibrary[\s\S]*useAgent\(agentId,\s*canOpenBatchTestOverview\)/,
   'workflow batch-test overview direct page should fetch agent metadata only with workflow.view'
+);
+assert.match(
+  workflowBatchTestOverviewSource,
+  /const canViewBatchResults\s*=\s*Boolean\(permissions\?\.canViewLogs\)/,
+  'workflow batch-test overview should derive result-link visibility from workflow.logs.view'
+);
+assert.match(
+  workflowBatchTestOverviewSource,
+  /const canCreateAndRunBatch\s*=\s*canUpdateTestAssets && canDebugTest && canViewBatchResults/,
+  'workflow batch-test overview should not link to new batch creation unless the resulting detail page is visible'
+);
+assert.match(
+  workflowBatchTestOverviewSource,
+  /const canRetestBatch\s*=\s*canDebugTest && canViewBatchResults[\s\S]*if \(!canRetestBatch\) return/,
+  'workflow batch-test retest action should require result visibility in addition to execution permission'
+);
+assert.match(
+  workflowBatchTestOverviewSource,
+  /canViewBatchResults \? \([\s\S]*runningBatch\.id[\s\S]*batchActions\.viewProgress/,
+  'workflow batch-test active progress link should require workflow.logs.view'
+);
+assert.match(
+  workflowBatchTestOverviewSource,
+  /canViewBatchResults && batch\.status === ['"]queued['"][\s\S]*batchActions\.viewDetail/,
+  'workflow batch-test queued detail link should require workflow.logs.view'
+);
+assert.match(
+  workflowBatchTestOverviewSource,
+  /canViewBatchResults && batch\.status === ['"]running['"][\s\S]*batchActions\.viewProgress/,
+  'workflow batch-test running progress link should require workflow.logs.view'
+);
+assert.match(
+  workflowBatchTestOverviewSource,
+  /canViewBatchResults && batch\.status !== ['"]queued['"][\s\S]*batchActions\.viewResult/,
+  'workflow batch-test finished result link should require workflow.logs.view'
 );
 assert.match(
   agentBatchTestBatchesPageSource,

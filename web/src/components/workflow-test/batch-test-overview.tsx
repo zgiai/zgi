@@ -282,7 +282,9 @@ export function BatchTestOverview({
   const canUpdateTestAssets = Boolean(permissions?.canUpdate);
   const canDebugTest = Boolean(permissions?.canDebug);
   const canStopTestRun = Boolean(permissions?.canStop);
-  const canCreateAndRunBatch = canUpdateTestAssets && canDebugTest;
+  const canViewBatchResults = Boolean(permissions?.canViewLogs);
+  const canCreateAndRunBatch = canUpdateTestAssets && canDebugTest && canViewBatchResults;
+  const canRetestBatch = canDebugTest && canViewBatchResults;
   const enabledCases = cases.filter(item => item.status === 'enabled');
   const disabledCases = cases.filter(item => item.status !== 'enabled');
   const coveredScenarioIds = new Set(cases.map(item => item.scenario_id).filter(Boolean));
@@ -448,7 +450,7 @@ export function BatchTestOverview({
   );
 
   const confirmRetestBatch = () => {
-    if (!canDebugTest) return;
+    if (!canRetestBatch) return;
     if (!retestingBatch) return;
     retestBatch.mutate(
       {
@@ -1114,11 +1116,13 @@ export function BatchTestOverview({
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        <Button variant="outline" size="sm" asChild>
-                          <Link href={`/console/agents/${agentId}/batch-test/${runningBatch.id}`}>
-                            {t('batchActions.viewProgress')}
-                          </Link>
-                        </Button>
+                        {canViewBatchResults ? (
+                          <Button variant="outline" size="sm" asChild>
+                            <Link href={`/console/agents/${agentId}/batch-test/${runningBatch.id}`}>
+                              {t('batchActions.viewProgress')}
+                            </Link>
+                          </Button>
+                        ) : null}
                         {canStopTestRun ? (
                           <Button
                             variant="ghost"
@@ -1189,14 +1193,14 @@ export function BatchTestOverview({
                                 {t('batchActions.start')}
                               </Button>
                             ) : null}
-                            {batch.status === 'queued' ? (
+                            {canViewBatchResults && batch.status === 'queued' ? (
                               <Button variant="link" size="sm" className="h-8 px-2" asChild>
                                 <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
                                   {t('batchActions.viewDetail')}
                                 </Link>
                               </Button>
                             ) : null}
-                            {batch.status === 'running' ? (
+                            {canViewBatchResults && batch.status === 'running' ? (
                               <Button variant="link" size="sm" className="h-8 px-2" asChild>
                                 <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
                                   {t('batchActions.viewProgress')}
@@ -1214,7 +1218,7 @@ export function BatchTestOverview({
                                 <Ban className="size-4" />
                                 {commonT('cancel')}
                               </Button>
-                            ) : batch.status !== 'queued' ? (
+                            ) : canViewBatchResults && batch.status !== 'queued' ? (
                               <Button variant="link" size="sm" className="h-8 px-2" asChild>
                                 <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
                                   {t('batchActions.viewResult')}
@@ -1222,7 +1226,7 @@ export function BatchTestOverview({
                               </Button>
                             ) : null}
                             {(canStopTestRun && (batch.status === 'queued' || batch.status === 'running')) ||
-                            (canDebugTest && batch.status !== 'queued' && batch.status !== 'running') ? (
+                            (canRetestBatch && batch.status !== 'queued' && batch.status !== 'running') ? (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
