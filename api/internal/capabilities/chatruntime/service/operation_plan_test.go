@@ -510,6 +510,7 @@ func TestSkillLoopCompletionEvidenceBuildsExecutionSummaryForBatchAndDeviations(
 	}
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-batch-summary")
 	recordOperationPlanToolDeviation(metadata, skills.SkillAgentManagement, "list_agents", "model_collected_unplanned_readonly_evidence")
+	recordOperationPlanToolBlockedDeviation(metadata, skills.SkillFileManager, "delete_file", "model_attempted_unrelated_mutation")
 	metadata["skill_invocations"] = []map[string]interface{}{
 		{
 			"kind":      "tool_call",
@@ -552,8 +553,19 @@ func TestSkillLoopCompletionEvidenceBuildsExecutionSummaryForBatchAndDeviations(
 		t.Fatalf("execution_summary = %#v, want compact summary", evidence["execution_summary"])
 	}
 	planSummary := mapFromOperationContext(summary["operation_plan"])
-	if got := mapSliceFromAny(planSummary["deviations"]); len(got) != 1 {
+	deviations := mapSliceFromAny(planSummary["deviations"])
+	if len(deviations) != 1 {
 		t.Fatalf("execution_summary.operation_plan.deviations = %#v, want one deviation", planSummary["deviations"])
+	}
+	if got := stringFromAny(deviations[0]["outcome"]); got != "allowed" {
+		t.Fatalf("execution_summary.operation_plan.deviations[0].outcome = %q, want allowed", got)
+	}
+	blockedDeviations := mapSliceFromAny(planSummary["blocked_deviations"])
+	if len(blockedDeviations) != 1 {
+		t.Fatalf("execution_summary.operation_plan.blocked_deviations = %#v, want one blocked deviation", planSummary["blocked_deviations"])
+	}
+	if got := stringFromAny(blockedDeviations[0]["outcome"]); got != "blocked" {
+		t.Fatalf("execution_summary.operation_plan.blocked_deviations[0].outcome = %q, want blocked", got)
 	}
 	groups := mapSliceFromAny(summary["operation_groups"])
 	if len(groups) != 1 {

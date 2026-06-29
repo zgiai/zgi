@@ -451,6 +451,9 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 	if deviations := skillLoopCompletionPlanDeviations(plan["deviations"], 8); len(deviations) > 0 {
 		summary["deviations"] = deviations
 	}
+	if blockedDeviations := skillLoopCompletionPlanDeviations(plan["blocked_deviations"], 8); len(blockedDeviations) > 0 {
+		summary["blocked_deviations"] = blockedDeviations
+	}
 	if len(summary) == 0 {
 		return nil
 	}
@@ -468,7 +471,7 @@ func skillLoopCompletionPlanDeviations(value interface{}, limit int) []interface
 			break
 		}
 		compact := map[string]interface{}{}
-		for _, key := range []string{"skill_id", "tool_name", "reason"} {
+		for _, key := range []string{"skill_id", "tool_name", "reason", "outcome"} {
 			if value, ok := item[key]; ok && value != nil {
 				compact[key] = value
 			}
