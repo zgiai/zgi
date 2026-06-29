@@ -13,6 +13,21 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
+func workflowDraftReadPermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionWorkflowView,
+		workspace_model.WorkspacePermissionWorkflowCreate,
+		workspace_model.WorkspacePermissionWorkflowImport,
+		workspace_model.WorkspacePermissionWorkflowUpdate,
+		workspace_model.WorkspacePermissionWorkflowRunDraft,
+		workspace_model.WorkspacePermissionWorkflowRunStop,
+		workspace_model.WorkspacePermissionWorkflowDebug,
+		workspace_model.WorkspacePermissionWorkflowPublish,
+		workspace_model.WorkspacePermissionWorkflowRuntimeConfigManage,
+		workspace_model.WorkspacePermissionWorkflowRuntimeAccessManage,
+	}
+}
+
 // WorkflowHandler handles workflow-related HTTP requests
 type WorkflowHandler struct {
 	workflowService            workflow_interfaces.WorkflowService
@@ -74,7 +89,7 @@ func (h *WorkflowHandler) GetDraftWorkflow(c *gin.Context) {
 	appID := c.Param("agent_id")
 	accountID := c.GetString("account_id")
 
-	if _, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowView); !ok {
+	if _, ok := h.requireAgentWorkspaceAnyPermission(c, appID, workflowDraftReadPermissionCodes()...); !ok {
 		return
 	}
 
@@ -160,7 +175,7 @@ func (h *WorkflowHandler) SyncDraftWorkflow(c *gin.Context) {
 // @Router /agents/{agent_id}/workflows/draft/config [get]
 func (h *WorkflowHandler) GetWorkflowConfig(c *gin.Context) {
 	appID := c.Param("agent_id")
-	workspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowView)
+	workspaceID, ok := h.requireAgentWorkspaceAnyPermission(c, appID, workflowDraftReadPermissionCodes()...)
 	if !ok {
 		return
 	}

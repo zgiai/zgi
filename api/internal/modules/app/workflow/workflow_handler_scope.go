@@ -33,6 +33,10 @@ type workflowWorkspacePermissionChecker interface {
 	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspace_model.WorkspacePermissionCode) (bool, error)
 }
 
+type workflowWorkspaceAnyPermissionChecker interface {
+	CheckWorkspaceOrganizationAnyPermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCodes ...workspace_model.WorkspacePermissionCode) (bool, error)
+}
+
 type webAppRunScope struct {
 	WorkspaceID        string
 	OrganizationID     string
@@ -227,6 +231,64 @@ func (h *WorkflowHandler) requireAgentWorkspacePermission(c *gin.Context, agentI
 	}
 
 	return workspaceID, true
+}
+
+func (h *WorkflowHandler) requireAgentWorkspaceAnyPermission(c *gin.Context, agentID string, permissionCodes ...workspace_model.WorkspacePermissionCode) (string, bool) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return "", false
+	}
+
+	workspaceID, ok := h.resolveAgentWorkspaceID(c, agentID)
+	if !ok {
+		return "", false
+	}
+
+	permissionChecker := h.getWorkspacePermissionChecker()
+	if permissionChecker == nil || len(permissionCodes) == 0 {
+		return workspaceID, true
+	}
+
+	organizationID := util.GetOrganizationID(c)
+	if anyChecker, ok := permissionChecker.(workflowWorkspaceAnyPermissionChecker); ok {
+		hasPermission, err := anyChecker.CheckWorkspaceOrganizationAnyPermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			permissionCodes...,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return "", false
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return "", false
+		}
+		return workspaceID, true
+	}
+
+	for _, permissionCode := range permissionCodes {
+		hasPermission, err := permissionChecker.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			permissionCode,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return "", false
+		}
+		if hasPermission {
+			return workspaceID, true
+		}
+	}
+
+	response.Fail(c, response.ErrPermissionDenied)
+	return "", false
 }
 
 func (h *WorkflowHandler) requirePublishedRuntimeAgentAccess(c *gin.Context, agentID string, permissionCode workspace_model.WorkspacePermissionCode) (string, bool) {

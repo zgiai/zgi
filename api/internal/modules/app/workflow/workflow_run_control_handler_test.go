@@ -373,15 +373,40 @@ func (s *workflowTaskStopService) ManualDiagnoseNode(_ context.Context, nodeLogI
 }
 
 type workflowTaskStopPermissionChecker struct {
-	allowed         bool
-	checked         bool
-	lastWorkspaceID string
-	lastPermission  workspace_model.WorkspacePermissionCode
+	allowed            bool
+	allowedPermissions map[workspace_model.WorkspacePermissionCode]bool
+	checked            bool
+	lastWorkspaceID    string
+	lastPermission     workspace_model.WorkspacePermissionCode
+	lastPermissions    []workspace_model.WorkspacePermissionCode
 }
 
 func (c *workflowTaskStopPermissionChecker) CheckWorkspacePermission(_ context.Context, _ string, workspaceID string, _ string, permissionCode workspace_model.WorkspacePermissionCode) (bool, error) {
 	c.checked = true
 	c.lastWorkspaceID = workspaceID
 	c.lastPermission = permissionCode
-	return c.allowed, nil
+	c.lastPermissions = []workspace_model.WorkspacePermissionCode{permissionCode}
+	return c.allows(permissionCode), nil
+}
+
+func (c *workflowTaskStopPermissionChecker) CheckWorkspaceOrganizationAnyPermission(_ context.Context, _ string, workspaceID string, _ string, permissions ...workspace_model.WorkspacePermissionCode) (bool, error) {
+	c.checked = true
+	c.lastWorkspaceID = workspaceID
+	c.lastPermissions = append([]workspace_model.WorkspacePermissionCode(nil), permissions...)
+	if len(permissions) > 0 {
+		c.lastPermission = permissions[0]
+	}
+	return c.allows(permissions...), nil
+}
+
+func (c *workflowTaskStopPermissionChecker) allows(permissions ...workspace_model.WorkspacePermissionCode) bool {
+	if len(c.allowedPermissions) == 0 {
+		return c.allowed
+	}
+	for _, permission := range permissions {
+		if c.allowedPermissions[permission] {
+			return true
+		}
+	}
+	return false
 }

@@ -152,6 +152,40 @@ func TestDraftWorkflowManagementHandlersRequireWorkspacePermissionBeforeWork(t *
 	}
 }
 
+func TestGetDraftWorkflowAllowsEditorReachabilityPermissions(t *testing.T) {
+	service := &workflowDraftPermissionService{workspaceID: "agent-workspace"}
+	permissionChecker := &workflowTaskStopPermissionChecker{
+		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
+			workspace_model.WorkspacePermissionWorkflowDebug: true,
+		},
+	}
+	handler := &WorkflowHandler{
+		workflowService:            service,
+		agentWorkspaceResolver:     service,
+		workspacePermissionChecker: permissionChecker,
+		validator:                  validator.New(),
+	}
+	ctx, recorder := newDraftWorkflowManagementContext(http.MethodGet, "/agents/agent-1/workflows/draft", "agent-1", "account-1", "org-1", "")
+
+	handler.GetDraftWorkflow(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !permissionChecker.checked {
+		t.Fatalf("expected workspace permission check")
+	}
+	if permissionChecker.lastWorkspaceID != "agent-workspace" {
+		t.Fatalf("workspace checked = %q, want agent-workspace", permissionChecker.lastWorkspaceID)
+	}
+	if got, want := permissionChecker.lastPermissions, workflowDraftReadPermissionCodes(); !sameWorkspacePermissions(got, want) {
+		t.Fatalf("permissions = %v, want %v", got, want)
+	}
+	if !service.getDraftCalled {
+		t.Fatalf("GetDraftWorkflow should be called when one editor reachability permission is allowed")
+	}
+}
+
 func TestPublishedRuntimeHandlersUseAPIKeyScopeInsteadOfWorkspaceMembership(t *testing.T) {
 	tests := []struct {
 		name string
@@ -293,4 +327,16 @@ func (s *workflowDraftPermissionService) RunAdvancedChatWorkflow(context.Context
 func (s *workflowDraftPermissionService) PublishWorkflow(context.Context, string, string, interface{}, string) (interface{}, error) {
 	s.publishCalled = true
 	return map[string]interface{}{}, nil
+}
+
+func sameWorkspacePermissions(left, right []workspace_model.WorkspacePermissionCode) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
