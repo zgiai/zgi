@@ -376,6 +376,38 @@ func TestAgentsHandlerCreateRequiresCreateBeforeBindingBusinessFields(t *testing
 	require.False(t, service.createAgentCalled)
 }
 
+func TestAgentsHandlerCreateWorkflowRequiresWorkflowCreateBeforeBindingBusinessFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	service := &stubWebAppStatusHandlerService{}
+	organizationService := &createAgentPermissionOrganizationService{allowed: false}
+	handler := NewAgentsHandler(service, nil, nil, organizationService, nil)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("account_id", "99999999-9999-9999-9999-999999999999")
+		util.SetOrganizationID(c, "88888888-8888-8888-8888-888888888888")
+		c.Next()
+	})
+	router.POST("/agents", handler.CreateAgent)
+
+	req := httptest.NewRequest(http.MethodPost, "/agents", bytes.NewBufferString(`{"workspace_id":"22222222-2222-2222-2222-222222222222","agent_type":"WORKFLOW"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, "403001", body["code"])
+	require.Equal(t, 1, organizationService.checkCalls)
+	require.Equal(t, "88888888-8888-8888-8888-888888888888", organizationService.organizationID)
+	require.Equal(t, "22222222-2222-2222-2222-222222222222", organizationService.workspaceID)
+	require.Equal(t, "99999999-9999-9999-9999-999999999999", organizationService.accountID)
+	require.Equal(t, workspace_model.WorkspacePermissionWorkflowCreate, organizationService.permission)
+	require.False(t, service.createAgentCalled)
+}
+
 func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 	public := publicAgentWebAppConfig(&dto.AgentWebAppRuntimeConfigResponse{
 		AgentID:     "agent-1",

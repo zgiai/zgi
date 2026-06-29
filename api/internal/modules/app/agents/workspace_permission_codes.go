@@ -74,6 +74,18 @@ func agentManageGatePermissionCodes(agentType string) []model.WorkspacePermissio
 	}
 }
 
+func agentCreatePermissionCodes(agentType string) []model.WorkspacePermissionCode {
+	if isWorkflowRuntimePermissionType(agentType) {
+		return []model.WorkspacePermissionCode{
+			model.WorkspacePermissionWorkflowCreate,
+		}
+	}
+
+	return []model.WorkspacePermissionCode{
+		model.WorkspacePermissionAgentCreate,
+	}
+}
+
 func agentUpdatePermissionCodes(agentType string) []model.WorkspacePermissionCode {
 	if isWorkflowRuntimePermissionType(agentType) {
 		return []model.WorkspacePermissionCode{
@@ -95,6 +107,18 @@ func agentDeletePermissionCodes(agentType string) []model.WorkspacePermissionCod
 
 	return []model.WorkspacePermissionCode{
 		model.WorkspacePermissionAgentDelete,
+	}
+}
+
+func agentMovePermissionCodes(agentType string) []model.WorkspacePermissionCode {
+	if isWorkflowRuntimePermissionType(agentType) {
+		return []model.WorkspacePermissionCode{
+			model.WorkspacePermissionWorkflowMove,
+		}
+	}
+
+	return []model.WorkspacePermissionCode{
+		model.WorkspacePermissionAgentMove,
 	}
 }
 

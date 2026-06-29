@@ -153,7 +153,11 @@ func (s *agentsService) checkWorkspaceAnyPermission(ctx context.Context, workspa
 }
 
 func (s *agentsService) ensureWorkspacePermission(ctx context.Context, workspaceID, accountID string, permission model.WorkspacePermissionCode) error {
-	checked, allowed, err := s.checkWorkspacePermission(ctx, workspaceID, accountID, permission)
+	return s.ensureWorkspaceAnyPermission(ctx, workspaceID, accountID, permission)
+}
+
+func (s *agentsService) ensureWorkspaceAnyPermission(ctx context.Context, workspaceID, accountID string, permissions ...model.WorkspacePermissionCode) error {
+	checked, allowed, err := s.checkWorkspaceAnyPermission(ctx, workspaceID, accountID, permissions...)
 	if err != nil {
 		return fmt.Errorf("failed to verify permissions")
 	}

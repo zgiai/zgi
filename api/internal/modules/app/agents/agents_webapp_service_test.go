@@ -54,6 +54,59 @@ func TestAgentsService_UpdateWebAppStatus_AllowsManagerEditor(t *testing.T) {
 	require.Equal(t, accountID, repo.lastUpdatedBy)
 }
 
+func TestAgentsService_CreateWorkflowRequiresWorkflowCreatePermission(t *testing.T) {
+	ctx := webAppStatusTestContext()
+	orgService := &stubWebAppStatusOrganizationService{
+		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
+			workspace_model.WorkspacePermissionAgentCreate: true,
+		},
+	}
+	service := &agentsService{enterpriseService: orgService}
+
+	_, err := service.CreateAgent(ctx, "22222222-2222-2222-2222-222222222222", dto.CreateAgentRequest{
+		Name:      "Workflow",
+		AgentType: "WORKFLOW",
+	}, "99999999-9999-9999-9999-999999999999")
+
+	require.EqualError(t, err, "permission denied")
+	require.True(t, orgService.checkCalled)
+	require.Equal(t, []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionWorkflowCreate,
+	}, orgService.lastPermissions)
+}
+
+func TestAgentsService_UpdateWorkflowTenantRequiresMovePermission(t *testing.T) {
+	ctx := webAppStatusTestContext()
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	orgService := &stubWebAppStatusOrganizationService{
+		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
+			workspace_model.WorkspacePermissionWorkflowUpdate: true,
+		},
+	}
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:         agentID,
+			TenantID:   uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+			AgentsType: "WORKFLOW",
+		},
+	}
+	service := &agentsService{
+		agentsRepo:        repo,
+		enterpriseService: orgService,
+	}
+
+	_, err := service.UpdateAgent(ctx, agentID.String(), map[string]interface{}{
+		"tenant_id": "33333333-3333-3333-3333-333333333333",
+	})
+
+	require.EqualError(t, err, "permission denied")
+	require.True(t, orgService.checkCalled)
+	require.Equal(t, []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionWorkflowMove,
+	}, orgService.lastPermissions)
+	require.False(t, repo.updateAgentCalled)
+}
+
 func TestAgentsService_UpdateWebAppStatus_RejectsInvalidInputs(t *testing.T) {
 	service := &agentsService{}
 

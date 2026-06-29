@@ -258,13 +258,20 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 	}
 
 	precheckedWorkspaceID := ""
-	if targetWorkspaceID, ok := h.peekCreateAgentWorkspaceID(c); ok && targetWorkspaceID != "" && h.organizationService != nil {
+	precheckedPermission := workspace_model.WorkspacePermissionCode("")
+	if targetWorkspaceID, agentType, ok := h.peekCreateAgentWorkspaceScope(c); ok && targetWorkspaceID != "" && h.organizationService != nil {
+		createPermissions := agentCreatePermissionCodes(agentType)
+		if len(createPermissions) == 0 {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+		precheckedPermission = createPermissions[0]
 		hasPermission, err := h.organizationService.CheckWorkspacePermission(
 			c.Request.Context(),
 			callerOrganizationID,
 			targetWorkspaceID,
 			accountID,
-			workspace_model.WorkspacePermissionAgentCreate,
+			precheckedPermission,
 		)
 		if err != nil {
 			logger.Error("Failed to check create agent workspace permission", err)
@@ -294,13 +301,20 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 		return
 	}
 
-	if h.organizationService != nil && precheckedWorkspaceID != targetWorkspaceID {
+	createPermissions := agentCreatePermissionCodes(req.AgentType)
+	if len(createPermissions) == 0 {
+		response.Fail(c, response.ErrPermissionDenied)
+		return
+	}
+	createPermission := createPermissions[0]
+
+	if h.organizationService != nil && (precheckedWorkspaceID != targetWorkspaceID || precheckedPermission != createPermission) {
 		hasPermission, err := h.organizationService.CheckWorkspacePermission(
 			c.Request.Context(),
 			callerOrganizationID,
 			targetWorkspaceID,
 			accountID,
-			workspace_model.WorkspacePermissionAgentCreate,
+			createPermission,
 		)
 		if err != nil {
 			logger.Error("Failed to check create agent workspace permission", err)
@@ -330,23 +344,24 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 	response.Success(c, result)
 }
 
-func (h *AgentsHandler) peekCreateAgentWorkspaceID(c *gin.Context) (string, bool) {
+func (h *AgentsHandler) peekCreateAgentWorkspaceScope(c *gin.Context) (string, string, bool) {
 	if c == nil || c.Request == nil || c.Request.Body == nil {
-		return "", false
+		return "", "", false
 	}
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.Request.Body = io.NopCloser(bytes.NewReader(nil))
-		return "", false
+		return "", "", false
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	var req struct {
 		WorkspaceID string `json:"workspace_id"`
+		AgentType   string `json:"agent_type"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
-		return "", false
+		return "", "", false
 	}
-	return strings.TrimSpace(req.WorkspaceID), true
+	return strings.TrimSpace(req.WorkspaceID), strings.TrimSpace(req.AgentType), true
 }
 
 func (h *AgentsHandler) GetAgent(c *gin.Context) {
@@ -1191,26 +1206,6 @@ func (h *AgentsHandler) UpdateAgent(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
-	}
-
-	// Optional: cross-tenant update permission check when tenant_id provided
-	if v, ok := req["tenant_id"].(string); ok && v != "" {
-		hasPermission, err := h.organizationService.CheckWorkspacePermission(
-			c.Request.Context(),
-			callerOrganizationID,
-			v,
-			accountID,
-			workspace_model.WorkspacePermissionAgentUpdate,
-		)
-		if err != nil {
-			logger.Error("Failed to check workspace permission for update", err)
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	result, err := h.appService.UpdateAgent(ctx, agentID, req)

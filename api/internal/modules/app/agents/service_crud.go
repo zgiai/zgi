@@ -10,7 +10,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
-	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -85,7 +84,11 @@ func (s *agentsService) CreateAgent(ctx context.Context, tenantID string, req in
 		return nil, fmt.Errorf("name and agentType are required")
 	}
 
-	if err := s.ensureWorkspacePermission(ctx, tenantID, accountID, model.WorkspacePermissionAgentCreate); err != nil {
+	createPermissions := agentCreatePermissionCodes(agentType)
+	if len(createPermissions) == 0 {
+		return nil, fmt.Errorf("permission denied")
+	}
+	if err := s.ensureWorkspaceAnyPermission(ctx, tenantID, accountID, createPermissions...); err != nil {
 		return nil, err
 	}
 
@@ -639,6 +642,23 @@ func (s *agentsService) UpdateAgent(ctx context.Context, agentID string, req int
 		}
 	default:
 		// Allow empty update
+	}
+
+	targetWorkspaceID := ""
+	if workspaceIDPtr != nil {
+		targetWorkspaceID = strings.TrimSpace(*workspaceIDPtr)
+	}
+	if targetWorkspaceID != "" && !strings.EqualFold(targetWorkspaceID, ag.TenantID.String()) {
+		movePermissions := agentMovePermissionCodes(ag.AgentsType)
+		if len(movePermissions) == 0 {
+			return nil, fmt.Errorf("permission denied")
+		}
+		if err := s.ensureWorkspaceAnyPermission(ctx, ag.TenantID.String(), accountID, movePermissions...); err != nil {
+			return nil, err
+		}
+		if err := s.ensureWorkspaceAnyPermission(ctx, targetWorkspaceID, accountID, movePermissions...); err != nil {
+			return nil, err
+		}
 	}
 
 	// Apply name change with duplicate check (within target tenant)
