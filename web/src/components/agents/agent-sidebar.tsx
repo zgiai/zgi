@@ -124,8 +124,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
         canManageRuntimeAccess,
         canViewRuntimeLogs,
         canViewBatchTest:
-          isWorkflowRuntime &&
-          (canViewWorkflowTestLibrary || canViewWorkflowTestBatches || canRunWorkflowBatchTest),
+          isWorkflowRuntime && (canViewWorkflowTestLibrary || canViewWorkflowTestBatches),
         canRunBatchTest: isWorkflowRuntime && canRunWorkflowBatchTest,
       }),
     [

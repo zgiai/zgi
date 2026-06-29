@@ -398,6 +398,63 @@ const agentLogsPagePath = path.join(
   'logs',
   'page.tsx'
 );
+const agentBatchTestPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'batch-test',
+  'page.tsx'
+);
+const agentBatchTestBatchesPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'batch-test',
+  'batches',
+  'page.tsx'
+);
+const agentBatchTestNewBatchPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'batch-test',
+  'batches',
+  'new',
+  'page.tsx'
+);
+const agentBatchTestBatchPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'batch-test',
+  '[batchId]',
+  'page.tsx'
+);
+const agentBatchTestBatchItemPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'batch-test',
+  '[batchId]',
+  'items',
+  '[itemId]',
+  'page.tsx'
+);
 const workflowEditorPagePath = path.join(
   rootDir,
   'src',
@@ -1725,6 +1782,20 @@ const createFromTemplateHookSource = fs.readFileSync(createFromTemplateHookPath,
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
 const workflowEditorPageSource = fs.readFileSync(workflowEditorPagePath, 'utf8');
+const agentBatchTestPageSource = fs.readFileSync(agentBatchTestPagePath, 'utf8');
+const agentBatchTestBatchesPageSource = fs.readFileSync(
+  agentBatchTestBatchesPagePath,
+  'utf8'
+);
+const agentBatchTestNewBatchPageSource = fs.readFileSync(
+  agentBatchTestNewBatchPagePath,
+  'utf8'
+);
+const agentBatchTestBatchPageSource = fs.readFileSync(agentBatchTestBatchPagePath, 'utf8');
+const agentBatchTestBatchItemPageSource = fs.readFileSync(
+  agentBatchTestBatchItemPagePath,
+  'utf8'
+);
 assert.match(
   accountServiceSource,
   /export type RuntimeResourceList = 'app_center' \| 'built_in_workflows';/,
@@ -2536,6 +2607,16 @@ assert.match(
   'workflow root should keep create/import users able to open the detail page'
 );
 assert.match(
+  agentEntryPageSource,
+  /canViewBatchTest:\s*isWorkflowRuntime && \(canViewWorkflowTestLibrary \|\| canViewWorkflowLogs\)/,
+  'workflow root should expose batch-test child pages only through workflow.view or workflow.logs.view'
+);
+assert.doesNotMatch(
+  agentEntryPageSource,
+  /canViewBatchTest:\s*isWorkflowRuntime && \(canViewWorkflowTestLibrary \|\| canViewWorkflowLogs \|\| canRunWorkflowBatchTest\)/,
+  'workflow root should not treat workflow.debug as batch-test page visibility'
+);
+assert.match(
   workflowEditorPageSource,
   /const canOpenWorkflowEditor[\s\S]*canCreateWorkflow[\s\S]*canImportWorkflow[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
   'workflow editor direct page should require an editor-related workflow permission'
@@ -2592,6 +2673,16 @@ assert.match(
 );
 assert.match(
   agentSidebarSource,
+  /canViewBatchTest:\s*isWorkflowRuntime && \(canViewWorkflowTestLibrary \|\| canViewWorkflowTestBatches\)/,
+  'agent sidebar should expose batch-test child pages only through workflow.view or workflow.logs.view'
+);
+assert.doesNotMatch(
+  agentSidebarSource,
+  /canViewBatchTest:\s*isWorkflowRuntime && \(canViewWorkflowTestLibrary \|\| canViewWorkflowTestBatches \|\| canRunWorkflowBatchTest\)/,
+  'agent sidebar should not treat workflow.debug as batch-test page visibility'
+);
+assert.match(
+  agentSidebarSource,
   /if\s*\(canViewWorkflowTestLibrary\)[\s\S]*subnav\.caseLibrary/,
   'agent sidebar should show the case-library batch-test child only with workflow.view'
 );
@@ -2631,6 +2722,11 @@ assert.match(
   'agent API page should delegate workflow API-key visibility through the shared route helper'
 );
 assert.match(
+  agentApiPageSource,
+  /useAgent\(agentId,\s*canManageRuntimeAccess\)/,
+  'agent API direct page should not fetch agent metadata before workflow runtime-access permission is present'
+);
+assert.match(
   agentLogsPageSource,
   /hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.logsView\)/,
   'agent logs page should use agent.logs.view for AGENT runtime logs'
@@ -2639,6 +2735,11 @@ assert.match(
   agentLogsPageSource,
   /hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.logsView\)/,
   'agent logs page should use workflow.logs.view for workflow runtime logs'
+);
+assert.match(
+  agentLogsPageSource,
+  /const canOpenRuntimeLogs\s*=\s*canViewAgentRuntimeLogs \|\| canViewWorkflowRuntimeLogs[\s\S]*useAgent\(agentId,\s*canOpenRuntimeLogs\)/,
+  'agent logs direct page should not fetch agent metadata before an AGENT or workflow logs permission is present'
 );
 assert.match(
   agentLogsPageSource,
@@ -2669,6 +2770,31 @@ assert.match(
   agentLogsPageSource,
   /useAgentRuntimeRunDetail\([\s\S]*agentId:\s*canQueryAgentRuntimeLogs\s*\?\s*agentId\s*:\s*null[\s\S]*enabled:\s*Boolean\(canQueryAgentRuntimeLogs && isDetailOpen && effectiveRunId\)/,
   'agent logs page should gate AGENT runtime log detail requests with agent.logs.view'
+);
+assert.match(
+  agentBatchTestPageSource,
+  /const canOpenBatchTestOverview\s*=\s*canViewBatchTestLibrary[\s\S]*useAgent\(agentId,\s*canOpenBatchTestOverview\)/,
+  'workflow batch-test overview direct page should fetch agent metadata only with workflow.view'
+);
+assert.match(
+  agentBatchTestBatchesPageSource,
+  /const canOpenBatchResults\s*=\s*canViewBatchTestLogs[\s\S]*useAgent\(agentId,\s*canOpenBatchResults\)/,
+  'workflow batch-test batches direct page should fetch agent metadata only with workflow.logs.view'
+);
+assert.match(
+  agentBatchTestNewBatchPageSource,
+  /const canCreateAndRunBatch\s*=\s*canViewBatchTestLibrary && canViewBatchTestLogs && canUpdateBatchTest && canDebugBatchTest[\s\S]*useAgent\(agentId,\s*canCreateAndRunBatch\)/,
+  'workflow batch-test new-batch direct page should require the full create-and-run permission set before fetching metadata'
+);
+assert.match(
+  agentBatchTestBatchPageSource,
+  /const canOpenBatchResult\s*=\s*canViewBatchTestLogs[\s\S]*useAgent\(agentId,\s*canOpenBatchResult\)/,
+  'workflow batch-test result direct page should fetch agent metadata only with workflow.logs.view'
+);
+assert.match(
+  agentBatchTestBatchItemPageSource,
+  /const canOpenBatchResult\s*=\s*canViewBatchTestLogs[\s\S]*useAgent\(agentId,\s*canOpenBatchResult\)/,
+  'workflow batch-test result item direct page should fetch agent metadata only with workflow.logs.view'
 );
 assert.match(
   workflowEditorSource,
@@ -3061,12 +3187,12 @@ assert.equal(
 assert.equal(
   canShowAgentBatchTest('WORKFLOW', { canView: true, canViewBatchTest: false, canRunBatchTest: true }),
   false,
-  'Explicit batch-test visibility should not be widened by execution permission fallback'
+  'Batch-test page visibility should not be widened by execution permission'
 );
 assert.equal(
   canShowAgentBatchTest('WORKFLOW', { canView: true, canRunBatchTest: true }),
-  true,
-  'Workflow batch-test area should remain visible when only execution permission is supplied'
+  false,
+  'Workflow batch-test area should not be visible with only execution permission'
 );
 const logsOnlyWorkflowRouteAccess = getAgentDetailRouteAccess('agent-1', 'WORKFLOW', {
   canView: true,
@@ -3120,7 +3246,16 @@ assert.equal(
     preferBatchTestLibrary: false,
   }),
   '/console/agents/agent-1/batch-test/batches',
-  'Workflow root should fall back to batch results for logs/debug-only batch-test access'
+  'Workflow root should fall back to batch results for logs-only batch-test access'
+);
+assert.equal(
+  getAgentDetailDefaultHref('agent-1', 'WORKFLOW', {
+    canView: true,
+    canOpenEditor: false,
+    canRunBatchTest: true,
+  }),
+  null,
+  'Workflow root should not route execution-only users into batch-test read pages'
 );
 assert.equal(
   getAgentDetailDefaultHref('agent-1', 'WORKFLOW', {

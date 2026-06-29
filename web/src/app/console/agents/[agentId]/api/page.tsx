@@ -18,9 +18,9 @@ export default function AgentApiPage() {
   const t = useT();
   const tWebapp = useT('webapp');
 
-  const { agent, isLoading, error } = useAgent(agentId);
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canManageRuntimeAccess = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage);
+  const { agent, isLoading, error } = useAgent(agentId, canManageRuntimeAccess);
   const agentType = (agent?.data?.agent_type as AgentType | undefined) ?? undefined;
   const canShowApiTabs = canShowAgentApiKeys(agentType, {
     canView: true,
@@ -28,10 +28,26 @@ export default function AgentApiPage() {
   });
   const supportsApiTabs = supportsWorkflowDetailPages(agentType);
 
-  if (isLoading || isPermissionsLoading) {
+  if (isPermissionsLoading || (canManageRuntimeAccess && isLoading)) {
     return (
       <div className="flex h-full w-full items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!canManageRuntimeAccess) {
+    return (
+      <div className="flex h-full w-full items-center justify-center p-6">
+        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+            <AlertCircle className="size-5 text-muted-foreground" />
+          </div>
+          <div className="text-lg font-semibold">{t('common.accessDenied')}</div>
+          <div className="mt-2 text-sm text-muted-foreground">
+            {t('common.unauthorizedDescription')}
+          </div>
+        </div>
       </div>
     );
   }
@@ -52,32 +68,20 @@ export default function AgentApiPage() {
     );
   }
 
-  if (!supportsApiTabs) {
+  if (!supportsApiTabs || !canShowApiTabs) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
           <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
             <AlertCircle className="size-5 text-muted-foreground" />
           </div>
-          <div className="text-lg font-semibold">{tWebapp('appCenter.appUnavailableTitle')}</div>
-          <div className="mt-2 text-sm text-muted-foreground">
-            {tWebapp('appCenter.appUnavailableDescription')}
+          <div className="text-lg font-semibold">
+            {supportsApiTabs ? t('common.accessDenied') : tWebapp('appCenter.appUnavailableTitle')}
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!canShowApiTabs) {
-    return (
-      <div className="flex h-full w-full items-center justify-center p-6">
-        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
-          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
-            <AlertCircle className="size-5 text-muted-foreground" />
-          </div>
-          <div className="text-lg font-semibold">{t('common.accessDenied')}</div>
           <div className="mt-2 text-sm text-muted-foreground">
-            {t('common.unauthorizedDescription')}
+            {supportsApiTabs
+              ? t('common.unauthorizedDescription')
+              : tWebapp('appCenter.appUnavailableDescription')}
           </div>
         </div>
       </div>

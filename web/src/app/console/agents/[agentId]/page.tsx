@@ -75,8 +75,7 @@ export default function AgentEntryPage({ params }: AgentEntryPageProps) {
         canManageRuntimeAccess: isWorkflowRuntime && canManageWorkflowRuntimeAccess,
         canViewRuntimeLogs: isAgentRuntime ? canViewAgentLogs : canViewWorkflowLogs,
         canViewBatchTest:
-          isWorkflowRuntime &&
-          (canViewWorkflowTestLibrary || canViewWorkflowLogs || canRunWorkflowBatchTest),
+          isWorkflowRuntime && (canViewWorkflowTestLibrary || canViewWorkflowLogs),
         canRunBatchTest: isWorkflowRuntime && canRunWorkflowBatchTest,
         isPublished: agent.data.is_published,
         preferBatchTestLibrary: canViewWorkflowTestLibrary,
