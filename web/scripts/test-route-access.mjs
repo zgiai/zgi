@@ -278,6 +278,14 @@ const templateGalleryDialogPath = path.join(
   'templates',
   'template-gallery-dialog.tsx'
 );
+const createFromTemplateHookPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'agents',
+  'templates',
+  'use-create-from-template.ts'
+);
 const agentSidebarPath = path.join(rootDir, 'src', 'components', 'agents', 'agent-sidebar.tsx');
 const agentApiPagePath = path.join(
   rootDir,
@@ -1195,6 +1203,7 @@ const datasetHooksSource = fs.readFileSync(datasetHooksPath, 'utf8');
 const datasetHitResultItemSource = fs.readFileSync(datasetHitResultItemPath, 'utf8');
 const datasetDetailRootPageSource = fs.readFileSync(datasetDetailRootPagePath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
+const createFromTemplateHookSource = fs.readFileSync(createFromTemplateHookPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
 assert.match(
@@ -1693,6 +1702,26 @@ assert.match(
   'create dialog should validate the selected runtime type before submitting'
 );
 assert.match(
+  createAgentDialogSource,
+  /router\.push\(`\/console\/agents\/\$\{newId\}`\)/,
+  'create dialog should route new agents through the permission-aware detail root'
+);
+assert.doesNotMatch(
+  createAgentDialogSource,
+  /\/console\/agents\/\$\{newId\}\/(?:agent|workflow)/,
+  'create dialog should not bypass permission-aware child routing after creation'
+);
+assert.match(
+  createFromTemplateHookSource,
+  /router\.push\(`\/console\/agents\/\$\{agentId\}`\)/,
+  'template-created workflows should route through the permission-aware detail root'
+);
+assert.doesNotMatch(
+  createFromTemplateHookSource,
+  /\/console\/agents\/\$\{agentId\}\/workflow/,
+  'template-created workflows should not bypass permission-aware child routing'
+);
+assert.match(
   agentCardSource,
   /const agentHref = `\/console\/agents\/\$\{agent\.id\}`/,
   'agent cards should link to the permission-aware detail root instead of directly opening the editor'
@@ -1814,13 +1843,23 @@ assert.match(
 );
 assert.match(
   agentEntryPageSource,
-  /canOpenAgentRuntimeEditor[\s\S]*AGENT_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*AGENT_PERMISSION_ACTIONS\.publish[\s\S]*AGENT_PERMISSION_ACTIONS\.runtimeAccessManage/,
-  'agent runtime root should use runtime config, publish, or access-management permission for the runtime editor'
+  /const canCreateAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.create\)[\s\S]*const canImportAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.import\)[\s\S]*const canUpdateAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.update\)/,
+  'agent runtime root should derive create/import/update detail-entry permissions explicitly'
 );
 assert.match(
   agentEntryPageSource,
-  /canOpenWorkflowEditor[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
-  'workflow root should only choose the editor when a workflow editor action is actually available'
+  /canOpenAgentRuntimeEditor[\s\S]*canCreateAgent[\s\S]*canImportAgent[\s\S]*canUpdateAgent[\s\S]*AGENT_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*AGENT_PERMISSION_ACTIONS\.publish[\s\S]*AGENT_PERMISSION_ACTIONS\.runtimeAccessManage/,
+  'agent runtime root should keep create/import/update users able to open the detail page'
+);
+assert.match(
+  agentEntryPageSource,
+  /const canCreateWorkflow\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.create\)[\s\S]*const canImportWorkflow\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.import\)/,
+  'workflow root should derive create/import detail-entry permissions explicitly'
+);
+assert.match(
+  agentEntryPageSource,
+  /canOpenWorkflowEditor[\s\S]*canCreateWorkflow[\s\S]*canImportWorkflow[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
+  'workflow root should keep create/import users able to open the detail page'
 );
 assert.match(
   agentSidebarSource,
@@ -1829,8 +1868,8 @@ assert.match(
 );
 assert.match(
   agentSidebarSource,
-  /canConfigureAgentRuntime \|\| canPublishAgent \|\| canManageAgentRuntimeAccess/,
-  'agent sidebar should gate the AGENT runtime editor by runtime config, publish, or access-management permission'
+  /canCreateAgent[\s\S]*canImportAgent[\s\S]*canUpdateAgent[\s\S]*canConfigureAgentRuntime[\s\S]*canPublishAgent[\s\S]*canManageAgentRuntimeAccess/,
+  'agent sidebar should keep create/import/update users able to open the detail page'
 );
 assert.match(
   agentSidebarSource,

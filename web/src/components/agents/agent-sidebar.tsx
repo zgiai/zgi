@@ -46,13 +46,18 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
   const t = useT();
   const { hasAnyPermission } = useAccountPermissions();
   const canView = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
+  const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
+  const canImportAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.import);
   const canUpdateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.update);
   const canConfigureAgentRuntime = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage);
   const canPublishAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.publish);
+  const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
+  const canImportWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
   const canUpdateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update);
   const canRunWorkflowDraft = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
   const canStopWorkflowRun = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop);
   const canDebugWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
+  const canPublishWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish);
   const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
   const canManageWorkflowRuntimeAccess = hasAnyPermission(
     WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
@@ -80,12 +85,20 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       ? canUpdateWorkflow
       : false;
   const canEditRuntime = isAgentRuntime
-    ? canConfigureAgentRuntime || canPublishAgent || canManageAgentRuntimeAccess
+    ? canCreateAgent ||
+      canImportAgent ||
+      canUpdateAgent ||
+      canConfigureAgentRuntime ||
+      canPublishAgent ||
+      canManageAgentRuntimeAccess
     : isWorkflowRuntime
-      ? canUpdateWorkflow ||
+      ? canCreateWorkflow ||
+        canImportWorkflow ||
+        canUpdateWorkflow ||
         canRunWorkflowDraft ||
         canStopWorkflowRun ||
         canDebugWorkflow ||
+        canPublishWorkflow ||
         canManageWorkflowRuntimeAccess
       : false;
   const canManageRuntimeAccess = isAgentRuntime

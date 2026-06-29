@@ -109,7 +109,7 @@ export function useCreateAgentFromTemplate() {
       const file = new File([hydratedYaml], `${template.id}.yml`, { type: 'application/x-yaml' });
       const response = await importWorkflow({ file, workspaceId });
       const agentId = response.data.agent_id;
-      router.push(`/console/agents/${agentId}/workflow`);
+      router.push(`/console/agents/${agentId}`);
       return response.data;
     },
     [importWorkflow, locale, router, t]

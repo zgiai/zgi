@@ -183,11 +183,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       onSuccess: (res: ApiResponseData<AgentCreateResponse>) => {
         const newId = res.data?.id;
         if (newId) {
-          router.push(
-            data.agent_type === AgentType.AGENT
-              ? `/console/agents/${newId}/agent`
-              : `/console/agents/${newId}/workflow`
-          );
+          router.push(`/console/agents/${newId}`);
         }
         resetFormState();
         onOpenChange(false);

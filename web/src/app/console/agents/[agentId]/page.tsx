@@ -31,17 +31,28 @@ export default function AgentEntryPage({ params }: AgentEntryPageProps) {
   const agentType = agent?.data?.agent_type;
   const isAgentRuntime = isAgentRuntimeType(agentType);
   const isWorkflowRuntime = isWorkflowRuntimeType(agentType);
+  const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
+  const canImportAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.import);
+  const canUpdateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.update);
   const canOpenAgentRuntimeEditor =
     isAgentRuntime &&
-    (hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage) ||
+    (canCreateAgent ||
+      canImportAgent ||
+      canUpdateAgent ||
+      hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage) ||
       hasAnyPermission(AGENT_PERMISSION_ACTIONS.publish) ||
       hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage));
+  const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
+  const canImportWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
   const canOpenWorkflowEditor =
     isWorkflowRuntime &&
-    (hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update) ||
+    (canCreateWorkflow ||
+      canImportWorkflow ||
+      hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update) ||
       hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft) ||
       hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop) ||
       hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug) ||
+      hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish) ||
       hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage));
   const canViewAgentLogs = hasAnyPermission(AGENT_PERMISSION_ACTIONS.logsView);
   const canManageWorkflowRuntimeAccess = hasAnyPermission(
