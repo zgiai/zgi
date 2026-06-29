@@ -79,6 +79,41 @@ func TestAuthorizeFileViewAccessAllowsWorkspaceDownloadPermission(t *testing.T) 
 	}
 }
 
+func TestAuthorizeFileViewAccessRejectsWorkspaceUploadOnlyPermission(t *testing.T) {
+	c, recorder := newFileAccessTestContext("account-1", "org-1")
+	workspaceID := "workspace-1"
+	fileService := &fileAccessFileService{
+		files: map[string]*dto.UploadFile{
+			"file-1": {
+				ID:             "file-1",
+				OrganizationID: "org-1",
+				WorkspaceID:    &workspaceID,
+				CreatedBy:      "account-2",
+			},
+		},
+	}
+	permissionChecker := &fileAccessPermissionChecker{
+		allowed: map[workspace_model.WorkspacePermissionCode]bool{
+			workspace_model.WorkspacePermissionFileUpload: true,
+		},
+	}
+
+	_, ok := authorizeFileViewAccess(c, fileService, permissionChecker, "file-1")
+
+	if ok {
+		t.Fatalf("authorizeFileViewAccess ok = true, want false")
+	}
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	if containsWorkspacePermission(permissionChecker.lastPermissions, workspace_model.WorkspacePermissionFileUpload) {
+		t.Fatalf("permissions = %#v should not treat upload as file view access", permissionChecker.lastPermissions)
+	}
+	if !containsWorkspacePermission(fileBrowsePermissionCodes(), workspace_model.WorkspacePermissionFileUpload) {
+		t.Fatalf("fileBrowsePermissionCodes should retain file.upload for file page entry browsing")
+	}
+}
+
 func TestAuthorizeFileManageAccessRejectsWorkspaceFileWithoutManagePermission(t *testing.T) {
 	c, recorder := newFileAccessTestContext("account-1", "org-1")
 	workspaceID := "workspace-1"

@@ -83,7 +83,7 @@ func (h *FileResourceHandler) GetFolders(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		fileReadablePermissionCodes()...,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -444,7 +444,7 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		fileReadablePermissionCodes()...,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -834,7 +834,7 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		fileReadablePermissionCodes()...,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -1029,7 +1029,7 @@ func (h *FileResourceHandler) ListRecentFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		fileReadablePermissionCodes()...,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -1193,7 +1193,7 @@ func (h *FileResourceHandler) ListFavoriteFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		fileReadablePermissionCodes()...,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -1443,7 +1443,7 @@ func (h *FileResourceHandler) GetFileStatistics(c *gin.Context) {
 		organizationID,
 		accountID,
 		"",
-		fileReadablePermissionCodes()...,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)

@@ -70,6 +70,7 @@ const fileDetailShellPath = path.join(
   'detail',
   'file-detail-shell.tsx'
 );
+const fileListPath = path.join(rootDir, 'src', 'components', 'files', 'file-list.tsx');
 const defaultCustomerPath = path.join(rootDir, 'src', 'customer', 'default.tsx');
 const accountServicePath = path.join(rootDir, 'src', 'services', 'account.service.ts');
 const webAppServicePath = path.join(rootDir, 'src', 'services', 'webapp.service.ts');
@@ -561,6 +562,7 @@ const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
+const fileListSource = fs.readFileSync(fileListPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 assert.match(
@@ -713,6 +715,11 @@ assert.match(
   /FILE_PERMISSION_ACTIONS\.metadataView[\s\S]*FILE_PERMISSION_ACTIONS\.preview[\s\S]*FILE_PERMISSION_ACTIONS\.download/,
   'file detail access should be based on readable file action permissions'
 );
+assert.doesNotMatch(
+  fileDetailShellSource.match(/const canOpenFileDetail[\s\S]*?\n\s*\]\);/)?.[0] ?? '',
+  /FILE_PERMISSION_ACTIONS\.upload/,
+  'file detail access should not treat upload-only permission as existing-file view access'
+);
 assert.match(
   fileDetailShellSource,
   /const canUpdateFile\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.update\)/,
@@ -722,6 +729,21 @@ assert.doesNotMatch(
   fileDetailShellSource,
   /['"]file\.(?:view|manage|upload_create|move_create)['"]/,
   'file detail should not consume legacy aggregate file permission codes'
+);
+assert.match(
+  fileListSource,
+  /const canOpenFileDetailByPermission\s*=\s*hasAnyPermission\(\[[\s\S]*FILE_PERMISSION_ACTIONS\.metadataView[\s\S]*FILE_PERMISSION_ACTIONS\.download[\s\S]*FILE_PERMISSION_ACTIONS\.update/,
+  'file list detail entry should use existing-file readable/action permissions'
+);
+assert.doesNotMatch(
+  fileListSource.match(/const canOpenFileDetailByPermission[\s\S]*?\n\s*\]\);/)?.[0] ?? '',
+  /FILE_PERMISSION_ACTIONS\.upload/,
+  'file list detail entry should not be visible for upload-only permission'
+);
+assert.match(
+  fileListSource,
+  /const canViewDetail\s*=\s*!selectionMode && canOpenFileDetailByPermission/,
+  'file list detail link should combine mode and permission gate'
 );
 assert.match(
   consoleRecentWorkSource,

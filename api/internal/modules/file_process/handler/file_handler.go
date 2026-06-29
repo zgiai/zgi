@@ -2287,7 +2287,7 @@ func (h *FileHandler) ListFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		fileReadablePermissionCodes()...,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		h.businessError(c, response.ErrSystemError)
@@ -2349,7 +2349,7 @@ func (h *FileHandler) ListArchivedFiles(c *gin.Context) {
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		fileReadablePermissionCodes()...,
+		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
 		h.businessError(c, response.ErrSystemError)

@@ -296,5 +296,5 @@ func (h *FileFavoriteHandler) canListFavoriteFile(ctx context.Context, organizat
 		return false, nil
 	}
 
-	return hasWorkspaceFilePermission(ctx, h.enterpriseService, organizationID, accountID, workspaceID, fileViewPermissions()...)
+	return hasWorkspaceFilePermission(ctx, h.enterpriseService, organizationID, accountID, workspaceID, fileReadablePermissionCodes()...)
 }

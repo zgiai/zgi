@@ -196,7 +196,7 @@ func authorizeFileFolderAccess(c *gin.Context, folderService fileFolderPermissio
 	}
 
 	if workspaceID != "" {
-		hasPermission, err := hasWorkspaceFilePermission(c.Request.Context(), permissionChecker, organizationID, accountID, workspaceID, fileViewPermissions()...)
+		hasPermission, err := hasWorkspaceFilePermission(c.Request.Context(), permissionChecker, organizationID, accountID, workspaceID, fileBrowsePermissionCodes()...)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)
 			return nil, false
@@ -254,11 +254,22 @@ func fileFolderAllowsSharedView(folder *file_model.FileFolder) bool {
 	}
 }
 
-func fileViewPermissions() []workspace_model.WorkspacePermissionCode {
-	return fileReadablePermissionCodes()
+func fileReadablePermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionFileMetadataView,
+		workspace_model.WorkspacePermissionFilePreview,
+		workspace_model.WorkspacePermissionFileRelatedView,
+		workspace_model.WorkspacePermissionFileDownload,
+		workspace_model.WorkspacePermissionFileUpdate,
+		workspace_model.WorkspacePermissionFileDelete,
+		workspace_model.WorkspacePermissionFileMove,
+		workspace_model.WorkspacePermissionFileArchive,
+		workspace_model.WorkspacePermissionFileShareManage,
+		workspace_model.WorkspacePermissionFileFavoriteManage,
+	}
 }
 
-func fileReadablePermissionCodes() []workspace_model.WorkspacePermissionCode {
+func fileBrowsePermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
 		workspace_model.WorkspacePermissionFileMetadataView,
 		workspace_model.WorkspacePermissionFilePreview,
@@ -295,7 +306,7 @@ func hasAnyPartialWorkspaceFilePermission(ctx context.Context, folderService fil
 		return false, err
 	}
 	for _, workspaceID := range workspaceIDs {
-		hasPermission, err := hasWorkspaceFilePermission(ctx, permissionChecker, organizationID, accountID, workspaceID, fileViewPermissions()...)
+		hasPermission, err := hasWorkspaceFilePermission(ctx, permissionChecker, organizationID, accountID, workspaceID, fileBrowsePermissionCodes()...)
 		if err != nil {
 			return false, err
 		}

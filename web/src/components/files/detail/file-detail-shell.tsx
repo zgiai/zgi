@@ -689,7 +689,6 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     ...FILE_PERMISSION_ACTIONS.preview,
     ...FILE_PERMISSION_ACTIONS.relatedView,
     ...FILE_PERMISSION_ACTIONS.download,
-    ...FILE_PERMISSION_ACTIONS.upload,
     ...FILE_PERMISSION_ACTIONS.update,
     ...FILE_PERMISSION_ACTIONS.delete,
     ...FILE_PERMISSION_ACTIONS.move,

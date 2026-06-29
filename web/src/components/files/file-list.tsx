@@ -244,13 +244,25 @@ function FileListBase({
   const [reparsingFileId, setReparsingFileId] = useState<string | null>(null);
 
   // Permission checks
-  const { hasPermission, hasAnyPermission } = useAccountPermissions();
-  const canDownload = hasPermission('file.download');
-  const canPreview = hasPermission('file.preview');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canDownload = hasAnyPermission(FILE_PERMISSION_ACTIONS.download);
+  const canPreview = hasAnyPermission(FILE_PERMISSION_ACTIONS.preview);
   const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);
   const canDeleteFilePermission = hasAnyPermission(FILE_PERMISSION_ACTIONS.delete);
   const canUpload = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
-  const canViewDetail = !selectionMode;
+  const canOpenFileDetailByPermission = hasAnyPermission([
+    ...FILE_PERMISSION_ACTIONS.metadataView,
+    ...FILE_PERMISSION_ACTIONS.preview,
+    ...FILE_PERMISSION_ACTIONS.relatedView,
+    ...FILE_PERMISSION_ACTIONS.download,
+    ...FILE_PERMISSION_ACTIONS.update,
+    ...FILE_PERMISSION_ACTIONS.delete,
+    ...FILE_PERMISSION_ACTIONS.move,
+    ...FILE_PERMISSION_ACTIONS.archive,
+    ...FILE_PERMISSION_ACTIONS.shareManage,
+    ...FILE_PERMISSION_ACTIONS.favoriteManage,
+  ]);
+  const canViewDetail = !selectionMode && canOpenFileDetailByPermission;
   const canRequestProcessing = !selectionMode && (canUpdateFile || canUpload);
   const hasAnyAction =
     canViewDetail || canRequestProcessing || canDownload || canPreview || canDeleteFilePermission;
