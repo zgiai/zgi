@@ -697,7 +697,6 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   ]);
   const canDownload = hasAnyPermission(FILE_PERMISSION_ACTIONS.download);
   const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);
-  const canUploadFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
   const { downloadFile, isDownloading } = useDownloadFile();
   const [activeView, setActiveView] = useState<'preview' | 'qa'>('preview');
   const [chunkLocateTarget, setChunkLocateTarget] = useState<FileChunkLocateTarget | null>(null);
@@ -775,7 +774,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const isFullyReady = status === 'ready' && vectorStatus === 'ready';
   const showProcessingWorkbench = !isFullyReady;
   const showHeaderRefresh = !isFullyReady;
-  const canRequestProcessing = canUpdateFile || canUploadFile || canDownload;
+  const canRequestProcessing = canUpdateFile;
   const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
   const providerStatusQuery = useQuery({
     queryKey: ['content-parse', 'file-route-providers', file?.name],

@@ -204,6 +204,38 @@ func TestAuthorizeFileManageAccessRejectsOrganizationAdminWithoutWorkspacePermis
 	}
 }
 
+func TestAuthorizeFileUpdateAccessUsesExactUpdatePermission(t *testing.T) {
+	c, _ := newFileAccessTestContext("account-1", "org-1")
+	workspaceID := "workspace-1"
+	fileService := &fileAccessFileService{
+		files: map[string]*dto.UploadFile{
+			"file-1": {
+				ID:             "file-1",
+				OrganizationID: "org-1",
+				WorkspaceID:    &workspaceID,
+				CreatedBy:      "account-2",
+			},
+		},
+	}
+	permissionChecker := &fileAccessPermissionChecker{
+		allowed: map[workspace_model.WorkspacePermissionCode]bool{
+			workspace_model.WorkspacePermissionFileUpdate: true,
+		},
+	}
+
+	uploadFile, ok := authorizeFileUpdateAccess(c, fileService, permissionChecker, "file-1")
+
+	if !ok {
+		t.Fatalf("authorizeFileUpdateAccess ok = false, want true")
+	}
+	if uploadFile == nil || uploadFile.ID != "file-1" {
+		t.Fatalf("uploadFile = %#v, want file-1", uploadFile)
+	}
+	if !reflect.DeepEqual(permissionChecker.lastPermissions, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionFileUpdate}) {
+		t.Fatalf("permissions = %#v, want file.update only", permissionChecker.lastPermissions)
+	}
+}
+
 func TestAuthorizeFileActionAccessUsesFinePermissions(t *testing.T) {
 	tests := []struct {
 		name           string

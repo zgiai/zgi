@@ -263,7 +263,7 @@ function FileListBase({
     ...FILE_PERMISSION_ACTIONS.favoriteManage,
   ]);
   const canViewDetail = !selectionMode && canOpenFileDetailByPermission;
-  const canRequestProcessing = !selectionMode && (canUpdateFile || canUpload);
+  const canRequestProcessing = !selectionMode && canUpdateFile;
   const hasAnyAction =
     canViewDetail || canRequestProcessing || canDownload || canPreview || canDeleteFilePermission;
   const emptyDescription = mobileEmptyDescription

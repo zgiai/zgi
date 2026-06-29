@@ -2132,7 +2132,7 @@ func (h *FileHandler) getAuthorizedFileForView(c *gin.Context, fileID string) (*
 }
 
 func (h *FileHandler) getAuthorizedFileForManage(c *gin.Context, fileID string) (*dto.UploadFile, bool) {
-	return authorizeFileManageAccess(c, h.fileService, h.enterpriseService, fileID)
+	return authorizeFileUpdateAccess(c, h.fileService, h.enterpriseService, fileID)
 }
 
 func getUploadFileWorkspaceID(uploadFile *dto.UploadFile) string {

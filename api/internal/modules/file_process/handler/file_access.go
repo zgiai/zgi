@@ -55,6 +55,16 @@ func authorizeFileManageAccess(c *gin.Context, fileService fileMetadataReader, p
 	)
 }
 
+func authorizeFileUpdateAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFileAccess(
+		c,
+		fileService,
+		permissionChecker,
+		fileID,
+		workspace_model.WorkspacePermissionFileUpdate,
+	)
+}
+
 func authorizeFileDeleteAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileAccess(
 		c,

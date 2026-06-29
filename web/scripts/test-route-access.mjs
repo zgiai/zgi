@@ -1907,6 +1907,11 @@ assert.match(
   /const canUpdateFile\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.update\)/,
   'file detail update action should use the exact file.update permission'
 );
+assert.match(
+  fileDetailShellSource,
+  /const canRequestProcessing\s*=\s*canUpdateFile;/,
+  'file detail reparse action should use file.update as the existing-file mutation permission'
+);
 assert.doesNotMatch(
   fileDetailShellSource,
   /['"]file\.(?:view|manage|upload_create|move_create)['"]/,
@@ -1926,6 +1931,11 @@ assert.match(
   fileListSource,
   /const canViewDetail\s*=\s*!selectionMode && canOpenFileDetailByPermission/,
   'file list detail link should combine mode and permission gate'
+);
+assert.match(
+  fileListSource,
+  /const canRequestProcessing\s*=\s*!selectionMode && canUpdateFile;/,
+  'file list parse/reparse actions should use file.update as the existing-file mutation permission'
 );
 assert.match(
   fileManagementContentSource,
@@ -1973,6 +1983,11 @@ assert.doesNotMatch(
   )?.[0] ?? '',
   /authorizeWorkspaceUpload/,
   'file text creation endpoint should not require file.upload'
+);
+assert.match(
+  fileHandlerSource,
+  /func \(h \*FileHandler\) getAuthorizedFileForManage[\s\S]*authorizeFileUpdateAccess/,
+  'file processing, replacement, chunk edits, and parse confirmations should require file.update'
 );
 assert.match(
   relatedResourcesPopoverSource,
