@@ -82,6 +82,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Verification Log
 
+- 2026-06-29: `pnpm test:route-access`, `pnpm exec eslint scripts/test-route-access.mjs`, and `git diff --check` passed after adding static guardrails for database BI search, operation logs, table records, table structure, AI table creation, table import, and table prompt direct-page gates.
 - 2026-06-29: `go test ./internal/modules/datasource/handler`, `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/constants/permissions.ts src/app/console/db/[dbId]/layout.tsx src/app/console/db/[dbId]/page.tsx` passed after aligning database table metadata read permissions.
 - 2026-06-29: `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/app/console/db/page.tsx` passed after splitting database list create and edit frontend gates.
 - 2026-06-29: `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/app/console/db/page.tsx src/app/console/db/[dbId]/layout.tsx` passed after constantizing database create and operation-log frontend gates.

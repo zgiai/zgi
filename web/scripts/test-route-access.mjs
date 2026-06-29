@@ -74,6 +74,55 @@ const fileListPath = path.join(rootDir, 'src', 'components', 'files', 'file-list
 const dbPagePath = path.join(rootDir, 'src', 'app', 'console', 'db', 'page.tsx');
 const dbOverviewPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'page.tsx');
 const dbLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'layout.tsx');
+const dbSearchPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'search', 'page.tsx');
+const dbRecordPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'record', 'page.tsx');
+const dbTablePagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'db',
+  '[dbId]',
+  'table',
+  '[tableId]',
+  'page.tsx'
+);
+const dbTableStructurePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'db',
+  '[dbId]',
+  'table',
+  '[tableId]',
+  'structure',
+  'page.tsx'
+);
+const dbTableCreatePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'db',
+  '[dbId]',
+  'table',
+  '[tableId]',
+  'create',
+  'page.tsx'
+);
+const dbTableDataPath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'db',
+  '[dbId]',
+  'table',
+  '[tableId]',
+  'data',
+  'page.tsx'
+);
 const defaultCustomerPath = path.join(rootDir, 'src', 'customer', 'default.tsx');
 const accountServicePath = path.join(rootDir, 'src', 'services', 'account.service.ts');
 const webAppServicePath = path.join(rootDir, 'src', 'services', 'webapp.service.ts');
@@ -569,6 +618,12 @@ const fileListSource = fs.readFileSync(fileListPath, 'utf8');
 const dbPageSource = fs.readFileSync(dbPagePath, 'utf8');
 const dbOverviewSource = fs.readFileSync(dbOverviewPath, 'utf8');
 const dbLayoutSource = fs.readFileSync(dbLayoutPath, 'utf8');
+const dbSearchSource = fs.readFileSync(dbSearchPath, 'utf8');
+const dbRecordSource = fs.readFileSync(dbRecordPath, 'utf8');
+const dbTablePageSource = fs.readFileSync(dbTablePagePath, 'utf8');
+const dbTableStructureSource = fs.readFileSync(dbTableStructurePath, 'utf8');
+const dbTableCreateSource = fs.readFileSync(dbTableCreatePath, 'utf8');
+const dbTableDataSource = fs.readFileSync(dbTableDataPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 assert.match(
@@ -795,6 +850,41 @@ assert.match(
   dbOverviewSource,
   /useDbTables\(dbId as string,\s*\{[\s\S]*enabled:\s*canViewTableMetadata/,
   'database overview should not fetch table list without table metadata permissions'
+);
+assert.match(
+  dbSearchSource,
+  /const canAiQuery\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryWrite/,
+  'database BI search direct page should require AI query read or write permission'
+);
+assert.match(
+  dbRecordSource,
+  /const canViewOperationLogs\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.operationLogsView\)/,
+  'database operation-log direct page should require database.operation_logs.view'
+);
+assert.match(
+  dbTablePageSource,
+  /const canOpenRecords\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordCreate[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordUpdate[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordDelete/,
+  'database table record direct page should require a record action permission'
+);
+assert.match(
+  dbTableStructureSource,
+  /const canOpenSchema\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaView[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaManage/,
+  'database table structure direct page should require schema view or schema manage'
+);
+assert.match(
+  dbTableCreateSource,
+  /const canManageSchema\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.schemaManage\)/,
+  'database AI table creation direct page should require schema manage'
+);
+assert.match(
+  dbTableDataSource,
+  /const canImportData\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.importAnalyze[\s\S]*DATABASE_PERMISSION_ACTIONS\.importExecute/,
+  'database table data import direct page should require import analyze or execute'
+);
+assert.match(
+  dbTableDataSource,
+  /const canViewTablePrompt\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.tablePromptView[\s\S]*DATABASE_PERMISSION_ACTIONS\.tablePromptManage/,
+  'database table prompt panel should require table prompt view or manage'
 );
 assert.match(
   dbLayoutSource,
