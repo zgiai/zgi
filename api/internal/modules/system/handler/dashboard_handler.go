@@ -122,6 +122,7 @@ func (h *DashboardHandler) GetRecentWork(c *gin.Context) {
 		Limit:                  limit,
 		WorkspaceIDs:           scopes.WorkspaceIDs,
 		AgentWorkspaceIDs:      scopes.AgentWorkspaceIDs,
+		WorkflowWorkspaceIDs:   scopes.WorkflowWorkspaceIDs,
 		DatasetWorkspaceIDs:    scopes.DatasetWorkspaceIDs,
 		DataSourceWorkspaceIDs: scopes.DataSourceWorkspaceIDs,
 		FileWorkspaceIDs:       scopes.FileWorkspaceIDs,
@@ -166,6 +167,7 @@ func (h *DashboardHandler) getWorkspaceRecentWork(c *gin.Context, organizationID
 		Limit:                  limit,
 		WorkspaceIDs:           scopes.WorkspaceIDs,
 		AgentWorkspaceIDs:      scopes.AgentWorkspaceIDs,
+		WorkflowWorkspaceIDs:   scopes.WorkflowWorkspaceIDs,
 		DatasetWorkspaceIDs:    scopes.DatasetWorkspaceIDs,
 		DataSourceWorkspaceIDs: scopes.DataSourceWorkspaceIDs,
 		FileWorkspaceIDs:       scopes.FileWorkspaceIDs,
@@ -190,6 +192,10 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
+	workflowWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(ctx, organizationID, accountID, dashboardWorkflowVisiblePermissionCodes()...)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
 	datasetWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(
 		ctx,
 		organizationID,
@@ -211,6 +217,7 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 	return systemmodel.DashboardWorkspaceScopes{
 		WorkspaceIDs:           workspaceIDs,
 		AgentWorkspaceIDs:      agentWorkspaceIDs,
+		WorkflowWorkspaceIDs:   workflowWorkspaceIDs,
 		DatasetWorkspaceIDs:    datasetWorkspaceIDs,
 		DataSourceWorkspaceIDs: dataSourceWorkspaceIDs,
 		FileWorkspaceIDs:       fileWorkspaceIDs,
@@ -234,6 +241,11 @@ func (h *DashboardHandler) buildSingleWorkspaceRecentWorkScopes(ctx context.Cont
 		return scopes, err
 	} else if ok {
 		scopes.AgentWorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, dashboardWorkflowVisiblePermissionCodes()...); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.WorkflowWorkspaceIDs = []string{workspaceID}
 	}
 	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID,
 		dashboardKnowledgeBaseVisiblePermissionCodes()...,
@@ -350,15 +362,9 @@ func dashboardAgentVisiblePermissionCodes() []workspacemodel.WorkspacePermission
 	return []workspacemodel.WorkspacePermissionCode{
 		workspacemodel.WorkspacePermissionAgentCreate,
 		workspacemodel.WorkspacePermissionAgentImport,
-		workspacemodel.WorkspacePermissionWorkflowView,
-		workspacemodel.WorkspacePermissionWorkflowCreate,
-		workspacemodel.WorkspacePermissionWorkflowImport,
 		workspacemodel.WorkspacePermissionAgentLogsView,
 		workspacemodel.WorkspacePermissionAgentStatsView,
 		workspacemodel.WorkspacePermissionAgentConversationView,
-		workspacemodel.WorkspacePermissionWorkflowLogsView,
-		workspacemodel.WorkspacePermissionWorkflowStatsView,
-		workspacemodel.WorkspacePermissionWorkflowEventsView,
 		workspacemodel.WorkspacePermissionAgentUpdate,
 		workspacemodel.WorkspacePermissionAgentDelete,
 		workspacemodel.WorkspacePermissionAgentMove,
@@ -368,6 +374,17 @@ func dashboardAgentVisiblePermissionCodes() []workspacemodel.WorkspacePermission
 		workspacemodel.WorkspacePermissionAgentRuntimeConfigManage,
 		workspacemodel.WorkspacePermissionAgentRuntimeAccessManage,
 		workspacemodel.WorkspacePermissionAgentConversationManage,
+	}
+}
+
+func dashboardWorkflowVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
+	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionWorkflowView,
+		workspacemodel.WorkspacePermissionWorkflowCreate,
+		workspacemodel.WorkspacePermissionWorkflowImport,
+		workspacemodel.WorkspacePermissionWorkflowLogsView,
+		workspacemodel.WorkspacePermissionWorkflowStatsView,
+		workspacemodel.WorkspacePermissionWorkflowEventsView,
 		workspacemodel.WorkspacePermissionWorkflowUpdate,
 		workspacemodel.WorkspacePermissionWorkflowDelete,
 		workspacemodel.WorkspacePermissionWorkflowMove,

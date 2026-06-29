@@ -469,12 +469,14 @@ const messages: DashboardMessages = {
       recentTypes: {
         conversation: '对话',
         agent: '智能体',
+        workflow: '工作流',
         dataset: '知识库',
         database: '数据库',
       },
       recentFallback: {
         conversation: '未命名对话',
         agent: '未命名智能体',
+        workflow: '未命名工作流',
         dataset: '未命名知识库',
         database: '未命名数据库',
       },

@@ -25,6 +25,7 @@ type DashboardStatsResponse struct {
 type DashboardWorkspaceScopes struct {
 	WorkspaceIDs           []string
 	AgentWorkspaceIDs      []string
+	WorkflowWorkspaceIDs   []string
 	DatasetWorkspaceIDs    []string
 	DataSourceWorkspaceIDs []string
 	FileWorkspaceIDs       []string
@@ -37,6 +38,7 @@ type RecentWorkRequest struct {
 	Limit                  int
 	WorkspaceIDs           []string
 	AgentWorkspaceIDs      []string
+	WorkflowWorkspaceIDs   []string
 	DatasetWorkspaceIDs    []string
 	DataSourceWorkspaceIDs []string
 	FileWorkspaceIDs       []string

@@ -25,7 +25,7 @@ export interface DashboardStats {
   };
 }
 
-export type DashboardRecentWorkType = 'conversation' | 'agent' | 'dataset' | 'database';
+export type DashboardRecentWorkType = 'conversation' | 'agent' | 'workflow' | 'dataset' | 'database';
 
 export type DashboardRecentWorkScope = 'overview' | 'workspace';
 

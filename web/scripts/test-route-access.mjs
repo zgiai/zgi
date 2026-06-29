@@ -14,6 +14,7 @@ const repoRootDir = path.resolve(rootDir, '..');
 const accessPath = path.join(rootDir, 'src', 'routes', 'access.ts');
 const agentDetailRoutesPath = path.join(rootDir, 'src', 'utils', 'agent-detail-routes.ts');
 const consoleRecentWorkPath = path.join(rootDir, 'src', 'utils', 'console-recent-work.ts');
+const dashboardTypesPath = path.join(rootDir, 'src', 'services', 'types', 'dashboard.ts');
 const consolePagePath = path.join(rootDir, 'src', 'app', 'console', 'page.tsx');
 const workspaceStorePath = path.join(rootDir, 'src', 'store', 'workspace-store.ts');
 const workLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'work', 'layout.tsx');
@@ -1162,6 +1163,7 @@ const dbTableDataSource = fs.readFileSync(dbTableDataPath, 'utf8');
 const dbTableDataComponentSource = fs.readFileSync(dbTableDataComponentPath, 'utf8');
 const excelImportShellSource = fs.readFileSync(excelImportShellPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
+const dashboardTypesSource = fs.readFileSync(dashboardTypesPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 const workflowEditorSource = fs.readFileSync(workflowEditorPath, 'utf8');
 const workflowStoreSource = fs.readFileSync(workflowStorePath, 'utf8');
@@ -1774,6 +1776,16 @@ assert.match(
   consoleRecentWorkSource,
   /return `\/console\/agents\/\$\{resourceId\}`;/,
   'recent agent links should use the canonical agent detail entry route'
+);
+assert.match(
+  dashboardTypesSource,
+  /DashboardRecentWorkType = 'conversation' \| 'agent' \| 'workflow' \| 'dataset' \| 'database'/,
+  'recent work response type should include workflow so workflow assets do not fall through to database links'
+);
+assert.match(
+  consoleRecentWorkSource,
+  /type === 'agent' \|\| type === 'workflow'/,
+  'recent workflow links should use the canonical agent/workflow detail entry route'
 );
 assert.match(
   agentLogsPageSource,

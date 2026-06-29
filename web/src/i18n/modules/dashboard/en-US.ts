@@ -484,12 +484,14 @@ const messages = {
       recentTypes: {
         conversation: 'Conversation',
         agent: 'Agent',
+        workflow: 'Workflow',
         dataset: 'Knowledge',
         database: 'Database',
       },
       recentFallback: {
         conversation: 'Untitled conversation',
         agent: 'Untitled agent',
+        workflow: 'Untitled workflow',
         dataset: 'Untitled knowledge base',
         database: 'Untitled database',
       },
