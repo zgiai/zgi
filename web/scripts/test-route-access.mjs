@@ -264,6 +264,7 @@ const agentLogsPagePath = path.join(
   'logs',
   'page.tsx'
 );
+const workflowEditorPath = path.join(rootDir, 'src', 'components', 'workflow', 'index.tsx');
 const enterOrganizationModeHookPath = path.join(
   rootDir,
   'src',
@@ -644,6 +645,7 @@ const dbTableCreateSource = fs.readFileSync(dbTableCreatePath, 'utf8');
 const dbTableDataSource = fs.readFileSync(dbTableDataPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
+const workflowEditorSource = fs.readFileSync(workflowEditorPath, 'utf8');
 assert.match(
   workspaceLayoutSource,
   /useAccountCapabilities/,
@@ -1768,6 +1770,16 @@ assert.match(
   agentLogsPageSource,
   /useAgentRuntimeRunDetail\([\s\S]*agentId:\s*canQueryAgentRuntimeLogs\s*\?\s*agentId\s*:\s*null[\s\S]*enabled:\s*Boolean\(canQueryAgentRuntimeLogs && isDetailOpen && effectiveRunId\)/,
   'agent logs page should gate AGENT runtime log detail requests with agent.logs.view'
+);
+assert.match(
+  workflowEditorSource,
+  /const canPublishCurrentDraft\s*=\s*canEditWorkflow && canPublishWorkflow/,
+  'workflow editor publish action should require workflow.publish plus workflow.update because publishing first saves the current draft'
+);
+assert.match(
+  workflowEditorSource,
+  /canPublishWorkflow=\{canPublishCurrentDraft\}/,
+  'workflow header should receive the combined publish-current-draft permission'
 );
 
 for (const appCenterPath of appCenterPaths) {

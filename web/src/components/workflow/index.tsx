@@ -217,6 +217,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
   );
   const canViewWorkflowRuntimeLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
+  const canPublishCurrentDraft = canEditWorkflow && canPublishWorkflow;
 
   // Ensure store holds current agent type for downstream filtering
   useEffect(() => {
@@ -479,7 +480,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
             canPublish={isValid}
             canSave={canEditWorkflow}
             canRunDraft={canRunWorkflowDraft}
-            canPublishWorkflow={canPublishWorkflow}
+            canPublishWorkflow={canPublishCurrentDraft}
             canManageRuntimeAccess={canManageWorkflowRuntimeAccess}
             canViewRuntimeLogs={canViewWorkflowRuntimeLogs}
             onSave={() => {
