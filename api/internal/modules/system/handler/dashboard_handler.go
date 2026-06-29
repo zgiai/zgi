@@ -367,6 +367,7 @@ func dashboardAgentVisiblePermissionCodes() []workspacemodel.WorkspacePermission
 		workspacemodel.WorkspacePermissionAgentConversationView,
 		workspacemodel.WorkspacePermissionAgentUpdate,
 		workspacemodel.WorkspacePermissionAgentDelete,
+		workspacemodel.WorkspacePermissionAgentLock,
 		workspacemodel.WorkspacePermissionAgentMove,
 		workspacemodel.WorkspacePermissionAgentCopy,
 		workspacemodel.WorkspacePermissionAgentExport,

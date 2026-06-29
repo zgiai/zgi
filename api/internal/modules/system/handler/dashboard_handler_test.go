@@ -37,6 +37,7 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 		userWorkspaceIDs: []string{"ws-1", "ws-2"},
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
 			workspacemodel.WorkspacePermissionAgentStatsView:              {"ws-agent"},
+			workspacemodel.WorkspacePermissionAgentLock:                   {"ws-agent-lock"},
 			workspacemodel.WorkspacePermissionWorkflowView:                {"ws-workflow"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView:   {"ws-knowledge-view", "ws-knowledge-shared"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: {"ws-knowledge-manage"},
@@ -62,7 +63,7 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 	require.Equal(t, "org-1", dashboardSvc.recentWorkReq.OrganizationID)
 	require.Equal(t, "acc-1", dashboardSvc.recentWorkReq.AccountID)
 	require.Equal(t, []string{"ws-1", "ws-2"}, dashboardSvc.recentWorkReq.WorkspaceIDs)
-	require.Equal(t, []string{"ws-agent"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
+	require.Equal(t, []string{"ws-agent", "ws-agent-lock"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
 	require.Equal(t, []string{"ws-workflow"}, dashboardSvc.recentWorkReq.WorkflowWorkspaceIDs)
 	require.Equal(t, []string{"ws-knowledge-view", "ws-knowledge-shared", "ws-knowledge-manage", "ws-knowledge-folder"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
 	require.Equal(t, []string{"ws-db"}, dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
@@ -158,6 +159,7 @@ func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
 		userWorkspaceIDs: []string{"ws-1", "ws-2"},
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
 			workspacemodel.WorkspacePermissionAgentStatsView:              {"ws-agent"},
+			workspacemodel.WorkspacePermissionAgentLock:                   {"ws-agent-lock"},
 			workspacemodel.WorkspacePermissionWorkflowView:                {"ws-workflow"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView:   {"ws-knowledge"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: {"ws-knowledge-manage"},
@@ -179,7 +181,7 @@ func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
 	require.Equal(t, "org-1", dashboardSvc.statsOrganizationID)
 	require.Equal(t, "acc-1", dashboardSvc.statsAccountID)
 	require.Equal(t, []string{"ws-1", "ws-2"}, dashboardSvc.statsScopes.WorkspaceIDs)
-	require.Equal(t, []string{"ws-agent"}, dashboardSvc.statsScopes.AgentWorkspaceIDs)
+	require.Equal(t, []string{"ws-agent", "ws-agent-lock"}, dashboardSvc.statsScopes.AgentWorkspaceIDs)
 	require.Equal(t, []string{"ws-workflow"}, dashboardSvc.statsScopes.WorkflowWorkspaceIDs)
 	require.Equal(t, []string{"ws-knowledge", "ws-knowledge-manage", "ws-knowledge-folder"}, dashboardSvc.statsScopes.DatasetWorkspaceIDs)
 	require.Equal(t, []string{"ws-db"}, dashboardSvc.statsScopes.DataSourceWorkspaceIDs)
