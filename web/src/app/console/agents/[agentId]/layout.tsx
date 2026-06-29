@@ -8,7 +8,11 @@ import { useAgent } from '@/hooks/agent/use-agents';
 import { useParams } from 'next/navigation';
 import { WorkspaceMismatchGuard } from '@/components/common/workspace-mismatch-guard';
 import { useT } from '@/i18n';
-import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
+import {
+  AGENT_ASSET_VISIBLE_PERMISSION_CODES,
+  AGENT_PERMISSION_ACTIONS,
+  WORKFLOW_PERMISSION_ACTIONS,
+} from '@/constants/permissions';
 import { isAgentRuntimeType, isWorkflowRuntimeType } from '@/utils/agent-detail-routes';
 
 export default function AgentLayout({ children }: { children: React.ReactNode }) {
@@ -17,7 +21,8 @@ export default function AgentLayout({ children }: { children: React.ReactNode })
   const agentId = params?.agentId ?? '';
 
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const { agent, isLoading: isAgentLoading } = useAgent(agentId);
+  const canViewAnyAgentAsset = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
+  const { agent, isLoading: isAgentLoading } = useAgent(agentId, canViewAnyAgentAsset);
 
   const agentType = agent?.data?.agent_type;
   const canViewAgentDetail = hasAnyPermission(AGENT_PERMISSION_ACTIONS.page);

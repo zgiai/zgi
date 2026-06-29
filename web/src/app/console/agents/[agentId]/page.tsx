@@ -8,7 +8,11 @@ import { Button } from '@/components/ui/button';
 import { useAgent } from '@/hooks/agent/use-agents';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
-import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
+import {
+  AGENT_ASSET_VISIBLE_PERMISSION_CODES,
+  AGENT_PERMISSION_ACTIONS,
+  WORKFLOW_PERMISSION_ACTIONS,
+} from '@/constants/permissions';
 import {
   getAgentDetailDefaultHref,
   isAgentRuntimeType,
@@ -27,8 +31,9 @@ export default function AgentEntryPage({ params }: AgentEntryPageProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { agentId } = use(params);
-  const { agent, isLoading, error, refetch } = useAgent(agentId);
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canViewAnyAgentAsset = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
+  const { agent, isLoading, error, refetch } = useAgent(agentId, canViewAnyAgentAsset);
   const agentType = agent?.data?.agent_type;
   const isAgentRuntime = isAgentRuntimeType(agentType);
   const isWorkflowRuntime = isWorkflowRuntimeType(agentType);
@@ -96,7 +101,7 @@ export default function AgentEntryPage({ params }: AgentEntryPageProps) {
   }
 
   const message = error ? getErrorMessage(error) : '';
-  const isAccessDenied = agent?.data && !targetHref;
+  const isAccessDenied = !canViewAnyAgentAsset || (agent?.data && !targetHref);
 
   return (
     <div className="flex h-full w-full items-center justify-center p-6">

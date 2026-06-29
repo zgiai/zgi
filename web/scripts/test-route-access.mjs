@@ -305,6 +305,15 @@ const agentEntryPagePath = path.join(
   '[agentId]',
   'page.tsx'
 );
+const agentLayoutPath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'layout.tsx'
+);
 const datasetPagePath = path.join(rootDir, 'src', 'app', 'console', 'dataset', 'page.tsx');
 const datasetCardPath = path.join(rootDir, 'src', 'components', 'datasets', 'dataset-card.tsx');
 const datasetFolderCardPath = path.join(
@@ -1682,6 +1691,7 @@ const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
 const agentEntryPageSource = fs.readFileSync(agentEntryPagePath, 'utf8');
+const agentLayoutSource = fs.readFileSync(agentLayoutPath, 'utf8');
 const datasetPageSource = fs.readFileSync(datasetPagePath, 'utf8');
 const datasetCardSource = fs.readFileSync(datasetCardPath, 'utf8');
 const datasetFolderCardSource = fs.readFileSync(datasetFolderCardPath, 'utf8');
@@ -2454,6 +2464,16 @@ assert.match(
   'agent detail root should replace to the first permission-compatible child page while preserving query params'
 );
 assert.match(
+  agentLayoutSource,
+  /const canViewAnyAgentAsset\s*=\s*hasAnyPermission\(AGENT_ASSET_VISIBLE_PERMISSION_CODES\)[\s\S]*useAgent\(agentId,\s*canViewAnyAgentAsset\)/,
+  'agent detail layout should not fetch agent metadata before an agent/workflow visible permission is present'
+);
+assert.match(
+  agentEntryPageSource,
+  /const canViewAnyAgentAsset\s*=\s*hasAnyPermission\(AGENT_ASSET_VISIBLE_PERMISSION_CODES\)[\s\S]*useAgent\(agentId,\s*canViewAnyAgentAsset\)/,
+  'agent detail root should gate metadata fetches by the shared agent/workflow visible permission group'
+);
+assert.match(
   agentEntryPageSource,
   /const canCreateAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.create\)[\s\S]*const canImportAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.import\)[\s\S]*const canUpdateAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.update\)/,
   'agent runtime root should derive create/import/update detail-entry permissions explicitly'
@@ -2482,6 +2502,11 @@ assert.match(
   agentSidebarSource,
   /canCreateAgent[\s\S]*canImportAgent[\s\S]*canUpdateAgent[\s\S]*canConfigureAgentRuntime[\s\S]*canPublishAgent[\s\S]*canManageAgentRuntimeAccess/,
   'agent sidebar should keep create/import/update users able to open the detail page'
+);
+assert.match(
+  agentSidebarSource,
+  /const canView\s*=\s*hasAnyPermission\(AGENT_ASSET_VISIBLE_PERMISSION_CODES\)[\s\S]*useAgent\(agentId,\s*canView\)/,
+  'agent sidebar should not refetch agent metadata without the shared agent/workflow visible permission group'
 );
 assert.match(
   agentSidebarSource,
