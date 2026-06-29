@@ -33,6 +33,15 @@ const workspacePermissionModelPath = path.join(
   'model',
   'organization.go'
 );
+const agentsWorkspacePermissionCodesPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'app',
+  'agents',
+  'workspace_permission_codes.go'
+);
 const consolePagePath = path.join(rootDir, 'src', 'app', 'console', 'page.tsx');
 const workspaceStorePath = path.join(rootDir, 'src', 'store', 'workspace-store.ts');
 const workLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'work', 'layout.tsx');
@@ -993,15 +1002,21 @@ function collectGoPermissionConstants(sourceText) {
   );
 }
 
-function collectDashboardVisiblePermissionCodes(sourceText, permissionConstants, functionName) {
-  const marker = `func ${functionName}() []workspacemodel.WorkspacePermissionCode {`;
+function collectGoWorkspacePermissionHelperCodes(
+  sourceText,
+  permissionConstants,
+  functionName,
+  packageName
+) {
+  const marker = `func ${functionName}() []${packageName}.WorkspacePermissionCode {`;
   const start = sourceText.indexOf(marker);
-  assert.notEqual(start, -1, `missing dashboard helper: ${functionName}`);
+  assert.notEqual(start, -1, `missing workspace permission helper: ${functionName}`);
   const bodyStart = start + marker.length;
   const end = sourceText.indexOf('\n}', bodyStart);
-  assert.notEqual(end, -1, `missing dashboard helper end: ${functionName}`);
+  assert.notEqual(end, -1, `missing workspace permission helper end: ${functionName}`);
   const helperSource = sourceText.slice(bodyStart, end);
-  return [...helperSource.matchAll(/workspacemodel\.(WorkspacePermission[A-Za-z0-9]+)/g)]
+  const permissionRefPattern = new RegExp(`${packageName}\\.(WorkspacePermission[A-Za-z0-9]+)`, 'g');
+  return [...helperSource.matchAll(permissionRefPattern)]
     .map(match => permissionConstants.get(match[1]))
     .filter(Boolean);
 }
@@ -2112,6 +2127,10 @@ const consoleSidebarSource = fs.readFileSync(consoleSidebarPath, 'utf8');
 const permissionConstantsSource = fs.readFileSync(permissionConstantsPath, 'utf8');
 const dashboardHandlerSource = fs.readFileSync(dashboardHandlerPath, 'utf8');
 const workspacePermissionModelSource = fs.readFileSync(workspacePermissionModelPath, 'utf8');
+const agentsWorkspacePermissionCodesSource = fs.readFileSync(
+  agentsWorkspacePermissionCodesPath,
+  'utf8'
+);
 assert.match(
   permissionConstantsSource,
   /export const DATABASE_TABLE_METADATA_PERMISSION_CODES = \[[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaView[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView[\s\S]*DATABASE_PERMISSION_ACTIONS\.importAnalyze[\s\S]*DATABASE_PERMISSION_ACTIONS\.tablePromptView[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead/,
@@ -2159,10 +2178,11 @@ for (const [label, frontendActionName, backendHelperName] of dashboardVisiblePer
   ].sort();
   const backendDashboardCodes = [
     ...new Set(
-      collectDashboardVisiblePermissionCodes(
+      collectGoWorkspacePermissionHelperCodes(
         dashboardHandlerSource,
         workspacePermissionConstants,
-        backendHelperName
+        backendHelperName,
+        'workspacemodel'
       )
     ),
   ].sort();
@@ -2172,6 +2192,27 @@ for (const [label, frontendActionName, backendHelperName] of dashboardVisiblePer
     `dashboard ${label} visible workspace scope should match frontend page-visible permission group`
   );
 }
+const agentAssetVisibleFrontendCodes = [
+  ...new Set([
+    ...collectPermissionActionPageCodes(permissionConstantsSource, 'AGENT_PERMISSION_ACTIONS'),
+    ...collectPermissionActionPageCodes(permissionConstantsSource, 'WORKFLOW_PERMISSION_ACTIONS'),
+  ]),
+].sort();
+const agentAssetVisibleBackendCodes = [
+  ...new Set(
+    collectGoWorkspacePermissionHelperCodes(
+      agentsWorkspacePermissionCodesSource,
+      workspacePermissionConstants,
+      'agentAssetVisiblePermissionCodes',
+      'model'
+    )
+  ),
+].sort();
+assert.deepEqual(
+  agentAssetVisibleBackendCodes,
+  agentAssetVisibleFrontendCodes,
+  'agent backend asset-visible scope should match frontend agent/workflow page-visible permission groups'
+);
 const frontendSourceFiles = listFiles(path.join(rootDir, 'src')).filter(filePath =>
   /\.(?:ts|tsx)$/.test(filePath)
 );

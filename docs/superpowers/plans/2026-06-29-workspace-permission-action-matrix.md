@@ -34,6 +34,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-30: `pnpm test:route-access` now also compares backend `agentAssetVisiblePermissionCodes` with the frontend combined agent/workflow page-visible groups. Direct agent/workflow detail pages can keep resolving runtime type through the shared visible scope without drifting from frontend entry visibility.
 - 2026-06-30: `pnpm test:route-access` now includes a cross-layer guard that parses frontend `*_PERMISSION_ACTIONS.page` groups and backend dashboard visible-scope helpers, then requires the agent, workflow, knowledge-base, database, and file permission sets to match exactly. This keeps overview stats/recent-work workspace scopes aligned with entry visibility when future fine permissions are added.
 - 2026-06-30: Dashboard agent visible workspace scope now includes `agent.lock`, matching the frontend agent page group and backend agent asset visible helper. A member with only lock authority can enter the agent surface and will also have that workspace counted for dashboard agent stats/recent-work scope.
 - 2026-06-30: Dashboard knowledge-base resource stats and recent-work entries now follow the workspace permission scope only. Once a caller has a knowledge-base visible/action permission in a workspace, overview counts and recent datasets no longer apply the legacy dataset `permission` / `only_me` filter, matching the current dataset folder/list contract that is governed by the new workspace permission codes.
