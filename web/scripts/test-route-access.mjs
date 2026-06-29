@@ -2425,6 +2425,21 @@ assert.match(
 );
 assert.match(
   excelImportShellSource,
+  /const canOpenCreatedTableRecords\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordCreate[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordUpdate[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordDelete/,
+  'database Excel import result should only link to the created table record page when record actions are available'
+);
+assert.match(
+  excelImportShellSource,
+  /const canOpenCreatedTableSchema\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaView[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaManage/,
+  'database Excel import result should check schema permissions before falling back to the created table structure page'
+);
+assert.match(
+  excelImportShellSource,
+  /const createdTableHref\s*=\s*createdTableId[\s\S]*canOpenCreatedTableRecords[\s\S]*`\/console\/db\/\$\{dbId\}\/table\/\$\{createdTableId\}`[\s\S]*canOpenCreatedTableSchema[\s\S]*`\/console\/db\/\$\{dbId\}\/table\/\$\{createdTableId\}\/structure`[\s\S]*: null/,
+  'database Excel import result should choose a permission-matching created-table destination'
+);
+assert.match(
+  excelImportShellSource,
   /useExcelImportErrors\([\s\S]*canViewImportErrors\s*&&[\s\S]*step === 'result'[\s\S]*importResult\.failed_rows > 0/,
   'database Excel import shell should not fetch import-error details without database.import.errors.view'
 );

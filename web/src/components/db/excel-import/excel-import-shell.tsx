@@ -119,6 +119,16 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   const canAnalyzeImport = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importAnalyze);
   const canExecuteImport = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importExecute);
   const canViewImportErrors = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importErrorsView);
+  const canOpenCreatedTableRecords = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.recordView,
+    ...DATABASE_PERMISSION_ACTIONS.recordCreate,
+    ...DATABASE_PERMISSION_ACTIONS.recordUpdate,
+    ...DATABASE_PERMISSION_ACTIONS.recordDelete,
+  ]);
+  const canOpenCreatedTableSchema = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.schemaView,
+    ...DATABASE_PERMISSION_ACTIONS.schemaManage,
+  ]);
   const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
   const { tables } = useDbTables(dbId, { enabled: canAnalyzeImport || canExecuteImport });
   const [step, setStep] = useState<Step>('file');
@@ -302,6 +312,13 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
 
   const displayedFailedItems =
     importErrorsQuery.data?.data.data ?? importResult?.failed_items ?? [];
+  const createdTableHref = createdTableId
+    ? canOpenCreatedTableRecords
+      ? `/console/db/${dbId}/table/${createdTableId}`
+      : canOpenCreatedTableSchema
+        ? `/console/db/${dbId}/table/${createdTableId}/structure`
+        : null
+    : null;
 
   if (isPermissionsLoading) {
     return (
@@ -764,9 +781,13 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
               </div>
             )}
             <div className="mt-6 flex justify-center gap-2">
-              {createdTableId && (
-                <Button onClick={() => router.push(`/console/db/${dbId}/table/${createdTableId}`)}>
-                  {t('excelImport.result.openTable')}
+              {createdTableHref && (
+                <Button asChild>
+                  <Link href={createdTableHref}>
+                    {canOpenCreatedTableRecords
+                      ? t('excelImport.result.openTable')
+                      : t('actions.manageStructure')}
+                  </Link>
                 </Button>
               )}
               <Button variant="outline" onClick={() => router.push(`/console/db/${dbId}`)}>
