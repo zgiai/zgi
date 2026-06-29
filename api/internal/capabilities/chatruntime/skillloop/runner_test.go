@@ -85,6 +85,46 @@ func TestFastPathFinalAnswerForAgentBatchDelete(t *testing.T) {
 	}
 }
 
+func TestFastPathFinalAnswerForCompletionEvidencePreservesBatchGroupFromLatestToolResult(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "completed",
+			"pending_next_action": "none",
+		},
+		"operation_result_summary": map[string]interface{}{
+			"latest_tool_result": map[string]interface{}{
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "delete_agents",
+				"result_summary": map[string]interface{}{
+					"status":        "partial_failed",
+					"target_count":  3,
+					"deleted_count": 2,
+					"failed_count":  1,
+				},
+				"operation_group": map[string]interface{}{
+					"operation": "agent.delete",
+					"item_results": []interface{}{
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+						map[string]interface{}{"status": "failed", "agent_name": "Agent Three", "error": "agent is locked"},
+					},
+				},
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want batch delete answer")
+	}
+	for _, want := range []string{"Agent One", "Agent Two", "Agent Three", "agent is locked"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, missing batch item evidence %q", answer, want)
+		}
+	}
+}
+
 func TestFastPathFinalAnswerForAgentDelete(t *testing.T) {
 	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
 		Kind:     "tool_call",

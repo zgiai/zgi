@@ -683,6 +683,8 @@ func fastPathTraceFromToolResult(result map[string]interface{}) (skills.SkillTra
 	payload := copyFastPathResultMap(evidenceMapFromAny(result["result_summary"]))
 	if len(payload) == 0 {
 		payload = copyFastPathResultMap(result)
+	} else {
+		mergeFastPathBatchEvidence(payload, result)
 	}
 	if _, ok := payload["status"]; !ok {
 		payload["status"] = status
@@ -694,6 +696,29 @@ func fastPathTraceFromToolResult(result map[string]interface{}) (skills.SkillTra
 		ToolName: toolName,
 		Result:   payload,
 	}, true
+}
+
+func mergeFastPathBatchEvidence(target map[string]interface{}, source map[string]interface{}) {
+	if len(target) == 0 || len(source) == 0 {
+		return
+	}
+	for _, key := range []string{
+		"operation_group",
+		"item_results",
+		"operation_type",
+		"operation",
+		"target_count",
+		"deleted_count",
+		"success_count",
+		"failed_count",
+	} {
+		if _, exists := target[key]; exists {
+			continue
+		}
+		if value, ok := source[key]; ok && value != nil {
+			target[key] = value
+		}
+	}
 }
 
 func fastPathTraceAndAnswerFromClientAction(action map[string]interface{}) (skills.SkillTrace, string, bool) {
