@@ -204,6 +204,13 @@ const taskWorkbenchPath = path.join(
   'automation',
   'task-workbench.tsx'
 );
+const taskDetailPanelPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'automation',
+  'task-detail-panel.tsx'
+);
 const automationTaskHandlerPath = path.join(
   repoRootDir,
   'api',
@@ -1455,6 +1462,7 @@ const llmDefaultModelRoutesSource = fs.readFileSync(llmDefaultModelRoutesPath, '
 const accountCapabilitiesHookSource = fs.readFileSync(accountCapabilitiesHookPath, 'utf8');
 const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
+const taskDetailPanelSource = fs.readFileSync(taskDetailPanelPath, 'utf8');
 const automationTaskHandlerSource = fs.readFileSync(automationTaskHandlerPath, 'utf8');
 const fileHandlerSource = fs.readFileSync(fileHandlerPath, 'utf8');
 const imagePreviewHandlerSource = fs.readFileSync(imagePreviewHandlerPath, 'utf8');
@@ -1846,6 +1854,51 @@ assert.match(
   taskWorkbenchSource,
   /const canManageTasks\s*=\s*Boolean\(workspaceId\)\s*&&\s*isWorkspaceManager\(\)/,
   'scheduled-task mutation UI should use workspace manager authority'
+);
+assert.match(
+  taskWorkbenchSource,
+  /const handleOpenCreate\s*=\s*React\.useCallback\(\(\) => \{[\s\S]*?if \(!canManageTasks\) \{[\s\S]*?return;[\s\S]*?route\.openCreate\(\);/,
+  'scheduled-task create panel opening should defensively require workspace manager authority'
+);
+assert.match(
+  taskWorkbenchSource,
+  /const handleRunTask\s*=\s*React\.useCallback\([\s\S]*?if \(!canManageTasks\) \{[\s\S]*?return;[\s\S]*?runAutomationTask/,
+  'scheduled-task manual run callback should defensively require workspace manager authority'
+);
+assert.match(
+  taskWorkbenchSource,
+  /const handlePauseTask\s*=\s*React\.useCallback\([\s\S]*?if \(!canManageTasks\) \{[\s\S]*?return;[\s\S]*?pauseAutomationTask/,
+  'scheduled-task pause callback should defensively require workspace manager authority'
+);
+assert.match(
+  taskWorkbenchSource,
+  /const handleResumeTask\s*=\s*React\.useCallback\([\s\S]*?if \(!canManageTasks\) \{[\s\S]*?return;[\s\S]*?resumeAutomationTask/,
+  'scheduled-task resume callback should defensively require workspace manager authority'
+);
+assert.match(
+  taskWorkbenchSource,
+  /const handleArchiveTask\s*=\s*React\.useCallback\(async \(\) => \{[\s\S]*?if \(!canManageTasks \|\| !archiveTarget\) \{/,
+  'scheduled-task archive callback should defensively require workspace manager authority'
+);
+assert.match(
+  taskWorkbenchSource,
+  /onOpenCreate=\{handleOpenCreate\}/,
+  'scheduled-task list create action should use the guarded create callback'
+);
+assert.match(
+  taskWorkbenchSource,
+  /onEdit=\{\(\) => \{[\s\S]*?if \(!canManageTasks\) \{[\s\S]*?return;[\s\S]*?route\.openEdit\(route\.taskId\)/,
+  'scheduled-task edit callback should defensively require workspace manager authority'
+);
+assert.match(
+  taskDetailPanelSource,
+  /const canEdit = canManage && !isArchived;[\s\S]*const canRun = canManage && !isArchived;[\s\S]*const canPause = canManage && task\.status === 'active';[\s\S]*const canResume = canManage && task\.status === 'paused';[\s\S]*const canArchive = canManage && !isArchived;/,
+  'scheduled-task detail actions should derive from workspace manager authority'
+);
+assert.match(
+  taskDetailPanelSource,
+  /onClick=\{onEdit\}[\s\S]*disabled=\{!canEdit \|\| actionBusy\}[\s\S]*onClick=\{onRunTask\}[\s\S]*disabled=\{!canRun \|\| actionBusy\}/,
+  'scheduled-task detail edit/run buttons should remain disabled without manager authority'
 );
 assert.doesNotMatch(
   taskWorkbenchSource,

@@ -165,6 +165,14 @@ function TaskWorkbenchContent({
     [route]
   );
 
+  const handleOpenCreate = React.useCallback(() => {
+    if (!canManageTasks) {
+      return;
+    }
+
+    route.openCreate();
+  }, [canManageTasks, route]);
+
   const handleEditSubmitted = React.useCallback(
     (taskDetail: AutomationTaskDetailData) => {
       route.selectTask(taskDetail.task.id, 'overview');
@@ -174,34 +182,46 @@ function TaskWorkbenchContent({
 
   const handleRunTask = React.useCallback(
     async (taskId: string) => {
+      if (!canManageTasks) {
+        return;
+      }
+
       await runAutomationTask(taskId, { workspace_id: workspaceId });
       route.selectTask(taskId, 'runs');
     },
-    [route, runAutomationTask, workspaceId]
+    [canManageTasks, route, runAutomationTask, workspaceId]
   );
 
   const handlePauseTask = React.useCallback(
     async (taskId: string) => {
+      if (!canManageTasks) {
+        return;
+      }
+
       await pauseAutomationTask(taskId, { workspace_id: workspaceId });
     },
-    [pauseAutomationTask, workspaceId]
+    [canManageTasks, pauseAutomationTask, workspaceId]
   );
 
   const handleResumeTask = React.useCallback(
     async (taskId: string) => {
+      if (!canManageTasks) {
+        return;
+      }
+
       await resumeAutomationTask(taskId, { workspace_id: workspaceId });
     },
-    [resumeAutomationTask, workspaceId]
+    [canManageTasks, resumeAutomationTask, workspaceId]
   );
 
   const handleArchiveTask = React.useCallback(async () => {
-    if (!archiveTarget) {
+    if (!canManageTasks || !archiveTarget) {
       return;
     }
 
     await archiveAutomationTask(archiveTarget.id, { workspace_id: workspaceId });
     setArchiveTarget(null);
-  }, [archiveAutomationTask, archiveTarget, workspaceId]);
+  }, [archiveAutomationTask, archiveTarget, canManageTasks, workspaceId]);
 
   const handleRefreshTask = React.useCallback(() => {
     void detail.refetch();
@@ -256,6 +276,10 @@ function TaskWorkbenchContent({
           actionBusy={actionBusy}
           onClose={route.closePanel}
           onEdit={() => {
+            if (!canManageTasks) {
+              return;
+            }
+
             if (route.taskId) {
               route.openEdit(route.taskId);
             }
@@ -324,7 +348,7 @@ function TaskWorkbenchContent({
             filterKey={route.filterKey}
             panelOpen={route.panelOpen}
             canManage={canManageTasks}
-            onOpenCreate={route.openCreate}
+            onOpenCreate={handleOpenCreate}
             onFilterChange={route.setStatusFilter}
             onPageChange={route.setPage}
             onSelectTask={route.selectTask}
