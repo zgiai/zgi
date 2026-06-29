@@ -680,7 +680,6 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const searchParams = useSearchParams();
   const { files: t, common } = useT();
   const {
-    hasPermission,
     hasAnyPermission,
     isLoading: isPermissionsLoading,
   } = useAccountPermissions();
@@ -696,7 +695,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     ...FILE_PERMISSION_ACTIONS.shareManage,
     ...FILE_PERMISSION_ACTIONS.favoriteManage,
   ]);
-  const canDownload = hasPermission('file.download');
+  const canDownload = hasAnyPermission(FILE_PERMISSION_ACTIONS.download);
   const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);
   const canUploadFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
   const { downloadFile, isDownloading } = useDownloadFile();

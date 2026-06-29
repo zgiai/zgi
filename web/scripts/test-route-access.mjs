@@ -913,6 +913,16 @@ assert.doesNotMatch(
 );
 assert.match(
   fileDetailShellSource,
+  /const canDownload\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.download\)/,
+  'file detail download action should use the exact file.download action group'
+);
+assert.doesNotMatch(
+  fileDetailShellSource,
+  /hasPermission\(['"]file\.download['"]\)/,
+  'file detail download action should not bypass the file action matrix with a raw permission literal'
+);
+assert.match(
+  fileDetailShellSource,
   /const canUpdateFile\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.update\)/,
   'file detail update action should use the exact file.update permission'
 );
