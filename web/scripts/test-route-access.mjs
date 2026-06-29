@@ -115,6 +115,15 @@ const automationTaskHandlerPath = path.join(
   'handler',
   'task_handler.go'
 );
+const fileHandlerPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'file_process',
+  'handler',
+  'file_handler.go'
+);
 const filePagePath = path.join(rootDir, 'src', 'app', 'console', 'files', 'page.tsx');
 const fileDetailPagePath = path.join(
   rootDir,
@@ -1132,6 +1141,7 @@ const accountCapabilitiesHookSource = fs.readFileSync(accountCapabilitiesHookPat
 const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
 const automationTaskHandlerSource = fs.readFileSync(automationTaskHandlerPath, 'utf8');
+const fileHandlerSource = fs.readFileSync(fileHandlerPath, 'utf8');
 const filePageSource = fs.readFileSync(filePagePath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
@@ -1567,6 +1577,23 @@ assert.match(
   fileSidebarSource,
   /t\('files\.sidebar\.newTextFile'\)/,
   'file sidebar should render the text creation label separately from upload'
+);
+assert.match(
+  fileHandlerSource,
+  /func \(h \*FileHandler\) authorizeWorkspaceTextCreate[\s\S]*WorkspacePermissionFileTextCreate/,
+  'file text creation backend helper should require file.text.create'
+);
+assert.match(
+  fileHandlerSource,
+  /func \(h \*FileHandler\) CreateTextFile[\s\S]*authorizeWorkspaceTextCreate/,
+  'file text creation endpoint should use the text-create backend helper'
+);
+assert.doesNotMatch(
+  fileHandlerSource.match(
+    /func \(h \*FileHandler\) CreateTextFile[\s\S]*?uploadFile, err := h\.fileService\.UploadFile/
+  )?.[0] ?? '',
+  /authorizeWorkspaceUpload/,
+  'file text creation endpoint should not require file.upload'
 );
 assert.match(
   relatedResourcesPopoverSource,

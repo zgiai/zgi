@@ -553,13 +553,21 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 }
 
 func (h *FileHandler) authorizeWorkspaceUpload(c *gin.Context, organizationID, workspaceID, accountID string) bool {
+	return h.authorizeWorkspaceFileCreate(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionFileUpload)
+}
+
+func (h *FileHandler) authorizeWorkspaceTextCreate(c *gin.Context, organizationID, workspaceID, accountID string) bool {
+	return h.authorizeWorkspaceFileCreate(c, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionFileTextCreate)
+}
+
+func (h *FileHandler) authorizeWorkspaceFileCreate(c *gin.Context, organizationID, workspaceID, accountID string, permission workspace_model.WorkspacePermissionCode) bool {
 	if h.enterpriseService != nil {
 		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
 			c.Request.Context(),
 			organizationID,
 			workspaceID,
 			accountID,
-			workspace_model.WorkspacePermissionFileUpload,
+			permission,
 		)
 		if err != nil {
 			h.businessError(c, response.ErrSystemError)
@@ -2023,7 +2031,7 @@ func (h *FileHandler) CreateTextFile(c *gin.Context) {
 			h.businessError(c, response.ErrInvalidParam)
 			return
 		}
-		if !h.authorizeWorkspaceUpload(c, organizationID, *workspaceID, accountID) {
+		if !h.authorizeWorkspaceTextCreate(c, organizationID, *workspaceID, accountID) {
 			return
 		}
 		teamTenantID = workspaceID

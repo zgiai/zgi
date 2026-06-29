@@ -464,6 +464,31 @@ func TestAuthorizeWorkspaceUploadUsesDirectWorkspacePermission(t *testing.T) {
 	}
 }
 
+func TestAuthorizeWorkspaceTextCreateUsesDirectWorkspacePermission(t *testing.T) {
+	c, _ := newFileAccessTestContext("account-1", "org-1")
+	permissionChecker := &fileUploadPermissionChecker{
+		allowed: true,
+	}
+	handler := &FileHandler{
+		enterpriseService: permissionChecker,
+		tenantService: &fileUploadWorkspaceService{
+			role: ptrWorkspaceRole(workspace_model.WorkspaceRoleAdmin),
+		},
+	}
+
+	ok := handler.authorizeWorkspaceTextCreate(c, "org-1", "workspace-1", "account-1")
+
+	if !ok {
+		t.Fatalf("authorizeWorkspaceTextCreate ok = false, want true")
+	}
+	if permissionChecker.lastWorkspaceID != "workspace-1" {
+		t.Fatalf("workspace id = %q, want workspace-1", permissionChecker.lastWorkspaceID)
+	}
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionFileTextCreate {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionFileTextCreate)
+	}
+}
+
 func TestAuthorizeWorkspaceUploadLegacyFallbackRequiresWorkspaceMembership(t *testing.T) {
 	c, recorder := newFileAccessTestContext("account-1", "org-1")
 	handler := &FileHandler{
