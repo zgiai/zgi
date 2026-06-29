@@ -751,8 +751,18 @@ assert.match(
 );
 assert.match(
   dbPageSource,
-  /const canManage\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.create\)/,
+  /const canCreateDatabase\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.create\)/,
   'database list create action should use the exact database.create action group'
+);
+assert.match(
+  dbPageSource,
+  /const canUpdateDatabase\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.update\)/,
+  'database list edit action should use the exact database.update action group'
+);
+assert.match(
+  dbPageSource,
+  /const openEdit = \(db: Db\) => \{[\s\S]*?if \(!canUpdateDatabase\) return;/,
+  'database list edit callback should not require database.create'
 );
 assert.doesNotMatch(
   dbPageSource,
