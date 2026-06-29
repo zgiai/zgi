@@ -507,6 +507,54 @@ func TestApplyWorkspaceRoleTemplateAppliesCustomTemplateTargets(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestApplyWorkspaceRoleTemplateReportsWorkspacePermissionFailure(t *testing.T) {
+	db, mock := newOrganizationPermissionRegressionMockDB(t)
+	organizationID := "org-1"
+	roleID := "10000000-0000-0000-0000-000000000001"
+	now := time.Now().UTC()
+	workspaceSvc := &applyTemplateWorkspaceManagementService{
+		workspaces: map[string]*model.Workspace{
+			"ws-1": {ID: "ws-1", OrganizationID: &organizationID},
+			"ws-2": {ID: "ws-2", OrganizationID: &organizationID},
+		},
+		failByTargetKey: map[string]error{
+			"ws-1:member-1": errors.New("no permission to update member role"),
+		},
+	}
+	svc := &organizationService{
+		organizationRepo:           workspace_repo.NewOrganizationRepository(db),
+		accountService:             organizationPermissionTestAccountService{},
+		workspaceManagementService: workspaceSvc,
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "roles" WHERE id = $1 AND group_id = $2 AND status = $3 ORDER BY "roles"."id" LIMIT $4`)).
+		WithArgs(roleID, organizationID, model.WorkspaceCustomRoleStatusActive, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "group_id", "name", "description", "status", "permissions", "created_by", "created_at", "updated_at"}).
+			AddRow(roleID, organizationID, "Custom", nil, model.WorkspaceCustomRoleStatusActive, `["agent.view"]`, "operator-1", now, now))
+
+	resp, err := svc.ApplyWorkspaceRoleTemplate(context.Background(), &shared_dto.ApplyWorkspaceRoleTemplateRequest{
+		OrganizationID: organizationID,
+		RoleID:         roleID,
+		OperatorID:     "operator-1",
+		Members: []shared_dto.ApplyWorkspaceRoleTemplateTarget{
+			{WorkspaceID: "ws-1", AccountID: "member-1"},
+			{WorkspaceID: "ws-2", AccountID: "member-2"},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, resp.AppliedCount)
+	require.Equal(t, 1, resp.FailedCount)
+	require.Len(t, resp.Results, 2)
+	require.Equal(t, "failed", resp.Results[0].Status)
+	require.Contains(t, resp.Results[0].Message, "no permission")
+	require.Equal(t, "applied", resp.Results[1].Status)
+	require.Len(t, workspaceSvc.customUpdates, 1)
+	require.Equal(t, "ws-2", workspaceSvc.customUpdates[0].workspaceID)
+	require.Equal(t, "member-2", workspaceSvc.customUpdates[0].accountID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func newOrganizationPermissionRegressionService(db *gorm.DB) *organizationService {
 	return &organizationService{
 		organizationRepo: workspace_repo.NewOrganizationRepository(db),

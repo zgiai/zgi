@@ -1575,15 +1575,14 @@ func TestApplyWorkspaceRoleTemplateBindsTargetsAndOperator(t *testing.T) {
 	handler := &OrganizationHandler{
 		organizationService: fakeOrganizationService{
 			isOrganizationAdminOrOwnerFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
-				require.Equal(t, "org-1", organizationID)
-				require.Equal(t, "admin-1", accountID)
-				return true, nil
+				t.Fatalf("ApplyWorkspaceRoleTemplate should delegate workspace-manager checks to the service layer")
+				return false, nil
 			},
 			applyWorkspaceRoleTemplateFn: func(ctx context.Context, req *shared_dto.ApplyWorkspaceRoleTemplateRequest) (*shared_dto.ApplyWorkspaceRoleTemplateResponse, error) {
 				serviceCalled = true
 				require.Equal(t, "org-1", req.OrganizationID)
 				require.Equal(t, model.WorkspaceBuiltinRoleMemberID, req.RoleID)
-				require.Equal(t, "admin-1", req.OperatorID)
+				require.Equal(t, "workspace-manager", req.OperatorID)
 				require.Len(t, req.Members, 2)
 				require.Equal(t, "ws-1", req.Members[0].WorkspaceID)
 				require.Equal(t, "member-1", req.Members[0].AccountID)
@@ -1595,7 +1594,7 @@ func TestApplyWorkspaceRoleTemplateBindsTargetsAndOperator(t *testing.T) {
 	}
 
 	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/roles/00000000-0000-0000-0000-000000000003/apply-template")
-	c.Set("account_id", "admin-1")
+	c.Set("account_id", "workspace-manager")
 	c.Params = gin.Params{
 		{Key: "organization_id", Value: "org-1"},
 		{Key: "role_id", Value: model.WorkspaceBuiltinRoleMemberID},

@@ -540,9 +540,6 @@ func (h *OrganizationHandler) ApplyWorkspaceRoleTemplate(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireOrganizationAdminOrOwner(c, organizationID, accountID) {
-		return
-	}
 
 	var body struct {
 		Members []dto.ApplyWorkspaceRoleTemplateTarget `json:"members" binding:"required"`
