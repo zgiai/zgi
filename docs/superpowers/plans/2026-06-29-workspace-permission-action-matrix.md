@@ -67,7 +67,7 @@ This matrix records the current workspace asset permission contract after the fi
 - Frontend type check.
 - Targeted ESLint for changed frontend files.
 - Backend targeted tests for agents, dataset, datasource, file, dashboard, and workspace permission model.
-- Manual/browser smoke still needed before marking the long-running goal complete: owner/admin, workspace owner/admin, advanced/basic/readonly member, custom legacy template, no-workspace app-center grant, and no-database/no-knowledge permission cases.
+- Manual/browser smoke is partially covered. Still needed before marking the long-running goal complete: owner/admin, workspace owner/admin, advanced/basic/readonly member, custom legacy template, and no-database/no-knowledge permission cases.
 
 ## Verification Log
 
@@ -99,4 +99,6 @@ This matrix records the current workspace asset permission contract after the fi
 - 2026-06-29: `go test ./internal/modules/workspace/service -run "TestBuiltinWorkspaceRoleSummaryPermissionsCanonicalizesCompatibilityCodes|TestApplyWorkspaceMemberDirectPermissionSnapshotExpandsPermissions|TestGetWorkspaceMemberPermissionsReturnsRawWorkspaceRole|TestApplyWorkspaceRoleTemplate"` passed. Full `go test ./internal/modules/workspace/service` is blocked in this local environment by `go-sqlite3` requiring CGO while the binary is built with `CGO_ENABLED=0`.
 - 2026-06-29: Backend targeted tests passed for `api_key`, `app/agents`, `app/workflow`, `dataset/handler`, `file_process/handler`, `datasource/handler`, `system/handler`, `workspace/model`, `prompts`, `contentparse`, and `automation/handler`.
 - 2026-06-29: `go test ./internal/modules/app/agents` passed after moving agent runtime surface/status authorization to `agent.runtime_access.manage`.
-- 2026-06-29: Browser smoke blocked by authentication state. `http://localhost:2880/console` redirects to `/login?redirect=%2Fconsole`; `http://localhost:2870/console` returns backend `404 page not found`.
+- 2026-06-29: Local Docker browser smoke unblocked with disposable local test credentials. Ordinary role-template member `asset-move-member@example.com` can log in at `http://localhost:2880/login`, open `/console`, see the overview panel, workspace-scoped asset navigation, recent work, and organization-scoped app-center shortcuts.
+- 2026-06-29: Local Docker no-workspace browser/API smoke passed after adding a temporary account app-center grant for `codex-no-workspace@example.com`. The account has no current workspace, `/console` shows `0 个工作空间`, hides workspace asset navigation (`agents`, `dataset`, `files`, `db`), shows the account-granted app-center shortcut, and opens `/console/work/app/2bbf0f19-8f39-4363-b1a5-9fc528f4be60` without a no-access state.
+- 2026-06-29: `pnpm test:route-access`, `pnpm type-check`, `go test ./internal/modules/workspace/service -run "TestWorkspacePermissionFilter|TestCheckPermission|TestCheckMemberPermission"`, `go test ./internal/modules/app/agents -run "Test.*Runnable|Test.*RuntimeSurfaces|TestAgentRuntimeAuthorizationFromUpdateRequest"`, and `go test ./internal/modules/app/runtimeauth -run "Test.*Surface|Test.*Authorized|Test.*Grant"` passed after the browser smoke pass.
