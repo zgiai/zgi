@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -317,6 +318,70 @@ func TestGetWorkspaceMemberPermissionsReturnsRawWorkspaceRole(t *testing.T) {
 	require.Equal(t, adminRoleID, *resp.WorkspaceRoleID)
 	require.NotEmpty(t, resp.WorkspaceRoleName)
 	require.NotEqual(t, resp.WorkspaceRoleName, resp.WorkspaceRole)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetWorkspaceMemberPermissionsCanonicalizesLegacySnapshot(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newOrganizationPermissionRegressionMockDB(t)
+	now := time.Now().UTC()
+	legacyPermissions := []string{
+		"workspace.view",
+		"dashboard.view",
+		"prompt.optimize",
+		"content_parse.playground",
+		string(model.WorkspacePermissionAgentManage),
+		string(model.WorkspacePermissionKnowledgeBaseManage),
+		string(model.WorkspacePermissionDatabaseAIQuery),
+		string(model.WorkspacePermissionFileUploadCreate),
+		string(model.WorkspacePermissionFileMoveCreate),
+	}
+	svc := &organizationService{
+		organizationRepo: workspace_repo.NewOrganizationRepository(db),
+		workspaceRepo:    workspace_repo.NewWorkspaceRepository(db),
+		workspaceManagementService: &workspaceMemberPermissionsManagementService{
+			join: &model.WorkspaceMember{
+				WorkspaceID:      "ws-1",
+				AccountID:        "member-1",
+				Role:             model.WorkspaceRoleNormal,
+				Permissions:      legacyPermissions,
+				PermissionSource: model.WorkspaceMemberPermissionSourceRoleTemplate,
+			},
+		},
+	}
+
+	expectOrganizationByID(mock, "org-1", now)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "organization_id" FROM "workspaces" WHERE id = $1 ORDER BY "workspaces"."id" LIMIT $2`)).
+		WithArgs("ws-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"organization_id"}).AddRow("org-1"))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT role FROM "members" WHERE organization_id = $1 AND account_id = $2`)).
+		WithArgs("org-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow(model.OrganizationRoleNormal))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "workspaces" WHERE id = $1 ORDER BY "workspaces"."id" LIMIT $2`)).
+		WithArgs("ws-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "organization_id", "status", "created_at", "updated_at"}).
+			AddRow("ws-1", "Workspace", "org-1", model.WorkspaceStatusNormal, now, now))
+
+	resp, err := svc.GetWorkspaceMemberPermissions(context.Background(), "org-1", "ws-1", "member-1", "member-1")
+
+	require.NoError(t, err)
+	require.Contains(t, resp.Permissions, string(model.WorkspacePermissionAgentCreate))
+	require.Contains(t, resp.Permissions, string(model.WorkspacePermissionKnowledgeBaseDocumentCreate))
+	require.Contains(t, resp.Permissions, string(model.WorkspacePermissionDatabaseAIQueryRead))
+	require.Contains(t, resp.Permissions, string(model.WorkspacePermissionFileUpload))
+	require.Contains(t, resp.Permissions, string(model.WorkspacePermissionFileMove))
+	require.NotContains(t, resp.Permissions, string(model.WorkspacePermissionAgentManage))
+	require.NotContains(t, resp.Permissions, string(model.WorkspacePermissionKnowledgeBaseManage))
+	require.NotContains(t, resp.Permissions, string(model.WorkspacePermissionDatabaseAIQuery))
+	require.NotContains(t, resp.Permissions, string(model.WorkspacePermissionFileUploadCreate))
+	require.NotContains(t, resp.Permissions, string(model.WorkspacePermissionFileMoveCreate))
+	for _, permission := range resp.Permissions {
+		require.False(t, strings.HasPrefix(permission, "workspace."), "workspace permission should be hidden: %s", permission)
+		require.False(t, strings.HasPrefix(permission, "dashboard."), "dashboard permission should be hidden: %s", permission)
+		require.False(t, strings.HasPrefix(permission, "prompt."), "prompt permission should be hidden: %s", permission)
+		require.False(t, strings.HasPrefix(permission, "content_parse."), "content parse permission should be hidden: %s", permission)
+	}
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

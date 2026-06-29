@@ -1634,7 +1634,7 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		}
 	}
 
-	rolePermissions := workspaceMemberEffectivePermissionStrings(
+	rolePermissions := workspaceMemberDisplayPermissionStrings(
 		join.Role,
 		join.RoleID,
 		join.Permissions,
