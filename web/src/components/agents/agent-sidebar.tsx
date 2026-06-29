@@ -47,7 +47,12 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
   const { hasAnyPermission } = useAccountPermissions();
   const canView = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
   const canUpdateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.update);
+  const canConfigureAgentRuntime = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage);
+  const canPublishAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.publish);
   const canUpdateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update);
+  const canRunWorkflowDraft = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
+  const canStopWorkflowRun = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop);
+  const canDebugWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
   const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
   const canManageWorkflowRuntimeAccess = hasAnyPermission(
     WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
@@ -69,10 +74,19 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
   const agentData = agent?.data;
   const isAgentRuntime = isAgentRuntimeType(agentData?.agent_type);
   const isWorkflowRuntime = isWorkflowRuntimeType(agentData?.agent_type);
-  const canEditRuntime = isAgentRuntime
+  const canEditIdentity = isAgentRuntime
     ? canUpdateAgent
     : isWorkflowRuntime
       ? canUpdateWorkflow
+      : false;
+  const canEditRuntime = isAgentRuntime
+    ? canConfigureAgentRuntime || canPublishAgent || canManageAgentRuntimeAccess
+    : isWorkflowRuntime
+      ? canUpdateWorkflow ||
+        canRunWorkflowDraft ||
+        canStopWorkflowRun ||
+        canDebugWorkflow ||
+        canManageWorkflowRuntimeAccess
       : false;
   const canManageRuntimeAccess = isAgentRuntime
     ? canManageAgentRuntimeAccess
@@ -88,6 +102,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
     () =>
       getAgentDetailRouteAccess(agentId, agentData?.agent_type, {
         canView,
+        canOpenEditor: canEditRuntime,
         canEditRuntime,
         canManageRuntimeAccess,
         canViewRuntimeLogs,
@@ -111,9 +126,15 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
   );
 
   const navItems: ResourceSidebarNavItem[] = React.useMemo(() => {
-    const items: ResourceSidebarNavItem[] = [
-      { title: t('agents.actions.edit'), href: routeAccess.editHref, icon: PanelsTopLeft },
-    ];
+    const items: ResourceSidebarNavItem[] = [];
+
+    if (routeAccess.canShowEditor) {
+      items.push({
+        title: t('agents.actions.edit'),
+        href: routeAccess.editHref,
+        icon: PanelsTopLeft,
+      });
+    }
 
     if (routeAccess.canShowRuntimeLogs && agentData?.is_published) {
       items.push({
@@ -223,7 +244,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
             onBackClick={() => markAgentListRestoreIntentFromDetail(agentId)}
             iconActionLabel={t('agents.actions.edit')}
             onIconClick={
-              routeAccess.canEditRuntime && !isMismatch && agentData
+              canEditIdentity && !isMismatch && agentData
                 ? () => setEditOpen(true)
                 : undefined
             }

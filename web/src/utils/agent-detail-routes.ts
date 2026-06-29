@@ -5,11 +5,14 @@ export type AgentDetailType = AgentType | string | null | undefined;
 export interface AgentDetailRoutePermissions {
   canView: boolean;
   canManage?: boolean;
+  canOpenEditor?: boolean;
   canEditRuntime?: boolean;
   canManageRuntimeAccess?: boolean;
   canViewRuntimeLogs?: boolean;
   canViewBatchTest?: boolean;
   canRunBatchTest?: boolean;
+  isPublished?: boolean;
+  preferBatchTestLibrary?: boolean;
 }
 
 function normalizeAgentType(agentType: AgentDetailType): string {
@@ -111,16 +114,21 @@ export function getAgentDetailRouteAccess(
     permissions.canViewBatchTest ?? permissions.canRunBatchTest ?? permissions.canManage
   );
   const canRunBatchTest = Boolean(permissions.canRunBatchTest ?? permissions.canManage);
+  const canOpenEditor = Boolean(
+    permissions.canOpenEditor ?? permissions.canEditRuntime ?? permissions.canManage
+  );
 
   return {
     editHref: getAgentDetailEditHref(agentId, agentType),
     canView: permissions.canView,
     canManage:
       canManage ||
+      canOpenEditor ||
       canEditRuntime ||
       canManageRuntimeAccess ||
       canViewRuntimeLogs ||
       canRunBatchTest,
+    canShowEditor: canOpenEditor,
     canEditRuntime,
     supportsWorkflowPages,
     canShowApiKeys: supportsWorkflowPages && canManageRuntimeAccess,
@@ -128,6 +136,34 @@ export function getAgentDetailRouteAccess(
     canShowRuntimeLogs: supportsAgentRuntimeLogs(agentType) && canViewRuntimeLogs,
     canShowBatchTest: supportsWorkflowPages && canViewBatchTest,
   };
+}
+
+export function getAgentDetailDefaultHref(
+  agentId: string,
+  agentType: AgentDetailType,
+  permissions: AgentDetailRoutePermissions
+): string | null {
+  const access = getAgentDetailRouteAccess(agentId, agentType, permissions);
+
+  if (access.canShowEditor) {
+    return access.editHref;
+  }
+
+  if (access.canShowApiKeys) {
+    return `/console/agents/${agentId}/api`;
+  }
+
+  if (access.canShowRuntimeLogs && permissions.isPublished) {
+    return `/console/agents/${agentId}/logs`;
+  }
+
+  if (access.canShowBatchTest) {
+    return permissions.preferBatchTestLibrary
+      ? `/console/agents/${agentId}/batch-test`
+      : `/console/agents/${agentId}/batch-test/batches`;
+  }
+
+  return null;
 }
 
 export function getWebAppRunHref(webAppId: string, agentType: AgentDetailType): string {

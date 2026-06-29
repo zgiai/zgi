@@ -234,6 +234,15 @@ const createAgentDialogPath = path.join(
   'create-dialog.tsx'
 );
 const agentCardPath = path.join(rootDir, 'src', 'components', 'agents', 'agent-card.tsx');
+const agentEntryPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'page.tsx'
+);
 const datasetCardPath = path.join(rootDir, 'src', 'components', 'datasets', 'dataset-card.tsx');
 const datasetDetailRootPagePath = path.join(
   rootDir,
@@ -403,6 +412,7 @@ const {
   canShowAgentApiKeys,
   canShowAgentBatchTest,
   canShowAgentRuntimeAccess,
+  getAgentDetailDefaultHref,
   getAgentDetailRouteAccess,
 } = agentRouteSandbox.module.exports;
 
@@ -1151,6 +1161,7 @@ const agentRuntimeKnowledgeSectionSource = fs.readFileSync(
 const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
+const agentEntryPageSource = fs.readFileSync(agentEntryPagePath, 'utf8');
 const datasetCardSource = fs.readFileSync(datasetCardPath, 'utf8');
 const datasetDetailRootPageSource = fs.readFileSync(datasetDetailRootPagePath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
@@ -1716,6 +1727,41 @@ assert.match(
   /router\.replace\(targetHref\)/,
   'dataset detail root should replace to the first permission-compatible child page'
 );
+assert.doesNotMatch(
+  agentEntryPageSource,
+  /function getAgentDefaultHref/,
+  'agent detail root should not keep a local type-only default redirect helper'
+);
+assert.match(
+  agentEntryPageSource,
+  /getAgentDetailDefaultHref\(agentId,[\s\S]*canOpenEditor:/,
+  'agent detail root should choose its default child page through the permission-aware route helper'
+);
+assert.match(
+  agentEntryPageSource,
+  /router\.replace\(targetHref\)/,
+  'agent detail root should replace to the first permission-compatible child page'
+);
+assert.match(
+  agentEntryPageSource,
+  /canOpenAgentRuntimeEditor[\s\S]*AGENT_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*AGENT_PERMISSION_ACTIONS\.publish[\s\S]*AGENT_PERMISSION_ACTIONS\.runtimeAccessManage/,
+  'agent runtime root should use runtime config, publish, or access-management permission for the runtime editor'
+);
+assert.match(
+  agentEntryPageSource,
+  /canOpenWorkflowEditor[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
+  'workflow root should only choose the editor when a workflow editor action is actually available'
+);
+assert.match(
+  agentSidebarSource,
+  /if \(routeAccess\.canShowEditor\)[\s\S]*agents\.actions\.edit/,
+  'agent sidebar should only show the edit/editor entry when that child page is permission-compatible'
+);
+assert.match(
+  agentSidebarSource,
+  /canConfigureAgentRuntime \|\| canPublishAgent \|\| canManageAgentRuntimeAccess/,
+  'agent sidebar should gate the AGENT runtime editor by runtime config, publish, or access-management permission'
+);
 assert.match(
   agentSidebarSource,
   /routeAccess\.canShowApiKeys/,
@@ -2023,6 +2069,53 @@ assert.equal(
   Object.hasOwn(logsOnlyWorkflowRouteAccess, 'canRunBatchTest'),
   false,
   'Workflow route access should expose batch-test visibility separately from execution-only state'
+);
+assert.equal(
+  getAgentDetailDefaultHref('agent-1', 'AGENT', {
+    canView: true,
+    canOpenEditor: false,
+    canViewRuntimeLogs: true,
+    isPublished: true,
+  }),
+  '/console/agents/agent-1/logs',
+  'AGENT root should fall back to published runtime logs for logs-only users'
+);
+assert.equal(
+  getAgentDetailDefaultHref('agent-1', 'WORKFLOW', {
+    canView: true,
+    canOpenEditor: false,
+    canManageRuntimeAccess: true,
+  }),
+  '/console/agents/agent-1/api',
+  'Workflow root should fall back to API key/docs when runtime-access is available but the editor is not exposed'
+);
+assert.equal(
+  getAgentDetailDefaultHref('agent-1', 'WORKFLOW', {
+    canView: true,
+    canOpenEditor: false,
+    canViewBatchTest: true,
+    preferBatchTestLibrary: true,
+  }),
+  '/console/agents/agent-1/batch-test',
+  'Workflow root should prefer the case library when workflow.view is available'
+);
+assert.equal(
+  getAgentDetailDefaultHref('agent-1', 'WORKFLOW', {
+    canView: true,
+    canOpenEditor: false,
+    canViewBatchTest: true,
+    preferBatchTestLibrary: false,
+  }),
+  '/console/agents/agent-1/batch-test/batches',
+  'Workflow root should fall back to batch results for logs/debug-only batch-test access'
+);
+assert.equal(
+  getAgentDetailDefaultHref('agent-1', 'WORKFLOW', {
+    canView: true,
+    canOpenEditor: false,
+  }),
+  null,
+  'Agent detail root should return no target when no child page is available'
 );
 
 console.log('route access scope check passed.');
