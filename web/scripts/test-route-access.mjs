@@ -74,6 +74,15 @@ const workspaceMembersPagePath = path.join(
   'members',
   'page.tsx'
 );
+const workspaceSettingsPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'workspace',
+  'settings',
+  'page.tsx'
+);
 const workspaceRoleTemplatesPath = path.join(
   rootDir,
   'src',
@@ -1481,6 +1490,7 @@ assert.match(
 const workspaceLayoutSource = fs.readFileSync(workspaceLayoutPath, 'utf8');
 const workspacePageSource = fs.readFileSync(workspacePagePath, 'utf8');
 const workspaceMembersPageSource = fs.readFileSync(workspaceMembersPagePath, 'utf8');
+const workspaceSettingsPageSource = fs.readFileSync(workspaceSettingsPagePath, 'utf8');
 const workspaceRoleTemplatesSource = fs.readFileSync(workspaceRoleTemplatesPath, 'utf8');
 const addWorkspaceMemberModalSource = fs.readFileSync(addWorkspaceMemberModalPath, 'utf8');
 const workspaceMemberPermissionsDialogSource = fs.readFileSync(
@@ -1681,6 +1691,31 @@ assert.doesNotMatch(
   workspacePageSource,
   /redirect\(/,
   'workspace overview should render in place instead of redirecting to members'
+);
+assert.match(
+  workspaceSettingsPageSource,
+  /useAccountPermissions\(\)/,
+  'workspace settings should consume the current account permission response instead of a possibly stale workspace-store snapshot'
+);
+assert.match(
+  workspaceSettingsPageSource,
+  /organizationRole === 'owner' \|\| organizationRole === 'admin'/,
+  'workspace settings should preserve organization owner/admin management authority'
+);
+assert.match(
+  workspaceSettingsPageSource,
+  /workspaceRole === 'owner' \|\| workspaceRole === 'admin'/,
+  'workspace settings should preserve workspace owner/admin management authority'
+);
+assert.match(
+  workspaceSettingsPageSource,
+  /const canTransferOwnership\s*=\s*isOrganizationManager \|\| workspaceRole === 'owner'/,
+  'workspace settings owner transfer should remain limited to organization owner/admin or workspace owner'
+);
+assert.doesNotMatch(
+  workspaceSettingsPageSource,
+  /usePermissions\(\)/,
+  'workspace settings should not derive current-page governance from the shared workspace store snapshot'
 );
 assert.match(
   workspaceMembersPageSource,

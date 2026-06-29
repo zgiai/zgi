@@ -13,9 +13,10 @@ import {
   ShieldCheck,
   X,
 } from 'lucide-react';
-import { useCurrentWorkspace, usePermissions, useWorkspaceStore } from '@/store/workspace-store';
+import { useCurrentWorkspace, useWorkspaceStore } from '@/store/workspace-store';
 import { useWorkspaceActions } from '@/hooks/workspace/use-workspace-actions';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkspaceMembers } from '@/hooks/workspace/use-workspace-members';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useCurrentUser } from '@/store/auth-store';
@@ -41,7 +42,7 @@ export default function WorkspaceSettingsPage() {
   const currentWorkspace = useCurrentWorkspace();
   const currentUser = useCurrentUser();
   const { currentOrganization } = useOrganizations();
-  const { organizationRole, workspaceRole } = usePermissions();
+  const { organizationRole, workspaceRole } = useAccountPermissions();
   const isOrganizationManager = organizationRole === 'owner' || organizationRole === 'admin';
   const canManage = isOrganizationManager || workspaceRole === 'owner' || workspaceRole === 'admin';
   const canTransferOwnership = isOrganizationManager || workspaceRole === 'owner';
