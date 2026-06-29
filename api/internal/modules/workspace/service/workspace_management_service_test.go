@@ -366,6 +366,30 @@ func TestCheckMemberPermissionRejectsPermissionManageFromDirectSnapshot(t *testi
 	require.Error(t, err)
 }
 
+func TestCheckPermissionAllowsOrganizationAdminWithoutWorkspaceMembership(t *testing.T) {
+	t.Parallel()
+
+	orgID := "org-1"
+	workspaceID := "ws-1"
+	adminID := "org-admin-1"
+
+	svc := &WorkspaceManagementServiceImpl{
+		workspaceRepo: &workspaceManagementWorkspaceRepo{workspace: &model.Workspace{
+			ID:             workspaceID,
+			Name:           "Workspace",
+			Status:         model.WorkspaceStatusNormal,
+			Plan:           "basic",
+			OrganizationID: &orgID,
+		}},
+		workspaceMemberRepo: &workspaceMemberDirectPermissionRepo{},
+		organizationService: workspaceManagementTestOrganizationService{
+			adminAccounts: map[string]bool{adminID: true},
+		},
+	}
+
+	require.True(t, svc.CheckPermission(context.Background(), workspaceID, adminID))
+}
+
 func TestUpdateMemberRoleReappliesSameBuiltinTemplateSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -660,6 +684,18 @@ func (r *workspaceMemberDirectPermissionRepo) Update(ctx context.Context, join *
 	clone.Permissions = append([]string(nil), join.Permissions...)
 	r.updated = &clone
 	return nil
+}
+
+type workspaceManagementWorkspaceRepo struct {
+	repository.WorkspaceRepository
+	workspace *model.Workspace
+}
+
+func (r *workspaceManagementWorkspaceRepo) GetByID(context.Context, string) (*model.Workspace, error) {
+	if r.workspace == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return r.workspace, nil
 }
 
 func stringPtr(value string) *string {

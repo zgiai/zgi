@@ -1102,6 +1102,11 @@ func (s *WorkspaceManagementServiceImpl) GetDatasetOperatorMembers(ctx context.C
 
 // CheckPermission Check permission
 func (s *WorkspaceManagementServiceImpl) CheckPermission(ctx context.Context, workspaceID, accountID string) bool {
+	allowed, err := s.isWorkspaceOrganizationAdminOrOwner(ctx, workspaceID, accountID)
+	if err == nil && allowed {
+		return true
+	}
+
 	join, err := s.workspaceMemberRepo.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
 	if err != nil || join == nil {
 		return false
