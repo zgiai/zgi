@@ -18,6 +18,7 @@ import { CreateNodeFloatingPicker } from './create-node-floating-picker';
 
 interface CreateNodeModalProps {
   isOpen: boolean;
+  isReadOnly: boolean;
   onClose: () => void;
   position: { x: number; y: number } | null;
   anchorClientPosition: { x: number; y: number } | null;
@@ -26,6 +27,7 @@ interface CreateNodeModalProps {
 
 const CreateNodeModal: React.FC<CreateNodeModalProps> = ({
   isOpen,
+  isReadOnly,
   onClose,
   position,
   anchorClientPosition,
@@ -163,6 +165,7 @@ const CreateNodeModal: React.FC<CreateNodeModalProps> = ({
     originatingEdge: activeEdge,
     onClose,
     createNodeByType,
+    isReadOnly,
   });
 
   const i18nTypes = useNodeTypesI18n();
@@ -237,6 +240,8 @@ const CreateNodeModal: React.FC<CreateNodeModalProps> = ({
   }
 
   const activeRender = renderRef.current;
+
+  if (isReadOnly) return null;
 
   const pickerContent = (
     <CreateNodePickerContent

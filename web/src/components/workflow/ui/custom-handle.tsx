@@ -55,6 +55,8 @@ const CustomHandle: React.FC<CustomHandleProps> = ({
   // History mode disables handle interactions and hover visuals
   const mode = useWorkflowStore.use.mode();
   const isHistory = mode === 'history';
+  const canEdit = useWorkflowStore.use.canEdit();
+  const isReadOnly = isHistory || !canEdit;
   // Trigger edge/anchor re-calculation when handle visual position changes
   const updateNodeInternals = useUpdateNodeInternals();
 
@@ -147,6 +149,9 @@ const CustomHandle: React.FC<CustomHandleProps> = ({
 
   const handleClick = (event: React.MouseEvent) => {
     event.stopPropagation();
+    if (isReadOnly) {
+      return;
+    }
     // Only allow add-node modal from source (output) handles
     if (type !== 'source') {
       return;
@@ -183,7 +188,7 @@ const CustomHandle: React.FC<CustomHandleProps> = ({
       position={position}
       id={id}
       className={handleStyles}
-      isConnectable={!isHistory && isConnectable}
+      isConnectable={!isReadOnly && isConnectable}
       style={{
         zIndex: 10,
         // Precision alignment: exactly centered on the 40px header line
@@ -191,19 +196,19 @@ const CustomHandle: React.FC<CustomHandleProps> = ({
         transform: position === Position.Right ? 'translate(80%, -50%)' : 'translate(-80%, -50%)',
         ...style,
       }}
-      onConnect={!isHistory ? combinedOnConnect : undefined}
-      isValidConnection={!isHistory ? isValidConnection : undefined}
-      onClick={!isHistory && type === 'source' ? handleClick : undefined}
+      onConnect={!isReadOnly ? combinedOnConnect : undefined}
+      isValidConnection={!isReadOnly ? isValidConnection : undefined}
+      onClick={!isReadOnly && type === 'source' ? handleClick : undefined}
       // Add test-friendly and accessible attributes
       data-handle-id={id}
       data-handle-type={type}
       data-node-id={nodeId ?? ''}
       aria-label={`Handle ${type} ${id}${nodeId ? ` of node ${nodeId}` : ''}`}
       // Ensure element is keyboard focusable for accessibility
-      tabIndex={isHistory ? -1 : 0}
+      tabIndex={isReadOnly ? -1 : 0}
       {...validProps}
     >
-      {!isHistory && type === 'source' ? (
+      {!isReadOnly && type === 'source' ? (
         <div
           className={cn(
             'absolute top-1/2 flex items-center justify-center transition-all duration-200',

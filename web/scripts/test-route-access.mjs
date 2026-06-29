@@ -364,6 +364,51 @@ const workflowGlobalContainerOverlayPath = path.join(
   'workflow',
   'global-container-overlay.tsx'
 );
+const workflowCustomHandlePath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'ui',
+  'custom-handle.tsx'
+);
+const workflowContainerNodePath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'container',
+  'index.tsx'
+);
+const workflowCreateNodeModalHostPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'ui',
+  'create-node-modal',
+  'index.tsx'
+);
+const workflowCreateNodeModalPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'ui',
+  'create-node-modal',
+  'create-node-modal.tsx'
+);
+const workflowCreationActionsPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'ui',
+  'create-node-modal',
+  'hooks',
+  'use-creation-actions.ts'
+);
 const workflowDatabasePickerPath = path.join(
   rootDir,
   'src',
@@ -830,6 +875,14 @@ const workflowGlobalContainerOverlaySource = fs.readFileSync(
   workflowGlobalContainerOverlayPath,
   'utf8'
 );
+const workflowCustomHandleSource = fs.readFileSync(workflowCustomHandlePath, 'utf8');
+const workflowContainerNodeSource = fs.readFileSync(workflowContainerNodePath, 'utf8');
+const workflowCreateNodeModalHostSource = fs.readFileSync(
+  workflowCreateNodeModalHostPath,
+  'utf8'
+);
+const workflowCreateNodeModalSource = fs.readFileSync(workflowCreateNodeModalPath, 'utf8');
+const workflowCreationActionsSource = fs.readFileSync(workflowCreationActionsPath, 'utf8');
 assert.match(
   workspaceLayoutSource,
   /useAccountCapabilities/,
@@ -2366,6 +2419,46 @@ assert.match(
   workflowGlobalContainerOverlaySource,
   /if \(isReadOnly \|\| !draggingNodeType\) return null;/,
   'workflow container drop overlay should not render active drop targets in read-only mode'
+);
+assert.match(
+  workflowCustomHandleSource,
+  /const isReadOnly = isHistory \|\| !canEdit;/,
+  'workflow custom handles should derive read-only state from permission edit authority as well as history mode'
+);
+assert.match(
+  workflowCustomHandleSource,
+  /onClick=\{!isReadOnly && type === 'source' \? handleClick : undefined\}/,
+  'workflow custom handles should not open create-node modal without workflow.update'
+);
+assert.match(
+  workflowContainerNodeSource,
+  /const isReadOnly = mode === 'history' \|\| !canEdit;/,
+  'workflow container nodes should derive read-only state from permission edit authority as well as history mode'
+);
+assert.match(
+  workflowContainerNodeSource,
+  /\{onlyHasStart && !isReadOnly && \(/,
+  'workflow container empty-state add button should not render without workflow.update'
+);
+assert.match(
+  workflowCreateNodeModalHostSource,
+  /if \(open && isReadOnly\) \{[\s\S]*closeModal\(\);[\s\S]*\}/,
+  'workflow create-node modal host should close stale creation modals when workflow becomes read-only'
+);
+assert.match(
+  workflowCreateNodeModalSource,
+  /isReadOnly,\s*\n\s*\}\);/,
+  'workflow create-node modal should pass read-only state into creation actions'
+);
+assert.match(
+  workflowCreationActionsSource,
+  /const isWorkflowCreationReadOnly = \(\) => \{[\s\S]*return mode === 'history' \|\| !canEdit;/,
+  'workflow creation actions should re-check current store edit authority before mutating the graph'
+);
+assert.match(
+  workflowCreationActionsSource,
+  /if \(isReadOnly \|\| isWorkflowCreationReadOnly\(\)\) \{[\s\S]*onClose\(\);[\s\S]*return;/,
+  'workflow creation actions should reject modal selections in read-only mode'
 );
 
 for (const appCenterPath of appCenterPaths) {

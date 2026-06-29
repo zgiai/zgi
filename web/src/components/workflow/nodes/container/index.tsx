@@ -15,6 +15,9 @@ interface ContainerContentProps {
 const ContainerContent: React.FC<ContainerContentProps> = ({ id, data }) => {
   const { openModal } = useCreateNodeModal();
   const t = useT();
+  const mode = useWorkflowStore.use.mode();
+  const canEdit = useWorkflowStore.use.canEdit();
+  const isReadOnly = mode === 'history' || !canEdit;
 
   const onlyHasStart = useWorkflowStoreBase(
     useCallback(
@@ -34,6 +37,7 @@ const ContainerContent: React.FC<ContainerContentProps> = ({ id, data }) => {
 
   const handleAddClick: React.MouseEventHandler<HTMLButtonElement> = e => {
     e.stopPropagation();
+    if (isReadOnly) return;
     openModal(
       undefined,
       {
@@ -48,6 +52,10 @@ const ContainerContent: React.FC<ContainerContentProps> = ({ id, data }) => {
   const handleDragOver: React.DragEventHandler = e => {
     e.preventDefault();
     e.stopPropagation();
+    if (isReadOnly) {
+      e.dataTransfer.dropEffect = 'none';
+      return;
+    }
     // No need to check node type here, the global overlay will handle it
     e.dataTransfer.dropEffect = 'copy';
     setDragOverContainerId(id);
@@ -56,6 +64,7 @@ const ContainerContent: React.FC<ContainerContentProps> = ({ id, data }) => {
   const handleDragEnter: React.DragEventHandler = e => {
     e.preventDefault();
     e.stopPropagation();
+    if (isReadOnly) return;
     setDragOverContainerId(id);
   };
 
@@ -84,7 +93,7 @@ const ContainerContent: React.FC<ContainerContentProps> = ({ id, data }) => {
     >
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#e5e7eb_1px,transparent_1px),linear-gradient(to_bottom,#e5e7eb_1px,transparent_1px)] bg-[size:20px_20px]" />
       <div className="absolute inset-0">
-        {onlyHasStart && (
+        {onlyHasStart && !isReadOnly && (
           <div className="absolute top-[13px] left-0 pointer-events-none flex items-center pl-[52px] overflow-visible">
             {/* Dashed Line - Matches system edge style */}
             <svg className="w-[80px] h-0.5 shrink-0 overflow-visible">
