@@ -424,7 +424,6 @@ function streamingOperationStatus(
     if (item.type !== 'skill_event') continue;
     const invocation = item.invocation as unknown as Record<string, unknown>;
     if (runningInvocationBlocksStreamingStatus(invocation)) return null;
-    if (!isSuccessfulTimelineStatus(invocation.status)) continue;
 
     const skillId = timelineString(invocation.skill_id);
     const toolName = timelineString(invocation.tool_name);
@@ -447,6 +446,7 @@ function streamingOperationStatus(
         assetType: timelineInvocationAssetType(invocation),
       };
     }
+    if (!isSuccessfulTimelineStatus(invocation.status)) continue;
     if (
       (skillId === 'console-navigator' && toolName === 'navigate') ||
       (kind === 'client_action' && actionType === 'route_navigation')
