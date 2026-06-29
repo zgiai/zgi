@@ -688,7 +688,7 @@ func continuationStateInvocations(metadata map[string]interface{}) []map[string]
 	out := make([]map[string]interface{}, 0, len(invocations))
 	for _, invocation := range invocations {
 		switch strings.TrimSpace(stringFromAny(invocation["kind"])) {
-		case "tool_call", "client_action", "guardrail":
+		case "tool_call", "client_action":
 			out = append(out, invocation)
 		}
 	}
@@ -1030,7 +1030,7 @@ func toolHistoryInvocations(metadata map[string]interface{}) []map[string]interf
 	out := make([]map[string]interface{}, 0, len(invocations))
 	for _, invocation := range invocations {
 		switch stringFromAny(invocation["kind"]) {
-		case "skill_load", "reference_read", "tool_call", "guardrail":
+		case "skill_load", "reference_read", "tool_call":
 			out = append(out, invocation)
 		}
 	}

@@ -90,6 +90,34 @@ func TestRecentExecutionContextDoesNotIncludeGenericToolResult(t *testing.T) {
 	}
 }
 
+func TestRecentExecutionContextOmitsGuardrailHistory(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query:  "continue",
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{
+				map[string]interface{}{
+					"kind":      "guardrail",
+					"skill_id":  skills.SkillConsoleNavigator,
+					"tool_name": "navigate",
+					"status":    "blocked",
+					"message":   "do not repeat navigation",
+					"error":     "old guardrail feedback",
+				},
+			},
+		},
+	}
+
+	recent, stats := buildRecentExecutionContextMessage([]*runtimemodel.Message{message})
+
+	if recent != nil {
+		t.Fatalf("recent execution context = %#v, want nil for guardrail-only history", recent)
+	}
+	if stats.IncludedToolEvents != 0 {
+		t.Fatalf("IncludedToolEvents = %d, want 0 for guardrail history", stats.IncludedToolEvents)
+	}
+}
+
 func TestRecentExecutionContextIncludesFileManagerSaveResult(t *testing.T) {
 	message := &runtimemodel.Message{
 		Query:  "save it to file management",
@@ -201,6 +229,42 @@ func TestContinuationTaskStateMessageUsesPriorTaskAndSaveState(t *testing.T) {
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("continuation task state missing %q: %s", want, content)
+		}
+	}
+}
+
+func TestContinuationTaskStateOmitsGuardrailToolState(t *testing.T) {
+	branch := []*runtimemodel.Message{
+		{
+			Query:  "delete the first file",
+			Status: runtimemodel.MessageStatusCompleted,
+			Metadata: map[string]interface{}{
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind":      "guardrail",
+						"skill_id":  skills.SkillFileManager,
+						"tool_name": "delete_file",
+						"status":    "blocked",
+						"message":   "do not delete yet",
+						"error":     "old guardrail feedback",
+					},
+				},
+			},
+		},
+	}
+
+	message := buildContinuationTaskStateMessage(&chatRequestParts{Query: "continue"}, branch)
+
+	if message == nil {
+		t.Fatal("continuation task state = nil, want base continuation state without guardrail tool state")
+	}
+	content, ok := message.Content.(string)
+	if !ok {
+		t.Fatalf("continuation content type = %T, want string", message.Content)
+	}
+	for _, blocked := range []string{"Recent completed/blocked execution state", "old guardrail feedback", "do not delete yet"} {
+		if strings.Contains(content, blocked) {
+			t.Fatalf("continuation state contains guardrail history %q: %s", blocked, content)
 		}
 	}
 }
