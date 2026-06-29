@@ -65,6 +65,7 @@ import { useFileDetail } from '@/hooks/file/use-file-detail';
 import { useCreateFileProcessingRequest } from '@/hooks/file/use-file-processing-request';
 import { usePrepareFileQAIndex } from '@/hooks/file/use-file-qa';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { formatDate, formatFileSize } from '@/utils/format';
 import { FILE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import {
@@ -451,6 +452,7 @@ function ReparseDialog({
   provider,
   onProviderChange,
   onConfigureProvider,
+  canConfigureProviders,
   onConfirm,
   loading,
   providers,
@@ -461,6 +463,7 @@ function ReparseDialog({
   provider: FileParseProviderKey;
   onProviderChange: (provider: FileParseProviderKey) => void;
   onConfigureProvider: (provider: 'mineru' | 'reducto') => void;
+  canConfigureProviders: boolean;
   onConfirm: () => void;
   loading: boolean;
   providers: ContentParseFileRouteProviderStatus[];
@@ -473,7 +476,11 @@ function ReparseDialog({
   const handleProviderChange = (value: string) => {
     const nextProvider = value as FileParseProviderKey;
     const nextItem = providers.find(item => item.key === nextProvider);
-    if (!nextItem?.selectable && isConfigurableParserProvider(nextProvider)) {
+    if (
+      canConfigureProviders &&
+      !nextItem?.selectable &&
+      isConfigurableParserProvider(nextProvider)
+    ) {
       onConfigureProvider(nextProvider);
       return;
     }
@@ -531,21 +538,21 @@ function ReparseDialog({
                     <SelectItem
                       key={item.key}
                       value={item.key}
-                      disabled={!item.selectable && !configurable}
+                      disabled={!item.selectable && (!configurable || !canConfigureProviders)}
                       className="py-2.5"
                     >
                       <div className="flex min-w-0 flex-col gap-0.5">
                         <span className="truncate">
                           {t(parseProviderTranslationPath(item.key))}
                         </span>
-                        {item.selectable || !configurable ? (
+                        {item.selectable || !configurable || !canConfigureProviders ? (
                           <span className="truncate text-xs text-muted-foreground">
                             {item.selectable
                               ? t('detail.reparse.providerReady')
                               : item.reason || t('detail.reparse.providerUnavailable')}
                           </span>
                         ) : null}
-                        {!item.selectable && configurable ? (
+                        {!item.selectable && configurable && canConfigureProviders ? (
                           <span className="text-xs font-medium text-primary">
                             {t('detail.reparse.configureProvider')}
                           </span>
@@ -686,6 +693,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     hasAnyPermission,
     isLoading: isPermissionsLoading,
   } = useAccountPermissions();
+  const { canManageModelConfig } = useAccountCapabilities();
   const canOpenFileDetail = hasAnyPermission([
     ...FILE_PERMISSION_ACTIONS.metadataView,
     ...FILE_PERMISSION_ACTIONS.preview,
@@ -823,10 +831,11 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     });
   };
   const handleConfigureParser = (provider: 'mineru' | 'reducto') => {
+    if (!canManageModelConfig) return;
     setPendingParserConfigProvider(provider);
   };
   const handleConfirmConfigureParser = () => {
-    if (!pendingParserConfigProvider) return;
+    if (!pendingParserConfigProvider || !canManageModelConfig) return;
     const provider = pendingParserConfigProvider;
     const returnTo = `${window.location.pathname}${window.location.search}`;
     setPendingParserConfigProvider(null);
@@ -1123,6 +1132,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
         provider={selectedReparseProvider}
         onProviderChange={setSelectedReparseProvider}
         onConfigureProvider={handleConfigureParser}
+        canConfigureProviders={canManageModelConfig}
         providers={reparseProviders}
         providersLoading={providerStatusQuery.isLoading || providerStatusQuery.isFetching}
         onConfirm={() => {

@@ -2081,6 +2081,21 @@ assert.match(
 );
 assert.match(
   fileDetailShellSource,
+  /useAccountCapabilities\(\)/,
+  'file detail parser settings shortcut should consume organization capabilities'
+);
+assert.match(
+  fileDetailShellSource,
+  /canConfigureProviders=\{canManageModelConfig\}/,
+  'file detail parser provider configuration shortcut should require model/parser management capability'
+);
+assert.match(
+  fileDetailShellSource,
+  /if \(!canManageModelConfig\) return;[\s\S]*setPendingParserConfigProvider\(provider\)/,
+  'file detail should not open parser configuration confirmation without organization model-config authority'
+);
+assert.match(
+  fileDetailShellSource,
   /const chunksEnabled\s*=\s*canPreviewFile && status === ['"]ready['"]/,
   'file detail chunk preview should require file.preview before loading parsed content'
 );
