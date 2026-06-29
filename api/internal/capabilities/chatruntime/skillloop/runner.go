@@ -935,19 +935,21 @@ func isDeleteOperation(operation string, effect string) bool {
 }
 
 func preparedUserText(prepared *PreparedChat) string {
-	if prepared == nil || prepared.LLMRequest == nil {
+	if prepared == nil {
 		return ""
 	}
-	for i := len(prepared.LLMRequest.Messages) - 1; i >= 0; i-- {
-		message := prepared.LLMRequest.Messages[i]
-		if !strings.EqualFold(strings.TrimSpace(message.Role), "user") {
-			continue
-		}
-		if text := strings.TrimSpace(messageContent(message.Content)); text != "" {
-			return text
+	if prepared.LLMRequest != nil {
+		for i := len(prepared.LLMRequest.Messages) - 1; i >= 0; i-- {
+			message := prepared.LLMRequest.Messages[i]
+			if !strings.EqualFold(strings.TrimSpace(message.Role), "user") {
+				continue
+			}
+			if text := strings.TrimSpace(messageContent(message.Content)); text != "" {
+				return text
+			}
 		}
 	}
-	return ""
+	return strings.TrimSpace(prepared.Query)
 }
 
 func visibleAgentProgressText(text string) string {
