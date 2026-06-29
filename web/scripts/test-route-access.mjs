@@ -29,12 +29,25 @@ const workspaceMembersPagePath = path.join(
   'members',
   'page.tsx'
 );
+const workspaceRoleTemplatesPath = path.join(
+  rootDir,
+  'src',
+  'utils',
+  'workspace-role-templates.ts'
+);
 const addWorkspaceMemberModalPath = path.join(
   rootDir,
   'src',
   'components',
   'member',
   'add-workspace-member-modal.tsx'
+);
+const workspaceMemberPermissionsDialogPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'member',
+  'workspace-member-permissions-dialog.tsx'
 );
 const assignWorkspaceDialogPath = path.join(
   rootDir,
@@ -43,6 +56,25 @@ const assignWorkspaceDialogPath = path.join(
   'dashboard',
   'organization',
   'assign-workspace-dialog.tsx'
+);
+const organizationPermissionsPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'dashboard',
+  'organization',
+  'permissions',
+  'page.tsx'
+);
+const organizationWorkspaceDetailPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'dashboard',
+  'organization',
+  'workspaces',
+  '[workspaceId]',
+  'page.tsx'
 );
 const promptListPagePath = path.join(rootDir, 'src', 'app', 'console', 'prompts', 'page.tsx');
 const promptDetailPagePath = path.join(
@@ -1147,8 +1179,21 @@ assert.match(
 const workspaceLayoutSource = fs.readFileSync(workspaceLayoutPath, 'utf8');
 const workspacePageSource = fs.readFileSync(workspacePagePath, 'utf8');
 const workspaceMembersPageSource = fs.readFileSync(workspaceMembersPagePath, 'utf8');
+const workspaceRoleTemplatesSource = fs.readFileSync(workspaceRoleTemplatesPath, 'utf8');
 const addWorkspaceMemberModalSource = fs.readFileSync(addWorkspaceMemberModalPath, 'utf8');
+const workspaceMemberPermissionsDialogSource = fs.readFileSync(
+  workspaceMemberPermissionsDialogPath,
+  'utf8'
+);
 const assignWorkspaceDialogSource = fs.readFileSync(assignWorkspaceDialogPath, 'utf8');
+const organizationPermissionsPageSource = fs.readFileSync(
+  organizationPermissionsPagePath,
+  'utf8'
+);
+const organizationWorkspaceDetailPageSource = fs.readFileSync(
+  organizationWorkspaceDetailPagePath,
+  'utf8'
+);
 const promptListPageSource = fs.readFileSync(promptListPagePath, 'utf8');
 const promptDetailPageSource = fs.readFileSync(promptDetailPagePath, 'utf8');
 const promptUsageSummarySource = fs.readFileSync(promptUsageSummaryPath, 'utf8');
@@ -1367,6 +1412,51 @@ assert.doesNotMatch(
   workspaceMembersPageSource,
   /hasAnyPermission\([^)]*workspace\./,
   'workspace members page should not reintroduce retired workspace.* permissions as ordinary gates'
+);
+assert.match(
+  workspaceRoleTemplatesSource,
+  /function isWorkspaceGovernanceRole/,
+  'workspace role template helper should centralize fixed governance role detection'
+);
+assert.match(
+  workspaceRoleTemplatesSource,
+  /function isLegacyBuiltinWorkspaceRole/,
+  'workspace role template helper should centralize legacy builtin role detection'
+);
+assert.match(
+  workspaceRoleTemplatesSource,
+  /function isSelectableWorkspacePermissionTemplate/,
+  'workspace role template helper should centralize selectable permission template detection'
+);
+assert.match(
+  addWorkspaceMemberModalSource,
+  /roles\.filter\(isSelectableWorkspacePermissionTemplate\)/,
+  'workspace add-member dialog should use the shared selectable role-template helper'
+);
+assert.match(
+  workspaceMemberPermissionsDialogSource,
+  /roleTemplates\.filter\(isSelectableWorkspacePermissionTemplate\)/,
+  'workspace member permission dialog should use the shared selectable role-template helper'
+);
+assert.match(
+  organizationPermissionsPageSource,
+  /roles\.filter\(isWorkspaceGovernanceRole\)/,
+  'organization permission page should use the shared governance role helper'
+);
+assert.match(
+  organizationPermissionsPageSource,
+  /roles\.filter\(isSelectableWorkspacePermissionTemplate\)/,
+  'organization permission page should use the shared selectable role-template helper'
+);
+assert.match(
+  organizationWorkspaceDetailPageSource,
+  /roles\.filter\(isSelectableWorkspacePermissionTemplate\)/,
+  'organization workspace detail page should use the shared selectable role-template helper'
+);
+assert.doesNotMatch(
+  organizationWorkspaceDetailPageSource,
+  /role\.(id|name)\.toLowerCase\(\)\s*!==\s*'owner'/,
+  'organization workspace detail page should not rely on owner-only string filtering for role templates'
 );
 assert.match(
   promptListPageSource,

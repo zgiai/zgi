@@ -67,6 +67,7 @@ import { StickyDataTable } from '@/components/common/sticky-data-table';
 import { WorkspaceMemberPermissionsDialog } from '@/components/member/workspace-member-permissions-dialog';
 import { useLocale } from '@/hooks/use-locale';
 import { pickLocale } from '@/utils/tool-helpers';
+import { isSelectableWorkspacePermissionTemplate } from '@/utils/workspace-role-templates';
 
 export default function WorkspaceDetailPage() {
   const params = useParams();
@@ -158,13 +159,7 @@ export default function WorkspaceDetailPage() {
   const workspaceMembersTotalPages = Math.max(1, Math.ceil(workspaceMembersTotal / memberPageSize));
   const shouldShowMemberSkeleton = isLoadingMembers || isMemberPageChanging;
   const selectableRoleTemplates = useMemo(
-    () =>
-      roles.filter(
-        role =>
-          role.status === 'active' &&
-          role.id.toLowerCase() !== 'owner' &&
-          role.name.toLowerCase() !== 'owner'
-      ),
+    () => roles.filter(isSelectableWorkspacePermissionTemplate),
     [roles]
   );
   const isFixedGovernanceRole = (role?: string) => role === 'owner' || role === 'admin';

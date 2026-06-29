@@ -37,6 +37,7 @@ import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { pickLocale } from '@/utils/tool-helpers';
+import { isSelectableWorkspacePermissionTemplate } from '@/utils/workspace-role-templates';
 import type { Role } from '@/services/types/organization';
 import type { WorkspaceMemberAccount } from '@/services/types/workspace';
 
@@ -89,15 +90,7 @@ export function WorkspaceMemberPermissionsDialog({
     [permissionModules]
   );
   const selectableTemplates = useMemo(
-    () =>
-      roleTemplates.filter(
-        role =>
-          role.status === 'active' &&
-          role.applicable !== false &&
-          !role.fixed_governance &&
-          role.role_kind !== 'governance' &&
-          role.role_kind !== 'legacy_builtin'
-      ),
+    () => roleTemplates.filter(isSelectableWorkspacePermissionTemplate),
     [roleTemplates]
   );
   const getRoleDisplayName = (role: Role) =>

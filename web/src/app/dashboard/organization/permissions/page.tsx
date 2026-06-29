@@ -22,6 +22,10 @@ import { useRoleActions } from '@/hooks/organization/use-role-actions';
 import { EditRoleInfoDialog } from '@/components/dashboard/organization/edit-role-info-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { Role } from '@/services/types/organization';
+import {
+  isSelectableWorkspacePermissionTemplate,
+  isWorkspaceGovernanceRole,
+} from '@/utils/workspace-role-templates';
 
 export default function PermissionsPage() {
   const t = useT('dashboard.organization.permissions');
@@ -91,25 +95,10 @@ export default function PermissionsPage() {
       ? pickLocale(role.description_i18n, locale, role.description || '')
       : role.description || '';
 
-  const isGovernanceRole = (role: Role) =>
-    role.fixed_governance ||
-    role.role_kind === 'governance' ||
-    role.id === '00000000-0000-0000-0000-000000000001' ||
-    role.id === '00000000-0000-0000-0000-000000000002' ||
-    ['owner', 'admin'].includes(role.name.toLowerCase());
-
-  const isLegacyBuiltinRole = (role: Role) =>
-    role.role_kind === 'legacy_builtin' || (role.builtin && !isGovernanceRole(role));
-
-  const governanceRoles = roles.filter(isGovernanceRole);
-  const permissionTemplateRoles = roles.filter(
-    role => !isGovernanceRole(role) && !isLegacyBuiltinRole(role) && role.applicable !== false
-  );
+  const governanceRoles = roles.filter(isWorkspaceGovernanceRole);
+  const permissionTemplateRoles = roles.filter(isSelectableWorkspacePermissionTemplate);
   const canApplySelectedRoleTemplate =
-    !!selectedRole &&
-    !isGovernanceRole(selectedRole) &&
-    !isLegacyBuiltinRole(selectedRole) &&
-    selectedRole.applicable !== false;
+    !!selectedRole && isSelectableWorkspacePermissionTemplate(selectedRole);
 
   return (
     <div className="h-full space-y-5 overflow-y-auto bg-bg-canvas/50 p-4 lg:p-6">

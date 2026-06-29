@@ -34,6 +34,7 @@ import { useDepartments } from '@/hooks/organization/use-departments';
 import { useOrganizationRoles } from '@/hooks/organization/use-organization-roles';
 import { useLocale } from '@/hooks/use-locale';
 import { pickLocale } from '@/utils/tool-helpers';
+import { isSelectableWorkspacePermissionTemplate } from '@/utils/workspace-role-templates';
 import type { AvailableWorkspaceMember, BatchAddMembersResponse } from '@/services/types/workspace';
 
 interface AddWorkspaceMemberModalProps {
@@ -103,15 +104,7 @@ export function AddWorkspaceMemberModal({
   }, [members]);
 
   const selectableRoles = useMemo(
-    () =>
-      roles.filter(
-        role =>
-          role.status === 'active' &&
-          role.applicable !== false &&
-          !role.fixed_governance &&
-          role.role_kind !== 'governance' &&
-          role.role_kind !== 'legacy_builtin'
-      ),
+    () => roles.filter(isSelectableWorkspacePermissionTemplate),
     [roles]
   );
   const defaultRoleId = useMemo(
