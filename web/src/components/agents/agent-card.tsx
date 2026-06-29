@@ -33,11 +33,7 @@ import { agentService } from '@/services';
 import { useExportWorkflow } from '@/hooks/workflow/use-workflow-import-export';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
-import {
-  getAgentDetailEditHref,
-  isAgentRuntimeType,
-  isWorkflowRuntimeType,
-} from '@/utils/agent-detail-routes';
+import { isAgentRuntimeType, isWorkflowRuntimeType } from '@/utils/agent-detail-routes';
 import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 
@@ -90,7 +86,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
   const canMoveAssets = hasAnyPermission(movePermissionCodes);
   const canShowActions = canUpdateRuntime || canExportRuntime || canDeleteRuntime || canMoveAssets;
   const shouldPrefetchAgentDetail = canUpdateRuntime || canExportRuntime || canDeleteRuntime;
-  const agentHref = getAgentDetailEditHref(agent.id, agent.agent_type);
+  const agentHref = `/console/agents/${agent.id}`;
   const modeText =
     agent.agent_type === AgentType.AGENT
       ? t('modes.agent')

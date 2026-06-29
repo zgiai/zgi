@@ -1664,6 +1664,16 @@ assert.match(
 );
 assert.match(
   agentCardSource,
+  /const agentHref = `\/console\/agents\/\$\{agent\.id\}`/,
+  'agent cards should link to the permission-aware detail root instead of directly opening the editor'
+);
+assert.doesNotMatch(
+  agentCardSource,
+  /getAgentDetailEditHref/,
+  'agent cards should not bypass permission-aware child routing by linking directly to the editor'
+);
+assert.match(
+  agentCardSource,
   /const exportPermissionCodes = isWorkflowRuntime[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.export[\s\S]*:\s*\[\];/,
   'agent cards should expose YAML export only for workflow runtimes because the backend export endpoint requires workflow.export'
 );
