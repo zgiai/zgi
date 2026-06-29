@@ -1806,6 +1806,8 @@ const messages = {
       allowWriteAll: 'All writable',
       allowWriteAllForDatabase: 'Allow write for all selected tables in {name}',
       allowWriteForTable: 'Allow write for {name}',
+      bindingPermissionRequired:
+        'Database AI query read and record view permissions are both required to bind database tables to this Agent.',
       writePermissionRequired:
         'Write authorization can only be edited by users with database AI query and data edit permissions.',
       writeEnabled: 'Writable',

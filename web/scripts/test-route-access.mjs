@@ -206,6 +206,15 @@ const agentRuntimeOrchestrationPanelPath = path.join(
   'agent-runtime',
   'orchestration-panel.tsx'
 );
+const agentRuntimeDatabaseSectionPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'agents',
+  'agent-runtime',
+  'sections',
+  'database-section.tsx'
+);
 const agentsPagePath = path.join(rootDir, 'src', 'app', 'console', 'agents', 'page.tsx');
 const createAgentDialogPath = path.join(
   rootDir,
@@ -1097,6 +1106,10 @@ const agentRuntimeOrchestrationPanelSource = fs.readFileSync(
   agentRuntimeOrchestrationPanelPath,
   'utf8'
 );
+const agentRuntimeDatabaseSectionSource = fs.readFileSync(
+  agentRuntimeDatabaseSectionPath,
+  'utf8'
+);
 const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
@@ -1493,6 +1506,36 @@ assert.match(
   agentRuntimeOrchestrationPanelSource,
   /<AgentRuntimeModelSection[\s\S]*?readOnly=\{readOnly\}/,
   'agent orchestration panel should forward read-only state into runtime sections'
+);
+assert.match(
+  agentRuntimeDatabaseSectionSource,
+  /const \{ hasAnyPermission, hasAllPermissions \} = useAccountPermissions\(\)/,
+  'agent runtime database section should be able to require both database read-binding permissions'
+);
+assert.match(
+  agentRuntimeDatabaseSectionSource,
+  /const canBindReadableDatabase\s*=\s*hasAllPermissions\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView/,
+  'agent runtime database binding should require both database.ai_query.read and database.record.view'
+);
+assert.match(
+  agentRuntimeDatabaseSectionSource,
+  /useDbsBasic\([\s\S]*enabled:\s*open && canBindReadableDatabase/,
+  'agent runtime database selector should not load database candidates without binding read permissions'
+);
+assert.match(
+  agentRuntimeDatabaseSectionSource,
+  /readOnly=\{readOnly \|\| !canBindReadableDatabase\}/,
+  'agent runtime database add action should be disabled without binding read permissions'
+);
+assert.match(
+  agentRuntimeDatabaseSectionSource,
+  /useDbTables\(dataSourceID,[\s\S]*enabled:\s*canReadBinding && tableIDs\.length > 0/,
+  'agent runtime selected database cards should not load table metadata without binding read permissions'
+);
+assert.match(
+  agentRuntimeDatabaseSectionSource,
+  /disabled=\{readOnly \|\| cannotReadBinding\}/,
+  'agent runtime selected database mutation controls should stay disabled without binding read permissions'
 );
 assert.match(
   agentsPageSource,

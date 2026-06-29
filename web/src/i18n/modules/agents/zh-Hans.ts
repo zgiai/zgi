@@ -1703,6 +1703,8 @@ const messages: AgentsMessages = {
       allowWriteAll: '全部可写',
       allowWriteAllForDatabase: '允许 {name} 中已选表全部写入',
       allowWriteForTable: '允许写入 {name}',
+      bindingPermissionRequired:
+        '需要同时具备数据库 AI 查询读取和数据记录查看权限，才能为智能体绑定数据库表。',
       writePermissionRequired: '只有具备数据库 AI 查询和数据编辑权限的用户，才能编辑写入授权。',
       writeEnabled: '可写',
       readOnly: '只读',

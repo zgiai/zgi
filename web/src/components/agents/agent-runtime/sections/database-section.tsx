@@ -38,8 +38,15 @@ export function AgentRuntimeDatabaseSection({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [tableDialogDbId, setTableDialogDbId] = useState('');
   const [pendingTableDialogDbIds, setPendingTableDialogDbIds] = useState<string[]>([]);
-  const { dbs, isLoading: isDbsLoading } = useDbsBasic({}, { enabled: open });
-  const { hasAnyPermission } = useAccountPermissions();
+  const { hasAnyPermission, hasAllPermissions } = useAccountPermissions();
+  const canBindReadableDatabase = hasAllPermissions([
+    ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
+    ...DATABASE_PERMISSION_ACTIONS.recordView,
+  ]);
+  const { dbs, isLoading: isDbsLoading } = useDbsBasic(
+    {},
+    { enabled: open && canBindReadableDatabase }
+  );
   const canUseAiQuery = hasAnyPermission([
     ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
     ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
@@ -49,7 +56,8 @@ export function AgentRuntimeDatabaseSection({
     ...DATABASE_PERMISSION_ACTIONS.recordUpdate,
     ...DATABASE_PERMISSION_ACTIONS.recordDelete,
   ]);
-  const canEditWritable = !readOnly && canUseAiQuery && canWriteDatabaseRecords;
+  const canEditWritable =
+    !readOnly && canBindReadableDatabase && canUseAiQuery && canWriteDatabaseRecords;
   const selectedCount = bindings.reduce((count, binding) => count + binding.table_ids.length, 0);
   const dbsByID = useMemo(() => new Map(dbs.map(db => [db.id, db])), [dbs]);
   const tableDialogDb = tableDialogDbId ? dbsByID.get(tableDialogDbId) : undefined;
@@ -140,13 +148,20 @@ export function AgentRuntimeDatabaseSection({
         open={open}
         count={selectedCount}
         addLabel={t('database.add')}
-        addTooltip={t('database.bindTableTooltip')}
+        addTooltip={
+          canBindReadableDatabase
+            ? t('database.bindTableTooltip')
+            : t('database.bindingPermissionRequired')
+        }
         helpText={t('database.helpText')}
         emptyText={t('database.emptySelected')}
         isLoading={isDbsLoading}
         onToggleSection={onToggleSection}
-        onAdd={() => setDialogOpen(true)}
-        readOnly={readOnly}
+        onAdd={() => {
+          if (!canBindReadableDatabase) return;
+          setDialogOpen(true);
+        }}
+        readOnly={readOnly || !canBindReadableDatabase}
       >
         <div className="space-y-2">
           {bindings.map(binding => (
@@ -157,6 +172,7 @@ export function AgentRuntimeDatabaseSection({
               tableIDs={binding.table_ids}
               writableTableIDs={binding.writable_table_ids ?? []}
               readOnly={readOnly}
+              canReadBinding={canBindReadableDatabase}
               canEditWritable={canEditWritable}
               onOpenTableDialog={openTableDialog}
               onRemoveTable={removeTable}
@@ -168,7 +184,7 @@ export function AgentRuntimeDatabaseSection({
       </AgentRuntimeResourceSection>
 
       <AgentRuntimeDatabaseDialog
-        open={dialogOpen}
+        open={dialogOpen && canBindReadableDatabase}
         bindings={bindings}
         onOpenChange={setDialogOpen}
         onConfirmDatabases={handleConfirmDatabases}
@@ -194,6 +210,7 @@ function DatabaseBindingCard({
   tableIDs,
   writableTableIDs,
   readOnly,
+  canReadBinding,
   canEditWritable,
   onOpenTableDialog,
   onRemoveTable,
@@ -205,6 +222,7 @@ function DatabaseBindingCard({
   tableIDs: string[];
   writableTableIDs: string[];
   readOnly: boolean;
+  canReadBinding: boolean;
   canEditWritable: boolean;
   onOpenTableDialog: (dataSourceID: string) => void;
   onRemoveTable: (dataSourceID: string, tableID: string) => void;
@@ -213,16 +231,25 @@ function DatabaseBindingCard({
 }) {
   const writableSet = useMemo(() => new Set(writableTableIDs), [writableTableIDs]);
   const t = useT('agents.agentRuntime');
-  const { tables, isLoading, error } = useDbTables(dataSourceID, { enabled: true });
+  const { tables, isLoading, error } = useDbTables(dataSourceID, {
+    enabled: canReadBinding && tableIDs.length > 0,
+  });
   const tablesByID = useMemo(() => new Map(tables.map(table => [table.id, table])), [tables]);
   const databaseLabel = dataSourceName || t('database.databaseUnavailable');
   const allWritable = tableIDs.length > 0 && tableIDs.every(tableID => writableSet.has(tableID));
+  const cannotReadBinding = !canReadBinding;
 
   return (
     <AgentRuntimeResourceCard
-      icon={error ? <AlertCircle className="size-4" /> : <Database className="size-4" />}
+      icon={
+        error || cannotReadBinding ? (
+          <AlertCircle className="size-4" />
+        ) : (
+          <Database className="size-4" />
+        )
+      }
       title={databaseLabel}
-      error={Boolean(error)}
+      error={Boolean(error) || cannotReadBinding}
       action={
         <Tooltip>
           <TooltipTrigger asChild>
@@ -233,7 +260,7 @@ function DatabaseBindingCard({
               isIcon
               className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
               aria-label={t('database.addTableForDatabase', { name: databaseLabel })}
-              disabled={readOnly}
+              disabled={readOnly || cannotReadBinding}
               onClick={() => onOpenTableDialog(dataSourceID)}
             >
               <Plus className="size-4" />
@@ -255,6 +282,11 @@ function DatabaseBindingCard({
           />
         </span>
       </div>
+      {cannotReadBinding ? (
+        <div className="mb-2 rounded-md border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive">
+          {t('database.bindingPermissionRequired')}
+        </div>
+      ) : null}
       {error ? (
         <div className="mb-2 rounded-md border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive">
           {t('database.loadTablesFailed')}
@@ -311,7 +343,7 @@ function DatabaseBindingCard({
                     isIcon
                     className="size-7 text-muted-foreground hover:text-destructive"
                     aria-label={t('database.removeTable', { name: label })}
-                    disabled={readOnly}
+                    disabled={readOnly || cannotReadBinding}
                     onClick={() => onRemoveTable(dataSourceID, tableID)}
                   >
                     <Trash2 className="size-4" />
