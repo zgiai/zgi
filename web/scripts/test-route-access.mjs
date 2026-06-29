@@ -406,6 +406,15 @@ const workflowNodeResizeHandlePath = path.join(
   'custom',
   'node-resize-handle.tsx'
 );
+const workflowAutoDimensionsSyncPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'hooks',
+  'use-auto-dimensions-sync.ts'
+);
 const workflowNoteNodePath = path.join(
   rootDir,
   'src',
@@ -914,6 +923,7 @@ const workflowGlobalContainerOverlaySource = fs.readFileSync(
 const workflowCustomHandleSource = fs.readFileSync(workflowCustomHandlePath, 'utf8');
 const workflowContainerNodeSource = fs.readFileSync(workflowContainerNodePath, 'utf8');
 const workflowNodeResizeHandleSource = fs.readFileSync(workflowNodeResizeHandlePath, 'utf8');
+const workflowAutoDimensionsSyncSource = fs.readFileSync(workflowAutoDimensionsSyncPath, 'utf8');
 const workflowNoteNodeSource = fs.readFileSync(workflowNoteNodePath, 'utf8');
 const workflowCreateNodeModalHostSource = fs.readFileSync(
   workflowCreateNodeModalHostPath,
@@ -2522,6 +2532,21 @@ assert.match(
   workflowNodeResizeHandleSource,
   /if \(isReadOnly\) return;/,
   'workflow manual resize handles should not update node dimensions without workflow.update'
+);
+assert.match(
+  workflowAutoDimensionsSyncSource,
+  /const canEdit = useWorkflowStore\.use\.canEdit\(\);/,
+  'workflow auto dimension sync should read workflow.update edit authority'
+);
+assert.match(
+  workflowAutoDimensionsSyncSource,
+  /const isReadOnly = mode === 'history' \|\| !canEdit;/,
+  'workflow auto dimension sync should derive read-only state from permission edit authority as well as history mode'
+);
+assert.match(
+  workflowAutoDimensionsSyncSource,
+  /if \(isReadOnly\) return;/,
+  'workflow auto dimension sync should not re-measure and persist node dimensions without workflow.update'
 );
 assert.match(
   workflowNoteNodeSource,
