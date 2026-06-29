@@ -68,6 +68,61 @@ func TestPromptPlaygroundRequiresWorkspaceViewBeforeModelSetup(t *testing.T) {
 	}
 }
 
+func TestPromptListRequiresWorkspaceViewBeforePromptQuery(t *testing.T) {
+	organizationService := &promptWorkspaceAccessOrganizationService{
+		workspaces: []*workspace_model.Workspace{{ID: "workspace-1", Status: workspace_model.WorkspaceStatusNormal}},
+		allowed:    false,
+	}
+	svc := &promptService{organizationService: organizationService}
+
+	resp, err := svc.List(context.Background(), "org-1", "account-1", promptdto.PromptListRequest{})
+
+	if err != nil {
+		t.Fatalf("List() error = %v, want nil", err)
+	}
+	if resp == nil || len(resp.Data) != 0 || resp.Total != 0 {
+		t.Fatalf("List() response = %#v, want empty response", resp)
+	}
+	want := []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionWorkspaceView,
+	}
+	if got := organizationService.permissionCodes; !sameWorkspaceAccessPermissions(got, want) {
+		t.Fatalf("permission codes = %v, want %v", got, want)
+	}
+}
+
+func TestOfficialPromptDetailRequiresWorkspaceViewBeforeVersionLookup(t *testing.T) {
+	repo := &promptWorkspaceAccessRepository{
+		prompt: &promptmodel.Prompt{
+			ID:     "official-prompt-1",
+			Source: promptmodel.PromptSourceOfficial,
+		},
+	}
+	organizationService := &promptWorkspaceAccessOrganizationService{
+		workspaces: []*workspace_model.Workspace{{ID: "workspace-1", Status: workspace_model.WorkspaceStatusNormal}},
+		allowed:    false,
+	}
+	svc := &promptService{
+		repo:                repo,
+		organizationService: organizationService,
+	}
+
+	_, err := svc.GetDetail(context.Background(), "org-1", "account-1", "official-prompt-1")
+
+	if err == nil || !strings.Contains(err.Error(), "prompt not found") {
+		t.Fatalf("GetDetail() error = %v, want prompt not found", err)
+	}
+	want := []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionWorkspaceView,
+	}
+	if got := organizationService.permissionCodes; !sameWorkspaceAccessPermissions(got, want) {
+		t.Fatalf("permission codes = %v, want %v", got, want)
+	}
+	if repo.findVersionsCalled {
+		t.Fatal("official prompt versions should not be loaded without workspace access")
+	}
+}
+
 func TestPromptOptimizerRejectsPromptFromAnotherWorkspace(t *testing.T) {
 	workspaceID := "workspace-1"
 	otherWorkspaceID := "workspace-2"
@@ -137,7 +192,8 @@ func (s *promptWorkspaceAccessOrganizationService) CheckWorkspaceOrganizationAny
 }
 
 type promptWorkspaceAccessRepository struct {
-	prompt *promptmodel.Prompt
+	prompt             *promptmodel.Prompt
+	findVersionsCalled bool
 }
 
 func (r *promptWorkspaceAccessRepository) DB() *gorm.DB { return nil }
@@ -158,6 +214,7 @@ func (r *promptWorkspaceAccessRepository) FindLatestVersions(context.Context, []
 }
 
 func (r *promptWorkspaceAccessRepository) FindVersions(context.Context, string) ([]*promptmodel.PromptVersion, error) {
+	r.findVersionsCalled = true
 	return nil, fmt.Errorf("not implemented")
 }
 
