@@ -493,6 +493,15 @@ const datasetAccessHandlerPath = path.join(
   'handler',
   'dataset_access.go'
 );
+const datasetHandlerPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'dataset',
+  'handler',
+  'dataset_handler.go'
+);
 const datasetDocumentHandlerPath = path.join(
   repoRootDir,
   'api',
@@ -2311,6 +2320,7 @@ const datasetDetailRootPageSource = fs.readFileSync(datasetDetailRootPagePath, '
 const datasetDetailLayoutSource = fs.readFileSync(datasetDetailLayoutPath, 'utf8');
 const datasetSettingsPageSource = fs.readFileSync(datasetSettingsPagePath, 'utf8');
 const datasetAccessHandlerSource = fs.readFileSync(datasetAccessHandlerPath, 'utf8');
+const datasetHandlerSource = fs.readFileSync(datasetHandlerPath, 'utf8');
 const datasetDocumentHandlerSource = fs.readFileSync(datasetDocumentHandlerPath, 'utf8');
 const datasetSegmentHandlerSource = fs.readFileSync(datasetSegmentHandlerPath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
@@ -3131,6 +3141,26 @@ assert.match(
   datasetSettingsPageSource,
   /if \(!canUpdateDataset\) \{[\s\S]*t\('common\.accessDenied'\)/,
   'dataset settings direct page should deny access without knowledge_base.update'
+);
+const datasetPatchHandlerSource = getGoHandlerMethodSource(
+  datasetHandlerSource,
+  'DatasetHandler',
+  'PatchDataset'
+);
+assert.match(
+  datasetPatchHandlerSource,
+  /CheckWorkspacePermission\([\s\S]*workspace_model\.WorkspacePermissionKnowledgeBaseUpdate[\s\S]*datasetService\.UpdateDataset/,
+  'dataset PATCH handler should require knowledge_base.update before updating dataset metadata'
+);
+assert.doesNotMatch(
+  datasetPatchHandlerSource,
+  /CheckEditorPermission/,
+  'dataset PATCH handler should not use the broad editor permission set for dataset metadata updates'
+);
+assert.match(
+  datasetPatchHandlerSource,
+  /req\.WorkspaceID != nil && \*req\.WorkspaceID != "" && \*req\.WorkspaceID != dataset\.WorkspaceID[\s\S]*workspace_model\.WorkspacePermissionKnowledgeBaseMove/,
+  'dataset PATCH handler should require knowledge_base.move only when workspace_id changes'
 );
 for (const [helperName, permissionPattern, message] of [
   [

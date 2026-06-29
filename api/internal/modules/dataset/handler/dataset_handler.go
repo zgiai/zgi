@@ -460,45 +460,54 @@ func (h *DatasetHandler) PatchDataset(c *gin.Context) {
 		req.IconType = &iconTypeStr
 	}
 
-	// Check editor permission with detailed error handling
-	hasPermission, err := h.datasetService.CheckEditorPermission(c.Request.Context(), datasetID, accountID, tenantID)
-	if err != nil {
-		errMsg := err.Error()
-		switch {
-		case strings.Contains(errMsg, "not found"):
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		case strings.Contains(errMsg, "no permission"):
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		default:
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-	}
-	if !hasPermission {
-		response.Fail(c, response.ErrDatasetPermissionDenied)
+	dataset, err := h.datasetService.GetDatasetByID(c.Request.Context(), datasetID)
+	if err != nil || dataset == nil {
+		response.Fail(c, response.ErrDatasetNotFound)
 		return
 	}
 
-	// Handle TenantID update - check permissions
-	if req.WorkspaceID != nil && *req.WorkspaceID != "" {
-		if h.organizationService != nil {
-			hasPermission, err := h.organizationService.CheckWorkspacePermission(
-				c.Request.Context(),
-				tenantID,
-				*req.WorkspaceID,
-				accountID,
-				workspace_model.WorkspacePermissionKnowledgeBaseMove,
-			)
-			if err != nil {
-				response.Fail(c, response.ErrSystemError)
-				return
-			}
-			if !hasPermission {
-				response.Fail(c, response.ErrPermissionDenied)
-				return
-			}
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		organizationID = tenantID
+	}
+
+	if h.organizationService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	hasPermission, err := h.organizationService.CheckWorkspacePermission(
+		c.Request.Context(),
+		organizationID,
+		dataset.WorkspaceID,
+		accountID,
+		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return
+	}
+
+	// Workspace transfer is distinct from metadata editing. Only require move when the target changes.
+	if req.WorkspaceID != nil && *req.WorkspaceID != "" && *req.WorkspaceID != dataset.WorkspaceID {
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			*req.WorkspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionKnowledgeBaseMove,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
 		}
 	}
 
@@ -520,7 +529,7 @@ func (h *DatasetHandler) PatchDataset(c *gin.Context) {
 		EnableGraphFlow:        req.EnableGraphFlow,
 	}
 
-	dataset, err := h.datasetService.UpdateDataset(c.Request.Context(), updateReq)
+	dataset, err = h.datasetService.UpdateDataset(c.Request.Context(), updateReq)
 	if err != nil {
 		errMsg := err.Error()
 		switch {
