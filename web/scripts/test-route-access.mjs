@@ -3969,6 +3969,21 @@ assert.match(
   'agent detail root should replace to the first permission-compatible child page while preserving query params'
 );
 assert.match(
+  agentCardSource,
+  /getAgentDetailDefaultHref\(agent\.id,\s*agent\.agent_type,[\s\S]*canOpenEditor:[\s\S]*canManageRuntimeAccess:[\s\S]*canViewRuntimeLogs:[\s\S]*canViewBatchTest:/,
+  'agent cards should use the permission-aware detail route helper before enabling card navigation'
+);
+assert.match(
+  agentCardSource,
+  /const canOpenAgentDetail\s*=\s*Boolean\([\s\S]*getAgentDetailDefaultHref/,
+  'agent cards should separate list action visibility from detail navigation'
+);
+assert.match(
+  agentCardSource,
+  /canOpenAgentDetail \? \([\s\S]*<Link href=\{agentHref\}[\s\S]*\) : \(/,
+  'agent cards should not send action-only users to a denied detail root'
+);
+assert.match(
   agentLayoutSource,
   /const canViewAnyAgentAsset\s*=\s*hasAnyPermission\(AGENT_ASSET_VISIBLE_PERMISSION_CODES\)[\s\S]*useAgent\(agentId,\s*canViewAnyAgentAsset\)/,
   'agent detail layout should not fetch agent metadata before an agent/workflow visible permission is present'
