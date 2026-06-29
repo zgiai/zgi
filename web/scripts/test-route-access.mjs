@@ -235,6 +235,15 @@ const createAgentDialogPath = path.join(
 );
 const agentCardPath = path.join(rootDir, 'src', 'components', 'agents', 'agent-card.tsx');
 const datasetCardPath = path.join(rootDir, 'src', 'components', 'datasets', 'dataset-card.tsx');
+const datasetDetailRootPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'dataset',
+  '[datasetId]',
+  'page.tsx'
+);
 const templateGalleryDialogPath = path.join(
   rootDir,
   'src',
@@ -1143,6 +1152,7 @@ const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
 const datasetCardSource = fs.readFileSync(datasetCardPath, 'utf8');
+const datasetDetailRootPageSource = fs.readFileSync(datasetDetailRootPagePath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
@@ -1675,6 +1685,36 @@ assert.match(
   datasetCardSource,
   /canMoveDataset[\s\S]*setWorkspaceMoveOpen\(true\)/,
   'dataset card workspace move menu item should remain gated by knowledge_base.move'
+);
+assert.doesNotMatch(
+  datasetDetailRootPageSource,
+  /from 'next\/navigation';[\s\S]*\bredirect\(/,
+  'dataset detail root should not use a fixed server redirect to documents'
+);
+assert.match(
+  datasetDetailRootPageSource,
+  /if \(canViewDocuments\) return `\/console\/dataset\/\$\{datasetId\}\/documents`/,
+  'dataset detail root should prefer documents when document access exists'
+);
+assert.match(
+  datasetDetailRootPageSource,
+  /if \(canUseRetrievalTest\) return `\/console\/dataset\/\$\{datasetId\}\/hit-testing`/,
+  'dataset detail root should fall back to hit-testing for retrieval-test-only users'
+);
+assert.match(
+  datasetDetailRootPageSource,
+  /if \(canViewGraph && isGraphEnabled\) return `\/console\/dataset\/\$\{datasetId\}\/graph`/,
+  'dataset detail root should route graph-only users to graph when graph flow is enabled'
+);
+assert.match(
+  datasetDetailRootPageSource,
+  /if \(canOpenSettings\) return `\/console\/dataset\/\$\{datasetId\}\/settings`/,
+  'dataset detail root should route settings-only users to settings'
+);
+assert.match(
+  datasetDetailRootPageSource,
+  /router\.replace\(targetHref\)/,
+  'dataset detail root should replace to the first permission-compatible child page'
 );
 assert.match(
   agentSidebarSource,
