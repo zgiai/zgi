@@ -41,7 +41,9 @@ type fakeOrganizationService struct {
 	isOrganizationMemberFn           func(ctx context.Context, organizationID, accountID string) (bool, error)
 	addMemberFn                      func(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error
 	directAddMemberFn                func(ctx context.Context, req *shared_dto.DirectAddOrganizationMemberRequest) (*shared_dto.DirectAddOrganizationMemberResponse, error)
+	listWorkspacePermissionDefsFn    func(ctx context.Context, organizationID, accountID string) ([]string, error)
 	listWorkspaceRolesFn             func(ctx context.Context, organizationID, accountID string, includeOwner bool) (*shared_dto.WorkspaceRoleListResponse, error)
+	getWorkspaceRoleDetailFn         func(ctx context.Context, organizationID, roleID, accountID string) (*shared_dto.OrganizationRoleDetailResponse, error)
 	applyWorkspaceRoleTemplateFn     func(ctx context.Context, req *shared_dto.ApplyWorkspaceRoleTemplateRequest) (*shared_dto.ApplyWorkspaceRoleTemplateResponse, error)
 }
 
@@ -173,11 +175,25 @@ func (f fakeOrganizationService) DirectAddOrganizationMember(ctx context.Context
 	}, nil
 }
 
+func (f fakeOrganizationService) ListWorkspacePermissionDefinitions(ctx context.Context, organizationID, accountID string) ([]string, error) {
+	if f.listWorkspacePermissionDefsFn != nil {
+		return f.listWorkspacePermissionDefsFn(ctx, organizationID, accountID)
+	}
+	return nil, nil
+}
+
 func (f fakeOrganizationService) ListWorkspaceRoles(ctx context.Context, organizationID, accountID string, includeOwner bool) (*shared_dto.WorkspaceRoleListResponse, error) {
 	if f.listWorkspaceRolesFn != nil {
 		return f.listWorkspaceRolesFn(ctx, organizationID, accountID, includeOwner)
 	}
 	return &shared_dto.WorkspaceRoleListResponse{}, nil
+}
+
+func (f fakeOrganizationService) GetWorkspaceRoleDetail(ctx context.Context, organizationID, roleID, accountID string) (*shared_dto.OrganizationRoleDetailResponse, error) {
+	if f.getWorkspaceRoleDetailFn != nil {
+		return f.getWorkspaceRoleDetailFn(ctx, organizationID, roleID, accountID)
+	}
+	return &shared_dto.OrganizationRoleDetailResponse{}, nil
 }
 
 func (f fakeOrganizationService) ApplyWorkspaceRoleTemplate(ctx context.Context, req *shared_dto.ApplyWorkspaceRoleTemplateRequest) (*shared_dto.ApplyWorkspaceRoleTemplateResponse, error) {
@@ -1532,15 +1548,81 @@ func TestOrganizationRoutesRegisterCurrentMembersList(t *testing.T) {
 	t.Fatalf("GET /organizations/current/members route was not registered")
 }
 
-func TestListWorkspaceRolesRejectsAccountWithoutOrganizationAccess(t *testing.T) {
+func TestListWorkspacePermissionsRejectsAccountWithoutManagedWorkspaceAccess(t *testing.T) {
 	t.Parallel()
 
 	serviceCalled := false
 	handler := &OrganizationHandler{
 		organizationService: fakeOrganizationService{
 			isOrganizationMemberFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
-				require.Equal(t, "org-2", organizationID)
-				require.Equal(t, "account-1", accountID)
+				t.Fatalf("permission definition list should use manager access instead of plain organization membership")
+				return true, nil
+			},
+			checkAnyManagedWorkspaceFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "ordinary-member", accountID)
+				return false, nil
+			},
+			listWorkspacePermissionDefsFn: func(ctx context.Context, organizationID, accountID string) ([]string, error) {
+				serviceCalled = true
+				return []string{string(model.WorkspacePermissionAgentView)}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/org-1/permissions")
+	c.Set("account_id", "ordinary-member")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+
+	handler.ListWorkspacePermissions(c)
+
+	require.False(t, serviceCalled)
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestListWorkspacePermissionsAllowsWorkspaceManagerAccess(t *testing.T) {
+	t.Parallel()
+
+	serviceCalled := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationMemberFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				t.Fatalf("permission definition list should use manager access instead of plain organization membership")
+				return false, nil
+			},
+			checkAnyManagedWorkspaceFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "workspace-manager", accountID)
+				return true, nil
+			},
+			listWorkspacePermissionDefsFn: func(ctx context.Context, organizationID, accountID string) ([]string, error) {
+				serviceCalled = true
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "workspace-manager", accountID)
+				return []string{string(model.WorkspacePermissionAgentView)}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/org-1/permissions")
+	c.Set("account_id", "workspace-manager")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+
+	handler.ListWorkspacePermissions(c)
+
+	require.True(t, serviceCalled)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), string(model.WorkspacePermissionAgentView))
+}
+
+func TestListWorkspaceRolesRejectsAccountWithoutManagedWorkspaceAccess(t *testing.T) {
+	t.Parallel()
+
+	serviceCalled := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationMemberFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				t.Fatalf("role template list should use manager access instead of plain organization membership")
 				return false, nil
 			},
 			checkAnyManagedWorkspaceFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
@@ -1566,6 +1648,117 @@ func TestListWorkspaceRolesRejectsAccountWithoutOrganizationAccess(t *testing.T)
 	var resp response.Response
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, strconv.Itoa(response.ErrPermissionDenied.Code), resp.Code)
+}
+
+func TestListWorkspaceRolesAllowsWorkspaceManagerAccess(t *testing.T) {
+	t.Parallel()
+
+	serviceCalled := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationMemberFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				t.Fatalf("role template list should use manager access instead of plain organization membership")
+				return false, nil
+			},
+			checkAnyManagedWorkspaceFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "workspace-manager", accountID)
+				return true, nil
+			},
+			listWorkspaceRolesFn: func(ctx context.Context, organizationID, accountID string, includeOwner bool) (*shared_dto.WorkspaceRoleListResponse, error) {
+				serviceCalled = true
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "workspace-manager", accountID)
+				require.True(t, includeOwner)
+				return &shared_dto.WorkspaceRoleListResponse{Roles: []shared_dto.WorkspaceRoleSummary{{ID: model.WorkspaceBuiltinRoleAdminID}}}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/org-1/roles?include_owner=true")
+	c.Set("account_id", "workspace-manager")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+	c.Request.URL.RawQuery = "include_owner=true"
+
+	handler.ListWorkspaceRoles(c)
+
+	require.True(t, serviceCalled)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), model.WorkspaceBuiltinRoleAdminID)
+}
+
+func TestGetWorkspaceRoleRejectsAccountWithoutManagedWorkspaceAccess(t *testing.T) {
+	t.Parallel()
+
+	serviceCalled := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationMemberFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				t.Fatalf("role detail should use manager access instead of plain organization membership")
+				return true, nil
+			},
+			checkAnyManagedWorkspaceFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "ordinary-member", accountID)
+				return false, nil
+			},
+			getWorkspaceRoleDetailFn: func(ctx context.Context, organizationID, roleID, accountID string) (*shared_dto.OrganizationRoleDetailResponse, error) {
+				serviceCalled = true
+				return &shared_dto.OrganizationRoleDetailResponse{}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/org-1/roles/role-1")
+	c.Set("account_id", "ordinary-member")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "role_id", Value: "role-1"},
+	}
+
+	handler.GetWorkspaceRole(c)
+
+	require.False(t, serviceCalled)
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestGetWorkspaceRoleAllowsWorkspaceManagerAccess(t *testing.T) {
+	t.Parallel()
+
+	serviceCalled := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationMemberFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				t.Fatalf("role detail should use manager access instead of plain organization membership")
+				return false, nil
+			},
+			checkAnyManagedWorkspaceFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "workspace-manager", accountID)
+				return true, nil
+			},
+			getWorkspaceRoleDetailFn: func(ctx context.Context, organizationID, roleID, accountID string) (*shared_dto.OrganizationRoleDetailResponse, error) {
+				serviceCalled = true
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "role-1", roleID)
+				require.Equal(t, "workspace-manager", accountID)
+				return &shared_dto.OrganizationRoleDetailResponse{ID: roleID, OrganizationID: organizationID}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/org-1/roles/role-1")
+	c.Set("account_id", "workspace-manager")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "role_id", Value: "role-1"},
+	}
+
+	handler.GetWorkspaceRole(c)
+
+	require.True(t, serviceCalled)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"id":"role-1"`)
 }
 
 func TestApplyWorkspaceRoleTemplateBindsTargetsAndOperator(t *testing.T) {

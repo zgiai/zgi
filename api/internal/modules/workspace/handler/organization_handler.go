@@ -193,6 +193,29 @@ func (h *OrganizationHandler) requireOrganizationAccess(c *gin.Context, organiza
 	return true
 }
 
+func (h *OrganizationHandler) requireOrganizationManagerAccess(c *gin.Context, organizationID, accountID string) bool {
+	if h.organizationService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+
+	hasManagedWorkspace, err := h.organizationService.CheckAnyManagedWorkspacePermission(c.Request.Context(), organizationID, accountID)
+	if err != nil {
+		if errors.Is(err, workspace_service.ErrOrganizationNotFound) || errors.Is(err, gorm.ErrRecordNotFound) || strings.Contains(err.Error(), "organization not found") {
+			response.Fail(c, response.ErrOrganizationNotFound)
+			return false
+		}
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if !hasManagedWorkspace {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+
+	return true
+}
+
 func (h *OrganizationHandler) requireOrganizationWorkspacePermission(c *gin.Context, organizationID, workspaceID, accountID string, permission model.WorkspacePermissionCode) bool {
 	if !h.requireRouteWorkspaceInOrganization(c, organizationID, workspaceID) {
 		return false
@@ -261,7 +284,7 @@ func (h *OrganizationHandler) ListWorkspacePermissions(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireOrganizationAccess(c, organizationID, accountID) {
+	if !h.requireOrganizationManagerAccess(c, organizationID, accountID) {
 		return
 	}
 
@@ -287,7 +310,7 @@ func (h *OrganizationHandler) ListWorkspaceRoles(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireOrganizationAccess(c, organizationID, accountID) {
+	if !h.requireOrganizationManagerAccess(c, organizationID, accountID) {
 		return
 	}
 
@@ -325,7 +348,7 @@ func (h *OrganizationHandler) GetWorkspaceRole(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireOrganizationAccess(c, organizationID, accountID) {
+	if !h.requireOrganizationManagerAccess(c, organizationID, accountID) {
 		return
 	}
 
