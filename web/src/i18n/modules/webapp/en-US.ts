@@ -213,6 +213,10 @@ const messages = {
       bindingUpdated: 'The configuration is updated. Preparing the result…',
       bindingUpdatedDetailed: 'Updated {count} {asset} binding(s). Preparing the result…',
       pageChanged: 'The page changed. Reading the new context…',
+      operationFailed: 'The operation ran into a problem. Preparing the next step…',
+      operationFailedDetailed:
+        '{count} {asset} operation(s) ran into a problem. Preparing the next step…',
+      pageActionFailed: 'The page action failed. Preparing the next step…',
       assetLabels: {
         agent: 'agent(s)',
         file: 'file(s)',

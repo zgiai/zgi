@@ -202,6 +202,9 @@ const messages: WebappMessages = {
       bindingUpdated: '配置已更新，正在整理结果…',
       bindingUpdatedDetailed: '已更新 {count} 个{asset}绑定，正在整理结果…',
       pageChanged: '页面已切换，正在读取新上下文…',
+      operationFailed: '操作遇到问题，正在整理下一步…',
+      operationFailedDetailed: '{count} 个{asset}操作遇到问题，正在整理下一步…',
+      pageActionFailed: '页面操作失败，正在整理下一步…',
       assetLabels: {
         agent: '智能体',
         file: '文件',

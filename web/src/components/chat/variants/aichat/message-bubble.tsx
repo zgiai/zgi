@@ -150,6 +150,19 @@ function isRunningTimelineStatus(status: unknown): boolean {
   ].includes(timelineStatus(status));
 }
 
+function isFailedTimelineStatus(status: unknown): boolean {
+  return [
+    'blocked',
+    'denied',
+    'error',
+    'failed',
+    'failure',
+    'rejected',
+    'timeout',
+    'timed_out',
+  ].includes(timelineStatus(status));
+}
+
 function timelineInvocationActionType(invocation: Record<string, unknown>): string {
   const result = timelineRecord(invocation.result);
   const args = timelineRecord(invocation.arguments);
@@ -205,7 +218,9 @@ type StreamingOperationStatusKey =
   | 'assetUpdated'
   | 'assetDeleted'
   | 'bindingUpdated'
-  | 'toolCompleted';
+  | 'toolCompleted'
+  | 'operationFailed'
+  | 'pageActionFailed';
 
 interface StreamingOperationStatus {
   key: StreamingOperationStatusKey;
@@ -349,12 +364,32 @@ function streamingOperationStatusFromProgress(
 
   const result = timelineRecord(item.result);
   const status = timelineString(item.status) || timelineString(result.status);
-  if (status && !isSuccessfulTimelineStatus(status)) {
-    return null;
-  }
   const actionType = (
     timelineString(item.action_type) || timelineString(result.action_type)
   ).toLowerCase();
+
+  if (status && isFailedTimelineStatus(status)) {
+    return actionType === 'route_navigation'
+      ? { key: 'pageActionFailed' }
+      : {
+          key: 'operationFailed',
+          count: streamingOperationCount({
+            kind: 'client_action',
+            action_type: actionType,
+            status: item.status,
+            arguments: {
+              effect: item.effect,
+              asset_type: item.asset_type,
+              assets: item.assets,
+            },
+            result: item.result,
+          }),
+          assetType: item.asset_type,
+        };
+  }
+  if (status && !isSuccessfulTimelineStatus(status)) {
+    return null;
+  }
 
   if (actionType === 'route_navigation') {
     return { key: 'pageChanged' };
@@ -395,6 +430,23 @@ function streamingOperationStatus(
     const toolName = timelineString(invocation.tool_name);
     const kind = timelineString(invocation.kind);
     const actionType = timelineInvocationActionType(invocation);
+    if (isFailedTimelineStatus(invocation.status)) {
+      if (
+        (skillId === 'console-navigator' && toolName === 'navigate') ||
+        (kind === 'client_action' && actionType === 'route_navigation')
+      ) {
+        return { key: 'pageActionFailed' };
+      }
+      if (hasAssetOperationEvidence(invocation)) {
+        const failedStatus = streamingOperationStatusFromInvocation(invocation);
+        return { ...failedStatus, key: 'operationFailed' };
+      }
+      return {
+        key: 'operationFailed',
+        count: streamingOperationCount(invocation),
+        assetType: timelineInvocationAssetType(invocation),
+      };
+    }
     if (
       (skillId === 'console-navigator' && toolName === 'navigate') ||
       (kind === 'client_action' && actionType === 'route_navigation')
@@ -458,7 +510,10 @@ function streamingOperationStatusText(
       return t('consoleChat.operationStatus.bindingUpdatedDetailed', { count, asset });
     case 'toolCompleted':
       return t('consoleChat.operationStatus.toolCompletedDetailed', { count, asset });
+    case 'operationFailed':
+      return t('consoleChat.operationStatus.operationFailedDetailed', { count, asset });
     case 'pageChanged':
+    case 'pageActionFailed':
     default:
       return t(`consoleChat.operationStatus.${status.key}`);
   }
