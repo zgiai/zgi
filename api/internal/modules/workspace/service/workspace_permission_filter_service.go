@@ -92,6 +92,27 @@ func (s *WorkspacePermissionFilterServiceImpl) getPermittedWorkspacesByUser(
 		return []*WorkspacePermissionResponse{}, nil
 	}
 
+	isOrganizationAdminOrOwner, err := s.isOrganizationAdminOrOwner(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if isOrganizationAdminOrOwner {
+		permittedWorkspaces := make([]*WorkspacePermissionResponse, 0, len(workspaces))
+		workspaceMap := make(map[string]*model.Workspace, len(workspaces))
+		for _, workspace := range workspaces {
+			if workspace == nil || workspace.Status != model.WorkspaceStatusNormal {
+				continue
+			}
+			workspaceMap[workspace.ID] = workspace
+			permittedWorkspaces = append(permittedWorkspaces, &WorkspacePermissionResponse{
+				ID:   workspace.ID,
+				Name: workspace.Name,
+			})
+		}
+		sortWorkspacesByCreatedAtFromMap(permittedWorkspaces, workspaceMap)
+		return permittedWorkspaces, nil
+	}
+
 	// Check permissions for each workspace
 	var permittedWorkspaces []*WorkspacePermissionResponse
 	workspaceMap := make(map[string]*model.Workspace)
@@ -144,6 +165,20 @@ func (s *WorkspacePermissionFilterServiceImpl) getPermittedWorkspacesByUser(
 	sortWorkspacesByCreatedAtFromMap(permittedWorkspaces, workspaceMap)
 
 	return permittedWorkspaces, nil
+}
+
+func (s *WorkspacePermissionFilterServiceImpl) isOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
+	join, err := s.organizationRepo.GetAccountJoin(ctx, organizationID, accountID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get organization account join: %w", err)
+	}
+	if join == nil || join.Status != model.OrganizationMemberStatusActive {
+		return false, nil
+	}
+	return join.Role == model.OrganizationRoleOwner || join.Role == model.OrganizationRoleAdmin, nil
 }
 
 func workspacePermissionCodeForFilterType(permissionType string) (model.WorkspacePermissionCode, error) {

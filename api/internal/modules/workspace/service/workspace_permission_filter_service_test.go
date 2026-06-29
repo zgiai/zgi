@@ -77,15 +77,15 @@ func TestWorkspacePermissionFilterAllowsFineCreatePermission(t *testing.T) {
 	require.Equal(t, []string{createWorkspaceID}, workspacePermissionResponseIDs(workspaces))
 }
 
-func TestWorkspacePermissionFilterOrganizationAdminDoesNotBypassWorkspaceMembership(t *testing.T) {
+func TestWorkspacePermissionFilterOrganizationAdminSeesNormalWorkspacesWithoutMembership(t *testing.T) {
 	t.Parallel()
 
 	fixture := newWorkspacePermissionFilterFixture(t)
 	accountID := uuid.NewString()
 	now := time.Now().UTC()
 
-	fixture.addWorkspace("First", model.WorkspaceStatusNormal, now)
-	fixture.addWorkspace("Second", model.WorkspaceStatusNormal, now.Add(time.Second))
+	firstWorkspaceID := fixture.addWorkspace("First", model.WorkspaceStatusNormal, now)
+	secondWorkspaceID := fixture.addWorkspace("Second", model.WorkspaceStatusNormal, now.Add(time.Second))
 	fixture.addWorkspace("Archived", model.WorkspaceStatusArchived, now.Add(2*time.Second))
 	fixture.addOrganizationMember(accountID, model.OrganizationRoleAdmin)
 
@@ -97,7 +97,30 @@ func TestWorkspacePermissionFilterOrganizationAdminDoesNotBypassWorkspaceMembers
 	)
 	require.NoError(t, err)
 
-	require.Empty(t, workspacePermissionResponseIDs(workspaces))
+	require.Equal(t, []string{firstWorkspaceID, secondWorkspaceID}, workspacePermissionResponseIDs(workspaces))
+}
+
+func TestWorkspacePermissionFilterOrganizationOwnerSeesNormalWorkspacesWithoutMembership(t *testing.T) {
+	t.Parallel()
+
+	fixture := newWorkspacePermissionFilterFixture(t)
+	accountID := uuid.NewString()
+	now := time.Now().UTC()
+
+	firstWorkspaceID := fixture.addWorkspace("First", model.WorkspaceStatusNormal, now)
+	secondWorkspaceID := fixture.addWorkspace("Second", model.WorkspaceStatusNormal, now.Add(time.Second))
+	fixture.addWorkspace("Archived", model.WorkspaceStatusArchived, now.Add(2*time.Second))
+	fixture.addOrganizationMember(accountID, model.OrganizationRoleOwner)
+
+	workspaces, err := fixture.service.GetAccessibleWorkspacesByPermission(
+		context.Background(),
+		accountID,
+		fixture.organizationID,
+		"create_knowledge",
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{firstWorkspaceID, secondWorkspaceID}, workspacePermissionResponseIDs(workspaces))
 }
 
 func TestWorkspacePermissionFilterDoesNotFallbackToCustomRoleTemplate(t *testing.T) {
