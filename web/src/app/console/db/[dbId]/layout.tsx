@@ -37,6 +37,7 @@ import { EditDbDialog } from '@/components/db/dialog';
 import { ErrorBoundary } from '@/components/error-boundary';
 import {
   DATABASE_PERMISSION_ACTIONS,
+  DATABASE_TABLE_METADATA_PERMISSION_CODES,
   DATABASE_VISIBLE_PERMISSION_CODES,
 } from '@/constants/permissions';
 
@@ -63,6 +64,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
     ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
   ]);
   const canViewOperationLogs = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.operationLogsView);
+  const canViewTableMetadata = hasAnyPermission(DATABASE_TABLE_METADATA_PERMISSION_CODES);
 
   const { data: dbDetail, isLoading: isDbLoading } = useDb(dbId, {
     enabled: canView,
@@ -86,7 +88,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const [deleteTarget, setDeleteTarget] = React.useState<{ id: string; name: string } | null>(null);
 
   const { tables, isLoading } = useDbTables(dbId, {
-    enabled: canView && !isMismatch,
+    enabled: canViewTableMetadata && !isMismatch,
   });
   const deleteMutation = useDeleteDbTable(dbId);
 
@@ -170,45 +172,46 @@ export default function DbLayout({ children, params }: LayoutProps) {
             }
           >
             <nav className="flex flex-1 flex-col gap-0.5 px-1 py-1.5">
-              {/* Tables toggle */}
-              <button
-                type="button"
-                onClick={() => {
-                  if (isCollapsed) {
-                    setIsCollapsed(false);
-                    setDbMenuOpen(true);
-                  } else {
-                    setDbMenuOpen(prev => !prev);
-                  }
-                }}
-                className={cn(
-                  'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
-                  pathname.startsWith(`/console/db/${dbId}/table`)
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-primary/5 hover:text-primary',
-                  isCollapsed && 'justify-center px-0'
-                )}
-              >
-                <Table className="h-4 w-4 shrink-0" />
-                <span
+              {canViewTableMetadata && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isCollapsed) {
+                      setIsCollapsed(false);
+                      setDbMenuOpen(true);
+                    } else {
+                      setDbMenuOpen(prev => !prev);
+                    }
+                  }}
                   className={cn(
-                    'truncate ml-1.5 grow text-left transition-all duration-300',
-                    isCollapsed && 'ml-0 w-0 grow-0 overflow-hidden opacity-0'
+                    'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    pathname.startsWith(`/console/db/${dbId}/table`)
+                      ? 'bg-primary/10 text-primary'
+                      : 'hover:bg-primary/5 hover:text-primary',
+                    isCollapsed && 'justify-center px-0'
                   )}
                 >
-                  {t('dbs.tables')}
-                </span>
-                {!isCollapsed && (
-                  <ChevronDown
+                  <Table className="h-4 w-4 shrink-0" />
+                  <span
                     className={cn(
-                      'h-4 w-4 transition-transform shrink-0',
-                      dbMenuOpen ? 'rotate-0' : 'rotate-90'
+                      'truncate ml-1.5 grow text-left transition-all duration-300',
+                      isCollapsed && 'ml-0 w-0 grow-0 overflow-hidden opacity-0'
                     )}
-                  />
-                )}
-              </button>
+                  >
+                    {t('dbs.tables')}
+                  </span>
+                  {!isCollapsed && (
+                    <ChevronDown
+                      className={cn(
+                        'h-4 w-4 transition-transform shrink-0',
+                        dbMenuOpen ? 'rotate-0' : 'rotate-90'
+                      )}
+                    />
+                  )}
+                </button>
+              )}
               {/* Table list */}
-              {dbMenuOpen && !isCollapsed && (
+              {canViewTableMetadata && dbMenuOpen && !isCollapsed && (
                 <div className="pl-3 space-y-0.5">
                   {/* Create table */}
                   {canManageSchema && (

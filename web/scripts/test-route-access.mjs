@@ -72,6 +72,7 @@ const fileDetailShellPath = path.join(
 );
 const fileListPath = path.join(rootDir, 'src', 'components', 'files', 'file-list.tsx');
 const dbPagePath = path.join(rootDir, 'src', 'app', 'console', 'db', 'page.tsx');
+const dbOverviewPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'page.tsx');
 const dbLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'layout.tsx');
 const defaultCustomerPath = path.join(rootDir, 'src', 'customer', 'default.tsx');
 const accountServicePath = path.join(rootDir, 'src', 'services', 'account.service.ts');
@@ -566,6 +567,7 @@ const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
 const fileListSource = fs.readFileSync(fileListPath, 'utf8');
 const dbPageSource = fs.readFileSync(dbPagePath, 'utf8');
+const dbOverviewSource = fs.readFileSync(dbOverviewPath, 'utf8');
 const dbLayoutSource = fs.readFileSync(dbLayoutPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
@@ -771,6 +773,31 @@ assert.doesNotMatch(
 );
 assert.match(
   dbLayoutSource,
+  /const canViewTableMetadata\s*=\s*hasAnyPermission\(DATABASE_TABLE_METADATA_PERMISSION_CODES\)/,
+  'database detail layout should derive table-list visibility from the shared table metadata permission group'
+);
+assert.match(
+  dbLayoutSource,
+  /useDbTables\(dbId,\s*\{[\s\S]*enabled:\s*canViewTableMetadata && !isMismatch/,
+  'database detail layout should not fetch tables for users without table metadata permissions'
+);
+assert.match(
+  dbLayoutSource,
+  /\{canViewTableMetadata && \([\s\S]*<button[\s\S]*\{t\('dbs\.tables'\)\}/,
+  'database detail layout should hide the table navigation group without table metadata permissions'
+);
+assert.match(
+  dbOverviewSource,
+  /const canViewTableMetadata\s*=\s*hasAnyPermission\(DATABASE_TABLE_METADATA_PERMISSION_CODES\)/,
+  'database overview should use the shared table metadata permission group'
+);
+assert.match(
+  dbOverviewSource,
+  /useDbTables\(dbId as string,\s*\{[\s\S]*enabled:\s*canViewTableMetadata/,
+  'database overview should not fetch table list without table metadata permissions'
+);
+assert.match(
+  dbLayoutSource,
   /const canViewOperationLogs\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.operationLogsView\)/,
   'database detail logs navigation should use the operationLogsView action group'
 );
@@ -839,6 +866,11 @@ assert.doesNotMatch(
 
 const consoleSidebarSource = fs.readFileSync(consoleSidebarPath, 'utf8');
 const permissionConstantsSource = fs.readFileSync(permissionConstantsPath, 'utf8');
+assert.match(
+  permissionConstantsSource,
+  /export const DATABASE_TABLE_METADATA_PERMISSION_CODES = \[[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaView[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView[\s\S]*DATABASE_PERMISSION_ACTIONS\.importAnalyze[\s\S]*DATABASE_PERMISSION_ACTIONS\.tablePromptView[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead/,
+  'database table metadata permission group should include schema, record, import, table prompt, and AI-query readers'
+);
 const permissionAllCodesSource = sourceSliceBetween(
   permissionConstantsSource,
   'export const ALL_PERMISSION_CODES = [',

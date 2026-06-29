@@ -285,7 +285,7 @@ func TestCreateTableRequiresDatabaseSchemaManageBeforeBindingRequest(t *testing.
 	require.Zero(t, dataSourceService.createTableCalls)
 }
 
-func TestListTablesRequiresDatabaseSchemaViewBeforeTableListing(t *testing.T) {
+func TestListTablesRequiresDatabaseTableMetadataPermissionBeforeTableListing(t *testing.T) {
 	dataSourceService := &excelImportPermissionDataSourceService{workspaceID: "workspace-1"}
 	permissionChecker := &excelImportPermissionChecker{allowed: false}
 	handler := &DataSourceHandler{
@@ -304,11 +304,11 @@ func TestListTablesRequiresDatabaseSchemaViewBeforeTableListing(t *testing.T) {
 	requireResponseCode(t, recorder, response.ErrPermissionDenied)
 	require.Equal(t, 1, dataSourceService.getDataSourceCalls)
 	require.Equal(t, 1, permissionChecker.calls)
-	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseSchemaView}, permissionChecker.lastPermissions)
+	require.Equal(t, databaseTableMetadataPermissions, permissionChecker.lastPermissions)
 	require.Zero(t, dataSourceService.listTablesCalls)
 }
 
-func TestGetTableRequiresDatabaseSchemaViewBeforeTableLookup(t *testing.T) {
+func TestGetTableRequiresDatabaseTableMetadataPermissionBeforeTableLookup(t *testing.T) {
 	dataSourceService := &excelImportPermissionDataSourceService{workspaceID: "workspace-1"}
 	permissionChecker := &excelImportPermissionChecker{allowed: false}
 	handler := &DataSourceHandler{
@@ -330,7 +330,7 @@ func TestGetTableRequiresDatabaseSchemaViewBeforeTableLookup(t *testing.T) {
 	requireResponseCode(t, recorder, response.ErrPermissionDenied)
 	require.Equal(t, 1, dataSourceService.getDataSourceCalls)
 	require.Equal(t, 1, permissionChecker.calls)
-	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseSchemaView}, permissionChecker.lastPermissions)
+	require.Equal(t, databaseTableMetadataPermissions, permissionChecker.lastPermissions)
 	require.Zero(t, dataSourceService.getTableCalls)
 }
 
@@ -412,7 +412,7 @@ func TestUpdateTableColumnsRequiresDatabaseSchemaManageBeforeBindingRequest(t *t
 	require.Zero(t, dataSourceService.updateTableColumnsCalls)
 }
 
-func TestGetTableColumnsRequiresDatabaseSchemaViewBeforeColumnLookup(t *testing.T) {
+func TestGetTableColumnsRequiresDatabaseTableMetadataPermissionBeforeColumnLookup(t *testing.T) {
 	dataSourceService := &excelImportPermissionDataSourceService{workspaceID: "workspace-1"}
 	permissionChecker := &excelImportPermissionChecker{allowed: false}
 	handler := &DataSourceHandler{
@@ -434,7 +434,7 @@ func TestGetTableColumnsRequiresDatabaseSchemaViewBeforeColumnLookup(t *testing.
 	requireResponseCode(t, recorder, response.ErrPermissionDenied)
 	require.Equal(t, 1, dataSourceService.getDataSourceCalls)
 	require.Equal(t, 1, permissionChecker.calls)
-	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseSchemaView}, permissionChecker.lastPermissions)
+	require.Equal(t, databaseTableMetadataPermissions, permissionChecker.lastPermissions)
 	require.Zero(t, dataSourceService.getTableColumnsCalls)
 }
 
@@ -490,7 +490,7 @@ func TestQueryTableRecordsRequiresDatabaseRecordViewBeforeRecordLookup(t *testin
 	require.Zero(t, dataSourceService.queryTableRecordsCalls)
 }
 
-func TestDownloadTableTemplateRequiresDatabaseSchemaViewBeforeTemplateLookup(t *testing.T) {
+func TestDownloadTableTemplateRequiresDatabaseTableMetadataPermissionBeforeTemplateLookup(t *testing.T) {
 	dataSourceService := &excelImportPermissionDataSourceService{workspaceID: "workspace-1"}
 	permissionChecker := &excelImportPermissionChecker{allowed: false}
 	handler := &DataSourceHandler{
@@ -512,7 +512,7 @@ func TestDownloadTableTemplateRequiresDatabaseSchemaViewBeforeTemplateLookup(t *
 	requireResponseCode(t, recorder, response.ErrPermissionDenied)
 	require.Equal(t, 1, dataSourceService.getDataSourceCalls)
 	require.Equal(t, 1, permissionChecker.calls)
-	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseSchemaView}, permissionChecker.lastPermissions)
+	require.Equal(t, databaseTableMetadataPermissions, permissionChecker.lastPermissions)
 	require.Zero(t, dataSourceService.getTableCalls)
 	require.Zero(t, dataSourceService.generateTableTemplateCalls)
 }

@@ -33,6 +33,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-29: Database table metadata reads were aligned across backend and frontend. Listing tables, reading table metadata, reading columns, and downloading table import templates now accept a table-metadata permission group covering schema, record, import, table-prompt, and AI-query capabilities; the database layout and overview only fetch/show table navigation when that same group is present. Operation-log-only users no longer trigger table-list requests or see table navigation.
 - 2026-06-29: Database list create/edit gates were split. Opening the create dialog uses `database.create`, while opening the edit dialog now uses `database.update`, matching the card action and backend update endpoint instead of accidentally requiring create permission.
 - 2026-06-29: Database list create and detail operation-log navigation gates now consume `DATABASE_PERMISSION_ACTIONS.create` and `DATABASE_PERMISSION_ACTIONS.operationLogsView` instead of raw permission literals, keeping frontend database UI actions bound to the shared action matrix.
 - 2026-06-29: File readable and browse permissions were separated. Existing-file detail, favorite filtering, and view authorization no longer treat `file.upload`, `file.text.create`, or folder-only access as file-view capability; list/folder/statistics browsing keeps a dedicated browse permission set so upload and folder workflows can still reach the file workspace surface. Frontend file detail and file-list detail actions now share the same existing-file readable/action gate.
@@ -81,6 +82,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Verification Log
 
+- 2026-06-29: `go test ./internal/modules/datasource/handler`, `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/constants/permissions.ts src/app/console/db/[dbId]/layout.tsx src/app/console/db/[dbId]/page.tsx` passed after aligning database table metadata read permissions.
 - 2026-06-29: `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/app/console/db/page.tsx` passed after splitting database list create and edit frontend gates.
 - 2026-06-29: `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/app/console/db/page.tsx src/app/console/db/[dbId]/layout.tsx` passed after constantizing database create and operation-log frontend gates.
 - 2026-06-29: `go test ./internal/modules/file_process/handler`, `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/components/files/file-list.tsx src/components/files/detail/file-detail-shell.tsx` passed after separating file readable and browse permissions.

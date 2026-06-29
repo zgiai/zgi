@@ -55,6 +55,22 @@ var databaseWorkspaceVisibilityPermissions = append(
 	databaseExistingAssetVisibilityPermissions...,
 )
 
+var databaseTableMetadataPermissions = []workspace_model.WorkspacePermissionCode{
+	workspace_model.WorkspacePermissionDatabaseSchemaView,
+	workspace_model.WorkspacePermissionDatabaseSchemaManage,
+	workspace_model.WorkspacePermissionDatabaseRecordView,
+	workspace_model.WorkspacePermissionDatabaseRecordCreate,
+	workspace_model.WorkspacePermissionDatabaseRecordUpdate,
+	workspace_model.WorkspacePermissionDatabaseRecordDelete,
+	workspace_model.WorkspacePermissionDatabaseImportAnalyze,
+	workspace_model.WorkspacePermissionDatabaseImportExecute,
+	workspace_model.WorkspacePermissionDatabaseImportErrorsView,
+	workspace_model.WorkspacePermissionDatabaseTablePromptView,
+	workspace_model.WorkspacePermissionDatabaseTablePromptManage,
+	workspace_model.WorkspacePermissionDatabaseAIQueryRead,
+	workspace_model.WorkspacePermissionDatabaseAIQueryWrite,
+}
+
 // NewDataSourceHandler creates a new DataSourceHandler
 func NewDataSourceHandler(service service.DataSourceService, accountService interfaces.AccountService, enterpriseService interfaces.OrganizationService) *DataSourceHandler {
 	return &DataSourceHandler{
@@ -525,7 +541,7 @@ func (h *DataSourceHandler) ListTables(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseSchemaView) {
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, databaseTableMetadataPermissions...) {
 		return
 	}
 
@@ -576,7 +592,7 @@ func (h *DataSourceHandler) GetTable(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseSchemaView) {
+	if !h.ensureDatabasePermission(c, organizationID, id, accountID, databaseTableMetadataPermissions...) {
 		return
 	}
 
@@ -805,7 +821,7 @@ func (h *DataSourceHandler) GetTableColumns(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseSchemaView) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, databaseTableMetadataPermissions...) {
 		return
 	}
 
@@ -1174,7 +1190,7 @@ func (h *DataSourceHandler) DownloadTableTemplate(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseSchemaView) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, databaseTableMetadataPermissions...) {
 		return
 	}
 

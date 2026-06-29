@@ -12,7 +12,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Plus, Table2, Search, ArrowRight, ScrollText, FileSpreadsheet } from 'lucide-react';
 
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import {
+  DATABASE_PERMISSION_ACTIONS,
+  DATABASE_TABLE_METADATA_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 export default function DbOverviewPage() {
   const { dbId } = useParams();
@@ -31,15 +34,20 @@ export default function DbOverviewPage() {
     ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
   ]);
   const canViewOperationLogs = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.operationLogsView);
+  const canViewTableMetadata = hasAnyPermission(DATABASE_TABLE_METADATA_PERMISSION_CODES);
 
   const { data: dbDetail, isLoading: isDbLoading } = useDb(dbId as string);
-  const { tables, isLoading: isTablesLoading } = useDbTables(dbId as string);
+  const { tables, isLoading: isTablesLoading } = useDbTables(dbId as string, {
+    enabled: canViewTableMetadata,
+  });
 
   // Create table dialog state
   const [createOpen, setCreateOpen] = useState(false);
 
-  const isLoading = isDbLoading || isTablesLoading;
+  const isLoading = isDbLoading || (canViewTableMetadata && isTablesLoading);
   const hasTables = tables.length > 0;
+  const showNoTablesState = canViewTableMetadata && !hasTables;
+  const showQuickActions = hasTables || canViewOperationLogs;
 
   const handleOpenCreate = () => {
     if (!canManageSchema) return;
@@ -95,7 +103,7 @@ export default function DbOverviewPage() {
       </div>
 
       {/* Empty State - No Tables */}
-      {!hasTables && (
+      {showNoTablesState && (
         <Card className="border-dashed">
           <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
             <div className="rounded-full bg-muted p-4 mb-4">
@@ -124,7 +132,7 @@ export default function DbOverviewPage() {
       )}
 
       {/* Quick Actions - Has Tables */}
-      {hasTables && (
+      {showQuickActions && (
         <div className="space-y-4">
           <h2 className="text-lg font-semibold">{t('dbs.overview.quickActions')}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
