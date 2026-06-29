@@ -32,11 +32,6 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
   const isAuthReady = useIsInitialized();
   const { datasetId } = useParams<{ datasetId: string }>();
   const pathname = usePathname();
-  const { data, isLoading } = useDataset(datasetId, {
-    // Refetch periodically to update available_document_count when documents finish indexing
-    refetchInterval: 10000,
-    refetchIntervalInBackground: false,
-  });
   const t = useT();
 
   // Permission checking
@@ -54,6 +49,13 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
     ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphView,
     ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphManage,
   ]);
+
+  const { data, isLoading } = useDataset(datasetId, {
+    enabled: canView,
+    // Refetch periodically to update available_document_count when documents finish indexing
+    refetchInterval: 10000,
+    refetchIntervalInBackground: false,
+  });
   const canOpenSettings = hasAnyPermission([
     ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.update,
     ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage,

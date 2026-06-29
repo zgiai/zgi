@@ -333,6 +333,15 @@ const datasetDetailRootPagePath = path.join(
   '[datasetId]',
   'page.tsx'
 );
+const datasetDetailLayoutPath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'dataset',
+  '[datasetId]',
+  'layout.tsx'
+);
 const templateGalleryDialogPath = path.join(
   rootDir,
   'src',
@@ -1679,6 +1688,7 @@ const datasetFolderCardSource = fs.readFileSync(datasetFolderCardPath, 'utf8');
 const datasetHooksSource = fs.readFileSync(datasetHooksPath, 'utf8');
 const datasetHitResultItemSource = fs.readFileSync(datasetHitResultItemPath, 'utf8');
 const datasetDetailRootPageSource = fs.readFileSync(datasetDetailRootPagePath, 'utf8');
+const datasetDetailLayoutSource = fs.readFileSync(datasetDetailLayoutPath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
 const createFromTemplateHookSource = fs.readFileSync(createFromTemplateHookPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
@@ -2422,6 +2432,11 @@ assert.match(
   datasetDetailRootPageSource,
   /router\.replace\(targetHref\)/,
   'dataset detail root should replace to the first permission-compatible child page'
+);
+assert.match(
+  datasetDetailLayoutSource,
+  /useDataset\(datasetId,\s*\{[\s\S]*enabled:\s*canView[\s\S]*refetchInterval:\s*10000/,
+  'dataset detail layout should not fetch dataset metadata before visible knowledge-base permission is present'
 );
 assert.doesNotMatch(
   agentEntryPageSource,
