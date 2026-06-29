@@ -394,6 +394,27 @@ const workflowSqlGeneratorManagerPath = path.join(
   'manager',
   'index.tsx'
 );
+const workflowKnowledgeRetrievalManagerPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'knowledge-retrieval',
+  'manager',
+  'index.tsx'
+);
+const workflowKnowledgeRecallSettingsPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'knowledge-retrieval',
+  'manager',
+  'recall-settings-dialog',
+  'index.tsx'
+);
 const enterOrganizationModeHookPath = path.join(
   rootDir,
   'src',
@@ -1366,6 +1387,14 @@ const workflowSqlGeneratorManagerSource = fs.readFileSync(
   workflowSqlGeneratorManagerPath,
   'utf8'
 );
+const workflowKnowledgeRetrievalManagerSource = fs.readFileSync(
+  workflowKnowledgeRetrievalManagerPath,
+  'utf8'
+);
+const workflowKnowledgeRecallSettingsSource = fs.readFileSync(
+  workflowKnowledgeRecallSettingsPath,
+  'utf8'
+);
 const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
@@ -1804,6 +1833,41 @@ assert.match(
   agentRuntimeKnowledgeSectionSource,
   /disabled=\{readOnly \|\| !canBindKnowledge\}/,
   'agent runtime selected knowledge mutation controls should stay disabled without knowledge binding access'
+);
+assert.match(
+  workflowKnowledgeRetrievalManagerSource,
+  /useKnowledgeNodePermissions\(\)/,
+  'workflow knowledge-retrieval manager should consume the shared knowledge node permission helper'
+);
+assert.match(
+  workflowKnowledgeRetrievalManagerSource,
+  /enabled:\s*canReadKnowledgeBinding/,
+  'workflow knowledge-retrieval dataset candidates should not load without knowledge readable permissions'
+);
+assert.match(
+  workflowKnowledgeRetrievalManagerSource,
+  /const canEditKnowledgeSelection\s*=\s*!readOnly && canReadKnowledgeBinding/,
+  'workflow knowledge-retrieval dataset selection should require workflow edit and knowledge readable permissions'
+);
+assert.match(
+  workflowKnowledgeRetrievalManagerSource,
+  /<RecallSettingsDialog id=\{nodeId\} readOnly=\{readOnly\}/,
+  'workflow knowledge-retrieval recall settings should receive the workflow read-only state'
+);
+assert.match(
+  workflowKnowledgeRetrievalManagerSource,
+  /enabled:[\s\S]*!readOnly[\s\S]*reranking_enable[\s\S]*reranking_mode === 'reranking_model'/,
+  'workflow knowledge-retrieval default rerank initialization should not mutate read-only workflows'
+);
+assert.match(
+  workflowKnowledgeRecallSettingsSource,
+  /if \(readOnly \|\| !nodeData\) return;/,
+  'workflow knowledge-retrieval recall settings mutations should no-op in read-only mode'
+);
+assert.match(
+  workflowKnowledgeRecallSettingsSource,
+  /disabled=\{readOnly\}/,
+  'workflow knowledge-retrieval recall settings controls should be disabled in read-only mode'
 );
 assert.match(
   agentRuntimeDatabaseSectionSource,
