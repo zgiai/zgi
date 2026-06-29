@@ -743,8 +743,16 @@ func TestOrganizationWorkspaceRoutesRejectCrossOrganizationWorkspaceBeforePermis
 func TestGetOrganizationWorkspaceMemberDetailByIDReturnsHasMobile(t *testing.T) {
 	t.Parallel()
 
+	var requestedPermission model.WorkspacePermissionCode
 	handler := &OrganizationHandler{
 		organizationService: fakeOrganizationService{
+			checkWorkspacePermissionFn: func(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "ws-1", workspaceID)
+				require.Equal(t, "acc-1", accountID)
+				requestedPermission = permissionCode
+				return true, nil
+			},
 			getOrganizationWorkspaceDetailFn: func(ctx context.Context, organizationID, workspaceID, accountID string) (*shared_dto.OrganizationWorkspaceResponse, error) {
 				require.Equal(t, "org-1", organizationID)
 				require.Equal(t, "ws-1", workspaceID)
@@ -791,6 +799,7 @@ func TestGetOrganizationWorkspaceMemberDetailByIDReturnsHasMobile(t *testing.T) 
 	handler.GetOrganizationWorkspaceMemberDetailByID(c)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, model.WorkspacePermissionWorkspaceMemberView, requestedPermission)
 	require.Contains(t, recorder.Body.String(), `"has_mobile":true`)
 }
 
@@ -893,6 +902,101 @@ func TestGetOrganizationWorkspaceMemberOptionsUsesWorkspaceViewAndHidesManagemen
 	require.Contains(t, recorder.Body.String(), `"has_mobile":true`)
 	require.NotContains(t, recorder.Body.String(), `"permissions"`)
 	require.NotContains(t, recorder.Body.String(), `"role"`)
+}
+
+func TestGetOrganizationWorkspaceMemberOptionDetailUsesWorkspaceViewAndHidesManagementFields(t *testing.T) {
+	t.Parallel()
+
+	var requestedPermission model.WorkspacePermissionCode
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			checkWorkspacePermissionFn: func(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "ws-1", workspaceID)
+				require.Equal(t, "acc-1", accountID)
+				requestedPermission = permissionCode
+				return true, nil
+			},
+		},
+		workspaceManagementService: fakeWorkspaceManagementService{
+			getWorkspaceMembersFn: func(ctx context.Context, workspaceID string) ([]*interfaces.AccountWithRole, error) {
+				require.Equal(t, "ws-1", workspaceID)
+				memberName := "Alice Member"
+				return []*interfaces.AccountWithRole{
+					{
+						ID:          "member-1",
+						Name:        "Alice",
+						AccountName: "alice",
+						MemberName:  &memberName,
+						Email:       "alice@example.com",
+						Role:        "admin",
+						Permissions: []string{"workspace.permission.manage"},
+						Status:      "active",
+						HasMobile:   true,
+					},
+				}, nil
+			},
+		},
+		departmentService: fakeDepartmentService{},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/org-1/workspaces/ws-1/member-options/member-1")
+	c.Set("account_id", "acc-1")
+	c.Set("organization_id", "org-1")
+	c.Set("tenant_id", "org-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "workspace_id", Value: "ws-1"},
+		{Key: "member_id", Value: "member-1"},
+	}
+
+	handler.GetOrganizationWorkspaceMemberOptionDetailByID(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, model.WorkspacePermissionWorkspaceView, requestedPermission)
+	require.Contains(t, recorder.Body.String(), `"email":"alice@example.com"`)
+	require.Contains(t, recorder.Body.String(), `"has_mobile":true`)
+	require.NotContains(t, recorder.Body.String(), `"permissions"`)
+	require.NotContains(t, recorder.Body.String(), `"role"`)
+}
+
+func TestGetOrganizationWorkspaceAssetsRequiresMemberManagePermission(t *testing.T) {
+	t.Parallel()
+
+	var requestedPermission model.WorkspacePermissionCode
+	assetsChecked := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			checkWorkspacePermissionFn: func(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "ws-1", workspaceID)
+				require.Equal(t, "acc-1", accountID)
+				requestedPermission = permissionCode
+				return false, nil
+			},
+			checkWorkspaceAssetsFn: func(ctx context.Context, workspaceID string) (bool, map[string]int64, error) {
+				assetsChecked = true
+				return true, map[string]int64{"agents": 1}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/org-1/workspaces/ws-1/assets")
+	c.Set("account_id", "acc-1")
+	c.Set("organization_id", "org-1")
+	c.Set("tenant_id", "org-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "workspace_id", Value: "ws-1"},
+	}
+
+	handler.GetOrganizationWorkspaceAssets(c)
+
+	var resp response.Response
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp), recorder.Body.String())
+	require.Equal(t, strconv.Itoa(response.ErrPermissionDenied.Code), resp.Code, recorder.Body.String())
+	require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, requestedPermission)
+	require.False(t, assetsChecked)
 }
 
 func TestPatchOrganizationReturnsUpdatedOrganization(t *testing.T) {
