@@ -125,6 +125,64 @@ func TestFastPathFinalAnswerForCompletionEvidencePreservesBatchGroupFromLatestTo
 	}
 }
 
+func TestFastPathFinalAnswerForCompletionEvidenceIgnoresPendingSkillLoadStep(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/delete_agents",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agents",
+				},
+				map[string]interface{}{
+					"id":       "skill:" + skills.SkillAgentManagement,
+					"title":    "Use agent-management",
+					"status":   "pending",
+					"skill_id": skills.SkillAgentManagement,
+					"role":     "primary",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/delete_agents":  "completed",
+				"skill:" + skills.SkillAgentManagement: "pending",
+			},
+			"pending_next_action": "Use agent-management",
+		},
+		"operation_result_summary": map[string]interface{}{
+			"latest_tool_result": map[string]interface{}{
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "delete_agents",
+				"result_summary": map[string]interface{}{
+					"status":        "completed",
+					"target_count":  2,
+					"deleted_count": 2,
+					"failed_count":  0,
+				},
+				"operation_group": map[string]interface{}{
+					"operation": "agent.delete",
+					"item_results": []interface{}{
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+					},
+				},
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want batch delete answer despite pending skill load step")
+	}
+	for _, want := range []string{"成功删除 2 个智能体", "Agent One", "Agent Two"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, missing %q", answer, want)
+		}
+	}
+}
+
 func TestFastPathFinalAnswerForAgentDelete(t *testing.T) {
 	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
 		Kind:     "tool_call",

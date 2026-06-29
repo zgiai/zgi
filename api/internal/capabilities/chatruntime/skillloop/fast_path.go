@@ -193,12 +193,19 @@ func fastPathPlanStepBlocksCompletion(step map[string]interface{}) bool {
 	if id == "" {
 		return false
 	}
-	if strings.HasPrefix(id, "skill:") &&
-		strings.EqualFold(strings.TrimSpace(stringFromAny(step["role"])), "supporting") &&
-		strings.TrimSpace(stringFromAny(step["tool_name"])) == "" {
+	if fastPathPlanStepIsSkillLoadOnly(step) {
 		return false
 	}
 	return true
+}
+
+func fastPathPlanStepIsSkillLoadOnly(step map[string]interface{}) bool {
+	if len(step) == 0 {
+		return false
+	}
+	id := strings.TrimSpace(stringFromAny(step["id"]))
+	return strings.HasPrefix(id, "skill:") &&
+		strings.TrimSpace(stringFromAny(step["tool_name"])) == ""
 }
 
 func fastPathPlanStepAction(step map[string]interface{}) string {
