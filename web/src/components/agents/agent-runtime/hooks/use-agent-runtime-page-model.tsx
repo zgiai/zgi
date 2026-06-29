@@ -247,7 +247,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const { data: workflowCandidatesResponse, isLoading: isWorkflowCandidatesLoading } = useQuery({
     queryKey: AGENT_KEYS.workflowBindingCandidates(agentId),
     queryFn: () => agentService.getAgentWorkflowBindingCandidates(agentId),
-    enabled: Boolean(agentId),
+    enabled: Boolean(agentId) && canConfigureAgentRuntime,
     staleTime: 60_000,
   });
   const publishAgent = usePublishAgent();
@@ -910,8 +910,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       );
       return;
     }
-    const saved = await saveNow({ silent: true, force: true });
-    if (saved) {
+    const canPublishCurrentDraft =
+      !canConfigureAgentRuntime || (await saveNow({ silent: true, force: true }));
+    if (canPublishCurrentDraft) {
       try {
         await publishAgent.mutateAsync({ agentId, silent: false });
       } catch {
@@ -921,6 +922,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [
     agentId,
     canPublishAgent,
+    canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
     isSystemPromptTooLong,
     publishAgent,
@@ -983,7 +985,11 @@ export function useAgentRuntimePageModel(agentId: string) {
   );
 
   const handlePreviewBeforeSend = useCallback(async () => {
-    if (!canConfigureAgentRuntime || isVersionPreviewing) {
+    if (!canConfigureAgentRuntime) {
+      toast.error(tRoot('common.unauthorizedDescription'));
+      return false;
+    }
+    if (isVersionPreviewing) {
       return true;
     }
     if (hasAgentMemorySlotErrors) {
@@ -1004,6 +1010,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     isVersionPreviewing,
     saveNow,
     t,
+    tRoot,
   ]);
 
   const leaveGuardNode = useAgentRuntimeLeaveGuard({
@@ -1036,7 +1043,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       disablePublishActions: isVersionPreviewing || !canPublishAgent,
       disablePublishSettingsActions: isVersionPreviewing || !canManageAgentRuntimeAccess,
       webAppUrl,
-      showPreviewAction: true,
+      showPreviewAction: canConfigureAgentRuntime,
       isPreviewOpen: previewSheetOpen,
       onSave: handleManualSave,
       onPublish: handlePublish,
@@ -1050,6 +1057,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       isRollingBack: isRollingBackVersion,
       isPreviewing: isVersionPreviewing,
       canRollback: canPublishAgent,
+      canOpen: canPublishAgent,
       versions: publishedVersions,
       selectedVersionId: selectedPublishedVersionId,
       onOpenChange: handlePublishedVersionsOpenChange,
@@ -1169,6 +1177,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       },
     },
     preview: {
+      canUseDraftPreview: canConfigureAgentRuntime,
       controller: chatController,
       modelSelectorValue,
       modelProps: selectedModelProps,

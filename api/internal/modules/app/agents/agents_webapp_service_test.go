@@ -491,6 +491,65 @@ func TestAgentsService_GetAgentConfig_AuthorizedCreatesDraftConfig(t *testing.T)
 	require.NotNil(t, repo.agent.AgentsModelConfigID)
 }
 
+func TestAgentsService_GetAgentConfig_AllowsRuntimeDetailReadPermissions(t *testing.T) {
+	ctx := webAppStatusTestContext()
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	accountID := "99999999-9999-9999-9999-999999999999"
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:         agentID,
+			TenantID:   uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+			AgentsType: "AGENT",
+		},
+	}
+	orgService := &stubWebAppStatusOrganizationService{
+		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
+			workspace_model.WorkspacePermissionAgentPublish: true,
+		},
+	}
+	service := &agentsService{
+		agentsRepo:        repo,
+		accountService:    &stubWebAppStatusAccountService{isEditor: false},
+		enterpriseService: orgService,
+	}
+
+	resp, err := service.GetAgentConfig(ctx, agentID.String(), accountID)
+	require.NoError(t, err)
+	require.Equal(t, agentID.String(), resp.AgentID)
+	require.True(t, orgService.checkCalled)
+	require.Equal(t, agentRuntimeConfigReadPermissionCodes("AGENT"), orgService.lastPermissions)
+	require.True(t, repo.createConfigCalled)
+}
+
+func TestAgentsService_GetAgentDraftRuntimeConfig_StillRequiresRuntimeConfigManage(t *testing.T) {
+	ctx := webAppStatusTestContext()
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	accountID := "99999999-9999-9999-9999-999999999999"
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:         agentID,
+			TenantID:   uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+			AgentsType: "AGENT",
+		},
+	}
+	orgService := &stubWebAppStatusOrganizationService{
+		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
+			workspace_model.WorkspacePermissionAgentPublish: true,
+		},
+	}
+	service := &agentsService{
+		agentsRepo:        repo,
+		accountService:    &stubWebAppStatusAccountService{isEditor: false},
+		enterpriseService: orgService,
+	}
+
+	_, err := service.GetAgentDraftRuntimeConfig(ctx, agentID.String(), accountID)
+	require.EqualError(t, err, "permission denied")
+	require.True(t, orgService.checkCalled)
+	require.Equal(t, agentRuntimeConfigManagePermissionCodes("AGENT"), orgService.lastPermissions)
+	require.False(t, repo.createConfigCalled)
+}
+
 func TestAgentsService_AgentMemoryEndpointsRequireManagePermission(t *testing.T) {
 	ctx := webAppStatusTestContext()
 	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")

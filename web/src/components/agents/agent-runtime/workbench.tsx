@@ -13,6 +13,7 @@ interface AgentRuntimeWorkbenchProps {
 }
 
 export function AgentRuntimeWorkbench({ model }: AgentRuntimeWorkbenchProps) {
+  const showDraftPreview = model.preview.canUseDraftPreview;
   const renderPreviewPanel = (surfaceMode: 'inline' | 'sheet' = 'inline') => (
     <AgentRuntimePreviewPanel
       {...model.preview}
@@ -29,7 +30,13 @@ export function AgentRuntimeWorkbench({ model }: AgentRuntimeWorkbenchProps) {
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
-        <div className="grid min-h-full grid-cols-1 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(320px,1fr)_minmax(360px,1fr)] lg:divide-x 2xl:grid-cols-[minmax(320px,0.95fr)_minmax(320px,0.95fr)_minmax(440px,1.2fr)]">
+        <div
+          className={
+            showDraftPreview
+              ? 'grid min-h-full grid-cols-1 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(320px,1fr)_minmax(360px,1fr)] lg:divide-x 2xl:grid-cols-[minmax(320px,0.95fr)_minmax(320px,0.95fr)_minmax(440px,1.2fr)]'
+              : 'grid min-h-full grid-cols-1 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(320px,1fr)_minmax(360px,1fr)] lg:divide-x'
+          }
+        >
           <div className="h-[45vh] min-h-[360px] border-b lg:h-full lg:min-h-0 lg:border-b-0">
             <AgentRuntimePromptPanel className="h-full" {...model.prompt} />
           </div>
@@ -41,13 +48,13 @@ export function AgentRuntimeWorkbench({ model }: AgentRuntimeWorkbenchProps) {
               {...model.orchestration}
             />
           </div>
-          {model.isTwoXlViewport ? (
+          {model.isTwoXlViewport && showDraftPreview ? (
             <div className="hidden min-w-0 overflow-hidden 2xl:flex">{renderPreviewPanel()}</div>
           ) : null}
         </div>
       </div>
 
-      {!model.isTwoXlViewport ? (
+      {!model.isTwoXlViewport && showDraftPreview ? (
         <Sheet open={model.previewSheetOpen} onOpenChange={model.setPreviewSheetOpen}>
           <SheetContent
             side="right"

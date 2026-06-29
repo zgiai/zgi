@@ -22,6 +22,7 @@ interface AgentRuntimeVersionPopoverProps {
   isLoading: boolean;
   isRollingBack: boolean;
   isPreviewing: boolean;
+  canOpen?: boolean;
   canRollback?: boolean;
   versions: AgentPublishedVersionListItem[];
   selectedVersionId: string;
@@ -40,6 +41,7 @@ export function AgentRuntimeVersionPopover({
   isLoading,
   isRollingBack,
   isPreviewing,
+  canOpen = true,
   canRollback = true,
   versions,
   selectedVersionId,
@@ -52,7 +54,7 @@ export function AgentRuntimeVersionPopover({
   const selectedVersion = versions.find(version => version.id === selectedVersionId);
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <Popover open={open && canOpen} onOpenChange={nextOpen => canOpen && onOpenChange(nextOpen)}>
       <Tooltip>
         <PopoverTrigger asChild>
           <TooltipTrigger asChild>
@@ -62,6 +64,7 @@ export function AgentRuntimeVersionPopover({
               size="sm"
               interactive="subtle"
               aria-label={t('header.versions')}
+              disabled={!canOpen}
             >
               <History className="size-[18px]" />
             </Button>

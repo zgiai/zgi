@@ -146,6 +146,31 @@ func agentRuntimeConfigManagePermissionCodes(agentType string) []model.Workspace
 	}
 }
 
+func agentRuntimeConfigReadPermissionCodes(agentType string) []model.WorkspacePermissionCode {
+	if isWorkflowRuntimePermissionType(agentType) {
+		return []model.WorkspacePermissionCode{
+			model.WorkspacePermissionWorkflowCreate,
+			model.WorkspacePermissionWorkflowImport,
+			model.WorkspacePermissionWorkflowUpdate,
+			model.WorkspacePermissionWorkflowRunDraft,
+			model.WorkspacePermissionWorkflowRunStop,
+			model.WorkspacePermissionWorkflowDebug,
+			model.WorkspacePermissionWorkflowPublish,
+			model.WorkspacePermissionWorkflowRuntimeConfigManage,
+			model.WorkspacePermissionWorkflowRuntimeAccessManage,
+		}
+	}
+
+	return []model.WorkspacePermissionCode{
+		model.WorkspacePermissionAgentCreate,
+		model.WorkspacePermissionAgentImport,
+		model.WorkspacePermissionAgentUpdate,
+		model.WorkspacePermissionAgentPublish,
+		model.WorkspacePermissionAgentRuntimeConfigManage,
+		model.WorkspacePermissionAgentRuntimeAccessManage,
+	}
+}
+
 func agentRuntimeAccessManagePermissionCodes(agentType string) []model.WorkspacePermissionCode {
 	if isWorkflowRuntimePermissionType(agentType) {
 		return []model.WorkspacePermissionCode{

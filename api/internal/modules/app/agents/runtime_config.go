@@ -24,7 +24,7 @@ var (
 )
 
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
-	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentRuntimeConfigReadPermissionCodes("AGENT")...)
 	if err != nil {
 		return nil, err
 	}
