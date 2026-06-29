@@ -4,12 +4,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	contentmodel "github.com/zgiai/zgi/api/internal/modules/contentparse/model"
 	contentsvc "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 )
 
 type fakeProviderAdminService struct{}
@@ -120,6 +122,37 @@ var (
 	_ contentsvc.RunQueryService      = (*fakeRunQueryService)(nil)
 )
 
+type fakeProviderSettingsService struct {
+	listCalled   bool
+	upsertCalled bool
+}
+
+func (f *fakeProviderSettingsService) List(context.Context, uuid.UUID) (*contentsvc.ParserSettingsList, error) {
+	f.listCalled = true
+	return &contentsvc.ParserSettingsList{}, nil
+}
+
+func (f *fakeProviderSettingsService) Upsert(context.Context, uuid.UUID, *uuid.UUID, string, contentsvc.ParserSettingsInput) (*contentsvc.ParserProviderSettings, error) {
+	f.upsertCalled = true
+	return &contentsvc.ParserProviderSettings{}, nil
+}
+
+type providerSettingsAccountService struct {
+	interfaces.AccountService
+
+	allowed             bool
+	authorizationCalled bool
+	lastOrganizationID  string
+	lastAccountID       string
+}
+
+func (s *providerSettingsAccountService) IsOrganizationAdminOrOwner(_ context.Context, organizationID, accountID string) (bool, error) {
+	s.authorizationCalled = true
+	s.lastOrganizationID = organizationID
+	s.lastAccountID = accountID
+	return s.allowed, nil
+}
+
 func TestRegisterInternalRoutes_RegisterExpectedPaths(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -163,6 +196,73 @@ func TestRegisterInternalRoutes_RegisterExpectedPaths(t *testing.T) {
 			t.Fatalf("%s %s returned %d want %d body=%s", tc.method, tc.path, w.Code, tc.want, w.Body.String())
 		}
 	}
+}
+
+func TestProviderSettingsRoutesRequireOrganizationAdminOrOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	organizationID := uuid.NewString()
+	accountSvc := &providerSettingsAccountService{allowed: false}
+	settingsSvc := &fakeProviderSettingsService{}
+
+	router := newProviderSettingsRouteTestRouter(organizationID, accountSvc, settingsSvc)
+
+	req := httptest.NewRequest(http.MethodGet, "/content-parse/provider-settings", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403 for non-admin provider settings request, got %d, body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"code":"403001"`) {
+		t.Fatalf("expected permission denied error code 403001, got body=%s", w.Body.String())
+	}
+	if !accountSvc.authorizationCalled {
+		t.Fatal("expected organization admin authorization check")
+	}
+	if accountSvc.lastOrganizationID != organizationID || accountSvc.lastAccountID != "acc-1" {
+		t.Fatalf("authorization scope = (%q, %q), want (%q, acc-1)", accountSvc.lastOrganizationID, accountSvc.lastAccountID, organizationID)
+	}
+	if settingsSvc.listCalled {
+		t.Fatal("provider settings service should not be called for non-admin request")
+	}
+}
+
+func TestProviderSettingsRoutesAllowOrganizationAdminOrOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	organizationID := uuid.NewString()
+	accountSvc := &providerSettingsAccountService{allowed: true}
+	settingsSvc := &fakeProviderSettingsService{}
+
+	router := newProviderSettingsRouteTestRouter(organizationID, accountSvc, settingsSvc)
+
+	req := httptest.NewRequest(http.MethodPut, "/content-parse/provider-settings/reducto", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for admin provider settings request, got %d, body=%s", w.Code, w.Body.String())
+	}
+	if !accountSvc.authorizationCalled {
+		t.Fatal("expected organization admin authorization check")
+	}
+	if !settingsSvc.upsertCalled {
+		t.Fatal("expected provider settings service to be called for admin request")
+	}
+}
+
+func newProviderSettingsRouteTestRouter(organizationID string, accountSvc *providerSettingsAccountService, settingsSvc *fakeProviderSettingsService) *gin.Engine {
+	router := gin.New()
+	group := router.Group("/content-parse")
+	group.Use(func(c *gin.Context) {
+		c.Set("account_id", "acc-1")
+		c.Set("organization_id", organizationID)
+		c.Set("tenant_id", organizationID)
+		c.Set("account_service", accountSvc)
+		c.Next()
+	})
+	NewProviderSettingsHandler(settingsSvc).RegisterRoutes(group)
+	return router
 }
 
 func TestRunHandlerListRunsRequiresDocumentOrDataset(t *testing.T) {

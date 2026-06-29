@@ -52,6 +52,27 @@ const contentParsePlaygroundPath = path.join(
   'playground',
   'content-parse-playground.tsx'
 );
+const dashboardLayoutPath = path.join(rootDir, 'src', 'app', 'dashboard', 'layout.tsx');
+const dashboardModelSettingsPath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'dashboard',
+  'settings',
+  'model',
+  'page.tsx'
+);
+const dashboardParserSettingsPath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'dashboard',
+  'settings',
+  'parsers',
+  'page.tsx'
+);
+const dashboardChannelPagePath = path.join(rootDir, 'src', 'app', 'dashboard', 'channel', 'page.tsx');
+const accountCapabilitiesHookPath = path.join(rootDir, 'src', 'hooks', 'use-account-capabilities.ts');
 const taskPagePath = path.join(rootDir, 'src', 'app', 'console', 'work', 'task', 'page.tsx');
 const taskWorkbenchPath = path.join(
   rootDir,
@@ -925,6 +946,11 @@ const promptDetailPageSource = fs.readFileSync(promptDetailPagePath, 'utf8');
 const promptUsageSummarySource = fs.readFileSync(promptUsageSummaryPath, 'utf8');
 const contentParsePageSource = fs.readFileSync(contentParsePagePath, 'utf8');
 const contentParsePlaygroundSource = fs.readFileSync(contentParsePlaygroundPath, 'utf8');
+const dashboardLayoutSource = fs.readFileSync(dashboardLayoutPath, 'utf8');
+const dashboardModelSettingsSource = fs.readFileSync(dashboardModelSettingsPath, 'utf8');
+const dashboardParserSettingsSource = fs.readFileSync(dashboardParserSettingsPath, 'utf8');
+const dashboardChannelPageSource = fs.readFileSync(dashboardChannelPagePath, 'utf8');
+const accountCapabilitiesHookSource = fs.readFileSync(accountCapabilitiesHookPath, 'utf8');
 const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
 const filePageSource = fs.readFileSync(filePagePath, 'utf8');
@@ -1114,6 +1140,32 @@ assert.doesNotMatch(
   /useAccountPermissions|hasPermission|hasAnyPermission|['"]content_parse\./,
   'content-parse playground should not reintroduce content_parse.* member permission codes'
 );
+assert.match(
+  dashboardLayoutSource,
+  /<ProtectedRoute requireAdmin fallback=\{<DashboardAccessDenied \/>}/,
+  'dashboard management routes should stay behind the organization admin route guard'
+);
+assert.match(
+  accountCapabilitiesHookSource,
+  /canManageModelConfig:\s*[\s\S]*capabilities\?\.organization\.can_manage_model_config[\s\S]*isOrganizationAdmin/,
+  'model and parser configuration entry capability should come from organization admin capabilities'
+);
+for (const [dashboardSource, dashboardName] of [
+  [dashboardModelSettingsSource, 'model settings'],
+  [dashboardParserSettingsSource, 'parser settings'],
+  [dashboardChannelPageSource, 'channel settings'],
+]) {
+  assert.doesNotMatch(
+    dashboardSource,
+    /useAccountPermissions|has(?:Any|All)?Permission\s*\(/,
+    `dashboard ${dashboardName} page should not consume workspace member permission helpers`
+  );
+  assert.doesNotMatch(
+    dashboardSource,
+    /has(?:Any|All)?Permission\s*\([\s\S]{0,240}['"](?:workspace|prompt|content_parse|dashboard)\./,
+    `dashboard ${dashboardName} page should not reintroduce retired workspace/content/dashboard permissions`
+  );
+}
 assert.match(
   taskPageSource,
   /<TaskWorkbench \/>/,
@@ -1561,6 +1613,17 @@ const workflowKnowledgeRetrievalManagerSource = fs.readFileSync(
 const workflowKnowledgeRecallSettingsSource = fs.readFileSync(
   workflowKnowledgeRecallSettingsPath,
   'utf8'
+);
+
+assert.match(
+  consolePageSource,
+  /const canOpenModelConfig\s*=\s*canAccessOrganizationDashboard && canManageModelConfig/,
+  'console overview model configuration entry should require organization dashboard and model-config capabilities'
+);
+assert.doesNotMatch(
+  consolePageSource,
+  /has(?:Any|All)?Permission\s*\([\s\S]{0,240}['"](?:dashboard|content_parse)\./,
+  'console overview should not gate model readiness or parser/dashboard entry points with retired workspace permissions'
 );
 const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
