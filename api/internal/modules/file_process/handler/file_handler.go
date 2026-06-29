@@ -891,7 +891,7 @@ func (h *FileHandler) ListFileChunks(c *gin.Context) {
 		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset chunk service is not available")
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizePreviewDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -964,7 +964,7 @@ func (h *FileHandler) PrepareFileQAIndex(c *gin.Context) {
 		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset qa service is not available")
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizePreviewDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -986,7 +986,7 @@ func (h *FileHandler) AskFileQuestion(c *gin.Context) {
 		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset qa service is not available")
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizePreviewDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -1018,7 +1018,7 @@ func (h *FileHandler) StreamFileQuestion(c *gin.Context) {
 		h.businessErrorWithMessage(c, response.ErrSystemError, "file asset qa service is not available")
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizePreviewDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -1234,7 +1234,7 @@ func (h *FileHandler) GetFileParsePreview(c *gin.Context) {
 		h.businessError(c, response.ErrFileIdRequired)
 		return
 	}
-	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	uploadFile, ok := h.getAuthorizedFileForPreview(c, fileID)
 	if !ok {
 		return
 	}
@@ -1275,7 +1275,7 @@ func (h *FileHandler) ListParseConfirmationItems(c *gin.Context) {
 		h.businessErrorWithMessage(c, response.ErrSystemError, "file parse confirmation service is not available")
 		return
 	}
-	organizationID, uploadFile, ok := h.authorizeDocumentFile(c)
+	organizationID, uploadFile, ok := h.authorizePreviewDocumentFile(c)
 	if !ok {
 		return
 	}
@@ -1455,6 +1455,10 @@ func (h *FileHandler) queueGenerateAfterConfirmationIfNeeded(ctx context.Context
 
 func (h *FileHandler) authorizeDocumentFile(c *gin.Context) (string, *dto.UploadFile, bool) {
 	return h.authorizeDocumentFileWith(c, h.getAuthorizedFileForDownload)
+}
+
+func (h *FileHandler) authorizePreviewDocumentFile(c *gin.Context) (string, *dto.UploadFile, bool) {
+	return h.authorizeDocumentFileWith(c, h.getAuthorizedFileForPreview)
 }
 
 func (h *FileHandler) authorizeManageDocumentFile(c *gin.Context) (string, *dto.UploadFile, bool) {

@@ -608,12 +608,14 @@ function FileDetailLoading() {
 function FilePreviewChunksWorkbench({
   file,
   chunksEnabled,
+  canUpdateFile,
   chunkQueryVersion,
   locateTarget,
   onChunksChanged,
 }: {
   file: FileItem;
   chunksEnabled: boolean;
+  canUpdateFile: boolean;
   chunkQueryVersion?: number | string | null;
   locateTarget?: FileChunkLocateTarget | null;
   onChunksChanged?: () => void;
@@ -662,6 +664,7 @@ function FilePreviewChunksWorkbench({
         <FileChunksPanel
           fileId={file.id}
           enabled={chunksEnabled}
+          canUpdateFile={canUpdateFile}
           queryVersion={chunkQueryVersion}
           className="h-full"
           originalPreviewHidden={originalPreviewHidden}
@@ -696,6 +699,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
     ...FILE_PERMISSION_ACTIONS.favoriteManage,
   ]);
   const canDownload = hasAnyPermission(FILE_PERMISSION_ACTIONS.download);
+  const canPreviewFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.preview);
   const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);
   const { downloadFile, isDownloading } = useDownloadFile();
   const [activeView, setActiveView] = useState<'preview' | 'qa'>('preview');
@@ -748,8 +752,9 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const chunkQueryVersion =
     summary?.generation_no ?? asset?.generation_no ?? file?.generation_no ?? null;
   const embeddingCount = processing?.embedding_count ?? file?.embedding_count ?? 0;
-  const chunksEnabled = status === 'ready';
-  const qaEnabled = status === 'ready' && vectorStatus === 'ready' && embeddingCount > 0;
+  const chunksEnabled = canPreviewFile && status === 'ready';
+  const qaEnabled =
+    canPreviewFile && status === 'ready' && vectorStatus === 'ready' && embeddingCount > 0;
   const qaIndexKey =
     qaEnabled && asset
       ? [
@@ -1071,13 +1076,20 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           className={cn('h-full min-h-0 flex-col', activeView === 'preview' ? 'flex' : 'hidden')}
           aria-hidden={activeView !== 'preview'}
         >
-          <FilePreviewChunksWorkbench
-            file={file}
-            chunksEnabled={chunksEnabled}
-            chunkQueryVersion={chunkQueryVersion}
-            locateTarget={chunkLocateTarget}
-            onChunksChanged={() => setQAIndexRevision(current => current + 1)}
-          />
+          {canPreviewFile ? (
+            <FilePreviewChunksWorkbench
+              file={file}
+              chunksEnabled={chunksEnabled}
+              canUpdateFile={canUpdateFile}
+              chunkQueryVersion={chunkQueryVersion}
+              locateTarget={chunkLocateTarget}
+              onChunksChanged={() => setQAIndexRevision(current => current + 1)}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center p-6">
+              <PermissionDeniedState />
+            </div>
+          )}
         </section>
         <section
           className={cn(

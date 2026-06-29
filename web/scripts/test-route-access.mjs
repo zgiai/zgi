@@ -267,6 +267,14 @@ const fileDetailShellPath = path.join(
   'detail',
   'file-detail-shell.tsx'
 );
+const fileChunksPanelPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'files',
+  'detail',
+  'file-chunks-panel.tsx'
+);
 const fileManagementContentPath = path.join(
   rootDir,
   'src',
@@ -1448,6 +1456,7 @@ const fileAccessSource = fs.readFileSync(fileAccessPath, 'utf8');
 const filePageSource = fs.readFileSync(filePagePath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
+const fileChunksPanelSource = fs.readFileSync(fileChunksPanelPath, 'utf8');
 const fileManagementContentSource = fs.readFileSync(fileManagementContentPath, 'utf8');
 const fileSidebarSource = fs.readFileSync(fileSidebarPath, 'utf8');
 const fileListSource = fs.readFileSync(fileListPath, 'utf8');
@@ -1917,6 +1926,11 @@ assert.match(
   /const canDownload\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.download\)/,
   'file detail download action should use the exact file.download action group'
 );
+assert.match(
+  fileDetailShellSource,
+  /const canPreviewFile\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.preview\)/,
+  'file detail content preview and QA should use the exact file.preview action group'
+);
 assert.doesNotMatch(
   fileDetailShellSource,
   /hasPermission\(['"]file\.download['"]\)/,
@@ -1932,10 +1946,40 @@ assert.match(
   /const canRequestProcessing\s*=\s*canUpdateFile;/,
   'file detail reparse action should use file.update as the existing-file mutation permission'
 );
+assert.match(
+  fileDetailShellSource,
+  /const chunksEnabled\s*=\s*canPreviewFile && status === ['"]ready['"]/,
+  'file detail chunk preview should require file.preview before loading parsed content'
+);
+assert.match(
+  fileDetailShellSource,
+  /const qaEnabled\s*=[\s\S]*canPreviewFile && status === ['"]ready['"][\s\S]*vectorStatus === ['"]ready['"]/,
+  'file detail QA should require file.preview before preparing or asking against file content'
+);
+assert.match(
+  fileDetailShellSource,
+  /<FilePreviewChunksWorkbench[\s\S]*canUpdateFile=\{canUpdateFile\}/,
+  'file detail should pass file.update capability into chunk mutation controls'
+);
 assert.doesNotMatch(
   fileDetailShellSource,
   /['"]file\.(?:view|manage|upload_create|move_create)['"]/,
   'file detail should not consume legacy aggregate file permission codes'
+);
+assert.match(
+  fileChunksPanelSource,
+  /const batchSelectionEnabled\s*=\s*ENABLE_CHUNK_BATCH_SELECTION && canUpdateFile/,
+  'file chunk batch selection should only render for file.update users'
+);
+assert.match(
+  fileChunksPanelSource,
+  /if \(!canUpdateFile\) return;[\s\S]*setEditingPrimaryChunkId/,
+  'file chunk edit entry should guard mutation handlers with file.update'
+);
+assert.match(
+  fileChunksPanelSource,
+  /disabled=\{!canUpdateFile \|\| updateChunk\.isPending \|\| batchUpdateChunks\.isPending\}/,
+  'file chunk mutation controls should be disabled when file.update is absent'
 );
 assert.match(
   fileListSource,
@@ -2008,6 +2052,34 @@ assert.match(
   fileHandlerSource,
   /func \(h \*FileHandler\) getAuthorizedFileForManage[\s\S]*authorizeFileUpdateAccess/,
   'file processing, replacement, chunk edits, and parse confirmations should require file.update'
+);
+assert.match(
+  fileHandlerSource,
+  /func \(h \*FileHandler\) authorizePreviewDocumentFile[\s\S]*getAuthorizedFileForPreview/,
+  'file parsed-content reads should use the file.preview helper instead of file.download'
+);
+for (const handlerName of [
+  'ListFileChunks',
+  'PrepareFileQAIndex',
+  'AskFileQuestion',
+  'StreamFileQuestion',
+  'ListParseConfirmationItems',
+]) {
+  assert.match(
+    getGoHandlerMethodSource(fileHandlerSource, 'FileHandler', handlerName),
+    /authorizePreviewDocumentFile/,
+    `${handlerName} should require file.preview for file-content reads`
+  );
+}
+assert.match(
+  getGoHandlerMethodSource(fileHandlerSource, 'FileHandler', 'GetFileParsePreview'),
+  /getAuthorizedFileForPreview/,
+  'file parse-preview endpoint should require file.preview'
+);
+assert.doesNotMatch(
+  getGoHandlerMethodSource(fileHandlerSource, 'FileHandler', 'GetFileParsePreview'),
+  /getAuthorizedFileForDownload/,
+  'file parse-preview endpoint should not require file.download'
 );
 assert.match(
   fileHandlerSource,
