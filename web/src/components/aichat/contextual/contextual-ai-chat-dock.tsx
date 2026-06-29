@@ -541,6 +541,16 @@ function routeSpecificReadyContextItem(items: AIChatContextItem[], href: string)
   );
 }
 
+function routeHasSpecificContextItem(items: AIChatContextItem[], href: string) {
+  return items.some(
+    item => routeHrefFromContextItem(item) === href && !isGenericRoutePageItem(item)
+  );
+}
+
+function routeShouldWaitForPageContext(items: AIChatContextItem[], href: string) {
+  return routeRequiresPageContextReady(href) || routeHasSpecificContextItem(items, href);
+}
+
 function routeObservationContextItem(item: AIChatContextItem) {
   return {
     id: item.id,
@@ -559,13 +569,13 @@ function routeObservationContextItem(item: AIChatContextItem) {
 
 function routeContextObservation(items: AIChatContextItem[], href: string) {
   const matchedItem = items.find(item => routeHrefFromContextItem(item) === href);
-  const readyItem = routeRequiresPageContextReady(href)
-    ? routeSpecificReadyContextItem(items, href)
-    : matchedItem;
+  const readyItem = routeSpecificReadyContextItem(items, href);
   return {
     page_context_ready: Boolean(readyItem),
     matched_context_item_id: matchedItem ? `${matchedItem.type}:${matchedItem.id}` : undefined,
     matched_context_title: matchedItem?.title,
+    matched_context_ready: matchedItem ? isRouteContextItemReady(matchedItem) : undefined,
+    matched_context_generic: matchedItem ? isGenericRoutePageItem(matchedItem) : undefined,
     ready_context_item_id: readyItem ? `${readyItem.type}:${readyItem.id}` : undefined,
     ready_context_title: readyItem?.title,
     context_item_count: items.length,
@@ -1218,7 +1228,7 @@ export function ContextualAIChatDock() {
 
       if (currentHref === href) {
         const observation = routeContextObservation(itemsRef.current, href);
-        if (!routeRequiresPageContextReady(href) || observation.page_context_ready) {
+        if (!routeShouldWaitForPageContext(itemsRef.current, href) || observation.page_context_ready) {
           completePendingClientAction(pending, {
             status: 'succeeded',
             result: {
@@ -1351,7 +1361,7 @@ export function ContextualAIChatDock() {
       if (!href) return;
 
       const observation = routeContextObservation(itemsRef.current, href);
-      if (routeRequiresPageContextReady(href) && !observation.page_context_ready) {
+      if (routeShouldWaitForPageContext(itemsRef.current, href) && !observation.page_context_ready) {
         needsPoll = true;
         return;
       }
