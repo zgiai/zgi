@@ -61,7 +61,7 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
           sessionStorage.setItem('dataset_prev_folder_id', currentFolderId || '');
         }}
       >
-        <Link href={`/console/dataset/${dataset.id}/documents`} className="block h-36 sm:h-40">
+        <Link href={`/console/dataset/${dataset.id}`} className="block h-36 sm:h-40">
           <Card className="hover:shadow-md transition-shadow h-full flex flex-col shrink-0">
             <CardContent className="p-3 sm:p-4 space-y-2 flex-1 flex flex-col shrink-0">
               <div className="flex items-center w-full">

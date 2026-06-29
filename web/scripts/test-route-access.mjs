@@ -1699,6 +1699,16 @@ assert.match(
 );
 assert.match(
   datasetCardSource,
+  /href=\{`\/console\/dataset\/\$\{dataset\.id\}`\}/,
+  'dataset cards should link to the permission-aware detail root instead of always opening documents'
+);
+assert.doesNotMatch(
+  datasetCardSource,
+  /href=\{`\/console\/dataset\/\$\{dataset\.id\}\/documents`\}/,
+  'dataset cards should not bypass permission-aware child routing by linking directly to documents'
+);
+assert.match(
+  datasetCardSource,
   /canMoveDatasetToFolder[\s\S]*setMoveOpen\(true\)/,
   'dataset card folder move menu item should be gated by the combined folder move permission'
 );
