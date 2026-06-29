@@ -1714,6 +1714,61 @@ assert.match(
   /defaultValue="api-keys"/,
   'agent API page should default to workflow API keys after publication access moved to the publish dialog'
 );
+assert.match(
+  agentApiPageSource,
+  /hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage\)/,
+  'agent API page should require workflow runtime-access management for workflow API key/docs tabs'
+);
+assert.doesNotMatch(
+  agentApiPageSource,
+  /AGENT_PERMISSION_ACTIONS\.runtimeAccessManage/,
+  'agent API page should not mix AGENT runtime-access permissions into the workflow-only API key/docs route'
+);
+assert.match(
+  agentApiPageSource,
+  /canShowAgentApiKeys\(agentType,[\s\S]*canManageRuntimeAccess/,
+  'agent API page should delegate workflow API-key visibility through the shared route helper'
+);
+assert.match(
+  agentLogsPageSource,
+  /hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.logsView\)/,
+  'agent logs page should use agent.logs.view for AGENT runtime logs'
+);
+assert.match(
+  agentLogsPageSource,
+  /hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.logsView\)/,
+  'agent logs page should use workflow.logs.view for workflow runtime logs'
+);
+assert.match(
+  agentLogsPageSource,
+  /const canQueryWorkflowLogs\s*=\s*canAccessRuntimeLogs && isPublished && !isAgentRuntime/,
+  'agent logs page should only query workflow run logs after workflow log access and publication are confirmed'
+);
+assert.match(
+  agentLogsPageSource,
+  /const canQueryAgentRuntimeLogs\s*=\s*canAccessRuntimeLogs && isPublished && isAgentRuntime/,
+  'agent logs page should only query AGENT runtime logs after agent log access and publication are confirmed'
+);
+assert.match(
+  agentLogsPageSource,
+  /useWorkflowRunsInfinite\([\s\S]*agentId:\s*canQueryWorkflowLogs\s*\?\s*agentId\s*:\s*null[\s\S]*enabled:\s*canQueryWorkflowLogs/,
+  'agent logs page should gate workflow log list requests with workflow.logs.view'
+);
+assert.match(
+  agentLogsPageSource,
+  /useAgentRuntimeRunsInfinite\([\s\S]*agentId:\s*canQueryAgentRuntimeLogs\s*\?\s*agentId\s*:\s*null[\s\S]*enabled:\s*canQueryAgentRuntimeLogs/,
+  'agent logs page should gate AGENT runtime log list requests with agent.logs.view'
+);
+assert.match(
+  agentLogsPageSource,
+  /useWorkflowRunDetail\([\s\S]*agentId:\s*canQueryWorkflowLogs\s*\?\s*agentId\s*:\s*null[\s\S]*enabled:\s*Boolean\(canQueryWorkflowLogs && isDetailOpen && effectiveRunId\)/,
+  'agent logs page should gate workflow log detail requests with workflow.logs.view'
+);
+assert.match(
+  agentLogsPageSource,
+  /useAgentRuntimeRunDetail\([\s\S]*agentId:\s*canQueryAgentRuntimeLogs\s*\?\s*agentId\s*:\s*null[\s\S]*enabled:\s*Boolean\(canQueryAgentRuntimeLogs && isDetailOpen && effectiveRunId\)/,
+  'agent logs page should gate AGENT runtime log detail requests with agent.logs.view'
+);
 
 for (const appCenterPath of appCenterPaths) {
   const appCenterSource = fs.readFileSync(appCenterPath, 'utf8');
