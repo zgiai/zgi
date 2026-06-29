@@ -303,7 +303,7 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
       invocationString(result.action_type);
     if (actionType === 'route_navigation') {
       const href = skillInvocationNavigationTarget(invocation);
-      if (href) return `client_action:route_navigation:${href.toLowerCase()}`;
+      if (href) return `navigation:route:${href.toLowerCase()}`;
     }
     if (actionType === 'asset_observation') {
       const assetType =
@@ -330,7 +330,7 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
     invocation.tool_name === 'navigate'
   ) {
     const href = skillInvocationNavigationTarget(invocation);
-    if (href) return `tool_call:console-navigator:navigate:${href.toLowerCase()}`;
+    if (href) return `navigation:route:${href.toLowerCase()}`;
   }
   if (invocation.kind === 'tool_governance') {
     const correlationId = skillInvocationGovernanceCorrelationId(invocation);

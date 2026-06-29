@@ -525,7 +525,7 @@ function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): str
     ).toLowerCase();
     if (actionType === 'route_navigation') {
       const href = skillInvocationNavigationTarget(invocation);
-      if (href) return `skill:client_action:route_navigation:${href.toLowerCase()}`;
+      if (href) return `skill:navigation:route:${href.toLowerCase()}`;
     }
     if (actionType === 'asset_observation') {
       return [
@@ -547,7 +547,7 @@ function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): str
     invocation.tool_name === 'navigate'
   ) {
     const href = skillInvocationNavigationTarget(invocation);
-    if (href) return `skill:console-navigator:navigate:${href.toLowerCase()}`;
+    if (href) return `skill:navigation:route:${href.toLowerCase()}`;
   }
   if (invocation.kind === 'tool_governance') {
     const correlationId = governanceCorrelationId(invocation);
