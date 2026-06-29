@@ -135,9 +135,31 @@ function clientActionProgressPayload(
     effect: payload.effect,
     asset_type: payload.asset_type,
     assets: payload.assets,
-    result: payload.result,
+    result: clientActionProgressResult(payload),
     created_at: payload.created_at,
   };
+}
+
+function clientActionProgressResult(
+  payload: AIChatClientActionRequiredEventData | AIChatClientActionResultEventData
+): Record<string, unknown> | null | undefined {
+  const result =
+    payload.result && typeof payload.result === 'object' && !Array.isArray(payload.result)
+      ? { ...payload.result }
+      : {};
+  const mergeIfPresent = (key: string, value: unknown) => {
+    if (value !== undefined && value !== null && result[key] === undefined) {
+      result[key] = value;
+    }
+  };
+
+  mergeIfPresent('action_type', payload.action_type);
+  mergeIfPresent('href', payload.href);
+  mergeIfPresent('effect', payload.effect);
+  mergeIfPresent('asset_type', payload.asset_type);
+  mergeIfPresent('assets', payload.assets);
+
+  return Object.keys(result).length > 0 ? result : payload.result;
 }
 
 /**
