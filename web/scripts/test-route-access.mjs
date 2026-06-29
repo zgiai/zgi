@@ -205,6 +205,15 @@ const llmDefaultModelRoutesPath = path.join(
   'routes.go'
 );
 const accountCapabilitiesHookPath = path.join(rootDir, 'src', 'hooks', 'use-account-capabilities.ts');
+const modelSelectorPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'common',
+  'model-selector',
+  'model-selector',
+  'index.tsx'
+);
 const taskPagePath = path.join(rootDir, 'src', 'app', 'console', 'work', 'task', 'page.tsx');
 const taskWorkbenchPath = path.join(
   rootDir,
@@ -1504,6 +1513,7 @@ const dashboardChannelPageSource = fs.readFileSync(dashboardChannelPagePath, 'ut
 const llmRouterSource = fs.readFileSync(llmRouterPath, 'utf8');
 const llmDefaultModelRoutesSource = fs.readFileSync(llmDefaultModelRoutesPath, 'utf8');
 const accountCapabilitiesHookSource = fs.readFileSync(accountCapabilitiesHookPath, 'utf8');
+const modelSelectorSource = fs.readFileSync(modelSelectorPath, 'utf8');
 const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
 const taskDetailPanelSource = fs.readFileSync(taskDetailPanelPath, 'utf8');
@@ -1881,6 +1891,21 @@ assert.match(
   accountCapabilitiesHookSource,
   /canManageModelConfig:\s*[\s\S]*capabilities\?\.organization\.can_manage_model_config[\s\S]*isOrganizationAdmin/,
   'model and parser configuration entry capability should come from organization admin capabilities'
+);
+assert.match(
+  modelSelectorSource,
+  /useAccountCapabilities\(\)/,
+  'shared model selector empty-state configuration entry should consume account capabilities'
+);
+assert.match(
+  modelSelectorSource,
+  /isAdminOrOwner=\{canManageModelConfig\}/,
+  'shared model selector should show provider configuration links only to model-config managers'
+);
+assert.doesNotMatch(
+  modelSelectorSource,
+  /usePermissions\(\)|organizationRole/,
+  'shared model selector should not derive provider configuration access from workspace permission store state'
 );
 for (const [dashboardSource, dashboardName] of [
   [dashboardModelSettingsSource, 'model settings'],

@@ -11,6 +11,7 @@ import { useAvailableModels } from '@/hooks/model/use-model';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useLocale } from '@/hooks/use-locale';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { getModelDisplayName } from '@/utils/model-label';
 
 import type {
@@ -29,7 +30,6 @@ import {
   ProviderHeader,
   ModelRowItem,
 } from './components';
-import { usePermissions } from '@/store';
 
 export interface ModelSelectorProps {
   /** The model use case to query, e.g. 'text-chat', 'embedding', 'rerank'. */
@@ -129,9 +129,7 @@ export function ModelSelector({
   const [open, setOpen] = useState(false);
   const [internalSelected, setInternalSelected] = useState<ModelSelectorValue | null>(null);
 
-  // Get user role for conditional rendering in empty state
-  const { organizationRole } = usePermissions();
-  const isAdminOrOwner = ['owner', 'admin'].includes(organizationRole || '');
+  const { canManageModelConfig } = useAccountCapabilities();
 
   // Use translated placeholder if none provided
   const effectivePlaceholder = placeholder || t('models.selector.placeholder');
@@ -687,7 +685,7 @@ export function ModelSelector({
                     noModelsText={t('models.selector.empty.noModels', {
                       type: t(`models.selector.usecases.${modelType}`),
                     })}
-                    isAdminOrOwner={isAdminOrOwner}
+                    isAdminOrOwner={canManageModelConfig}
                     contactAdminText={t('models.selector.empty.contactAdmin')}
                     configureText={t('models.selector.empty.configure')}
                     configureDescription={t('models.selector.empty.configureDescription', {
