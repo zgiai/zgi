@@ -27,6 +27,21 @@ const workspaceMembersPagePath = path.join(
   'members',
   'page.tsx'
 );
+const addWorkspaceMemberModalPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'member',
+  'add-workspace-member-modal.tsx'
+);
+const assignWorkspaceDialogPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'dashboard',
+  'organization',
+  'assign-workspace-dialog.tsx'
+);
 const promptListPagePath = path.join(rootDir, 'src', 'app', 'console', 'prompts', 'page.tsx');
 const promptDetailPagePath = path.join(
   rootDir,
@@ -1064,6 +1079,8 @@ assert.match(
 const workspaceLayoutSource = fs.readFileSync(workspaceLayoutPath, 'utf8');
 const workspacePageSource = fs.readFileSync(workspacePagePath, 'utf8');
 const workspaceMembersPageSource = fs.readFileSync(workspaceMembersPagePath, 'utf8');
+const addWorkspaceMemberModalSource = fs.readFileSync(addWorkspaceMemberModalPath, 'utf8');
+const assignWorkspaceDialogSource = fs.readFileSync(assignWorkspaceDialogPath, 'utf8');
 const promptListPageSource = fs.readFileSync(promptListPagePath, 'utf8');
 const promptDetailPageSource = fs.readFileSync(promptDetailPagePath, 'utf8');
 const promptUsageSummarySource = fs.readFileSync(promptUsageSummaryPath, 'utf8');
@@ -1238,6 +1255,26 @@ assert.match(
   workspaceMembersPageSource,
   /useOrganizationRoles\(\{\s*enabled:\s*canManageWorkspaceMembers\s*\}\)/,
   'workspace members page should not fetch role templates until manager authority is known'
+);
+assert.match(
+  addWorkspaceMemberModalSource,
+  /useOrganizationRoles\(\{\s*enabled:\s*open\s*\}\)/,
+  'workspace add-member dialog should not fetch role templates while closed'
+);
+assert.match(
+  addWorkspaceMemberModalSource,
+  /useDepartments\(\{\s*enabled:\s*open\s*\}\)/,
+  'workspace add-member dialog should not fetch department scope while closed'
+);
+assert.match(
+  assignWorkspaceDialogSource,
+  /useOrganizationRoles\(\{\s*enabled:\s*open\s*\}\)/,
+  'organization assign-workspace dialog should not fetch role templates while closed'
+);
+assert.match(
+  assignWorkspaceDialogSource,
+  /useWorkspaces\([\s\S]*enabled:\s*open[\s\S]*\)/,
+  'organization assign-workspace dialog should not fetch workspace candidates while closed'
 );
 assert.match(
   workspaceMembersPageSource,
@@ -1824,6 +1861,21 @@ const workflowKnowledgeRecallSettingsSource = fs.readFileSync(
   'utf8'
 );
 
+assert.match(
+  runtimeAudiencePickerSource,
+  /useDepartments\(\{\s*enabled:\s*open\s*\}\)/,
+  'runtime audience picker should not fetch department scope while closed'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /useWorkspaces\('',\s*1,\s*1000,\s*\{\s*keepPreviousData:\s*true,\s*enabled:\s*open\s*\}\)/,
+  'runtime audience picker should not fetch workspace scope while closed'
+);
+assert.match(
+  runtimeAudiencePickerSource,
+  /lookupEnabled=\{open\}/,
+  'runtime audience picker selected chips should not resolve department/workspace labels while closed'
+);
 assert.match(
   consolePageSource,
   /const canOpenModelConfig\s*=\s*canAccessOrganizationDashboard && canManageModelConfig/,

@@ -62,8 +62,9 @@ export function AssignWorkspaceDialog({
     isPlaceholderData,
   } = useWorkspaces(debouncedSearchKeyword, currentPage, pageSize, {
     keepPreviousData: true,
+    enabled: open,
   });
-  const { roles, isLoading: isLoadingRoles } = useOrganizationRoles();
+  const { roles, isLoading: isLoadingRoles } = useOrganizationRoles({ enabled: open });
   const { batchAddWorkspaceMembers, isBatchAddingWorkspaceMembers } = useWorkspaceMemberActions();
 
   const joinedWorkspaceIds = useMemo(

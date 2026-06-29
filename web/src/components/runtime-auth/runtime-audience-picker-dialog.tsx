@@ -140,12 +140,12 @@ export function RuntimeAudiencePickerDialog({
     departments,
     isLoading: isDepartmentsLoading,
     isFetching: isDepartmentsFetching,
-  } = useDepartments();
+  } = useDepartments({ enabled: open });
   const {
     workspaces,
     isLoading: isWorkspacesLoading,
     isFetching: isWorkspacesFetching,
-  } = useWorkspaces('', 1, 1000, { keepPreviousData: true });
+  } = useWorkspaces('', 1, 1000, { keepPreviousData: true, enabled: open });
   const {
     members,
     isLoading: isMembersLoading,
@@ -446,6 +446,7 @@ export function RuntimeAudiencePickerDialog({
                 value={draft}
                 disabled={disabled}
                 emptyText={t('picker.emptySelected')}
+                lookupEnabled={open}
                 onRemove={removeGrant}
               />
             </div>
@@ -470,6 +471,7 @@ interface RuntimeAudienceChipListProps {
   disabled?: boolean;
   emptyText: string;
   className?: string;
+  lookupEnabled?: boolean;
   onRemove?: (grant: RuntimeAudienceGrant) => void;
 }
 
@@ -478,18 +480,28 @@ export function RuntimeAudienceChipList({
   disabled = false,
   emptyText,
   className,
+  lookupEnabled = true,
   onRemove,
 }: RuntimeAudienceChipListProps) {
-  const { departments, isLoading, isFetching, error } = useDepartments();
+  const normalized = useMemo(() => dedupeRuntimeAudienceGrants(value), [value]);
+  const shouldLookupDepartments =
+    lookupEnabled && normalized.some(grant => grant.subject_type === 'department');
+  const shouldLookupWorkspaces =
+    lookupEnabled && normalized.some(grant => grant.subject_type === 'workspace');
+  const { departments, isLoading, isFetching, error } = useDepartments({
+    enabled: shouldLookupDepartments,
+  });
   const {
     workspaces,
     isLoading: isWorkspacesLoading,
     isFetching: isWorkspacesFetching,
     error: workspacesError,
-  } = useWorkspaces('', 1, 1000, { keepPreviousData: true });
+  } = useWorkspaces('', 1, 1000, {
+    keepPreviousData: true,
+    enabled: shouldLookupWorkspaces,
+  });
   const departmentById = useMemo(() => buildDepartmentMap(departments), [departments]);
   const workspaceById = useMemo(() => buildWorkspaceMap(workspaces), [workspaces]);
-  const normalized = useMemo(() => dedupeRuntimeAudienceGrants(value), [value]);
   const isDepartmentLookupLoading = isLoading || isFetching;
   const isWorkspaceLookupLoading = isWorkspacesLoading || isWorkspacesFetching;
 

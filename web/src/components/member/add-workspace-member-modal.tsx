@@ -74,8 +74,8 @@ export function AddWorkspaceMemberModal({
   const debouncedSearchQuery = useDebouncedValue(searchQuery, 400);
   const pageSize = 20;
 
-  const { departments } = useDepartments();
-  const { roles, isLoading: isLoadingRoles } = useOrganizationRoles();
+  const { departments } = useDepartments({ enabled: open });
+  const { roles, isLoading: isLoadingRoles } = useOrganizationRoles({ enabled: open });
   const { locale } = useLocale();
 
   const {
