@@ -213,6 +213,15 @@ const fileHandlerPath = path.join(
   'handler',
   'file_handler.go'
 );
+const fileAccessPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'file_process',
+  'handler',
+  'file_access.go'
+);
 const filePagePath = path.join(rootDir, 'src', 'app', 'console', 'files', 'page.tsx');
 const fileDetailPagePath = path.join(
   rootDir,
@@ -983,13 +992,28 @@ function sourceSliceBetween(sourceText, startMarker, endMarker) {
 }
 
 function collectPermissionActionPageCodes(sourceText, actionName) {
+  return collectPermissionActionCodes(sourceText, actionName, 'page');
+}
+
+function collectPermissionActionCodes(sourceText, actionName, actionKey) {
   const actionSource = sourceSliceBetween(
     sourceText,
     `export const ${actionName} = {`,
     '\n} as const'
   );
-  const pageSource = sourceSliceBetween(actionSource, 'page: [', ']');
-  return collectStringLiterals(pageSource);
+  const actionSourceMatch = actionSource.match(
+    new RegExp(`(?:^|\\n)\\s*${regexpEscape(actionKey)}:\\s*\\[([\\s\\S]*?)\\]`)
+  );
+  assert.ok(actionSourceMatch, `missing permission action ${actionName}.${actionKey}`);
+  return collectStringLiterals(actionSourceMatch[1]);
+}
+
+function collectPermissionActionSpreadCodes(sourceText, constantsSourceText) {
+  const directCodes = collectStringLiterals(sourceText);
+  const spreadCodes = [
+    ...sourceText.matchAll(/\.\.\.([A-Z_]+_PERMISSION_ACTIONS)\.([A-Za-z0-9]+)/g),
+  ].flatMap(match => collectPermissionActionCodes(constantsSourceText, match[1], match[2]));
+  return [...directCodes, ...spreadCodes];
 }
 
 function collectGoPermissionConstants(sourceText) {
@@ -1342,6 +1366,7 @@ const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
 const automationTaskHandlerSource = fs.readFileSync(automationTaskHandlerPath, 'utf8');
 const fileHandlerSource = fs.readFileSync(fileHandlerPath, 'utf8');
+const fileAccessSource = fs.readFileSync(fileAccessPath, 'utf8');
 const filePageSource = fs.readFileSync(filePagePath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
@@ -2213,6 +2238,33 @@ assert.deepEqual(
   agentAssetVisibleFrontendCodes,
   'agent backend asset-visible scope should match frontend agent/workflow page-visible permission groups'
 );
+const fileDetailReadableFrontendCodes = [
+  ...new Set(
+    collectPermissionActionSpreadCodes(
+      sourceSliceBetween(
+        fileDetailShellSource,
+        'const canOpenFileDetail = hasAnyPermission([',
+        ']);'
+      ),
+      permissionConstantsSource
+    )
+  ),
+].sort();
+const fileReadableBackendCodes = [
+  ...new Set(
+    collectGoWorkspacePermissionHelperCodes(
+      fileAccessSource,
+      workspacePermissionConstants,
+      'fileReadablePermissionCodes',
+      'workspace_model'
+    )
+  ),
+].sort();
+assert.deepEqual(
+  fileReadableBackendCodes,
+  fileDetailReadableFrontendCodes,
+  'file detail readable frontend gate should match backend fileReadablePermissionCodes helper'
+);
 const frontendSourceFiles = listFiles(path.join(rootDir, 'src')).filter(filePath =>
   /\.(?:ts|tsx)$/.test(filePath)
 );
@@ -2480,6 +2532,34 @@ const agentBatchTestBatchPageSource = fs.readFileSync(agentBatchTestBatchPagePat
 const agentBatchTestBatchItemPageSource = fs.readFileSync(
   agentBatchTestBatchItemPagePath,
   'utf8'
+);
+
+const knowledgeBaseReadFrontendCodes = [
+  ...new Set(
+    collectPermissionActionSpreadCodes(
+      sourceSliceBetween(
+        permissionConstantsSource,
+        'export const KNOWLEDGE_BASE_READ_PERMISSION_CODES = [',
+        '] as const satisfies readonly PermissionCode[];'
+      ),
+      permissionConstantsSource
+    )
+  ),
+].sort();
+const knowledgeBaseReadBackendCodes = [
+  ...new Set(
+    collectGoWorkspacePermissionHelperCodes(
+      datasetServiceSource,
+      workspacePermissionConstants,
+      'knowledgeBaseReadPermissionCodes',
+      'workspace_model'
+    )
+  ),
+].sort();
+assert.deepEqual(
+  knowledgeBaseReadBackendCodes,
+  knowledgeBaseReadFrontendCodes,
+  'knowledge-base read frontend group should match backend knowledgeBaseReadPermissionCodes helper'
 );
 assert.match(
   accountServiceSource,
