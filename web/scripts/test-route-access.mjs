@@ -1877,9 +1877,24 @@ assert.match(
   /<ContentParsePlayground \/>/,
   'content-parse route should delegate to the playground behind the workspace-scoped console guard'
 );
+assert.match(
+  contentParsePlaygroundSource,
+  /useAccountPermissions\(\)/,
+  'content-parse playground should consume the shared workspace access contract'
+);
+assert.match(
+  contentParsePlaygroundSource,
+  /hasWorkspaceAccess\(\)/,
+  'content-parse playground should require workspace access instead of content_parse.* member permissions'
+);
+assert.match(
+  contentParsePlaygroundSource,
+  /!hasWorkspaceContext[\s\S]*<WorkspaceRequiredState \/>/,
+  'content-parse playground should show the workspace-required state when no workspace is selected'
+);
 assert.doesNotMatch(
   contentParsePlaygroundSource,
-  /useAccountPermissions|hasPermission|hasAnyPermission|['"]content_parse\./,
+  /hasPermission|hasAnyPermission|['"]content_parse\./,
   'content-parse playground should not reintroduce content_parse.* member permission codes'
 );
 assert.match(
