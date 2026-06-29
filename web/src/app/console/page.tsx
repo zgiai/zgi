@@ -272,7 +272,7 @@ export default function ConsolePage() {
       description: t('dashboard.stats.consoleHome.productEntries.appCenterDescription'),
       href: '/console/work/app',
       icon: AppWindow,
-      enabled: canUseOrganizationScope && productSurfaces?.app !== false,
+      enabled: canUseOrganizationScope && productSurfaces?.app !== false && canUseRunnableApps,
     },
   ];
 
@@ -629,12 +629,14 @@ export default function ConsolePage() {
                       {t('dashboard.stats.consoleHome.runnableAppsDescription')}
                     </CardDescription>
                   </div>
-                  <Button asChild variant="outline" size="sm">
-                    <Link href="/console/work/app">
-                      {t('dashboard.stats.consoleHome.actions.openAppCenter')}
-                      <ArrowRight className="size-3.5" />
-                    </Link>
-                  </Button>
+                  {canUseRunnableApps ? (
+                    <Button asChild variant="outline" size="sm">
+                      <Link href="/console/work/app">
+                        {t('dashboard.stats.consoleHome.actions.openAppCenter')}
+                        <ArrowRight className="size-3.5" />
+                      </Link>
+                    </Button>
+                  ) : null}
                 </div>
               </CardHeader>
               <CardContent>

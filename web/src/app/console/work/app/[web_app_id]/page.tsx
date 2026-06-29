@@ -6,6 +6,7 @@ import AgentWebappChat from '@/components/webapp/agent-chat';
 import WebappChat from '@/components/webapp/chat';
 import { WebAppNotPublishedState } from '@/components/webapp/not-published-state';
 import { WebappRun } from '@/components/webapp/run';
+import { PermissionDeniedState } from '@/components/common/permission-gate-state';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useRunnableWebApps } from '@/hooks/agent/use-runnable-webapps';
@@ -24,13 +25,17 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
   const t = useT('webapp');
   const resolvedParams = use(params);
   const webAppId = resolvedParams.web_app_id;
-  const { items, isLoading: isListLoading } = useRunnableWebApps({ workspaceId: null });
+  const {
+    items,
+    isLoading: isListLoading,
+    canUseResourceList,
+  } = useRunnableWebApps({ workspaceId: null });
 
   const isRunnable = useMemo(
     () => items.some(item => item.web_app_id === webAppId),
     [items, webAppId]
   );
-  const shouldLoadConfig = !isListLoading && isRunnable;
+  const shouldLoadConfig = !isListLoading && canUseResourceList && isRunnable;
   const { data, error: configError, isLoading: isConfigLoading } = useWebAppConfig(webAppId, {
     enabled: shouldLoadConfig,
   });
@@ -53,6 +58,10 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
         </div>
       </div>
     );
+  }
+
+  if (!canUseResourceList) {
+    return <PermissionDeniedState />;
   }
 
   if (!isRunnable) {

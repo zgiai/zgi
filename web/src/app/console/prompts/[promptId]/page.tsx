@@ -47,6 +47,7 @@ import {
   getTemplateCopy,
   type TemplateTranslator,
 } from '@/components/agents/templates/template-labels';
+import { AGENT_ASSET_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
 import type { PromptOptimizationRun } from '@/services/types/prompt';
 
 export default function PromptDetailPage() {
@@ -55,8 +56,13 @@ export default function PromptDetailPage() {
   const params = useParams<{ promptId: string }>();
   const promptId = params?.promptId ?? '';
   const templateT = rootT as unknown as TemplateTranslator;
-  const { hasWorkspaceAccess, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const {
+    hasAnyPermission,
+    hasWorkspaceAccess,
+    isLoading: isPermissionsLoading,
+  } = useAccountPermissions();
   const canUseWorkspaceTools = hasWorkspaceAccess();
+  const canOpenAgentAssets = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
   const canView = canUseWorkspaceTools;
   const canManage = canUseWorkspaceTools;
   const { prompt, isLoading } = usePrompt(promptId, canView);
@@ -201,7 +207,7 @@ export default function PromptDetailPage() {
             <div className="text-sm text-muted-foreground">{t('states.loading')}</div>
           ) : (
             <div className="space-y-6">
-              {relatedTemplates.length > 0 ? (
+              {canOpenAgentAssets && relatedTemplates.length > 0 ? (
                 <div className="rounded-xl border p-4 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="text-lg font-semibold">{t('relatedTemplates.title')}</h2>

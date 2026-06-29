@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, AppWindow, SearchX } from 'lucide-react';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
+import { PermissionDeniedState } from '@/components/common/permission-gate-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,7 +18,7 @@ const RECENT_WEBAPP_STORAGE_KEY = 'zgi:webapp:recent';
 
 export default function ConsoleWorkAppHomePage() {
   const t = useT('webapp');
-  const { items, isLoading } = useRunnableWebApps({ workspaceId: null });
+  const { items, isLoading, canUseResourceList } = useRunnableWebApps({ workspaceId: null });
   const [search, setSearch] = useState('');
   const [recentIds, setRecentIds] = useState<string[]>([]);
 
@@ -86,6 +87,10 @@ export default function ConsoleWorkAppHomePage() {
       ? 'recent'
       : 'quick-start'
     : null;
+
+  if (!isLoading && !canUseResourceList) {
+    return <PermissionDeniedState />;
+  }
 
   return (
     <div className="h-full w-full overflow-auto bg-background">

@@ -34,6 +34,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-30: App Center frontend entry points now all honor the same `app_center` runtime resource-list capability. The console overview product card and open-app-center CTA hide without that capability, the app-center list renders a denied state instead of a misleading empty list, and the app-center detail page requires `canUseResourceList` before loading webapp config. Prompt detail remains a workspace-member tool, but its related agent-template shortcuts are hidden unless the caller also has the shared agent/workflow visible permission group required by those target routes.
 - 2026-06-30: Database sidebar table links now route by the child page the caller can actually open: record-capable users go to the data page, schema-capable users fall back to structure, and metadata-only users see table names without dead links.
 - 2026-06-30: Database table structure now hides the "view data" shortcut unless the caller has the same record-readable permission group required by the table record direct page. Schema-only users remain on the structure surface instead of being sent to a denied data page.
 - 2026-06-30: Knowledge-base document-to-file links now respect file-detail reachability. The documents file-ref panel only renders source-file links when the caller has an existing-file readable/action permission, and hit-testing document-detail links now use the same document-readable permission group as the direct document page.

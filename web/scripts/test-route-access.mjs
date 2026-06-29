@@ -1911,6 +1911,21 @@ assert.match(
   /WorkspaceMismatchGuard[\s\S]*targetWorkspaceId=\{targetWorkspaceId\}/,
   'prompt detail should keep workspace-owned prompts behind the workspace mismatch guard'
 );
+assert.match(
+  promptDetailPageSource,
+  /AGENT_ASSET_VISIBLE_PERMISSION_CODES/,
+  'prompt detail related template shortcuts should reuse the shared agent/workflow visible permission group'
+);
+assert.match(
+  promptDetailPageSource,
+  /const canOpenAgentAssets\s*=\s*hasAnyPermission\(AGENT_ASSET_VISIBLE_PERMISSION_CODES\)/,
+  'prompt detail should derive related-template navigation from agent/workflow visibility'
+);
+assert.match(
+  promptDetailPageSource,
+  /\{canOpenAgentAssets && relatedTemplates\.length > 0 \? \(/,
+  'prompt detail should hide agent template shortcuts when the target agent/workflow pages are not visible'
+);
 assert.doesNotMatch(
   promptDetailPageSource,
   /['"]prompt\./,
@@ -3315,6 +3330,16 @@ assert.match(
   consolePageSource,
   /useRunnableWebApps\(\{\s*workspaceId:\s*null\s*\}\)/,
   'console home should load runnable apps through organization scope instead of the current workspace'
+);
+assert.match(
+  consolePageSource,
+  /key:\s*'app-center'[\s\S]*enabled:\s*canUseOrganizationScope\s*&&\s*productSurfaces\?\.app\s*!==\s*false\s*&&\s*canUseRunnableApps/,
+  'console home should hide the app-center product entry when the account lacks the app_center resource-list capability'
+);
+assert.match(
+  consolePageSource,
+  /\{canUseRunnableApps \? \([\s\S]*href="\/console\/work\/app"/,
+  'console home should hide the open-app-center CTA when the account lacks the app_center resource-list capability'
 );
 assert.match(
   consolePageSource,
@@ -4915,11 +4940,27 @@ for (const webAppI18nPath of webAppI18nPaths) {
   );
 }
 
+const appCenterListSource = fs.readFileSync(appCenterPaths[0], 'utf8');
 const appCenterDetailSource = fs.readFileSync(appCenterPaths[2], 'utf8');
 assert.match(
+  appCenterListSource,
+  /const \{ items, isLoading, canUseResourceList \}\s*=\s*useRunnableWebApps\(\{\s*workspaceId:\s*null\s*\}\)/,
+  'app center list should read the app_center resource-list capability from the runnable app hook'
+);
+assert.match(
+  appCenterListSource,
+  /if \(!isLoading && !canUseResourceList\) \{[\s\S]*<PermissionDeniedState \/>/,
+  'app center list should render a denied state when the account lacks the app_center resource-list capability'
+);
+assert.match(
   appCenterDetailSource,
-  /const shouldLoadConfig\s*=\s*!isListLoading\s*&&\s*isRunnable/,
+  /const shouldLoadConfig\s*=\s*!isListLoading\s*&&\s*canUseResourceList\s*&&\s*isRunnable/,
   'app center detail should wait for runnable authorization before loading public webapp config'
+);
+assert.match(
+  appCenterDetailSource,
+  /if \(!canUseResourceList\) \{[\s\S]*<PermissionDeniedState \/>/,
+  'app center detail should render a denied state before unavailable-app copy when app_center itself is disabled'
 );
 assert.match(
   appCenterDetailSource,
