@@ -103,6 +103,42 @@ func TestEffectiveWorkspaceMemberPermissionStringsFallsBackForLegacyRole(t *test
 	assertNoRetiredWorkspacePermissions(t, permissions)
 }
 
+func TestWorkspaceMemberAllowsPermissionDoesNotPromoteStoredGovernanceCodes(t *testing.T) {
+	permissions := []string{
+		string(WorkspacePermissionWorkspaceManage),
+		string(WorkspacePermissionWorkspaceMemberManage),
+		string(WorkspacePermissionAgentCreate),
+	}
+
+	if WorkspaceMemberAllowsPermission(
+		WorkspaceRoleNormal,
+		nil,
+		permissions,
+		WorkspaceMemberPermissionSourceDirect,
+		WorkspacePermissionWorkspaceManage,
+	) {
+		t.Fatalf("normal member should not allow workspace governance from stored permissions: %#v", permissions)
+	}
+	if WorkspaceMemberAllowsPermission(
+		WorkspaceRoleNormal,
+		nil,
+		permissions,
+		WorkspaceMemberPermissionSourceDirect,
+		WorkspacePermissionWorkspaceMemberManage,
+	) {
+		t.Fatalf("normal member should not allow member governance from stored permissions: %#v", permissions)
+	}
+	if !WorkspaceMemberAllowsPermission(
+		WorkspaceRoleNormal,
+		nil,
+		permissions,
+		WorkspaceMemberPermissionSourceDirect,
+		WorkspacePermissionAgentCreate,
+	) {
+		t.Fatalf("normal member should still allow assignable asset permissions: %#v", permissions)
+	}
+}
+
 func TestEffectiveWorkspaceMemberPermissionStringsExpandsLegacyCoarseGrant(t *testing.T) {
 	permissions := EffectiveWorkspaceMemberPermissionStrings(
 		WorkspaceRoleNormal,
