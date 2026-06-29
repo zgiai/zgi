@@ -343,6 +343,15 @@ const excelImportShellPath = path.join(
   'excel-import',
   'excel-import-shell.tsx'
 );
+const datasourceHandlerPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'datasource',
+  'handler',
+  'datasource_handler.go'
+);
 const defaultCustomerPath = path.join(rootDir, 'src', 'customer', 'default.tsx');
 const accountServicePath = path.join(rootDir, 'src', 'services', 'account.service.ts');
 const webAppServicePath = path.join(rootDir, 'src', 'services', 'webapp.service.ts');
@@ -1054,6 +1063,25 @@ function collectGoWorkspacePermissionHelperCodes(
     .filter(Boolean);
 }
 
+function collectGoWorkspacePermissionSliceCodes(
+  sourceText,
+  permissionConstants,
+  sliceName,
+  packageName
+) {
+  const marker = `var ${sliceName} = []${packageName}.WorkspacePermissionCode{`;
+  const start = sourceText.indexOf(marker);
+  assert.notEqual(start, -1, `missing workspace permission slice: ${sliceName}`);
+  const bodyStart = start + marker.length;
+  const end = sourceText.indexOf('\n}', bodyStart);
+  assert.notEqual(end, -1, `missing workspace permission slice end: ${sliceName}`);
+  const sliceSource = sourceText.slice(bodyStart, end);
+  const permissionRefPattern = new RegExp(`${packageName}\\.(WorkspacePermission[A-Za-z0-9]+)`, 'g');
+  return [...sliceSource.matchAll(permissionRefPattern)]
+    .map(match => permissionConstants.get(match[1]))
+    .filter(Boolean);
+}
+
 function collectGoFunctionWorkspacePermissionCodes(
   sourceText,
   permissionConstants,
@@ -1416,6 +1444,7 @@ const dbTableCreateSource = fs.readFileSync(dbTableCreatePath, 'utf8');
 const dbTableDataSource = fs.readFileSync(dbTableDataPath, 'utf8');
 const dbTableDataComponentSource = fs.readFileSync(dbTableDataComponentPath, 'utf8');
 const excelImportShellSource = fs.readFileSync(excelImportShellPath, 'utf8');
+const datasourceHandlerSource = fs.readFileSync(datasourceHandlerPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const dashboardTypesSource = fs.readFileSync(dashboardTypesPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
@@ -2322,6 +2351,33 @@ assert.deepEqual(
   databaseReadBindingBackendCodes,
   databaseReadBindingFrontendCodes,
   'database read-binding frontend group should match backend requireDatabaseReadBindingPermission'
+);
+const databaseTableMetadataFrontendCodes = [
+  ...new Set(
+    collectPermissionActionSpreadCodes(
+      sourceSliceBetween(
+        permissionConstantsSource,
+        'export const DATABASE_TABLE_METADATA_PERMISSION_CODES = [',
+        '] as const satisfies readonly PermissionCode[];'
+      ),
+      permissionConstantsSource
+    )
+  ),
+].sort();
+const databaseTableMetadataBackendCodes = [
+  ...new Set(
+    collectGoWorkspacePermissionSliceCodes(
+      datasourceHandlerSource,
+      workspacePermissionConstants,
+      'databaseTableMetadataPermissions',
+      'workspace_model'
+    )
+  ),
+].sort();
+assert.deepEqual(
+  databaseTableMetadataBackendCodes,
+  databaseTableMetadataFrontendCodes,
+  'database table-metadata frontend group should match backend databaseTableMetadataPermissions'
 );
 const frontendSourceFiles = listFiles(path.join(rootDir, 'src')).filter(filePath =>
   /\.(?:ts|tsx)$/.test(filePath)
