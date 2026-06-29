@@ -561,7 +561,7 @@ func plannerFeedbackTrace(skillID string, toolName string, err error) skills.Ski
 		Kind:     "planner_feedback",
 		SkillID:  strings.TrimSpace(skillID),
 		ToolName: strings.TrimSpace(toolName),
-		Status:   "blocked",
+		Status:   "advisory",
 		Error:    message,
 		Arguments: map[string]interface{}{
 			"next_step": "continue_planning",

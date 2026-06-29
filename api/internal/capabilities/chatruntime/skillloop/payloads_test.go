@@ -13,8 +13,8 @@ func TestBlockedSkillPlanningFeedbackTraceIsNotGuardrail(t *testing.T) {
 	if trace.Kind != "planner_feedback" {
 		t.Fatalf("Kind = %q, want planner_feedback", trace.Kind)
 	}
-	if trace.Status != "blocked" {
-		t.Fatalf("Status = %q, want blocked", trace.Status)
+	if trace.Status != "advisory" {
+		t.Fatalf("Status = %q, want advisory", trace.Status)
 	}
 	if trace.Arguments["next_step"] != "load_skill" {
 		t.Fatalf("next_step = %#v, want load_skill", trace.Arguments["next_step"])

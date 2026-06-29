@@ -33,6 +33,7 @@ export type AIChatSkillActivityStatus =
   | 'needs_resolution'
   | 'denied'
   | 'success'
+  | 'advisory'
   | 'blocked'
   | 'error';
 export type AIChatSkillInvocationKind =
@@ -42,6 +43,7 @@ export type AIChatSkillInvocationKind =
   | 'tool_call'
   | 'tool_governance'
   | 'guardrail'
+  | 'planner_feedback'
   | 'client_action'
   | 'intermediate_answer'
   | 'user_input_request'

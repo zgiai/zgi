@@ -280,7 +280,7 @@ func TestMergeSkillTraceMetadataOmitsPlannerFeedback(t *testing.T) {
 		Kind:     "planner_feedback",
 		SkillID:  skills.SkillFileReader,
 		ToolName: "read_file",
-		Status:   "blocked",
+		Status:   "advisory",
 		Error:    "skill must be loaded before calling its tools",
 		Arguments: map[string]interface{}{
 			"next_step": "load_skill",
