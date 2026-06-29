@@ -11,7 +11,6 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/system/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -243,16 +242,7 @@ func (s *dashboardService) getResourceStats(ctx context.Context, organizationID 
 	}
 
 	if len(scopes.DatasetWorkspaceIDs) > 0 {
-		stats.Datasets = s.safeCount(ctx, "datasets",
-			"workspace_id IN ? AND (permission IN ? OR (permission = ? AND created_by = ?))",
-			scopes.DatasetWorkspaceIDs,
-			[]datasetmodel.DatasetPermissionType{
-				datasetmodel.DatasetPermissionAllTeam,
-				datasetmodel.DatasetPermissionAllTeamMembers,
-			},
-			datasetmodel.DatasetPermissionOnlyMe,
-			accountID,
-		)
+		stats.Datasets = s.safeCount(ctx, "datasets", "workspace_id IN ?", scopes.DatasetWorkspaceIDs)
 	}
 
 	if len(scopes.DataSourceWorkspaceIDs) > 0 {
@@ -349,15 +339,7 @@ func (s *dashboardService) getRecentDatasets(ctx context.Context, workspaceIDs [
 		Table("datasets AS d").
 		Select("d.id, d.name AS title, d.id AS resource_id, d.workspace_id, w.name AS workspace_name, d.updated_at, d.created_at").
 		Joins("INNER JOIN workspaces AS w ON w.id = d.workspace_id").
-		Where("d.workspace_id IN ? AND (d.permission IN ? OR (d.permission = ? AND d.created_by = ?))",
-			workspaceIDs,
-			[]datasetmodel.DatasetPermissionType{
-				datasetmodel.DatasetPermissionAllTeam,
-				datasetmodel.DatasetPermissionAllTeamMembers,
-			},
-			datasetmodel.DatasetPermissionOnlyMe,
-			accountID,
-		).
+		Where("d.workspace_id IN ?", workspaceIDs).
 		Order("d.updated_at DESC").
 		Limit(limit).
 		Scan(&rows).Error

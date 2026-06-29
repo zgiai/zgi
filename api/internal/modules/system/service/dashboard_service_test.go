@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	"github.com/zgiai/zgi/api/internal/modules/system/model"
 )
 
 func TestDashboardServiceTableExistsCacheIsConcurrentSafe(t *testing.T) {
@@ -114,6 +116,52 @@ func TestDashboardServiceCountAgentAssetsSplitsWorkspaceScopes(t *testing.T) {
 	count := svc.countAgentAssets(context.Background(), []string{"ws-agent"}, []string{"ws-workflow"})
 
 	require.Equal(t, int64(2), count)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardServiceDatasetStatsUsesWorkspaceScopeOnly(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["datasets"] = true
+
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?datasets"? WHERE workspace_id IN`).
+		WithArgs("ws-knowledge").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+
+	stats := svc.getResourceStats(context.Background(), "org-1", "acc-1", model.DashboardWorkspaceScopes{
+		DatasetWorkspaceIDs: []string{"ws-knowledge"},
+	})
+
+	require.Equal(t, int64(2), stats.Datasets)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardServiceRecentDatasetsUsesWorkspaceScopeOnly(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["datasets"] = true
+	svc.tableCache["workspaces"] = true
+
+	updatedAt := time.Unix(1710000000, 0).UTC()
+	mock.ExpectQuery(`(?s)SELECT .*FROM "?datasets"? AS d.*d\.workspace_id IN.*ORDER BY d\.updated_at DESC.*LIMIT`).
+		WithArgs("ws-knowledge", 3).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"title",
+			"resource_id",
+			"workspace_id",
+			"workspace_name",
+			"updated_at",
+			"created_at",
+		}).AddRow("dataset-1", "Dataset One", "dataset-1", "ws-knowledge", "Knowledge Space", updatedAt, updatedAt))
+
+	items := svc.getRecentDatasets(context.Background(), []string{"ws-knowledge"}, "acc-1", 3)
+
+	require.Len(t, items, 1)
+	require.Equal(t, "dataset", items[0].Type)
+	require.Equal(t, "dataset:dataset-1", items[0].ID)
+	require.Equal(t, "dataset-1", items[0].ResourceID)
+	require.Equal(t, "ws-knowledge", items[0].WorkspaceID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
