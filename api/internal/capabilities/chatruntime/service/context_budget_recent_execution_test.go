@@ -164,6 +164,48 @@ func TestRecentExecutionContextIncludesFileManagerSaveResult(t *testing.T) {
 	}
 }
 
+func TestRecentExecutionContextIncludesOperationResultSummary(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query:  "delete the first two agents",
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusCompleted,
+				"operation_group": map[string]interface{}{
+					"status":        "partial_failed",
+					"operation":     "agent.delete",
+					"asset_type":    "agent",
+					"target_count":  2,
+					"success_count": 1,
+					"failed_count":  1,
+					"item_results": []interface{}{
+						map[string]interface{}{"name": "Agent A", "status": "success"},
+						map[string]interface{}{"name": "Agent B", "status": "failed", "error": "permission denied"},
+					},
+				},
+			},
+		},
+	}
+
+	recent, stats := buildRecentExecutionContextMessage([]*runtimemodel.Message{message})
+
+	if recent == nil {
+		t.Fatal("recent execution context = nil, want message")
+	}
+	content, ok := recent.Content.(string)
+	if !ok {
+		t.Fatalf("recent content type = %T, want string", recent.Content)
+	}
+	for _, want := range []string{"Most recent operation result facts", "operation_result_summary", "partial_failed", "agent.delete", "failed_count"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("recent execution context missing %q: %s", want, content)
+		}
+	}
+	if stats.IncludedOperationSummaries != 1 {
+		t.Fatalf("IncludedOperationSummaries = %d, want 1", stats.IncludedOperationSummaries)
+	}
+}
+
 func TestContinuationTaskStateMessageUsesPriorTaskAndSaveState(t *testing.T) {
 	branch := []*runtimemodel.Message{
 		{
@@ -233,6 +275,45 @@ func TestContinuationTaskStateMessageUsesPriorTaskAndSaveState(t *testing.T) {
 	}
 }
 
+func TestContinuationTaskStateMessageIncludesOperationResultSummary(t *testing.T) {
+	branch := []*runtimemodel.Message{
+		{
+			Query:  "删除前两个智能体",
+			Status: runtimemodel.MessageStatusCompleted,
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status":              operationPlanStatusCompleted,
+					"original_user_goal":  "删除前两个智能体",
+					"pending_next_action": "none",
+					"operation_group": map[string]interface{}{
+						"status":        "success",
+						"operation":     "agent.delete",
+						"asset_type":    "agent",
+						"target_count":  2,
+						"success_count": 2,
+						"failed_count":  0,
+					},
+				},
+			},
+		},
+	}
+
+	message := buildContinuationTaskStateMessage(&chatRequestParts{Query: "继续"}, branch)
+
+	if message == nil {
+		t.Fatal("continuation task state = nil, want message")
+	}
+	content, ok := message.Content.(string)
+	if !ok {
+		t.Fatalf("continuation content type = %T, want string", message.Content)
+	}
+	for _, want := range []string{"Authoritative operation result facts", "operation_result_summary", "agent.delete", "success_count"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("continuation task state missing %q: %s", want, content)
+		}
+	}
+}
+
 func TestContinuationTaskStateOmitsGuardrailToolState(t *testing.T) {
 	branch := []*runtimemodel.Message{
 		{
@@ -266,6 +347,33 @@ func TestContinuationTaskStateOmitsGuardrailToolState(t *testing.T) {
 		if strings.Contains(content, blocked) {
 			t.Fatalf("continuation state contains guardrail history %q: %s", blocked, content)
 		}
+	}
+}
+
+func TestPreparedResultMetadataStoresOperationResultSummary(t *testing.T) {
+	metadata := preparedResultMetadata(map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusCompleted,
+			"operation_group": map[string]interface{}{
+				"status":        "success",
+				"operation":     "file.save",
+				"asset_type":    "file",
+				"target_count":  1,
+				"success_count": 1,
+				"failed_count":  0,
+			},
+		},
+	}, nil)
+
+	summary := mapFromOperationContext(metadata["operation_result_summary"])
+	if len(summary) == 0 {
+		t.Fatalf("operation_result_summary missing in metadata: %#v", metadata)
+	}
+	if got := stringFromAny(summary["operation"]); got != "file.save" {
+		t.Fatalf("operation_result_summary.operation = %q, want file.save", got)
+	}
+	if got := intValueFromAny(summary["success_count"]); got != 1 {
+		t.Fatalf("operation_result_summary.success_count = %d, want 1; summary=%#v", got, summary)
 	}
 }
 

@@ -396,14 +396,15 @@ func (s *service) historyMessageGroups(ctx context.Context, branch []*runtimemod
 }
 
 type recentExecutionContextStats struct {
-	ToolHistoryTurns          int
-	IntermediateAnswerTurns   int
-	IncludedToolEvents        int
-	IncludedIntermediate      int
-	IncludedGeneratedFiles    int
-	ToolHistoryTruncated      bool
-	IntermediateTruncated     bool
-	ExecutionContextTruncated bool
+	ToolHistoryTurns           int
+	IntermediateAnswerTurns    int
+	IncludedToolEvents         int
+	IncludedOperationSummaries int
+	IncludedIntermediate       int
+	IncludedGeneratedFiles     int
+	ToolHistoryTruncated       bool
+	IntermediateTruncated      bool
+	ExecutionContextTruncated  bool
 }
 
 func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapter.Message, recentExecutionContextStats) {
@@ -430,6 +431,15 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	}
 
 	remaining = recentExecutionContextBudgetChars - builder.Len()
+	operationSection, operationStats := recentOperationResultSummarySection(branch, remaining)
+	stats.IncludedOperationSummaries = operationStats.IncludedOperationSummaries
+	stats.ExecutionContextTruncated = stats.ExecutionContextTruncated || operationStats.ExecutionContextTruncated
+	if operationSection != "" {
+		builder.WriteString("\nMost recent operation result facts:\n")
+		builder.WriteString(operationSection)
+	}
+
+	remaining = recentExecutionContextBudgetChars - builder.Len()
 	toolSection, toolStats := recentToolHistorySection(branch, remaining)
 	stats.ToolHistoryTurns = toolStats.ToolHistoryTurns
 	stats.IncludedToolEvents = toolStats.IncludedToolEvents
@@ -452,7 +462,7 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	}
 
 	content := strings.TrimSpace(builder.String())
-	if stats.IncludedToolEvents == 0 && stats.IncludedIntermediate == 0 && stats.IncludedGeneratedFiles == 0 {
+	if stats.IncludedToolEvents == 0 && stats.IncludedOperationSummaries == 0 && stats.IncludedIntermediate == 0 && stats.IncludedGeneratedFiles == 0 {
 		return nil, stats
 	}
 	return &adapter.Message{Role: "system", Content: content}, stats
@@ -483,6 +493,10 @@ func buildContinuationTaskStateMessage(parts *chatRequestParts, branch []*runtim
 	if planState := recentContinuationOperationPlanSection(branch, recentContinuationBudgetChars-builder.Len()); planState != "" {
 		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nAuthoritative operation plan state:\n")
 		appendBudgetedLine(&builder, recentContinuationBudgetChars, planState)
+	}
+	if resultState := recentContinuationOperationResultSummarySection(branch, recentContinuationBudgetChars-builder.Len()); resultState != "" {
+		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nAuthoritative operation result facts:\n")
+		appendBudgetedLine(&builder, recentContinuationBudgetChars, resultState)
 	}
 	if toolState := recentContinuationToolStateSection(branch, recentContinuationBudgetChars-builder.Len()); toolState != "" {
 		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nRecent completed/blocked execution state:\n")
@@ -544,6 +558,89 @@ func recentContinuationToolStateSection(branch []*runtimemodel.Message, budget i
 		}
 	}
 	return builder.String()
+}
+
+func recentContinuationOperationResultSummarySection(branch []*runtimemodel.Message, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	section, _ := recentOperationResultSummarySection(branch, budget)
+	return section
+}
+
+func recentOperationResultSummarySection(branch []*runtimemodel.Message, budget int) (string, recentExecutionContextStats) {
+	stats := recentExecutionContextStats{}
+	if budget <= 0 {
+		stats.ExecutionContextTruncated = true
+		return "", stats
+	}
+	var builder strings.Builder
+	turns := 0
+	for i := len(branch) - 1; i >= 0 && turns < recentToolHistoryTurnLimit; i-- {
+		message := branch[i]
+		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
+			continue
+		}
+		summary := operationResultSummaryForPrompt(message.Metadata)
+		if len(summary) == 0 {
+			continue
+		}
+		turns++
+		if !appendBudgetedLine(&builder, budget, fmt.Sprintf("- Turn query: %s\n", compactForPrompt(message.Query, 240))) {
+			stats.ExecutionContextTruncated = true
+			return builder.String(), stats
+		}
+		line := "  operation_result_summary=" + compactJSONForPrompt(summary, minInt(1400, budget-builder.Len())) + "\n"
+		if !appendBudgetedLine(&builder, budget, line) {
+			stats.ExecutionContextTruncated = true
+			return builder.String(), stats
+		}
+		stats.IncludedOperationSummaries++
+	}
+	return builder.String(), stats
+}
+
+func operationResultSummaryForPrompt(metadata map[string]interface{}) map[string]interface{} {
+	if summary := mapFromOperationContext(metadataValue(metadata, "operation_result_summary")); len(summary) > 0 {
+		return sanitizeOperationResultSummaryForPrompt(summary)
+	}
+	executionSummary := skillLoopCompletionExecutionSummary(metadata)
+	if len(executionSummary) == 0 {
+		return nil
+	}
+	return sanitizeOperationResultSummaryForPrompt(skillLoopCompletionOperationResultSummary(executionSummary))
+}
+
+func sanitizeOperationResultSummaryForPrompt(summary map[string]interface{}) map[string]interface{} {
+	if len(summary) == 0 {
+		return nil
+	}
+	out := copyStringAnyMap(summary)
+	if latest := mapFromOperationContext(out["latest_tool_result"]); strings.TrimSpace(stringFromAny(latest["kind"])) == "guardrail" {
+		delete(out, "latest_tool_result")
+		delete(out, "latest_tool_status")
+		delete(out, "skill_id")
+		delete(out, "tool_name")
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(out["status"])), "blocked") {
+			delete(out, "status")
+		}
+	}
+	for _, key := range []string{
+		"operation",
+		"operation_group",
+		"target_count",
+		"success_count",
+		"failed_count",
+		"generated_file_count",
+		"generated_files",
+		"latest_tool_result",
+		"latest_client_action",
+	} {
+		if value, ok := out[key]; ok && value != nil {
+			return out
+		}
+	}
+	return nil
 }
 
 func recentContinuationOperationPlanSection(branch []*runtimemodel.Message, budget int) string {
