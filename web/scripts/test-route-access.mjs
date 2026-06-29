@@ -71,6 +71,13 @@ const fileDetailShellPath = path.join(
   'file-detail-shell.tsx'
 );
 const fileListPath = path.join(rootDir, 'src', 'components', 'files', 'file-list.tsx');
+const relatedResourcesPopoverPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'files',
+  'related-resources-popover.tsx'
+);
 const dbPagePath = path.join(rootDir, 'src', 'app', 'console', 'db', 'page.tsx');
 const dbOverviewPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'page.tsx');
 const dbLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'layout.tsx');
@@ -663,6 +670,7 @@ const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
 const fileListSource = fs.readFileSync(fileListPath, 'utf8');
+const relatedResourcesPopoverSource = fs.readFileSync(relatedResourcesPopoverPath, 'utf8');
 const dbPageSource = fs.readFileSync(dbPagePath, 'utf8');
 const dbOverviewSource = fs.readFileSync(dbOverviewPath, 'utf8');
 const dbLayoutSource = fs.readFileSync(dbLayoutPath, 'utf8');
@@ -854,6 +862,16 @@ assert.match(
   fileListSource,
   /const canViewDetail\s*=\s*!selectionMode && canOpenFileDetailByPermission/,
   'file list detail link should combine mode and permission gate'
+);
+assert.match(
+  relatedResourcesPopoverSource,
+  /router\.push\(`\/console\/dataset\/\$\{resource\.id\}`\)/,
+  'file related-resource dataset links should route through the permission-aware dataset detail root'
+);
+assert.doesNotMatch(
+  relatedResourcesPopoverSource,
+  /router\.push\(`\/console\/dataset\/\$\{resource\.id\}\/documents`\)/,
+  'file related-resource dataset links should not assume document access'
 );
 assert.match(
   dbPageSource,
