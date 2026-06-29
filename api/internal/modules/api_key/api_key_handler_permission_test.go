@@ -197,6 +197,106 @@ func TestAPIKeyManagementPermissionFollowsAgentType(t *testing.T) {
 	}
 }
 
+func TestAPIKeyManagementWorkflowRoutesRequireWorkflowRuntimeAccess(t *testing.T) {
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	apiKeyID := "not-a-uuid"
+	workspaceID := "22222222-2222-2222-2222-222222222222"
+	tests := []struct {
+		name   string
+		method string
+		target string
+		body   string
+		params gin.Params
+		call   func(*APIKeyHandler, *gin.Context)
+	}{
+		{
+			name:   "list",
+			method: http.MethodGet,
+			target: "/agents/" + agentID.String() + "/api-keys",
+			params: gin.Params{{Key: "agent_id", Value: agentID.String()}},
+			call:   (*APIKeyHandler).ListAPIKeys,
+		},
+		{
+			name:   "get",
+			method: http.MethodGet,
+			target: "/agents/" + agentID.String() + "/api-keys/" + apiKeyID,
+			params: gin.Params{{Key: "agent_id", Value: agentID.String()}, {Key: "api_key_id", Value: apiKeyID}},
+			call:   (*APIKeyHandler).GetAPIKey,
+		},
+		{
+			name:   "usage logs",
+			method: http.MethodGet,
+			target: "/agents/" + agentID.String() + "/api-keys/" + apiKeyID + "/usage",
+			params: gin.Params{{Key: "agent_id", Value: agentID.String()}, {Key: "api_key_id", Value: apiKeyID}},
+			call:   (*APIKeyHandler).GetAPIKeyUsageLogs,
+		},
+		{
+			name:   "usage stats",
+			method: http.MethodGet,
+			target: "/agents/" + agentID.String() + "/api-keys/" + apiKeyID + "/usage/stats",
+			params: gin.Params{{Key: "agent_id", Value: agentID.String()}, {Key: "api_key_id", Value: apiKeyID}},
+			call:   (*APIKeyHandler).GetAPIKeyUsageStats,
+		},
+		{
+			name:   "create",
+			method: http.MethodPost,
+			target: "/agents/" + agentID.String() + "/api-keys",
+			body:   `{"broken":`,
+			params: gin.Params{{Key: "agent_id", Value: agentID.String()}},
+			call:   (*APIKeyHandler).CreateAPIKey,
+		},
+		{
+			name:   "update",
+			method: http.MethodPut,
+			target: "/agents/" + agentID.String() + "/api-keys/" + apiKeyID,
+			body:   `{"broken":`,
+			params: gin.Params{{Key: "agent_id", Value: agentID.String()}, {Key: "api_key_id", Value: apiKeyID}},
+			call:   (*APIKeyHandler).UpdateAPIKey,
+		},
+		{
+			name:   "delete",
+			method: http.MethodDelete,
+			target: "/agents/" + agentID.String() + "/api-keys/" + apiKeyID,
+			params: gin.Params{{Key: "agent_id", Value: agentID.String()}, {Key: "api_key_id", Value: apiKeyID}},
+			call:   (*APIKeyHandler).DeleteAPIKey,
+		},
+		{
+			name:   "revoke",
+			method: http.MethodPost,
+			target: "/agents/" + agentID.String() + "/api-keys/" + apiKeyID + "/revoke",
+			params: gin.Params{{Key: "agent_id", Value: agentID.String()}, {Key: "api_key_id", Value: apiKeyID}},
+			call:   (*APIKeyHandler).RevokeAPIKey,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &apiKeyPermissionRepository{}
+			permissionChecker := &apiKeyPermissionChecker{allowed: false}
+			handler := &APIKeyHandler{
+				apiKeyRepo:             repo,
+				apiKeyUsageLogRepo:     &apiKeyPermissionUsageLogRepository{},
+				organizationService:    permissionChecker,
+				agentWorkspaceResolver: &apiKeyPermissionAgentWorkspaceResolver{workspaceID: workspaceID, agentType: "WORKFLOW"},
+			}
+			ctx, recorder := newAPIKeyPermissionContext(tt.method, tt.target, tt.body, tt.params)
+
+			tt.call(handler, ctx)
+
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+			}
+			requireAPIKeyResponseCode(t, recorder, response.ErrPermissionDenied)
+			if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowRuntimeAccessManage {
+				t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowRuntimeAccessManage)
+			}
+			if repo.calls != 0 {
+				t.Fatalf("repository calls = %d, want 0", repo.calls)
+			}
+		})
+	}
+}
+
 func TestAPIKeyManagementRequiresRouteAgentWorkspace(t *testing.T) {
 	agentID := "11111111-1111-1111-1111-111111111111"
 	repo := &apiKeyPermissionRepository{}
