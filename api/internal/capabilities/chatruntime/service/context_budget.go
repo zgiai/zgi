@@ -617,6 +617,12 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if assetState := mapFromOperationContext(plan["asset_state"]); len(assetState) > 0 {
 		out["asset_state"] = assetState
 	}
+	if deviations := skillLoopCompletionPlanDeviations(plan["deviations"], 6); len(deviations) > 0 {
+		out["deviations"] = deviations
+	}
+	if blockedDeviations := skillLoopCompletionPlanDeviations(plan["blocked_deviations"], 6); len(blockedDeviations) > 0 {
+		out["blocked_deviations"] = blockedDeviations
+	}
 	steps := mapSliceFromAny(plan["steps"])
 	if len(steps) > 0 {
 		promptSteps := operationPlanPromptSteps(steps, 8)

@@ -577,6 +577,45 @@ func TestCompactOperationPlanForPromptKeepsPendingStepsPastDefaultLimit(t *testi
 	}
 }
 
+func TestCompactOperationPlanForPromptIncludesPlanDeviations(t *testing.T) {
+	compact := compactOperationPlanForPrompt(map[string]interface{}{
+		"version": operationPlanVersion,
+		"task_id": "task-with-deviation",
+		"status":  operationPlanStatusRunning,
+		"deviations": []interface{}{
+			map[string]interface{}{
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "list_agents",
+				"reason":    "model_collected_unplanned_readonly_evidence",
+				"outcome":   "allowed",
+			},
+		},
+		"blocked_deviations": []interface{}{
+			map[string]interface{}{
+				"skill_id":  skills.SkillFileManager,
+				"tool_name": "delete_file",
+				"reason":    "model_attempted_unrelated_mutation",
+				"outcome":   "blocked",
+			},
+		},
+	})
+
+	deviations := mapSliceFromAny(compact["deviations"])
+	if len(deviations) != 1 {
+		t.Fatalf("compact deviations = %#v, want one allowed deviation", compact["deviations"])
+	}
+	if got := stringFromAny(deviations[0]["outcome"]); got != "allowed" {
+		t.Fatalf("compact deviation outcome = %q, want allowed", got)
+	}
+	blockedDeviations := mapSliceFromAny(compact["blocked_deviations"])
+	if len(blockedDeviations) != 1 {
+		t.Fatalf("compact blocked_deviations = %#v, want one blocked deviation", compact["blocked_deviations"])
+	}
+	if got := stringFromAny(blockedDeviations[0]["outcome"]); got != "blocked" {
+		t.Fatalf("compact blocked deviation outcome = %q, want blocked", got)
+	}
+}
+
 func operationPlanStepForTest(plan map[string]interface{}, id string) map[string]interface{} {
 	for _, step := range mapSliceFromAny(plan["steps"]) {
 		if stringFromAny(step["id"]) == id {
