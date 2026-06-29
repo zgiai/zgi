@@ -49,8 +49,8 @@ import WorkflowValueInserter from '@/components/workflow/common/workflow-value-i
 import type { VariableInsertValue } from '@/components/workflow/common/workflow-value-inserter/variable-item';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import {
-  useWorkspaceMemberDetails,
-  useWorkspaceMembersInfinite,
+  useWorkspaceMemberOptionDetails,
+  useWorkspaceMemberOptionsInfinite,
 } from '@/hooks/workspace/use-workspace-members';
 import { useT } from '@/i18n';
 import {
@@ -392,7 +392,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     isFetchingNextPage: membersFetchingNextPage,
     hasMore: hasMoreMembers,
     fetchNextPage: fetchNextMembersPage,
-  } = useWorkspaceMembersInfinite(undefined, undefined, {
+  } = useWorkspaceMemberOptionsInfinite(undefined, undefined, {
     enabled: !readOnly,
     keyword: debouncedMemberKeyword,
     limit: MEMBER_PAGE_SIZE,
@@ -476,7 +476,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     () => selectedSMSMemberAccountIds.filter(accountId => !memberOptionByAccountId.has(accountId)),
     [memberOptionByAccountId, selectedSMSMemberAccountIds]
   );
-  const selectedSMSMemberDetailQueries = useWorkspaceMemberDetails(
+  const selectedSMSMemberDetailQueries = useWorkspaceMemberOptionDetails(
     undefined,
     undefined,
     selectedSMSMemberDetailAccountIds,

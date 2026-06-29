@@ -77,6 +77,18 @@ type TenantMemberWithDepartmentResponse struct {
 	DepartmentName           *string                               `json:"department_name,omitempty"`
 }
 
+type WorkspaceMemberOptionResponse struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	AccountName string  `json:"account_name"`
+	MemberName  *string `json:"member_name,omitempty"`
+	Avatar      string  `json:"avatar"`
+	AvatarURL   string  `json:"avatar_url"`
+	Email       string  `json:"email"`
+	Status      string  `json:"status"`
+	HasMobile   bool    `json:"has_mobile"`
+}
+
 func getWorkspaceRoleDisplayName(role string) string {
 	switch role {
 	case string(model.WorkspaceRoleOwner):
@@ -3350,15 +3362,7 @@ func (h *OrganizationHandler) GetOrganizationWorkspaceMembers(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireRouteWorkspaceInOrganization(c, organizationID, workspaceID) {
-		return
-	}
-	if !h.requireOrganizationAccess(c, organizationID, accountID) {
-		return
-	}
-
-	_, err := h.organizationService.GetOrganizationWorkspaceDetail(c.Request.Context(), organizationID, workspaceID, accountID)
-	if handleOrganizationWorkspaceDetailError(c, err) {
+	if !h.requireOrganizationWorkspacePermission(c, organizationID, workspaceID, accountID, model.WorkspacePermissionWorkspaceMemberView) {
 		return
 	}
 
@@ -3480,6 +3484,113 @@ func (h *OrganizationHandler) GetOrganizationWorkspaceMembers(c *gin.Context) {
 	})
 }
 
+func (h *OrganizationHandler) GetOrganizationWorkspaceMemberOptions(c *gin.Context) {
+	organizationID := h.getOrganizationID(c)
+	workspaceID := c.Param("workspace_id")
+	if organizationID == "" || workspaceID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.requireOrganizationWorkspacePermission(c, organizationID, workspaceID, accountID, model.WorkspacePermissionWorkspaceView) {
+		return
+	}
+
+	keyword := c.Query("keyword")
+	page := 1
+	limit := 20
+	if pageStr := c.Query("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+
+	pagedMembers, total, err := h.workspaceManagementService.GetWorkspaceMembersPaginated(c.Request.Context(), workspaceID, page, limit, keyword, "")
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	results := make([]*WorkspaceMemberOptionResponse, len(pagedMembers))
+	for i, m := range pagedMembers {
+		results[i] = &WorkspaceMemberOptionResponse{
+			ID:          m.ID,
+			Name:        m.Name,
+			AccountName: m.AccountName,
+			MemberName:  m.MemberName,
+			Avatar:      m.Avatar,
+			AvatarURL:   m.AvatarURL,
+			Email:       m.Email,
+			Status:      m.Status,
+			HasMobile:   m.HasMobile,
+		}
+	}
+
+	hasMore := int64(page*limit) < total
+	response.Success(c, gin.H{
+		"data":     results,
+		"total":    total,
+		"page":     page,
+		"limit":    limit,
+		"has_more": hasMore,
+	})
+}
+
+func (h *OrganizationHandler) GetOrganizationWorkspaceMemberOptionDetailByID(c *gin.Context) {
+	organizationID := h.getOrganizationID(c)
+	workspaceID := c.Param("workspace_id")
+	memberID := c.Param("member_id")
+	if organizationID == "" || workspaceID == "" || memberID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.requireOrganizationWorkspacePermission(c, organizationID, workspaceID, accountID, model.WorkspacePermissionWorkspaceView) {
+		return
+	}
+
+	members, err := h.workspaceManagementService.GetWorkspaceMembers(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	for _, m := range members {
+		if m.ID != memberID {
+			continue
+		}
+		response.Success(c, &WorkspaceMemberOptionResponse{
+			ID:          m.ID,
+			Name:        m.Name,
+			AccountName: m.AccountName,
+			MemberName:  m.MemberName,
+			Avatar:      m.Avatar,
+			AvatarURL:   m.AvatarURL,
+			Email:       m.Email,
+			Status:      m.Status,
+			HasMobile:   m.HasMobile,
+		})
+		return
+	}
+
+	response.Fail(c, response.ErrMemberNotInWorkspace)
+}
+
 func (h *OrganizationHandler) GetOrganizationWorkspaceMemberDetailByID(c *gin.Context) {
 	organizationID := h.getOrganizationID(c)
 	workspaceID := c.Param("workspace_id")
@@ -3494,15 +3605,7 @@ func (h *OrganizationHandler) GetOrganizationWorkspaceMemberDetailByID(c *gin.Co
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.requireRouteWorkspaceInOrganization(c, organizationID, workspaceID) {
-		return
-	}
-	if !h.requireOrganizationAccess(c, organizationID, accountID) {
-		return
-	}
-
-	_, err := h.organizationService.GetOrganizationWorkspaceDetail(c.Request.Context(), organizationID, workspaceID, accountID)
-	if handleOrganizationWorkspaceDetailError(c, err) {
+	if !h.requireOrganizationWorkspacePermission(c, organizationID, workspaceID, accountID, model.WorkspacePermissionWorkspaceMemberView) {
 		return
 	}
 
@@ -4443,6 +4546,8 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 		organization.GET("/:organization_id/workspaces", h.GetOrganizationWorkspaces)
 		organization.GET("/:organization_id/workspaces/:workspace_id", h.GetOrganizationWorkspaceDetail)
 		organization.GET("/:organization_id/workspaces/:workspace_id/available-members", h.GetOrganizationWorkspaceAvailableMembers)
+		organization.GET("/:organization_id/workspaces/:workspace_id/member-options", h.GetOrganizationWorkspaceMemberOptions)
+		organization.GET("/:organization_id/workspaces/:workspace_id/member-options/:member_id", h.GetOrganizationWorkspaceMemberOptionDetailByID)
 		organization.GET("/:organization_id/workspaces/:workspace_id/members", h.GetOrganizationWorkspaceMembers)
 		organization.GET("/:organization_id/workspaces/:workspace_id/members/:member_id", h.GetOrganizationWorkspaceMemberDetailByID)
 		organization.DELETE("/:organization_id/workspaces/:workspace_id/members/:member_id", h.RemoveOrganizationWorkspaceMember)

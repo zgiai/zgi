@@ -58,6 +58,26 @@ export interface WorkspaceMemberAccount {
   organization_role?: 'owner' | 'admin' | 'normal' | '';
 }
 
+export interface WorkspaceMemberOption {
+  id: string;
+  name: string;
+  account_name?: string;
+  member_name?: string;
+  avatar: string | null;
+  avatar_url: string | null;
+  email: string;
+  status: string;
+  has_mobile?: boolean;
+}
+
+export interface WorkspaceMemberOptionList {
+  data: WorkspaceMemberOption[];
+  total: number;
+  has_more: boolean;
+  page: number;
+  limit: number;
+}
+
 export interface AvailableWorkspaceMember {
   id: string;
   account_id: string;

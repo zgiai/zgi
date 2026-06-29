@@ -3092,6 +3092,21 @@ assert.match(
   /if \(readOnly\) \{[\s\S]*pendingActionHandleUpdatesRef\.current = new Map\(\);[\s\S]*return;[\s\S]*\}/,
   'workflow approval action handle edge sync should not flush graph mutations in read-only mode'
 );
+assert.match(
+  workflowApprovalManagerSource,
+  /useWorkspaceMemberOptionsInfinite/,
+  'workflow approval member picker should use the non-management workspace member options endpoint'
+);
+assert.match(
+  workflowApprovalManagerSource,
+  /useWorkspaceMemberOptionDetails/,
+  'workflow approval selected-member hydration should use the non-management workspace member option detail endpoint'
+);
+assert.doesNotMatch(
+  workflowApprovalManagerSource,
+  /useWorkspaceMembersInfinite|useWorkspaceMemberDetails/,
+  'workflow approval member picker should not consume workspace member management hooks'
+);
 
 for (const appCenterPath of appCenterPaths) {
   const appCenterSource = fs.readFileSync(appCenterPath, 'utf8');

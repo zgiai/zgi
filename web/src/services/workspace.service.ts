@@ -5,6 +5,8 @@ import type {
   WorkspaceManagementList,
   WorkspaceStatistics,
   WorkspaceMemberAccount,
+  WorkspaceMemberOption,
+  WorkspaceMemberOptionList,
   WorkspaceMemberRole,
   BatchAddMemberRequest,
   BatchAddMembersResponse,
@@ -163,6 +165,34 @@ class WorkspaceService extends BaseService {
     >('get', `/organizations/${organizationId}/workspaces/${workspaceId}/members`, undefined, {
       params,
     });
+    return response.data;
+  }
+
+  // Get workspace member options for business pickers without role/permission management fields
+  async getWorkspaceMemberOptions(
+    organizationId: string,
+    workspaceId: string,
+    params?: { page?: number; limit?: number; keyword?: string }
+  ): Promise<WorkspaceMemberOptionList> {
+    const response = await this.request<ApiResponseData<WorkspaceMemberOptionList>>(
+      'get',
+      `/organizations/${organizationId}/workspaces/${workspaceId}/member-options`,
+      undefined,
+      { params }
+    );
+    return response.data;
+  }
+
+  // Get a single workspace member option for business picker display hydration
+  async getWorkspaceMemberOption(
+    organizationId: string,
+    workspaceId: string,
+    memberId: string
+  ): Promise<WorkspaceMemberOption> {
+    const response = await this.request<ApiResponseData<WorkspaceMemberOption>>(
+      'get',
+      `/organizations/${organizationId}/workspaces/${workspaceId}/member-options/${memberId}`
+    );
     return response.data;
   }
 
