@@ -106,6 +106,15 @@ const taskWorkbenchPath = path.join(
   'automation',
   'task-workbench.tsx'
 );
+const automationTaskHandlerPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'automation',
+  'handler',
+  'task_handler.go'
+);
 const filePagePath = path.join(rootDir, 'src', 'app', 'console', 'files', 'page.tsx');
 const fileDetailPagePath = path.join(
   rootDir,
@@ -1094,6 +1103,7 @@ const dashboardChannelPageSource = fs.readFileSync(dashboardChannelPagePath, 'ut
 const accountCapabilitiesHookSource = fs.readFileSync(accountCapabilitiesHookPath, 'utf8');
 const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
+const automationTaskHandlerSource = fs.readFileSync(automationTaskHandlerPath, 'utf8');
 const filePageSource = fs.readFileSync(filePagePath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
@@ -1398,6 +1408,43 @@ assert.doesNotMatch(
   /hasPermission\(['"]workspace\.|hasAnyPermission\(\[['"]workspace\./,
   'scheduled-task workbench should not reintroduce ordinary workspace.* member permissions'
 );
+function getTaskHandlerMethodSource(methodName) {
+  const methodStart = `func (h *TaskHandler) ${methodName}(`;
+  const methodIndex = automationTaskHandlerSource.indexOf(methodStart);
+  assert.notEqual(methodIndex, -1, `automation handler should define ${methodName}`);
+
+  const nextMethodIndex = automationTaskHandlerSource.indexOf(
+    '\nfunc (h *TaskHandler)',
+    methodIndex + methodStart.length
+  );
+  return automationTaskHandlerSource.slice(
+    methodIndex,
+    nextMethodIndex === -1 ? automationTaskHandlerSource.length : nextMethodIndex
+  );
+}
+
+for (const handlerName of ['GetTask', 'ListTasks', 'ListTaskRuns']) {
+  assert.match(
+    getTaskHandlerMethodSource(handlerName),
+    /resolveScope\([\s\S]*workspacemodel\.WorkspacePermissionWorkspaceView/,
+    `automation ${handlerName} should require workspace.view for read access`
+  );
+}
+
+for (const handlerName of [
+  'GenerateTaskDraft',
+  'CreateTask',
+  'UpdateTask',
+  'RunTaskNow',
+  'DeleteTask',
+  'mutateTaskState',
+]) {
+  assert.match(
+    getTaskHandlerMethodSource(handlerName),
+    /resolveScope\([\s\S]*workspacemodel\.WorkspacePermissionWorkspaceManage/,
+    `automation ${handlerName} should require workspace.manage for mutations`
+  );
+}
 assert.match(
   filePageSource,
   /hasAnyPermission\(FILE_VISIBLE_PERMISSION_CODES\)/,

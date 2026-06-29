@@ -34,6 +34,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-30: Scheduled-task backend route permissions are now locked by the frontend route-access guardrail. `GetTask`, `ListTasks`, and `ListTaskRuns` must keep `workspace.view`, while draft generation, create/update, manual run, delete, and state mutations must keep `workspace.manage`, matching the frontend `isWorkspaceManager()` mutation UI.
 - 2026-06-29: Database table metadata reads were aligned across backend and frontend. Listing tables, reading table metadata, reading columns, and downloading table import templates now accept a table-metadata permission group covering schema, record, import, table-prompt, and AI-query capabilities; the database layout and overview only fetch/show table navigation when that same group is present. Operation-log-only users no longer trigger table-list requests or see table navigation.
 - 2026-06-29: Database list create/edit gates were split. Opening the create dialog uses `database.create`, while opening the edit dialog now uses `database.update`, matching the card action and backend update endpoint instead of accidentally requiring create permission.
 - 2026-06-29: Database list create and detail operation-log navigation gates now consume `DATABASE_PERMISSION_ACTIONS.create` and `DATABASE_PERMISSION_ACTIONS.operationLogsView` instead of raw permission literals, keeping frontend database UI actions bound to the shared action matrix.
@@ -129,6 +130,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Verification Log
 
+- 2026-06-30: `pnpm test:route-access`, `pnpm exec eslint scripts/test-route-access.mjs`, and `git diff --check` passed after adding static scheduled-task backend guardrails for `workspace.view` read handlers and `workspace.manage` mutation handlers. `git diff --check` reported only the existing CRLF normalization warning for this matrix document.
 - 2026-06-30: `pnpm test:route-access`, `pnpm exec eslint scripts/test-route-access.mjs`, and `git diff --check` passed after extending route-access guardrails to reject backend non-test business-code usage of compatibility-only aggregate workspace asset permission literals and Go constants.
 - 2026-06-30: `go test ./internal/modules/workspace/handler -run "TestGetCurrentOrganizationMembers"`, `go test ./internal/modules/workspace/service -run "TestGetVisibleOrganizationMemberAccountIDsLimitsNonAdminScope|TestGetUserAllWorkspacesInOrganizationDoesNotUseOrganizationAdminBypass"`, and `git diff --check` passed after replacing the all-organization `/organizations/current/members` response for non-admin callers with department-subtree plus visible-workspace member scoping. `git diff --check` reported only CRLF normalization warnings.
 - 2026-06-29: `pnpm test:route-access`, targeted ESLint, `pnpm type-check`, and `git diff --check` passed after deferring member-assignment and runtime-audience dialog role-template/department/workspace catalog queries behind dialog-open state.
