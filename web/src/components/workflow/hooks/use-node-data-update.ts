@@ -15,6 +15,7 @@ export function useNodeDataUpdate<T extends WorkflowNodeData>(nodeId: string) {
     (patch: Partial<T> | ((prev: T) => Partial<T>)) => {
       // Pull latest from store state to avoid stale closures
       const storeState = useWorkflowStore.getState();
+      if (storeState.mode === 'history' || !storeState.canEdit) return;
       const node = storeState.nodes.find(n => n.id === nodeId);
       if (!node) return;
 

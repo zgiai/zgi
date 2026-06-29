@@ -350,6 +350,22 @@ const workflowLifecyclePath = path.join(
   'hooks',
   'use-workflow-lifecycle.ts'
 );
+const workflowNodeDataUpdateHookPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'hooks',
+  'use-node-data-update.ts'
+);
+const workflowOperationsHookPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'hooks',
+  'use-workflow-operations.ts'
+);
 const workflowCanvasWithDndPath = path.join(
   rootDir,
   'src',
@@ -888,6 +904,8 @@ const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 const workflowEditorSource = fs.readFileSync(workflowEditorPath, 'utf8');
 const workflowLifecycleSource = fs.readFileSync(workflowLifecyclePath, 'utf8');
+const workflowNodeDataUpdateHookSource = fs.readFileSync(workflowNodeDataUpdateHookPath, 'utf8');
+const workflowOperationsHookSource = fs.readFileSync(workflowOperationsHookPath, 'utf8');
 const workflowCanvasWithDndSource = fs.readFileSync(workflowCanvasWithDndPath, 'utf8');
 const workflowGlobalContainerOverlaySource = fs.readFileSync(
   workflowGlobalContainerOverlayPath,
@@ -2424,6 +2442,41 @@ assert.match(
   workflowLifecycleSource,
   /if \(!canEditDraft\) return;[\s\S]*hasInitializedModelsRef/,
   'workflow lifecycle should not inject default node models in read-only workflow detail'
+);
+assert.match(
+  workflowNodeDataUpdateHookSource,
+  /if \(storeState\.mode === 'history' \|\| !storeState\.canEdit\) return;/,
+  'workflow node data update helper should not mutate node data without workflow.update'
+);
+assert.match(
+  workflowOperationsHookSource,
+  /const isWorkflowStoreReadOnly = \(\) => \{[\s\S]*return mode === 'history' \|\| !canEdit;/,
+  'workflow operations helper should share the same history/permission read-only predicate'
+);
+assert.match(
+  workflowOperationsHookSource,
+  /if \(isWorkflowStoreReadOnly\(\)\) return null;[\s\S]*let finalData/,
+  'workflow node creation operations should not add nodes without workflow.update'
+);
+assert.match(
+  workflowOperationsHookSource,
+  /const deleteNodeSafe = useCallback\([\s\S]*if \(isWorkflowStoreReadOnly\(\)\) return false;/,
+  'workflow delete operation should not remove nodes without workflow.update'
+);
+assert.match(
+  workflowOperationsHookSource,
+  /const pasteClipboardAtPointer = useCallback\(\(\) => \{[\s\S]*if \(isWorkflowStoreReadOnly\(\)\) return;/,
+  'workflow paste operation should not mutate the graph without workflow.update'
+);
+assert.match(
+  workflowOperationsHookSource,
+  /const duplicateNode = useCallback\([\s\S]*if \(isWorkflowStoreReadOnly\(\)\) return;/,
+  'workflow duplicate operation should not mutate the graph without workflow.update'
+);
+assert.match(
+  workflowOperationsHookSource,
+  /const handleResetWorkflow = useCallback\(\(\) => \{[\s\S]*if \(isWorkflowStoreReadOnly\(\)\) return;/,
+  'workflow reset operation should not mutate the graph without workflow.update'
 );
 assert.match(
   workflowCanvasWithDndSource,
