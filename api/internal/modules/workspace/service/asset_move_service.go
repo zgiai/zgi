@@ -112,14 +112,37 @@ func (s *WorkspaceAssetMoveService) previewWithDB(ctx context.Context, db *gorm.
 		seen[seenKey] = struct{}{}
 
 		permission, supportedPermission := assetMovePermissionForType(requestItem.Type)
+		var targetPrecheckPermission workspace_model.WorkspacePermissionCode
 		if len(targetBlockers) == 0 && supportedPermission {
-			if err := s.requireAssetMovePermission(ctx, organizationID, item.TargetWorkspaceID, accountID, permission); err != nil {
+			if requestItem.Type == AssetMoveTypeAgent {
+				var err error
+				targetPrecheckPermission, err = s.requireAnyAssetMovePermission(
+					ctx,
+					organizationID,
+					item.TargetWorkspaceID,
+					accountID,
+					workspace_model.WorkspacePermissionAgentMove,
+					workspace_model.WorkspacePermissionWorkflowMove,
+				)
+				if err != nil {
+					return nil, err
+				}
+			} else if err := s.requireAssetMovePermission(ctx, organizationID, item.TargetWorkspaceID, accountID, permission); err != nil {
 				return nil, err
 			}
 		}
 
 		if len(targetBlockers) == 0 && requestItem.Type != "" && requestItem.ID != "" {
 			if err := s.previewAsset(ctx, db, organizationID, requestItem, &item); err != nil {
+				return nil, err
+			}
+		}
+
+		if requestItem.Type == AssetMoveTypeAgent {
+			permission = agentMovePermissionForType(item.ResolvedAgentType)
+		}
+		if len(targetBlockers) == 0 && supportedPermission && requestItem.Type == AssetMoveTypeAgent && item.ResolvedAgentID != "" && targetPrecheckPermission != permission {
+			if err := s.requireAssetMovePermission(ctx, organizationID, item.TargetWorkspaceID, accountID, permission); err != nil {
 				return nil, err
 			}
 		}
@@ -153,6 +176,22 @@ func assetMovePermissionForType(assetType string) (workspace_model.WorkspacePerm
 	}
 }
 
+func agentMovePermissionForType(agentType string) workspace_model.WorkspacePermissionCode {
+	if isWorkflowRuntimeAssetType(agentType) {
+		return workspace_model.WorkspacePermissionWorkflowMove
+	}
+	return workspace_model.WorkspacePermissionAgentMove
+}
+
+func isWorkflowRuntimeAssetType(agentType string) bool {
+	switch strings.ToUpper(strings.TrimSpace(agentType)) {
+	case "WORKFLOW", "CONVERSATIONAL_WORKFLOW", "CONVERSATIONAL_AGENT":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *WorkspaceAssetMoveService) requireAssetMovePermission(ctx context.Context, organizationID, workspaceID, accountID string, permission workspace_model.WorkspacePermissionCode) error {
 	if s.organizationService == nil {
 		return ErrAssetMovePermissionDenied
@@ -165,6 +204,22 @@ func (s *WorkspaceAssetMoveService) requireAssetMovePermission(ctx context.Conte
 		return ErrAssetMovePermissionDenied
 	}
 	return nil
+}
+
+func (s *WorkspaceAssetMoveService) requireAnyAssetMovePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissions ...workspace_model.WorkspacePermissionCode) (workspace_model.WorkspacePermissionCode, error) {
+	if s.organizationService == nil {
+		return "", ErrAssetMovePermissionDenied
+	}
+	for _, permission := range permissions {
+		allowed, err := s.organizationService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, permission)
+		if err != nil {
+			return "", err
+		}
+		if allowed {
+			return permission, nil
+		}
+	}
+	return "", ErrAssetMovePermissionDenied
 }
 
 func (s *WorkspaceAssetMoveService) loadTargetWorkspace(ctx context.Context, db *gorm.DB, organizationID, workspaceID string) (*workspace_model.Workspace, []string, error) {
@@ -206,12 +261,13 @@ func (s *WorkspaceAssetMoveService) previewAsset(ctx context.Context, db *gorm.D
 
 func (s *WorkspaceAssetMoveService) previewAgent(ctx context.Context, db *gorm.DB, organizationID, agentID string, item *dto.WorkspaceAssetMovePreviewItem) error {
 	var agent struct {
-		ID       string
-		TenantID string
+		ID        string
+		TenantID  string
+		AgentType string
 	}
 	err := db.WithContext(ctx).
 		Table("agents").
-		Select("id, tenant_id").
+		Select("id, tenant_id, agent_type").
 		Where("id = ? AND deleted_at IS NULL", agentID).
 		First(&agent).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -222,6 +278,7 @@ func (s *WorkspaceAssetMoveService) previewAgent(ctx context.Context, db *gorm.D
 		return err
 	}
 	item.ResolvedAgentID = agent.ID
+	item.ResolvedAgentType = agent.AgentType
 	if err := s.attachAndCheckSourceWorkspace(ctx, db, organizationID, agent.TenantID, item); err != nil {
 		return err
 	}

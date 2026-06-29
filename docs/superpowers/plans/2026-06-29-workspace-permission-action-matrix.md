@@ -33,6 +33,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-29: Workspace asset-move service now resolves `agents.agent_type` before final permission checks for `agent` move requests. Shared asset-move UI may continue submitting type `agent`, but backend source/target workspace checks require `workflow.move` for workflow runtime agents and `agent.move` for ordinary agents.
 - 2026-06-29: Agent/workflow create and legacy tenant move backend checks were tightened by runtime type. Creating workflow resources now requires `workflow.create` instead of `agent.create`; legacy `UpdateAgent` workspace changes require the matching `agent.move` or `workflow.move` permission in addition to update access, and the handler no longer performs a destination `agent.update` precheck that could reject workflow move users incorrectly.
 - 2026-06-29: Added an idempotent migration data fix for already-migrated databases. Workspace role-template permission snapshots and non-owner workspace member snapshots are canonicalized again, expanding old aggregate inputs into fine action permissions while dropping retired `workspace.*`, `dashboard.*`, `prompt.*`, `content_parse.*`, and compatibility-only aggregate codes from stored editable snapshots.
 - 2026-06-29: Workspace member list/detail/extension permission responses now return displayable canonical asset permissions. Old stored snapshots can still authorize through compatibility expansion, but API responses no longer expose retired `workspace.*`/`dashboard.*` codes or deprecated aggregate asset codes such as `agent.manage`, `database.ai_query`, and `file.upload_create` to frontend member-permission UI.
@@ -74,6 +75,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Verification Log
 
+- 2026-06-29: `go test ./internal/modules/workspace/service -run "TestWorkspaceAssetMove"` passed after making asset move permission checks branch by resolved agent/workflow runtime type.
 - 2026-06-29: `pnpm type-check` passed.
 - 2026-06-29: Targeted ESLint passed for changed agent/workflow/file permission UI files; reran for `agent-runtime/header.tsx`, `agent-runtime/use-agent-runtime-page-model.tsx`, `agent-runtime` prompt/orchestration/section read-only files, and `agent-detail-routes.ts` after runtime-access/header/read-only alignment.
 - 2026-06-29: `pnpm test:route-access` passed after preserving the workflow-only API-key/docs detail route contract and adding agent runtime publish-dropdown/runtime-access plus runtime-config read-only assertions.

@@ -25,6 +25,7 @@ type WorkspaceAssetMovePreviewItem struct {
 	Blockers          []string                     `json:"blockers"`
 	Warnings          []string                     `json:"warnings"`
 	ResolvedAgentID   string                       `json:"-"`
+	ResolvedAgentType string                       `json:"-"`
 	TargetFolderID    string                       `json:"-"`
 	FromWorkspaceID   string                       `json:"-"`
 	TargetWorkspaceID string                       `json:"-"`

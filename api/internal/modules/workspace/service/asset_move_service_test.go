@@ -14,10 +14,11 @@ import (
 )
 
 type stubAssetMoveOrgService struct {
-	allowed         bool
-	err             error
-	deniedWorkspace string
-	checks          []assetMovePermissionCheck
+	allowed            bool
+	allowedPermissions map[workspace_model.WorkspacePermissionCode]bool
+	err                error
+	deniedWorkspace    string
+	checks             []assetMovePermissionCheck
 }
 
 type assetMovePermissionCheck struct {
@@ -39,6 +40,9 @@ func (s *stubAssetMoveOrgService) CheckWorkspacePermission(ctx context.Context, 
 	}
 	if s.deniedWorkspace != "" && s.deniedWorkspace == workspaceID {
 		return false, nil
+	}
+	if s.allowedPermissions != nil {
+		return s.allowedPermissions[permission], nil
 	}
 	return s.allowed, nil
 }
@@ -142,9 +146,7 @@ func TestWorkspaceAssetMovePreviewBlocksTargetOutsideOrganization(t *testing.T) 
 func TestWorkspaceAssetMovePreviewBlocksSourceOutsideOrganization(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	expectWorkspaceLookup(mock, "ws-2", "org-1", "normal")
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, tenant_id FROM "agents" WHERE id = $1 AND deleted_at IS NULL ORDER BY "agents"."id" LIMIT $2`)).
-		WithArgs("agent-1", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id"}).AddRow("agent-1", "ws-1"))
+	expectAgentPreview(mock, "agent-1", "ws-1", "AGENT")
 	expectWorkspaceLookup(mock, "ws-1", "org-2", "normal")
 	expectWorkspaceLookup(mock, "ws-1", "org-2", "normal")
 
@@ -157,6 +159,37 @@ func TestWorkspaceAssetMovePreviewBlocksSourceOutsideOrganization(t *testing.T) 
 	require.NoError(t, err)
 	require.False(t, preview.Movable)
 	require.Contains(t, preview.Items[0].Blockers, "agent is outside current organization")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWorkspaceAssetMovePreviewWorkflowAgentRequiresWorkflowMovePermission(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	expectWorkspaceLookup(mock, "ws-2", "org-1", "normal")
+	expectAgentPreview(mock, "workflow-agent-1", "ws-1", "WORKFLOW")
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, graph FROM "workflows" WHERE agent_id = $1 OR app_id = $2`)).
+		WithArgs("workflow-agent-1", "workflow-agent-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "graph"}))
+
+	orgService := &stubAssetMoveOrgService{
+		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
+			workspace_model.WorkspacePermissionAgentMove:    true,
+			workspace_model.WorkspacePermissionWorkflowMove: false,
+		},
+	}
+	svc := NewWorkspaceAssetMoveService(db, orgService)
+
+	_, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
+		TargetWorkspaceID: "ws-2",
+		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeAgent, ID: "workflow-agent-1"}},
+	})
+
+	require.ErrorIs(t, err, ErrAssetMovePermissionDenied)
+	require.Equal(t, []assetMovePermissionCheck{
+		{organizationID: "org-1", workspaceID: "ws-2", accountID: "acct-1", permission: workspace_model.WorkspacePermissionAgentMove},
+		{organizationID: "org-1", workspaceID: "ws-2", accountID: "acct-1", permission: workspace_model.WorkspacePermissionWorkflowMove},
+	}, orgService.checks)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -185,9 +218,7 @@ func TestWorkspaceAssetMovePreviewBlocksDatasetTargetFolderOutsideTargetWorkspac
 func TestWorkspaceAssetMovePreviewBlocksSameWorkspaceForAgent(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, tenant_id FROM "agents" WHERE id = $1 AND deleted_at IS NULL ORDER BY "agents"."id" LIMIT $2`)).
-		WithArgs("agent-1", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id"}).AddRow("agent-1", "ws-1"))
+	expectAgentPreview(mock, "agent-1", "ws-1", "AGENT")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 
@@ -267,9 +298,7 @@ func TestWorkspaceAssetMoveAgentMoveUpdatesRelatedTablesAndAudit(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
 	expectWorkspaceLookup(mock, "ws-2", "org-1", "normal")
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, tenant_id FROM "agents" WHERE id = $1 AND deleted_at IS NULL ORDER BY "agents"."id" LIMIT $2`)).
-		WithArgs("agent-1", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id"}).AddRow("agent-1", "ws-1"))
+	expectAgentPreview(mock, "agent-1", "ws-1", "AGENT")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, graph FROM "workflows" WHERE agent_id = $1 OR app_id = $2`)).
@@ -351,6 +380,12 @@ func expectWorkspaceLookup(mock sqlmock.Sqlmock, workspaceID, orgID, status stri
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "workspaces" WHERE id = $1 ORDER BY "workspaces"."id" LIMIT $2`)).
 		WithArgs(workspaceID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "organization_id", "status"}).AddRow(workspaceID, workspaceID, orgID, status))
+}
+
+func expectAgentPreview(mock sqlmock.Sqlmock, agentID, workspaceID, agentType string) {
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, tenant_id, agent_type FROM "agents" WHERE id = $1 AND deleted_at IS NULL ORDER BY "agents"."id" LIMIT $2`)).
+		WithArgs(agentID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "agent_type"}).AddRow(agentID, workspaceID, agentType))
 }
 
 func expectDatasetPreview(mock sqlmock.Sqlmock, datasetID, orgID, workspaceID string) {
