@@ -874,14 +874,15 @@ func skillLoopShouldBlockRepeatedLoadedNavigation(prepared *PreparedChat, skillI
 	}
 	return consoleNavigationRouteAlreadyAvailable(prepared.parts, href) ||
 		clientActionContinuationLoadedRoute(prepared.parts, href) ||
+		(prepared.Message != nil && clientActionMetadataHasActiveRoute(prepared.Message.Metadata, href)) ||
 		(prepared.Message != nil && clientActionMetadataHasCompletedRoute(prepared.Message.Metadata, href))
 }
 
 func skillLoopRepeatedLoadedNavigationGuardResult(args map[string]interface{}) skillloop.FinalAnswerGuardResult {
 	href := normalizeConsoleNavigationGuardHref(skillToolCallArgumentString(args, "href"))
-	message := "The requested console route is already loaded in the current page context."
+	message := "The requested console route is already loaded or already pending in the current page context."
 	if href != "" {
-		message = "The requested console route " + href + " is already loaded in the current page context."
+		message = "The requested console route " + href + " is already loaded or already pending in the current page context."
 	}
 	return skillloop.FinalAnswerGuardResult{
 		SkillID:  skills.SkillConsoleNavigator,
@@ -4182,6 +4183,49 @@ func clientActionMetadataHasCompletedRoute(metadata map[string]interface{}, href
 		}
 	}
 	return false
+}
+
+func clientActionMetadataHasActiveRoute(metadata map[string]interface{}, href string) bool {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if len(metadata) == 0 || href == "" {
+		return false
+	}
+	if clientActionRouteRecordActiveForTarget(governanceMapFromAny(metadata["client_action_continuation"]), href) {
+		return true
+	}
+	for _, action := range mapSliceFromAny(metadata["client_actions"]) {
+		if clientActionRouteRecordActiveForTarget(action, href) {
+			return true
+		}
+	}
+	for _, invocation := range skillInvocationsFromMetadata(metadata["skill_invocations"]) {
+		if strings.TrimSpace(stringFromAny(invocation["kind"])) != "client_action" {
+			continue
+		}
+		if clientActionRouteRecordActiveForTarget(invocation, href) {
+			return true
+		}
+	}
+	return false
+}
+
+func clientActionRouteRecordActiveForTarget(action map[string]interface{}, href string) bool {
+	if len(action) == 0 || href == "" {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["action_type"])), "route_navigation") &&
+		!isConsoleNavigatorNavigateTool(stringFromAny(action["skill_id"]), stringFromAny(action["tool_name"])) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(action["status"]))) {
+	case clientActionStatusWaiting, clientActionStatusRunning, "pending", "loading", "streaming":
+	default:
+		return false
+	}
+	if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(action["href"]), href) {
+		return true
+	}
+	return consoleNavigationResultMatchesTarget(governanceMapFromAny(action["result"]), href)
 }
 
 func consoleNavigationResultMatchesTarget(result map[string]interface{}, href string) bool {

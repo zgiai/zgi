@@ -1730,6 +1730,61 @@ func TestSkillLoopPlanToolGuardBlocksRouteAlreadyLoadedByMessageMetadata(t *test
 	}
 }
 
+func TestSkillLoopPlanToolGuardBlocksRouteAlreadyPendingByMessageMetadata(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "save the generated file to file management",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillFileManager},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"client_action_continuation": map[string]interface{}{
+				"action_id":   "route_navigation:/console/files",
+				"action_type": "route_navigation",
+				"status":      clientActionStatusWaiting,
+				"skill_id":    skills.SkillConsoleNavigator,
+				"tool_name":   "navigate",
+				"href":        "/console/files",
+			},
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate"),
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillConsoleNavigator,
+						"tool_name": "navigate",
+					},
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"),
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillFileManager,
+						"tool_name": "save_file_to_management",
+					},
+				},
+				"step_status": map[string]interface{}{
+					operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate"):           operationPlanStepStatusPending,
+					operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"): operationPlanStepStatusPending,
+				},
+			},
+		}},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillConsoleNavigator,
+		ToolName:  "navigate",
+		Arguments: map[string]interface{}{"href": "/console/files"},
+	})
+	if !blocked {
+		t.Fatal("console-navigator/navigate repeated pending metadata route was allowed")
+	}
+	if !strings.Contains(result.SystemMessage, "already loaded or already pending") {
+		t.Fatalf("SystemMessage = %q, want pending-route guidance", result.SystemMessage)
+	}
+}
+
 func TestSkillLoopPlanToolGuardAllowsSpecificRouteAfterCompletedParentRoute(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
