@@ -44,6 +44,12 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
   // Permissions
   const { hasAnyPermission } = useAccountPermissions();
   const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
+  const canViewRecords = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.recordView,
+    ...DATABASE_PERMISSION_ACTIONS.recordCreate,
+    ...DATABASE_PERMISSION_ACTIONS.recordUpdate,
+    ...DATABASE_PERMISSION_ACTIONS.recordDelete,
+  ]);
 
   const { columns, isLoading, isFetching } = useDbTableColumns(dbId, tableId, {
     includeSystemFields: true,
@@ -139,11 +145,13 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
           </Button>
         ) : (
           <div className="flex items-center gap-2">
-            <Button asChild variant="outline">
-              <Link href={`/console/db/${dbId}/table/${tableId}`} title={t('actions.viewData')}>
-                {t('actions.viewData')}
-              </Link>
-            </Button>
+            {canViewRecords && (
+              <Button asChild variant="outline">
+                <Link href={`/console/db/${dbId}/table/${tableId}`} title={t('actions.viewData')}>
+                  {t('actions.viewData')}
+                </Link>
+              </Button>
+            )}
             {canManageSchema && (
               <Button asChild className="bg-highlight text-white hover:bg-highlight/90">
                 <Link

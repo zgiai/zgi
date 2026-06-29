@@ -34,6 +34,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-30: Database table structure now hides the "view data" shortcut unless the caller has the same record-readable permission group required by the table record direct page. Schema-only users remain on the structure surface instead of being sent to a denied data page.
 - 2026-06-30: Knowledge-base document-to-file links now respect file-detail reachability. The documents file-ref panel only renders source-file links when the caller has an existing-file readable/action permission, and hit-testing document-detail links now use the same document-readable permission group as the direct document page.
 - 2026-06-30: File list related-resource pills now share the backend `file.related.view` boundary. Users without the related-resource action no longer see a clickable relation count that would be rejected by the related-resource endpoint; the list shows a neutral placeholder instead.
 - 2026-06-30: File related-resource backend endpoints now require the exact `file.related.view` action instead of broad file-readable permissions. Returned related datasets and the summary document count are filtered by the target knowledge-base read permission group, so file relation visibility no longer leaks knowledge bases the caller cannot read.
@@ -161,6 +162,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Verification Log
 
+- 2026-06-30: `pnpm test:route-access`, `pnpm exec eslint scripts/test-route-access.mjs src/components/db/table-columns/index.tsx`, and `pnpm type-check` passed after gating the database table-structure "view data" shortcut by record-readable permissions.
 - 2026-06-30: `pnpm test:route-access`, `pnpm exec eslint scripts/test-route-access.mjs src/app/console/dataset/[datasetId]/documents/page.tsx src/components/datasets/document/dataset-file-ref-panel.tsx src/components/datasets/hit-testing/components/result-item.tsx`, and `pnpm type-check` passed after aligning knowledge-base file-ref source links and hit-testing document links with their target direct-page permission gates.
 - 2026-06-30: `pnpm test:route-access`, `pnpm exec eslint scripts/test-route-access.mjs src/components/files/file-list.tsx`, and `pnpm type-check` passed after aligning the file-list related-resource pill with `FILE_PERMISSION_ACTIONS.relatedView`.
 - 2026-06-30: `go test ./internal/modules/file_process/handler -run "TestGetRelatedResources|TestAuthorizeFileViewAccess"` and `pnpm test:route-access` passed after tightening file related-resource authorization to `file.related.view` and adding knowledge-base read-permission filtering for returned related datasets/document counts.

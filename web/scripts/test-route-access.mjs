@@ -377,6 +377,14 @@ const dbTableDataComponentPath = path.join(
   'table-data',
   'index.tsx'
 );
+const dbTableColumnsComponentPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'db',
+  'table-columns',
+  'index.tsx'
+);
 const excelImportShellPath = path.join(
   rootDir,
   'src',
@@ -1515,6 +1523,7 @@ const dbTableStructureSource = fs.readFileSync(dbTableStructurePath, 'utf8');
 const dbTableCreateSource = fs.readFileSync(dbTableCreatePath, 'utf8');
 const dbTableDataSource = fs.readFileSync(dbTableDataPath, 'utf8');
 const dbTableDataComponentSource = fs.readFileSync(dbTableDataComponentPath, 'utf8');
+const dbTableColumnsComponentSource = fs.readFileSync(dbTableColumnsComponentPath, 'utf8');
 const excelImportShellSource = fs.readFileSync(excelImportShellPath, 'utf8');
 const datasourceHandlerSource = fs.readFileSync(datasourceHandlerPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
@@ -2342,6 +2351,16 @@ assert.match(
   dbTableStructureSource,
   /const canOpenSchema\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaView[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaManage/,
   'database table structure direct page should require schema view or schema manage'
+);
+assert.match(
+  dbTableColumnsComponentSource,
+  /const canViewRecords\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordCreate[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordUpdate[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordDelete/,
+  'database table structure view-data link should use the same record-readable permission group as the table record direct page'
+);
+assert.match(
+  dbTableColumnsComponentSource,
+  /canViewRecords && \([\s\S]*href=\{`\/console\/db\/\$\{dbId\}\/table\/\$\{tableId\}`\}/,
+  'database table structure should hide the view-data link when records cannot be opened'
 );
 assert.match(
   dbTableCreateSource,
