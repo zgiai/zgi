@@ -58,6 +58,9 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
   const canStopWorkflowRun = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop);
   const canDebugWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
   const canPublishWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish);
+  const canConfigureWorkflowRuntime = hasAnyPermission(
+    WORKFLOW_PERMISSION_ACTIONS.runtimeConfigManage
+  );
   const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
   const canManageWorkflowRuntimeAccess = hasAnyPermission(
     WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
@@ -99,6 +102,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
         canStopWorkflowRun ||
         canDebugWorkflow ||
         canPublishWorkflow ||
+        canConfigureWorkflowRuntime ||
         canManageWorkflowRuntimeAccess
       : false;
   const canManageRuntimeAccess = isAgentRuntime

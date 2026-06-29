@@ -235,14 +235,27 @@ export function useAgentRuntimePageModel(agentId: string) {
   const { locale } = useLocale();
   const t = useT('agents.agentRuntime');
   const tRoot = useT();
-  const { agent, isLoading: isAgentLoading } = useAgent(agentId);
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
+  const canImportAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.import);
+  const canUpdateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.update);
   const canConfigureAgentRuntime = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage);
   const canPublishAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.publish);
   const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
+  const canOpenAgentRuntimeEditor =
+    canCreateAgent ||
+    canImportAgent ||
+    canUpdateAgent ||
+    canConfigureAgentRuntime ||
+    canPublishAgent ||
+    canManageAgentRuntimeAccess;
+  const { agent, isLoading: isAgentLoading } = useAgent(agentId, canOpenAgentRuntimeEditor);
   const canBindKnowledge = hasAnyPermission(KNOWLEDGE_BASE_READ_PERMISSION_CODES);
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
-  const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(agentId);
+  const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(
+    agentId,
+    canOpenAgentRuntimeEditor
+  );
   const { data: allSkills = [], isLoading: isSkillsLoading } = useAIChatSkills();
   const { data: workflowCandidatesResponse, isLoading: isWorkflowCandidatesLoading } = useQuery({
     queryKey: AGENT_KEYS.workflowBindingCandidates(agentId),
@@ -1028,6 +1041,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     locale,
     t,
     isLoading: isAgentLoading || isConfigLoading || isPermissionsLoading,
+    canOpenAgentRuntimeEditor,
     leaveGuardNode,
     isTwoXlViewport,
     previewSheetOpen,

@@ -59,6 +59,7 @@ export default function AgentEntryPage({ params }: AgentEntryPageProps) {
       hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop) ||
       hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug) ||
       hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish) ||
+      hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeConfigManage) ||
       hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage));
   const canViewAgentLogs = hasAnyPermission(AGENT_PERMISSION_ACTIONS.logsView);
   const canManageWorkflowRuntimeAccess = hasAnyPermission(

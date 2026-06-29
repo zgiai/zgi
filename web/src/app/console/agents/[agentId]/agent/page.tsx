@@ -7,6 +7,7 @@ import {
   AgentRuntimeWorkbench,
   useAgentRuntimePageModel,
 } from '@/components/agents/agent-runtime';
+import { PermissionDeniedState } from '@/components/common/permission-gate-state';
 
 interface AgentRuntimePageProps {
   params: Promise<{ agentId: string }>;
@@ -18,6 +19,10 @@ export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
 
   if (model.isLoading) {
     return <AgentRuntimeLoadingState />;
+  }
+
+  if (!model.canOpenAgentRuntimeEditor) {
+    return <PermissionDeniedState />;
   }
 
   return (

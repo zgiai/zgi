@@ -305,6 +305,16 @@ const agentEntryPagePath = path.join(
   '[agentId]',
   'page.tsx'
 );
+const agentRuntimePagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'agent',
+  'page.tsx'
+);
 const agentLayoutPath = path.join(
   rootDir,
   'src',
@@ -386,6 +396,16 @@ const agentLogsPagePath = path.join(
   'agents',
   '[agentId]',
   'logs',
+  'page.tsx'
+);
+const workflowEditorPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'agents',
+  '[agentId]',
+  'workflow',
   'page.tsx'
 );
 const workflowEditorPath = path.join(rootDir, 'src', 'components', 'workflow', 'index.tsx');
@@ -1691,6 +1711,7 @@ const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
 const agentEntryPageSource = fs.readFileSync(agentEntryPagePath, 'utf8');
+const agentRuntimePageSource = fs.readFileSync(agentRuntimePagePath, 'utf8');
 const agentLayoutSource = fs.readFileSync(agentLayoutPath, 'utf8');
 const datasetPageSource = fs.readFileSync(datasetPagePath, 'utf8');
 const datasetCardSource = fs.readFileSync(datasetCardPath, 'utf8');
@@ -1703,6 +1724,7 @@ const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, '
 const createFromTemplateHookSource = fs.readFileSync(createFromTemplateHookPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
+const workflowEditorPageSource = fs.readFileSync(workflowEditorPagePath, 'utf8');
 assert.match(
   accountServiceSource,
   /export type RuntimeResourceList = 'app_center' \| 'built_in_workflows';/,
@@ -2067,6 +2089,26 @@ assert.match(
   agentRuntimeHeaderSource,
   /if \(!canManageRuntimeAccess\) \{[\s\S]*?return;[\s\S]*?\}/,
   'agent runtime webapp status mutation should require runtime access management'
+);
+assert.match(
+  agentRuntimePageModelSource,
+  /const canOpenAgentRuntimeEditor[\s\S]*canCreateAgent[\s\S]*canImportAgent[\s\S]*canUpdateAgent[\s\S]*canConfigureAgentRuntime[\s\S]*canPublishAgent[\s\S]*canManageAgentRuntimeAccess/,
+  'agent runtime page model should require an editor-related agent permission before opening the runtime editor'
+);
+assert.match(
+  agentRuntimePageModelSource,
+  /useAgent\(agentId,\s*canOpenAgentRuntimeEditor\)/,
+  'agent runtime page model should not fetch agent metadata before editor access is present'
+);
+assert.match(
+  agentRuntimePageModelSource,
+  /useAgentConfig\(\s*agentId,\s*canOpenAgentRuntimeEditor\s*\)/,
+  'agent runtime page model should not fetch runtime config before editor access is present'
+);
+assert.match(
+  agentRuntimePageSource,
+  /if \(!model\.canOpenAgentRuntimeEditor\) \{[\s\S]*<PermissionDeniedState \/>/,
+  'agent runtime direct page should deny direct access without editor-related agent permission'
 );
 assert.match(
   agentRuntimePageModelSource,
@@ -2490,8 +2532,28 @@ assert.match(
 );
 assert.match(
   agentEntryPageSource,
-  /canOpenWorkflowEditor[\s\S]*canCreateWorkflow[\s\S]*canImportWorkflow[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
+  /canOpenWorkflowEditor[\s\S]*canCreateWorkflow[\s\S]*canImportWorkflow[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
   'workflow root should keep create/import users able to open the detail page'
+);
+assert.match(
+  workflowEditorPageSource,
+  /const canOpenWorkflowEditor[\s\S]*canCreateWorkflow[\s\S]*canImportWorkflow[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
+  'workflow editor direct page should require an editor-related workflow permission'
+);
+assert.match(
+  workflowEditorPageSource,
+  /useAgent\(agentId,\s*canOpenWorkflowEditor\)/,
+  'workflow editor direct page should not fetch agent metadata before editor access is present'
+);
+assert.match(
+  workflowEditorPageSource,
+  /if \(!canOpenWorkflowEditor\) \{[\s\S]*<PermissionDeniedState \/>/,
+  'workflow editor direct page should deny direct access without editor-related workflow permission'
+);
+assert.match(
+  workflowEditorPageSource,
+  /supportsWorkflowDetailPages\(agent\.data\.agent_type\)/,
+  'workflow editor direct page should only render the workflow editor for workflow runtimes'
 );
 assert.match(
   agentSidebarSource,
@@ -2502,6 +2564,11 @@ assert.match(
   agentSidebarSource,
   /canCreateAgent[\s\S]*canImportAgent[\s\S]*canUpdateAgent[\s\S]*canConfigureAgentRuntime[\s\S]*canPublishAgent[\s\S]*canManageAgentRuntimeAccess/,
   'agent sidebar should keep create/import/update users able to open the detail page'
+);
+assert.match(
+  agentSidebarSource,
+  /const canConfigureWorkflowRuntime\s*=\s*hasAnyPermission\(\s*WORKFLOW_PERMISSION_ACTIONS\.runtimeConfigManage\s*\)[\s\S]*canConfigureWorkflowRuntime[\s\S]*canManageWorkflowRuntimeAccess/,
+  'agent sidebar should keep workflow runtime-config managers able to open the editor page'
 );
 assert.match(
   agentSidebarSource,
