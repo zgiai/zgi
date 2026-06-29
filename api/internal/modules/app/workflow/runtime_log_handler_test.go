@@ -393,11 +393,13 @@ func (errRuntimeLogAgentNotFound) Error() string {
 }
 
 type fakeRuntimeLogWorkspacePermissionChecker struct {
-	allowed bool
-	checked bool
+	allowed        bool
+	checked        bool
+	lastPermission workspace_model.WorkspacePermissionCode
 }
 
-func (c *fakeRuntimeLogWorkspacePermissionChecker) CheckWorkspacePermission(_ context.Context, _ string, _ string, _ string, _ workspace_model.WorkspacePermissionCode) (bool, error) {
+func (c *fakeRuntimeLogWorkspacePermissionChecker) CheckWorkspacePermission(_ context.Context, _ string, _ string, _ string, permission workspace_model.WorkspacePermissionCode) (bool, error) {
 	c.checked = true
+	c.lastPermission = permission
 	return c.allowed, nil
 }

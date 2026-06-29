@@ -141,6 +141,10 @@ func (h *AgentHistoryDispatchHandler) requireBuilderAgentHistoryView(c *gin.Cont
 }
 
 func (h *AgentHistoryDispatchHandler) runtimeScope(c *gin.Context) (runtimeservice.Scope, uuid.UUID, bool) {
+	if h == nil || h.agentsRepo == nil || h.chatRuntime == nil {
+		response.Fail(c, response.ErrNotFound)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {
 		response.Fail(c, response.ErrUnauthorized)
@@ -157,25 +161,41 @@ func (h *AgentHistoryDispatchHandler) runtimeScope(c *gin.Context) (runtimeservi
 		return runtimeservice.Scope{}, uuid.Nil, false
 	}
 
-	var workspaceID *uuid.UUID
-	if h.agentsRepo != nil {
-		if ag, err := h.agentsRepo.GetByID(c.Request.Context(), agentID.String()); err == nil {
-			value := ag.TenantID
-			workspaceID = &value
-		}
+	agent, err := h.agentsRepo.GetByID(c.Request.Context(), agentID.String())
+	if err != nil || agent == nil || agent.AgentsType != "AGENT" {
+		response.Fail(c, response.ErrNotFound)
+		return runtimeservice.Scope{}, uuid.Nil, false
 	}
-	if workspaceID == nil {
-		if raw := strings.TrimSpace(util.GetWorkspaceID(c)); raw != "" {
-			if parsed, err := uuid.Parse(raw); err == nil {
-				workspaceID = &parsed
-			}
-		}
+	workspaceID := agent.TenantID
+	if h.workflowRuns == nil {
+		response.Fail(c, response.ErrSystemError)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
+	permissionChecker := h.workflowRuns.getWorkspacePermissionChecker()
+	if permissionChecker == nil {
+		response.Fail(c, response.ErrSystemError)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
+	hasPermission, err := permissionChecker.CheckWorkspacePermission(
+		c.Request.Context(),
+		organizationID.String(),
+		workspaceID.String(),
+		accountID.String(),
+		workspace_model.WorkspacePermissionAgentLogsView,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return runtimeservice.Scope{}, uuid.Nil, false
 	}
 
 	return runtimeservice.Scope{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
-		WorkspaceID:    workspaceID,
+		WorkspaceID:    &workspaceID,
 	}, agentID, true
 }
 

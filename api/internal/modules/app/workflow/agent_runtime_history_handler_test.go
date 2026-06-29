@@ -1039,7 +1039,9 @@ func setupRuntimeHistoryHandler(t *testing.T) (*AgentHistoryDispatchHandler, *fa
 			AgentsType: "AGENT",
 			WebAppID:   uuid.New(),
 		}},
-		nil,
+		&WorkflowHandler{
+			workspacePermissionChecker: &fakeRuntimeLogWorkspacePermissionChecker{allowed: true},
+		},
 		nil,
 		nil,
 		service,

@@ -124,44 +124,95 @@ func TestAgentHistoryDispatchRuntimeLogsRequiresWorkflowLogsViewBeforeBindingReq
 	}
 }
 
-func TestAgentHistoryDispatchRuntimeAgentBypassesBuilderHistoryPermission(t *testing.T) {
+func TestAgentHistoryDispatchRuntimeAgentRequiresAgentLogsView(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	agentID := uuid.New()
 	workspaceID := uuid.New()
 	accountID := uuid.New()
 	organizationID := uuid.New()
-	service := newFakeRuntimeHistoryService()
-	service.addConversation(&runtimemodel.Conversation{
-		ID:             uuid.New(),
-		OrganizationID: organizationID,
-		WorkspaceID:    &workspaceID,
-		AccountID:      accountID,
-		CallerType:     runtimemodel.ConversationCallerAgent,
-		CallerID:       &agentID,
-		Source:         runtimemodel.ConversationSourceConsole,
-	})
-	handler := NewAgentHistoryDispatchHandler(
-		&agentHistoryAgentRepo{agent: &agentspkg.Agent{
-			ID:         agentID,
-			TenantID:   workspaceID,
-			AgentsType: "AGENT",
-		}},
-		nil,
-		nil,
-		nil,
-		service,
-	)
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/"+agentID.String()+"/conversations", nil)
-	ctx.Params = gin.Params{{Key: "agent_id", Value: agentID.String()}}
-	ctx.Set("account_id", accountID.String())
-	util.SetOrganizationID(ctx, organizationID.String())
 
-	handler.GetConversations(ctx)
+	endpoints := []struct {
+		name       string
+		method     func(*AgentHistoryDispatchHandler, *gin.Context)
+		methodName string
+		path       string
+		params     gin.Params
+		body       string
+	}{
+		{
+			name:       "conversations",
+			method:     (*AgentHistoryDispatchHandler).GetConversations,
+			methodName: http.MethodGet,
+			path:       "/agents/" + agentID.String() + "/conversations",
+			params:     gin.Params{{Key: "agent_id", Value: agentID.String()}},
+		},
+		{
+			name:       "conversation detail",
+			method:     (*AgentHistoryDispatchHandler).GetConversationDetail,
+			methodName: http.MethodGet,
+			path:       "/agents/" + agentID.String() + "/conversations/" + uuid.NewString(),
+			params:     gin.Params{{Key: "agent_id", Value: agentID.String()}, {Key: "conversation_id", Value: uuid.NewString()}},
+		},
+		{
+			name:       "chat messages",
+			method:     (*AgentHistoryDispatchHandler).GetChatMessages,
+			methodName: http.MethodGet,
+			path:       "/agents/" + agentID.String() + "/chat-messages",
+			params:     gin.Params{{Key: "agent_id", Value: agentID.String()}},
+		},
+		{
+			name:       "runtime logs",
+			method:     (*AgentHistoryDispatchHandler).GetRuntimeLogs,
+			methodName: http.MethodPost,
+			path:       "/agents/" + agentID.String() + "/runtime-logs",
+			params:     gin.Params{{Key: "agent_id", Value: agentID.String()}},
+			body:       `{"broken":`,
+		},
+	}
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	for _, endpoint := range endpoints {
+		t.Run(endpoint.name, func(t *testing.T) {
+			service := newFakeRuntimeHistoryService()
+			service.addConversation(&runtimemodel.Conversation{
+				ID:             uuid.New(),
+				OrganizationID: organizationID,
+				WorkspaceID:    &workspaceID,
+				AccountID:      accountID,
+				CallerType:     runtimemodel.ConversationCallerAgent,
+				CallerID:       &agentID,
+				Source:         runtimemodel.ConversationSourceConsole,
+			})
+			permissionChecker := &agentHistoryPermissionChecker{allowed: false}
+			handler := NewAgentHistoryDispatchHandler(
+				&agentHistoryAgentRepo{agent: &agentspkg.Agent{
+					ID:         agentID,
+					TenantID:   workspaceID,
+					AgentsType: "AGENT",
+				}},
+				&WorkflowHandler{workspacePermissionChecker: permissionChecker},
+				nil,
+				nil,
+				service,
+			)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(endpoint.methodName, endpoint.path, strings.NewReader(endpoint.body))
+			ctx.Params = endpoint.params
+			ctx.Set("account_id", accountID.String())
+			util.SetOrganizationID(ctx, organizationID.String())
+
+			endpoint.method(handler, ctx)
+
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+			}
+			if !permissionChecker.checked {
+				t.Fatalf("expected agent.logs.view permission check")
+			}
+			if permissionChecker.lastPermission != workspace_model.WorkspacePermissionAgentLogsView {
+				t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionAgentLogsView)
+			}
+		})
 	}
 }
 
