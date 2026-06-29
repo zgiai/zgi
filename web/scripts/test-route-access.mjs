@@ -433,6 +433,40 @@ const workflowCreateNodeModalHostPath = path.join(
   'create-node-modal',
   'index.tsx'
 );
+const workflowContextMenuPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'ui',
+  'context-menu.tsx'
+);
+const workflowBottomToolbarPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'ui',
+  'workflow-bottom-toolbar.tsx'
+);
+const workflowKeyboardHookPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'hooks',
+  'use-workflow-keyboard.ts'
+);
+const workflowApprovalManagerPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'approval',
+  'manager',
+  'index.tsx'
+);
 const workflowCreateNodeModalPath = path.join(
   rootDir,
   'src',
@@ -929,6 +963,10 @@ const workflowCreateNodeModalHostSource = fs.readFileSync(
   workflowCreateNodeModalHostPath,
   'utf8'
 );
+const workflowContextMenuSource = fs.readFileSync(workflowContextMenuPath, 'utf8');
+const workflowBottomToolbarSource = fs.readFileSync(workflowBottomToolbarPath, 'utf8');
+const workflowKeyboardHookSource = fs.readFileSync(workflowKeyboardHookPath, 'utf8');
+const workflowApprovalManagerSource = fs.readFileSync(workflowApprovalManagerPath, 'utf8');
 const workflowCreateNodeModalSource = fs.readFileSync(workflowCreateNodeModalPath, 'utf8');
 const workflowCreationActionsSource = fs.readFileSync(workflowCreationActionsPath, 'utf8');
 assert.match(
@@ -2582,6 +2620,51 @@ assert.match(
   workflowCreationActionsSource,
   /if \(isReadOnly \|\| isWorkflowCreationReadOnly\(\)\) \{[\s\S]*onClose\(\);[\s\S]*return;/,
   'workflow creation actions should reject modal selections in read-only mode'
+);
+assert.match(
+  workflowContextMenuSource,
+  /const effectiveDisabled = disabled \|\| isReadOnly;/,
+  'workflow context menu should combine parent disabled state with workflow.update edit authority'
+);
+assert.match(
+  workflowContextMenuSource,
+  /const handleAddNote = useCallback\(\(\) => \{[\s\S]*if \(effectiveDisabled\) return;[\s\S]*addNode\(\{ type: 'note', text: '' \}, position\);/,
+  'workflow context menu add-note action should not add nodes without workflow.update'
+);
+assert.match(
+  workflowContextMenuSource,
+  /\{!effectiveDisabled && \(isCanvasMenuOpen \|\| contextNodeId\) && \(/,
+  'workflow context menu should not render action menu without workflow.update'
+);
+assert.match(
+  workflowBottomToolbarSource,
+  /const isReadOnly = mode === 'history' \|\| !canEdit;/,
+  'workflow bottom toolbar should derive read-only state from permission edit authority as well as history mode'
+);
+assert.match(
+  workflowBottomToolbarSource,
+  /const canUndo = !isReadOnly && historyPast\.length > 0;/,
+  'workflow bottom toolbar undo action should be disabled without workflow.update'
+);
+assert.match(
+  workflowBottomToolbarSource,
+  /const handleAddNote = \(\) => \{[\s\S]*if \(isReadOnly\) return;[\s\S]*addNode\(\{ type: 'note', text: '' \}, center\);/,
+  'workflow bottom toolbar add-note action should not add nodes without workflow.update'
+);
+assert.match(
+  workflowKeyboardHookSource,
+  /const isReadOnly = Boolean\(disabled \|\| mode === 'history' \|\| !canEdit\);/,
+  'workflow keyboard shortcuts should derive read-only state from permission edit authority as well as caller disabled state'
+);
+assert.match(
+  workflowKeyboardHookSource,
+  /if \(isReadOnly\) return;[\s\S]*document\.addEventListener\('keydown', handleKeyDown\);/,
+  'workflow keyboard shortcuts should not attach mutation shortcuts without workflow.update'
+);
+assert.match(
+  workflowApprovalManagerSource,
+  /if \(readOnly\) \{[\s\S]*pendingActionHandleUpdatesRef\.current = new Map\(\);[\s\S]*return;[\s\S]*\}/,
+  'workflow approval action handle edge sync should not flush graph mutations in read-only mode'
 );
 
 for (const appCenterPath of appCenterPaths) {

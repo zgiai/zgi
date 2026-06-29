@@ -548,6 +548,11 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
       actionHandleUpdateTimerRef.current = null;
     }
 
+    if (readOnly) {
+      pendingActionHandleUpdatesRef.current = new Map();
+      return;
+    }
+
     const updates = pendingActionHandleUpdatesRef.current;
     if (updates.size === 0) return;
     pendingActionHandleUpdatesRef.current = new Map();
@@ -566,7 +571,7 @@ export function ApprovalManager({ id: nodeId, className, readOnly = false }: App
     if (hasChangedEdge) {
       setEdges(nextEdges);
     }
-  }, [nodeId, setEdges]);
+  }, [nodeId, readOnly, setEdges]);
 
   const flushApprovalPendingEdits = React.useCallback(() => {
     flushApprovalDraft();
