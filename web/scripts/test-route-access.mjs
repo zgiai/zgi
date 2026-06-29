@@ -78,6 +78,15 @@ const contentParsePlaygroundPath = path.join(
   'playground',
   'content-parse-playground.tsx'
 );
+const contentParseProviderSettingsHandlerPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'contentparse',
+  'handler',
+  'provider_settings_handler.go'
+);
 const dashboardLayoutPath = path.join(rootDir, 'src', 'app', 'dashboard', 'layout.tsx');
 const dashboardModelSettingsPath = path.join(
   rootDir,
@@ -98,6 +107,17 @@ const dashboardParserSettingsPath = path.join(
   'page.tsx'
 );
 const dashboardChannelPagePath = path.join(rootDir, 'src', 'app', 'dashboard', 'channel', 'page.tsx');
+const llmRouterPath = path.join(repoRootDir, 'api', 'internal', 'modules', 'llm', 'router.go');
+const llmDefaultModelRoutesPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'llm',
+  'defaultmodel',
+  'handler',
+  'routes.go'
+);
 const accountCapabilitiesHookPath = path.join(rootDir, 'src', 'hooks', 'use-account-capabilities.ts');
 const taskPagePath = path.join(rootDir, 'src', 'app', 'console', 'work', 'task', 'page.tsx');
 const taskWorkbenchPath = path.join(
@@ -1134,10 +1154,16 @@ const promptDetailPageSource = fs.readFileSync(promptDetailPagePath, 'utf8');
 const promptUsageSummarySource = fs.readFileSync(promptUsageSummaryPath, 'utf8');
 const contentParsePageSource = fs.readFileSync(contentParsePagePath, 'utf8');
 const contentParsePlaygroundSource = fs.readFileSync(contentParsePlaygroundPath, 'utf8');
+const contentParseProviderSettingsHandlerSource = fs.readFileSync(
+  contentParseProviderSettingsHandlerPath,
+  'utf8'
+);
 const dashboardLayoutSource = fs.readFileSync(dashboardLayoutPath, 'utf8');
 const dashboardModelSettingsSource = fs.readFileSync(dashboardModelSettingsPath, 'utf8');
 const dashboardParserSettingsSource = fs.readFileSync(dashboardParserSettingsPath, 'utf8');
 const dashboardChannelPageSource = fs.readFileSync(dashboardChannelPagePath, 'utf8');
+const llmRouterSource = fs.readFileSync(llmRouterPath, 'utf8');
+const llmDefaultModelRoutesSource = fs.readFileSync(llmDefaultModelRoutesPath, 'utf8');
 const accountCapabilitiesHookSource = fs.readFileSync(accountCapabilitiesHookPath, 'utf8');
 const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
@@ -1433,6 +1459,21 @@ for (const [dashboardSource, dashboardName] of [
     `dashboard ${dashboardName} page should not reintroduce retired workspace/content/dashboard permissions`
   );
 }
+assert.match(
+  llmDefaultModelRoutesSource,
+  /admin\.Use\(middleware\.EnterpriseAdminOrOwnerRequired\(\)\)[\s\S]*admin\.PUT\("\/:use_case", handler\.Upsert\)[\s\S]*admin\.DELETE\("\/:use_case", handler\.Delete\)/,
+  'LLM default-model writes should stay behind organization owner/admin middleware'
+);
+assert.match(
+  contentParseProviderSettingsHandlerSource,
+  /admin := rg\.Group\("\/provider-settings"\)[\s\S]*admin\.Use\(middleware\.EnterpriseAdminOrOwnerRequired\(\)\)[\s\S]*admin\.GET\("", h\.List\)[\s\S]*admin\.PUT\("\/:provider_key", h\.Upsert\)/,
+  'content-parse provider settings read/write should stay behind organization owner/admin middleware'
+);
+assert.match(
+  llmRouterSource,
+  /tenantChannelsAdmin := tenantChannels\.Group\(""\)[\s\S]*tenantChannelsAdmin\.Use\(middleware\.EnterpriseAdminOrOwnerRequired\(\)\)[\s\S]*tenantChannelsAdmin\.POST\("", m\.ChannelHandler\.CreateRoute\)[\s\S]*tenantChannelsAdmin\.PUT\("\/:id", m\.ChannelHandler\.UpdateRoute\)[\s\S]*tenantChannelsAdmin\.DELETE\("\/:id", m\.ChannelHandler\.DeleteRoute\)[\s\S]*tenantChannelsAdmin\.POST\("\/:id\/toggle", m\.ChannelHandler\.ToggleRoute\)/,
+  'LLM channel configuration mutations should stay behind organization owner/admin middleware'
+);
 assert.match(
   taskPageSource,
   /<TaskWorkbench \/>/,
