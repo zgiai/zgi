@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zgiai/zgi/api/internal/dto"
+	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	file_model "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -757,6 +758,137 @@ func TestGetFileStatisticsScopesServiceToVisibleWorkspaces(t *testing.T) {
 	}
 }
 
+func TestGetRelatedResourcesRequiresFileRelatedPermissionBeforeServiceLookup(t *testing.T) {
+	fileID := "11111111-1111-1111-1111-111111111111"
+	fileWorkspaceID := "file-workspace"
+	folderService := &fileResourcePermissionFolderService{}
+	fileService := &fileAccessFileService{
+		files: map[string]*dto.UploadFile{
+			fileID: {
+				ID:             fileID,
+				OrganizationID: "org-1",
+				WorkspaceID:    &fileWorkspaceID,
+				CreatedBy:      "account-2",
+			},
+		},
+	}
+	permissionChecker := &fileAccessPermissionChecker{
+		allowedByWorkspace: map[string]map[workspace_model.WorkspacePermissionCode]bool{
+			fileWorkspaceID: {
+				workspace_model.WorkspacePermissionFilePreview: true,
+			},
+		},
+	}
+	handler := &FileResourceHandler{
+		fileFolderService: folderService,
+		fileService:       fileService,
+		enterpriseService: &fileResourcePermissionChecker{checker: permissionChecker},
+	}
+	c, recorder := newFileAccessTestContext("account-1", "org-1")
+	c.Request = httptest.NewRequest(http.MethodGet, "/files/"+fileID+"/related-resources", nil)
+	c.Params = gin.Params{{Key: "file_id", Value: fileID}}
+
+	handler.GetRelatedResources(c)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	if folderService.getRelatedDocumentsCalls != 0 || folderService.getRelatedDatasetsCalls != 0 {
+		t.Fatalf("related service calls = documents:%d datasets:%d, want 0",
+			folderService.getRelatedDocumentsCalls,
+			folderService.getRelatedDatasetsCalls,
+		)
+	}
+	wantPermissions := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionFileRelatedView}
+	if !reflect.DeepEqual(permissionChecker.lastPermissions, wantPermissions) {
+		t.Fatalf("permissions = %#v, want %#v", permissionChecker.lastPermissions, wantPermissions)
+	}
+}
+
+func TestGetRelatedResourcesFiltersKnowledgeBaseResourcesByReadPermission(t *testing.T) {
+	fileID := "11111111-1111-1111-1111-111111111111"
+	fileWorkspaceID := "file-workspace"
+	visibleDatasetWorkspaceID := "visible-dataset-workspace"
+	hiddenDatasetWorkspaceID := "hidden-dataset-workspace"
+	folderService := &fileResourcePermissionFolderService{
+		relatedDocuments: []*dataset_model.Document{
+			{ID: "doc-visible", DatasetID: "dataset-visible"},
+			{ID: "doc-hidden", DatasetID: "dataset-hidden"},
+		},
+		relatedDatasets: []*dataset_model.Dataset{
+			{ID: "dataset-visible", OrganizationID: "org-1", WorkspaceID: visibleDatasetWorkspaceID, Name: "Visible"},
+			{ID: "dataset-hidden", OrganizationID: "org-1", WorkspaceID: hiddenDatasetWorkspaceID, Name: "Hidden"},
+		},
+	}
+	fileService := &fileAccessFileService{
+		files: map[string]*dto.UploadFile{
+			fileID: {
+				ID:             fileID,
+				OrganizationID: "org-1",
+				WorkspaceID:    &fileWorkspaceID,
+				CreatedBy:      "account-2",
+			},
+		},
+	}
+	handler := &FileResourceHandler{
+		fileFolderService: folderService,
+		fileService:       fileService,
+		enterpriseService: &fileResourcePermissionChecker{
+			checker: &fileAccessPermissionChecker{
+				allowedByWorkspace: map[string]map[workspace_model.WorkspacePermissionCode]bool{
+					fileWorkspaceID: {
+						workspace_model.WorkspacePermissionFileRelatedView: true,
+					},
+					visibleDatasetWorkspaceID: {
+						workspace_model.WorkspacePermissionKnowledgeBaseDocumentView: true,
+					},
+				},
+			},
+		},
+	}
+	c, recorder := newFileAccessTestContext("account-1", "org-1")
+	c.Request = httptest.NewRequest(http.MethodGet, "/files/"+fileID+"/related-resources", nil)
+	c.Params = gin.Params{{Key: "file_id", Value: fileID}}
+
+	handler.GetRelatedResources(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if folderService.getRelatedDocumentsCalls != 1 || folderService.getRelatedDatasetsCalls != 1 {
+		t.Fatalf("related service calls = documents:%d datasets:%d, want 1 each",
+			folderService.getRelatedDocumentsCalls,
+			folderService.getRelatedDatasetsCalls,
+		)
+	}
+
+	var body struct {
+		Data struct {
+			Data struct {
+				Documents struct {
+					Count int `json:"count"`
+				} `json:"documents"`
+				Datasets struct {
+					Count int                     `json:"count"`
+					Items []dataset_model.Dataset `json:"items"`
+				} `json:"datasets"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Data.Data.Documents.Count != 1 {
+		t.Fatalf("documents count = %d, want 1", body.Data.Data.Documents.Count)
+	}
+	if body.Data.Data.Datasets.Count != 1 {
+		t.Fatalf("datasets count = %d, want 1", body.Data.Data.Datasets.Count)
+	}
+	if len(body.Data.Data.Datasets.Items) != 1 || body.Data.Data.Datasets.Items[0].ID != "dataset-visible" {
+		t.Fatalf("datasets = %#v, want only dataset-visible", body.Data.Data.Datasets.Items)
+	}
+}
+
 func newFileAccessTestContext(accountID, organizationID string) (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -847,13 +979,17 @@ func containsWorkspacePermission(permissions []workspace_model.WorkspacePermissi
 
 type fileResourcePermissionFolderService struct {
 	service.FileFolderService
-	folders                 map[string]*file_model.FileFolder
-	partialWorkspaces       map[string][]string
-	updateFolderCalls       int
-	moveFilesToFolderCalls  int
-	statistics              *dto.FileStatisticsResponse
-	getFileStatisticsCalls  int
-	lastVisibleWorkspaceIDs []string
+	folders                  map[string]*file_model.FileFolder
+	partialWorkspaces        map[string][]string
+	updateFolderCalls        int
+	moveFilesToFolderCalls   int
+	statistics               *dto.FileStatisticsResponse
+	getFileStatisticsCalls   int
+	lastVisibleWorkspaceIDs  []string
+	relatedDocuments         []*dataset_model.Document
+	relatedDatasets          []*dataset_model.Dataset
+	getRelatedDocumentsCalls int
+	getRelatedDatasetsCalls  int
 }
 
 func (f *fileResourcePermissionFolderService) GetFolderByID(ctx context.Context, id string) (*file_model.FileFolder, error) {
@@ -885,6 +1021,16 @@ func (f *fileResourcePermissionFolderService) GetFileStatistics(ctx context.Cont
 		return f.statistics, nil
 	}
 	return &dto.FileStatisticsResponse{}, nil
+}
+
+func (f *fileResourcePermissionFolderService) GetRelatedDocuments(ctx context.Context, fileID string) ([]*dataset_model.Document, error) {
+	f.getRelatedDocumentsCalls++
+	return append([]*dataset_model.Document(nil), f.relatedDocuments...), nil
+}
+
+func (f *fileResourcePermissionFolderService) GetRelatedDatasets(ctx context.Context, fileID string) ([]*dataset_model.Dataset, error) {
+	f.getRelatedDatasetsCalls++
+	return append([]*dataset_model.Dataset(nil), f.relatedDatasets...), nil
 }
 
 type fileResourcePermissionChecker struct {

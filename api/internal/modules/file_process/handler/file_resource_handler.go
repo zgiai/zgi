@@ -12,6 +12,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -708,7 +709,7 @@ func (h *FileResourceHandler) GetRelatedDocuments(c *gin.Context) {
 		return
 	}
 
-	if _, ok := authorizeFileViewAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+	if _, ok := authorizeFileRelatedAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 		return
 	}
 
@@ -718,6 +719,16 @@ func (h *FileResourceHandler) GetRelatedDocuments(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
+	relatedDatasets, err := h.fileFolderService.GetRelatedDatasets(c.Request.Context(), fileID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	_, visibleDatasetIDs, ok := h.filterRelatedDatasetsByPermission(c, relatedDatasets)
+	if !ok {
+		return
+	}
+	documents = filterRelatedDocumentsByDatasetIDs(documents, visibleDatasetIDs)
 
 	response.Success(c, gin.H{
 		"file_id": fileID,
@@ -739,7 +750,7 @@ func (h *FileResourceHandler) GetRelatedDatasets(c *gin.Context) {
 		return
 	}
 
-	if _, ok := authorizeFileViewAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+	if _, ok := authorizeFileRelatedAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 		return
 	}
 
@@ -747,6 +758,10 @@ func (h *FileResourceHandler) GetRelatedDatasets(c *gin.Context) {
 	datasets, err := h.fileFolderService.GetRelatedDatasets(c.Request.Context(), fileID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	datasets, _, ok := h.filterRelatedDatasetsByPermission(c, datasets)
+	if !ok {
 		return
 	}
 
@@ -771,12 +786,12 @@ func (h *FileResourceHandler) GetRelatedResources(c *gin.Context) {
 		return
 	}
 
-	if _, ok := authorizeFileViewAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
+	if _, ok := authorizeFileRelatedAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 		return
 	}
 
-	// Get related documents count
-	relatedDocumentCount, err := h.fileFolderService.GetRelatedDocumentCount(c.Request.Context(), fileID)
+	// Get related documents and datasets before filtering them by the target asset permissions.
+	relatedDocuments, err := h.fileFolderService.GetRelatedDocuments(c.Request.Context(), fileID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
@@ -788,12 +803,17 @@ func (h *FileResourceHandler) GetRelatedResources(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
+	relatedDatasets, visibleDatasetIDs, ok := h.filterRelatedDatasetsByPermission(c, relatedDatasets)
+	if !ok {
+		return
+	}
+	relatedDocuments = filterRelatedDocumentsByDatasetIDs(relatedDocuments, visibleDatasetIDs)
 
 	response.Success(c, gin.H{
 		"file_id": fileID,
 		"data": map[string]interface{}{
 			"documents": gin.H{
-				"count": relatedDocumentCount,
+				"count": len(relatedDocuments),
 			},
 			"datasets": gin.H{
 				"count": len(relatedDatasets),
@@ -802,6 +822,100 @@ func (h *FileResourceHandler) GetRelatedResources(c *gin.Context) {
 			// Can be extended with other resource types
 		},
 	})
+}
+
+func (h *FileResourceHandler) filterRelatedDatasetsByPermission(c *gin.Context, datasets []*dataset_model.Dataset) ([]*dataset_model.Dataset, map[string]struct{}, bool) {
+	visibleDatasetIDs := make(map[string]struct{}, len(datasets))
+	if len(datasets) == 0 {
+		return datasets, visibleDatasetIDs, true
+	}
+
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return nil, nil, false
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return nil, nil, false
+	}
+	if h.enterpriseService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return nil, nil, false
+	}
+
+	permissions := fileRelatedKnowledgeBasePermissionCodes()
+	visibleDatasets := make([]*dataset_model.Dataset, 0, len(datasets))
+	for _, dataset := range datasets {
+		if dataset == nil || strings.TrimSpace(dataset.WorkspaceID) == "" {
+			continue
+		}
+		if dataset.OrganizationID != "" && dataset.OrganizationID != organizationID {
+			continue
+		}
+
+		hasPermission, err := h.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
+			c.Request.Context(),
+			organizationID,
+			dataset.WorkspaceID,
+			accountID,
+			permissions...,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return nil, nil, false
+		}
+		if !hasPermission {
+			continue
+		}
+
+		visibleDatasets = append(visibleDatasets, dataset)
+		visibleDatasetIDs[dataset.ID] = struct{}{}
+	}
+
+	return visibleDatasets, visibleDatasetIDs, true
+}
+
+func filterRelatedDocumentsByDatasetIDs(documents []*dataset_model.Document, visibleDatasetIDs map[string]struct{}) []*dataset_model.Document {
+	if len(documents) == 0 {
+		return documents
+	}
+	if len(visibleDatasetIDs) == 0 {
+		return []*dataset_model.Document{}
+	}
+
+	filtered := make([]*dataset_model.Document, 0, len(documents))
+	for _, document := range documents {
+		if document == nil {
+			continue
+		}
+		if _, ok := visibleDatasetIDs[document.DatasetID]; !ok {
+			continue
+		}
+		filtered = append(filtered, document)
+	}
+	return filtered
+}
+
+func fileRelatedKnowledgeBasePermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderView,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
+		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseMove,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseIndexManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+	}
 }
 
 // ListAllFiles handles GET /file-folders/all-files

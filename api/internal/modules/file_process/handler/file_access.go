@@ -55,6 +55,16 @@ func authorizeFilePreviewAccess(c *gin.Context, fileService fileMetadataReader, 
 	)
 }
 
+func authorizeFileRelatedAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
+	return authorizeFileAccess(
+		c,
+		fileService,
+		permissionChecker,
+		fileID,
+		workspace_model.WorkspacePermissionFileRelatedView,
+	)
+}
+
 func authorizeFileManageAccess(c *gin.Context, fileService fileMetadataReader, permissionChecker fileWorkspacePermissionChecker, fileID string) (*dto.UploadFile, bool) {
 	return authorizeFileAccess(
 		c,

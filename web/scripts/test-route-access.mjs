@@ -256,6 +256,15 @@ const fileAccessPath = path.join(
   'handler',
   'file_access.go'
 );
+const fileResourceHandlerPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'file_process',
+  'handler',
+  'file_resource_handler.go'
+);
 const filePagePath = path.join(rootDir, 'src', 'app', 'console', 'files', 'page.tsx');
 const fileDetailPagePath = path.join(
   rootDir,
@@ -1468,6 +1477,7 @@ const fileHandlerSource = fs.readFileSync(fileHandlerPath, 'utf8');
 const imagePreviewHandlerSource = fs.readFileSync(imagePreviewHandlerPath, 'utf8');
 const fileSpreadsheetPreviewSource = fs.readFileSync(fileSpreadsheetPreviewPath, 'utf8');
 const fileAccessSource = fs.readFileSync(fileAccessPath, 'utf8');
+const fileResourceHandlerSource = fs.readFileSync(fileResourceHandlerPath, 'utf8');
 const filePageSource = fs.readFileSync(filePagePath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
@@ -2181,6 +2191,35 @@ assert.doesNotMatch(
   /router\.push\(`\/console\/dataset\/\$\{resource\.id\}\/documents`\)/,
   'file related-resource dataset links should not assume document access'
 );
+for (const handlerName of ['GetRelatedDocuments', 'GetRelatedDatasets', 'GetRelatedResources']) {
+  const relatedHandlerSlice = sourceSliceBetween(
+    fileResourceHandlerSource,
+    `func (h *FileResourceHandler) ${handlerName}`,
+    handlerName === 'GetRelatedResources'
+      ? 'func (h *FileResourceHandler) filterRelatedDatasetsByPermission'
+      : `// ${handlerName === 'GetRelatedDocuments' ? 'GetRelatedDatasets' : 'GetRelatedResources'}`
+  );
+  assert.match(
+    relatedHandlerSlice,
+    /authorizeFileRelatedAccess/,
+    `file ${handlerName} should require the exact file.related.view action`
+  );
+  assert.doesNotMatch(
+    relatedHandlerSlice,
+    /authorizeFileViewAccess/,
+    `file ${handlerName} should not use broad file readable permissions`
+  );
+}
+assert.match(
+  fileResourceHandlerSource,
+  /filterRelatedDatasetsByPermission[\s\S]*CheckWorkspaceOrganizationAnyPermission/,
+  'file related-resource datasets should be filtered by the target knowledge-base workspace permissions'
+);
+assert.match(
+  fileResourceHandlerSource,
+  /GetRelatedResources[\s\S]*filterRelatedDocumentsByDatasetIDs/,
+  'file related-resource summary should filter document counts by visible related datasets'
+);
 assert.match(
   dbPageSource,
   /const canCreateDatabase\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.create\)/,
@@ -2875,6 +2914,21 @@ assert.deepEqual(
   knowledgeBaseReadBackendCodes,
   knowledgeBaseReadFrontendCodes,
   'knowledge-base read frontend group should match backend knowledgeBaseReadPermissionCodes helper'
+);
+const fileRelatedKnowledgeBaseBackendCodes = [
+  ...new Set(
+    collectGoWorkspacePermissionHelperCodes(
+      fileResourceHandlerSource,
+      workspacePermissionConstants,
+      'fileRelatedKnowledgeBasePermissionCodes',
+      'workspace_model'
+    )
+  ),
+].sort();
+assert.deepEqual(
+  fileRelatedKnowledgeBaseBackendCodes,
+  knowledgeBaseReadBackendCodes,
+  'file related-resource knowledge-base filter should match backend knowledgeBaseReadPermissionCodes helper'
 );
 assert.match(
   accountServiceSource,
