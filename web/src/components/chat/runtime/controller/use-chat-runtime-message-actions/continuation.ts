@@ -135,6 +135,11 @@ export function useWorkflowContinuationActions({
         return;
       }
       if (!conversation || !sourceMessage) return;
+      const alreadyContinuingMessage =
+        (currentState.isSending || conversation.runtime_status === 'streaming') &&
+        (previousStreaming?.status === 'streaming' ||
+          conversation.active_message_id === messageId);
+      if (alreadyContinuingMessage) return;
       const sourceConversation: AIChatConversation = conversation;
       let streamStarted = false;
       let startError: Error | null = null;
