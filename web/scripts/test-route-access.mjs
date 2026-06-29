@@ -215,6 +215,15 @@ const agentRuntimeDatabaseSectionPath = path.join(
   'sections',
   'database-section.tsx'
 );
+const agentRuntimeKnowledgeSectionPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'agents',
+  'agent-runtime',
+  'sections',
+  'knowledge-section.tsx'
+);
 const agentsPagePath = path.join(rootDir, 'src', 'app', 'console', 'agents', 'page.tsx');
 const createAgentDialogPath = path.join(
   rootDir,
@@ -970,6 +979,20 @@ assert.match(
   /export const DATABASE_TABLE_METADATA_PERMISSION_CODES = \[[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaView[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView[\s\S]*DATABASE_PERMISSION_ACTIONS\.importAnalyze[\s\S]*DATABASE_PERMISSION_ACTIONS\.tablePromptView[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead/,
   'database table metadata permission group should include schema, record, import, table prompt, and AI-query readers'
 );
+assert.match(
+  permissionConstantsSource,
+  /export const KNOWLEDGE_BASE_READ_PERMISSION_CODES = \[[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.folderView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.documentView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.segmentView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.graphView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.indexManage/,
+  'knowledge base runtime binding read group should mirror backend readable knowledge permissions'
+);
+assert.doesNotMatch(
+  sourceSliceBetween(
+    permissionConstantsSource,
+    'export const KNOWLEDGE_BASE_READ_PERMISSION_CODES = [',
+    '] as const satisfies readonly PermissionCode[];'
+  ),
+  /KNOWLEDGE_BASE_PERMISSION_ACTIONS\.(?:create|retrievalTest)\b/,
+  'knowledge base runtime binding read group should not include pure create or retrieval-test permissions'
+);
 const permissionAllCodesSource = sourceSliceBetween(
   permissionConstantsSource,
   'export const ALL_PERMISSION_CODES = [',
@@ -1108,6 +1131,10 @@ const agentRuntimeOrchestrationPanelSource = fs.readFileSync(
 );
 const agentRuntimeDatabaseSectionSource = fs.readFileSync(
   agentRuntimeDatabaseSectionPath,
+  'utf8'
+);
+const agentRuntimeKnowledgeSectionSource = fs.readFileSync(
+  agentRuntimeKnowledgeSectionPath,
   'utf8'
 );
 const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
@@ -1506,6 +1533,41 @@ assert.match(
   agentRuntimeOrchestrationPanelSource,
   /<AgentRuntimeModelSection[\s\S]*?readOnly=\{readOnly\}/,
   'agent orchestration panel should forward read-only state into runtime sections'
+);
+assert.match(
+  agentRuntimePageModelSource,
+  /const canBindKnowledge\s*=\s*hasAnyPermission\(KNOWLEDGE_BASE_READ_PERMISSION_CODES\)/,
+  'agent runtime page model should derive knowledge binding access from the knowledge readable group'
+);
+assert.match(
+  agentRuntimePageModelSource,
+  /enabled:\s*Boolean\(datasetId\) && canBindKnowledge/,
+  'agent runtime selected knowledge detail queries should not run without knowledge binding access'
+);
+assert.match(
+  agentRuntimePageModelSource,
+  /enabled:\s*knowledgeDialogOpen && canBindKnowledge/,
+  'agent runtime knowledge selector should not list candidates without knowledge binding access'
+);
+assert.match(
+  agentRuntimePageModelSource,
+  /!canBindKnowledge[\s\S]*t\('knowledge\.bindingPermissionRequired'\)/,
+  'agent runtime selected knowledge fallbacks should show a permission warning when binding access is missing'
+);
+assert.match(
+  agentRuntimeOrchestrationPanelSource,
+  /<AgentRuntimeKnowledgeSection[\s\S]*?canBindKnowledge=\{canBindKnowledge\}/,
+  'agent orchestration panel should pass knowledge binding access to the knowledge section'
+);
+assert.match(
+  agentRuntimeKnowledgeSectionSource,
+  /readOnly=\{readOnly \|\| !canBindKnowledge\}/,
+  'agent runtime knowledge add action should be disabled without knowledge binding access'
+);
+assert.match(
+  agentRuntimeKnowledgeSectionSource,
+  /disabled=\{readOnly \|\| !canBindKnowledge\}/,
+  'agent runtime selected knowledge mutation controls should stay disabled without knowledge binding access'
 );
 assert.match(
   agentRuntimeDatabaseSectionSource,

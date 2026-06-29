@@ -1666,6 +1666,7 @@ const messages: AgentsMessages = {
       noDescription: '暂无描述',
       loadFailedName: '知识库不可用',
       loadFailedDescription: '知识库详情加载失败，关联关系已保留，请检查权限或知识库是否仍可用。',
+      bindingPermissionRequired: '需要具备知识库读取或维护权限，才能为智能体绑定知识库。',
     },
     database: {
       emptySelected: '还没有为这个智能体绑定数据库表。',

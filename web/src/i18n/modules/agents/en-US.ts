@@ -1767,6 +1767,8 @@ const messages = {
       loadFailedName: 'Unavailable knowledge',
       loadFailedDescription:
         'Failed to load this knowledge base. The link is kept, but please verify permissions or availability.',
+      bindingPermissionRequired:
+        'Knowledge base read or maintenance permission is required to bind knowledge bases to this Agent.',
     },
     database: {
       emptySelected: 'No database table has been bound to this Agent yet.',

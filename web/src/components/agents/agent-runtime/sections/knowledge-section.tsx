@@ -12,6 +12,7 @@ type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
 interface AgentRuntimeKnowledgeSectionProps {
   open: boolean;
   isDatasetsLoading: boolean;
+  canBindKnowledge: boolean;
   selectedKnowledgeDatasets: AgentKnowledgeDataset[];
   selectedKnowledgeDatasetIds: string[];
   readOnly?: boolean;
@@ -23,6 +24,7 @@ interface AgentRuntimeKnowledgeSectionProps {
 export function AgentRuntimeKnowledgeSection({
   open,
   isDatasetsLoading,
+  canBindKnowledge,
   selectedKnowledgeDatasets,
   selectedKnowledgeDatasetIds,
   readOnly = false,
@@ -39,12 +41,15 @@ export function AgentRuntimeKnowledgeSection({
       open={open}
       count={selectedKnowledgeDatasetIds.length}
       addLabel={t('knowledge.add')}
+      addTooltip={
+        canBindKnowledge ? undefined : t('knowledge.bindingPermissionRequired')
+      }
       helpText={t('knowledge.helpText')}
       emptyText={t('knowledge.emptySelected')}
       isLoading={isDatasetsLoading}
       onToggleSection={onToggleSection}
       onAdd={onOpenKnowledgeDialog}
-      readOnly={readOnly}
+      readOnly={readOnly || !canBindKnowledge}
     >
       <div className="space-y-2">
         {selectedKnowledgeDatasets.map(dataset => (
@@ -73,7 +78,7 @@ export function AgentRuntimeKnowledgeSection({
                 className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
                 aria-label={t('knowledge.remove', { name: dataset.name })}
                 onClick={() => onToggleKnowledgeDataset(dataset.id, false)}
-                disabled={readOnly}
+                disabled={readOnly || !canBindKnowledge}
               >
                 <Trash2 className="size-4" />
               </Button>

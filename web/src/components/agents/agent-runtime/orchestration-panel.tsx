@@ -36,6 +36,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   isSkillsLoading: boolean;
   isSkillConfigLoading: boolean;
   isDatasetsLoading: boolean;
+  canBindKnowledge: boolean;
   selectedKnowledgeDatasets: Dataset[];
   selectedKnowledgeDatasetIds: string[];
   databaseBindings: AgentDatabaseBinding[];
@@ -84,6 +85,7 @@ export function AgentRuntimeOrchestrationPanel({
   isSkillsLoading,
   isSkillConfigLoading,
   isDatasetsLoading,
+  canBindKnowledge,
   selectedKnowledgeDatasets,
   selectedKnowledgeDatasetIds,
   databaseBindings,
@@ -165,6 +167,7 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeKnowledgeSection
             open={openSections.knowledge}
             isDatasetsLoading={isDatasetsLoading}
+            canBindKnowledge={canBindKnowledge}
             selectedKnowledgeDatasets={selectedKnowledgeDatasets}
             selectedKnowledgeDatasetIds={selectedKnowledgeDatasetIds}
             readOnly={readOnly}
