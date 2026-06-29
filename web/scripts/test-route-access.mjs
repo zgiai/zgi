@@ -484,6 +484,33 @@ const datasetSettingsPagePath = path.join(
   'settings',
   'page.tsx'
 );
+const datasetAccessHandlerPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'dataset',
+  'handler',
+  'dataset_access.go'
+);
+const datasetDocumentHandlerPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'dataset',
+  'handler',
+  'document_handler.go'
+);
+const datasetSegmentHandlerPath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'dataset',
+  'handler',
+  'segment_handler.go'
+);
 const templateGalleryDialogPath = path.join(
   rootDir,
   'src',
@@ -1621,19 +1648,29 @@ assert.doesNotMatch(
   /hasPermission\(['"]workspace\.|hasAnyPermission\(\[['"]workspace\./,
   'scheduled-task workbench should not reintroduce ordinary workspace.* member permissions'
 );
-function getTaskHandlerMethodSource(methodName) {
-  const methodStart = `func (h *TaskHandler) ${methodName}(`;
-  const methodIndex = automationTaskHandlerSource.indexOf(methodStart);
-  assert.notEqual(methodIndex, -1, `automation handler should define ${methodName}`);
+function getGoFunctionSource(source, functionName) {
+  const functionStart = `func ${functionName}(`;
+  const functionIndex = source.indexOf(functionStart);
+  assert.notEqual(functionIndex, -1, `go source should define ${functionName}`);
 
-  const nextMethodIndex = automationTaskHandlerSource.indexOf(
-    '\nfunc (h *TaskHandler)',
+  const nextFunctionIndex = source.indexOf('\nfunc ', functionIndex + functionStart.length);
+  return source.slice(functionIndex, nextFunctionIndex === -1 ? source.length : nextFunctionIndex);
+}
+
+function getGoHandlerMethodSource(source, receiverType, methodName) {
+  const methodStart = `func (h *${receiverType}) ${methodName}(`;
+  const methodIndex = source.indexOf(methodStart);
+  assert.notEqual(methodIndex, -1, `${receiverType} should define ${methodName}`);
+
+  const nextMethodIndex = source.indexOf(
+    `\nfunc (h *${receiverType})`,
     methodIndex + methodStart.length
   );
-  return automationTaskHandlerSource.slice(
-    methodIndex,
-    nextMethodIndex === -1 ? automationTaskHandlerSource.length : nextMethodIndex
-  );
+  return source.slice(methodIndex, nextMethodIndex === -1 ? source.length : nextMethodIndex);
+}
+
+function getTaskHandlerMethodSource(methodName) {
+  return getGoHandlerMethodSource(automationTaskHandlerSource, 'TaskHandler', methodName);
 }
 
 for (const handlerName of ['GetTask', 'ListTasks', 'ListTaskRuns']) {
@@ -2273,6 +2310,9 @@ const datasetHitResultItemSource = fs.readFileSync(datasetHitResultItemPath, 'ut
 const datasetDetailRootPageSource = fs.readFileSync(datasetDetailRootPagePath, 'utf8');
 const datasetDetailLayoutSource = fs.readFileSync(datasetDetailLayoutPath, 'utf8');
 const datasetSettingsPageSource = fs.readFileSync(datasetSettingsPagePath, 'utf8');
+const datasetAccessHandlerSource = fs.readFileSync(datasetAccessHandlerPath, 'utf8');
+const datasetDocumentHandlerSource = fs.readFileSync(datasetDocumentHandlerPath, 'utf8');
+const datasetSegmentHandlerSource = fs.readFileSync(datasetSegmentHandlerPath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
 const createFromTemplateHookSource = fs.readFileSync(createFromTemplateHookPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
@@ -3092,6 +3132,199 @@ assert.match(
   /if \(!canUpdateDataset\) \{[\s\S]*t\('common\.accessDenied'\)/,
   'dataset settings direct page should deny access without knowledge_base.update'
 );
+for (const [helperName, permissionPattern, message] of [
+  [
+    'authorizeDatasetDocumentViewAccess',
+    /knowledgeBaseDocumentViewPermissionCodes\(\)\.\.\./,
+    'dataset document view helper should stay bound to document readable permissions',
+  ],
+  [
+    'authorizeDatasetDocumentUpdateAccess',
+    /workspace_model\.WorkspacePermissionKnowledgeBaseDocumentUpdate/,
+    'dataset document update helper should require knowledge_base.document.update',
+  ],
+  [
+    'authorizeDatasetDocumentDeleteAccess',
+    /workspace_model\.WorkspacePermissionKnowledgeBaseDocumentDelete/,
+    'dataset document delete helper should require knowledge_base.document.delete',
+  ],
+  [
+    'authorizeDatasetDocumentSegmentUpdateAccess',
+    /workspace_model\.WorkspacePermissionKnowledgeBaseSegmentUpdate/,
+    'dataset document-level segment update helper should require knowledge_base.segment.update',
+  ],
+  [
+    'authorizeDatasetDocumentSegmentDeleteAccess',
+    /workspace_model\.WorkspacePermissionKnowledgeBaseSegmentDelete/,
+    'dataset document-level segment delete helper should require knowledge_base.segment.delete',
+  ],
+  [
+    'authorizeDatasetSegmentViewAccess',
+    /knowledgeBaseSegmentViewPermissionCodes\(\)\.\.\./,
+    'dataset segment view helper should stay bound to segment readable permissions',
+  ],
+  [
+    'authorizeDatasetSegmentUpdateAccess',
+    /workspace_model\.WorkspacePermissionKnowledgeBaseSegmentUpdate/,
+    'dataset segment update helper should require knowledge_base.segment.update',
+  ],
+  [
+    'authorizeDatasetSegmentDeleteAccess',
+    /workspace_model\.WorkspacePermissionKnowledgeBaseSegmentDelete/,
+    'dataset segment delete helper should require knowledge_base.segment.delete',
+  ],
+]) {
+  assert.match(getGoFunctionSource(datasetAccessHandlerSource, helperName), permissionPattern, message);
+}
+for (const [handlerName, permissionPattern, message] of [
+  [
+    'GetDocumentList',
+    /authorizeDatasetViewAccess[\s\S]*documentService\.GetDocumentList/,
+    'dataset document list handler should require a visible knowledge-base permission before listing documents',
+  ],
+  [
+    'GetDocumentDetail',
+    /authorizeDatasetDocumentViewAccess[\s\S]*documentService\.GetDocumentDetail/,
+    'dataset document detail handler should require document view before reading details',
+  ],
+  [
+    'UpdateDocument',
+    /authorizeDatasetDocumentUpdateAccess[\s\S]*documentService\.UpdateDocument/,
+    'dataset document update handler should require document update before mutating metadata',
+  ],
+  [
+    'DeleteDocument',
+    /authorizeDatasetDocumentDeleteAccess[\s\S]*documentService\.DeleteDocuments/,
+    'dataset single document delete handler should require document delete',
+  ],
+  [
+    'DeleteDocuments',
+    /authorizeDatasetViewAccess[\s\S]*authorizeDatasetDocumentDeleteAccess[\s\S]*documentService\.DeleteDocuments/,
+    'dataset bulk document delete handler should check every target document with document delete',
+  ],
+  [
+    'GetDocumentIndexingStatus',
+    /authorizeDatasetDocumentViewAccess[\s\S]*documentService\.GetDocumentIndexingStatus/,
+    'dataset document indexing status should require document view',
+  ],
+  [
+    'GetDocumentProgress',
+    /authorizeDatasetDocumentViewAccess[\s\S]*documentService\.GetDocumentProgress/,
+    'dataset document progress should require document view',
+  ],
+  [
+    'RetryDocument',
+    /authorizeDatasetIndexManageAccess[\s\S]*authorizeDatasetDocumentUpdateAccess[\s\S]*documentService\.RetryDocuments/,
+    'dataset retry handler should require index management plus per-document update',
+  ],
+  [
+    'UpdateDocumentStatus',
+    /authorizeDatasetDocumentBatchUpdateAccess[\s\S]*authorizeDatasetDocumentUpdateAccess[\s\S]*documentService\.UpdateDocumentStatus/,
+    'dataset document status batch mutation should require document update for the dataset and every document',
+  ],
+]) {
+  assert.match(
+    getGoHandlerMethodSource(datasetDocumentHandlerSource, 'DocumentHandler', handlerName),
+    permissionPattern,
+    message
+  );
+}
+assert.match(
+  getGoFunctionSource(datasetSegmentHandlerSource, 'rejectDatasetSegmentMutation'),
+  /dataset segments must be edited from file management/,
+  'dataset segment mutation rejection should keep the file-management editing contract visible'
+);
+assert.match(
+  getGoHandlerMethodSource(datasetSegmentHandlerSource, 'SegmentHandler', 'GetDocumentSegments'),
+  /authorizeDatasetDocumentViewAccess[\s\S]*segmentService\.GetSegmentsByDocument/,
+  'dataset segment list handler should require document view before listing segments'
+);
+assert.match(
+  getGoHandlerMethodSource(datasetSegmentHandlerSource, 'SegmentHandler', 'GetChildChunks'),
+  /authorizeDatasetSegmentViewAccess[\s\S]*segmentService\.GetChildChunks/,
+  'dataset child-chunk list handler should require segment view'
+);
+assert.match(
+  getGoHandlerMethodSource(datasetSegmentHandlerSource, 'SegmentHandler', 'GetChildChunk'),
+  /authorizeDatasetChildChunkAccess[\s\S]*knowledgeBaseSegmentViewPermissionCodes\(\)\.\.\.[\s\S]*segmentService\.GetChildChunk/,
+  'dataset child-chunk detail handler should require segment view'
+);
+for (const handlerName of [
+  'DeleteDocumentSegments',
+  'CreateDocumentSegment',
+  'UpdateDocumentSegment',
+  'DeleteDocumentSegment',
+  'UpdateDocumentSegmentStatus',
+  'CreateChildChunk',
+  'UpdateChildChunk',
+  'DeleteChildChunk',
+]) {
+  assert.match(
+    getGoHandlerMethodSource(datasetSegmentHandlerSource, 'SegmentHandler', handlerName),
+    /rejectDatasetSegmentMutation\(c\)\s*return/,
+    `dataset ${handlerName} should remain disabled in favor of file-management edits`
+  );
+}
+for (const handlerName of [
+  'GetDocumentSegmentQuestion',
+  'ListDocumentSegmentQuestionsBySegment',
+]) {
+  assert.match(
+    getGoHandlerMethodSource(datasetSegmentHandlerSource, 'SegmentHandler', handlerName),
+    /authorizeDatasetSegmentViewAccess[\s\S]*segmentService\./,
+    `dataset ${handlerName} should require segment view`
+  );
+}
+for (const handlerName of [
+  'ListDocumentSegmentQuestionsByDocument',
+  'ListDocumentSegmentQuestionsByDataset',
+]) {
+  assert.match(
+    getGoHandlerMethodSource(datasetSegmentHandlerSource, 'SegmentHandler', handlerName),
+    /authorizeDataset(?:Document)?ViewAccess[\s\S]*segmentService\./,
+    `dataset ${handlerName} should require readable knowledge-base access`
+  );
+}
+for (const handlerName of [
+  'GenerateQuestionsForSegment',
+  'CreateDocumentSegmentQuestion',
+  'UpdateDocumentSegmentQuestion',
+  'BatchCreateDocumentSegmentQuestions',
+]) {
+  assert.match(
+    getGoHandlerMethodSource(datasetSegmentHandlerSource, 'SegmentHandler', handlerName),
+    /authorizeDatasetSegmentUpdateAccess[\s\S]*segmentService\./,
+    `dataset ${handlerName} should require segment update`
+  );
+}
+for (const [handlerName, permissionPattern, message] of [
+  [
+    'DeleteDocumentSegmentQuestion',
+    /authorizeDatasetSegmentDeleteAccess[\s\S]*segmentService\./,
+    'dataset single segment-question delete should require segment delete',
+  ],
+  [
+    'DeleteDocumentSegmentQuestionsBySegment',
+    /authorizeDatasetSegmentUpdateAccess[\s\S]*segmentService\./,
+    'dataset segment-question cleanup by segment should keep its existing segment update contract',
+  ],
+  [
+    'DeleteDocumentSegmentQuestionsByDocument',
+    /authorizeDatasetDocumentSegmentDeleteAccess[\s\S]*segmentService\./,
+    'dataset segment-question cleanup by document should require document-level segment delete',
+  ],
+  [
+    'DeleteDocumentSegmentQuestionsByDataset',
+    /authorizeDatasetSegmentDeleteAccessByDataset[\s\S]*segmentService\./,
+    'dataset segment-question cleanup by dataset should require segment delete on the dataset',
+  ],
+]) {
+  assert.match(
+    getGoHandlerMethodSource(datasetSegmentHandlerSource, 'SegmentHandler', handlerName),
+    permissionPattern,
+    message
+  );
+}
 assert.doesNotMatch(
   agentEntryPageSource,
   /function getAgentDefaultHref/,
