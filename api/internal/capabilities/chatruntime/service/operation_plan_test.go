@@ -45,6 +45,34 @@ func TestStreamingMessageMetadataIncludesOperationPlan(t *testing.T) {
 	}
 }
 
+func TestOperationPlanForCrossPageAgentCreateIncludesRouteAndCreate(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "请导航到智能体页面，并在当前工作空间创建两个临时测试 Agent 草稿，名称分别为 AICHAT-A 和 AICHAT-B。描述都写为：AIChat smoke。",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+	}
+
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-create")
+	plan := metadata["operation_plan"].(map[string]interface{})
+	if got := plan["intent"]; got != "manage_agent_asset" {
+		t.Fatalf("operation_plan intent = %#v, want manage_agent_asset; plan=%#v", got, plan)
+	}
+	target := mapFromOperationContext(plan["asset_target"])
+	if got := target["page"]; got != "/console/agents" {
+		t.Fatalf("operation_plan target_page = %#v, want /console/agents; plan=%#v", got, plan)
+	}
+	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate")); got != operationPlanStepStatusPending {
+		t.Fatalf("operation_plan steps = %#v, want console-navigator/navigate", plan["steps"])
+	}
+	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")); got != operationPlanStepStatusPending {
+		t.Fatalf("operation_plan steps = %#v, want agent-management/create_agent", plan["steps"])
+	}
+	if got := operationPlanStepStatusForTest(plan, operationPlanRouteStepID("/console/workspace", 1)); got != "" {
+		t.Fatalf("operation_plan unexpectedly routed current workspace phrase with status %q; plan=%#v", got, plan)
+	}
+}
+
 func TestOperationPlanCompletionCriteriaKeepsEvidenceStepsAdvisory(t *testing.T) {
 	criteria := operationPlanCompletionCriteria([]map[string]interface{}{
 		{
@@ -2420,6 +2448,58 @@ func TestAgentManagementDeleteIntentDoesNotPlanEditsFromTargetNames(t *testing.T
 		if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, unexpected) {
 			t.Fatalf("planned_tools = %#v, want no %s from target-name keywords", strategy.PlannedTools, unexpected)
 		}
+	}
+}
+
+func TestAgentManagementDeleteCreatedReferenceDoesNotPlanCreate(t *testing.T) {
+	query := "\u5220\u9664\u521a\u521a\u521b\u5efa\u7684\u8fd9\u4e24\u4e2a\u6d4b\u8bd5 Agent\uff1aAICHAT-BATCH-SMOKE-A \u548c AICHAT-BATCH-SMOKE-B\u3002\u8bf7\u4e00\u6b21\u6027\u6279\u91cf\u5220\u9664\uff0c\u5b8c\u6210\u540e\u505c\u7559\u5728\u667a\u80fd\u4f53\u5217\u8868\u9875\uff0c\u5e76\u544a\u8bc9\u6211\u6bcf\u4e2a\u5220\u9664\u7ed3\u679c\u3002"
+	if !agentManagementCreateRequested(query) {
+		t.Fatalf("agentManagementCreateRequested(%q) = false before reference filter, want raw marker detected", query)
+	}
+	if !agentManagementCreateMentionIsDeleteTargetReference(query) {
+		t.Fatalf("agentManagementCreateMentionIsDeleteTargetReference(%q) = false, want true", query)
+	}
+	parts := &chatRequestParts{
+		Query:     query,
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement},
+	}
+	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
+		Intent: "manage_agent_asset",
+		PlannedTools: []AIChatTurnStrategyTool{
+			{SkillID: skills.SkillAgentManagement, ToolName: "create_agent"},
+		},
+	})
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "create_agent") {
+		t.Fatalf("planned_tools = %#v, want stale create_agent removed for delete target reference", strategy.PlannedTools)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agents") {
+		t.Fatalf("planned_tools = %#v, missing delete_agents", strategy.PlannedTools)
+	}
+	plan := operationPlanFromTurnStrategy("task-agent-delete-created-reference", parts, strategy)
+	if _, ok := mapFromOperationContext(plan["step_status"])[operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")]; ok {
+		t.Fatalf("plan = %#v, want no create_agent step", plan)
+	}
+}
+
+func TestAgentManagementDeleteThenCreateStillPlansCreate(t *testing.T) {
+	query := "\u5220\u9664\u521a\u521a\u521b\u5efa\u7684\u8fd9\u4e24\u4e2a Agent\uff0c\u7136\u540e\u518d\u521b\u5efa\u4e00\u4e2a\u65b0\u7684 Agent"
+	if agentManagementCreateMentionIsDeleteTargetReference(query) {
+		t.Fatalf("agentManagementCreateMentionIsDeleteTargetReference(%q) = true, want false when user asks to create again", query)
+	}
+	parts := &chatRequestParts{
+		Query:     query,
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement},
+	}
+	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "create_agent") {
+		t.Fatalf("planned_tools = %#v, missing create_agent for explicit follow-up create", strategy.PlannedTools)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agents") {
+		t.Fatalf("planned_tools = %#v, missing delete_agents", strategy.PlannedTools)
 	}
 }
 

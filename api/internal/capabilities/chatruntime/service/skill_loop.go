@@ -1020,6 +1020,9 @@ func agentManagementCreateRequestedCount(query string) int {
 	if text == "" {
 		return 1
 	}
+	if count := agentManagementCreateRequestedReadableCount(text); count > 1 {
+		return count
+	}
 	for _, pattern := range []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\bcreate\s+([0-9]+)\s+(?:draft\s+)?agents?\b`),
 		regexp.MustCompile(`(?i)\bnew\s+([0-9]+)\s+(?:draft\s+)?agents?\b`),
@@ -1048,6 +1051,40 @@ func agentManagementCreateRequestedCount(query string) int {
 		}
 	}
 	return 1
+}
+
+func agentManagementCreateRequestedReadableCount(text string) int {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" || !containsAnySubstring(text, []string{"agent", "智能体"}) {
+		return 0
+	}
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`([0-9]+)\s*(?:个|位|条)?\s*(?:临时|草稿|测试|测试草稿|临时测试)*\s*(?:agent|agents|智能体)`),
+		regexp.MustCompile(`(?:create|new|add)\s+([0-9]+)\s+(?:temporary\s+|draft\s+|test\s+)*agents?`),
+	} {
+		matches := pattern.FindStringSubmatch(text)
+		if len(matches) != 2 {
+			continue
+		}
+		if count, err := strconv.Atoi(matches[1]); err == nil && count > 1 {
+			return count
+		}
+	}
+	countWords := []struct {
+		markers []string
+		count   int
+	}{
+		{[]string{"两个agent", "两个 agent", "两个智能体", "两个临时agent", "两个临时 agent", "两个临时测试agent", "两个临时测试 agent", "两个草稿agent", "两个草稿 agent", "两个草稿智能体", "两位智能体"}, 2},
+		{[]string{"三个agent", "三个 agent", "三个智能体", "三位智能体"}, 3},
+		{[]string{"四个agent", "四个 agent", "四个智能体", "四位智能体"}, 4},
+		{[]string{"五个agent", "五个 agent", "五个智能体", "五位智能体"}, 5},
+	}
+	for _, item := range countWords {
+		if containsAnySubstring(text, item.markers) {
+			return item.count
+		}
+	}
+	return 0
 }
 
 func agentManagementUniqueCreateTargetCount(calls []skillloop.SkillToolCallRef) int {
@@ -1859,7 +1896,11 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 		return strategy
 	}
 	deleteRequested := agentManagementDeleteRequested(query)
-	if agentManagementCreateRequested(query) {
+	createReferenceOnly := deleteRequested && agentManagementCreateMentionIsDeleteTargetReference(query)
+	if createReferenceOnly {
+		strategy = removePlannedTool(strategy, skills.SkillAgentManagement, "create_agent")
+	}
+	if !createReferenceOnly && agentManagementCreateRequested(query) {
 		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "create_agent", nil)
 	}
 	if deleteRequested {
@@ -1985,6 +2026,29 @@ func agentManagementCreateRequested(query string) bool {
 	return false
 }
 
+func agentManagementCreateMentionIsDeleteTargetReference(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(stripQuotedIntentPayloads(query)))
+	if text == "" {
+		return false
+	}
+	if !agentManagementDeleteRequested(text) || !agentManagementCreateRequested(text) {
+		return false
+	}
+	if containsAnySubstring(text, []string{
+		"then create", "and create", "create another", "create a new", "recreate",
+		"\u7136\u540e\u521b\u5efa", "\u518d\u521b\u5efa", "\u5e76\u521b\u5efa", "\u53e6\u5916\u521b\u5efa", "\u91cd\u65b0\u521b\u5efa",
+		"\u7136\u540e\u65b0\u5efa", "\u518d\u65b0\u5efa", "\u5e76\u65b0\u5efa", "\u53e6\u5916\u65b0\u5efa", "\u91cd\u65b0\u65b0\u5efa",
+	}) {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"just created", "newly created", "already created", "previously created", "created agent", "created agents",
+		"\u521a\u521a\u521b\u5efa", "\u521a\u521b\u5efa", "\u65b0\u521b\u5efa", "\u5df2\u521b\u5efa", "\u5df2\u7ecf\u521b\u5efa",
+		"\u521a\u521a\u65b0\u5efa", "\u521a\u65b0\u5efa", "\u65b0\u5efa\u7684", "\u5df2\u65b0\u5efa", "\u5df2\u7ecf\u65b0\u5efa",
+		"\u521b\u5efa\u7684\u8fd9", "\u521b\u5efa\u7684\u4e24", "\u521b\u5efa\u7684\u51e0", "\u521b\u5efa\u7684\u667a\u80fd\u4f53",
+	})
+}
+
 func agentManagementDeleteRequested(query string) bool {
 	text := strings.ToLower(strings.TrimSpace(query))
 	if agentManagementDeleteMentionIsOnlyDescriptive(text) {
@@ -2045,7 +2109,16 @@ func agentManagementBatchDeleteRequested(query string) bool {
 			"selected agents",
 			"\u6279\u91cf",
 			"\u591a\u4e2a",
+			"\u4e24\u4e2a",
+			"\u4e09\u4e2a",
+			"\u56db\u4e2a",
+			"\u4e94\u4e2a",
+			"\u51e0\u4e2a",
 			"\u8fd9\u4e9b",
+			"\u8fd9\u4e24\u4e2a",
+			"\u8fd9\u4e09\u4e2a",
+			"\u8fd9\u56db\u4e2a",
+			"\u8fd9\u51e0\u4e2a",
 			"\u5168\u90e8",
 			"\u6240\u6709",
 			"\u524d",
@@ -2296,6 +2369,22 @@ func appendPlannedTool(strategy *AIChatTurnStrategy, skillID string, toolName st
 		tool.Arguments = arguments
 	}
 	strategy.PlannedTools = append(strategy.PlannedTools, tool)
+	return strategy
+}
+
+func removePlannedTool(strategy *AIChatTurnStrategy, skillID string, toolName string) *AIChatTurnStrategy {
+	if strategy == nil || len(strategy.PlannedTools) == 0 {
+		return strategy
+	}
+	id := operationPlanToolStepID(skillID, toolName)
+	filtered := strategy.PlannedTools[:0]
+	for _, existing := range strategy.PlannedTools {
+		if operationPlanToolStepID(existing.SkillID, existing.ToolName) == id {
+			continue
+		}
+		filtered = append(filtered, existing)
+	}
+	strategy.PlannedTools = filtered
 	return strategy
 }
 
@@ -6535,6 +6624,9 @@ func consoleNavigationKeywordPositionAllowed(keyword, normalized string, positio
 	if keyword == "" || normalized == "" || position < 0 || position+len(keyword) > len(normalized) {
 		return false
 	}
+	if consoleNavigationWorkspaceKeywordIsScopePhrase(keyword, normalized, position) {
+		return false
+	}
 	if consoleNavigationKeywordHasExplicitPageCue(keyword) {
 		return true
 	}
@@ -6558,6 +6650,26 @@ func consoleNavigationKeywordPositionAllowed(keyword, normalized string, positio
 		}
 	}
 	return true
+}
+
+func consoleNavigationWorkspaceKeywordIsScopePhrase(keyword, normalized string, position int) bool {
+	keyword = strings.TrimSpace(keyword)
+	if keyword != "工作空间" && keyword != "workspace" {
+		return false
+	}
+	prefix := normalized[:position]
+	suffix := normalized[position+len(keyword):]
+	for _, pageCue := range []string{"页", "页面", "管理", " page", " module"} {
+		if strings.HasPrefix(suffix, pageCue) {
+			return false
+		}
+	}
+	for _, scopePrefix := range []string{"当前", "本", "这个", "该", "所在", "当前 ", "current ", "this "} {
+		if strings.HasSuffix(prefix, scopePrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func consoleNavigationKeywordHasExplicitPageCue(keyword string) bool {

@@ -356,6 +356,42 @@ func TestAddContextualAIChatSkillIDsAddsAgentManagementForConsoleAgents(t *testi
 	}
 }
 
+func TestAddContextualAIChatSkillIDsAddsAgentManagementForCrossPageAgentCreate(t *testing.T) {
+	catalog := contextualAIChatFileSkillCatalogForTest()
+	parts := contextualConsoleFilesAllCapabilityPartsForTest()
+	parts.Query = "请导航到智能体页面，并在当前工作空间创建两个临时测试 Agent 草稿"
+
+	got := addContextualAIChatSkillIDsWithCapabilities(
+		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator},
+		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator},
+		catalog,
+		parts,
+		contextualAIChatSkillCapabilities{Navigation: true, AgentRead: true, AgentManage: true},
+	)
+	want := []string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cross-page agent create skills = %#v, want %#v", got, want)
+	}
+}
+
+func TestAddContextualAIChatSkillIDsDoesNotAddAgentManagementForPureAgentsNavigation(t *testing.T) {
+	catalog := contextualAIChatFileSkillCatalogForTest()
+	parts := contextualConsoleFilesAllCapabilityPartsForTest()
+	parts.Query = "打开智能体页面"
+
+	got := addContextualAIChatSkillIDsWithCapabilities(
+		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator},
+		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator},
+		catalog,
+		parts,
+		contextualAIChatSkillCapabilities{Navigation: true, AgentRead: true, AgentManage: true},
+	)
+	want := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("pure route skills = %#v, want %#v", got, want)
+	}
+}
+
 func TestAddContextualAIChatSkillIDsRespectsOrganizationDisabledUserSelectableSkill(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},

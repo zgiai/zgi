@@ -89,6 +89,7 @@ interface PendingClientActionContinuation {
   requestedAt: number;
   completed: boolean;
   timeoutId?: number;
+  settleTimeoutId?: number;
   resuming?: boolean;
 }
 
@@ -439,15 +440,16 @@ function routeContextQueryReady(
   countKeys: string[]
 ) {
   const queryStatus = metadataText(item, statusKey)?.trim().toLowerCase();
+  const querySettled = metadataBoolean(item, settledKey);
+  const permissionsSettled = metadataBoolean(item, 'permissions_settled');
   if (queryStatus && ['error', 'unavailable', 'forbidden'].includes(queryStatus)) {
-    return true;
+    return querySettled === true || permissionsSettled === true;
   }
 
   if (!isRouteContextItemReady(item)) return false;
 
   if (queryStatus && queryStatus !== 'ready') return false;
 
-  const querySettled = metadataBoolean(item, settledKey);
   if (querySettled === false) return false;
 
   if (queryStatus === 'ready' || querySettled === true) return true;
@@ -560,6 +562,9 @@ function routeObservationContextItem(item: AIChatContextItem) {
     context_ready: metadataBoolean(item, 'context_ready'),
     files_query_status: metadataText(item, 'files_query_status'),
     agents_query_status: metadataText(item, 'agents_query_status'),
+    agents_query_settled: metadataBoolean(item, 'agents_query_settled'),
+    permissions_settled: metadataBoolean(item, 'permissions_settled'),
+    permissions_query_status: metadataText(item, 'permissions_query_status'),
     visible_file_count: metadataText(item, 'visible_file_count'),
     total_file_count: metadataText(item, 'total_file_count'),
     visible_agent_count: metadataText(item, 'visible_agent_count'),
@@ -994,9 +999,14 @@ export function ContextualAIChatDock() {
 
   const clearClientActionTimeout = useCallback((pending: PendingClientActionContinuation) => {
     if (typeof window === 'undefined') return;
-    if (pending.timeoutId === undefined) return;
-    window.clearTimeout(pending.timeoutId);
-    pending.timeoutId = undefined;
+    if (pending.timeoutId !== undefined) {
+      window.clearTimeout(pending.timeoutId);
+      pending.timeoutId = undefined;
+    }
+    if (pending.settleTimeoutId !== undefined) {
+      window.clearTimeout(pending.settleTimeoutId);
+      pending.settleTimeoutId = undefined;
+    }
   }, []);
 
   const clearAllClientActionTimeouts = useCallback(() => {
@@ -1302,6 +1312,23 @@ export function ContextualAIChatDock() {
               ...observation,
             },
           });
+        } else if (typeof window !== 'undefined') {
+          pending.settleTimeoutId = window.setTimeout(() => {
+            const latestObservation = routeContextObservation(itemsRef.current, href);
+            completePendingClientAction(pending, {
+              status: 'succeeded',
+              result: {
+                event_type: 'route_already_loaded_context_pending',
+                action_type: pending.actionType,
+                href,
+                label: pending.label,
+                reason: pending.reason,
+                observed_path: currentHref,
+                elapsed_ms: Date.now() - pending.requestedAt,
+                ...latestObservation,
+              },
+            });
+          }, CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS);
         }
         return;
       }

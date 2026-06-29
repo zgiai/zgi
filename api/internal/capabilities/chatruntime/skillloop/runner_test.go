@@ -885,6 +885,81 @@ func TestFastPathFinalAnswerForCompletionEvidenceBlocksRouteWhenNextToolPending(
 	}
 }
 
+func TestFastPathFinalAnswerForCompletionEvidenceScansPastPendingRouteStep(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "route:/console/agents:1",
+					"status":    "pending",
+					"skill_id":  skills.SkillConsoleNavigator,
+					"tool_name": "navigate",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/create_agent",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"route:/console/agents:1":            "pending",
+				"tool:agent-management/create_agent": "pending",
+			},
+		},
+		"operation_result_summary": map[string]interface{}{
+			"latest_client_action": map[string]interface{}{
+				"status":      "succeeded",
+				"action_type": "route_navigation",
+				"skill_id":    skills.SkillConsoleNavigator,
+				"tool_name":   "navigate",
+				"label":       "智能体",
+				"result": map[string]interface{}{
+					"loaded_href": "/console/agents",
+				},
+			},
+		},
+	}
+
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by later pending create_agent", answer)
+	}
+}
+
+func TestFastPathFinalAnswerForCompletionEvidenceBlocksRouteWhenAgentCreateProgressMissing(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "asset_observation",
+		},
+		"agent_create_progress": map[string]interface{}{
+			"operation":       "agent.create",
+			"status":          "partial",
+			"requested_count": 2,
+			"completed_count": 0,
+			"missing_count":   2,
+			"missing_targets": []interface{}{"Agent One", "Agent Two"},
+		},
+		"operation_result_summary": map[string]interface{}{
+			"latest_client_action": map[string]interface{}{
+				"status":      "succeeded",
+				"action_type": "route_navigation",
+				"skill_id":    skills.SkillConsoleNavigator,
+				"tool_name":   "navigate",
+				"label":       "智能体",
+				"result": map[string]interface{}{
+					"loaded_href": "/console/agents",
+				},
+			},
+		},
+	}
+
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by missing create targets", answer)
+	}
+}
+
 func TestFastPathFinalAnswerForCompletionEvidenceRespectsPendingDifferentPlanAction(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{

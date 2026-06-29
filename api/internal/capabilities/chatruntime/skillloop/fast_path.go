@@ -163,7 +163,7 @@ func fastPathPendingExecutablePlanActions(plan map[string]interface{}, limit int
 			continue
 		}
 		actions = append(actions, action)
-		if len(actions) >= limit || fastPathPlanStepIsRoute(step) {
+		if len(actions) >= limit {
 			break
 		}
 	}
@@ -573,6 +573,9 @@ func latestClientActionFastPathAnswerFromEvidence(evidence map[string]interface{
 	if len(evidenceMapFromAny(evidence["operation_plan"])) == 0 {
 		return "", false
 	}
+	if fastPathAgentCreateStillMissing(evidence) {
+		return "", false
+	}
 	for _, action := range fastPathClientActionCandidates(evidence) {
 		trace, answer, ok := fastPathTraceAndAnswerFromClientAction(action)
 		if !ok {
@@ -584,6 +587,32 @@ func latestClientActionFastPathAnswerFromEvidence(evidence map[string]interface{
 		return answer, true
 	}
 	return "", false
+}
+
+func fastPathAgentCreateStillMissing(evidence map[string]interface{}) bool {
+	progress := evidenceMapFromAny(evidence["agent_create_progress"])
+	if len(progress) == 0 {
+		ledger := evidenceMapFromAny(evidence["execution_ledger"])
+		progress = evidenceMapFromAny(ledger["agent_create_progress"])
+	}
+	if len(progress) == 0 {
+		return false
+	}
+	if status := strings.ToLower(strings.TrimSpace(firstNonEmptyString(progress["status"]))); status == "completed" || status == "complete" || status == "done" {
+		return false
+	}
+	if len(mapSliceFromAny(progress["missing_targets"])) > 0 {
+		return true
+	}
+	if missing, ok := intFromAny(progress["missing_count"]); ok && missing > 0 {
+		return true
+	}
+	requested, requestedOK := intFromAny(progress["requested_count"])
+	completed, completedOK := intFromAny(progress["completed_count"])
+	if !requestedOK || !completedOK {
+		return false
+	}
+	return requested > 0 && completed < requested
 }
 
 func fastPathLatestToolResultCandidates(evidence map[string]interface{}) []map[string]interface{} {

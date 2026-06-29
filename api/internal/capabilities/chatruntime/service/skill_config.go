@@ -368,7 +368,8 @@ func addContextualAIChatSkillIDsWithCapabilities(enabled []string, organizationE
 	if capabilities.Navigation {
 		enabled = addSkillIDIfAvailable(enabled, organizationEnabled, catalog, skills.SkillConsoleNavigator, runtimemodel.ConversationCallerAIChat)
 	}
-	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
+	if (isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
+		contextualAIChatAgentManagementToolingRequested(parts)) &&
 		(capabilities.AgentRead || capabilities.AgentManage) {
 		enabled = addRuntimeManagedSkillIDIfAvailable(enabled, catalog, skills.SkillAgentManagement, runtimemodel.ConversationCallerAIChat)
 	}
@@ -394,7 +395,7 @@ func contextualAIChatSkillCapabilitiesFromClientContext(parts *chatRequestParts)
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return contextualAIChatSkillCapabilities{}
 	}
-	return contextualAIChatSkillCapabilities{
+	capabilities := contextualAIChatSkillCapabilities{
 		Navigation:  true,
 		FileRead:    hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
 		FileDelete:  hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext),
@@ -402,6 +403,13 @@ func contextualAIChatSkillCapabilitiesFromClientContext(parts *chatRequestParts)
 		AgentRead:   hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
 		AgentManage: hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
 	}
+	if contextualAIChatAgentManagementToolingRequested(parts) {
+		capabilities.AgentRead = true
+		if contextualAIChatAgentManagementMutationRequested(parts) {
+			capabilities.AgentManage = true
+		}
+	}
+	return capabilities
 }
 
 func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, scope Scope, parts *chatRequestParts) contextualAIChatSkillCapabilities {
@@ -409,8 +417,10 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 		return contextualAIChatSkillCapabilities{}
 	}
 	capabilities := contextualAIChatSkillCapabilities{Navigation: true}
-	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
-		!isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+	needsAgentTooling := contextualAIChatAgentManagementToolingRequested(parts)
+	isAgentsContext := isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
+	isFilesContext := isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
+	if !isFilesContext && !isAgentsContext && !needsAgentTooling {
 		return capabilities
 	}
 	workspaceID := ""
@@ -423,16 +433,17 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 	if workspaceID == "" || s.workspacePerms == nil {
 		return capabilities
 	}
-	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		if hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+	if isAgentsContext || needsAgentTooling {
+		if hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) || needsAgentTooling {
 			capabilities.AgentRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentView) ||
 				s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentManage)
 		}
-		if hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		if hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
+			contextualAIChatAgentManagementMutationRequested(parts) {
 			capabilities.AgentManage = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentManage)
 		}
 	}
-	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+	if !isFilesContext {
 		return capabilities
 	}
 	if hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
@@ -445,6 +456,36 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 		capabilities.FileCreate = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFileUploadCreate)
 	}
 	return capabilities
+}
+
+func contextualAIChatAgentManagementToolingRequested(parts *chatRequestParts) bool {
+	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
+		return false
+	}
+	query := strings.ToLower(strings.TrimSpace(parts.Query))
+	if query == "" {
+		return false
+	}
+	return agentManagementReadRequested(query) ||
+		agentManagementConfigReadRequested(query) ||
+		agentManagementModelSelectionRequested(query) ||
+		contextualAIChatAgentManagementMutationRequested(parts)
+}
+
+func contextualAIChatAgentManagementMutationRequested(parts *chatRequestParts) bool {
+	if parts == nil {
+		return false
+	}
+	query := strings.ToLower(strings.TrimSpace(parts.Query))
+	if query == "" {
+		return false
+	}
+	return agentManagementCreateRequested(query) ||
+		agentManagementDeleteRequested(query) ||
+		agentManagementConfigUpdateRequested(query) ||
+		agentManagementIdentityUpdateRequested(query) ||
+		agentManagementSkillBindingRequested(query) ||
+		len(requiredAgentBindingMutationTools(query)) > 0
 }
 
 func contextualAIChatWorkspaceIDFromContext(parts *chatRequestParts) string {

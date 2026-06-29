@@ -25,6 +25,7 @@ interface AgentsAIChatContextRegistrationProps {
   canManage: boolean;
   isLoading: boolean;
   isFetching: boolean;
+  permissionsSettled?: boolean;
   hasNextPage: boolean;
 }
 
@@ -202,12 +203,20 @@ function buildAgentsAIChatContextItems({
   canManage,
   isLoading,
   isFetching,
+  permissionsSettled = true,
   hasNextPage,
 }: AgentsAIChatContextRegistrationProps): AIChatPageContextItem[] {
   const visibleAgents = agents.slice(0, AGENTS_CONTEXT_VISIBLE_LIMIT);
   const capabilities = buildAgentListCapabilities(canView, canManage);
-  const contextReady = canView && !isLoading && !isFetching;
-  const queryStatus = !canView ? 'unavailable' : contextReady ? 'ready' : 'loading';
+  const contextReady = permissionsSettled && canView && !isLoading && !isFetching;
+  const queryStatus = !permissionsSettled
+    ? 'loading'
+    : !canView
+      ? 'unavailable'
+      : contextReady
+        ? 'ready'
+        : 'loading';
+  const querySettled = permissionsSettled && (!canView || contextReady);
   const orderedVisibleAgentIds = visibleAgents.map(agent => agent.id).join(',');
   const visibleRuntimeAgents = visibleAgents.filter(isAgentRuntimeItem);
   const orderedVisibleRuntimeAgentIds = visibleRuntimeAgents.map(agent => agent.id).join(',');
@@ -247,7 +256,9 @@ function buildAgentsAIChatContextItems({
         resource_kind: 'page',
         context_ready: contextReady,
         agents_query_status: queryStatus,
-        agents_query_settled: contextReady,
+        agents_query_settled: querySettled,
+        permissions_settled: permissionsSettled,
+        permissions_query_status: permissionsSettled ? 'ready' : 'loading',
         ordered_visible_agent_ids: orderedVisibleAgentIds || null,
         ordered_visible_runtime_agent_ids: orderedVisibleRuntimeAgentIds || null,
         visible_agent_count: visibleAgents.length,
@@ -360,6 +371,7 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
     canManage,
     isLoading,
     isFetching,
+    permissionsSettled,
     hasNextPage,
   } = props;
   const items = useMemo(
@@ -375,6 +387,7 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
         canManage,
         isLoading,
         isFetching,
+        permissionsSettled,
         hasNextPage,
       }),
     [
@@ -386,6 +399,7 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
       isLoading,
       pageSize,
       pageTitle,
+      permissionsSettled,
       searchKeyword,
       workspaceId,
       workspaceName,

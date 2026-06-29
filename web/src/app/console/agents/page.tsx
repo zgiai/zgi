@@ -319,6 +319,7 @@ export default function AgentsPage() {
         canManage={canManage}
         isLoading={isLoading}
         isFetching={isFetching}
+        permissionsSettled={!isPermissionsLoading}
         hasNextPage={hasNextPage}
       />
       <div
