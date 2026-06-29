@@ -33,6 +33,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-29: Dataset card move actions were split by backend contract. Workspace transfer remains gated by `knowledge_base.move`, while moving a dataset into a knowledge-base folder now requires both `knowledge_base.move` and `knowledge_base.folder_manage`, matching the `dataset-folders/move-dataset` target-folder authorization.
 - 2026-06-29: Agent card YAML export was narrowed to workflow runtime assets only. The only current export endpoint is workflow YAML export and it requires `workflow.export`; ordinary Agent cards no longer expose an `agent.export` action until a real Agent export endpoint exists.
 - 2026-06-29: Agent list creation/import UI now separates blank-create permissions from workflow import/template permissions. Blank creation opens for `agent.create` or `workflow.create` and the create dialog hides runtime types the user cannot create; workflow YAML import and template creation are gated by `workflow.import` to match the backend import endpoint.
 - 2026-06-29: Workspace asset-move service now resolves `agents.agent_type` before final permission checks for `agent` move requests. Shared asset-move UI may continue submitting type `agent`, but backend source/target workspace checks require `workflow.move` for workflow runtime agents and `agent.move` for ordinary agents.
@@ -77,6 +78,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Verification Log
 
+- 2026-06-29: `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/components/datasets/dataset-card.tsx` passed after splitting dataset folder move and workspace move UI permissions.
 - 2026-06-29: `pnpm test:route-access` and `pnpm exec eslint scripts/test-route-access.mjs src/components/agents/agent-card.tsx` passed after narrowing card-level YAML export to workflow runtimes.
 - 2026-06-29: `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/app/console/agents/page.tsx src/components/agents/agent-dialog/create-dialog.tsx src/components/agents/templates/template-gallery-dialog.tsx` passed after aligning agent/workflow blank-create and workflow import/template frontend gates.
 - 2026-06-29: `go test ./internal/modules/workspace/service -run "TestWorkspaceAssetMove"` passed after making asset move permission checks branch by resolved agent/workflow runtime type.

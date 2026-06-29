@@ -163,6 +163,7 @@ const createAgentDialogPath = path.join(
   'create-dialog.tsx'
 );
 const agentCardPath = path.join(rootDir, 'src', 'components', 'agents', 'agent-card.tsx');
+const datasetCardPath = path.join(rootDir, 'src', 'components', 'datasets', 'dataset-card.tsx');
 const templateGalleryDialogPath = path.join(
   rootDir,
   'src',
@@ -921,6 +922,7 @@ const agentRuntimeOrchestrationPanelSource = fs.readFileSync(
 const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
+const datasetCardSource = fs.readFileSync(datasetCardPath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
@@ -1363,6 +1365,31 @@ assert.doesNotMatch(
   agentCardSource,
   /AGENT_PERMISSION_ACTIONS\.export/,
   'agent cards should not wire agent.export to the workflow YAML export endpoint'
+);
+assert.match(
+  datasetCardSource,
+  /const canMoveDataset = hasAnyPermission\(KNOWLEDGE_BASE_PERMISSION_ACTIONS\.move\)/,
+  'dataset card workspace move should use knowledge_base.move'
+);
+assert.match(
+  datasetCardSource,
+  /const canManageDatasetFolders = hasAnyPermission\(KNOWLEDGE_BASE_PERMISSION_ACTIONS\.folderManage\)/,
+  'dataset card folder move should check folder management capability'
+);
+assert.match(
+  datasetCardSource,
+  /const canMoveDatasetToFolder = canMoveDataset && canManageDatasetFolders/,
+  'dataset card folder move should require both dataset move and folder manage permissions'
+);
+assert.match(
+  datasetCardSource,
+  /canMoveDatasetToFolder[\s\S]*setMoveOpen\(true\)/,
+  'dataset card folder move menu item should be gated by the combined folder move permission'
+);
+assert.match(
+  datasetCardSource,
+  /canMoveDataset[\s\S]*setWorkspaceMoveOpen\(true\)/,
+  'dataset card workspace move menu item should remain gated by knowledge_base.move'
 );
 assert.match(
   agentSidebarSource,

@@ -49,7 +49,10 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
   const canUpdateDataset = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.update);
   const canDeleteDataset = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.delete);
   const canMoveDataset = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.move);
-  const canShowActions = canUpdateDataset || canDeleteDataset || canMoveDataset;
+  const canManageDatasetFolders = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.folderManage);
+  const canMoveDatasetToFolder = canMoveDataset && canManageDatasetFolders;
+  const canShowActions =
+    canUpdateDataset || canDeleteDataset || canMoveDataset || canMoveDatasetToFolder;
 
   return (
     <div className="relative h-36 sm:h-40">
@@ -122,7 +125,7 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
                   {t('actions.edit')}
                 </DropdownMenuItem>
               )}
-              {canMoveDataset && (
+              {canMoveDatasetToFolder && (
                 <DropdownMenuItem inset onSelect={() => setMoveOpen(true)}>
                   <FolderOpen className="h-4 w-4" />
                   {t('actions.move')}
