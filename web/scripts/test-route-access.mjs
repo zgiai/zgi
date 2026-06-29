@@ -3249,6 +3249,13 @@ assert.match(
   /authorizeDatasetChildChunkAccess[\s\S]*knowledgeBaseSegmentViewPermissionCodes\(\)\.\.\.[\s\S]*segmentService\.GetChildChunk/,
   'dataset child-chunk detail handler should require segment view'
 );
+for (const handlerName of ['GetDocumentSegments', 'GetChildChunks', 'GetChildChunk']) {
+  assert.doesNotMatch(
+    getGoHandlerMethodSource(datasetSegmentHandlerSource, 'SegmentHandler', handlerName),
+    /CheckDatasetPermission/,
+    `dataset ${handlerName} should not stack legacy dataset permission checks after fine-grained access helpers`
+  );
+}
 for (const handlerName of [
   'DeleteDocumentSegments',
   'CreateDocumentSegment',

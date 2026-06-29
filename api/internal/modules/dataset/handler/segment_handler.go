@@ -60,14 +60,6 @@ func (h *SegmentHandler) GetDocumentSegments(c *gin.Context) {
 		return
 	}
 
-	// Get current user from context
-	accountID := c.GetString("account_id")
-	organizationID := c.GetString("tenant_id")
-	if accountID == "" || organizationID == "" {
-		response.Fail(c, response.ErrUnauthorized)
-		return
-	}
-
 	if _, _, ok := authorizeDatasetDocumentViewAccess(c, h.datasetService, h.documentService, h.authService, datasetID, documentID); !ok {
 		return
 	}
@@ -76,13 +68,6 @@ func (h *SegmentHandler) GetDocumentSegments(c *gin.Context) {
 	_, err := h.datasetService.GetDatasetByID(c.Request.Context(), datasetID)
 	if err != nil {
 		response.Fail(c, response.ErrDatasetNotFound)
-		return
-	}
-
-	// Check dataset permission
-	hasPermission, err := h.datasetService.CheckDatasetPermission(c.Request.Context(), datasetID, accountID, organizationID)
-	if err != nil || !hasPermission {
-		response.Fail(c, response.ErrDatasetPermissionDenied)
 		return
 	}
 
@@ -695,14 +680,6 @@ func (h *SegmentHandler) GetChildChunks(c *gin.Context) {
 		return
 	}
 
-	// Get current user from context
-	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
-	if accountID == "" || tenantID == "" {
-		response.Fail(c, response.ErrUnauthorized)
-		return
-	}
-
 	if _, _, _, ok := authorizeDatasetSegmentViewAccess(c, h.datasetService, h.documentService, h.segmentService, h.authService, datasetID, documentID, segmentID); !ok {
 		return
 	}
@@ -711,13 +688,6 @@ func (h *SegmentHandler) GetChildChunks(c *gin.Context) {
 	_, err := h.datasetService.GetDatasetByID(c.Request.Context(), datasetID)
 	if err != nil {
 		response.Fail(c, response.ErrDatasetNotFound)
-		return
-	}
-
-	// Check dataset permission
-	hasPermission, err := h.datasetService.CheckDatasetPermission(c.Request.Context(), datasetID, accountID, tenantID)
-	if err != nil || !hasPermission {
-		response.Fail(c, response.ErrDatasetPermissionDenied)
 		return
 	}
 
@@ -772,14 +742,6 @@ func (h *SegmentHandler) GetChildChunk(c *gin.Context) {
 		return
 	}
 
-	// Get current user from context
-	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
-	if accountID == "" || tenantID == "" {
-		response.Fail(c, response.ErrUnauthorized)
-		return
-	}
-
 	if _, ok := authorizeDatasetChildChunkAccess(
 		c,
 		h.datasetService,
@@ -799,13 +761,6 @@ func (h *SegmentHandler) GetChildChunk(c *gin.Context) {
 	_, err := h.datasetService.GetDatasetByID(c.Request.Context(), datasetID)
 	if err != nil {
 		response.Fail(c, response.ErrDatasetNotFound)
-		return
-	}
-
-	// Check dataset permission
-	hasPermission, err := h.datasetService.CheckDatasetPermission(c.Request.Context(), datasetID, accountID, tenantID)
-	if err != nil || !hasPermission {
-		response.Fail(c, response.ErrDatasetPermissionDenied)
 		return
 	}
 
