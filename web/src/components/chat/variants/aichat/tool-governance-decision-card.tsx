@@ -31,6 +31,8 @@ export interface ToolGovernanceDisplayAsset {
 
 export interface ToolGovernancePendingApproval {
   id: string;
+  conversationId?: string;
+  messageId?: string;
   title: string;
   toolLabel?: string | null;
   actionSentence: string;
@@ -520,14 +522,10 @@ export function ToolGovernanceApprovalPanel({
     if (!submitEnabled || !approval.onSubmitDecision) return;
     setSubmittingAction(action);
     setSubmitError(null);
-    let restorePendingApproval: (() => void) | null = null;
     try {
+      setResolvedAction(action);
       const continuation = Promise.resolve(
         approval.onSubmitDecision(action, action === 'approve' ? rememberForSession : false)
-      );
-      restorePendingApproval = dismissToolGovernancePendingApproval(
-        approval,
-        pendingApprovalScopeId
       );
       toast.success(
         action === 'approve'
@@ -535,12 +533,12 @@ export function ToolGovernanceApprovalPanel({
           : t('consoleChat.governance.rejectSucceeded')
       );
       await continuation;
+      dismissToolGovernancePendingApproval(approval, pendingApprovalScopeId);
     } catch (error) {
       const message =
         error instanceof Error && error.message
           ? error.message
           : t('consoleChat.governance.submitFailed');
-      restorePendingApproval?.();
       setSubmitError(message);
       toast.error(message);
       setResolvedAction(null);

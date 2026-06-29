@@ -1210,6 +1210,12 @@ export function AIChatShell({
             toolGovernancePermissionTier={toolGovernancePermissionTier}
             onToolGovernancePermissionTierChange={setToolGovernancePermissionTier}
             enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+            activeConversationId={activeConversation?.id ?? null}
+            activeToolGovernanceMessageId={
+              activeConversation?.active_message_id ??
+              activeConversation?.current_leaf_message_id ??
+              null
+            }
             activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
           />
         </main>

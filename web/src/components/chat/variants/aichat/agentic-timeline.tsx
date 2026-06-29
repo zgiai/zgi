@@ -1804,6 +1804,8 @@ function toPendingToolGovernanceApproval(
 ): ToolGovernancePendingApproval {
   return {
     id: view.pendingApprovalId,
+    conversationId: item.event.conversation_id,
+    messageId: item.event.message_id,
     title: view.title,
     toolLabel: view.toolLabel,
     actionSentence: view.actionSentence,

@@ -989,8 +989,11 @@ export function AIChatMessageBubble({
   );
   const hasTimeline = displayTimeline.length > 0;
   const streamingStatus = useMemo(
-    () => (isStreaming ? streamingOperationStatus(displayTimeline) : null),
-    [displayTimeline, isStreaming]
+    () =>
+      isStreaming || isWaitingForClientAction
+        ? streamingOperationStatus(displayTimeline)
+        : null,
+    [displayTimeline, isStreaming, isWaitingForClientAction]
   );
   const streamingStatusLabel = useMemo(
     () =>
