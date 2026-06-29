@@ -1236,6 +1236,11 @@ assert.match(
 );
 assert.match(
   workspaceMembersPageSource,
+  /useOrganizationRoles\(\{\s*enabled:\s*canManageWorkspaceMembers\s*\}\)/,
+  'workspace members page should not fetch role templates until manager authority is known'
+);
+assert.match(
+  workspaceMembersPageSource,
   /if \(!canManageWorkspaceMembers\)[\s\S]*?<PermissionDeniedState/,
   'workspace members direct route should render a denied state for ordinary workspace members'
 );

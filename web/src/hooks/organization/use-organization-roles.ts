@@ -11,12 +11,17 @@ import { useOrganizations } from './use-organizations';
 
 import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
 
+interface UseOrganizationRolesOptions {
+  enabled?: boolean;
+}
+
 /**
  * Hook for fetching Organization roles
  */
-export function useOrganizationRoles() {
+export function useOrganizationRoles(options: UseOrganizationRolesOptions = {}) {
   const t = useT('dashboard');
   const { currentOrganization } = useOrganizations();
+  const enabled = options.enabled ?? true;
 
   const {
     data: responseData,
@@ -32,7 +37,7 @@ export function useOrganizationRoles() {
       }
       return await organizationService.getRoles(currentOrganization.id);
     },
-    enabled: !!currentOrganization?.id,
+    enabled: enabled && !!currentOrganization?.id,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -42,7 +47,7 @@ export function useOrganizationRoles() {
   useEffect(() => {
     if (!error) return;
     toast.error(getErrorMessage(error) || t('organization.permissions.loadError'));
-  }, [error, toast, t]);
+  }, [error, t]);
 
   return {
     roles: responseData?.roles ?? [],

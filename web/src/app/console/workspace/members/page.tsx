@@ -57,7 +57,7 @@ export default function WorkspaceMembersPage() {
     batchAddWorkspaceMembers,
     isBatchAddingWorkspaceMembers: isAddingMembers,
   } = useWorkspaceMemberActions();
-  const { roles } = useOrganizationRoles();
+  const { roles } = useOrganizationRoles({ enabled: canManageWorkspaceMembers });
   const { locale } = useLocale();
 
   // State for tracking which member's role is currently being updated (optimistic/UI state)
