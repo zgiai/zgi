@@ -860,6 +860,7 @@ for (const code of legacyAggregatePermissionCodes) {
 for (const filePath of frontendSourceFiles) {
   if (filePath === permissionConstantsPath) continue;
   const fileSource = fs.readFileSync(filePath, 'utf8');
+  const stringLiterals = collectStringLiterals(fileSource);
   for (const aggregateName of permissionActionAggregateNames) {
     assert.doesNotMatch(
       fileSource,
@@ -867,6 +868,18 @@ for (const filePath of frontendSourceFiles) {
       `${path.relative(rootDir, filePath)} should not use aggregate manage permission group ${aggregateName} for UI actions`
     );
   }
+  for (const code of legacyAggregatePermissionCodes) {
+    assert.equal(
+      stringLiterals.includes(code),
+      false,
+      `${path.relative(rootDir, filePath)} should not consume legacy aggregate permission ${code} outside the compatibility constants`
+    );
+  }
+  assert.doesNotMatch(
+    fileSource,
+    /has(?:Any|All)?Permission\s*\([\s\S]{0,240}['"](?:workspace|prompt|content_parse|dashboard)\./,
+    `${path.relative(rootDir, filePath)} should not gate ordinary UI with retired workspace governance/tool permissions`
+  );
 }
 
 const consolePageSource = fs.readFileSync(consolePagePath, 'utf8');
