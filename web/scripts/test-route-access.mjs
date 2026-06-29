@@ -133,6 +133,14 @@ const fileDetailShellPath = path.join(
   'detail',
   'file-detail-shell.tsx'
 );
+const fileManagementContentPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'files',
+  'file-management-content.tsx'
+);
+const fileSidebarPath = path.join(rootDir, 'src', 'components', 'files', 'file-sidebar.tsx');
 const fileListPath = path.join(rootDir, 'src', 'components', 'files', 'file-list.tsx');
 const relatedResourcesPopoverPath = path.join(
   rootDir,
@@ -1127,6 +1135,8 @@ const automationTaskHandlerSource = fs.readFileSync(automationTaskHandlerPath, '
 const filePageSource = fs.readFileSync(filePagePath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
+const fileManagementContentSource = fs.readFileSync(fileManagementContentPath, 'utf8');
+const fileSidebarSource = fs.readFileSync(fileSidebarPath, 'utf8');
 const fileListSource = fs.readFileSync(fileListPath, 'utf8');
 const relatedResourcesPopoverSource = fs.readFileSync(relatedResourcesPopoverPath, 'utf8');
 const dbPageSource = fs.readFileSync(dbPagePath, 'utf8');
@@ -1527,6 +1537,36 @@ assert.match(
   fileListSource,
   /const canViewDetail\s*=\s*!selectionMode && canOpenFileDetailByPermission/,
   'file list detail link should combine mode and permission gate'
+);
+assert.match(
+  fileManagementContentSource,
+  /const canUpload\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.upload\)/,
+  'file upload entry should use the exact file.upload permission'
+);
+assert.match(
+  fileManagementContentSource,
+  /const canCreateTextFile\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.textCreate\)/,
+  'file text creation entry should use the exact file.text.create permission'
+);
+assert.match(
+  fileManagementContentSource,
+  /onUpload=\{canUpload \? handleUpload : undefined\}/,
+  'file upload sidebar action should stay gated by upload permission'
+);
+assert.match(
+  fileManagementContentSource,
+  /onCreateTextFile=\{canCreateTextFile \? handleCreateTextFile : undefined\}/,
+  'file text creation sidebar action should stay gated by text-create permission'
+);
+assert.match(
+  fileSidebarSource,
+  /onCreateTextFile\?: \(\) => void/,
+  'file sidebar should expose a dedicated text creation action'
+);
+assert.match(
+  fileSidebarSource,
+  /t\('files\.sidebar\.newTextFile'\)/,
+  'file sidebar should render the text creation label separately from upload'
 );
 assert.match(
   relatedResourcesPopoverSource,

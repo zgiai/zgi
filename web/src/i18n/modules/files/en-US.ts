@@ -8,6 +8,7 @@ const messages = {
   sidebar: {
     storage: 'Storage',
     newFolder: 'New Folder',
+    newTextFile: 'New Text File',
     uploadFile: 'Upload File',
     viewsTitle: 'Views',
     fileSpaceTitle: 'File Space',
@@ -601,9 +602,12 @@ const messages = {
   mobileSelector: {
     browse: 'Browse folders',
     browseAndUpload: 'Folders & Upload',
+    browseAndCreateText: 'Folders & Text',
     switchSpace: 'Switch space',
     emptyDescriptionWithUpload:
       'No files are available yet. Tap "Folders & Upload" above, then use the upload entry inside to add files.',
+    emptyDescriptionWithTextCreate:
+      'No files are available yet. Tap "Folders & Text" above, then use the new text file entry inside to add a file.',
     emptyDescriptionWithoutUpload:
       'No files are available in the current workspace, and you do not have upload permission here. Contact an administrator for access, or switch to another workspace.',
   },

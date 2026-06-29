@@ -7,6 +7,7 @@ const messages: FilesMessages = {
 
   // Sidebar
   sidebar: {
+    newTextFile: '新建文本',
     storage: '文件存储',
     newFolder: '新建文件夹',
     uploadFile: '上传文件',
@@ -569,6 +570,9 @@ const messages: FilesMessages = {
     tipDescription: '只有当前工作空间具备文件上传权限时，左侧栏才会显示上传入口。',
   },
   mobileSelector: {
+    browseAndCreateText: '目录与新建文本',
+    emptyDescriptionWithTextCreate:
+      '当前还没有文件。点击上方“目录与新建文本”，然后使用其中的新建文本入口添加文件。',
     browse: '浏览目录',
     browseAndUpload: '目录与上传',
     switchSpace: '切换空间',
