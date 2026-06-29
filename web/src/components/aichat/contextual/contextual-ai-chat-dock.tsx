@@ -1053,6 +1053,43 @@ export function ContextualAIChatDock() {
     [clearClientActionTimeout]
   );
 
+  const failUnsupportedClientAction = useCallback(
+    (
+      request: ContextualAIChatClientActionRequest,
+      options: {
+        key: string;
+        error: string;
+        result: Record<string, unknown>;
+      }
+    ) => {
+      const pending: PendingClientActionContinuation = {
+        key: options.key,
+        conversationId: request.conversationId,
+        messageId: request.messageId,
+        actionId: request.actionId,
+        actionType: request.actionType,
+        href: request.href,
+        label: request.label,
+        reason: request.reason,
+        requestedAt: Date.now(),
+        completed: false,
+      };
+      pendingClientActionsRef.current.set(options.key, pending);
+      setPendingClientActionVersion(version => version + 1);
+
+      completePendingClientAction(pending, {
+        status: 'failed',
+        error: options.error,
+        result: {
+          action_type: request.actionType,
+          elapsed_ms: Date.now() - pending.requestedAt,
+          ...options.result,
+        },
+      });
+    },
+    [completePendingClientAction]
+  );
+
   const invalidateQueries = useCallback(
     (queryKey: QueryKey) => {
       void queryClient.invalidateQueries({ queryKey });
@@ -1181,9 +1218,32 @@ export function ContextualAIChatDock() {
         return;
       }
 
-      if (request.actionType !== 'route_navigation') return;
+      if (request.actionType !== 'route_navigation') {
+        failUnsupportedClientAction(request, {
+          key,
+          error: `Unsupported client action: ${request.actionType || 'unknown'}.`,
+          result: {
+            event_type: 'client_action_unsupported',
+            supported_action_types: ['asset_observation', 'route_navigation'],
+          },
+        });
+        return;
+      }
       const href = normalizeZGIConsoleNavigationHref(request.href);
-      if (!href) return;
+      if (!href) {
+        failUnsupportedClientAction(request, {
+          key,
+          error: 'Route navigation target is unsupported.',
+          result: {
+            event_type: 'route_navigation_invalid',
+            requested_href: request.href ?? null,
+            label: request.label,
+            reason: request.reason,
+            observed_path: normalizeZGIConsoleNavigationHref(pathname ?? undefined),
+          },
+        });
+        return;
+      }
       const routeKey = routeClientActionRequestKey(request, href);
       if (pendingClientActionsRef.current.has(routeKey)) return;
       const currentHref = normalizeZGIConsoleNavigationHref(pathname ?? undefined);
@@ -1263,6 +1323,7 @@ export function ContextualAIChatDock() {
     },
     [
       completePendingClientAction,
+      failUnsupportedClientAction,
       handleAssetOperationSuccess,
       pathname,
       router,
