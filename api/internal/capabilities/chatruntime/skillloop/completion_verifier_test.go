@@ -93,6 +93,41 @@ func TestCompletionVerificationSystemMessageKeepsChineseRetryLanguage(t *testing
 	}
 }
 
+func TestCompletionVerificationSystemMessageMapsResolvedFileDeleteToToolAction(t *testing.T) {
+	message := completionVerificationSystemMessage(completionVerificationDecision{
+		Status:       completionVerificationStatusNeedsAction,
+		Reason:       "missing delete evidence",
+		MissingSteps: []string{"Delete resolved file"},
+	}, "已删除。", 1)
+	content := messageContent(message.Content)
+
+	for _, fragment := range []string{
+		"Required next tool: call file-manager/delete_file",
+		"resolved file_id",
+		"Tool governance owns the approval card",
+		"Do not produce another final answer until file-manager/delete_file succeeds",
+	} {
+		if !strings.Contains(content, fragment) {
+			t.Fatalf("system message = %q, want fragment %q", content, fragment)
+		}
+	}
+}
+
+func TestCompletionVerificationFallbackAnswerMapsResolvedFileDeleteLabel(t *testing.T) {
+	answer := completionVerificationFallbackAnswer(completionVerificationDecision{
+		Status:       completionVerificationStatusFailed,
+		Reason:       "final answer lacks tool evidence",
+		MissingSteps: []string{"Delete resolved file"},
+	}, "已删除。")
+
+	if strings.Contains(answer, "Delete resolved file") {
+		t.Fatalf("answer leaks internal step label: %q", answer)
+	}
+	if !strings.Contains(answer, "\u6587\u4ef6\u5220\u9664\u7ed3\u679c") {
+		t.Fatalf("answer = %q, want public missing delete evidence label", answer)
+	}
+}
+
 func TestCompletionVerificationContractTreatsPlanAsAdvisory(t *testing.T) {
 	contract := completionVerificationContract()
 	rawRules, ok := contract["rules"].([]string)

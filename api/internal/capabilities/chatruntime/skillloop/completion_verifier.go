@@ -1091,6 +1091,7 @@ func completionVerificationSystemMessage(decision completionVerificationDecision
 	if guidance := strings.TrimSpace(decision.FinalAnswerGuidance); guidance != "" {
 		lines = append(lines, "Final answer guidance: "+guidance)
 	}
+	lines = append(lines, completionVerificationExecutableActionFeedback(decision)...)
 	lines = append(lines,
 		fmt.Sprintf("Post-verification retry %d of %d.", retry, defaultMaxCompletionVerificationRetries),
 		"Continue only if the next action is safe and supported by the available tools. If the same tool with the same arguments already failed, do not repeat it; answer truthfully from the failure.",
@@ -1099,6 +1100,29 @@ func completionVerificationSystemMessage(decision completionVerificationDecision
 		lines = append(lines, "Candidate answer:\n"+text)
 	}
 	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}
+}
+
+func completionVerificationExecutableActionFeedback(decision completionVerificationDecision) []string {
+	text := strings.ToLower(strings.Join(append(append([]string{}, decision.MissingSteps...), decision.NextActionHint, decision.FinalAnswerGuidance, decision.Reason), "\n"))
+	switch {
+	case strings.Contains(text, "file-manager/delete_file") ||
+		strings.Contains(text, "delete_file") ||
+		strings.Contains(text, "delete resolved file"):
+		return []string{
+			"Required next tool: call file-manager/delete_file with the resolved file_id from current page context, resolved targets, or operation plan evidence.",
+			"Tool governance owns the approval card; do not ask for a separate natural-language confirmation before calling the governed delete tool.",
+			"Do not produce another final answer until file-manager/delete_file succeeds, fails, or is rejected by governance.",
+		}
+	case strings.Contains(text, "file-manager/save_file_to_management") ||
+		strings.Contains(text, "save_file_to_management"):
+		return []string{
+			"Required next tool: call file-manager/save_file_to_management with the already generated artifact or supplied URL.",
+			"Do not regenerate an existing artifact unless the prior generation failed or the user requested different content.",
+			"Do not produce another final answer until file-manager/save_file_to_management succeeds, fails, or is rejected by governance.",
+		}
+	default:
+		return nil
+	}
 }
 
 func completionVerificationFallbackAnswer(decision completionVerificationDecision, candidateAnswer string) string {
@@ -1117,7 +1141,7 @@ func completionVerificationFallbackAnswer(decision completionVerificationDecisio
 	if reason := completionVerificationPublicReason(decision.Reason); reason != "" {
 		parts = append(parts, "\u539f\u56e0\uff1a"+reason+"\u3002")
 	}
-	if missing := strings.Join(cleanStringSlice(decision.MissingSteps), completionVerificationJoinSeparator); missing != "" {
+	if missing := strings.Join(completionVerificationPublicMissingSteps(decision.MissingSteps), completionVerificationJoinSeparator); missing != "" {
 		parts = append(parts, "\u7f3a\u5c11\u7684\u5b8c\u6210\u8bc1\u636e\uff1a"+missing+"\u3002")
 	}
 	if claims := strings.Join(cleanStringSlice(decision.UnsupportedClaims), completionVerificationJoinSeparator); claims != "" {
@@ -1127,6 +1151,21 @@ func completionVerificationFallbackAnswer(decision completionVerificationDecisio
 		return strings.TrimSpace(candidateAnswer)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func completionVerificationPublicMissingSteps(steps []string) []string {
+	cleaned := cleanStringSlice(steps)
+	out := make([]string, 0, len(cleaned))
+	for _, step := range cleaned {
+		lower := strings.ToLower(strings.TrimSpace(step))
+		switch {
+		case strings.Contains(lower, "delete resolved file"):
+			out = append(out, "\u6587\u4ef6\u5220\u9664\u7ed3\u679c")
+		default:
+			out = append(out, step)
+		}
+	}
+	return dedupeStrings(out)
 }
 
 func completionVerificationPublicReason(reason string) string {
