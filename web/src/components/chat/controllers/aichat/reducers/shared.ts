@@ -295,8 +295,34 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
   if (invocation.kind === 'intermediate_answer' && invocation.answer_id) {
     return `intermediate_answer:${invocation.answer_id}`;
   }
-  if (invocation.kind === 'client_action' && invocation.action_id) {
-    return `client_action:${invocation.action_id}`;
+  if (invocation.kind === 'client_action') {
+    const record = invocation as unknown as Record<string, unknown>;
+    const result = invocationRecord(invocation.result);
+    const actionType =
+      invocation.action_type ||
+      invocationString(result.action_type);
+    if (actionType === 'route_navigation') {
+      const href = skillInvocationNavigationTarget(invocation);
+      if (href) return `client_action:route_navigation:${href.toLowerCase()}`;
+    }
+    if (actionType === 'asset_observation') {
+      const assetType =
+        invocationString(record.asset_type) ||
+        invocationString(result.asset_type);
+      const effect =
+        invocationString(record.effect) ||
+        invocationString(result.effect);
+      return [
+        'client_action',
+        'asset_observation',
+        assetType,
+        effect,
+        stableMetadataValue(record.assets ?? result.assets ?? {}),
+      ].join(':');
+    }
+    if (invocation.action_id) {
+      return `client_action:${invocation.action_id}`;
+    }
   }
   if (
     invocation.kind === 'tool_call' &&

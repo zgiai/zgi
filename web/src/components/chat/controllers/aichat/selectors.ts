@@ -515,8 +515,30 @@ function governanceCorrelationId(value: unknown): string {
 }
 
 function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
-  if (invocation.kind === 'client_action' && invocation.action_id) {
-    return `skill:client_action:${invocation.action_id}`;
+  if (invocation.kind === 'client_action') {
+    const record = invocation as unknown as Record<string, unknown>;
+    const result = timelineRecord(invocation.result);
+    const actionType = (
+      timelineString(invocation.action_type) ||
+      timelineString(result.action_type)
+    ).toLowerCase();
+    if (actionType === 'route_navigation') {
+      const href = skillInvocationNavigationTarget(invocation);
+      if (href) return `skill:client_action:route_navigation:${href.toLowerCase()}`;
+    }
+    if (actionType === 'asset_observation') {
+      return [
+        'skill',
+        'client_action',
+        'asset_observation',
+        timelineString(record.asset_type) || timelineString(result.asset_type),
+        timelineString(record.effect) || timelineString(result.effect),
+        stableTimelineValue(record.assets ?? result.assets ?? {}),
+      ].join(':');
+    }
+    if (invocation.action_id) {
+      return `skill:client_action:${invocation.action_id}`;
+    }
   }
   if (
     invocation.kind === 'tool_call' &&
@@ -556,7 +578,34 @@ function timelineSkillInvocationBaseIdentity(invocation: AIChatSkillInvocation):
 
 function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
   switch (item.type) {
-    case 'progress_text':
+    case 'progress_text': {
+      if (item.phase === 'client_action' || item.phase === 'client_action_result') {
+        const result = timelineRecord(item.result);
+        const actionType = (
+          timelineString(item.action_type) ||
+          timelineString(result.action_type)
+        ).toLowerCase();
+        if (actionType === 'route_navigation') {
+          const href =
+            timelineString(result.href) ||
+            timelineString(result.loaded_href) ||
+            timelineString(result.current_href) ||
+            timelineString(result.target_href);
+          if (href) {
+            return `progress:client_action:route_navigation:${href.replace(/\/+$/, '').toLowerCase()}`;
+          }
+        }
+        if (actionType === 'asset_observation') {
+          return [
+            'progress',
+            'client_action',
+            'asset_observation',
+            timelineString(item.asset_type) || timelineString(result.asset_type),
+            timelineString(item.effect) || timelineString(result.effect),
+            stableTimelineValue(item.assets ?? result.assets ?? {}),
+          ].join(':');
+        }
+      }
       return [
         'progress',
         item.phase ?? '',
@@ -564,6 +613,7 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
         item.tool_name ?? '',
         item.content.trim().replace(/\s+/g, ' '),
       ].join(':');
+    }
     case 'skill_event': {
       return timelineSkillInvocationIdentity(item.invocation);
     }
