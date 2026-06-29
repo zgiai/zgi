@@ -11,6 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { usePromptUsage } from '@/hooks/prompt/use-prompts';
 import { useT } from '@/i18n';
 import type { PromptVersion } from '@/services/types/prompt';
@@ -65,10 +67,22 @@ export function PromptUsageSummary({
   versions = [],
 }: PromptUsageSummaryProps) {
   const t = useT('prompts');
+  const { hasAnyPermission } = useAccountPermissions();
   const { usage, isLoading, error } = usePromptUsage(promptId, enabled);
   const [versionFilter, setVersionFilter] = useState<string>('all');
   const [labelFilter, setLabelFilter] = useState<string>('all');
   const isFiltered = versionFilter !== 'all' || labelFilter !== 'all';
+  const canOpenWorkflowReference =
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeConfigManage) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage);
+  const canOpenWorkflowRunLog = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
 
   const labelToVersion = useMemo(() => {
     const next = new Map<string, number>();
@@ -397,12 +411,16 @@ export function PromptUsageSummary({
                   return (
                     <>
                 <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <Link
-                    href={`/console/agents/${reference.agent_id}?nodeId=${reference.node_id}`}
-                    className="font-medium hover:text-primary"
-                  >
-                    {reference.agent_name}
-                  </Link>
+                  {canOpenWorkflowReference ? (
+                    <Link
+                      href={`/console/agents/${reference.agent_id}?nodeId=${reference.node_id}`}
+                      className="font-medium hover:text-primary"
+                    >
+                      {reference.agent_name}
+                    </Link>
+                  ) : (
+                    <span className="font-medium text-foreground">{reference.agent_name}</span>
+                  )}
                   <div className="text-xs text-muted-foreground">
                     {new Date(reference.updated_at).toLocaleString()}
                   </div>
@@ -467,7 +485,7 @@ export function PromptUsageSummary({
             {filteredRuns.map(run => (
               <div key={`${run.workflow_run_id || run.node_id}-${run.created_at}`} className="rounded-lg border p-3">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
-                  {run.workflow_run_id ? (
+                  {run.workflow_run_id && canOpenWorkflowRunLog ? (
                     <Link
                       href={`/console/agents/${run.agent_id}/logs?runId=${run.workflow_run_id}&tab=execution`}
                       className="font-medium hover:text-primary"

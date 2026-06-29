@@ -1818,6 +1818,26 @@ assert.doesNotMatch(
 );
 assert.match(
   promptUsageSummarySource,
+  /useAccountPermissions\(\)/,
+  'prompt usage summary should consume workspace permissions before rendering workflow deep links'
+);
+assert.match(
+  promptUsageSummarySource,
+  /const canOpenWorkflowReference\s*=[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.create[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.import[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
+  'prompt usage workflow reference links should require an editor-compatible workflow permission'
+);
+assert.match(
+  promptUsageSummarySource,
+  /const canOpenWorkflowRunLog\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.logsView\)/,
+  'prompt usage run log links should require workflow.logs.view'
+);
+assert.match(
+  promptUsageSummarySource,
+  /canOpenWorkflowReference\s*\?\s*\([\s\S]*href=\{`\/console\/agents\/\$\{reference\.agent_id\}\?nodeId=\$\{reference\.node_id\}`\}/,
+  'prompt usage references should gate workflow node deep links with target-page permissions'
+);
+assert.match(
+  promptUsageSummarySource,
   /href=\{`\/console\/agents\/\$\{reference\.agent_id\}\?nodeId=\$\{reference\.node_id\}`\}/,
   'prompt usage references should route through the permission-aware agent detail root while preserving node focus'
 );
@@ -1825,6 +1845,11 @@ assert.doesNotMatch(
   promptUsageSummarySource,
   /\/console\/agents\/\$\{reference\.agent_id\}\/workflow\?nodeId=/,
   'prompt usage references should not bypass agent detail root permissions'
+);
+assert.match(
+  promptUsageSummarySource,
+  /run\.workflow_run_id && canOpenWorkflowRunLog\s*\?\s*\([\s\S]*href=\{`\/console\/agents\/\$\{run\.agent_id\}\/logs\?runId=\$\{run\.workflow_run_id\}&tab=execution`\}/,
+  'prompt usage recent-run logs should be hidden unless the workflow log direct page is available'
 );
 assert.match(
   contentParsePageSource,
