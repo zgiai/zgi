@@ -39,10 +39,9 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
   const t = useT();
   const router = useRouter();
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canImportData = hasAnyPermission([
-    ...DATABASE_PERMISSION_ACTIONS.importAnalyze,
-    ...DATABASE_PERMISSION_ACTIONS.importExecute,
-  ]);
+  const canAnalyzeImport = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importAnalyze);
+  const canCreateRecord = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.recordCreate);
+  const canUseSmartIngest = canAnalyzeImport && canCreateRecord;
   const canViewTablePrompt = hasAnyPermission([
     ...DATABASE_PERMISSION_ACTIONS.tablePromptView,
     ...DATABASE_PERMISSION_ACTIONS.tablePromptManage,
@@ -124,7 +123,7 @@ export default function DbTableDataIngestPage({ params }: PageProps) {
     return <PermissionLoadingState />;
   }
 
-  if (!canImportData) {
+  if (!canUseSmartIngest) {
     return <PermissionDeniedState />;
   }
 

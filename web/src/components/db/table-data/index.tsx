@@ -55,11 +55,10 @@ const TableData: FC<TableDataProps> = ({ dbId, tableId }) => {
   const canDeleteRecord = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.recordDelete);
   const canEditData = canCreateRecord || canUpdateRecord || canDeleteRecord;
   const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
-  const canBatchImport = hasAnyPermission([
-    ...DATABASE_PERMISSION_ACTIONS.importAnalyze,
-    ...DATABASE_PERMISSION_ACTIONS.importExecute,
-  ]);
-  const canSmartIngest = hasAnyPermission([...DATABASE_PERMISSION_ACTIONS.aiQueryWrite]);
+  const canAnalyzeImport = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importAnalyze);
+  const canExecuteImport = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importExecute);
+  const canBatchImport = canExecuteImport;
+  const canSmartIngest = canAnalyzeImport && canCreateRecord;
 
   // Fetch table columns (structure).
   const {

@@ -169,6 +169,14 @@ const dbTableDataPath = path.join(
   'data',
   'page.tsx'
 );
+const dbTableDataComponentPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'db',
+  'table-data',
+  'index.tsx'
+);
 const excelImportShellPath = path.join(
   rootDir,
   'src',
@@ -968,6 +976,7 @@ const dbTablePageSource = fs.readFileSync(dbTablePagePath, 'utf8');
 const dbTableStructureSource = fs.readFileSync(dbTableStructurePath, 'utf8');
 const dbTableCreateSource = fs.readFileSync(dbTableCreatePath, 'utf8');
 const dbTableDataSource = fs.readFileSync(dbTableDataPath, 'utf8');
+const dbTableDataComponentSource = fs.readFileSync(dbTableDataComponentPath, 'utf8');
 const excelImportShellSource = fs.readFileSync(excelImportShellPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
@@ -1348,13 +1357,48 @@ assert.match(
 );
 assert.match(
   dbTableDataSource,
-  /const canImportData\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.importAnalyze[\s\S]*DATABASE_PERMISSION_ACTIONS\.importExecute/,
-  'database table data import direct page should require import analyze or execute'
+  /const canAnalyzeImport\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.importAnalyze\)/,
+  'database smart ingest direct page should require import analyze permission'
+);
+assert.match(
+  dbTableDataSource,
+  /const canCreateRecord\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.recordCreate\)/,
+  'database smart ingest direct page should require record creation permission'
+);
+assert.match(
+  dbTableDataSource,
+  /const canUseSmartIngest\s*=\s*canAnalyzeImport && canCreateRecord/,
+  'database smart ingest direct page should combine import analyze with record creation'
 );
 assert.match(
   dbTableDataSource,
   /const canViewTablePrompt\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.tablePromptView[\s\S]*DATABASE_PERMISSION_ACTIONS\.tablePromptManage/,
   'database table prompt panel should require table prompt view or manage'
+);
+assert.match(
+  dbTableDataComponentSource,
+  /const canAnalyzeImport\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.importAnalyze\)/,
+  'database table component should derive smart ingest from import analyze permission'
+);
+assert.match(
+  dbTableDataComponentSource,
+  /const canExecuteImport\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.importExecute\)/,
+  'database table component should derive direct batch import from import execute permission'
+);
+assert.match(
+  dbTableDataComponentSource,
+  /const canBatchImport\s*=\s*canExecuteImport/,
+  'database table batch import entry should match the backend direct import execute permission'
+);
+assert.match(
+  dbTableDataComponentSource,
+  /const canSmartIngest\s*=\s*canAnalyzeImport && canCreateRecord/,
+  'database table smart ingest entry should require analyze plus record creation'
+);
+assert.doesNotMatch(
+  dbTableDataComponentSource,
+  /canSmartIngest\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryWrite/,
+  'database smart ingest should not be gated by database AI-query write permission'
 );
 assert.match(
   dbLayoutSource,
