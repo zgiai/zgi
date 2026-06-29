@@ -57,6 +57,8 @@ func TestAgenticSkillLoopSystemMessageProgressGuidance(t *testing.T) {
 	for _, want := range []string{
 		"at most one brief, high-level user-facing progress sentence",
 		"Do not narrate every tool call",
+		"current page evidence",
+		"Do not start every task by listing resources or navigating",
 		"submit_intermediate_answer is for substantial user-facing deliverables only",
 	} {
 		if !strings.Contains(content, want) {

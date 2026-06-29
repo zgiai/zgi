@@ -1044,6 +1044,8 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 	return adapter.Message{Role: "system", Content: strings.Join([]string{
 		"When using skills or tools, you may provide at most one brief, high-level user-facing progress sentence when it helps the user understand a multi-step operation.",
 		"Do not narrate every tool call, internal plan step, tool name, tool arguments, IDs, protocol details, or bookkeeping status.",
+		"If you share progress or reasoning, frame it around the user's goal, current page evidence, and the next useful action; do not expose a rigid hidden checklist.",
+		"Do not start every task by listing resources or navigating. If current page context, recent tool results, or visible resolved targets are enough, act from that evidence directly.",
 		"When an additional system message contains required_next_tool, treat it as an important planned next step, not as a reason to ignore fresh evidence. Load and call it when the current page context and prior tool/client-action evidence show it is still needed; do not repeat the same navigation or business tool after matching evidence already satisfies the step.",
 		"After each skill/tool result, continue with the next necessary action or final answer. Summarize only user-relevant outcomes, not internal bookkeeping.",
 		"If a tool call fails, explain the likely user-relevant cause, fix the arguments, and retry when possible.",
