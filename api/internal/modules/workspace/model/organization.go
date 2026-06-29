@@ -436,6 +436,7 @@ func IsWorkspaceGovernancePermission(code WorkspacePermissionCode) bool {
 		WorkspacePermissionWorkspaceBillingAudit,
 		WorkspacePermissionWorkspaceTransferArchive,
 		WorkspacePermissionWorkspaceSettingsManage,
+		WorkspacePermissionWorkspaceMemberView,
 		WorkspacePermissionWorkspaceMemberManage,
 		WorkspacePermissionWorkspacePermissionManage,
 		WorkspacePermissionWorkspaceTransfer,
@@ -448,8 +449,7 @@ func IsWorkspaceGovernancePermission(code WorkspacePermissionCode) bool {
 
 func IsWorkspaceMembershipPermission(code WorkspacePermissionCode) bool {
 	switch code {
-	case WorkspacePermissionWorkspaceView,
-		WorkspacePermissionWorkspaceMemberView:
+	case WorkspacePermissionWorkspaceView:
 		return true
 	default:
 		return false

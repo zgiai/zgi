@@ -362,7 +362,6 @@ func TestWorkspaceMemberAllowsPermissionRoleMatrix(t *testing.T) {
 			),
 			allowed: []model.WorkspacePermissionCode{
 				model.WorkspacePermissionWorkspaceView,
-				model.WorkspacePermissionWorkspaceMemberView,
 				model.WorkspacePermissionAgentLogsView,
 				model.WorkspacePermissionWorkflowView,
 				model.WorkspacePermissionKnowledgeBaseDocumentView,
@@ -370,6 +369,7 @@ func TestWorkspaceMemberAllowsPermissionRoleMatrix(t *testing.T) {
 				model.WorkspacePermissionFileMetadataView,
 			},
 			denied: []model.WorkspacePermissionCode{
+				model.WorkspacePermissionWorkspaceMemberView,
 				model.WorkspacePermissionAgentCreate,
 				model.WorkspacePermissionWorkflowPublish,
 				model.WorkspacePermissionKnowledgeBaseDocumentCreate,
@@ -389,13 +389,13 @@ func TestWorkspaceMemberAllowsPermissionRoleMatrix(t *testing.T) {
 			),
 			allowed: []model.WorkspacePermissionCode{
 				model.WorkspacePermissionWorkspaceView,
-				model.WorkspacePermissionWorkspaceMemberView,
 				model.WorkspacePermissionKnowledgeBaseRetrievalTest,
 				model.WorkspacePermissionDatabaseAIQueryRead,
 				model.WorkspacePermissionFileUpload,
 				model.WorkspacePermissionFileDownload,
 			},
 			denied: []model.WorkspacePermissionCode{
+				model.WorkspacePermissionWorkspaceMemberView,
 				model.WorkspacePermissionAgentCreate,
 				model.WorkspacePermissionWorkflowCreate,
 				model.WorkspacePermissionKnowledgeBaseCreate,
@@ -454,11 +454,11 @@ func TestWorkspaceMemberAllowsPermissionRoleMatrix(t *testing.T) {
 			},
 			allowed: []model.WorkspacePermissionCode{
 				model.WorkspacePermissionWorkspaceView,
-				model.WorkspacePermissionWorkspaceMemberView,
 				model.WorkspacePermissionDatabaseSchemaManage,
 				model.WorkspacePermissionFileMetadataView,
 			},
 			denied: []model.WorkspacePermissionCode{
+				model.WorkspacePermissionWorkspaceMemberView,
 				model.WorkspacePermissionDatabaseManage,
 				model.WorkspacePermissionFileManage,
 				model.WorkspacePermissionAgentCreate,

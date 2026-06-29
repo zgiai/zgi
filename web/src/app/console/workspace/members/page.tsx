@@ -4,7 +4,7 @@ import { useT, type WorkspaceKey } from '@/i18n';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { TableCell } from '@/components/ui/table';
-import { AlertCircle, Users, ShieldCheck } from 'lucide-react';
+import { AlertCircle, Users, ShieldCheck, Loader2 } from 'lucide-react';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useAuthStore } from '@/store/auth-store';
 import { useCurrentWorkspace } from '@/store/workspace-store';
@@ -30,16 +30,22 @@ import type { WorkspaceMemberAccount } from '@/services/types/workspace';
 import { useLocale } from '@/hooks/use-locale';
 import { pickLocale } from '@/utils/tool-helpers';
 import type { Role } from '@/services/types/organization';
+import { PermissionDeniedState } from '@/components/common/permission-gate-state';
 
 export default function WorkspaceMembersPage() {
   const t = useT();
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
+  const {
+    isWorkspaceManager,
+    isLoading: isLoadingPermissions,
+  } = useAccountPermissions();
+  const canManageWorkspaceMembers = isWorkspaceManager();
   const { members, total, isLoading, error } = useWorkspaceMembers(undefined, undefined, {
     page: currentPage,
     limit: pageSize,
+    enabled: canManageWorkspaceMembers,
   });
-  const { isWorkspaceManager } = useAccountPermissions();
   const currentUser = useAuthStore.use.user();
   const currentWorkspace = useCurrentWorkspace();
   const {
@@ -65,8 +71,8 @@ export default function WorkspaceMembersPage() {
   const { currentOrganization } = useOrganizations();
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const canManageMembers = isWorkspaceManager();
-  const canManagePermissions = isWorkspaceManager();
+  const canManageMembers = canManageWorkspaceMembers;
+  const canManagePermissions = canManageWorkspaceMembers;
   const showActionsColumn = canManageMembers || canManagePermissions;
   const queryClient = useQueryClient();
   const isFixedGovernanceRole = (role?: string) => role === 'owner' || role === 'admin';
@@ -184,6 +190,18 @@ export default function WorkspaceMembersPage() {
       setUpdatingMemberId(null);
     }
   };
+
+  if (isLoadingPermissions) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!canManageWorkspaceMembers) {
+    return <PermissionDeniedState />;
+  }
 
   return (
     <div className="mx-auto flex h-full max-w-7xl flex-col px-6 py-6">

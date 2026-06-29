@@ -20,6 +20,7 @@ interface WorkspaceNavItem {
   desc: string;
   icon: React.ComponentType<{ className?: string }>;
   href: string;
+  visible?: boolean;
 }
 
 function WorkspaceAccessDeniedState() {
@@ -50,6 +51,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   const hasHydrated = useHasHydrated();
   const {
     hasWorkspaceAccess,
+    isWorkspaceManager,
     isLoading: isLoadingPermissions,
     isFetching: isFetchingPermissions,
   } = useAccountPermissions();
@@ -66,6 +68,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     isCapabilitiesFetching;
   const hasWorkspaceContext = contextStatus === 'ready' && !!currentWorkspace;
   const canViewWorkspace = hasWorkspaceAccess();
+  const canManageWorkspace = isWorkspaceManager();
 
   const workspaceNavItems: WorkspaceNavItem[] = [
     {
@@ -81,6 +84,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
       desc: t('navigation.memberDesc'),
       icon: Users,
       href: '/console/workspace/members',
+      visible: canManageWorkspace,
     },
     {
       id: 'settings',
@@ -124,56 +128,58 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           {/* Workspace Navigation */}
           <div className="flex-1 overflow-y-auto px-3 py-3">
             <div className="space-y-0.5">
-              {workspaceNavItems.map(item => {
-                const Icon = item.icon;
-                const isActive = isWorkspaceNavItemActive(pathname, item.href);
+              {workspaceNavItems
+                .filter(item => item.visible !== false)
+                .map(item => {
+                  const Icon = item.icon;
+                  const isActive = isWorkspaceNavItemActive(pathname, item.href);
 
-                return (
-                  <Link
-                    key={item.id}
-                    href={item.href}
-                    className={cn(
-                      'group relative flex items-start gap-2 rounded-md px-2.5 py-2 text-sm transition-colors',
-                      isActive
-                        ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
-                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                    )}
-                  >
-                    {/* Active indicator */}
-                    {isActive && (
-                      <div className="absolute bottom-2 left-0 top-2 w-0.5 rounded-r-full bg-foreground/70" />
-                    )}
-
-                    <Icon
+                  return (
+                    <Link
+                      key={item.id}
+                      href={item.href}
                       className={cn(
-                        'mt-0.5 h-4 w-4 flex-shrink-0 transition-colors',
-                        isActive ? 'text-foreground' : 'text-muted-foreground'
+                        'group relative flex items-start gap-2 rounded-md px-2.5 py-2 text-sm transition-colors',
+                        isActive
+                          ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
+                          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
                       )}
-                    />
+                    >
+                      {/* Active indicator */}
+                      {isActive && (
+                        <div className="absolute bottom-2 left-0 top-2 w-0.5 rounded-r-full bg-foreground/70" />
+                      )}
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span
+                      <Icon
+                        className={cn(
+                          'mt-0.5 h-4 w-4 flex-shrink-0 transition-colors',
+                          isActive ? 'text-foreground' : 'text-muted-foreground'
+                        )}
+                      />
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn(
+                              'truncate font-medium',
+                              isActive ? 'text-foreground' : 'text-muted-foreground'
+                            )}
+                          >
+                            {item.label}
+                          </span>
+                        </div>
+                        <p
                           className={cn(
-                            'truncate font-medium',
-                            isActive ? 'text-foreground' : 'text-muted-foreground'
+                            'mt-0.5 line-clamp-1 text-[11px] leading-4',
+                            isActive ? 'text-muted-foreground' : 'text-muted-foreground/80'
                           )}
                         >
-                          {item.label}
-                        </span>
+                          {item.desc}
+                        </p>
                       </div>
-                      <p
-                        className={cn(
-                          'mt-0.5 line-clamp-1 text-[11px] leading-4',
-                          isActive ? 'text-muted-foreground' : 'text-muted-foreground/80'
-                        )}
-                      >
-                        {item.desc}
-                      </p>
-                    </div>
-                  </Link>
-                );
-              })}
+                    </Link>
+                  );
+                })}
             </div>
           </div>
         </div>

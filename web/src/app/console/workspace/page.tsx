@@ -205,7 +205,7 @@ export default function WorkspacePage() {
       value: workspaceStats?.members_count,
       icon: Users,
       href: '/console/workspace/members',
-      enabled: canViewWorkspace,
+      enabled: canManageWorkspace,
     },
     {
       key: 'admins',
@@ -213,7 +213,7 @@ export default function WorkspacePage() {
       value: workspaceStats?.admins_count,
       icon: ShieldCheck,
       href: '/console/workspace/members',
-      enabled: canViewWorkspace,
+      enabled: canManageWorkspace,
     },
   ];
 
@@ -224,7 +224,7 @@ export default function WorkspacePage() {
       description: t('workspace.overview.management.membersDescription'),
       href: '/console/workspace/members',
       icon: Users,
-      enabled: canViewWorkspace,
+      enabled: canManageWorkspace,
     },
     {
       key: 'settings',

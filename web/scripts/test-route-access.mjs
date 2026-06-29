@@ -18,6 +18,15 @@ const workspaceStorePath = path.join(rootDir, 'src', 'store', 'workspace-store.t
 const workLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'work', 'layout.tsx');
 const workspaceLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'workspace', 'layout.tsx');
 const workspacePagePath = path.join(rootDir, 'src', 'app', 'console', 'workspace', 'page.tsx');
+const workspaceMembersPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'workspace',
+  'members',
+  'page.tsx'
+);
 const promptListPagePath = path.join(rootDir, 'src', 'app', 'console', 'prompts', 'page.tsx');
 const promptDetailPagePath = path.join(
   rootDir,
@@ -1054,6 +1063,7 @@ assert.match(
 
 const workspaceLayoutSource = fs.readFileSync(workspaceLayoutPath, 'utf8');
 const workspacePageSource = fs.readFileSync(workspacePagePath, 'utf8');
+const workspaceMembersPageSource = fs.readFileSync(workspaceMembersPagePath, 'utf8');
 const promptListPageSource = fs.readFileSync(promptListPagePath, 'utf8');
 const promptDetailPageSource = fs.readFileSync(promptDetailPagePath, 'utf8');
 const promptUsageSummarySource = fs.readFileSync(promptUsageSummaryPath, 'utf8');
@@ -1139,6 +1149,16 @@ assert.match(
   /hasWorkspaceAccess\(\)/,
   'workspace management layout should derive access from workspace membership after capability gating'
 );
+assert.match(
+  workspaceLayoutSource,
+  /isWorkspaceManager\(\)/,
+  'workspace management layout should derive governance navigation from workspace manager authority'
+);
+assert.match(
+  workspaceLayoutSource,
+  /id:\s*'members'[\s\S]*?visible:\s*canManageWorkspace/,
+  'workspace members navigation should be visible only to organization/workspace managers'
+);
 assert.doesNotMatch(
   workspaceLayoutSource,
   /router\.replace\('\/console'\)/,
@@ -1174,6 +1194,21 @@ assert.match(
   /workspace\.overview\.permissions\.governanceAccess/,
   'workspace overview should describe workspace management as governance authority'
 );
+assert.match(
+  workspacePageSource,
+  /key:\s*'members'[\s\S]*?href:\s*'\/console\/workspace\/members'[\s\S]*?enabled:\s*canManageWorkspace/,
+  'workspace overview member-count card should link to member management only for managers'
+);
+assert.match(
+  workspacePageSource,
+  /key:\s*'admins'[\s\S]*?href:\s*'\/console\/workspace\/members'[\s\S]*?enabled:\s*canManageWorkspace/,
+  'workspace overview admin-count card should link to member management only for managers'
+);
+assert.match(
+  workspacePageSource,
+  /key:\s*'members'[\s\S]*?workspace\.overview\.management\.membersDescription[\s\S]*?enabled:\s*canManageWorkspace/,
+  'workspace overview member-management action should be enabled only for managers'
+);
 assert.doesNotMatch(
   workspacePageSource,
   /workspace\.overview\.permissions\.workspace(View|Manage)/,
@@ -1188,6 +1223,26 @@ assert.doesNotMatch(
   workspacePageSource,
   /redirect\(/,
   'workspace overview should render in place instead of redirecting to members'
+);
+assert.match(
+  workspaceMembersPageSource,
+  /const canManageWorkspaceMembers = isWorkspaceManager\(\)/,
+  'workspace members page should derive access from fixed organization/workspace manager authority'
+);
+assert.match(
+  workspaceMembersPageSource,
+  /enabled:\s*canManageWorkspaceMembers/,
+  'workspace members page should not fetch the member roster until manager authority is known'
+);
+assert.match(
+  workspaceMembersPageSource,
+  /if \(!canManageWorkspaceMembers\)[\s\S]*?<PermissionDeniedState/,
+  'workspace members direct route should render a denied state for ordinary workspace members'
+);
+assert.doesNotMatch(
+  workspaceMembersPageSource,
+  /hasAnyPermission\([^)]*workspace\./,
+  'workspace members page should not reintroduce retired workspace.* permissions as ordinary gates'
 );
 assert.match(
   promptListPageSource,

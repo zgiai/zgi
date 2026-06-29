@@ -46,6 +46,7 @@ func TestBuiltinMemberPermissionsIncludeCompatibleFineCodes(t *testing.T) {
 	}
 
 	expectedDenied := []WorkspacePermissionCode{
+		WorkspacePermissionWorkspaceMemberView,
 		WorkspacePermissionWorkspaceMemberManage,
 		WorkspacePermissionAgentCreate,
 		WorkspacePermissionDatabaseRecordDelete,
