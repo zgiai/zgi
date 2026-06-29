@@ -18,6 +18,7 @@ import (
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 )
 
 func TestExcelImportMutationsRequireFineDatabaseImportPermissionBeforeBindingRequest(t *testing.T) {
@@ -187,6 +188,75 @@ func TestDeleteDataSourceRequiresDatabaseDeleteBeforeMutation(t *testing.T) {
 	require.Equal(t, 1, permissionChecker.calls)
 	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseDelete}, permissionChecker.lastPermissions)
 	require.Zero(t, dataSourceService.deleteDataSourceCalls)
+}
+
+func TestGuardPolicyRoutesRequireDatabaseGuardPolicyManageBeforeServiceLookup(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		target     string
+		body       string
+		call       func(*DataSourceHandler, *gin.Context)
+		assertZero func(*testing.T, *excelImportPermissionDataSourceService)
+	}{
+		{
+			name:   "get policy",
+			method: http.MethodGet,
+			target: "/data-dbs/datasource-1/guard/policy",
+			body:   "{",
+			call:   (*DataSourceHandler).GetGuardPolicy,
+			assertZero: func(t *testing.T, svc *excelImportPermissionDataSourceService) {
+				require.Zero(t, svc.getGuardPolicyCalls)
+			},
+		},
+		{
+			name:   "update policy",
+			method: http.MethodPut,
+			target: "/data-dbs/datasource-1/guard/policy",
+			body:   `{"policy":{"mode":"warn"}}`,
+			call:   (*DataSourceHandler).UpdateGuardPolicy,
+			assertZero: func(t *testing.T, svc *excelImportPermissionDataSourceService) {
+				require.Zero(t, svc.getGuardPolicyCalls)
+				require.Zero(t, svc.updateGuardPolicyCalls)
+			},
+		},
+		{
+			name:   "preview policy",
+			method: http.MethodPost,
+			target: "/data-dbs/datasource-1/guard/preview",
+			body:   `{"sql":"select 1","policy":{"mode":"warn"}}`,
+			call:   (*DataSourceHandler).PreviewGuard,
+			assertZero: func(t *testing.T, svc *excelImportPermissionDataSourceService) {
+				require.Zero(t, svc.previewGuardCalls)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dataSourceService := &excelImportPermissionDataSourceService{workspaceID: "workspace-1"}
+			permissionChecker := &excelImportPermissionChecker{allowed: false}
+			handler := &DataSourceHandler{
+				service:             dataSourceService,
+				organizationService: permissionChecker,
+			}
+			ctx, recorder := newExcelImportPermissionContextWithBody(
+				tt.method,
+				tt.target,
+				gin.Params{{Key: "id", Value: "datasource-1"}},
+				tt.body,
+			)
+
+			tt.call(handler, ctx)
+
+			require.Equal(t, http.StatusForbidden, recorder.Code)
+			requireResponseCode(t, recorder, response.ErrPermissionDenied)
+			require.Equal(t, 1, dataSourceService.getDataSourceCalls)
+			require.Equal(t, 1, permissionChecker.calls)
+			require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseGuardPolicyManage}, permissionChecker.lastPermissions)
+			tt.assertZero(t, dataSourceService)
+		})
+	}
 }
 
 func TestCreateDataSourceRequiresDatabaseCreateBeforeServiceMutation(t *testing.T) {
@@ -892,6 +962,9 @@ type excelImportPermissionDataSourceService struct {
 	listSQLAuditCalls                     int
 	countSQLAuditCalls                    int
 	getSQLAuditDetailCalls                int
+	getGuardPolicyCalls                   int
+	updateGuardPolicyCalls                int
+	previewGuardCalls                     int
 }
 
 func (s *excelImportPermissionDataSourceService) GetDataSourceByID(_ context.Context, organizationID, id, _ string) (*dto.DataSourceResponse, error) {
@@ -981,6 +1054,21 @@ func (s *excelImportPermissionDataSourceService) UpdateDataSource(_ context.Cont
 func (s *excelImportPermissionDataSourceService) DeleteDataSourceByID(_ context.Context, _, _ string, _ string) error {
 	s.deleteDataSourceCalls++
 	return nil
+}
+
+func (s *excelImportPermissionDataSourceService) GetGuardPolicy(_ context.Context, _, _ string) (guard.Policy, error) {
+	s.getGuardPolicyCalls++
+	return guard.Policy{}, nil
+}
+
+func (s *excelImportPermissionDataSourceService) UpdateGuardPolicy(_ context.Context, _, _ string, policy guard.Policy) (guard.Policy, error) {
+	s.updateGuardPolicyCalls++
+	return policy, nil
+}
+
+func (s *excelImportPermissionDataSourceService) PreviewGuard(_ context.Context, _, _, _ string, _ *guard.Policy) (guard.Result, error) {
+	s.previewGuardCalls++
+	return guard.Result{}, nil
 }
 
 func (s *excelImportPermissionDataSourceService) CreateTable(_ context.Context, _, _ string, _ string, _ dto.CreateTableRequest) (*datasource_model.Table, error) {
