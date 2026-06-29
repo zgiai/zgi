@@ -60,6 +60,7 @@ const taskWorkbenchPath = path.join(
   'automation',
   'task-workbench.tsx'
 );
+const filePagePath = path.join(rootDir, 'src', 'app', 'console', 'files', 'page.tsx');
 const fileDetailPagePath = path.join(
   rootDir,
   'src',
@@ -683,6 +684,7 @@ const contentParsePageSource = fs.readFileSync(contentParsePagePath, 'utf8');
 const contentParsePlaygroundSource = fs.readFileSync(contentParsePlaygroundPath, 'utf8');
 const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
+const filePageSource = fs.readFileSync(filePagePath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
 const fileListSource = fs.readFileSync(fileListPath, 'utf8');
@@ -848,6 +850,16 @@ assert.doesNotMatch(
   taskWorkbenchSource,
   /hasPermission\(['"]workspace\.|hasAnyPermission\(\[['"]workspace\./,
   'scheduled-task workbench should not reintroduce ordinary workspace.* member permissions'
+);
+assert.match(
+  filePageSource,
+  /hasAnyPermission\(FILE_VISIBLE_PERMISSION_CODES\)/,
+  'file list page should gate direct access by file visible permissions'
+);
+assert.match(
+  filePageSource,
+  /<PermissionDeniedState \/>/,
+  'file list page should show the shared access-denied state when file permissions are absent'
 );
 assert.match(
   fileDetailPageSource,
