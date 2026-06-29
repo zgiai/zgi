@@ -901,6 +901,98 @@ func TestRunToolGovernanceDecisionStreamAlreadyRunningRecoversActiveStream(t *te
 	assertRecoveredContinuationEvents(t, events)
 }
 
+func TestRunToolGovernanceDecisionStreamResolvedDuplicateRecoversCompletedStream(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	now := time.Now().UTC()
+
+	metadata := pendingToolGovernanceDecisionMetadata("corr-approve")
+	event := map[string]interface{}{
+		"correlation_id":    "corr-approve",
+		"action":            toolGovernanceActionApprove,
+		"approval_status":   toolGovernanceApprovalStatusApproved,
+		"skill_id":          skills.SkillFileManager,
+		"tool_name":         "delete_file",
+		"status":            "approved",
+		"resolved_at":       now.Format(time.RFC3339),
+		"resolved_by":       accountID.String(),
+		"requires_approval": false,
+	}
+	metadata = mergeToolGovernanceDecisionMetadata(metadata, event)
+	metadata = resolveToolGovernanceContinuationMetadata(metadata, "corr-approve", event)
+
+	conversation := &runtimemodel.Conversation{
+		ID:                   conversationID,
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		CallerType:           runtimemodel.ConversationCallerAIChat,
+		Status:               runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
+		CurrentLeafMessageID: &messageID,
+		Metadata:             map[string]interface{}{},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	message := &runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "Delete report.pdf",
+		Answer:         "Done",
+		Status:         runtimemodel.MessageStatusCompleted,
+		Metadata:       metadata,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
+	conversationRepo := &toolGovernanceStreamConversationRepo{conversation: conversation}
+	llm := &toolGovernanceStreamLLM{}
+	svc := NewService(&repository.Repositories{
+		Access:       toolGovernanceStreamAccessRepo{},
+		Conversation: conversationRepo,
+		Message:      messageRepo,
+	}, llm).(*service)
+
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer redisServer.Close()
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close()
+	svc.events = newStreamEventStore(redisClient)
+	appendRecoveredContinuationEvents(t, ctx, svc.events, conversationID, messageID)
+
+	var events []StreamEvent
+	result, err := svc.RunToolGovernanceDecisionStream(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		"corr-approve",
+		runtimedto.ToolGovernanceDecisionRequest{Action: "approve"},
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunToolGovernanceDecisionStream() error = %v", err)
+	}
+	if result == nil || result.Status != runtimemodel.MessageStatusStreaming {
+		t.Fatalf("result = %#v, want recovery result", result)
+	}
+	if len(llm.appChatRequests) != 0 || len(llm.streamRequests) != 0 {
+		t.Fatalf("LLM calls = app %d stream %d, want none for resolved duplicate", len(llm.appChatRequests), len(llm.streamRequests))
+	}
+	if messageRepo.updateCompletedCalled || message.Status != runtimemodel.MessageStatusCompleted {
+		t.Fatalf("message status = %q completedCalled=%v, want existing completed message untouched", message.Status, messageRepo.updateCompletedCalled)
+	}
+	assertRecoveredContinuationEvents(t, events)
+}
+
 func TestRunClientActionContinuationStreamAlreadyRunningRecoversActiveStream(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
