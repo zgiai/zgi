@@ -603,29 +603,8 @@ func (h *DatasetHandler) DeleteDataset(c *gin.Context) {
 		}
 	}
 
-	// Check editor permission with detailed error handling
-	hasPermission, err := h.datasetService.CheckEditorPermission(c.Request.Context(), datasetID, accountID, tenantID)
-	if err != nil {
-		errMsg := err.Error()
-		switch {
-		case strings.Contains(errMsg, "not found"):
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		case strings.Contains(errMsg, "no permission"):
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		default:
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-	}
-	if !hasPermission {
-		response.Fail(c, response.ErrDatasetPermissionDenied)
-		return
-	}
-
 	// Delete dataset
-	err = h.datasetService.DeleteDataset(c.Request.Context(), datasetID, accountID, tenantID)
+	err := h.datasetService.DeleteDataset(c.Request.Context(), datasetID, accountID, tenantID)
 	if err != nil {
 		errMsg := err.Error()
 		switch {

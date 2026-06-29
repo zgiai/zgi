@@ -598,18 +598,24 @@ func (s *datasetService) UpdateDataset(ctx context.Context, req *UpdateDatasetRe
 }
 
 func (s *datasetService) DeleteDataset(ctx context.Context, datasetID, accountID, tenantID string) error {
-	hasPermission, err := s.CheckEditorPermission(ctx, datasetID, accountID, tenantID)
+	// Step 1: Get dataset information before deletion (for recording)
+	dataset, err := s.datasetRepo.GetByID(ctx, datasetID)
+	if err != nil {
+		return fmt.Errorf("failed to get dataset: %w", err)
+	}
+
+	hasPermission, err := s.checkKnowledgeBaseWorkspacePermission(
+		ctx,
+		dataset.OrganizationID,
+		dataset.WorkspaceID,
+		accountID,
+		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to check permission: %w", err)
 	}
 	if !hasPermission {
 		return ErrDatasetAccessDenied
-	}
-
-	// Step 1: Get dataset information before deletion (for recording)
-	dataset, err := s.datasetRepo.GetByID(ctx, datasetID)
-	if err != nil {
-		return fmt.Errorf("failed to get dataset: %w", err)
 	}
 
 	// Step 2: Get groupID from dataset.WorkspaceID for quota recording

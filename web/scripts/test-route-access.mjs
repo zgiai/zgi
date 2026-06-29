@@ -502,6 +502,15 @@ const datasetHandlerPath = path.join(
   'handler',
   'dataset_handler.go'
 );
+const datasetServicePath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'dataset',
+  'service',
+  'dataset_service.go'
+);
 const datasetDocumentHandlerPath = path.join(
   repoRootDir,
   'api',
@@ -1666,16 +1675,20 @@ function getGoFunctionSource(source, functionName) {
   return source.slice(functionIndex, nextFunctionIndex === -1 ? source.length : nextFunctionIndex);
 }
 
-function getGoHandlerMethodSource(source, receiverType, methodName) {
-  const methodStart = `func (h *${receiverType}) ${methodName}(`;
+function getGoReceiverMethodSource(source, receiverName, receiverType, methodName) {
+  const methodStart = `func (${receiverName} *${receiverType}) ${methodName}(`;
   const methodIndex = source.indexOf(methodStart);
   assert.notEqual(methodIndex, -1, `${receiverType} should define ${methodName}`);
 
   const nextMethodIndex = source.indexOf(
-    `\nfunc (h *${receiverType})`,
+    `\nfunc (${receiverName} *${receiverType})`,
     methodIndex + methodStart.length
   );
   return source.slice(methodIndex, nextMethodIndex === -1 ? source.length : nextMethodIndex);
+}
+
+function getGoHandlerMethodSource(source, receiverType, methodName) {
+  return getGoReceiverMethodSource(source, 'h', receiverType, methodName);
 }
 
 function getTaskHandlerMethodSource(methodName) {
@@ -2321,6 +2334,7 @@ const datasetDetailLayoutSource = fs.readFileSync(datasetDetailLayoutPath, 'utf8
 const datasetSettingsPageSource = fs.readFileSync(datasetSettingsPagePath, 'utf8');
 const datasetAccessHandlerSource = fs.readFileSync(datasetAccessHandlerPath, 'utf8');
 const datasetHandlerSource = fs.readFileSync(datasetHandlerPath, 'utf8');
+const datasetServiceSource = fs.readFileSync(datasetServicePath, 'utf8');
 const datasetDocumentHandlerSource = fs.readFileSync(datasetDocumentHandlerPath, 'utf8');
 const datasetSegmentHandlerSource = fs.readFileSync(datasetSegmentHandlerPath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
@@ -3161,6 +3175,37 @@ assert.match(
   datasetPatchHandlerSource,
   /req\.WorkspaceID != nil && \*req\.WorkspaceID != "" && \*req\.WorkspaceID != dataset\.WorkspaceID[\s\S]*workspace_model\.WorkspacePermissionKnowledgeBaseMove/,
   'dataset PATCH handler should require knowledge_base.move only when workspace_id changes'
+);
+const datasetDeleteHandlerSource = getGoHandlerMethodSource(
+  datasetHandlerSource,
+  'DatasetHandler',
+  'DeleteDataset'
+);
+assert.match(
+  datasetDeleteHandlerSource,
+  /CheckWorkspacePermission\([\s\S]*workspace_model\.WorkspacePermissionKnowledgeBaseDelete[\s\S]*datasetService\.DeleteDataset/,
+  'dataset DELETE handler should require knowledge_base.delete before deleting a dataset'
+);
+assert.doesNotMatch(
+  datasetDeleteHandlerSource,
+  /CheckEditorPermission/,
+  'dataset DELETE handler should not use the broad editor permission set'
+);
+const datasetDeleteServiceSource = getGoReceiverMethodSource(
+  datasetServiceSource,
+  's',
+  'datasetService',
+  'DeleteDataset'
+);
+assert.match(
+  datasetDeleteServiceSource,
+  /checkKnowledgeBaseWorkspacePermission\([\s\S]*workspace_model\.WorkspacePermissionKnowledgeBaseDelete[\s\S]*db\.Transaction/,
+  'dataset DeleteDataset service should defend with knowledge_base.delete before deleting records'
+);
+assert.doesNotMatch(
+  datasetDeleteServiceSource,
+  /CheckEditorPermission|knowledgeBaseEditPermissionCodes/,
+  'dataset DeleteDataset service should not depend on the broad editor permission set'
 );
 for (const [helperName, permissionPattern, message] of [
   [
