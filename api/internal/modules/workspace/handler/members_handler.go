@@ -195,12 +195,17 @@ func (h *MembersHandler) GetCurrentOrganizationMembers(c *gin.Context) {
 
 func (h *MembersHandler) InviteMemberByEmail(c *gin.Context) {
 	var req struct {
-		Emails   []string `json:"emails" binding:"required"`
-		Role     string   `json:"role" binding:"required"`
-		Language string   `json:"language,omitempty"`
+		Emails      []string `json:"emails" binding:"required"`
+		Role        string   `json:"role" binding:"required"`
+		Language    string   `json:"language,omitempty"`
+		Permissions []string `json:"permissions,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Permissions != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
@@ -395,6 +400,10 @@ func (h *MembersHandler) GetDatasetOperatorMembers(c *gin.Context) {
 	currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
 	if err != nil || currentWorkspaceJoin == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
+
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspaceView) {
 		return
 	}
 
@@ -836,12 +845,17 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmail(c *gin.Context) {
 	}
 
 	var req struct {
-		Emails   []string `json:"emails" binding:"required"`
-		Role     string   `json:"role" binding:"required"`
-		Language string   `json:"language,omitempty"`
+		Emails      []string `json:"emails" binding:"required"`
+		Role        string   `json:"role" binding:"required"`
+		Language    string   `json:"language,omitempty"`
+		Permissions []string `json:"permissions,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Permissions != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
@@ -946,6 +960,10 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Permissions != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
@@ -1076,6 +1094,10 @@ func (h *MembersHandler) InviteWorkspaceMemberByAccountId(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if req.Permissions != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 
 	if req.Role == "" {
 		req.Role = "admin"
@@ -1174,6 +1196,10 @@ func (h *MembersHandler) BatchInviteWorkspaceMembers(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Permissions != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
@@ -1870,6 +1896,10 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if req.Permissions != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -1895,6 +1925,10 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 	}
 
 	workspaceID := currentWorkspaceJoin.WorkspaceID
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
+		return
+	}
+
 	workspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
 	if err != nil || workspace == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)

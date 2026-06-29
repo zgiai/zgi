@@ -77,6 +77,36 @@ func TestMembersHandlerCurrentMemberDetailRequiresMemberViewBeforeLookup(t *test
 	require.Equal(t, model.WorkspacePermissionWorkspaceMemberView, organizationSvc.lastPermissionCode)
 }
 
+func TestMembersHandlerCurrentDatasetOperatorsRequiresWorkspaceViewBeforeLookup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	workspaceID := "workspace-current"
+	organizationID := "org-from-workspace"
+	accountID := "account-1"
+	workspaceSvc := &membersHandlerWorkspaceManagementService{
+		currentWorkspace: &model.WorkspaceMember{WorkspaceID: workspaceID},
+	}
+	organizationSvc := &membersHandlerOrganizationService{
+		workspaceOrganizationID:         organizationID,
+		checkWorkspacePermissionAllowed: false,
+	}
+	handler := NewMembersHandler(workspaceSvc, &membersHandlerAccountService{}, organizationSvc, "")
+
+	c, recorder := newMembersHandlerContext(http.MethodGet, "/workspaces/current/dataset-operators", accountID)
+
+	handler.GetDatasetOperatorMembers(c)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+	requireWorkspaceHandlerResponseCode(t, recorder, response.ErrPermissionDenied)
+	require.True(t, workspaceSvc.currentWorkspaceCalled)
+	require.False(t, workspaceSvc.datasetOperatorMembersCalled)
+	require.Equal(t, workspaceID, organizationSvc.lastWorkspaceIDForOrganization)
+	require.Equal(t, organizationID, organizationSvc.lastPermissionOrganizationID)
+	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
+	require.Equal(t, accountID, organizationSvc.lastPermissionAccountID)
+	require.Equal(t, model.WorkspacePermissionWorkspaceView, organizationSvc.lastPermissionCode)
+}
+
 func TestMembersHandlerWorkspaceMembersExtensionUsesRouteWorkspaceOrganizationForPermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -212,6 +242,135 @@ func TestMembersHandlerCurrentInviteRequiresManageBeforeInvite(t *testing.T) {
 	require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, organizationSvc.lastPermissionCode)
 }
 
+func TestMembersHandlerLegacyInviteRoutesRejectDirectPermissions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		body   string
+		params gin.Params
+		call   func(*MembersHandler, *gin.Context)
+	}{
+		{
+			name:   "current bulk email invite",
+			method: http.MethodPost,
+			target: "/workspaces/current/members/invite-email",
+			body:   `{"emails":["alice@example.com"],"role":"normal","permissions":["agent.view"]}`,
+			call:   (*MembersHandler).InviteMemberByEmail,
+		},
+		{
+			name:   "route bulk email invite",
+			method: http.MethodPost,
+			target: "/workspaces/workspace-route/members/invite-email",
+			body:   `{"emails":["alice@example.com"],"role":"normal","permissions":["agent.view"]}`,
+			params: gin.Params{{Key: "workspace_id", Value: "workspace-route"}},
+			call:   (*MembersHandler).InviteWorkspaceMemberByEmail,
+		},
+		{
+			name:   "route email invite ex",
+			method: http.MethodPost,
+			target: "/workspaces/workspace-route/members/invite-email-ex",
+			body:   `{"email":"alice@example.com","role":"normal","permissions":["agent.view"]}`,
+			params: gin.Params{{Key: "workspace_id", Value: "workspace-route"}},
+			call:   (*MembersHandler).InviteWorkspaceMemberByEmailEx,
+		},
+		{
+			name:   "route account invite",
+			method: http.MethodPost,
+			target: "/workspaces/workspace-route/members/invite-by-id",
+			body:   `{"account_id":"member-1","role":"normal","permissions":["agent.view"]}`,
+			params: gin.Params{{Key: "workspace_id", Value: "workspace-route"}},
+			call:   (*MembersHandler).InviteWorkspaceMemberByAccountId,
+		},
+		{
+			name:   "route batch invite",
+			method: http.MethodPost,
+			target: "/workspaces/workspace-route/members/batch-invite",
+			body:   `{"account_ids":["member-1"],"role":"normal","permissions":["agent.view"]}`,
+			params: gin.Params{{Key: "workspace_id", Value: "workspace-route"}},
+			call:   (*MembersHandler).BatchInviteWorkspaceMembers,
+		},
+		{
+			name:   "current default invite",
+			method: http.MethodPost,
+			target: "/workspaces/current/members/invite-email-ex",
+			body:   `{"email":"alice@example.com","role":"normal","permissions":["agent.view"]}`,
+			call:   (*MembersHandler).InviteDefaultMemberByEmailEx,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspaceSvc := &membersHandlerWorkspaceManagementService{
+				currentWorkspace: &model.WorkspaceMember{WorkspaceID: "workspace-current"},
+			}
+			accountSvc := &membersHandlerAccountService{}
+			organizationSvc := &membersHandlerOrganizationService{
+				workspaceOrganizationID:         "org-from-workspace",
+				checkWorkspacePermissionAllowed: true,
+			}
+			handler := NewMembersHandler(workspaceSvc, accountSvc, organizationSvc, "")
+
+			c, recorder := newMembersHandlerContext(tt.method, tt.target, "account-1")
+			c.Params = tt.params
+			c.Request = httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set("account_id", "account-1")
+
+			tt.call(handler, c)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			requireWorkspaceHandlerResponseCode(t, recorder, response.ErrInvalidParam)
+			require.False(t, workspaceSvc.currentWorkspaceCalled)
+			require.False(t, workspaceSvc.getWorkspaceByIDCalled)
+			require.False(t, accountSvc.getAccountByIDCalled)
+			require.False(t, accountSvc.inviteMemberCalled)
+			require.False(t, accountSvc.inviteMemberExCalled)
+		})
+	}
+}
+
+func TestMembersHandlerDefaultInviteRequiresManageBeforeWorkspaceLookup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	workspaceID := "workspace-current"
+	organizationID := "org-from-workspace"
+	accountID := "account-1"
+	workspaceSvc := &membersHandlerWorkspaceManagementService{
+		currentWorkspace: &model.WorkspaceMember{WorkspaceID: workspaceID},
+	}
+	accountSvc := &membersHandlerAccountService{}
+	organizationSvc := &membersHandlerOrganizationService{
+		workspaceOrganizationID:         organizationID,
+		checkWorkspacePermissionAllowed: false,
+	}
+	handler := NewMembersHandler(workspaceSvc, accountSvc, organizationSvc, "")
+
+	c, recorder := newMembersHandlerContext(http.MethodPost, "/workspaces/current/members/invite-email-ex", accountID)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/workspaces/current/members/invite-email-ex",
+		strings.NewReader(`{"email":"alice@example.com","role":"normal"}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("account_id", accountID)
+
+	handler.InviteDefaultMemberByEmailEx(c)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+	requireWorkspaceHandlerResponseCode(t, recorder, response.ErrPermissionDenied)
+	require.True(t, workspaceSvc.currentWorkspaceCalled)
+	require.False(t, workspaceSvc.getWorkspaceByIDCalled)
+	require.False(t, accountSvc.inviteMemberExCalled)
+	require.Equal(t, workspaceID, organizationSvc.lastWorkspaceIDForOrganization)
+	require.Equal(t, organizationID, organizationSvc.lastPermissionOrganizationID)
+	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
+	require.Equal(t, accountID, organizationSvc.lastPermissionAccountID)
+	require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, organizationSvc.lastPermissionCode)
+}
+
 func TestMembersHandlerCurrentUpdateRoleUsesCurrentWorkspaceForPermissionAndMutation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -270,6 +429,8 @@ type membersHandlerWorkspaceManagementService struct {
 	membersPaginatedCalled          bool
 	membersWithExtensionsCalled     bool
 	memberWithExtensionsByIDCalled  bool
+	datasetOperatorMembersCalled    bool
+	getWorkspaceByIDCalled          bool
 	removeMemberFromWorkspaceCalled bool
 	updateMemberRoleCalled          bool
 	lastUpdateMemberRoleRequest     *interfaces.UpdateMemberRoleRequest
@@ -293,6 +454,16 @@ func (s *membersHandlerWorkspaceManagementService) GetWorkspaceMembersWithExtens
 func (s *membersHandlerWorkspaceManagementService) GetWorkspaceMemberWithExtensionsById(context.Context, string, string) (*interfaces.WorkspaceMemberWithExtensionResponse, error) {
 	s.memberWithExtensionsByIDCalled = true
 	return nil, nil
+}
+
+func (s *membersHandlerWorkspaceManagementService) GetDatasetOperatorMembers(context.Context, string) ([]*interfaces.AccountWithRole, error) {
+	s.datasetOperatorMembersCalled = true
+	return nil, nil
+}
+
+func (s *membersHandlerWorkspaceManagementService) GetWorkspaceByID(_ context.Context, workspaceID string) (*model.Workspace, error) {
+	s.getWorkspaceByIDCalled = true
+	return &model.Workspace{ID: workspaceID}, nil
 }
 
 func (s *membersHandlerWorkspaceManagementService) RemoveMemberFromWorkspace(context.Context, *model.Workspace, *auth_model.Account, *auth_model.Account) error {
@@ -339,6 +510,7 @@ type membersHandlerAccountService struct {
 
 	getAccountByIDCalled bool
 	inviteMemberCalled   bool
+	inviteMemberExCalled bool
 }
 
 func (s *membersHandlerAccountService) GetAccountByID(context.Context, string) (*auth_model.Account, error) {
@@ -348,6 +520,11 @@ func (s *membersHandlerAccountService) GetAccountByID(context.Context, string) (
 
 func (s *membersHandlerAccountService) InviteMember(context.Context, string, string, string, model.WorkspaceMemberRole, string) (string, error) {
 	s.inviteMemberCalled = true
+	return "", nil
+}
+
+func (s *membersHandlerAccountService) InviteMemberEx(context.Context, string, string, string, model.WorkspaceMemberRole, string, string, string, string, string, bool) (string, error) {
+	s.inviteMemberExCalled = true
 	return "", nil
 }
 
