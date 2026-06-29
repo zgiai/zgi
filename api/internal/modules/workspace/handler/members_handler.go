@@ -129,6 +129,10 @@ func (h *MembersHandler) GetCurrentOrganizationMemberDetail(c *gin.Context) {
 		return
 	}
 
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspaceMemberView) {
+		return
+	}
+
 	member, err := h.workspaceManagementService.GetWorkspaceMemberWithExtensionsById(c.Request.Context(), currentWorkspaceJoin.WorkspaceID, memberID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -219,6 +223,10 @@ func (h *MembersHandler) InviteMemberByEmail(c *gin.Context) {
 		return
 	}
 
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
+		return
+	}
+
 	invitationResults := make([]map[string]interface{}, 0)
 
 	for _, email := range req.Emails {
@@ -276,6 +284,16 @@ func (h *MembersHandler) CancelMemberInvite(c *gin.Context) {
 		return
 	}
 
+	currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
+	if err != nil || currentWorkspaceJoin == nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
+
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
+		return
+	}
+
 	member, err := h.accountService.GetAccountByID(c.Request.Context(), memberID)
 	if err != nil || member == nil {
 		response.Fail(c, response.ErrAccountNotFound)
@@ -285,12 +303,6 @@ func (h *MembersHandler) CancelMemberInvite(c *gin.Context) {
 	operator, err := h.accountService.GetAccountByID(c.Request.Context(), accountID)
 	if err != nil || operator == nil {
 		response.Fail(c, response.ErrUnauthorized)
-		return
-	}
-
-	currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
-	if err != nil || currentWorkspaceJoin == nil {
-		response.Fail(c, response.ErrWorkspaceNotFound)
 		return
 	}
 

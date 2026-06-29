@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -37,6 +38,38 @@ func TestMembersHandlerCurrentMembersUsesCurrentWorkspaceOrganizationForPermissi
 	requireWorkspaceHandlerResponseCode(t, recorder, response.ErrPermissionDenied)
 	require.True(t, workspaceSvc.currentWorkspaceCalled)
 	require.False(t, workspaceSvc.membersPaginatedCalled)
+	require.Equal(t, workspaceID, organizationSvc.lastWorkspaceIDForOrganization)
+	require.Equal(t, organizationID, organizationSvc.lastPermissionOrganizationID)
+	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
+	require.Equal(t, accountID, organizationSvc.lastPermissionAccountID)
+	require.Equal(t, model.WorkspacePermissionWorkspaceMemberView, organizationSvc.lastPermissionCode)
+}
+
+func TestMembersHandlerCurrentMemberDetailRequiresMemberViewBeforeLookup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	workspaceID := "workspace-current"
+	organizationID := "org-from-workspace"
+	accountID := "account-1"
+	memberID := "member-1"
+	workspaceSvc := &membersHandlerWorkspaceManagementService{
+		currentWorkspace: &model.WorkspaceMember{WorkspaceID: workspaceID},
+	}
+	organizationSvc := &membersHandlerOrganizationService{
+		workspaceOrganizationID:         organizationID,
+		checkWorkspacePermissionAllowed: false,
+	}
+	handler := NewMembersHandler(workspaceSvc, &membersHandlerAccountService{}, organizationSvc, "")
+
+	c, recorder := newMembersHandlerContext(http.MethodGet, "/workspaces/current/members/"+memberID, accountID)
+	c.Params = gin.Params{{Key: "member_id", Value: memberID}}
+
+	handler.GetCurrentOrganizationMemberDetail(c)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+	requireWorkspaceHandlerResponseCode(t, recorder, response.ErrPermissionDenied)
+	require.True(t, workspaceSvc.currentWorkspaceCalled)
+	require.False(t, workspaceSvc.memberWithExtensionsByIDCalled)
 	require.Equal(t, workspaceID, organizationSvc.lastWorkspaceIDForOrganization)
 	require.Equal(t, organizationID, organizationSvc.lastPermissionOrganizationID)
 	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
@@ -106,6 +139,79 @@ func TestMembersHandlerCancelWorkspaceInviteRequiresManageBeforeMemberLookup(t *
 	require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, organizationSvc.lastPermissionCode)
 }
 
+func TestMembersHandlerCurrentCancelRequiresManageBeforeAccountLookup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	workspaceID := "workspace-current"
+	organizationID := "org-from-workspace"
+	accountID := "account-1"
+	memberID := "member-1"
+	workspaceSvc := &membersHandlerWorkspaceManagementService{
+		currentWorkspace: &model.WorkspaceMember{WorkspaceID: workspaceID},
+	}
+	accountSvc := &membersHandlerAccountService{}
+	organizationSvc := &membersHandlerOrganizationService{
+		workspaceOrganizationID:         organizationID,
+		checkWorkspacePermissionAllowed: false,
+	}
+	handler := NewMembersHandler(workspaceSvc, accountSvc, organizationSvc, "")
+
+	c, recorder := newMembersHandlerContext(http.MethodDelete, "/workspaces/current/members/"+memberID, accountID)
+	c.Params = gin.Params{{Key: "member_id", Value: memberID}}
+
+	handler.CancelMemberInvite(c)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+	requireWorkspaceHandlerResponseCode(t, recorder, response.ErrPermissionDenied)
+	require.True(t, workspaceSvc.currentWorkspaceCalled)
+	require.False(t, accountSvc.getAccountByIDCalled)
+	require.False(t, workspaceSvc.removeMemberFromWorkspaceCalled)
+	require.Equal(t, workspaceID, organizationSvc.lastWorkspaceIDForOrganization)
+	require.Equal(t, organizationID, organizationSvc.lastPermissionOrganizationID)
+	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
+	require.Equal(t, accountID, organizationSvc.lastPermissionAccountID)
+	require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, organizationSvc.lastPermissionCode)
+}
+
+func TestMembersHandlerCurrentInviteRequiresManageBeforeInvite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	workspaceID := "workspace-current"
+	organizationID := "org-from-workspace"
+	accountID := "account-1"
+	workspaceSvc := &membersHandlerWorkspaceManagementService{
+		currentWorkspace: &model.WorkspaceMember{WorkspaceID: workspaceID},
+	}
+	accountSvc := &membersHandlerAccountService{}
+	organizationSvc := &membersHandlerOrganizationService{
+		workspaceOrganizationID:         organizationID,
+		checkWorkspacePermissionAllowed: false,
+	}
+	handler := NewMembersHandler(workspaceSvc, accountSvc, organizationSvc, "")
+
+	c, recorder := newMembersHandlerContext(http.MethodPost, "/workspaces/current/members/invite-email", accountID)
+	c.Request.Body = http.NoBody
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/workspaces/current/members/invite-email",
+		strings.NewReader(`{"emails":["alice@example.com"],"role":"normal"}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("account_id", accountID)
+
+	handler.InviteMemberByEmail(c)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+	requireWorkspaceHandlerResponseCode(t, recorder, response.ErrPermissionDenied)
+	require.True(t, workspaceSvc.currentWorkspaceCalled)
+	require.False(t, accountSvc.inviteMemberCalled)
+	require.Equal(t, workspaceID, organizationSvc.lastWorkspaceIDForOrganization)
+	require.Equal(t, organizationID, organizationSvc.lastPermissionOrganizationID)
+	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
+	require.Equal(t, accountID, organizationSvc.lastPermissionAccountID)
+	require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, organizationSvc.lastPermissionCode)
+}
+
 func newMembersHandlerContext(method, target, accountID string) (*gin.Context, *httptest.ResponseRecorder) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -121,6 +227,7 @@ type membersHandlerWorkspaceManagementService struct {
 	currentWorkspaceCalled          bool
 	membersPaginatedCalled          bool
 	membersWithExtensionsCalled     bool
+	memberWithExtensionsByIDCalled  bool
 	removeMemberFromWorkspaceCalled bool
 }
 
@@ -136,6 +243,11 @@ func (s *membersHandlerWorkspaceManagementService) GetWorkspaceMembersPaginated(
 
 func (s *membersHandlerWorkspaceManagementService) GetWorkspaceMembersWithExtensions(context.Context, string) ([]*interfaces.WorkspaceMemberWithExtensionResponse, error) {
 	s.membersWithExtensionsCalled = true
+	return nil, nil
+}
+
+func (s *membersHandlerWorkspaceManagementService) GetWorkspaceMemberWithExtensionsById(context.Context, string, string) (*interfaces.WorkspaceMemberWithExtensionResponse, error) {
+	s.memberWithExtensionsByIDCalled = true
 	return nil, nil
 }
 
@@ -176,11 +288,17 @@ type membersHandlerAccountService struct {
 	interfaces.AccountService
 
 	getAccountByIDCalled bool
+	inviteMemberCalled   bool
 }
 
 func (s *membersHandlerAccountService) GetAccountByID(context.Context, string) (*auth_model.Account, error) {
 	s.getAccountByIDCalled = true
 	return nil, nil
+}
+
+func (s *membersHandlerAccountService) InviteMember(context.Context, string, string, string, model.WorkspaceMemberRole, string) (string, error) {
+	s.inviteMemberCalled = true
+	return "", nil
 }
 
 var _ interfaces.WorkspaceManagementService = (*membersHandlerWorkspaceManagementService)(nil)
