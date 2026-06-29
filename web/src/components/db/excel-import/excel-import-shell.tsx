@@ -118,6 +118,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canAnalyzeImport = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importAnalyze);
   const canExecuteImport = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importExecute);
+  const canViewImportErrors = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importErrorsView);
   const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
   const { tables } = useDbTables(dbId, { enabled: canAnalyzeImport || canExecuteImport });
   const [step, setStep] = useState<Step>('file');
@@ -146,7 +147,9 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
     dbId,
     importResult?.job_id,
     { limit: 20, offset: 0 },
-    step === 'result' && Boolean(importResult && importResult.failed_rows > 0)
+    canViewImportErrors &&
+      step === 'result' &&
+      Boolean(importResult && importResult.failed_rows > 0)
   );
   const analyzeRequestSeq = useRef(0);
 

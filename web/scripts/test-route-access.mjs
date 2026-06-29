@@ -1610,6 +1610,16 @@ assert.match(
 );
 assert.match(
   excelImportShellSource,
+  /const canViewImportErrors\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.importErrorsView\)/,
+  'database Excel import shell should check the import-error detail permission'
+);
+assert.match(
+  excelImportShellSource,
+  /useExcelImportErrors\([\s\S]*canViewImportErrors\s*&&[\s\S]*step === 'result'[\s\S]*importResult\.failed_rows > 0/,
+  'database Excel import shell should not fetch import-error details without database.import.errors.view'
+);
+assert.match(
+  excelImportShellSource,
   /if \(!canAnalyzeImport && !canExecuteImport\) \{[\s\S]*ShieldAlert/,
   'database Excel import shell should block direct access when import permissions are absent'
 );
