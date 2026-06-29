@@ -276,7 +276,15 @@ const agentEntryPagePath = path.join(
   '[agentId]',
   'page.tsx'
 );
+const datasetPagePath = path.join(rootDir, 'src', 'app', 'console', 'dataset', 'page.tsx');
 const datasetCardPath = path.join(rootDir, 'src', 'components', 'datasets', 'dataset-card.tsx');
+const datasetFolderCardPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'datasets',
+  'folder-card.tsx'
+);
 const datasetHooksPath = path.join(rootDir, 'src', 'hooks', 'dataset', 'use-datasets.ts');
 const datasetHitResultItemPath = path.join(
   rootDir,
@@ -1293,7 +1301,9 @@ const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
 const agentEntryPageSource = fs.readFileSync(agentEntryPagePath, 'utf8');
+const datasetPageSource = fs.readFileSync(datasetPagePath, 'utf8');
 const datasetCardSource = fs.readFileSync(datasetCardPath, 'utf8');
+const datasetFolderCardSource = fs.readFileSync(datasetFolderCardPath, 'utf8');
 const datasetHooksSource = fs.readFileSync(datasetHooksPath, 'utf8');
 const datasetHitResultItemSource = fs.readFileSync(datasetHitResultItemPath, 'utf8');
 const datasetDetailRootPageSource = fs.readFileSync(datasetDetailRootPagePath, 'utf8');
@@ -1835,6 +1845,26 @@ assert.doesNotMatch(
   agentCardSource,
   /AGENT_PERMISSION_ACTIONS\.export/,
   'agent cards should not wire agent.export to the workflow YAML export endpoint'
+);
+assert.match(
+  datasetPageSource,
+  /const canManage\s*=\s*hasAnyPermission\(KNOWLEDGE_BASE_PERMISSION_ACTIONS\.create\)/,
+  'dataset list create action should use the knowledge-base create action group'
+);
+assert.doesNotMatch(
+  datasetPageSource,
+  /hasPermission\(['"]knowledge_base\.(?:create|folder_manage)['"]\)/,
+  'dataset list should not bypass the knowledge-base action matrix with raw permission literals'
+);
+assert.match(
+  datasetFolderCardSource,
+  /const canManageFolders\s*=\s*hasAnyPermission\(KNOWLEDGE_BASE_PERMISSION_ACTIONS\.folderManage\)/,
+  'dataset folder card edit/delete actions should use the folder manage action group'
+);
+assert.doesNotMatch(
+  datasetFolderCardSource,
+  /hasPermission\(['"]knowledge_base\.folder_manage['"]\)/,
+  'dataset folder card should not bypass the knowledge-base action matrix with a raw folder permission literal'
 );
 assert.match(
   datasetCardSource,
