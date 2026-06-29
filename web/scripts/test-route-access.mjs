@@ -89,6 +89,16 @@ const relatedResourcesPopoverPath = path.join(
 const dbPagePath = path.join(rootDir, 'src', 'app', 'console', 'db', 'page.tsx');
 const dbOverviewPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'page.tsx');
 const dbLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'layout.tsx');
+const dbImportExcelPath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'db',
+  '[dbId]',
+  'import-excel',
+  'page.tsx'
+);
 const dbSearchPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'search', 'page.tsx');
 const dbRecordPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'record', 'page.tsx');
 const dbTablePagePath = path.join(
@@ -137,6 +147,14 @@ const dbTableDataPath = path.join(
   '[tableId]',
   'data',
   'page.tsx'
+);
+const excelImportShellPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'db',
+  'excel-import',
+  'excel-import-shell.tsx'
 );
 const defaultCustomerPath = path.join(rootDir, 'src', 'customer', 'default.tsx');
 const accountServicePath = path.join(rootDir, 'src', 'services', 'account.service.ts');
@@ -692,12 +710,14 @@ const relatedResourcesPopoverSource = fs.readFileSync(relatedResourcesPopoverPat
 const dbPageSource = fs.readFileSync(dbPagePath, 'utf8');
 const dbOverviewSource = fs.readFileSync(dbOverviewPath, 'utf8');
 const dbLayoutSource = fs.readFileSync(dbLayoutPath, 'utf8');
+const dbImportExcelSource = fs.readFileSync(dbImportExcelPath, 'utf8');
 const dbSearchSource = fs.readFileSync(dbSearchPath, 'utf8');
 const dbRecordSource = fs.readFileSync(dbRecordPath, 'utf8');
 const dbTablePageSource = fs.readFileSync(dbTablePagePath, 'utf8');
 const dbTableStructureSource = fs.readFileSync(dbTableStructurePath, 'utf8');
 const dbTableCreateSource = fs.readFileSync(dbTableCreatePath, 'utf8');
 const dbTableDataSource = fs.readFileSync(dbTableDataPath, 'utf8');
+const excelImportShellSource = fs.readFileSync(excelImportShellPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 const workflowEditorSource = fs.readFileSync(workflowEditorPath, 'utf8');
@@ -965,6 +985,26 @@ assert.match(
   dbRecordSource,
   /const canViewOperationLogs\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.operationLogsView\)/,
   'database operation-log direct page should require database.operation_logs.view'
+);
+assert.match(
+  dbImportExcelSource,
+  /<ExcelImportShell dbId=\{dbId\} \/>/,
+  'database Excel import direct page should delegate to the shared guarded import shell'
+);
+assert.match(
+  excelImportShellSource,
+  /const canAnalyzeImport\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.importAnalyze\)/,
+  'database Excel import shell should check the import analyze permission'
+);
+assert.match(
+  excelImportShellSource,
+  /const canExecuteImport\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.importExecute\)/,
+  'database Excel import shell should check the import execute permission'
+);
+assert.match(
+  excelImportShellSource,
+  /if \(!canAnalyzeImport && !canExecuteImport\) \{[\s\S]*ShieldAlert/,
+  'database Excel import shell should block direct access when import permissions are absent'
 );
 assert.match(
   dbTablePageSource,
