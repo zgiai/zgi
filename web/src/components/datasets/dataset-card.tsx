@@ -50,59 +50,87 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
   const canDeleteDataset = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.delete);
   const canMoveDataset = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.move);
   const canManageDatasetFolders = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.folderManage);
+  const canViewDocuments = hasAnyPermission([
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentCreate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentUpdate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentDelete,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage,
+  ]);
+  const canUseRetrievalTest = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.retrievalTest);
+  const canViewGraph =
+    dataset.enable_graph_flow &&
+    hasAnyPermission([
+      ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphView,
+      ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphManage,
+    ]);
+  const canOpenDatasetDetail =
+    canViewDocuments || canUseRetrievalTest || canViewGraph || canUpdateDataset;
   const canMoveDatasetToFolder = canMoveDataset && canManageDatasetFolders;
   const canShowActions =
     canUpdateDataset || canDeleteDataset || canMoveDataset || canMoveDatasetToFolder;
 
+  const cardContent = (
+    <Card
+      className={`hover:shadow-md transition-shadow h-full flex flex-col shrink-0 ${
+        canOpenDatasetDetail ? 'cursor-pointer' : ''
+      }`}
+    >
+      <CardContent className="p-3 sm:p-4 space-y-2 flex-1 flex flex-col shrink-0">
+        <div className="flex items-center w-full">
+          <div className="size-6 flex items-center justify-center mr-2 w-8 h-8 sm:w-10 sm:h-10">
+            <IconPreview
+              icon={dataset.icon || dataset.name.slice(0, 2).toUpperCase()}
+              iconType={dataset.icon_type}
+              src={dataset.icon_type === 'image' ? dataset.icon_url : undefined}
+              iconBackground={dataset.icon_background || ICON_BG}
+              editable={false}
+              size="sm"
+            />
+          </div>
+          <h3
+            className="font-medium text-sm sm:text-md w-0 grow px-1 break-words line-clamp-2"
+            title={dataset.name}
+          >
+            {dataset.name || t('noName')}
+          </h3>
+          {dataset.enable_graph_flow && (
+            <div className="flex">
+              <Badge
+                variant="outline"
+                className="border-highlight text-highlight bg-highlight/10 text-[11px] px-1.5 py-px"
+              >
+                {t('graphFlowBadge')}
+              </Badge>
+            </div>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground line-clamp-2 sm:line-clamp-3 grow h-0 overflow-ellipsis pt-1 sm:pt-2">
+          {dataset.description || t('noDescription')}
+        </p>
+        <div className="text-xs flex items-center gap-2">
+          <BookOpenIcon size={14} className="sm:w-4 sm:h-4" />
+          <span className="truncate">{t('dataset')}</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   return (
     <div className="relative h-36 sm:h-40">
-      <div
-        onClick={() => {
-          sessionStorage.setItem('dataset_prev_folder_id', currentFolderId || '');
-        }}
-      >
-        <Link href={`/console/dataset/${dataset.id}`} className="block h-36 sm:h-40">
-          <Card className="hover:shadow-md transition-shadow h-full flex flex-col shrink-0">
-            <CardContent className="p-3 sm:p-4 space-y-2 flex-1 flex flex-col shrink-0">
-              <div className="flex items-center w-full">
-                <div className="size-6 flex items-center justify-center mr-2 w-8 h-8 sm:w-10 sm:h-10">
-                  <IconPreview
-                    icon={dataset.icon || dataset.name.slice(0, 2).toUpperCase()}
-                    iconType={dataset.icon_type}
-                    src={dataset.icon_type === 'image' ? dataset.icon_url : undefined}
-                    iconBackground={dataset.icon_background || ICON_BG}
-                    editable={false}
-                    size="sm"
-                  />
-                </div>
-                <h3
-                  className="font-medium text-sm sm:text-md w-0 grow px-1 break-words line-clamp-2"
-                  title={dataset.name}
-                >
-                  {dataset.name || t('noName')}
-                </h3>
-                {dataset.enable_graph_flow && (
-                  <div className="flex">
-                    <Badge
-                      variant="outline"
-                      className="border-highlight text-highlight bg-highlight/10 text-[11px] px-1.5 py-px"
-                    >
-                      {t('graphFlowBadge')}
-                    </Badge>
-                  </div>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground line-clamp-2 sm:line-clamp-3 grow h-0 overflow-ellipsis pt-1 sm:pt-2">
-                {dataset.description || t('noDescription')}
-              </p>
-              <div className="text-xs flex items-center gap-2">
-                <BookOpenIcon size={14} className="sm:w-4 sm:h-4" />
-                <span className="truncate">{t('dataset')}</span>
-              </div>
-            </CardContent>
-          </Card>
+      {canOpenDatasetDetail ? (
+        <Link
+          href={`/console/dataset/${dataset.id}`}
+          className="block h-36 sm:h-40"
+          onClick={() => {
+            sessionStorage.setItem('dataset_prev_folder_id', currentFolderId || '');
+          }}
+        >
+          {cardContent}
         </Link>
-      </div>
+      ) : (
+        <div className="h-36 sm:h-40">{cardContent}</div>
+      )}
       {canShowActions && (
         <div className="absolute bottom-1.5 sm:bottom-2 right-1.5 sm:right-2">
           <DropdownMenu>

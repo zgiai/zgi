@@ -3530,8 +3530,18 @@ assert.match(
 );
 assert.match(
   datasetCardSource,
+  /const canOpenDatasetDetail\s*=[\s\S]*canViewDocuments \|\| canUseRetrievalTest \|\| canViewGraph \|\| canUpdateDataset/,
+  'dataset card body link should only be enabled when the dataset detail root can route to a visible child page'
+);
+assert.match(
+  datasetCardSource,
   /href=\{`\/console\/dataset\/\$\{dataset\.id\}`\}/,
   'dataset cards should link to the permission-aware detail root instead of always opening documents'
+);
+assert.match(
+  datasetCardSource,
+  /canOpenDatasetDetail \? \([\s\S]*href=\{`\/console\/dataset\/\$\{dataset\.id\}`\}[\s\S]*\) : \(/,
+  'dataset cards should not send action-only users to a denied dataset detail route'
 );
 assert.doesNotMatch(
   datasetCardSource,
