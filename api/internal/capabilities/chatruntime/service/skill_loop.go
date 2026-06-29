@@ -667,7 +667,16 @@ func skillLoopPlanToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard 
 }
 
 func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) skillloop.ToolCallGuard {
+	contextualGuard := skillLoopToolCallGuard(prepared)
 	return func(req skillloop.ToolCallGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		if contextualGuard != nil && skillLoopShouldApplyContextualPlanGuard(prepared) {
+			if guardResult, blocked := contextualGuard(req); blocked {
+				if prepared != nil && prepared.Message != nil {
+					recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, req.SkillID, req.ToolName, "contextual_execution_evidence_requires_different_next_step")
+				}
+				return guardResult, true
+			}
+		}
 		allowed := skillLoopAllowedPlannedTools(prepared)
 		if len(allowed) == 0 && !skillLoopShouldRestrictToOperationPlan(prepared) {
 			return skillloop.FinalAnswerGuardResult{}, false
@@ -738,6 +747,16 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 		recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_requested_unplanned_tool_without_safe_current_goal_match")
 		return skillLoopUnplannedToolGuardResult(skillID, toolName), true
 	}
+}
+
+func skillLoopShouldApplyContextualPlanGuard(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	if plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"]); len(plan) > 0 {
+		return true
+	}
+	return isContinuationIntent(prepared.parts.Query) && generatedFileMetadataHasAnyArtifact(prepared.Message.Metadata)
 }
 
 func skillLoopShouldBlockDuplicateMutationToolCall(prepared *PreparedChat, resolved *skills.ResolvedSkills, req skillloop.ToolCallGuardRequest) bool {

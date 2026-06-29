@@ -1853,6 +1853,61 @@ func TestSkillLoopToolCallGuardPreventsDuplicateManagedFileGeneration(t *testing
 	}
 }
 
+func TestSkillLoopPlanToolGuardAppliesContextualManagedFileDuplicateGenerationGuard(t *testing.T) {
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status":             operationPlanStatusRunning,
+					"original_user_goal": "please create a txt file in File Management",
+				},
+			},
+		},
+		parts: consoleFilesCreateCapabilityTestParts("please create a txt file in File Management"),
+	}
+	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
+	prepared.parts.SkillMode = skillModeAuto
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_file",
+		Arguments: map[string]interface{}{
+			"filename": "second.txt",
+			"format":   "txt",
+		},
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillFileGenerator,
+			ToolName: "generate_file",
+			Arguments: map[string]interface{}{
+				"filename": "first",
+				"format":   "txt",
+			},
+			Result: map[string]interface{}{
+				"tool_file_id": "tool-1",
+				"filename":     "first.txt",
+			},
+		}},
+	})
+
+	if !blocked {
+		t.Fatal("plan tool guard allowed duplicate file generation after a temporary artifact already existed")
+	}
+	for _, want := range []string{skills.SkillFileManager, "save_file_to_management", `"tool_file_id":"tool-1"`, `"filename":"first.txt"`} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard system message missing %q in:\n%s", want, result.SystemMessage)
+		}
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	blockedDeviations := mapSliceFromAny(plan["blocked_deviations"])
+	if len(blockedDeviations) != 1 {
+		t.Fatalf("blocked_deviations = %#v, want one contextual guard deviation", plan["blocked_deviations"])
+	}
+	if got := stringFromAny(blockedDeviations[0]["reason"]); got != "contextual_execution_evidence_requires_different_next_step" {
+		t.Fatalf("blocked deviation reason = %q, want contextual guard reason", got)
+	}
+}
+
 func TestSkillLoopToolCallGuardAllowsDistinctExplicitManagedFileTargets(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesCreateCapabilityTestParts("please create and save aichat-one.txt and aichat-two.svg to File Management"),
