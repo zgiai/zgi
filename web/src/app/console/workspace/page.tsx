@@ -270,13 +270,13 @@ export default function WorkspacePage() {
 
   const permissionItems: PermissionItem[] = [
     {
-      key: 'workspace-view',
-      label: t('workspace.overview.permissions.workspaceView'),
+      key: 'membership',
+      label: t('workspace.overview.permissions.membership'),
       enabled: canViewWorkspace,
     },
     {
-      key: 'workspace-manage',
-      label: t('workspace.overview.permissions.workspaceManage'),
+      key: 'governance',
+      label: t('workspace.overview.permissions.governanceAccess'),
       enabled: canManageWorkspace,
     },
     {

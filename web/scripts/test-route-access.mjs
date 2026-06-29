@@ -776,6 +776,21 @@ assert.match(
   /workspace\.overview\.permissions/,
   'workspace overview should summarize current workspace permissions'
 );
+assert.match(
+  workspacePageSource,
+  /workspace\.overview\.permissions\.membership/,
+  'workspace overview should describe workspace membership as a role state instead of a selectable workspace permission'
+);
+assert.match(
+  workspacePageSource,
+  /workspace\.overview\.permissions\.governanceAccess/,
+  'workspace overview should describe workspace management as governance authority'
+);
+assert.doesNotMatch(
+  workspacePageSource,
+  /workspace\.overview\.permissions\.workspace(View|Manage)/,
+  'workspace overview should not present retired workspace view/manage codes as ordinary member permissions'
+);
 assert.doesNotMatch(
   workspacePageSource,
   /dashboardService\.getRecentWork|DASHBOARD_KEYS\.recentWork/,
