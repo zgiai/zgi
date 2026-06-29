@@ -130,11 +130,15 @@ function clientActionProgressPayload(
     phase,
     skill_id: payload.skill_id,
     tool_name: payload.tool_name,
+    action_id: payload.action_id,
     action_type: payload.action_type,
     status: payload.status,
     effect: payload.effect,
     asset_type: payload.asset_type,
     assets: payload.assets,
+    correlation_id:
+      typeof payload.correlation_id === 'string' ? payload.correlation_id : undefined,
+    asset_operation_audit: payload.asset_operation_audit,
     result: clientActionProgressResult(payload),
     created_at: payload.created_at,
   };
@@ -154,10 +158,13 @@ function clientActionProgressResult(
   };
 
   mergeIfPresent('action_type', payload.action_type);
+  mergeIfPresent('action_id', payload.action_id);
+  mergeIfPresent('correlation_id', payload.correlation_id);
   mergeIfPresent('href', payload.href);
   mergeIfPresent('effect', payload.effect);
   mergeIfPresent('asset_type', payload.asset_type);
   mergeIfPresent('assets', payload.assets);
+  mergeIfPresent('asset_operation_audit', payload.asset_operation_audit);
 
   return Object.keys(result).length > 0 ? result : payload.result;
 }

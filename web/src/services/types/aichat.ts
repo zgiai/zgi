@@ -838,11 +838,14 @@ export interface AIChatAgentProgressEventData {
   meta_tool_name?: string;
   skill_id?: string;
   tool_name?: string;
+  action_id?: string;
   action_type?: string;
   status?: string;
   effect?: string;
   asset_type?: string;
   assets?: AIChatToolGovernanceAssetRef[];
+  correlation_id?: string;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   result?: Record<string, unknown> | null;
   arguments_chars?: number;
   created_at?: number;

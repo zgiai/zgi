@@ -488,23 +488,38 @@ function skillInvocationNavigationTarget(invocation: AIChatSkillInvocation): str
   return href.replace(/\/+$/, '') || href;
 }
 
-function skillInvocationAssetOperationIdentity(invocation: AIChatSkillInvocation): string {
-  const result = timelineRecord(invocation.result);
-  const args = timelineRecord(invocation.arguments);
-  const record = invocation as unknown as Record<string, unknown>;
-  const audit =
-    record.asset_operation_audit &&
-    typeof record.asset_operation_audit === 'object' &&
-    !Array.isArray(record.asset_operation_audit)
-      ? (record.asset_operation_audit as Record<string, unknown>)
-      : timelineRecord(result.asset_operation_audit);
+type AssetOperationTimelineIdentityInput = {
+  audit?: unknown;
+  result?: Record<string, unknown>;
+  args?: Record<string, unknown>;
+  assetType?: unknown;
+  effect?: unknown;
+  assets?: unknown;
+  actionId?: unknown;
+  correlationId?: unknown;
+};
+
+function normalizeAssetOperationActionId(value: unknown): string {
+  const actionId = timelineString(value);
+  if (!actionId) return '';
+  return actionId.startsWith('asset_observation:')
+    ? actionId.slice('asset_observation:'.length)
+    : actionId;
+}
+
+function assetOperationTimelineIdentity(input: AssetOperationTimelineIdentityInput): string {
+  const result = input.result ?? {};
+  const args = input.args ?? {};
+  const audit = timelineRecord(input.audit ?? result.asset_operation_audit);
   const operationGroup = timelineRecord(result.operation_group);
   const assetType = (
+    timelineString(input.assetType) ||
     timelineString(audit.asset_type) ||
     timelineString(result.asset_type) ||
     timelineString(args.asset_type)
   ).toLowerCase();
   const effect = (
+    timelineString(input.effect) ||
     timelineString(audit.effect) ||
     timelineString(result.effect) ||
     timelineString(args.effect)
@@ -512,10 +527,17 @@ function skillInvocationAssetOperationIdentity(invocation: AIChatSkillInvocation
   if (!assetType || !effect) return '';
 
   const correlationId =
+    timelineString(input.correlationId) ||
     timelineString(audit.correlation_id) ||
     timelineString(result.correlation_id) ||
     timelineString(operationGroup.correlation_id);
   if (correlationId) return `skill:asset_operation:${correlationId}`;
+
+  const actionId =
+    normalizeAssetOperationActionId(input.actionId) ||
+    normalizeAssetOperationActionId(result.action_id) ||
+    normalizeAssetOperationActionId(args.action_id);
+  if (actionId) return `skill:asset_operation:${actionId}`;
 
   return [
     'skill',
@@ -523,7 +545,8 @@ function skillInvocationAssetOperationIdentity(invocation: AIChatSkillInvocation
     assetType,
     effect,
     stableTimelineValue(
-      audit.assets ??
+      input.assets ??
+        audit.assets ??
         result.assets ??
         args.assets ??
         result.item_results ??
@@ -531,6 +554,19 @@ function skillInvocationAssetOperationIdentity(invocation: AIChatSkillInvocation
         {}
     ),
   ].join(':');
+}
+
+function skillInvocationAssetOperationIdentity(invocation: AIChatSkillInvocation): string {
+  const result = timelineRecord(invocation.result);
+  const args = timelineRecord(invocation.arguments);
+  const record = invocation as unknown as Record<string, unknown>;
+  return assetOperationTimelineIdentity({
+    audit: record.asset_operation_audit,
+    result,
+    args,
+    actionId: record.action_id,
+    correlationId: record.correlation_id,
+  });
 }
 
 function governanceCorrelationId(value: unknown): string {
@@ -644,10 +680,26 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
             timelineString(result.current_href) ||
             timelineString(result.target_href);
           if (href) {
-            return `progress:client_action:route_navigation:${href.replace(/\/+$/, '').toLowerCase()}`;
+            return `skill:navigation:route:${href.replace(/\/+$/, '').toLowerCase()}`;
           }
         }
         if (actionType === 'asset_observation') {
+          const assetOperationIdentity = assetOperationTimelineIdentity({
+            audit: item.asset_operation_audit,
+            result,
+            args: {
+              action_id: item.action_id,
+              asset_type: item.asset_type,
+              effect: item.effect,
+              assets: item.assets,
+            },
+            actionId: item.action_id,
+            correlationId: item.correlation_id,
+            assetType: item.asset_type,
+            effect: item.effect,
+            assets: item.assets,
+          });
+          if (assetOperationIdentity) return assetOperationIdentity;
           return [
             'progress',
             'client_action',

@@ -69,11 +69,14 @@ export type AIChatAgenticTimelineItem =
       meta_tool_name?: string;
       skill_id?: string;
       tool_name?: string;
+      action_id?: string;
       action_type?: string;
       status?: string;
       effect?: string;
       asset_type?: string;
       assets?: AIChatAgentProgressEventData['assets'];
+      correlation_id?: string;
+      asset_operation_audit?: AIChatAgentProgressEventData['asset_operation_audit'];
       result?: AIChatAgentProgressEventData['result'];
       arguments_chars?: number;
       created_at?: number;

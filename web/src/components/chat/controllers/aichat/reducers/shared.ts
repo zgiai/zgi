@@ -278,6 +278,73 @@ function skillInvocationNavigationTarget(invocation: AIChatSkillInvocation): str
   return href.replace(/\/+$/, '') || href;
 }
 
+type AssetOperationSemanticIdentityInput = {
+  audit?: unknown;
+  result?: Record<string, unknown>;
+  args?: Record<string, unknown>;
+  assetType?: unknown;
+  effect?: unknown;
+  assets?: unknown;
+  actionId?: unknown;
+  correlationId?: unknown;
+};
+
+function normalizeAssetOperationActionId(value: unknown): string {
+  const actionId = invocationString(value);
+  if (!actionId) return '';
+  return actionId.startsWith('asset_observation:')
+    ? actionId.slice('asset_observation:'.length)
+    : actionId;
+}
+
+function assetOperationSemanticIdentity(input: AssetOperationSemanticIdentityInput): string {
+  const result = input.result ?? {};
+  const args = input.args ?? {};
+  const audit = invocationRecord(input.audit ?? result.asset_operation_audit);
+  const operationGroup = invocationRecord(result.operation_group);
+  const assetType = (
+    invocationString(input.assetType) ||
+    invocationString(audit.asset_type) ||
+    invocationString(result.asset_type) ||
+    invocationString(args.asset_type)
+  ).toLowerCase();
+  const effect = (
+    invocationString(input.effect) ||
+    invocationString(audit.effect) ||
+    invocationString(result.effect) ||
+    invocationString(args.effect)
+  ).toLowerCase();
+  if (!assetType || !effect) return '';
+
+  const correlationId =
+    invocationString(input.correlationId) ||
+    invocationString(audit.correlation_id) ||
+    invocationString(result.correlation_id) ||
+    invocationString(operationGroup.correlation_id);
+  if (correlationId) return `asset_operation:${correlationId}`;
+
+  const actionId =
+    normalizeAssetOperationActionId(input.actionId) ||
+    normalizeAssetOperationActionId(result.action_id) ||
+    normalizeAssetOperationActionId(args.action_id);
+  if (actionId) return `asset_operation:${actionId}`;
+
+  return [
+    'asset_operation',
+    assetType,
+    effect,
+    stableMetadataValue(
+      input.assets ??
+        audit.assets ??
+        result.assets ??
+        args.assets ??
+        result.item_results ??
+        operationGroup.item_results ??
+        {}
+    ),
+  ].join(':');
+}
+
 function skillInvocationGovernanceCorrelationId(invocation: AIChatSkillInvocation): string {
   const record = invocation as unknown as Record<string, unknown>;
   const governance = invocationRecord(record.governance);
@@ -306,17 +373,19 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
       if (href) return `navigation:route:${href.toLowerCase()}`;
     }
     if (actionType === 'asset_observation') {
-      const assetType =
-        invocationString(record.asset_type) ||
-        invocationString(result.asset_type);
-      const effect =
-        invocationString(record.effect) ||
-        invocationString(result.effect);
+      const assetOperationIdentity = assetOperationSemanticIdentity({
+        audit: record.asset_operation_audit,
+        result,
+        args: invocationRecord(invocation.arguments),
+        actionId: record.action_id,
+        correlationId: record.correlation_id,
+      });
+      if (assetOperationIdentity) return assetOperationIdentity;
       return [
         'client_action',
         'asset_observation',
-        assetType,
-        effect,
+        invocationString(record.asset_type) || invocationString(result.asset_type),
+        invocationString(record.effect) || invocationString(result.effect),
         stableMetadataValue(record.assets ?? result.assets ?? {}),
       ].join(':');
     }
@@ -331,6 +400,17 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
   ) {
     const href = skillInvocationNavigationTarget(invocation);
     if (href) return `navigation:route:${href.toLowerCase()}`;
+  }
+  if (invocation.kind === 'tool_call') {
+    const record = invocation as unknown as Record<string, unknown>;
+    const assetOperationIdentity = assetOperationSemanticIdentity({
+      audit: record.asset_operation_audit,
+      result: invocationRecord(invocation.result),
+      args: invocationRecord(invocation.arguments),
+      actionId: record.action_id,
+      correlationId: record.correlation_id,
+    });
+    if (assetOperationIdentity) return assetOperationIdentity;
   }
   if (invocation.kind === 'tool_governance') {
     const correlationId = skillInvocationGovernanceCorrelationId(invocation);

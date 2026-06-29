@@ -629,7 +629,8 @@ export function applyAgentProgressState(
     lastItem.phase === payload.phase &&
     (lastItem.meta_tool_name ?? '') === (payload.meta_tool_name ?? '') &&
     (lastItem.skill_id ?? '') === (payload.skill_id ?? '') &&
-    (lastItem.tool_name ?? '') === (payload.tool_name ?? '');
+    (lastItem.tool_name ?? '') === (payload.tool_name ?? '') &&
+    (lastItem.action_id ?? '') === (payload.action_id ?? '');
   const isRepeatedProgress =
     lastItem?.type === 'progress_text' && lastItem.content.trim() === content;
   if (isRepeatedStructuredProgress || isRepeatedProgress) {
@@ -658,11 +659,14 @@ export function applyAgentProgressState(
       meta_tool_name: payload.meta_tool_name,
       skill_id: payload.skill_id,
       tool_name: payload.tool_name,
+      action_id: payload.action_id,
       action_type: payload.action_type,
       status: payload.status,
       effect: payload.effect,
       asset_type: payload.asset_type,
       assets: payload.assets,
+      correlation_id: payload.correlation_id,
+      asset_operation_audit: payload.asset_operation_audit,
       result: payload.result,
       arguments_chars: payload.arguments_chars,
       created_at: payload.created_at,
