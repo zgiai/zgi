@@ -219,6 +219,65 @@ CREATE TABLE workspace_members (
 	require.Equal(t, "admin", members[0].OrganizationRole)
 }
 
+func TestWorkspaceMemberResponsePermissionsExcludeRetiredAndCompatibilityCodes(t *testing.T) {
+	t.Parallel()
+
+	join := &model.WorkspaceMember{
+		WorkspaceID:      "ws-1",
+		AccountID:        "member-1",
+		Role:             model.WorkspaceRoleNormal,
+		PermissionSource: model.WorkspaceMemberPermissionSourceRoleTemplate,
+		Permissions: []string{
+			"workspace.view",
+			"workspace.member.view",
+			"dashboard.view",
+			"dashboard.stats.view",
+			string(model.WorkspacePermissionDatabaseDataEdit),
+			string(model.WorkspacePermissionDatabaseAIQuery),
+			string(model.WorkspacePermissionFileUploadCreate),
+			string(model.WorkspacePermissionFileMoveCreate),
+			string(model.WorkspacePermissionAgentManage),
+		},
+	}
+
+	permissions := workspaceMemberResponsePermissions(join)
+
+	require.Contains(t, permissions, string(model.WorkspacePermissionDatabaseRecordCreate))
+	require.Contains(t, permissions, string(model.WorkspacePermissionDatabaseAIQueryRead))
+	require.Contains(t, permissions, string(model.WorkspacePermissionFileUpload))
+	require.Contains(t, permissions, string(model.WorkspacePermissionFileMove))
+	require.Contains(t, permissions, string(model.WorkspacePermissionAgentCreate))
+	require.NotContains(t, permissions, "workspace.view")
+	require.NotContains(t, permissions, "workspace.member.view")
+	require.NotContains(t, permissions, "dashboard.view")
+	require.NotContains(t, permissions, string(model.WorkspacePermissionDatabaseDataEdit))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionDatabaseAIQuery))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionFileUploadCreate))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionFileMoveCreate))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionAgentManage))
+}
+
+func TestExpandWorkspaceMemberStoredPermissionsReturnsDisplayablePermissions(t *testing.T) {
+	t.Parallel()
+
+	permissions := expandWorkspaceMemberStoredPermissions(
+		string(model.WorkspaceRoleNormal),
+		nil,
+		`["workspace.view","dashboard.view","agent.manage","database.ai_query","file.upload_create"]`,
+		model.WorkspaceMemberPermissionSourceRoleTemplate,
+	)
+
+	require.Contains(t, permissions, string(model.WorkspacePermissionAgentCreate))
+	require.Contains(t, permissions, string(model.WorkspacePermissionWorkflowPublish))
+	require.Contains(t, permissions, string(model.WorkspacePermissionDatabaseAIQueryRead))
+	require.Contains(t, permissions, string(model.WorkspacePermissionFileUpload))
+	require.NotContains(t, permissions, "workspace.view")
+	require.NotContains(t, permissions, "dashboard.view")
+	require.NotContains(t, permissions, string(model.WorkspacePermissionAgentManage))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionDatabaseAIQuery))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionFileUploadCreate))
+}
+
 func TestUpdateMemberDirectPermissionsStoresExpandedDirectPermissions(t *testing.T) {
 	t.Parallel()
 

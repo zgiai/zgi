@@ -946,7 +946,29 @@ func (s *WorkspaceManagementServiceImpl) getOrganizationDepartmentDisplayByAccou
 
 func expandWorkspaceMemberStoredPermissions(role string, roleID *string, rawPermissions string, source model.WorkspaceMemberPermissionSource) []string {
 	permissions := parseStoredWorkspacePermissions(rawPermissions)
-	return model.EffectiveWorkspaceMemberPermissionStrings(model.WorkspaceMemberRole(role), roleID, permissions, source)
+	return workspaceMemberDisplayPermissionStrings(model.WorkspaceMemberRole(role), roleID, permissions, source)
+}
+
+func workspaceMemberResponsePermissions(join *model.WorkspaceMember) []string {
+	if join == nil {
+		return []string{}
+	}
+	return workspaceMemberDisplayPermissionStrings(
+		join.Role,
+		join.RoleID,
+		join.Permissions,
+		join.PermissionSource,
+	)
+}
+
+func workspaceMemberDisplayPermissionStrings(
+	role model.WorkspaceMemberRole,
+	roleID *string,
+	permissions []string,
+	permissionSource model.WorkspaceMemberPermissionSource,
+) []string {
+	effective := model.EffectiveWorkspaceMemberPermissionStrings(role, roleID, permissions, permissionSource)
+	return model.CanonicalAssignableWorkspacePermissionSnapshotStrings(effective)
 }
 
 func parseStoredWorkspacePermissions(raw string) []string {
@@ -1018,7 +1040,7 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMembersWithExtensions(ctx c
 				member.Position = pos
 			}
 		}
-		member.Permissions = model.ExpandWorkspacePermissionStringsForCompatibility(join.Permissions)
+		member.Permissions = workspaceMemberResponsePermissions(join)
 
 		members = append(members, member)
 	}
@@ -1449,7 +1471,7 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMemberWithExtensionsById(ct
 			member.Position = pos
 		}
 	}
-	member.Permissions = model.ExpandWorkspacePermissionStringsForCompatibility(join.Permissions)
+	member.Permissions = workspaceMemberResponsePermissions(join)
 
 	// Set GroupRole
 	// Need to get GroupRole through AccountService
