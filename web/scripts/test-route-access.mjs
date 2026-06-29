@@ -824,6 +824,13 @@ const enterOrganizationModeHookPath = path.join(
   'workspace',
   'use-enter-organization-mode.ts'
 );
+const joinedWorkspacesHookPath = path.join(
+  rootDir,
+  'src',
+  'hooks',
+  'workspace',
+  'use-joined-workspaces.ts'
+);
 const consoleSidebarPath = path.join(
   rootDir,
   'src',
@@ -2152,6 +2159,7 @@ const builtInWorkflowsHookSource = fs.readFileSync(builtInWorkflowsHookPath, 'ut
 const teamSwitcherSource = fs.readFileSync(teamSwitcherPath, 'utf8');
 const userMenuSource = fs.readFileSync(userMenuPath, 'utf8');
 const enterOrganizationModeHookSource = fs.readFileSync(enterOrganizationModeHookPath, 'utf8');
+const joinedWorkspacesHookSource = fs.readFileSync(joinedWorkspacesHookPath, 'utf8');
 const publishSettingsDialogSource = fs.readFileSync(publishSettingsDialogPath, 'utf8');
 const runtimeAudiencePickerSource = fs.readFileSync(runtimeAudiencePickerPath, 'utf8');
 const runtimeGrantSubjectRowSource = fs.readFileSync(runtimeGrantSubjectRowPath, 'utf8');
@@ -2443,6 +2451,21 @@ assert.match(
   enterOrganizationModeHookSource,
   /sessionManager\.broadcastContextChanged\([\s\S]*mode:\s*'organization'/,
   'enter-organization-mode hook should broadcast organization context changes to other tabs'
+);
+assert.match(
+  joinedWorkspacesHookSource,
+  /organizationRole === 'owner' \|\| organizationRole === 'admin'/,
+  'workspace switcher source should identify organization owner/admin users'
+);
+assert.match(
+  joinedWorkspacesHookSource,
+  /if \(canManageOrganization\) \{[\s\S]*workspaceService\.getManagedWorkspaces/,
+  'workspace switcher should merge managed workspaces for organization owner/admin users'
+);
+assert.match(
+  joinedWorkspacesHookSource,
+  /queryKey:[\s\S]*organizationRole/,
+  'workspace switcher cache key should include organization role when managed workspace merging changes'
 );
 assert.match(
   runtimeGrantSubjectRowSource,
