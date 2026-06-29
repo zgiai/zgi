@@ -91,6 +91,7 @@ export function useWorkflowChatPanelState({
   const canRunDraft = useWorkflowStore.use.canRunDraft();
   const canStopRun = useWorkflowStore.use.canStopRun();
   const canViewRuntimeLogs = useWorkflowStore.use.canViewRuntimeLogs();
+  const canViewRuntimeEvents = useWorkflowStore.use.canViewRuntimeEvents();
   const [convId, setConvId] = useState(() => generateClientId('conversation'));
   const [shake, setShake] = useState(false);
   const { panelWidth, isResizing, panelWidthStyle, resizeHandleProps } = useResizableRightPanel({
@@ -1778,6 +1779,7 @@ export function useWorkflowChatPanelState({
 
   const startApprovalResumeEventStream = useCallback(
     (payload?: unknown) => {
+      if (!canViewRuntimeEvents) return;
       const data = payload ? getEventData(payload) : {};
       const runId =
         workflowRunId ||
@@ -1855,7 +1857,13 @@ export function useWorkflowChatPanelState({
         }
       );
     },
-    [dispatchApprovalEvent, getEventData, startWorkflowRunEvents, workflowRunId]
+    [
+      canViewRuntimeEvents,
+      dispatchApprovalEvent,
+      getEventData,
+      startWorkflowRunEvents,
+      workflowRunId,
+    ]
   );
 
   useEffect(() => {

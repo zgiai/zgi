@@ -510,6 +510,26 @@ const workflowEditorPagePath = path.join(
   'page.tsx'
 );
 const workflowEditorPath = path.join(rootDir, 'src', 'components', 'workflow', 'index.tsx');
+const workflowStorePath = path.join(rootDir, 'src', 'components', 'workflow', 'store', 'store.ts');
+const workflowRunPanelPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'ui',
+  'workflow-run-panel',
+  'index.tsx'
+);
+const workflowChatPanelStatePath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'ui',
+  'workflow-chat-panel',
+  'hooks',
+  'use-workflow-chat-panel-state.tsx'
+);
 const workflowLifecyclePath = path.join(
   rootDir,
   'src',
@@ -1124,6 +1144,9 @@ const excelImportShellSource = fs.readFileSync(excelImportShellPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 const workflowEditorSource = fs.readFileSync(workflowEditorPath, 'utf8');
+const workflowStoreSource = fs.readFileSync(workflowStorePath, 'utf8');
+const workflowRunPanelSource = fs.readFileSync(workflowRunPanelPath, 'utf8');
+const workflowChatPanelStateSource = fs.readFileSync(workflowChatPanelStatePath, 'utf8');
 const workflowLifecycleSource = fs.readFileSync(workflowLifecyclePath, 'utf8');
 const workflowNodeDataUpdateHookSource = fs.readFileSync(workflowNodeDataUpdateHookPath, 'utf8');
 const workflowOperationsHookSource = fs.readFileSync(workflowOperationsHookPath, 'utf8');
@@ -3035,6 +3058,41 @@ assert.match(
   workflowEditorSource,
   /const canPublishCurrentDraft\s*=\s*canEditWorkflow && canPublishWorkflow/,
   'workflow editor publish action should require workflow.publish plus workflow.update because publishing first saves the current draft'
+);
+assert.match(
+  workflowEditorSource,
+  /const canViewWorkflowRuntimeEvents\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.eventsView\)/,
+  'workflow editor should derive persisted run event access from workflow.events.view'
+);
+assert.match(
+  workflowEditorSource,
+  /setCanViewRuntimeEvents\(canViewWorkflowRuntimeEvents\)/,
+  'workflow editor should sync workflow.events.view into the workflow store'
+);
+assert.match(
+  workflowStoreSource,
+  /canViewRuntimeEvents:\s*boolean[\s\S]*setCanViewRuntimeEvents:\s*\(canViewRuntimeEvents:\s*boolean\) => void/,
+  'workflow store should track persisted run event access separately from runtime log access'
+);
+assert.match(
+  workflowRunPanelSource,
+  /const canViewRuntimeEvents\s*=\s*useWorkflowStore\.use\.canViewRuntimeEvents\(\)/,
+  'workflow run panel should consume persisted run event access'
+);
+assert.match(
+  workflowRunPanelSource,
+  /const startApprovalResumeEventStream = useCallback\([\s\S]*if \(!canViewRuntimeEvents\) return;[\s\S]*startWorkflowRunEvents/,
+  'workflow run panel should not call persisted event stream without workflow.events.view'
+);
+assert.match(
+  workflowChatPanelStateSource,
+  /const canViewRuntimeEvents\s*=\s*useWorkflowStore\.use\.canViewRuntimeEvents\(\)/,
+  'workflow chat panel should consume persisted run event access'
+);
+assert.match(
+  workflowChatPanelStateSource,
+  /const startApprovalResumeEventStream = useCallback\([\s\S]*if \(!canViewRuntimeEvents\) return;[\s\S]*startWorkflowRunEvents/,
+  'workflow chat panel should not call persisted event stream without workflow.events.view'
 );
 assert.match(
   workflowEditorSource,

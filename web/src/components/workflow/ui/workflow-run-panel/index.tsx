@@ -116,6 +116,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const canRunDraft = useWorkflowStore.use.canRunDraft();
   const canStopRun = useWorkflowStore.use.canStopRun();
   const canViewRuntimeLogs = useWorkflowStore.use.canViewRuntimeLogs();
+  const canViewRuntimeEvents = useWorkflowStore.use.canViewRuntimeEvents();
   const selectedRunId = useWorkflowStore.use.selectedRunId();
   const enterHistoryMode = useWorkflowStore.use.enterHistoryMode();
   const setHistorySnapshot = useWorkflowStore.use.setHistorySnapshot();
@@ -756,6 +757,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
 
   const startApprovalResumeEventStream = useCallback(
     (payload?: unknown) => {
+      if (!canViewRuntimeEvents) return;
       const runId = workflowRunId || (payload ? getWorkflowRunIdFromPayload(payload) : '');
       if (!runId) return;
       setWorkflowRunId(runId);
@@ -829,6 +831,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       );
     },
     [
+      canViewRuntimeEvents,
       dispatchWorkflowRunEvent,
       getWorkflowRunIdFromPayload,
       startWorkflowRunEvents,

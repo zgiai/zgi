@@ -132,6 +132,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const setCanStopRun = useWorkflowStore.use.setCanStopRun();
   const setCanDebug = useWorkflowStore.use.setCanDebug();
   const setCanViewRuntimeLogs = useWorkflowStore.use.setCanViewRuntimeLogs();
+  const setCanViewRuntimeEvents = useWorkflowStore.use.setCanViewRuntimeEvents();
 
   const isHistoryMode = mode === 'history';
   const isPermissionReadOnly = !storeCanEdit;
@@ -221,6 +222,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
   );
   const canViewWorkflowRuntimeLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
+  const canViewWorkflowRuntimeEvents = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.eventsView);
   const canPublishCurrentDraft = canEditWorkflow && canPublishWorkflow;
 
   // Ensure store holds current agent type for downstream filtering
@@ -235,16 +237,19 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     setCanStopRun(canStopWorkflowRun);
     setCanDebug(canDebugWorkflow);
     setCanViewRuntimeLogs(canViewWorkflowRuntimeLogs);
+    setCanViewRuntimeEvents(canViewWorkflowRuntimeEvents);
   }, [
     canDebugWorkflow,
     canEditWorkflow,
     canRunWorkflowDraft,
     canStopWorkflowRun,
+    canViewWorkflowRuntimeEvents,
     canViewWorkflowRuntimeLogs,
     setCanDebug,
     setCanEdit,
     setCanRunDraft,
     setCanStopRun,
+    setCanViewRuntimeEvents,
     setCanViewRuntimeLogs,
   ]);
 
