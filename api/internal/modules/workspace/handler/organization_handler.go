@@ -3024,16 +3024,8 @@ func (h *OrganizationHandler) GetCurrentOrganizationMembers(c *gin.Context) {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
-	if !isOrganizationAdminOrOwner {
-		hasPermission, err := h.organizationService.CheckAnyManagedWorkspacePermission(c.Request.Context(), organizationID, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !isOrganizationAdminOrOwner && !h.requireOrganizationAccess(c, organizationID, accountID) {
+		return
 	}
 
 	page := 1
@@ -3054,7 +3046,7 @@ func (h *OrganizationHandler) GetCurrentOrganizationMembers(c *gin.Context) {
 	if keyword == "" {
 		keyword = c.Query("search")
 	}
-	pagination, err := h.organizationService.GetOrganizationMembersPaginated(c.Request.Context(), organizationID, page, limit, keyword)
+	pagination, err := h.organizationService.GetVisibleOrganizationMembersPaginated(c.Request.Context(), organizationID, accountID, page, limit, keyword)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return

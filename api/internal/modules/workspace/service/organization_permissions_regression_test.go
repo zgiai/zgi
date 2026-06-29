@@ -210,12 +210,60 @@ func TestGetUserAllWorkspacesInOrganizationDoesNotUseOrganizationAdminBypass(t *
 	db, mock := newOrganizationPermissionRegressionMockDB(t)
 	svc := newOrganizationPermissionRegressionService(db)
 
+	expectOrganizationMemberMissing(mock, "org-1", "org-admin")
 	expectPermissionWorkspaceQuery(mock, "org-1", "org-admin", nil)
 
 	workspaces, err := svc.GetUserAllWorkspacesInOrganization(context.Background(), "org-1", "org-admin")
 
 	require.NoError(t, err)
 	require.Empty(t, workspaces)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetVisibleOrganizationMemberAccountIDsLimitsNonAdminScope(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newOrganizationPermissionRegressionMockDB(t)
+	svc := newOrganizationPermissionRegressionService(db)
+	now := time.Now().UTC()
+	organizationID := "org-1"
+	workspaceID := "workspace-visible"
+	rootDepartmentID := "department-root"
+	childDepartmentID := "department-child"
+	otherDepartmentID := "department-other"
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT dm.department_id FROM department_members dm JOIN departments d ON d.id = dm.department_id WHERE d.group_id = $1 AND d.status = $2 AND dm.account_id = $3`)).
+		WithArgs(organizationID, model.DepartmentStatusActive, "viewer").
+		WillReturnRows(sqlmock.NewRows([]string{"department_id"}).AddRow(rootDepartmentID))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "departments" WHERE group_id = $1 AND status = $2`)).
+		WithArgs(organizationID, model.DepartmentStatusActive).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "group_id", "parent_id", "name", "sort_order", "status", "created_at", "updated_at", "created_by"}).
+			AddRow(rootDepartmentID, organizationID, nil, "Root", 0, model.DepartmentStatusActive, now, now, nil).
+			AddRow(childDepartmentID, organizationID, rootDepartmentID, "Child", 0, model.DepartmentStatusActive, now, now, nil).
+			AddRow(otherDepartmentID, organizationID, nil, "Other", 0, model.DepartmentStatusActive, now, now, nil))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT DISTINCT account_id FROM "department_members" WHERE department_id IN ($1,$2)`)).
+		WithArgs(childDepartmentID, rootDepartmentID).
+		WillReturnRows(sqlmock.NewRows([]string{"account_id"}).
+			AddRow("viewer").
+			AddRow("dept-peer").
+			AddRow("child-peer"))
+
+	expectOrganizationMemberRole(mock, organizationID, "viewer", model.OrganizationRoleNormal, now)
+	expectPermissionWorkspaceQuery(mock, organizationID, "viewer", []workspacePermissionWorkspaceRow{
+		{id: workspaceID, name: "Visible Workspace", status: model.WorkspaceStatusNormal, createdAt: now},
+	})
+	expectPermissionJoinQuery(mock, []workspacePermissionJoinRow{
+		{workspaceID: workspaceID, accountID: "viewer", role: model.WorkspaceRoleNormal, permissions: `[]`, source: model.WorkspaceMemberPermissionSourceRoleTemplate},
+	}, workspaceID, "viewer")
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT DISTINCT account_id FROM "workspace_members" WHERE workspace_id IN ($1)`)).
+		WithArgs(workspaceID).
+		WillReturnRows(sqlmock.NewRows([]string{"account_id"}).
+			AddRow("viewer").
+			AddRow("workspace-peer"))
+
+	accountIDs, err := svc.getVisibleOrganizationMemberAccountIDs(context.Background(), organizationID, "viewer")
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"viewer", "dept-peer", "child-peer", "workspace-peer"}, accountIDs)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

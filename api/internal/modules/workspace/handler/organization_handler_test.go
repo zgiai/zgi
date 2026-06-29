@@ -36,6 +36,7 @@ type fakeOrganizationService struct {
 	checkAnyManagedWorkspaceFn       func(ctx context.Context, organizationID, accountID string) (bool, error)
 	isOrganizationAdminOrOwnerFn     func(ctx context.Context, organizationID, accountID string) (bool, error)
 	getMembersPaginatedFn            func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error)
+	getVisibleMembersPaginatedFn     func(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error)
 	getMemberByAccountIDFn           func(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error)
 	existsMemberByNameFn             func(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error)
 	isOrganizationMemberFn           func(ctx context.Context, organizationID, accountID string) (bool, error)
@@ -127,6 +128,13 @@ func (f fakeOrganizationService) IsOrganizationAdminOrOwner(ctx context.Context,
 func (f fakeOrganizationService) GetOrganizationMembersPaginated(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
 	if f.getMembersPaginatedFn != nil {
 		return f.getMembersPaginatedFn(ctx, organizationID, page, limit, keyword)
+	}
+	return &shared_dto.OrganizationMemberPaginationResponse{}, nil
+}
+
+func (f fakeOrganizationService) GetVisibleOrganizationMembersPaginated(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+	if f.getVisibleMembersPaginatedFn != nil {
+		return f.getVisibleMembersPaginatedFn(ctx, organizationID, accountID, page, limit, keyword)
 	}
 	return &shared_dto.OrganizationMemberPaginationResponse{}, nil
 }
@@ -1243,7 +1251,12 @@ func TestGetCurrentOrganizationMembersUsesKeyword(t *testing.T) {
 	handler := &OrganizationHandler{
 		organizationService: fakeOrganizationService{
 			getMembersPaginatedFn: func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+				t.Fatalf("current organization members should use visible member pagination")
+				return nil, nil
+			},
+			getVisibleMembersPaginatedFn: func(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
 				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "owner-1", accountID)
 				require.Equal(t, 2, page)
 				require.Equal(t, 5, limit)
 				require.Equal(t, "alice", keyword)
@@ -1291,7 +1304,12 @@ func TestGetCurrentOrganizationMembersAllowsOrganizationAdminWithoutManagedWorks
 				return false, nil
 			},
 			getMembersPaginatedFn: func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+				t.Fatalf("handler should delegate current member visibility to the visible member pagination service")
+				return nil, nil
+			},
+			getVisibleMembersPaginatedFn: func(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
 				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "admin-1", accountID)
 				require.Equal(t, 1, page)
 				require.Equal(t, 20, limit)
 				require.Equal(t, "alice", keyword)
@@ -1322,6 +1340,61 @@ func TestGetCurrentOrganizationMembersAllowsOrganizationAdminWithoutManagedWorks
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), `"email":"alice@example.com"`)
+}
+
+func TestGetCurrentOrganizationMembersAllowsPlainOrganizationMemberWithVisibleScope(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationAdminOrOwnerFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "member-1", accountID)
+				return false, nil
+			},
+			isOrganizationMemberFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "member-1", accountID)
+				return true, nil
+			},
+			checkAnyManagedWorkspaceFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				t.Fatalf("plain organization members should not need workspace management permission to load their visible member list")
+				return false, nil
+			},
+			getMembersPaginatedFn: func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+				t.Fatalf("plain organization members must not receive the all-organization member list")
+				return nil, nil
+			},
+			getVisibleMembersPaginatedFn: func(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "member-1", accountID)
+				return &shared_dto.OrganizationMemberPaginationResponse{
+					Data: []*shared_dto.OrganizationMemberWithExtensionResponse{
+						{
+							ID:               "member-1",
+							Name:             "Member",
+							Email:            "member@example.com",
+							Status:           "active",
+							OrganizationRole: model.OrganizationRoleNormal,
+						},
+					},
+					Page:  1,
+					Limit: 20,
+					Total: 1,
+				}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/current/members")
+	c.Set("account_id", "member-1")
+	c.Set("organization_id", "org-1")
+	c.Set("tenant_id", "org-1")
+
+	handler.GetCurrentOrganizationMembers(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"email":"member@example.com"`)
 }
 
 func TestGetCurrentOrganizationMemberDetailUsesOrganizationScope(t *testing.T) {

@@ -3591,6 +3591,32 @@ func (s *organizationService) GetManagedDatasetWorkspacesInOrganization(ctx cont
 }
 
 func (s *organizationService) GetOrganizationMembersPaginated(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+	return s.getOrganizationMembersPaginated(ctx, organizationID, nil, page, limit, keyword)
+}
+
+func (s *organizationService) GetVisibleOrganizationMembersPaginated(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+	if s.checkOrganizationAdmin(ctx, accountID, organizationID) {
+		return s.GetOrganizationMembersPaginated(ctx, organizationID, page, limit, keyword)
+	}
+
+	visibleAccountIDs, err := s.getVisibleOrganizationMemberAccountIDs(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if len(visibleAccountIDs) == 0 {
+		return &shared_dto.OrganizationMemberPaginationResponse{
+			Data:    []*shared_dto.OrganizationMemberWithExtensionResponse{},
+			Page:    page,
+			Limit:   limit,
+			Total:   0,
+			HasMore: false,
+		}, nil
+	}
+
+	return s.getOrganizationMembersPaginated(ctx, organizationID, visibleAccountIDs, page, limit, keyword)
+}
+
+func (s *organizationService) getOrganizationMembersPaginated(ctx context.Context, organizationID string, accountIDs []string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
 	offset := (page - 1) * limit
 
 	db := s.organizationRepo.GetDB()
@@ -3600,28 +3626,44 @@ func (s *organizationService) GetOrganizationMembersPaginated(ctx context.Contex
 		OrganizationRole model.OrganizationRole         `gorm:"column:organization_role"`
 		MemberStatus     model.OrganizationMemberStatus `gorm:"column:member_status"`
 		MemberName       *string                        `gorm:"column:member_name"`
+		DepartmentID     *string                        `gorm:"column:department_id"`
+		DepartmentName   *string                        `gorm:"column:department_name"`
 	}
 	var total int64
 
 	baseQuery := db.WithContext(ctx).Unscoped().Table("members").
-		Select("accounts.*, members.role as organization_role, members.status as member_status, members.name as member_name").
+		Select("accounts.*, members.role as organization_role, members.status as member_status, members.name as member_name, d.id as department_id, d.name as department_name").
 		Joins("JOIN accounts ON members.account_id = accounts.id").
+		Joins(`
+			LEFT JOIN department_members dm
+				ON dm.account_id = members.account_id
+				AND EXISTS (
+					SELECT 1 FROM departments d_scope
+					WHERE d_scope.id = dm.department_id
+						AND d_scope.group_id = members.organization_id
+				)
+		`).
+		Joins("LEFT JOIN departments d ON d.id = dm.department_id AND d.status = ?", model.DepartmentStatusActive).
 		Where("members.organization_id = ?", organizationID)
 
+	if accountIDs != nil {
+		baseQuery = baseQuery.Where("members.account_id IN ?", accountIDs)
+	}
+
 	if keyword != "" {
-		searchPattern := "%" + keyword + "%"
+		searchPattern := "%" + strings.ToLower(keyword) + "%"
 		baseQuery = baseQuery.Where(
-			"accounts.name ILIKE ? OR accounts.email ILIKE ? OR members.name ILIKE ?",
+			"LOWER(accounts.name) LIKE ? OR LOWER(accounts.email) LIKE ? OR LOWER(members.name) LIKE ?",
 			searchPattern, searchPattern, searchPattern,
 		)
 	}
 
-	err := baseQuery.Count(&total).Error
+	err := baseQuery.Distinct("members.account_id").Count(&total).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to count organization members: %w", err)
 	}
 
-	err = baseQuery.Order("members.created_at DESC").
+	err = baseQuery.Order("members.created_at DESC, accounts.id ASC").
 		Offset(offset).
 		Limit(limit).
 		Find(&accounts).Error
@@ -3677,6 +3719,8 @@ func (s *organizationService) GetOrganizationMembersPaginated(ctx context.Contex
 			OrganizationRole: accountData.OrganizationRole,
 			AccountRole:      accountRole,
 			Extension:        extension,
+			DepartmentID:     accountData.DepartmentID,
+			DepartmentName:   accountData.DepartmentName,
 		}
 		responses = append(responses, response)
 	}
@@ -3690,6 +3734,115 @@ func (s *organizationService) GetOrganizationMembersPaginated(ctx context.Contex
 		Total:   total,
 		HasMore: hasMore,
 	}, nil
+}
+
+func (s *organizationService) getVisibleOrganizationMemberAccountIDs(ctx context.Context, organizationID, accountID string) ([]string, error) {
+	db := s.organizationRepo.GetDB()
+	visible := map[string]struct{}{
+		accountID: {},
+	}
+
+	departmentIDs, err := s.getVisibleDepartmentIDsForAccount(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if len(departmentIDs) > 0 {
+		var departmentAccountIDs []string
+		if err := db.WithContext(ctx).
+			Table("department_members").
+			Select("DISTINCT account_id").
+			Where("department_id IN ?", departmentIDs).
+			Pluck("account_id", &departmentAccountIDs).Error; err != nil {
+			return nil, fmt.Errorf("failed to get visible department members: %w", err)
+		}
+		for _, departmentAccountID := range departmentAccountIDs {
+			visible[departmentAccountID] = struct{}{}
+		}
+	}
+
+	workspaces, err := s.GetUserAllWorkspacesInOrganization(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get visible workspaces: %w", err)
+	}
+	if len(workspaces) > 0 {
+		workspaceIDs := make([]string, 0, len(workspaces))
+		for _, workspace := range workspaces {
+			workspaceIDs = append(workspaceIDs, workspace.ID)
+		}
+
+		var workspaceAccountIDs []string
+		if err := db.WithContext(ctx).
+			Table("workspace_members").
+			Select("DISTINCT account_id").
+			Where("workspace_id IN ?", workspaceIDs).
+			Pluck("account_id", &workspaceAccountIDs).Error; err != nil {
+			return nil, fmt.Errorf("failed to get visible workspace members: %w", err)
+		}
+		for _, workspaceAccountID := range workspaceAccountIDs {
+			visible[workspaceAccountID] = struct{}{}
+		}
+	}
+
+	accountIDs := make([]string, 0, len(visible))
+	for visibleAccountID := range visible {
+		accountIDs = append(accountIDs, visibleAccountID)
+	}
+	slices.Sort(accountIDs)
+	return accountIDs, nil
+}
+
+func (s *organizationService) getVisibleDepartmentIDsForAccount(ctx context.Context, organizationID, accountID string) ([]string, error) {
+	db := s.organizationRepo.GetDB()
+
+	var ownDepartments []string
+	if err := db.WithContext(ctx).
+		Table("department_members dm").
+		Select("dm.department_id").
+		Joins("JOIN departments d ON d.id = dm.department_id").
+		Where("d.group_id = ? AND d.status = ? AND dm.account_id = ?", organizationID, model.DepartmentStatusActive, accountID).
+		Pluck("dm.department_id", &ownDepartments).Error; err != nil {
+		return nil, fmt.Errorf("failed to get account departments: %w", err)
+	}
+	if len(ownDepartments) == 0 {
+		return nil, nil
+	}
+
+	var departments []model.Department
+	if err := db.WithContext(ctx).
+		Where("group_id = ? AND status = ?", organizationID, model.DepartmentStatusActive).
+		Find(&departments).Error; err != nil {
+		return nil, fmt.Errorf("failed to get organization departments: %w", err)
+	}
+
+	childrenByParent := make(map[string][]string, len(departments))
+	for _, department := range departments {
+		if department.ParentID == nil || *department.ParentID == "" {
+			continue
+		}
+		childrenByParent[*department.ParentID] = append(childrenByParent[*department.ParentID], department.ID)
+	}
+
+	visible := make(map[string]struct{}, len(departments))
+	var visit func(string)
+	visit = func(departmentID string) {
+		if _, ok := visible[departmentID]; ok {
+			return
+		}
+		visible[departmentID] = struct{}{}
+		for _, childID := range childrenByParent[departmentID] {
+			visit(childID)
+		}
+	}
+	for _, departmentID := range ownDepartments {
+		visit(departmentID)
+	}
+
+	departmentIDs := make([]string, 0, len(visible))
+	for departmentID := range visible {
+		departmentIDs = append(departmentIDs, departmentID)
+	}
+	slices.Sort(departmentIDs)
+	return departmentIDs, nil
 }
 
 func (s *organizationService) GetOrganizationMemberByAccountID(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error) {

@@ -65,6 +65,7 @@ type OrganizationService interface {
 	GetUserWorkspacesInOrganization(ctx context.Context, organizationID, accountID string, page, limit int) (*dto.WorkspacePaginationResponse, error)
 	GetUserWorkspacesRolesInOrganization(ctx context.Context, organizationID, accountID string) ([]*dto.WorkspaceRoleResponse, error)
 	GetUserAllWorkspacesInOrganization(ctx context.Context, organizationID, accountID string) ([]*model.Workspace, error)
+	GetVisibleOrganizationMembersPaginated(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*dto.OrganizationMemberPaginationResponse, error)
 	CheckWorkspaceAssets(ctx context.Context, workspaceID string) (bool, map[string]int64, error)
 	GetManagedWorkspacesInOrganization(ctx context.Context, organizationID, accountID string, page, limit int) (*dto.WorkspacePaginationResponse, error)
 	GetManagedAppWorkspacesInOrganization(ctx context.Context, organizationID, accountID string, page, limit int) (*dto.WorkspacePaginationResponse, error)
