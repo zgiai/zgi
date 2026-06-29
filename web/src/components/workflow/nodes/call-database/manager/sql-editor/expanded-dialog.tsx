@@ -23,6 +23,7 @@ import { useDbTableColumns } from '@/hooks/db/use-db-table-columns';
 import { buildTableRef } from '../../utils';
 import WorkflowValueInserter from '@/components/workflow/common/workflow-value-inserter';
 import type { WorkflowVariable } from '@/components/workflow/store/type';
+import { useDatabaseNodePermissions } from '@/components/workflow/hooks';
 import SqlMonacoEditor, { type SqlMonacoEditorHandle } from './sql-monaco-editor';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { DbTable } from '@/services/types/db';
@@ -49,11 +50,18 @@ interface ColumnBadgesProps {
   table: TableRef;
   expanded: boolean;
   onInsertColumn: (name: string) => void;
+  canBrowseDatabaseMetadata: boolean;
 }
 
-const ColumnBadges: React.FC<ColumnBadgesProps> = ({ dbId, table, expanded, onInsertColumn }) => {
+const ColumnBadges: React.FC<ColumnBadgesProps> = ({
+  dbId,
+  table,
+  expanded,
+  onInsertColumn,
+  canBrowseDatabaseMetadata,
+}) => {
   const t = useT('nodes');
-  const shouldFetch = Boolean(dbId && table.id && expanded);
+  const shouldFetch = Boolean(canBrowseDatabaseMetadata && dbId && table.id && expanded);
   const { columns, isLoading } = useDbTableColumns(dbId ?? '', table.id ?? '', {
     enabled: shouldFetch,
     refetchOnWindowFocus: false,
@@ -136,10 +144,11 @@ const ExpandedSqlEditorDialog: React.FC<ExpandedSqlEditorDialogProps> = ({
   const editorRef = useRef<SqlMonacoEditorHandle | null>(null);
   const [search, setSearch] = useState('');
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const { canReadDatabaseBinding } = useDatabaseNodePermissions();
 
   // Fetch latest tables and filter to current selection
   const { tables: apiTables, isLoading } = useDbTables(dbId ?? '', {
-    enabled: Boolean(dbId && open),
+    enabled: Boolean(dbId && open && canReadDatabaseBinding),
     refetchOnWindowFocus: false,
   });
 
@@ -347,6 +356,7 @@ const ExpandedSqlEditorDialog: React.FC<ExpandedSqlEditorDialogProps> = ({
                                     table={ref}
                                     expanded={openRow}
                                     onInsertColumn={name => handleInsertColumn(ref, name)}
+                                    canBrowseDatabaseMetadata={canReadDatabaseBinding}
                                   />
                                 </div>
                               ) : null}

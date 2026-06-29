@@ -342,6 +342,58 @@ const agentLogsPagePath = path.join(
   'page.tsx'
 );
 const workflowEditorPath = path.join(rootDir, 'src', 'components', 'workflow', 'index.tsx');
+const workflowDatabasePickerPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'common',
+  'datasource-picker-dialog',
+  'index.tsx'
+);
+const workflowCallDatabaseManagerPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'call-database',
+  'manager',
+  'index.tsx'
+);
+const workflowCallDatabaseInsertMenusPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'call-database',
+  'manager',
+  'sql-editor',
+  'insert-menus',
+  'index.tsx'
+);
+const workflowCallDatabaseExpandedDialogPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'call-database',
+  'manager',
+  'sql-editor',
+  'expanded-dialog.tsx'
+);
+const workflowSqlGeneratorManagerPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'nodes',
+  'sql-generator',
+  'manager',
+  'index.tsx'
+);
 const enterOrganizationModeHookPath = path.join(
   rootDir,
   'src',
@@ -1297,6 +1349,23 @@ const agentRuntimeKnowledgeSectionSource = fs.readFileSync(
   agentRuntimeKnowledgeSectionPath,
   'utf8'
 );
+const workflowDatabasePickerSource = fs.readFileSync(workflowDatabasePickerPath, 'utf8');
+const workflowCallDatabaseManagerSource = fs.readFileSync(
+  workflowCallDatabaseManagerPath,
+  'utf8'
+);
+const workflowCallDatabaseInsertMenusSource = fs.readFileSync(
+  workflowCallDatabaseInsertMenusPath,
+  'utf8'
+);
+const workflowCallDatabaseExpandedDialogSource = fs.readFileSync(
+  workflowCallDatabaseExpandedDialogPath,
+  'utf8'
+);
+const workflowSqlGeneratorManagerSource = fs.readFileSync(
+  workflowSqlGeneratorManagerPath,
+  'utf8'
+);
 const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
@@ -1742,9 +1811,14 @@ assert.match(
   'agent runtime database section should be able to require both database read-binding permissions'
 );
 assert.match(
+  permissionConstantsSource,
+  /DATABASE_READ_BINDING_PERMISSION_CODES[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView/,
+  'shared database binding permission group should require both database.ai_query.read and database.record.view'
+);
+assert.match(
   agentRuntimeDatabaseSectionSource,
-  /const canBindReadableDatabase\s*=\s*hasAllPermissions\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView/,
-  'agent runtime database binding should require both database.ai_query.read and database.record.view'
+  /const canBindReadableDatabase\s*=\s*hasAllPermissions\(DATABASE_READ_BINDING_PERMISSION_CODES\)/,
+  'agent runtime database binding should consume the shared database read-binding permission group'
 );
 assert.match(
   agentRuntimeDatabaseSectionSource,
@@ -1765,6 +1839,66 @@ assert.match(
   agentRuntimeDatabaseSectionSource,
   /disabled=\{readOnly \|\| cannotReadBinding\}/,
   'agent runtime selected database mutation controls should stay disabled without binding read permissions'
+);
+assert.match(
+  workflowDatabasePickerSource,
+  /useDatabaseNodePermissions\(\)/,
+  'workflow database picker should consume the shared database node permission helper'
+);
+assert.match(
+  workflowDatabasePickerSource,
+  /enabled:\s*open && canBrowseDatabaseMetadata/,
+  'workflow database picker should not list database candidates without read-binding permissions'
+);
+assert.match(
+  workflowDatabasePickerSource,
+  /enabled:\s*Boolean\(dbId\) && canBrowseDatabaseMetadata/,
+  'workflow database picker should not list tables without read-binding permissions'
+);
+assert.match(
+  workflowDatabasePickerSource,
+  /enabled:\s*expanded && canBrowseDatabaseMetadata/,
+  'workflow database picker should not list table columns without read-binding permissions'
+);
+assert.match(
+  workflowCallDatabaseManagerSource,
+  /const canEditDatabaseSource\s*=\s*!readOnly && canReadDatabaseBinding/,
+  'workflow call-database source picker should require workflow edit and database read-binding permissions'
+);
+assert.match(
+  workflowCallDatabaseManagerSource,
+  /readOnly=\{!canEditDatabaseSource\}/,
+  'workflow call-database picker should be read-only when database read-binding permissions are absent'
+);
+assert.match(
+  workflowCallDatabaseInsertMenusSource,
+  /enabled:\s*Boolean\(dbId\) && canBrowseDatabaseMetadata/,
+  'workflow SQL insert table menu should not fetch tables without database read-binding permissions'
+);
+assert.match(
+  workflowCallDatabaseInsertMenusSource,
+  /canBrowseDatabaseMetadata && dbId && table\.id && \(forcedOpen \|\| expanded\)/,
+  'workflow SQL insert column menu should not fetch columns without database read-binding permissions'
+);
+assert.match(
+  workflowCallDatabaseExpandedDialogSource,
+  /enabled:\s*Boolean\(dbId && open && canReadDatabaseBinding\)/,
+  'workflow expanded SQL editor should not fetch tables without database read-binding permissions'
+);
+assert.match(
+  workflowCallDatabaseExpandedDialogSource,
+  /canBrowseDatabaseMetadata && dbId && table\.id && expanded/,
+  'workflow expanded SQL editor should not fetch columns without database read-binding permissions'
+);
+assert.match(
+  workflowSqlGeneratorManagerSource,
+  /enabled:\s*Boolean\(canReadDatabaseBinding && \(pendingSelection \|\| pickerOpen\) && currentDbId\)/,
+  'workflow SQL generator should not enrich table metadata without database read-binding permissions'
+);
+assert.match(
+  workflowSqlGeneratorManagerSource,
+  /readOnly=\{!canEditDatabaseSource\}/,
+  'workflow SQL generator picker should be read-only when database read-binding permissions are absent'
 );
 assert.match(
   agentsPageSource,

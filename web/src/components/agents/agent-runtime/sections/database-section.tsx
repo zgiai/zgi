@@ -17,7 +17,10 @@ import { AgentRuntimeDatabaseDialog } from '../database-dialog';
 import { AgentRuntimeDatabaseTableDialog } from '../database-table-dialog';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
-import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import {
+  DATABASE_PERMISSION_ACTIONS,
+  DATABASE_READ_BINDING_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 interface AgentRuntimeDatabaseSectionProps {
   open: boolean;
@@ -39,10 +42,7 @@ export function AgentRuntimeDatabaseSection({
   const [tableDialogDbId, setTableDialogDbId] = useState('');
   const [pendingTableDialogDbIds, setPendingTableDialogDbIds] = useState<string[]>([]);
   const { hasAnyPermission, hasAllPermissions } = useAccountPermissions();
-  const canBindReadableDatabase = hasAllPermissions([
-    ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
-    ...DATABASE_PERMISSION_ACTIONS.recordView,
-  ]);
+  const canBindReadableDatabase = hasAllPermissions(DATABASE_READ_BINDING_PERMISSION_CODES);
   const { dbs, isLoading: isDbsLoading } = useDbsBasic(
     {},
     { enabled: open && canBindReadableDatabase }
