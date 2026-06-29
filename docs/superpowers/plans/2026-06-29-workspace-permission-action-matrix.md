@@ -34,6 +34,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-30: File list related-resource pills now share the backend `file.related.view` boundary. Users without the related-resource action no longer see a clickable relation count that would be rejected by the related-resource endpoint; the list shows a neutral placeholder instead.
 - 2026-06-30: File related-resource backend endpoints now require the exact `file.related.view` action instead of broad file-readable permissions. Returned related datasets and the summary document count are filtered by the target knowledge-base read permission group, so file relation visibility no longer leaks knowledge bases the caller cannot read.
 - 2026-06-30: Agent/workflow cards now separate action-menu visibility from detail navigation. Move/delete/export-only users can keep the relevant list actions, but the card body only links to `/console/agents/:id` when the permission-aware detail root can redirect to editor, API, runtime logs, or batch-test child pages.
 - 2026-06-30: Scheduled-task frontend mutation callbacks were tightened to fail closed on `canManageTasks`. The create-panel opener, edit opener, manual-run, pause, resume, and archive callbacks now defensively require workspace manager authority in addition to the existing disabled/read-only UI, keeping the frontend behavior aligned with backend `workspace.manage` mutation checks.
@@ -159,6 +160,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Verification Log
 
+- 2026-06-30: `pnpm test:route-access`, `pnpm exec eslint scripts/test-route-access.mjs src/components/files/file-list.tsx`, and `pnpm type-check` passed after aligning the file-list related-resource pill with `FILE_PERMISSION_ACTIONS.relatedView`.
 - 2026-06-30: `go test ./internal/modules/file_process/handler -run "TestGetRelatedResources|TestAuthorizeFileViewAccess"` and `pnpm test:route-access` passed after tightening file related-resource authorization to `file.related.view` and adding knowledge-base read-permission filtering for returned related datasets/document counts.
 - 2026-06-30: `pnpm test:route-access`, `pnpm exec eslint scripts/test-route-access.mjs src/components/agents/agent-card.tsx`, and `pnpm type-check` passed after aligning agent/workflow card navigation with `getAgentDetailDefaultHref`.
 - 2026-06-30: `pnpm test:route-access`, `pnpm exec eslint scripts/test-route-access.mjs src/components/automation/task-workbench.tsx src/components/automation/task-detail-panel.tsx`, `pnpm type-check`, `go test ./internal/modules/automation/handler -run "TestTask(ReadRoutesRequireWorkspaceViewBeforeServiceLookup|MutationRoutesRequireWorkspaceManageBeforeMutation)|TestParseStatuses"`, and `git diff --check` passed after adding defensive scheduled-task frontend manager guards. `git diff --check` reported only the existing CRLF normalization warning for this matrix document.

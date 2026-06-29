@@ -250,6 +250,7 @@ function FileListBase({
   const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);
   const canDeleteFilePermission = hasAnyPermission(FILE_PERMISSION_ACTIONS.delete);
   const canUpload = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
+  const canViewRelatedResources = hasAnyPermission(FILE_PERMISSION_ACTIONS.relatedView);
   const canOpenFileDetailByPermission = hasAnyPermission([
     ...FILE_PERMISSION_ACTIONS.metadataView,
     ...FILE_PERMISSION_ACTIONS.preview,
@@ -650,7 +651,7 @@ function FileListBase({
                             >
                               {file.extension}
                             </Badge>
-                            {file.related_count > 0 ? (
+                            {canViewRelatedResources && file.related_count > 0 ? (
                               <Badge
                                 variant="secondary"
                                 className="rounded-full px-2 py-0.5 text-[11px]"
@@ -772,9 +773,11 @@ function FileListBase({
                           <span>{t('fileList.relatedStatus')}</span>
                         </div>
                         <div className="mt-1 text-sm font-medium text-foreground">
-                          {file.related_count > 0
-                            ? t('fileList.relatedCount', { count: file.related_count })
-                            : t('fileList.notRelated')}
+                          {canViewRelatedResources
+                            ? file.related_count > 0
+                              ? t('fileList.relatedCount', { count: file.related_count })
+                              : t('fileList.notRelated')
+                            : '-'}
                         </div>
                       </div>
                     </div>
@@ -1076,15 +1079,19 @@ function FileListBase({
                     <FileProcessingStatus file={file} />
                   </TableCell>
                   <TableCell>
-                    {file.related_count > 0 ? (
+                    {canViewRelatedResources && file.related_count > 0 ? (
                       <RelatedResourcesPopover fileId={file.id} relatedCount={file.related_count}>
                         <span className="inline-flex max-w-full cursor-pointer items-center rounded-full bg-primary/10 px-2 py-0.5 text-[12px] font-medium text-primary transition-colors hover:bg-primary/15">
                           {t('fileList.relatedCount', { count: file.related_count })}
                         </span>
                       </RelatedResourcesPopover>
-                    ) : (
+                    ) : canViewRelatedResources ? (
                       <span className="inline-flex max-w-full items-center rounded-full bg-muted px-2 py-0.5 text-[12px] font-medium text-muted-foreground">
                         {t('fileList.notRelated')}
+                      </span>
+                    ) : (
+                      <span className="inline-flex max-w-full items-center rounded-full bg-muted px-2 py-0.5 text-[12px] font-medium text-muted-foreground">
+                        -
                       </span>
                     )}
                   </TableCell>

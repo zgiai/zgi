@@ -2191,6 +2191,16 @@ assert.doesNotMatch(
   /router\.push\(`\/console\/dataset\/\$\{resource\.id\}\/documents`\)/,
   'file related-resource dataset links should not assume document access'
 );
+assert.match(
+  fileListSource,
+  /const canViewRelatedResources\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.relatedView\)/,
+  'file list related-resource entry should derive visibility from the exact file.related.view action'
+);
+assert.match(
+  fileListSource,
+  /canViewRelatedResources && file\.related_count > 0[\s\S]*<RelatedResourcesPopover/,
+  'file list should not render the related-resource popover unless file.related.view is granted'
+);
 for (const handlerName of ['GetRelatedDocuments', 'GetRelatedDatasets', 'GetRelatedResources']) {
   const relatedHandlerSlice = sourceSliceBetween(
     fileResourceHandlerSource,
