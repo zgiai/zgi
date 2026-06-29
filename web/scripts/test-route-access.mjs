@@ -71,6 +71,8 @@ const fileDetailShellPath = path.join(
   'file-detail-shell.tsx'
 );
 const fileListPath = path.join(rootDir, 'src', 'components', 'files', 'file-list.tsx');
+const dbPagePath = path.join(rootDir, 'src', 'app', 'console', 'db', 'page.tsx');
+const dbLayoutPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'layout.tsx');
 const defaultCustomerPath = path.join(rootDir, 'src', 'customer', 'default.tsx');
 const accountServicePath = path.join(rootDir, 'src', 'services', 'account.service.ts');
 const webAppServicePath = path.join(rootDir, 'src', 'services', 'webapp.service.ts');
@@ -563,6 +565,8 @@ const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
 const fileDetailPageSource = fs.readFileSync(fileDetailPagePath, 'utf8');
 const fileDetailShellSource = fs.readFileSync(fileDetailShellPath, 'utf8');
 const fileListSource = fs.readFileSync(fileListPath, 'utf8');
+const dbPageSource = fs.readFileSync(dbPagePath, 'utf8');
+const dbLayoutSource = fs.readFileSync(dbLayoutPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 assert.match(
@@ -744,6 +748,26 @@ assert.match(
   fileListSource,
   /const canViewDetail\s*=\s*!selectionMode && canOpenFileDetailByPermission/,
   'file list detail link should combine mode and permission gate'
+);
+assert.match(
+  dbPageSource,
+  /const canManage\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.create\)/,
+  'database list create action should use the exact database.create action group'
+);
+assert.doesNotMatch(
+  dbPageSource,
+  /hasPermission\(['"]database\.create['"]\)/,
+  'database list should not gate create UI with a raw permission literal'
+);
+assert.match(
+  dbLayoutSource,
+  /const canViewOperationLogs\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.operationLogsView\)/,
+  'database detail logs navigation should use the operationLogsView action group'
+);
+assert.doesNotMatch(
+  dbLayoutSource,
+  /hasPermission\(['"]database\.operation_logs\.view['"]\)/,
+  'database detail layout should not gate logs navigation with a raw permission literal'
 );
 assert.match(
   consoleRecentWorkSource,

@@ -33,6 +33,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-29: Database list create and detail operation-log navigation gates now consume `DATABASE_PERMISSION_ACTIONS.create` and `DATABASE_PERMISSION_ACTIONS.operationLogsView` instead of raw permission literals, keeping frontend database UI actions bound to the shared action matrix.
 - 2026-06-29: File readable and browse permissions were separated. Existing-file detail, favorite filtering, and view authorization no longer treat `file.upload`, `file.text.create`, or folder-only access as file-view capability; list/folder/statistics browsing keeps a dedicated browse permission set so upload and folder workflows can still reach the file workspace surface. Frontend file detail and file-list detail actions now share the same existing-file readable/action gate.
 - 2026-06-29: Dataset card move actions were split by backend contract. Workspace transfer remains gated by `knowledge_base.move`, while moving a dataset into a knowledge-base folder now requires both `knowledge_base.move` and `knowledge_base.folder_manage`, matching the `dataset-folders/move-dataset` target-folder authorization.
 - 2026-06-29: Agent card YAML export was narrowed to workflow runtime assets only. The only current export endpoint is workflow YAML export and it requires `workflow.export`; ordinary Agent cards no longer expose an `agent.export` action until a real Agent export endpoint exists.
@@ -79,6 +80,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Verification Log
 
+- 2026-06-29: `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/app/console/db/page.tsx src/app/console/db/[dbId]/layout.tsx` passed after constantizing database create and operation-log frontend gates.
 - 2026-06-29: `go test ./internal/modules/file_process/handler`, `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/components/files/file-list.tsx src/components/files/detail/file-detail-shell.tsx` passed after separating file readable and browse permissions.
 - 2026-06-29: `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/components/datasets/dataset-card.tsx` passed after splitting dataset folder move and workspace move UI permissions.
 - 2026-06-29: `pnpm test:route-access` and `pnpm exec eslint scripts/test-route-access.mjs src/components/agents/agent-card.tsx` passed after narrowing card-level YAML export to workflow runtimes.

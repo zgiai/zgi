@@ -16,17 +16,19 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ShieldAlert } from 'lucide-react';
 import type { Db } from '@/services/types/db';
-import { DATABASE_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
+import {
+  DATABASE_PERMISSION_ACTIONS,
+  DATABASE_VISIBLE_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 export default function DbPage() {
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
 
   // Permissions
-  const { hasPermission, hasAnyPermission, isLoading: isPermissionsLoading } =
-    useAccountPermissions();
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canView = hasAnyPermission(DATABASE_VISIBLE_PERMISSION_CODES);
-  const canManage = hasPermission('database.create');
+  const canManage = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.create);
 
   const [searchKeyword, setSearchKeyword] = useState('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);

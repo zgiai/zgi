@@ -52,7 +52,6 @@ export default function DbLayout({ children, params }: LayoutProps) {
 
   // Permissions
   const {
-    hasPermission,
     hasAnyPermission,
     isLoading: isPermissionsLoading,
   } = useAccountPermissions();
@@ -63,7 +62,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
     ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
     ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
   ]);
-  const canViewOperationLogs = hasPermission('database.operation_logs.view');
+  const canViewOperationLogs = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.operationLogsView);
 
   const { data: dbDetail, isLoading: isDbLoading } = useDb(dbId, {
     enabled: canView,
