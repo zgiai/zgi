@@ -33,6 +33,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Change Log
 
+- 2026-06-29: Agent list creation/import UI now separates blank-create permissions from workflow import/template permissions. Blank creation opens for `agent.create` or `workflow.create` and the create dialog hides runtime types the user cannot create; workflow YAML import and template creation are gated by `workflow.import` to match the backend import endpoint.
 - 2026-06-29: Workspace asset-move service now resolves `agents.agent_type` before final permission checks for `agent` move requests. Shared asset-move UI may continue submitting type `agent`, but backend source/target workspace checks require `workflow.move` for workflow runtime agents and `agent.move` for ordinary agents.
 - 2026-06-29: Agent/workflow create and legacy tenant move backend checks were tightened by runtime type. Creating workflow resources now requires `workflow.create` instead of `agent.create`; legacy `UpdateAgent` workspace changes require the matching `agent.move` or `workflow.move` permission in addition to update access, and the handler no longer performs a destination `agent.update` precheck that could reject workflow move users incorrectly.
 - 2026-06-29: Added an idempotent migration data fix for already-migrated databases. Workspace role-template permission snapshots and non-owner workspace member snapshots are canonicalized again, expanding old aggregate inputs into fine action permissions while dropping retired `workspace.*`, `dashboard.*`, `prompt.*`, `content_parse.*`, and compatibility-only aggregate codes from stored editable snapshots.
@@ -75,6 +76,7 @@ This matrix records the current workspace asset permission contract after the fi
 
 ## Verification Log
 
+- 2026-06-29: `pnpm test:route-access`, `pnpm type-check`, and `pnpm exec eslint scripts/test-route-access.mjs src/app/console/agents/page.tsx src/components/agents/agent-dialog/create-dialog.tsx src/components/agents/templates/template-gallery-dialog.tsx` passed after aligning agent/workflow blank-create and workflow import/template frontend gates.
 - 2026-06-29: `go test ./internal/modules/workspace/service -run "TestWorkspaceAssetMove"` passed after making asset move permission checks branch by resolved agent/workflow runtime type.
 - 2026-06-29: `pnpm type-check` passed.
 - 2026-06-29: Targeted ESLint passed for changed agent/workflow/file permission UI files; reran for `agent-runtime/header.tsx`, `agent-runtime/use-agent-runtime-page-model.tsx`, `agent-runtime` prompt/orchestration/section read-only files, and `agent-detail-routes.ts` after runtime-access/header/read-only alignment.

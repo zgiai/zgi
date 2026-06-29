@@ -31,7 +31,11 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ShieldAlert } from 'lucide-react';
 import { AgentEmptyElement, AgentEmptySearchResults } from '@/components/agents/empty-element';
-import { AGENT_ASSET_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
+import {
+  AGENT_ASSET_VISIBLE_PERMISSION_CODES,
+  AGENT_PERMISSION_ACTIONS,
+  WORKFLOW_PERMISSION_ACTIONS,
+} from '@/constants/permissions';
 
 const PAGE_SIZE = 20;
 
@@ -41,11 +45,13 @@ export default function AgentsPage() {
   const currentWorkspace = useCurrentWorkspace();
 
   // Permissions
-  const { hasPermission, hasAnyPermission, isLoading: isPermissionsLoading } =
-    useAccountPermissions();
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canView = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
-  const canCreate = hasPermission('agent.create');
-  const canImport = hasPermission('agent.import');
+  const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
+  const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
+  const canCreateBlank = canCreateAgent || canCreateWorkflow;
+  const canImportWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
+  const canCreate = canCreateBlank || canImportWorkflow;
 
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -283,17 +289,21 @@ export default function AgentsPage() {
 
   const handleCreate = () => {
     if (!canCreate) return;
-    setTemplateOpen(true);
+    if (canImportWorkflow) {
+      setTemplateOpen(true);
+      return;
+    }
+    setOpen(true);
   };
 
   const handleCreateBlank = () => {
-    if (!canCreate) return;
+    if (!canCreateBlank) return;
     setTemplateOpen(false);
     setOpen(true);
   };
 
   const handleImport = () => {
-    if (!canImport) return;
+    if (!canImportWorkflow) return;
     setImportOpen(true);
   };
 
@@ -348,9 +358,9 @@ export default function AgentsPage() {
               <FolderPlus />
               {t('createFolder')}
             </Button> */}
-            {(canImport || canCreate) && (
+            {(canImportWorkflow || canCreate) && (
               <>
-                {canImport && (
+                {canImportWorkflow && (
                   <Button variant="outline" onClick={handleImport} className="w-full sm:w-auto">
                     <Upload className="h-4 w-4" />
                     <span className="text-sm">{t('agents.importAgent')}</span>
@@ -386,7 +396,7 @@ export default function AgentsPage() {
           ) : (
             <AgentEmptyElement
               actions={[
-                ...(canImport
+                ...(canImportWorkflow
                   ? [
                       {
                         label: t('agents.importAgent'),
@@ -463,6 +473,7 @@ export default function AgentsPage() {
       <TemplateGalleryDialog
         open={templateOpen}
         workspaceId={currentWorkspace?.id}
+        canCreateBlank={canCreateBlank}
         onOpenChange={setTemplateOpen}
         onCreateBlank={handleCreateBlank}
         initialTemplateId={templateFromQuery}

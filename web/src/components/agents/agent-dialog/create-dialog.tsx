@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -41,6 +41,8 @@ import { useCreateAgent } from '@/hooks/agent/use-agents';
 import { Bot, MessageSquareQuote, Workflow } from 'lucide-react';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface CreateAgentDialogProps {
   open: boolean;
@@ -49,11 +51,27 @@ interface CreateAgentDialogProps {
 
 export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps) {
   const t = useT('agents');
+  const tRoot = useT();
   const router = useRouter();
   const portalHostRef = useRef<HTMLDivElement | null>(null);
 
   const createMutation = useCreateAgent();
   const currentWorkspaceFromStore = useCurrentWorkspace();
+  const { hasAnyPermission } = useAccountPermissions();
+  const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
+  const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
+  const defaultAgentType =
+    canCreateAgent || !canCreateWorkflow ? AgentType.AGENT : AgentType.CONVERSATIONAL_AGENT;
+  const canCreateAnyType = canCreateAgent || canCreateWorkflow;
+  const isAgentTypeAllowed = useCallback(
+    (agentType: AgentType) => {
+      if (agentType === AgentType.AGENT) {
+        return canCreateAgent;
+      }
+      return canCreateWorkflow;
+    },
+    [canCreateAgent, canCreateWorkflow]
+  );
 
   const [iconValue, setIconValue] = useState<IconValue>(createTextIconValue('', ICON_BG));
 
@@ -117,11 +135,25 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
   }, [watchedName, iconValue.type]);
 
   const resetFormState = () => {
-    form.reset();
+    form.reset({
+      name: '',
+      description: '',
+      icon: '',
+      icon_type: 'text',
+      agent_type: defaultAgentType,
+    });
     setIconValue(createTextIconValue('', ICON_BG));
   };
 
   const onSubmit = (data: CreateFormDataLocal) => {
+    if (!isAgentTypeAllowed(data.agent_type)) {
+      form.setError('agent_type', {
+        type: 'manual',
+        message: tRoot('common.unauthorizedDescription'),
+      });
+      return;
+    }
+
     const workspaceId = currentWorkspaceFromStore?.id;
 
     if (!workspaceId) {
@@ -175,6 +207,14 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
     onOpenChange(nextOpen);
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const currentAgentType = form.getValues('agent_type');
+    if (!isAgentTypeAllowed(currentAgentType)) {
+      form.setValue('agent_type', defaultAgentType, { shouldValidate: true });
+    }
+  }, [defaultAgentType, form, isAgentTypeAllowed, open]);
+
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
@@ -211,30 +251,36 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                             onValueChange={field.onChange}
                             className="gap-2"
                           >
-                            <RadioCard
-                              value={AgentType.AGENT}
-                              title={t('modes.agent')}
-                              description={t('modes.agentDesc')}
-                              checked={field.value === AgentType.AGENT}
-                              hiddenRadio
-                              icon={<Bot className="w-6 h-6" />}
-                            />
-                            <RadioCard
-                              value={AgentType.CONVERSATIONAL_AGENT}
-                              title={t('modes.chatWorkflow')}
-                              description={t('modes.chatWorkflowDesc')}
-                              checked={field.value === AgentType.CONVERSATIONAL_AGENT}
-                              hiddenRadio
-                              icon={<MessageSquareQuote className="w-6 h-6" />}
-                            />
-                            <RadioCard
-                              value={AgentType.WORKFLOW}
-                              title={t('modes.taskWorkflow')}
-                              description={t('modes.taskWorkflowDesc')}
-                              checked={field.value === AgentType.WORKFLOW}
-                              hiddenRadio
-                              icon={<Workflow className="w-6 h-6" />}
-                            />
+                            {canCreateAgent && (
+                              <RadioCard
+                                value={AgentType.AGENT}
+                                title={t('modes.agent')}
+                                description={t('modes.agentDesc')}
+                                checked={field.value === AgentType.AGENT}
+                                hiddenRadio
+                                icon={<Bot className="w-6 h-6" />}
+                              />
+                            )}
+                            {canCreateWorkflow && (
+                              <>
+                                <RadioCard
+                                  value={AgentType.CONVERSATIONAL_AGENT}
+                                  title={t('modes.chatWorkflow')}
+                                  description={t('modes.chatWorkflowDesc')}
+                                  checked={field.value === AgentType.CONVERSATIONAL_AGENT}
+                                  hiddenRadio
+                                  icon={<MessageSquareQuote className="w-6 h-6" />}
+                                />
+                                <RadioCard
+                                  value={AgentType.WORKFLOW}
+                                  title={t('modes.taskWorkflow')}
+                                  description={t('modes.taskWorkflowDesc')}
+                                  checked={field.value === AgentType.WORKFLOW}
+                                  hiddenRadio
+                                  icon={<Workflow className="w-6 h-6" />}
+                                />
+                              </>
+                            )}
                           </RadioCardGroup>
                         </FormControl>
                         <FormMessage />
@@ -327,7 +373,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
               <Button type="button" variant="outline" onClick={handleClose}>
                 {t('form.cancel')}
               </Button>
-              <Button type="submit" disabled={createMutation.isPending}>
+              <Button type="submit" disabled={createMutation.isPending || !canCreateAnyType}>
                 {createMutation.isPending ? t('form.creating') : t('form.create')}
               </Button>
             </DialogFooter>

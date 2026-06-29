@@ -153,6 +153,23 @@ const agentRuntimeOrchestrationPanelPath = path.join(
   'agent-runtime',
   'orchestration-panel.tsx'
 );
+const agentsPagePath = path.join(rootDir, 'src', 'app', 'console', 'agents', 'page.tsx');
+const createAgentDialogPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'agents',
+  'agent-dialog',
+  'create-dialog.tsx'
+);
+const templateGalleryDialogPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'agents',
+  'templates',
+  'template-gallery-dialog.tsx'
+);
 const agentSidebarPath = path.join(rootDir, 'src', 'components', 'agents', 'agent-sidebar.tsx');
 const agentApiPagePath = path.join(
   rootDir,
@@ -900,6 +917,9 @@ const agentRuntimeOrchestrationPanelSource = fs.readFileSync(
   agentRuntimeOrchestrationPanelPath,
   'utf8'
 );
+const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
+const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
+const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
 assert.match(
@@ -1291,6 +1311,46 @@ assert.match(
   agentRuntimeOrchestrationPanelSource,
   /<AgentRuntimeModelSection[\s\S]*?readOnly=\{readOnly\}/,
   'agent orchestration panel should forward read-only state into runtime sections'
+);
+assert.match(
+  agentsPageSource,
+  /const canCreateAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.create\)/,
+  'agent list blank-create entry should check agent.create explicitly'
+);
+assert.match(
+  agentsPageSource,
+  /const canCreateWorkflow\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.create\)/,
+  'agent list blank-create entry should check workflow.create explicitly'
+);
+assert.match(
+  agentsPageSource,
+  /const canImportWorkflow\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.import\)/,
+  'agent list import/template entry should use workflow.import because the dialog calls workflow import'
+);
+assert.doesNotMatch(
+  agentsPageSource,
+  /hasPermission\(['"]agent\.import['"]\)/,
+  'agent list should not gate workflow import UI with agent.import'
+);
+assert.match(
+  templateGalleryDialogSource,
+  /canCreateBlank/,
+  'template gallery should hide blank creation when the user only has workflow import/template access'
+);
+assert.match(
+  createAgentDialogSource,
+  /canCreateAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.create\)/,
+  'create dialog should gate AGENT mode by agent.create'
+);
+assert.match(
+  createAgentDialogSource,
+  /canCreateWorkflow\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.create\)/,
+  'create dialog should gate workflow modes by workflow.create'
+);
+assert.match(
+  createAgentDialogSource,
+  /isAgentTypeAllowed/,
+  'create dialog should validate the selected runtime type before submitting'
 );
 assert.match(
   agentSidebarSource,
