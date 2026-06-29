@@ -10,14 +10,21 @@ import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { useAuthStore } from '@/store/auth-store';
 import { useOrganizationStore } from '@/store/organization-store';
-import type { WorkspaceManagementList } from '@/services/types/workspace';
+import type {
+  WorkspaceEntity,
+  WorkspaceManagement,
+  WorkspaceManagementList,
+} from '@/services/types/workspace';
 
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
 
 const MAX_JOINED_WORKSPACE_PAGES = 100;
 
-type JoinedWorkspacePagesResult = WorkspaceManagementList & {
+type WorkspaceSwitcherItem = WorkspaceManagement | WorkspaceEntity;
+
+type JoinedWorkspacePagesResult = Omit<WorkspaceManagementList, 'data'> & {
   organizationId: string;
+  data: WorkspaceSwitcherItem[];
 };
 
 interface UseJoinedWorkspacesOptions {
@@ -25,6 +32,15 @@ interface UseJoinedWorkspacesOptions {
   limit?: number;
   /** If true, automatically sync to workspace store */
   syncToStore?: boolean;
+}
+
+function toWorkspaceStoreItem(workspace: WorkspaceSwitcherItem) {
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    leader_id: 'leader_id' in workspace ? workspace.leader_id : undefined,
+    leader_name: 'leader_name' in workspace ? workspace.leader_name : undefined,
+  };
 }
 
 /**
@@ -46,6 +62,8 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
 
   const organizationId = currentOrganization?.id ?? null;
   const accountId = user?.id ?? null;
+  const organizationRole = currentOrganization?.organization_role ?? user?.organization_role ?? null;
+  const canManageOrganization = organizationRole === 'owner' || organizationRole === 'admin';
 
   const fetchJoinedWorkspacePages = async (): Promise<JoinedWorkspacePagesResult> => {
     if (!organizationId || !accountId) {
@@ -60,7 +78,7 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
       { page, limit }
     );
     const seenWorkspaceIds = new Set<string>();
-    const mergedWorkspaces = firstPage.data.filter(workspace => {
+    const mergedWorkspaces: WorkspaceSwitcherItem[] = firstPage.data.filter(workspace => {
       if (seenWorkspaceIds.has(workspace.id)) return false;
       seenWorkspaceIds.add(workspace.id);
       return true;
@@ -90,6 +108,37 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
       nextPage = (latestPage.page || nextPage) + 1;
     }
 
+    if (canManageOrganization) {
+      let managedPage = await workspaceService.getManagedWorkspaces(requestOrganizationId, {
+        page: 1,
+        limit,
+      });
+      let managedPagesFetched = 1;
+      let nextManagedPage = (managedPage.page || 1) + 1;
+
+      managedPage.data.forEach(workspace => {
+        if (seenWorkspaceIds.has(workspace.id)) return;
+        seenWorkspaceIds.add(workspace.id);
+        mergedWorkspaces.push(workspace);
+      });
+
+      while (managedPage.has_more && managedPagesFetched < MAX_JOINED_WORKSPACE_PAGES) {
+        managedPage = await workspaceService.getManagedWorkspaces(requestOrganizationId, {
+          page: nextManagedPage,
+          limit,
+        });
+
+        managedPage.data.forEach(workspace => {
+          if (seenWorkspaceIds.has(workspace.id)) return;
+          seenWorkspaceIds.add(workspace.id);
+          mergedWorkspaces.push(workspace);
+        });
+
+        managedPagesFetched += 1;
+        nextManagedPage = (managedPage.page || nextManagedPage) + 1;
+      }
+    }
+
     return {
       ...firstPage,
       organizationId: requestOrganizationId,
@@ -108,7 +157,12 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     error,
     refetch,
   } = useQuery({
-    queryKey: WORKSPACE_KEYS.forSwitcher(organizationId, { page, limit, accountId }),
+    queryKey: WORKSPACE_KEYS.forSwitcher(organizationId, {
+      page,
+      limit,
+      accountId,
+      organizationRole,
+    }),
     queryFn: fetchJoinedWorkspacePages,
     enabled: !!organizationId && !!accountId && !isSwitchingOrganization,
     staleTime: 2 * 60 * 1000,
@@ -123,12 +177,7 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     if (!syncToStore || !responseData?.data) return;
     if (responseData.organizationId !== organizationId) return;
 
-    const transformedWorkspaces = responseData.data.map(w => ({
-      id: w.id,
-      name: w.name,
-      leader_id: w.leader_id,
-      leader_name: w.leader_name,
-    }));
+    const transformedWorkspaces = responseData.data.map(toWorkspaceStoreItem);
 
     setWorkspaces(transformedWorkspaces);
 
@@ -178,12 +227,7 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
 
     if (profileWorkspaceId !== storeWorkspaceId) {
       // Transform again to ensure we have the list
-      const workspaces = responseData.data.map(w => ({
-        id: w.id,
-        name: w.name,
-        leader_id: w.leader_id,
-        leader_name: w.leader_name,
-      }));
+      const workspaces = responseData.data.map(toWorkspaceStoreItem);
 
       if (profileWorkspaceId && profileWorkspaceId !== '') {
         const profileWorkspace = workspaces.find(w => w.id === profileWorkspaceId);
@@ -199,6 +243,7 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
   }, [
     user,
     user?.current_workspace_id,
+    organizationRole,
     responseData?.data,
     responseData?.organizationId,
     organizationId,
