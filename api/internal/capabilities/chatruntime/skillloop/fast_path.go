@@ -916,7 +916,7 @@ func agentConfigUpdateFastPathAnswer(result map[string]interface{}) (string, boo
 		return "", false
 	}
 	status := strings.ToLower(strings.TrimSpace(stringFromAny(result["status"])))
-	if status != "completed" {
+	if status != "completed" && status != "success" && status != "succeeded" {
 		return "", false
 	}
 

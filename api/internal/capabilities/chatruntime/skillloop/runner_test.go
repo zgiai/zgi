@@ -218,6 +218,34 @@ func TestFastPathFinalAnswerForAgentConfigUpdateRequiresEvidence(t *testing.T) {
 	}
 }
 
+func TestFastPathFinalAnswerForAgentConfigUpdateAcceptsSuccessResultStatus(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":         "success",
+			"effect":         "updated",
+			"agent_id":       "agent-1",
+			"updated_fields": []interface{}{"model"},
+			"agent": map[string]interface{}{
+				"id":   "agent-1",
+				"name": "Agent One",
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true for successful config update evidence")
+	}
+	if !strings.Contains(answer, "Agent One") {
+		t.Fatalf("answer = %q, want visible agent name", answer)
+	}
+	if strings.Contains(answer, "agent-1") {
+		t.Fatalf("answer = %q, want hidden raw agent id", answer)
+	}
+}
+
 func TestFastPathFinalAnswerForFileManagementSave(t *testing.T) {
 	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
 		Kind:     "tool_call",
