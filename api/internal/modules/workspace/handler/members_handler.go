@@ -361,19 +361,18 @@ func (h *MembersHandler) UpdateMemberRole(c *gin.Context) {
 		return
 	}
 
-	workspaces, err := h.workspaceManagementService.GetAccountWorkspaces(c.Request.Context(), accountID)
-	if err != nil || len(workspaces) == 0 {
+	currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
+	if err != nil || currentWorkspaceJoin == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)
 		return
 	}
 
-	currentWorkspace := workspaces[0]
-	if !h.requireWorkspacePermission(c, currentWorkspace.ID, model.WorkspacePermissionWorkspacePermissionManage) {
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspacePermissionManage) {
 		return
 	}
 
 	updateReq := &interfaces.UpdateMemberRoleRequest{
-		WorkspaceID: currentWorkspace.ID,
+		WorkspaceID: currentWorkspaceJoin.WorkspaceID,
 		AccountID:   memberID,
 		Role:        role,
 	}

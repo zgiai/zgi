@@ -212,6 +212,48 @@ func TestMembersHandlerCurrentInviteRequiresManageBeforeInvite(t *testing.T) {
 	require.Equal(t, model.WorkspacePermissionWorkspaceMemberManage, organizationSvc.lastPermissionCode)
 }
 
+func TestMembersHandlerCurrentUpdateRoleUsesCurrentWorkspaceForPermissionAndMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	workspaceID := "workspace-current"
+	organizationID := "org-from-workspace"
+	accountID := "account-1"
+	memberID := "member-1"
+	workspaceSvc := &membersHandlerWorkspaceManagementService{
+		currentWorkspace: &model.WorkspaceMember{WorkspaceID: workspaceID},
+	}
+	organizationSvc := &membersHandlerOrganizationService{
+		workspaceOrganizationID:         organizationID,
+		checkWorkspacePermissionAllowed: true,
+	}
+	handler := NewMembersHandler(workspaceSvc, &membersHandlerAccountService{}, organizationSvc, "")
+
+	c, recorder := newMembersHandlerContext(http.MethodPut, "/workspaces/current/members/"+memberID+"/update-role", accountID)
+	c.Params = gin.Params{{Key: "member_id", Value: memberID}}
+	c.Request = httptest.NewRequest(
+		http.MethodPut,
+		"/workspaces/current/members/"+memberID+"/update-role",
+		strings.NewReader(`{"role":"normal"}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("account_id", accountID)
+
+	handler.UpdateMemberRole(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.True(t, workspaceSvc.currentWorkspaceCalled)
+	require.True(t, workspaceSvc.updateMemberRoleCalled)
+	require.Equal(t, workspaceID, organizationSvc.lastWorkspaceIDForOrganization)
+	require.Equal(t, organizationID, organizationSvc.lastPermissionOrganizationID)
+	require.Equal(t, workspaceID, organizationSvc.lastPermissionWorkspaceID)
+	require.Equal(t, accountID, organizationSvc.lastPermissionAccountID)
+	require.Equal(t, model.WorkspacePermissionWorkspacePermissionManage, organizationSvc.lastPermissionCode)
+	require.NotNil(t, workspaceSvc.lastUpdateMemberRoleRequest)
+	require.Equal(t, workspaceID, workspaceSvc.lastUpdateMemberRoleRequest.WorkspaceID)
+	require.Equal(t, memberID, workspaceSvc.lastUpdateMemberRoleRequest.AccountID)
+	require.Equal(t, model.WorkspaceRoleNormal, workspaceSvc.lastUpdateMemberRoleRequest.Role)
+}
+
 func newMembersHandlerContext(method, target, accountID string) (*gin.Context, *httptest.ResponseRecorder) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -229,6 +271,8 @@ type membersHandlerWorkspaceManagementService struct {
 	membersWithExtensionsCalled     bool
 	memberWithExtensionsByIDCalled  bool
 	removeMemberFromWorkspaceCalled bool
+	updateMemberRoleCalled          bool
+	lastUpdateMemberRoleRequest     *interfaces.UpdateMemberRoleRequest
 }
 
 func (s *membersHandlerWorkspaceManagementService) GetCurrentWorkspace(context.Context, string) (*model.WorkspaceMember, error) {
@@ -253,6 +297,12 @@ func (s *membersHandlerWorkspaceManagementService) GetWorkspaceMemberWithExtensi
 
 func (s *membersHandlerWorkspaceManagementService) RemoveMemberFromWorkspace(context.Context, *model.Workspace, *auth_model.Account, *auth_model.Account) error {
 	s.removeMemberFromWorkspaceCalled = true
+	return nil
+}
+
+func (s *membersHandlerWorkspaceManagementService) UpdateMemberRole(_ context.Context, req *interfaces.UpdateMemberRoleRequest) error {
+	s.updateMemberRoleCalled = true
+	s.lastUpdateMemberRoleRequest = req
 	return nil
 }
 
