@@ -115,6 +115,50 @@ func (h *OrganizationHandler) getOrganizationID(c *gin.Context) string {
 	return organizationID
 }
 
+func (h *OrganizationHandler) resolveRouteWorkspaceID(c *gin.Context, accountID string) (string, bool) {
+	workspaceID := c.Param("workspace_id")
+	if workspaceID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return "", false
+	}
+	if workspaceID != "current" {
+		return workspaceID, true
+	}
+	if h.accountService != nil {
+		accountContext, err := h.accountService.GetAccountContext(c.Request.Context(), accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return "", false
+		}
+		if accountContext != nil && accountContext.CurrentWorkspaceID != nil {
+			currentWorkspaceID := strings.TrimSpace(*accountContext.CurrentWorkspaceID)
+			if currentWorkspaceID != "" {
+				return currentWorkspaceID, true
+			}
+		}
+	}
+	if h.workspaceManagementService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", false
+	}
+
+	currentWorkspace, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) || strings.Contains(err.Error(), "record not found") || strings.Contains(err.Error(), "workspace not found") {
+			response.Fail(c, response.ErrWorkspaceNotFound)
+			return "", false
+		}
+		response.Fail(c, response.ErrSystemError)
+		return "", false
+	}
+	if currentWorkspace == nil || strings.TrimSpace(currentWorkspace.WorkspaceID) == "" {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return "", false
+	}
+
+	return currentWorkspace.WorkspaceID, true
+}
+
 func (h *OrganizationHandler) requireRouteWorkspaceInOrganization(c *gin.Context, organizationID, workspaceID string) bool {
 	if h.organizationService == nil {
 		response.Fail(c, response.ErrSystemError)
@@ -664,8 +708,7 @@ func (h *OrganizationHandler) GetMemberPermissions(c *gin.Context) {
 
 func (h *OrganizationHandler) GetWorkspaceMemberPermissions(c *gin.Context) {
 	organizationID := h.getOrganizationID(c)
-	workspaceID := c.Param("workspace_id")
-	if organizationID == "" || workspaceID == "" {
+	if organizationID == "" {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
@@ -673,6 +716,10 @@ func (h *OrganizationHandler) GetWorkspaceMemberPermissions(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	workspaceID, ok := h.resolveRouteWorkspaceID(c, accountID)
+	if !ok {
 		return
 	}
 

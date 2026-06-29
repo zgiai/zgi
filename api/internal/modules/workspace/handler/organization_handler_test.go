@@ -216,6 +216,7 @@ type fakeWorkspaceManagementService struct {
 	getWorkspaceMembersFn           func(ctx context.Context, workspaceID string) ([]*interfaces.AccountWithRole, error)
 	getWorkspaceMembersPaginatedFn  func(ctx context.Context, workspaceID string, page, limit int, keyword, roleFilter string) ([]*interfaces.AccountWithRole, int64, error)
 	getWorkspaceByIDFn              func(ctx context.Context, id string) (*model.Workspace, error)
+	getCurrentWorkspaceFn           func(ctx context.Context, accountID string) (*model.WorkspaceMember, error)
 	getUserRoleFn                   func(ctx context.Context, accountID, workspaceID string) (*model.WorkspaceMemberRole, error)
 	addMemberFn                     func(ctx context.Context, req *interfaces.AddMemberRequest) error
 	updateMemberDirectPermissionsFn func(ctx context.Context, workspaceID, accountID string, permissions []string) error
@@ -238,6 +239,13 @@ func (f fakeWorkspaceManagementService) GetWorkspaceMembersPaginated(ctx context
 func (f fakeWorkspaceManagementService) GetWorkspaceByID(ctx context.Context, id string) (*model.Workspace, error) {
 	if f.getWorkspaceByIDFn != nil {
 		return f.getWorkspaceByIDFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (f fakeWorkspaceManagementService) GetCurrentWorkspace(ctx context.Context, accountID string) (*model.WorkspaceMember, error) {
+	if f.getCurrentWorkspaceFn != nil {
+		return f.getCurrentWorkspaceFn(ctx, accountID)
 	}
 	return nil, nil
 }
@@ -267,6 +275,7 @@ type fakeAccountService struct {
 	interfaces.AccountService
 	getUserThroughEmailFn              func(ctx context.Context, email string) (*auth_model.Account, error)
 	getAccountByIDFn                   func(ctx context.Context, id string) (*auth_model.Account, error)
+	getAccountContextFn                func(ctx context.Context, accountID string) (*auth_model.AccountContext, error)
 	createAccountFn                    func(ctx context.Context, req *shared_dto.CreateAccountRequest) (*auth_model.Account, error)
 	ensureAccountContextForWorkspaceFn func(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error)
 	isOrganizationAdminOrOwnerFn       func(ctx context.Context, organizationID, accountID string) (bool, error)
@@ -286,6 +295,13 @@ func (f fakeAccountService) GetAccountByID(ctx context.Context, id string) (*aut
 		return f.getAccountByIDFn(ctx, id)
 	}
 	return &auth_model.Account{ID: id}, nil
+}
+
+func (f fakeAccountService) GetAccountContext(ctx context.Context, accountID string) (*auth_model.AccountContext, error) {
+	if f.getAccountContextFn != nil {
+		return f.getAccountContextFn(ctx, accountID)
+	}
+	return nil, nil
 }
 
 func (f fakeAccountService) CreateAccount(ctx context.Context, req *shared_dto.CreateAccountRequest) (*auth_model.Account, error) {
@@ -471,6 +487,60 @@ func TestGetWorkspaceMemberPermissionsReturnsSuccessResponse(t *testing.T) {
 	require.Equal(t, "0", resp.Code)
 	require.Equal(t, "success", resp.Message)
 	require.Contains(t, recorder.Body.String(), `"workspace_id":"ws-1"`)
+}
+
+func TestGetWorkspaceMemberPermissionsResolvesCurrentWorkspace(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			getOrganizationByWorkspaceIDFn: func(ctx context.Context, workspaceID string) (*model.Organization, error) {
+				require.Equal(t, "ws-current", workspaceID)
+				return &model.Organization{ID: "org-1", Status: model.OrganizationStatusActive}, nil
+			},
+			getWorkspaceMemberPermissionsFn: func(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "ws-current", workspaceID)
+				require.Equal(t, "acc-1", accountID)
+				require.Equal(t, "acc-1", targetAccountID)
+				return &shared_dto.WorkspaceMemberPermissionsResponse{
+					OrganizationID: organizationID,
+					WorkspaceID:    workspaceID,
+					AccountID:      targetAccountID,
+					Permissions:    []string{"agent.view"},
+				}, nil
+			},
+		},
+		accountService: fakeAccountService{
+			getAccountContextFn: func(ctx context.Context, accountID string) (*auth_model.AccountContext, error) {
+				require.Equal(t, "acc-1", accountID)
+				currentWorkspaceID := "ws-current"
+				return &auth_model.AccountContext{AccountID: accountID, CurrentWorkspaceID: &currentWorkspaceID}, nil
+			},
+		},
+		workspaceManagementService: fakeWorkspaceManagementService{
+			getCurrentWorkspaceFn: func(ctx context.Context, accountID string) (*model.WorkspaceMember, error) {
+				t.Fatalf("workspace member current fallback should not be called when account context has current workspace")
+				return nil, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/current/workspaces/current/accounts/current/permissions")
+	c.Set("account_id", "acc-1")
+	c.Set("organization_id", "org-1")
+	c.Set("tenant_id", "org-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "current"},
+		{Key: "workspace_id", Value: "current"},
+		{Key: "account_id", Value: "current"},
+	}
+
+	handler.GetWorkspaceMemberPermissions(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"workspace_id":"ws-current"`)
+	require.Contains(t, recorder.Body.String(), `"agent.view"`)
 }
 
 func TestUpdateOrganizationWorkspaceMemberPermissionsUsesPermissionManage(t *testing.T) {
