@@ -25,7 +25,13 @@ export function ResultItem({ result, index }: ResultItemProps) {
   const t = useT('datasets');
   const { datasetId } = useParams<{ datasetId: string }>();
   const { hasAnyPermission } = useAccountPermissions();
-  const canViewDocumentDetails = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView);
+  const canViewDocumentDetails = hasAnyPermission([
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentCreate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentUpdate,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentDelete,
+    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage,
+  ]);
 
   // Format score as percentage
   const scorePercentage = (result.score * 100).toFixed(1);

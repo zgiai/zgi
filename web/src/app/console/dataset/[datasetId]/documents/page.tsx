@@ -19,7 +19,7 @@ import {
   useRetryDatasetFileRefSync,
 } from '@/hooks/dataset/use-dataset-file-refs';
 import type { DatasetFileRef } from '@/services/types/dataset';
-import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { FILE_PERMISSION_ACTIONS, KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import {
   PermissionDeniedState,
   PermissionLoadingState,
@@ -45,6 +45,18 @@ export default function DatasetDocumentsPage() {
   const canUpdateDocument = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentUpdate);
   const canDeleteDocument = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentDelete);
   const canManageIndex = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage);
+  const canOpenSourceFile = hasAnyPermission([
+    ...FILE_PERMISSION_ACTIONS.metadataView,
+    ...FILE_PERMISSION_ACTIONS.preview,
+    ...FILE_PERMISSION_ACTIONS.relatedView,
+    ...FILE_PERMISSION_ACTIONS.download,
+    ...FILE_PERMISSION_ACTIONS.update,
+    ...FILE_PERMISSION_ACTIONS.delete,
+    ...FILE_PERMISSION_ACTIONS.move,
+    ...FILE_PERMISSION_ACTIONS.archive,
+    ...FILE_PERMISSION_ACTIONS.shareManage,
+    ...FILE_PERMISSION_ACTIONS.favoriteManage,
+  ]);
   const canEdit = canCreateDocument || canUpdateDocument || canDeleteDocument || canManageIndex;
 
   const [fileSelectorOpen, setFileSelectorOpen] = useState(false);
@@ -192,6 +204,7 @@ export default function DatasetDocumentsPage() {
         <DatasetFileRefPanel
           refs={filteredRefs}
           canEdit={canEdit}
+          canOpenSourceFile={canOpenSourceFile}
           canToggleEnabled={canUpdateDocument}
           canRetry={canManageIndex}
           canRemove={canDeleteDocument}

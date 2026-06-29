@@ -23,6 +23,7 @@ import { formatDate } from '@/utils/format';
 interface DatasetFileRefPanelProps {
   refs: DatasetFileRef[];
   canEdit?: boolean;
+  canOpenSourceFile?: boolean;
   canToggleEnabled?: boolean;
   canRetry?: boolean;
   canRemove?: boolean;
@@ -123,6 +124,7 @@ function TableHeadWithHelp({ label, tooltip }: { label: string; tooltip: string 
 export function DatasetFileRefPanel({
   refs,
   canEdit = true,
+  canOpenSourceFile = true,
   canToggleEnabled,
   canRetry,
   canRemove,
@@ -236,14 +238,16 @@ export function DatasetFileRefPanel({
                 </TableCell>
                 <TableCell>
                   <div className="flex justify-end gap-1">
-                    <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
-                      <Link
-                        href={`/console/files/${ref.file_id}?returnTo=${encodeURIComponent(returnTo)}`}
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        {t('documents.fileRefs.openFile')}
-                      </Link>
-                    </Button>
+                    {canOpenSourceFile ? (
+                      <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
+                        <Link
+                          href={`/console/files/${ref.file_id}?returnTo=${encodeURIComponent(returnTo)}`}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          {t('documents.fileRefs.openFile')}
+                        </Link>
+                      </Button>
+                    ) : null}
                     {canRetryAction && isFailed ? (
                       <Button
                         variant="ghost"

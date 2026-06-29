@@ -552,6 +552,14 @@ const datasetHitResultItemPath = path.join(
   'components',
   'result-item.tsx'
 );
+const datasetFileRefPanelPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'datasets',
+  'document',
+  'dataset-file-ref-panel.tsx'
+);
 const datasetDetailRootPagePath = path.join(
   rootDir,
   'src',
@@ -559,6 +567,16 @@ const datasetDetailRootPagePath = path.join(
   'console',
   'dataset',
   '[datasetId]',
+  'page.tsx'
+);
+const datasetDocumentsPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'dataset',
+  '[datasetId]',
+  'documents',
   'page.tsx'
 );
 const datasetDetailLayoutPath = path.join(
@@ -2866,7 +2884,9 @@ const datasetCardSource = fs.readFileSync(datasetCardPath, 'utf8');
 const datasetFolderCardSource = fs.readFileSync(datasetFolderCardPath, 'utf8');
 const datasetHooksSource = fs.readFileSync(datasetHooksPath, 'utf8');
 const datasetHitResultItemSource = fs.readFileSync(datasetHitResultItemPath, 'utf8');
+const datasetFileRefPanelSource = fs.readFileSync(datasetFileRefPanelPath, 'utf8');
 const datasetDetailRootPageSource = fs.readFileSync(datasetDetailRootPagePath, 'utf8');
+const datasetDocumentsPageSource = fs.readFileSync(datasetDocumentsPagePath, 'utf8');
 const datasetDetailLayoutSource = fs.readFileSync(datasetDetailLayoutPath, 'utf8');
 const datasetSettingsPageSource = fs.readFileSync(datasetSettingsPagePath, 'utf8');
 const datasetAccessHandlerSource = fs.readFileSync(datasetAccessHandlerPath, 'utf8');
@@ -3677,13 +3697,28 @@ assert.doesNotMatch(
 );
 assert.match(
   datasetHitResultItemSource,
-  /hasAnyPermission\(KNOWLEDGE_BASE_PERMISSION_ACTIONS\.documentView\)/,
-  'hit-testing document detail links should be gated by document view permission'
+  /const canViewDocumentDetails\s*=\s*hasAnyPermission\(\[[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.documentView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.documentCreate[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.documentUpdate[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.documentDelete[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.indexManage/,
+  'hit-testing document detail links should use the same document-readable permission group as the direct document page'
 );
 assert.match(
   datasetHitResultItemSource,
   /canViewDocumentDetails \? \([\s\S]*\/documents\/\$\{result\.segment\.document\.id\}/,
   'hit-testing result UI should only render document detail links when the document page can be opened'
+);
+assert.match(
+  datasetDocumentsPageSource,
+  /const canOpenSourceFile\s*=\s*hasAnyPermission\(\[[\s\S]*FILE_PERMISSION_ACTIONS\.metadataView[\s\S]*FILE_PERMISSION_ACTIONS\.preview[\s\S]*FILE_PERMISSION_ACTIONS\.relatedView[\s\S]*FILE_PERMISSION_ACTIONS\.download[\s\S]*FILE_PERMISSION_ACTIONS\.update[\s\S]*FILE_PERMISSION_ACTIONS\.delete[\s\S]*FILE_PERMISSION_ACTIONS\.move[\s\S]*FILE_PERMISSION_ACTIONS\.archive[\s\S]*FILE_PERMISSION_ACTIONS\.shareManage[\s\S]*FILE_PERMISSION_ACTIONS\.favoriteManage/,
+  'dataset documents source-file links should use the same file-readable permission group as file detail'
+);
+assert.match(
+  datasetDocumentsPageSource,
+  /<DatasetFileRefPanel[\s\S]*canOpenSourceFile=\{canOpenSourceFile\}/,
+  'dataset documents page should pass source-file detail reachability into the file-ref panel'
+);
+assert.match(
+  datasetFileRefPanelSource,
+  /canOpenSourceFile \? \([\s\S]*href=\{`\/console\/files\/\$\{ref\.file_id\}\?returnTo=/,
+  'dataset file-ref panel should hide source-file links when file detail cannot be opened'
 );
 assert.match(
   datasetCardSource,
