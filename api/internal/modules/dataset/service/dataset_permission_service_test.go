@@ -75,7 +75,7 @@ func TestSetOrganizationServiceAllowsDatasetReadByKnowledgeBasePermission(t *tes
 	}
 }
 
-func TestCanEditDatasetUsesFineKnowledgeBaseEditPermissions(t *testing.T) {
+func TestCanEditDatasetUsesDatasetUpdatePermission(t *testing.T) {
 	dataset := &model.Dataset{
 		ID:             "dataset-1",
 		OrganizationID: "org-1",
@@ -87,9 +87,9 @@ func TestCanEditDatasetUsesFineKnowledgeBaseEditPermissions(t *testing.T) {
 	svc := &datasetService{enterpriseService: orgService}
 
 	if !svc.canEditDataset(context.Background(), dataset, "member-1") {
-		t.Fatal("dataset should be editable when organization service grants knowledge-base edit permission")
+		t.Fatal("dataset should be editable when organization service grants knowledge-base update permission")
 	}
-	want := knowledgeBaseEditPermissionCodes()
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseUpdate}
 	if len(orgService.permission) != len(want) {
 		t.Fatalf("permissions = %v, want %v", orgService.permission, want)
 	}
@@ -101,6 +101,11 @@ func TestCanEditDatasetUsesFineKnowledgeBaseEditPermissions(t *testing.T) {
 	for _, permission := range orgService.permission {
 		if permission == workspace_model.WorkspacePermissionKnowledgeBaseManage {
 			t.Fatalf("permissions = %v should not include legacy knowledge_base.manage", orgService.permission)
+		}
+		if permission == workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate ||
+			permission == workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate ||
+			permission == workspace_model.WorkspacePermissionKnowledgeBaseIndexManage {
+			t.Fatalf("permissions = %v should not include content-edit permissions for dataset metadata editing", orgService.permission)
 		}
 	}
 }

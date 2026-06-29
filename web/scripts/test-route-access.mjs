@@ -3207,6 +3207,22 @@ assert.doesNotMatch(
   /CheckEditorPermission|knowledgeBaseEditPermissionCodes/,
   'dataset DeleteDataset service should not depend on the broad editor permission set'
 );
+const datasetCanEditServiceSource = getGoReceiverMethodSource(
+  datasetServiceSource,
+  's',
+  'datasetService',
+  'canEditDataset'
+);
+assert.match(
+  datasetCanEditServiceSource,
+  /checkKnowledgeBaseWorkspacePermission\([\s\S]*workspace_model\.WorkspacePermissionKnowledgeBaseUpdate/,
+  'dataset canEditDataset should represent dataset metadata update authority'
+);
+assert.doesNotMatch(
+  datasetCanEditServiceSource,
+  /knowledgeBaseEditPermissionCodes|WorkspacePermissionKnowledgeBaseDocumentUpdate|WorkspacePermissionKnowledgeBaseSegmentUpdate|WorkspacePermissionKnowledgeBaseIndexManage/,
+  'dataset canEditDataset should not treat document, segment, or index permissions as dataset metadata edit authority'
+);
 for (const [helperName, permissionPattern, message] of [
   [
     'authorizeDatasetDocumentViewAccess',

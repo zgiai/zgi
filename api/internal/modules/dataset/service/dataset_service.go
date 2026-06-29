@@ -1054,7 +1054,7 @@ func (s *datasetService) canEditDataset(ctx context.Context, dataset *model.Data
 		dataset.OrganizationID,
 		dataset.WorkspaceID,
 		accountID,
-		knowledgeBaseEditPermissionCodes()...,
+		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
 	)
 	return err == nil && hasPermission
 }
