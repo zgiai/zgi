@@ -84,6 +84,9 @@ func TestAIChatSystemTemplateRender(t *testing.T) {
 		"Do not claim to see or operate the current page",
 		"High-risk asset operations require",
 		"AIChat account memory and Agent memory are separate",
+		"adjustable execution guide, not a fixed script",
+		"Prefer current page evidence",
+		"if the result is missing, partial, or failed, say that plainly",
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("rendered aichat system template does not contain %q: %s", expected, rendered)
@@ -100,6 +103,7 @@ func TestAIChatSystemTemplateRender(t *testing.T) {
 	for _, expected := range []string{
 		"ZGI sidebar operation assistant",
 		"navigating to relevant internal console modules",
+		"Use navigation only when the user goal needs another ZGI page",
 	} {
 		if !strings.Contains(contextual, expected) {
 			t.Fatalf("rendered contextual aichat system template does not contain %q: %s", expected, contextual)
