@@ -1002,6 +1002,110 @@ func TestRunClientActionContinuationStreamAlreadyRunningRecoversActiveStream(t *
 	assertRecoveredContinuationEvents(t, events)
 }
 
+func TestRunClientActionContinuationStreamResolvedDuplicateRecoversCompletedStream(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	provider := "deepseek"
+	now := time.Now().UTC()
+	actionID := "route_navigation:open-files"
+	event := map[string]interface{}{
+		"action_id":   actionID,
+		"action_type": "route_navigation",
+		"status":      clientActionStatusSucceeded,
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+		"href":        "/console/files",
+		"result": map[string]interface{}{
+			"loaded_href": "/console/files",
+		},
+	}
+	metadata := mergeClientActionMetadata(map[string]interface{}{
+		"surface":              "contextual_sidebar",
+		"configured_skill_ids": []string{skills.SkillConsoleNavigator},
+	}, event)
+	metadata["client_action_continuation"] = compactSkillInvocation(event)
+
+	conversation := &runtimemodel.Conversation{
+		ID:                   conversationID,
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		CallerType:           runtimemodel.ConversationCallerAIChat,
+		Title:                "Files",
+		Status:               runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
+		CurrentLeafMessageID: &messageID,
+		Metadata:             map[string]interface{}{},
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	message := &runtimemodel.Message{
+		ID:              messageID,
+		ConversationID:  conversationID,
+		Query:           "Open files",
+		Answer:          "Done",
+		Status:          runtimemodel.MessageStatusCompleted,
+		ModelProvider:   &provider,
+		ModelName:       "deepseek-chat",
+		ModelParameters: map[string]interface{}{},
+		Metadata:        metadata,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	messageRepo := &toolGovernanceStreamMessageRepo{message: message}
+	llm := &toolGovernanceStreamLLM{}
+	svc := NewService(&repository.Repositories{
+		Access:       toolGovernanceStreamAccessRepo{},
+		Conversation: &toolGovernanceStreamConversationRepo{conversation: conversation},
+		Message:      messageRepo,
+	}, llm).(*service)
+
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer redisServer.Close()
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close()
+	svc.events = newStreamEventStore(redisClient)
+	appendRecoveredContinuationEvents(t, ctx, svc.events, conversationID, messageID)
+
+	var events []StreamEvent
+	result, err := svc.RunClientActionContinuationStream(
+		ctx,
+		Scope{OrganizationID: organizationID, AccountID: accountID},
+		conversationID,
+		messageID,
+		actionID,
+		runtimedto.ClientActionResultRequest{
+			Status:  "succeeded",
+			Surface: "contextual_sidebar",
+			Result: map[string]interface{}{
+				"loaded_href": "/console/files",
+			},
+		},
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunClientActionContinuationStream() error = %v", err)
+	}
+	if result == nil || result.Status != runtimemodel.MessageStatusStreaming {
+		t.Fatalf("result = %#v, want recovery result", result)
+	}
+	if len(llm.appChatRequests) != 0 || len(llm.streamRequests) != 0 {
+		t.Fatalf("LLM calls = app %d stream %d, want none for resolved duplicate", len(llm.appChatRequests), len(llm.streamRequests))
+	}
+	if messageRepo.updateCompletedCalled || message.Status != runtimemodel.MessageStatusCompleted {
+		t.Fatalf("message status = %q completedCalled=%v, want existing completed message untouched", message.Status, messageRepo.updateCompletedCalled)
+	}
+	assertRecoveredContinuationEvents(t, events)
+}
+
 func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
