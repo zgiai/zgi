@@ -18,10 +18,14 @@ import {
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 export function ResultItem({ result, index }: ResultItemProps) {
   const t = useT('datasets');
   const { datasetId } = useParams<{ datasetId: string }>();
+  const { hasAnyPermission } = useAccountPermissions();
+  const canViewDocumentDetails = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView);
 
   // Format score as percentage
   const scorePercentage = (result.score * 100).toFixed(1);
@@ -213,6 +217,7 @@ export function ResultItem({ result, index }: ResultItemProps) {
                   )}
                 </div>
 
+                {canViewDocumentDetails ? (
                 <Link
                   href={`/console/dataset/${datasetId}/documents/${result.segment.document.id}`}
                   className="inline-flex items-center gap-1.5 text-sm font-bold text-blue-600 hover:text-blue-700 transition-colors group"
@@ -222,6 +227,7 @@ export function ResultItem({ result, index }: ResultItemProps) {
                     →
                   </span>
                 </Link>
+                ) : null}
               </div>
             </CardContent>
           </Card>

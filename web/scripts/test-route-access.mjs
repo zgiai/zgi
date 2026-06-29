@@ -244,6 +244,16 @@ const agentEntryPagePath = path.join(
   'page.tsx'
 );
 const datasetCardPath = path.join(rootDir, 'src', 'components', 'datasets', 'dataset-card.tsx');
+const datasetHooksPath = path.join(rootDir, 'src', 'hooks', 'dataset', 'use-datasets.ts');
+const datasetHitResultItemPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'datasets',
+  'hit-testing',
+  'components',
+  'result-item.tsx'
+);
 const datasetDetailRootPagePath = path.join(
   rootDir,
   'src',
@@ -1163,6 +1173,8 @@ const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
 const agentEntryPageSource = fs.readFileSync(agentEntryPagePath, 'utf8');
 const datasetCardSource = fs.readFileSync(datasetCardPath, 'utf8');
+const datasetHooksSource = fs.readFileSync(datasetHooksPath, 'utf8');
+const datasetHitResultItemSource = fs.readFileSync(datasetHitResultItemPath, 'utf8');
 const datasetDetailRootPageSource = fs.readFileSync(datasetDetailRootPagePath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
@@ -1706,6 +1718,26 @@ assert.doesNotMatch(
   datasetCardSource,
   /href=\{`\/console\/dataset\/\$\{dataset\.id\}\/documents`\}/,
   'dataset cards should not bypass permission-aware child routing by linking directly to documents'
+);
+assert.match(
+  datasetHooksSource,
+  /router\.push\(`\/console\/dataset\/\$\{response\.data\.id\}`\)/,
+  'dataset creation should route through the permission-aware detail root'
+);
+assert.doesNotMatch(
+  datasetHooksSource,
+  /router\.push\(`\/console\/dataset\/\$\{response\.data\.id\}\/documents`\)/,
+  'dataset creation should not assume the creator can open the documents child page'
+);
+assert.match(
+  datasetHitResultItemSource,
+  /hasAnyPermission\(KNOWLEDGE_BASE_PERMISSION_ACTIONS\.documentView\)/,
+  'hit-testing document detail links should be gated by document view permission'
+);
+assert.match(
+  datasetHitResultItemSource,
+  /canViewDocumentDetails \? \([\s\S]*\/documents\/\$\{result\.segment\.document\.id\}/,
+  'hit-testing result UI should only render document detail links when the document page can be opened'
 );
 assert.match(
   datasetCardSource,
