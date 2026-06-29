@@ -28,6 +28,13 @@ const promptDetailPagePath = path.join(
   '[promptId]',
   'page.tsx'
 );
+const promptUsageSummaryPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'prompts',
+  'prompt-usage-summary.tsx'
+);
 const contentParsePagePath = path.join(
   rootDir,
   'src',
@@ -671,6 +678,7 @@ const workspaceLayoutSource = fs.readFileSync(workspaceLayoutPath, 'utf8');
 const workspacePageSource = fs.readFileSync(workspacePagePath, 'utf8');
 const promptListPageSource = fs.readFileSync(promptListPagePath, 'utf8');
 const promptDetailPageSource = fs.readFileSync(promptDetailPagePath, 'utf8');
+const promptUsageSummarySource = fs.readFileSync(promptUsageSummaryPath, 'utf8');
 const contentParsePageSource = fs.readFileSync(contentParsePagePath, 'utf8');
 const contentParsePlaygroundSource = fs.readFileSync(contentParsePlaygroundPath, 'utf8');
 const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
@@ -800,6 +808,16 @@ assert.doesNotMatch(
   promptDetailPageSource,
   /['"]prompt\./,
   'prompt detail should not reintroduce prompt.* member permission codes'
+);
+assert.match(
+  promptUsageSummarySource,
+  /href=\{`\/console\/agents\/\$\{reference\.agent_id\}\?nodeId=\$\{reference\.node_id\}`\}/,
+  'prompt usage references should route through the permission-aware agent detail root while preserving node focus'
+);
+assert.doesNotMatch(
+  promptUsageSummarySource,
+  /\/console\/agents\/\$\{reference\.agent_id\}\/workflow\?nodeId=/,
+  'prompt usage references should not bypass agent detail root permissions'
 );
 assert.match(
   contentParsePageSource,
@@ -1838,8 +1856,8 @@ assert.match(
 );
 assert.match(
   agentEntryPageSource,
-  /router\.replace\(targetHref\)/,
-  'agent detail root should replace to the first permission-compatible child page'
+  /targetHrefWithSearch[\s\S]*searchParams\.toString\(\)[\s\S]*router\.replace\(targetHrefWithSearch\)/,
+  'agent detail root should replace to the first permission-compatible child page while preserving query params'
 );
 assert.match(
   agentEntryPageSource,

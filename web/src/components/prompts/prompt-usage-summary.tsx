@@ -398,7 +398,7 @@ export function PromptUsageSummary({
                     <>
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <Link
-                    href={`/console/agents/${reference.agent_id}/workflow?nodeId=${reference.node_id}`}
+                    href={`/console/agents/${reference.agent_id}?nodeId=${reference.node_id}`}
                     className="font-medium hover:text-primary"
                   >
                     {reference.agent_name}

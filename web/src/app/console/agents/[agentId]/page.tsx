@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertCircle, Loader2, RefreshCcw } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,7 @@ interface AgentEntryPageProps {
 export default function AgentEntryPage({ params }: AgentEntryPageProps) {
   const t = useT();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { agentId } = use(params);
   const { agent, isLoading, error, refetch } = useAgent(agentId);
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
@@ -75,14 +76,16 @@ export default function AgentEntryPage({ params }: AgentEntryPageProps) {
         preferBatchTestLibrary: canViewWorkflowTestLibrary,
       })
     : null;
+  const targetHrefWithSearch =
+    targetHref && searchParams.toString() ? `${targetHref}?${searchParams.toString()}` : targetHref;
 
   useEffect(() => {
-    if (!targetHref) {
+    if (!targetHrefWithSearch) {
       return;
     }
 
-    router.replace(targetHref);
-  }, [router, targetHref]);
+    router.replace(targetHrefWithSearch);
+  }, [router, targetHrefWithSearch]);
 
   if (isLoading || isPermissionsLoading || targetHref) {
     return (
