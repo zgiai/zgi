@@ -223,6 +223,45 @@ const modelSelectorPath = path.join(
   'model-selector',
   'index.tsx'
 );
+const promptPlaygroundPanelPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'prompts',
+  'prompt-playground-panel.tsx'
+);
+const promptOptimizerDialogPath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'prompts',
+  'prompt-optimizer-dialog.tsx'
+);
+const aiChatMessageBubblePath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'chat',
+  'variants',
+  'aichat',
+  'message-bubble.tsx'
+);
+const aiChatPagePath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'chat',
+  'variants',
+  'aichat',
+  'aichat-chat.tsx'
+);
+const workflowBillingFeedbackPath = path.join(
+  rootDir,
+  'src',
+  'hooks',
+  'workflow',
+  'use-workflow-billing-feedback.ts'
+);
 const taskPagePath = path.join(rootDir, 'src', 'app', 'console', 'work', 'task', 'page.tsx');
 const taskWorkbenchPath = path.join(
   rootDir,
@@ -1524,6 +1563,11 @@ const llmRouterSource = fs.readFileSync(llmRouterPath, 'utf8');
 const llmDefaultModelRoutesSource = fs.readFileSync(llmDefaultModelRoutesPath, 'utf8');
 const accountCapabilitiesHookSource = fs.readFileSync(accountCapabilitiesHookPath, 'utf8');
 const modelSelectorSource = fs.readFileSync(modelSelectorPath, 'utf8');
+const promptPlaygroundPanelSource = fs.readFileSync(promptPlaygroundPanelPath, 'utf8');
+const promptOptimizerDialogSource = fs.readFileSync(promptOptimizerDialogPath, 'utf8');
+const aiChatMessageBubbleSource = fs.readFileSync(aiChatMessageBubblePath, 'utf8');
+const aiChatPageSource = fs.readFileSync(aiChatPagePath, 'utf8');
+const workflowBillingFeedbackSource = fs.readFileSync(workflowBillingFeedbackPath, 'utf8');
 const taskPageSource = fs.readFileSync(taskPagePath, 'utf8');
 const taskWorkbenchSource = fs.readFileSync(taskWorkbenchPath, 'utf8');
 const taskDetailPanelSource = fs.readFileSync(taskDetailPanelPath, 'utf8');
@@ -1957,6 +2001,24 @@ assert.doesNotMatch(
   /usePermissions\(\)|organizationRole/,
   'shared model selector should not derive provider configuration access from workspace permission store state'
 );
+for (const [capabilityConsumerSource, capabilityConsumerName] of [
+  [promptPlaygroundPanelSource, 'prompt playground'],
+  [promptOptimizerDialogSource, 'prompt optimizer'],
+  [aiChatMessageBubbleSource, 'AI chat message bubble'],
+  [aiChatPageSource, 'AI chat page'],
+  [workflowBillingFeedbackSource, 'workflow billing feedback'],
+]) {
+  assert.match(
+    capabilityConsumerSource,
+    /canManageModelConfig[\s\S]*useAccountCapabilities\(\)|useAccountCapabilities\(\)[\s\S]*canManageModelConfig/,
+    `${capabilityConsumerName} should derive model/billing setup affordances from account capabilities`
+  );
+  assert.doesNotMatch(
+    capabilityConsumerSource,
+    /permissionState\(\)\.organizationRole|organizationRole\s*=\s*useWorkspaceStore/,
+    `${capabilityConsumerName} should not derive organization admin affordances from workspace permission store state`
+  );
+}
 for (const [dashboardSource, dashboardName] of [
   [dashboardModelSettingsSource, 'model settings'],
   [dashboardParserSettingsSource, 'parser settings'],

@@ -18,7 +18,7 @@ import { usePrompt } from '@/hooks/prompt/use-prompts';
 import type { PromptPlaygroundMessage } from '@/services/types/prompt';
 import { extractPromptVariables } from './prompt-optimizer-template';
 import { getPromptRuntimeErrorMessage } from './prompt-runtime-errors';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 
 const playgroundProgressSteps = ['analyze', 'rewrite', 'polish'] as const;
 
@@ -96,8 +96,7 @@ export function PromptPlaygroundPanel({
   const t = useT('prompts');
   const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
   const { prompt: prefillPrompt } = usePrompt(prefillPromptId, !!prefillPromptId);
-  const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
-  const isAdminOrOwner = organizationRole === 'owner' || organizationRole === 'admin';
+  const { canManageModelConfig: isAdminOrOwner } = useAccountCapabilities();
   const [prompt, setPrompt] = useState('');
   const [messageBlocks, setMessageBlocks] = useState<PromptPlaygroundMessage[]>([]);
   const [input, setInput] = useState('');

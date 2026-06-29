@@ -44,6 +44,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import type {
   AIChatConversation,
   AIChatMessage,
@@ -252,8 +253,7 @@ export function AIChatShell({
   const streamingByMessageId = useStore(controller.store, state => state.streamingByMessageId);
   const error = useStore(controller.store, state => state.error);
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
-  const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
-  const isBillingAdmin = organizationRole === 'owner' || organizationRole === 'admin';
+  const { canManageModelConfig: isBillingAdmin } = useAccountCapabilities();
   const enableAIChatSkillPreference =
     !isEmbedded && surface !== 'agent-draft' && surface !== 'agent-webapp';
   const { data: availableSkills = [] } = useAIChatSkills({ enabled: enableAIChatSkillPreference });
