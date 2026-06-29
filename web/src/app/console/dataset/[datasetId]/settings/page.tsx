@@ -37,7 +37,6 @@ import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 export default function DatasetSettingsPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
-  const { data, isLoading } = useDataset(datasetId);
   const t = useT();
   const updateDataset = useUpdateDataset(datasetId);
   const currentWorkspace = useCurrentWorkspace();
@@ -45,6 +44,7 @@ export default function DatasetSettingsPage() {
   // Permission checking
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canUpdateDataset = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.update);
+  const { data, isLoading } = useDataset(datasetId, { enabled: canUpdateDataset });
 
   // Form state
   const [name, setName] = useState('');
@@ -238,7 +238,7 @@ export default function DatasetSettingsPage() {
     canUpdateDataset,
   ]);
 
-  if (isLoading) {
+  if (isPermissionsLoading || (canUpdateDataset && isLoading)) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
         {t('datasets.loading')}
@@ -246,12 +246,8 @@ export default function DatasetSettingsPage() {
     );
   }
 
-  if (!dataset) {
-    return <div>Dataset not found</div>;
-  }
-
   // Check manage permission - show empty state if no permission
-  if (!isPermissionsLoading && !canUpdateDataset) {
+  if (!canUpdateDataset) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
         <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
@@ -265,6 +261,10 @@ export default function DatasetSettingsPage() {
         </div>
       </div>
     );
+  }
+
+  if (!dataset) {
+    return <div>Dataset not found</div>;
   }
 
   return (

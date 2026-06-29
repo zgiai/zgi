@@ -361,6 +361,16 @@ const datasetDetailLayoutPath = path.join(
   '[datasetId]',
   'layout.tsx'
 );
+const datasetSettingsPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'dataset',
+  '[datasetId]',
+  'settings',
+  'page.tsx'
+);
 const templateGalleryDialogPath = path.join(
   rootDir,
   'src',
@@ -1777,6 +1787,7 @@ const datasetHooksSource = fs.readFileSync(datasetHooksPath, 'utf8');
 const datasetHitResultItemSource = fs.readFileSync(datasetHitResultItemPath, 'utf8');
 const datasetDetailRootPageSource = fs.readFileSync(datasetDetailRootPagePath, 'utf8');
 const datasetDetailLayoutSource = fs.readFileSync(datasetDetailLayoutPath, 'utf8');
+const datasetSettingsPageSource = fs.readFileSync(datasetSettingsPagePath, 'utf8');
 const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, 'utf8');
 const createFromTemplateHookSource = fs.readFileSync(createFromTemplateHookPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
@@ -2553,6 +2564,11 @@ assert.match(
 );
 assert.match(
   datasetDetailRootPageSource,
+  /const canOpenSettings\s*=\s*hasAnyPermission\(\[\s*\.\.\.KNOWLEDGE_BASE_PERMISSION_ACTIONS\.update,\s*\]\)/,
+  'dataset detail root should open settings only with knowledge_base.update'
+);
+assert.match(
+  datasetDetailRootPageSource,
   /router\.replace\(targetHref\)/,
   'dataset detail root should replace to the first permission-compatible child page'
 );
@@ -2560,6 +2576,21 @@ assert.match(
   datasetDetailLayoutSource,
   /useDataset\(datasetId,\s*\{[\s\S]*enabled:\s*canView[\s\S]*refetchInterval:\s*10000/,
   'dataset detail layout should not fetch dataset metadata before visible knowledge-base permission is present'
+);
+assert.match(
+  datasetDetailLayoutSource,
+  /const canOpenSettings\s*=\s*hasAnyPermission\(\[\s*\.\.\.KNOWLEDGE_BASE_PERMISSION_ACTIONS\.update,\s*\]\)/,
+  'dataset detail layout should show the settings navigation only with knowledge_base.update'
+);
+assert.match(
+  datasetSettingsPageSource,
+  /const canUpdateDataset\s*=\s*hasAnyPermission\(KNOWLEDGE_BASE_PERMISSION_ACTIONS\.update\)[\s\S]*useDataset\(datasetId,\s*\{ enabled:\s*canUpdateDataset \}\)/,
+  'dataset settings direct page should not fetch dataset metadata before knowledge_base.update is present'
+);
+assert.match(
+  datasetSettingsPageSource,
+  /if \(!canUpdateDataset\) \{[\s\S]*t\('common\.accessDenied'\)/,
+  'dataset settings direct page should deny access without knowledge_base.update'
 );
 assert.doesNotMatch(
   agentEntryPageSource,

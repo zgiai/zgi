@@ -58,8 +58,6 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
   });
   const canOpenSettings = hasAnyPermission([
     ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.update,
-    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.indexManage,
-    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphManage,
   ]);
 
   // Get dataset details for conditional rendering
