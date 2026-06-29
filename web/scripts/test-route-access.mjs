@@ -10,6 +10,7 @@ const ts = require('typescript');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
+const repoRootDir = path.resolve(rootDir, '..');
 const accessPath = path.join(rootDir, 'src', 'routes', 'access.ts');
 const agentDetailRoutesPath = path.join(rootDir, 'src', 'utils', 'agent-detail-routes.ts');
 const consoleRecentWorkPath = path.join(rootDir, 'src', 'utils', 'console-recent-work.ts');
@@ -1807,6 +1808,50 @@ for (const filePath of frontendSourceFiles) {
     /has(?:Any|All)?Permission\s*\([\s\S]{0,240}['"](?:workspace|prompt|content_parse|dashboard)\./,
     `${path.relative(rootDir, filePath)} should not gate ordinary UI with retired workspace governance/tool permissions`
   );
+}
+
+const backendPermissionBusinessFiles = listFiles(path.join(repoRootDir, 'api', 'internal')).filter(
+  filePath =>
+    filePath.endsWith('.go') &&
+    !filePath.endsWith('_test.go') &&
+    !filePath.includes(`${path.sep}migrations${path.sep}`) &&
+    filePath !== path.join(
+      repoRootDir,
+      'api',
+      'internal',
+      'modules',
+      'workspace',
+      'model',
+      'organization.go'
+    )
+);
+const legacyAggregatePermissionConstantNames = [
+  'WorkspacePermissionAgentManage',
+  'WorkspacePermissionKnowledgeBaseManage',
+  'WorkspacePermissionDatabaseManage',
+  'WorkspacePermissionDatabaseDataEdit',
+  'WorkspacePermissionDatabaseAIQuery',
+  'WorkspacePermissionFileManage',
+  'WorkspacePermissionFileUploadCreate',
+  'WorkspacePermissionFileMoveCreate',
+];
+for (const filePath of backendPermissionBusinessFiles) {
+  const fileSource = fs.readFileSync(filePath, 'utf8');
+  const stringLiterals = collectStringLiterals(fileSource);
+  for (const code of legacyAggregatePermissionCodes) {
+    assert.equal(
+      stringLiterals.includes(code),
+      false,
+      `${path.relative(repoRootDir, filePath)} should not consume compatibility-only aggregate permission ${code} in backend business logic`
+    );
+  }
+  for (const constantName of legacyAggregatePermissionConstantNames) {
+    assert.doesNotMatch(
+      fileSource,
+      new RegExp(`\\b${constantName}\\b`),
+      `${path.relative(repoRootDir, filePath)} should not consume compatibility-only aggregate permission ${constantName} in backend business logic`
+    );
+  }
 }
 
 const consolePageSource = fs.readFileSync(consolePagePath, 'utf8');
