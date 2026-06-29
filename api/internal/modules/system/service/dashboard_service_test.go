@@ -104,6 +104,58 @@ func TestDashboardServiceRecentConversationsBranchesByRuntimeType(t *testing.T) 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDashboardServiceRecentWorkUsesLogScopedConversationWorkspaces(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["agents_conversations"] = true
+	svc.tableCache["agents"] = true
+	svc.tableCache["workspaces"] = true
+
+	newer := time.Unix(1710000002, 0).UTC()
+	older := time.Unix(1710000001, 0).UTC()
+	mock.ExpectQuery(`(?s)SELECT .*FROM "?agents_conversations"? AS c.*a\.agent_type IN.*c\.from_account_id =.*ORDER BY c\.updated_at DESC.*LIMIT`).
+		WithArgs("ws-agent-logs", "AGENT", "acc-1", 5).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"title",
+			"resource_id",
+			"parent_id",
+			"workspace_id",
+			"workspace_name",
+			"updated_at",
+			"created_at",
+		}).AddRow("conversation-agent", "Agent Conversation", "conversation-agent", "agent-1", "ws-agent-logs", "Agent Logs Space", older, older))
+	mock.ExpectQuery(`(?s)SELECT .*FROM "?agents_conversations"? AS c.*a\.agent_type IN.*c\.from_account_id =.*ORDER BY c\.updated_at DESC.*LIMIT`).
+		WithArgs("ws-workflow-logs", "WORKFLOW", "CONVERSATIONAL_WORKFLOW", "acc-1", 5).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"title",
+			"resource_id",
+			"parent_id",
+			"workspace_id",
+			"workspace_name",
+			"updated_at",
+			"created_at",
+		}).AddRow("conversation-workflow", "Workflow Conversation", "conversation-workflow", "workflow-1", "ws-workflow-logs", "Workflow Logs Space", newer, newer))
+
+	resp, err := svc.GetRecentWork(context.Background(), model.RecentWorkRequest{
+		AccountID:                        "acc-1",
+		Limit:                            5,
+		AgentConversationWorkspaceIDs:    []string{"ws-agent-logs"},
+		WorkflowConversationWorkspaceIDs: []string{"ws-workflow-logs"},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 2)
+	require.Equal(t, "conversation:conversation-workflow", resp.Items[0].ID)
+	require.Equal(t, "workflow-1", resp.Items[0].ParentID)
+	require.Equal(t, "ws-workflow-logs", resp.Items[0].WorkspaceID)
+	require.Equal(t, "conversation:conversation-agent", resp.Items[1].ID)
+	require.Equal(t, "agent-1", resp.Items[1].ParentID)
+	require.Equal(t, "ws-agent-logs", resp.Items[1].WorkspaceID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestDashboardServiceCountAgentAssetsSplitsWorkspaceScopes(t *testing.T) {
 	db, mock := openDashboardServiceMockDB(t)
 	svc := NewDashboardService(db).(*dashboardService)

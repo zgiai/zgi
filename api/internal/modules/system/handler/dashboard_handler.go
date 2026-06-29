@@ -117,15 +117,17 @@ func (h *DashboardHandler) GetRecentWork(c *gin.Context) {
 		return
 	}
 	recentWork, err := h.dashboardService.GetRecentWork(ctx, systemmodel.RecentWorkRequest{
-		OrganizationID:         organizationID,
-		AccountID:              accountID,
-		Limit:                  limit,
-		WorkspaceIDs:           scopes.WorkspaceIDs,
-		AgentWorkspaceIDs:      scopes.AgentWorkspaceIDs,
-		WorkflowWorkspaceIDs:   scopes.WorkflowWorkspaceIDs,
-		DatasetWorkspaceIDs:    scopes.DatasetWorkspaceIDs,
-		DataSourceWorkspaceIDs: scopes.DataSourceWorkspaceIDs,
-		FileWorkspaceIDs:       scopes.FileWorkspaceIDs,
+		OrganizationID:                   organizationID,
+		AccountID:                        accountID,
+		Limit:                            limit,
+		WorkspaceIDs:                     scopes.WorkspaceIDs,
+		AgentWorkspaceIDs:                scopes.AgentWorkspaceIDs,
+		WorkflowWorkspaceIDs:             scopes.WorkflowWorkspaceIDs,
+		AgentConversationWorkspaceIDs:    scopes.AgentConversationWorkspaceIDs,
+		WorkflowConversationWorkspaceIDs: scopes.WorkflowConversationWorkspaceIDs,
+		DatasetWorkspaceIDs:              scopes.DatasetWorkspaceIDs,
+		DataSourceWorkspaceIDs:           scopes.DataSourceWorkspaceIDs,
+		FileWorkspaceIDs:                 scopes.FileWorkspaceIDs,
 	})
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -162,15 +164,17 @@ func (h *DashboardHandler) getWorkspaceRecentWork(c *gin.Context, organizationID
 	}
 
 	recentWork, err := h.dashboardService.GetRecentWork(ctx, systemmodel.RecentWorkRequest{
-		OrganizationID:         organizationID,
-		AccountID:              accountID,
-		Limit:                  limit,
-		WorkspaceIDs:           scopes.WorkspaceIDs,
-		AgentWorkspaceIDs:      scopes.AgentWorkspaceIDs,
-		WorkflowWorkspaceIDs:   scopes.WorkflowWorkspaceIDs,
-		DatasetWorkspaceIDs:    scopes.DatasetWorkspaceIDs,
-		DataSourceWorkspaceIDs: scopes.DataSourceWorkspaceIDs,
-		FileWorkspaceIDs:       scopes.FileWorkspaceIDs,
+		OrganizationID:                   organizationID,
+		AccountID:                        accountID,
+		Limit:                            limit,
+		WorkspaceIDs:                     scopes.WorkspaceIDs,
+		AgentWorkspaceIDs:                scopes.AgentWorkspaceIDs,
+		WorkflowWorkspaceIDs:             scopes.WorkflowWorkspaceIDs,
+		AgentConversationWorkspaceIDs:    scopes.AgentConversationWorkspaceIDs,
+		WorkflowConversationWorkspaceIDs: scopes.WorkflowConversationWorkspaceIDs,
+		DatasetWorkspaceIDs:              scopes.DatasetWorkspaceIDs,
+		DataSourceWorkspaceIDs:           scopes.DataSourceWorkspaceIDs,
+		FileWorkspaceIDs:                 scopes.FileWorkspaceIDs,
 	})
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -196,6 +200,24 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
+	agentConversationWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(
+		ctx,
+		organizationID,
+		accountID,
+		workspacemodel.WorkspacePermissionAgentLogsView,
+	)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
+	workflowConversationWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(
+		ctx,
+		organizationID,
+		accountID,
+		workspacemodel.WorkspacePermissionWorkflowLogsView,
+	)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
 	datasetWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(
 		ctx,
 		organizationID,
@@ -215,12 +237,14 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 	}
 
 	return systemmodel.DashboardWorkspaceScopes{
-		WorkspaceIDs:           workspaceIDs,
-		AgentWorkspaceIDs:      agentWorkspaceIDs,
-		WorkflowWorkspaceIDs:   workflowWorkspaceIDs,
-		DatasetWorkspaceIDs:    datasetWorkspaceIDs,
-		DataSourceWorkspaceIDs: dataSourceWorkspaceIDs,
-		FileWorkspaceIDs:       fileWorkspaceIDs,
+		WorkspaceIDs:                     workspaceIDs,
+		AgentWorkspaceIDs:                agentWorkspaceIDs,
+		WorkflowWorkspaceIDs:             workflowWorkspaceIDs,
+		AgentConversationWorkspaceIDs:    agentConversationWorkspaceIDs,
+		WorkflowConversationWorkspaceIDs: workflowConversationWorkspaceIDs,
+		DatasetWorkspaceIDs:              datasetWorkspaceIDs,
+		DataSourceWorkspaceIDs:           dataSourceWorkspaceIDs,
+		FileWorkspaceIDs:                 fileWorkspaceIDs,
 	}, nil
 }
 
@@ -246,6 +270,16 @@ func (h *DashboardHandler) buildSingleWorkspaceRecentWorkScopes(ctx context.Cont
 		return scopes, err
 	} else if ok {
 		scopes.WorkflowWorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionAgentLogsView); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.AgentConversationWorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionWorkflowLogsView); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.WorkflowConversationWorkspaceIDs = []string{workspaceID}
 	}
 	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID,
 		dashboardKnowledgeBaseVisiblePermissionCodes()...,

@@ -23,25 +23,29 @@ type DashboardStatsResponse struct {
 
 // DashboardWorkspaceScopes describes the workspace sets visible to the current account.
 type DashboardWorkspaceScopes struct {
-	WorkspaceIDs           []string
-	AgentWorkspaceIDs      []string
-	WorkflowWorkspaceIDs   []string
-	DatasetWorkspaceIDs    []string
-	DataSourceWorkspaceIDs []string
-	FileWorkspaceIDs       []string
+	WorkspaceIDs                     []string
+	AgentWorkspaceIDs                []string
+	WorkflowWorkspaceIDs             []string
+	AgentConversationWorkspaceIDs    []string
+	WorkflowConversationWorkspaceIDs []string
+	DatasetWorkspaceIDs              []string
+	DataSourceWorkspaceIDs           []string
+	FileWorkspaceIDs                 []string
 }
 
 // RecentWorkRequest describes a recent-work query for either overview or workspace scope.
 type RecentWorkRequest struct {
-	OrganizationID         string
-	AccountID              string
-	Limit                  int
-	WorkspaceIDs           []string
-	AgentWorkspaceIDs      []string
-	WorkflowWorkspaceIDs   []string
-	DatasetWorkspaceIDs    []string
-	DataSourceWorkspaceIDs []string
-	FileWorkspaceIDs       []string
+	OrganizationID                   string
+	AccountID                        string
+	Limit                            int
+	WorkspaceIDs                     []string
+	AgentWorkspaceIDs                []string
+	WorkflowWorkspaceIDs             []string
+	AgentConversationWorkspaceIDs    []string
+	WorkflowConversationWorkspaceIDs []string
+	DatasetWorkspaceIDs              []string
+	DataSourceWorkspaceIDs           []string
+	FileWorkspaceIDs                 []string
 }
 
 // RecentWorkItem represents one recently updated console work item.

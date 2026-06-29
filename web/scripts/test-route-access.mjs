@@ -24,6 +24,15 @@ const dashboardHandlerPath = path.join(
   'handler',
   'dashboard_handler.go'
 );
+const dashboardServicePath = path.join(
+  repoRootDir,
+  'api',
+  'internal',
+  'modules',
+  'system',
+  'service',
+  'dashboard_service.go'
+);
 const workspacePermissionModelPath = path.join(
   repoRootDir,
   'api',
@@ -1528,6 +1537,8 @@ const excelImportShellSource = fs.readFileSync(excelImportShellPath, 'utf8');
 const datasourceHandlerSource = fs.readFileSync(datasourceHandlerPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const dashboardTypesSource = fs.readFileSync(dashboardTypesPath, 'utf8');
+const dashboardHandlerSource = fs.readFileSync(dashboardHandlerPath, 'utf8');
+const dashboardServiceSource = fs.readFileSync(dashboardServicePath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 const workflowEditorSource = fs.readFileSync(workflowEditorPath, 'utf8');
 const workflowStoreSource = fs.readFileSync(workflowStorePath, 'utf8');
@@ -2473,6 +2484,31 @@ assert.match(
   'recent conversation links should target agent logs when an agent id is available'
 );
 assert.match(
+  dashboardHandlerSource,
+  /AgentConversationWorkspaceIDs:\s*scopes\.AgentConversationWorkspaceIDs[\s\S]*WorkflowConversationWorkspaceIDs:\s*scopes\.WorkflowConversationWorkspaceIDs/,
+  'dashboard recent-work handler should pass dedicated conversation scopes into the service'
+);
+assert.match(
+  dashboardHandlerSource,
+  /AgentConversationWorkspaceIDs:\s*agentConversationWorkspaceIDs[\s\S]*WorkflowConversationWorkspaceIDs:\s*workflowConversationWorkspaceIDs/,
+  'dashboard overview recent-work should derive dedicated conversation scopes'
+);
+assert.match(
+  dashboardHandlerSource,
+  /workspacemodel\.WorkspacePermissionAgentLogsView[\s\S]*workspacemodel\.WorkspacePermissionWorkflowLogsView/,
+  'dashboard recent conversation scopes should be based on runtime log permissions'
+);
+assert.match(
+  dashboardServiceSource,
+  /getRecentAgentConversations\(ctx,\s*req\.AgentConversationWorkspaceIDs[\s\S]*getRecentAgentConversations\(ctx,\s*req\.WorkflowConversationWorkspaceIDs/,
+  'dashboard service should query recent conversations from log-scoped workspace sets'
+);
+assert.doesNotMatch(
+  dashboardServiceSource,
+  /getRecentAgentConversations\(ctx,\s*req\.(?:AgentWorkspaceIDs|WorkflowWorkspaceIDs)/,
+  'dashboard service should not query recent conversations from general asset-visible workspace sets'
+);
+assert.match(
   consoleRecentWorkSource,
   /return `\/console\/agents\/\$\{resourceId\}`;/,
   'recent agent links should use the canonical agent detail entry route'
@@ -2532,7 +2568,6 @@ assert.doesNotMatch(
 
 const consoleSidebarSource = fs.readFileSync(consoleSidebarPath, 'utf8');
 const permissionConstantsSource = fs.readFileSync(permissionConstantsPath, 'utf8');
-const dashboardHandlerSource = fs.readFileSync(dashboardHandlerPath, 'utf8');
 const workspacePermissionModelSource = fs.readFileSync(workspacePermissionModelPath, 'utf8');
 const agentsWorkspacePermissionCodesSource = fs.readFileSync(
   agentsWorkspacePermissionCodesPath,

@@ -123,6 +123,8 @@ func (s *dashboardService) GetRecentWork(ctx context.Context, req model.RecentWo
 	}
 	if len(req.AgentWorkspaceIDs) == 0 &&
 		len(req.WorkflowWorkspaceIDs) == 0 &&
+		len(req.AgentConversationWorkspaceIDs) == 0 &&
+		len(req.WorkflowConversationWorkspaceIDs) == 0 &&
 		len(req.DatasetWorkspaceIDs) == 0 &&
 		len(req.DataSourceWorkspaceIDs) == 0 &&
 		len(req.FileWorkspaceIDs) == 0 {
@@ -134,8 +136,8 @@ func (s *dashboardService) GetRecentWork(ctx context.Context, req model.RecentWo
 	items = append(items, s.getRecentAgents(ctx, req.AgentWorkspaceIDs, []string{dashboardAgentTypeAgent}, "agent", limit)...)
 	items = append(items, s.getRecentAgents(ctx, req.WorkflowWorkspaceIDs, dashboardWorkflowAgentTypes, "workflow", limit)...)
 	items = append(items, s.getRecentDatasets(ctx, req.DatasetWorkspaceIDs, req.AccountID, limit)...)
-	items = append(items, s.getRecentAgentConversations(ctx, req.AgentWorkspaceIDs, []string{dashboardAgentTypeAgent}, req.AccountID, limit)...)
-	items = append(items, s.getRecentAgentConversations(ctx, req.WorkflowWorkspaceIDs, dashboardWorkflowAgentTypes, req.AccountID, limit)...)
+	items = append(items, s.getRecentAgentConversations(ctx, req.AgentConversationWorkspaceIDs, []string{dashboardAgentTypeAgent}, req.AccountID, limit)...)
+	items = append(items, s.getRecentAgentConversations(ctx, req.WorkflowConversationWorkspaceIDs, dashboardWorkflowAgentTypes, req.AccountID, limit)...)
 	items = append(items, s.getRecentDataSources(ctx, req.OrganizationID, req.DataSourceWorkspaceIDs, limit)...)
 
 	sort.SliceStable(items, func(i, j int) bool {

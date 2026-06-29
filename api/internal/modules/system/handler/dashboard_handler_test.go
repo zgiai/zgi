@@ -36,9 +36,11 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
 		userWorkspaceIDs: []string{"ws-1", "ws-2"},
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
+			workspacemodel.WorkspacePermissionAgentLogsView:               {"ws-agent-logs"},
 			workspacemodel.WorkspacePermissionAgentStatsView:              {"ws-agent"},
 			workspacemodel.WorkspacePermissionAgentLock:                   {"ws-agent-lock"},
 			workspacemodel.WorkspacePermissionWorkflowView:                {"ws-workflow"},
+			workspacemodel.WorkspacePermissionWorkflowLogsView:            {"ws-workflow-logs"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView:   {"ws-knowledge-view", "ws-knowledge-shared"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: {"ws-knowledge-manage"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage:   {"ws-knowledge-shared", "ws-knowledge-folder"},
@@ -63,8 +65,10 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 	require.Equal(t, "org-1", dashboardSvc.recentWorkReq.OrganizationID)
 	require.Equal(t, "acc-1", dashboardSvc.recentWorkReq.AccountID)
 	require.Equal(t, []string{"ws-1", "ws-2"}, dashboardSvc.recentWorkReq.WorkspaceIDs)
-	require.Equal(t, []string{"ws-agent", "ws-agent-lock"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
-	require.Equal(t, []string{"ws-workflow"}, dashboardSvc.recentWorkReq.WorkflowWorkspaceIDs)
+	require.Equal(t, []string{"ws-agent-logs", "ws-agent", "ws-agent-lock"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
+	require.Equal(t, []string{"ws-workflow", "ws-workflow-logs"}, dashboardSvc.recentWorkReq.WorkflowWorkspaceIDs)
+	require.Equal(t, []string{"ws-agent-logs"}, dashboardSvc.recentWorkReq.AgentConversationWorkspaceIDs)
+	require.Equal(t, []string{"ws-workflow-logs"}, dashboardSvc.recentWorkReq.WorkflowConversationWorkspaceIDs)
 	require.Equal(t, []string{"ws-knowledge-view", "ws-knowledge-shared", "ws-knowledge-manage", "ws-knowledge-folder"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
 	require.Equal(t, []string{"ws-db"}, dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
 	require.Equal(t, []string{"ws-file"}, dashboardSvc.recentWorkReq.FileWorkspaceIDs)
@@ -77,8 +81,10 @@ func TestDashboardRecentWorkWorkspaceScopeUsesResourcePermissions(t *testing.T) 
 		userWorkspaceIDs: []string{"ws-1"},
 		allowedByPermission: map[workspacemodel.WorkspacePermissionCode]bool{
 			workspacemodel.WorkspacePermissionWorkspaceView:               false,
+			workspacemodel.WorkspacePermissionAgentLogsView:               false,
 			workspacemodel.WorkspacePermissionAgentStatsView:              true,
 			workspacemodel.WorkspacePermissionWorkflowView:                true,
+			workspacemodel.WorkspacePermissionWorkflowLogsView:            false,
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: true,
 			workspacemodel.WorkspacePermissionDatabaseRecordView:          false,
 			workspacemodel.WorkspacePermissionFileMetadataView:            true,
@@ -101,6 +107,8 @@ func TestDashboardRecentWorkWorkspaceScopeUsesResourcePermissions(t *testing.T) 
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.WorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.WorkflowWorkspaceIDs)
+	require.Equal(t, []string(nil), dashboardSvc.recentWorkReq.AgentConversationWorkspaceIDs)
+	require.Equal(t, []string(nil), dashboardSvc.recentWorkReq.WorkflowConversationWorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
 	require.Equal(t, []string(nil), dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.FileWorkspaceIDs)
@@ -133,6 +141,8 @@ func TestDashboardRecentWorkWorkspaceScopeFallsBackToCurrentWorkspace(t *testing
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.WorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.AgentWorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.WorkflowWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.AgentConversationWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.WorkflowConversationWorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
 	require.Equal(t, []string{"ws-1"}, dashboardSvc.recentWorkReq.FileWorkspaceIDs)
