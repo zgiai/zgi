@@ -342,6 +342,14 @@ const agentLogsPagePath = path.join(
   'page.tsx'
 );
 const workflowEditorPath = path.join(rootDir, 'src', 'components', 'workflow', 'index.tsx');
+const workflowLifecyclePath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'workflow',
+  'hooks',
+  'use-workflow-lifecycle.ts'
+);
 const workflowDatabasePickerPath = path.join(
   rootDir,
   'src',
@@ -802,6 +810,7 @@ const excelImportShellSource = fs.readFileSync(excelImportShellPath, 'utf8');
 const consoleRecentWorkSource = fs.readFileSync(consoleRecentWorkPath, 'utf8');
 const agentLogsPageSource = fs.readFileSync(agentLogsPagePath, 'utf8');
 const workflowEditorSource = fs.readFileSync(workflowEditorPath, 'utf8');
+const workflowLifecycleSource = fs.readFileSync(workflowLifecyclePath, 'utf8');
 assert.match(
   workspaceLayoutSource,
   /useAccountCapabilities/,
@@ -2298,6 +2307,31 @@ assert.match(
   workflowEditorSource,
   /canPublishWorkflow=\{canPublishCurrentDraft\}/,
   'workflow header should receive the combined publish-current-draft permission'
+);
+assert.match(
+  workflowEditorSource,
+  /canEditDraft:\s*canEditWorkflow/,
+  'workflow lifecycle should receive workflow.update permission instead of relying on store default edit state'
+);
+assert.match(
+  workflowEditorSource,
+  /isPermissionLoading:\s*isPermissionLoading \|\| isPermissionFetching/,
+  'workflow lifecycle should wait for permission resolution before treating missing update permission as read-only'
+);
+assert.match(
+  workflowLifecycleSource,
+  /if \(!canEditDraft\) \{[\s\S]*if \(isPermissionLoading\) return;[\s\S]*loadWorkflow\(initialWorkflowData, agentId, false\);/,
+  'workflow lifecycle should not bootstrap a draft graph for read-only viewers before permissions resolve'
+);
+assert.match(
+  workflowLifecycleSource,
+  /if \(!canEditDraft\) return;[\s\S]*hasNormalizedDefaultPromptsRef/,
+  'workflow lifecycle should not normalize default prompts in read-only workflow detail'
+);
+assert.match(
+  workflowLifecycleSource,
+  /if \(!canEditDraft\) return;[\s\S]*hasInitializedModelsRef/,
+  'workflow lifecycle should not inject default node models in read-only workflow detail'
 );
 
 for (const appCenterPath of appCenterPaths) {

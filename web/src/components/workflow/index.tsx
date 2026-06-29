@@ -207,7 +207,11 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     return viewport;
   }, [isHistoryMode, selectedRunId, historySnapshots, viewport]);
 
-  const { hasAnyPermission } = useAccountPermissions();
+  const {
+    hasAnyPermission,
+    isLoading: isPermissionLoading,
+    isFetching: isPermissionFetching,
+  } = useAccountPermissions();
   const canEditWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update);
   const canRunWorkflowDraft = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
   const canStopWorkflowRun = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop);
@@ -268,9 +272,16 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     };
   }, [agentId, resetWorkflowUiState]);
 
-  // Load workflow once on init; thereafter preserve local graph on server updates to avoid flicker
-  // Pass isHistoryMode instead of isReadOnly to allow draft loading in permission-based read-only
-  useWorkflowLifecycle({ agentId, isHistoryMode, workflowData, agentType, isLoading });
+  // Load existing drafts for read-only viewers; only editable users may bootstrap or normalize draft data.
+  useWorkflowLifecycle({
+    agentId,
+    isHistoryMode,
+    canEditDraft: canEditWorkflow,
+    isPermissionLoading: isPermissionLoading || isPermissionFetching,
+    workflowData,
+    agentType,
+    isLoading,
+  });
 
   // Periodic auto-save every 60 seconds: save when either semantic or layout-only changes are present
   useEffect(() => {
