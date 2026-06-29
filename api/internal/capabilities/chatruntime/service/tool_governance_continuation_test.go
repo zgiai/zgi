@@ -194,3 +194,20 @@ func TestToolGovernanceFrozenFastPathCoversSingleDeletePlanWithBatchResult(t *te
 		t.Fatalf("answer = %q, want batch delete evidence summary", answer)
 	}
 }
+
+func TestToolGovernanceFrozenExecutionContinuationKeepsProgressInUserLanguage(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query: "\u521b\u5efa\u4e24\u4e2a\u6d4b\u8bd5 Agent",
+	}
+	msg := toolGovernanceFrozenExecutionContinuationMessage(message, map[string]interface{}{}, nil, nil)
+	content := messageContentText(msg.Content)
+	for _, want := range []string{
+		"All user-visible progress updates and final answers must use the user's language.",
+		"If all requested work is complete, answer in the user's language.",
+		"\u521b\u5efa\u4e24\u4e2a\u6d4b\u8bd5 Agent",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("continuation message missing %q in %q", want, content)
+		}
+	}
+}
