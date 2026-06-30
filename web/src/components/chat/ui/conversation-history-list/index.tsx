@@ -257,6 +257,15 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
         onSelect={id => {
           handleSelect(id);
         }}
+        onNewConversation={handleCreate}
+        onSelectSearchResult={result => {
+          if (controller.loadAndSelect) {
+            void controller.loadAndSelect(result.conversationId);
+          } else {
+            controller.select(result.conversationId);
+          }
+          onActionComplete?.();
+        }}
         search={hasConversationSearch ? conversationSearch : undefined}
         searchKey={searchKey}
       />
