@@ -1846,10 +1846,30 @@ assert.match(
   /roles\.filter\(isSelectableWorkspacePermissionTemplate\)/,
   'organization workspace detail page should use the shared selectable role-template helper'
 );
+assert.match(
+  organizationWorkspaceDetailPageSource,
+  /const isFixedGovernanceRole = \(role\?: string\) => role === 'owner' \|\| role === 'admin'/,
+  'organization workspace detail page should treat workspace owner/admin as fixed governance roles'
+);
+assert.match(
+  organizationWorkspaceDetailPageSource,
+  /!\s*isFixedGovernanceRole\(member\.role\)[\s\S]*?setMemberToEditPermissions\(member\)/,
+  'organization workspace detail page should hide direct permission editing for fixed governance roles'
+);
+assert.match(
+  organizationWorkspaceDetailPageSource,
+  /member\.role !== 'owner'[\s\S]*?setMemberToRemove\(member\.id\)/,
+  'organization workspace detail page should keep workspace owner removal hidden in the member action list'
+);
 assert.doesNotMatch(
   organizationWorkspaceDetailPageSource,
   /role\.(id|name)\.toLowerCase\(\)\s*!==\s*'owner'/,
   'organization workspace detail page should not rely on owner-only string filtering for role templates'
+);
+assert.doesNotMatch(
+  organizationWorkspaceDetailPageSource,
+  /has(?:Any|All)?Permission\s*\([\s\S]{0,240}['"]workspace\./,
+  'organization workspace detail page should rely on the dashboard admin boundary instead of ordinary workspace.* permission gates'
 );
 assert.match(
   workspaceManagementServiceSource,
