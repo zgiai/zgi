@@ -444,7 +444,7 @@ func TestValidatorValidateModelsForCreation_AllowsWorkspacePrivateModels(t *test
 		listModelsResult: []adapter.Model{
 			{ID: "ernie-x1-turbo-32k"},
 		},
-		chatFailures:      map[string]error{"ernie-x1-turbo-32k": errors.New("creation should not probe chat")},
+		chatFailures:      map[string]error{},
 		embeddingFailures: map[string]error{},
 		imageFailures:     map[string]error{},
 		rerankFailures:    map[string]error{},
@@ -463,8 +463,9 @@ func TestValidatorValidateModelsForCreation_AllowsWorkspacePrivateModels(t *test
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
+	require.Equal(t, 0, fakeAdapter.listModelsCalls)
 	require.Equal(t, 0, fakeAdapter.chatCalls)
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
 	require.Equal(t, []string{"ernie-x1-turbo-32k"}, result.NormalizedModels)
 }
 
@@ -491,7 +492,7 @@ func TestValidatorValidateModelsForCreation_UsesChannelProviderForDuplicatePriva
 	validator := NewValidator(&fakeModelLookupRepo{models: map[string]*llmmodelmodel.LLMModel{}}, privateModels)
 	fakeAdapter := &fakeValidationAdapter{
 		listModelsErr:     fmt.Errorf("%w: list models", adapter.ErrCapabilityUnsupported),
-		chatFailures:      map[string]error{"qwen3.5:9b": errors.New("creation should not probe chat")},
+		chatFailures:      map[string]error{},
 		embeddingFailures: map[string]error{},
 		imageFailures:     map[string]error{},
 		rerankFailures:    map[string]error{},
@@ -512,9 +513,10 @@ func TestValidatorValidateModelsForCreation_UsesChannelProviderForDuplicatePriva
 	require.NotNil(t, result)
 	require.Equal(t, 1, privateModels.providerSpecificCalls)
 	require.Equal(t, 0, privateModels.genericCalls)
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
+	require.Equal(t, 0, fakeAdapter.listModelsCalls)
 	require.Equal(t, 0, fakeAdapter.chatCalls)
-	require.NotEmpty(t, WarningMessages(result.Report))
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+	require.Empty(t, WarningMessages(result.Report))
 	require.Equal(t, []string{"qwen3.5:9b"}, result.NormalizedModels)
 }
 
@@ -543,7 +545,7 @@ func TestValidatorValidateModelsForCreation_OpenAICompatibleAllowsDuplicatePriva
 		listModelsResult: []adapter.Model{
 			{Name: "qwen3.5:9b"},
 		},
-		chatFailures:      map[string]error{"qwen3.5:9b": errors.New("creation should not probe chat")},
+		chatFailures:      map[string]error{},
 		embeddingFailures: map[string]error{},
 		imageFailures:     map[string]error{},
 		rerankFailures:    map[string]error{},
@@ -565,8 +567,9 @@ func TestValidatorValidateModelsForCreation_OpenAICompatibleAllowsDuplicatePriva
 	require.Equal(t, 1, privateModels.listCalls)
 	require.Equal(t, 0, privateModels.providerSpecificCalls)
 	require.Equal(t, 0, privateModels.genericCalls)
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
+	require.Equal(t, 0, fakeAdapter.listModelsCalls)
 	require.Equal(t, 0, fakeAdapter.chatCalls)
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
 	require.Equal(t, []string{"qwen3.5:9b"}, result.NormalizedModels)
 }
 
@@ -659,7 +662,7 @@ func TestValidatorTestModel_ImageProbeUsesDefaultSize(t *testing.T) {
 	require.Equal(t, "1024x1024", fakeAdapter.lastImageReq.Size)
 }
 
-func TestValidatorTestModel_ImageDefaultUsesModelListWithoutImageProbe(t *testing.T) {
+func TestValidatorTestModel_ImageDefaultUsesLocalMetadataWithoutImageProbe(t *testing.T) {
 	validator := NewValidator(nil, nil)
 	validator.modelRepo = &fakeModelLookupRepo{
 		models: map[string]*llmmodelmodel.LLMModel{
@@ -668,7 +671,7 @@ func TestValidatorTestModel_ImageDefaultUsesModelListWithoutImageProbe(t *testin
 	}
 
 	fakeAdapter := &fakeValidationAdapter{
-		listModelsResult: []adapter.Model{{ID: "qwen-image-2.0"}},
+		listModelsErr: errors.New("image metadata check should not list upstream models"),
 	}
 	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
 		return fakeAdapter, nil
@@ -681,64 +684,30 @@ func TestValidatorTestModel_ImageDefaultUsesModelListWithoutImageProbe(t *testin
 	require.Equal(t, "qwen-image-2.0", result.Model)
 	require.Equal(t, testMethodImageGeneration, result.UseCase)
 	require.Equal(t, testMethodMetadata, result.TestMethod)
-	require.Equal(t, "model is returned by upstream model list; real image generation was not run", result.Message)
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
+	require.Equal(t, "validated local model metadata; real image generation was not run", result.Message)
+	require.Zero(t, fakeAdapter.listModelsCalls)
 	require.Zero(t, fakeAdapter.imageCalls)
 }
 
-func TestValidatorTestModel_ImageDefaultFailsOnModelListError(t *testing.T) {
+func TestValidatorValidateModelsForCreation_RejectsEmptyModelList(t *testing.T) {
 	validator := NewValidator(nil, nil)
-	validator.modelRepo = &fakeModelLookupRepo{
-		models: map[string]*llmmodelmodel.LLMModel{
-			"qwen-image-2.0": {Model: "qwen-image-2.0", UseCases: llmmodelmodel.StringArray{"image-gen"}},
-		},
-	}
 
-	fakeAdapter := &fakeValidationAdapter{
-		listModelsErr: errors.New("invalid_api_key"),
-	}
-	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
-		return fakeAdapter, nil
-	}
-
-	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai-compatible", "key", "https://example.com/v1", "qwen-image-2.0", "")
-	require.NoError(t, err)
+	result, err := validator.ValidateModelsForCreation(
+		context.Background(),
+		uuid.Nil,
+		"openai-compatible",
+		"key",
+		"https://example.com/v1",
+		nil,
+	)
+	require.Error(t, err)
 	require.NotNil(t, result)
-	require.False(t, result.Success)
-	require.Equal(t, testMethodImageGeneration, result.UseCase)
-	require.Equal(t, testMethodMetadata, result.TestMethod)
-	require.Contains(t, result.Message, "API key is invalid")
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
-	require.Zero(t, fakeAdapter.imageCalls)
+	require.Contains(t, err.Error(), "at least one model is required")
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+	require.Equal(t, 0, result.Report[keyValidatedCount])
 }
 
-func TestValidatorTestModel_ImageDefaultFallsBackToMetadataWhenListUnsupported(t *testing.T) {
-	validator := NewValidator(nil, nil)
-	validator.modelRepo = &fakeModelLookupRepo{
-		models: map[string]*llmmodelmodel.LLMModel{
-			"qwen-image-2.0": {Model: "qwen-image-2.0", UseCases: llmmodelmodel.StringArray{"image-gen"}},
-		},
-	}
-
-	fakeAdapter := &fakeValidationAdapter{
-		listModelsErr: adapter.ErrCapabilityUnsupported,
-	}
-	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
-		return fakeAdapter, nil
-	}
-
-	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai-compatible", "key", "https://example.com/v1", "qwen-image-2.0", "")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.True(t, result.Success)
-	require.Equal(t, testMethodImageGeneration, result.UseCase)
-	require.Equal(t, testMethodMetadata, result.TestMethod)
-	require.Equal(t, "validated local model metadata; upstream model listing is unsupported; real image generation was not run", result.Message)
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
-	require.Zero(t, fakeAdapter.imageCalls)
-}
-
-func TestValidatorValidateModelsForCreation_ImageModelUsesListingAndSkipsRealProbe(t *testing.T) {
+func TestValidatorValidateModelsForCreation_ImageModelUsesLocalMetadataOnly(t *testing.T) {
 	modelRepo := &fakeModelLookupRepo{
 		models: map[string]*llmmodelmodel.LLMModel{
 			"gpt-image-2": {
@@ -750,19 +719,13 @@ func TestValidatorValidateModelsForCreation_ImageModelUsesListingAndSkipsRealPro
 			},
 		},
 	}
-	fakeAdapter := &fakeValidationAdapter{
-		listModelsResult: []adapter.Model{
-			{ID: "gpt-image-2"},
-		},
-		imageFailures: map[string]error{
-			"gpt-image-2": errors.New("creation should not call image generation"),
-		},
-	}
 
 	validator := NewValidator(nil, nil)
 	validator.modelRepo = modelRepo
+	adapterCreated := false
 	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
-		return fakeAdapter, nil
+		adapterCreated = true
+		return &fakeValidationAdapter{}, nil
 	}
 
 	result, err := validator.ValidateModelsForCreation(
@@ -775,13 +738,14 @@ func TestValidatorValidateModelsForCreation_ImageModelUsesListingAndSkipsRealPro
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, validationModeListing, result.Report[keyValidationMode])
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
-	require.Equal(t, 0, fakeAdapter.imageCalls)
-	require.Nil(t, fakeAdapter.lastImageReq)
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+	require.False(t, adapterCreated)
+	require.Equal(t, 1, result.Report[keyValidatedCount])
+	require.Equal(t, 1, result.Report[keyPassedCount])
+	require.Equal(t, []string{}, result.Report[keyProbedModels])
 }
 
-func TestValidatorValidateModelsForCreation_UsesModelListingAndSkipsRepresentativeProbes(t *testing.T) {
+func TestValidatorValidateModelsForCreation_UsesLocalMetadataOnlyAndIgnoresListing(t *testing.T) {
 	modelRepo := &fakeModelLookupRepo{
 		models: map[string]*llmmodelmodel.LLMModel{
 			"chat-a":  {Model: "chat-a", UseCases: llmmodelmodel.StringArray{"text-chat"}},
@@ -789,18 +753,13 @@ func TestValidatorValidateModelsForCreation_UsesModelListingAndSkipsRepresentati
 			"embed-a": {Model: "embed-a", UseCases: llmmodelmodel.StringArray{"embedding"}},
 		},
 	}
-	fakeAdapter := &fakeValidationAdapter{
-		listModelsResult:  []adapter.Model{{ID: "chat-a"}, {ID: "chat-b"}, {ID: "embed-a"}},
-		chatFailures:      map[string]error{"chat-a": errors.New("chat probe failed")},
-		embeddingFailures: map[string]error{"embed-a": errors.New("embedding probe failed")},
-		imageFailures:     map[string]error{},
-		rerankFailures:    map[string]error{},
-	}
 
 	validator := NewValidator(nil, nil)
 	validator.modelRepo = modelRepo
+	adapterCreated := false
 	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
-		return fakeAdapter, nil
+		adapterCreated = true
+		return &fakeValidationAdapter{}, nil
 	}
 
 	result, err := validator.ValidateModelsForCreation(
@@ -813,37 +772,31 @@ func TestValidatorValidateModelsForCreation_UsesModelListingAndSkipsRepresentati
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, validationModeListing, result.Report[keyValidationMode])
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
 	require.Equal(t, false, result.Report[keySampled])
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
-	require.Equal(t, 0, fakeAdapter.chatCalls)
-	require.Equal(t, 0, fakeAdapter.embeddingCalls)
+	require.False(t, adapterCreated)
 	require.Equal(t, 3, result.Report[keyValidatedCount])
 	require.Equal(t, 3, result.Report[keyPassedCount])
 	require.Equal(t, 0, result.Report[keyUnvalidatedCount])
 	require.Empty(t, result.Report[keyFailedModels])
 	require.Empty(t, WarningMessages(result.Report))
+	require.Equal(t, []string{}, result.Report[keyProbedModels])
 }
 
-func TestValidatorValidateModelsForCreation_ReportsModelsMissingFromUpstreamList(t *testing.T) {
+func TestValidatorValidateModelsForCreation_AllowsModelsMissingFromUpstreamList(t *testing.T) {
 	modelRepo := &fakeModelLookupRepo{
 		models: map[string]*llmmodelmodel.LLMModel{
 			"chat-a":  {Model: "chat-a", UseCases: llmmodelmodel.StringArray{"text-chat"}},
 			"embed-a": {Model: "embed-a", UseCases: llmmodelmodel.StringArray{"embedding"}},
 		},
 	}
-	fakeAdapter := &fakeValidationAdapter{
-		listModelsResult:  []adapter.Model{{ID: "chat-a"}},
-		chatFailures:      map[string]error{"chat-a": errors.New("creation should not probe chat")},
-		embeddingFailures: map[string]error{"embed-a": errors.New("creation should not probe embedding")},
-		imageFailures:     map[string]error{},
-		rerankFailures:    map[string]error{},
-	}
 
 	validator := NewValidator(nil, nil)
 	validator.modelRepo = modelRepo
+	adapterCreated := false
 	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
-		return fakeAdapter, nil
+		adapterCreated = true
+		return &fakeValidationAdapter{}, nil
 	}
 
 	result, err := validator.ValidateModelsForCreation(
@@ -856,29 +809,26 @@ func TestValidatorValidateModelsForCreation_ReportsModelsMissingFromUpstreamList
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
-	require.Equal(t, 0, fakeAdapter.chatCalls)
-	require.Equal(t, 0, fakeAdapter.embeddingCalls)
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+	require.False(t, adapterCreated)
 	require.Equal(t, 2, result.Report[keyValidatedCount])
-	require.Equal(t, 1, result.Report[keyPassedCount])
-	require.Contains(t, fmt.Sprint(result.Report[keyFailedModels]), "embed-a")
-	require.Contains(t, fmt.Sprint(WarningMessages(result.Report)), "embed-a")
+	require.Equal(t, 2, result.Report[keyPassedCount])
+	require.Empty(t, result.Report[keyFailedModels])
+	require.Empty(t, WarningMessages(result.Report))
 }
 
-func TestValidatorValidateModelsForCreation_ReportsModelListingErrors(t *testing.T) {
+func TestValidatorValidateModelsForCreation_IgnoresModelListingErrors(t *testing.T) {
 	modelRepo := &fakeModelLookupRepo{
 		models: map[string]*llmmodelmodel.LLMModel{
 			"chat-a": {Model: "chat-a", UseCases: llmmodelmodel.StringArray{"text-chat"}},
 		},
 	}
-	fakeAdapter := &fakeValidationAdapter{
-		listModelsErr: errors.New(`request failed: Get "://bad/models": unsupported protocol scheme ""`),
-	}
-
 	validator := NewValidator(nil, nil)
 	validator.modelRepo = modelRepo
+	adapterCreated := false
 	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
-		return fakeAdapter, nil
+		adapterCreated = true
+		return &fakeValidationAdapter{}, nil
 	}
 
 	result, err := validator.ValidateModelsForCreation(
@@ -892,42 +842,23 @@ func TestValidatorValidateModelsForCreation_ReportsModelListingErrors(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
-	require.NotEmpty(t, WarningMessages(result.Report))
-	require.Contains(t, fmt.Sprint(WarningMessages(result.Report)), "failed to list upstream models")
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
-	require.Equal(t, 0, fakeAdapter.chatCalls)
+	require.Empty(t, WarningMessages(result.Report))
+	require.False(t, adapterCreated)
 }
 
-func TestValidatorValidateModelsForCreation_ReturnsFriendlyProviderAPIKeyError(t *testing.T) {
+func TestValidatorValidateModelsForCreation_DoesNotProbeProviderAPIKey(t *testing.T) {
 	modelRepo := &fakeModelLookupRepo{
 		models: map[string]*llmmodelmodel.LLMModel{
 			"deepseek-v4-pro": {Model: "deepseek-v4-pro", UseCases: llmmodelmodel.StringArray{"text-chat"}},
 		},
 	}
-	fakeAdapter := &fakeValidationAdapter{
-		listModelsErr: adapter.NewAdapterError(
-			"invalid_api_key",
-			"Authentication Fails, Your api key: ****1d35 is invalid",
-			401,
-			adapter.ErrAuthFailed,
-		),
-		chatFailures: map[string]error{
-			"deepseek-v4-pro": adapter.NewAdapterError(
-				"invalid_api_key",
-				"Authentication Fails, Your api key: ****1d35 is invalid",
-				401,
-				adapter.ErrAuthFailed,
-			),
-		},
-		embeddingFailures: map[string]error{},
-		imageFailures:     map[string]error{},
-		rerankFailures:    map[string]error{},
-	}
 
 	validator := NewValidator(nil, nil)
 	validator.modelRepo = modelRepo
+	adapterCreated := false
 	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
-		return fakeAdapter, nil
+		adapterCreated = true
+		return &fakeValidationAdapter{}, nil
 	}
 
 	result, err := validator.ValidateModelsForCreation(
@@ -938,12 +869,9 @@ func TestValidatorValidateModelsForCreation_ReturnsFriendlyProviderAPIKeyError(t
 		"",
 		[]string{"deepseek-v4-pro"},
 	)
-	require.Error(t, err)
+	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.ErrorIs(t, err, ErrProviderAPIKeyInvalid)
-	require.Equal(t, providerAPIKeyInvalidMessage, err.Error())
-	require.NotContains(t, err.Error(), "Authentication Fails")
-	require.NotContains(t, err.Error(), "1d35")
-	require.Equal(t, 1, fakeAdapter.listModelsCalls)
-	require.Equal(t, 0, fakeAdapter.chatCalls)
+	require.False(t, adapterCreated)
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+	require.Equal(t, 1, result.Report[keyValidatedCount])
 }

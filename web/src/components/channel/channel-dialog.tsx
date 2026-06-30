@@ -12,16 +12,10 @@ import {
 import { Input, PasswordInput } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import {
-  useCreateChannel,
-  useDiscoverDraftChannelModels,
-  useTestDraftChannelModel,
-  useUpdateChannel,
-} from '@/hooks';
+import { useCreateChannel, useUpdateChannel } from '@/hooks';
 import type {
   CreateChannelRequest,
   ChannelDetail,
-  ChannelModelTestResult,
   UpdateChannelRequest,
 } from '@/services/types/channel';
 import type { ModelItem } from '@/services/types/model';
@@ -29,12 +23,8 @@ import { useT } from '@/i18n';
 import ModelMultiSelector from '@/components/common/model-multi-selector/model-multi-selector';
 import { buildModelSelectionKey } from '@/components/common/model-multi-selector/model-selection';
 import {
-  AlertCircle,
   ArrowLeft,
-  CheckCircle2,
   ChevronDown,
-  Loader2,
-  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -51,41 +41,6 @@ import {
 } from '@/utils/ai-credits';
 
 const DEFAULT_INITIAL_FUNDS_USD = '100.00';
-const EMPTY_MODEL_KEYS: string[] = [];
-const DISCOVER_RESTRICTION_UNCHECKED = { status: 'unchecked' } as const;
-const DISCOVER_RESTRICTION_UNSUPPORTED = { status: 'unsupported' } as const;
-
-type DiscoverModelRestriction =
-  | typeof DISCOVER_RESTRICTION_UNCHECKED
-  | typeof DISCOVER_RESTRICTION_UNSUPPORTED
-  | {
-      status: 'limited';
-      modelKeys?: string[];
-      modelNames?: string[];
-    };
-
-type DraftTestFailureKind =
-  | 'auth'
-  | 'baseUrl'
-  | 'model'
-  | 'rateLimit'
-  | 'quota'
-  | 'protocol'
-  | 'unknown';
-
-const DRAFT_TEST_MESSAGE_TRANSLATION_KEYS = {
-  'model is returned by upstream model list; real image generation was not run':
-    'dialog.testConnection.messages.imageModelFound',
-  'validated local model metadata; upstream model listing is unsupported; real image generation was not run':
-    'dialog.testConnection.messages.imageModelMetadataOnly',
-  'model is not returned by upstream model list; real image generation was not run':
-    'dialog.testConnection.messages.imageModelMissing',
-  'Private channel API key is invalid or expired. Update the API key and try again.':
-    'dialog.testConnection.messages.apiKeyInvalid',
-  'model not found or endpoint not available': 'dialog.testConnection.messages.modelNotFound',
-  'rate limit exceeded': 'dialog.testConnection.messages.rateLimited',
-  'request timeout': 'dialog.testConnection.messages.timeout',
-} as const;
 
 type ChannelSetupCategory = 'common' | 'aggregator' | 'advanced';
 type ChannelSetupKind = 'direct' | 'aggregator' | 'compatible' | 'local' | 'custom';
@@ -356,69 +311,6 @@ function haveSameSelectedModelItems(left: ModelItem[], right: ModelItem[]): bool
   );
 }
 
-function classifyDraftTestFailure(message: string): DraftTestFailureKind {
-  const normalized = message.toLowerCase();
-
-  if (
-    normalized.includes('api key') ||
-    normalized.includes('apikey') ||
-    normalized.includes('unauthorized') ||
-    normalized.includes('forbidden') ||
-    normalized.includes('invalid key') ||
-    normalized.includes('authentication') ||
-    normalized.includes('auth')
-  ) {
-    return 'auth';
-  }
-
-  if (
-    normalized.includes('base_url') ||
-    normalized.includes('base url') ||
-    normalized.includes('connection refused') ||
-    normalized.includes('no such host') ||
-    normalized.includes('timeout') ||
-    normalized.includes('deadline exceeded') ||
-    normalized.includes('unsupported protocol scheme')
-  ) {
-    return 'baseUrl';
-  }
-
-  if (
-    normalized.includes('model') &&
-    (normalized.includes('not found') ||
-      normalized.includes('not exist') ||
-      normalized.includes('not available') ||
-      normalized.includes('not registered') ||
-      normalized.includes('unknown'))
-  ) {
-    return 'model';
-  }
-
-  if (normalized.includes('rate limit') || normalized.includes('too many requests')) {
-    return 'rateLimit';
-  }
-
-  if (
-    normalized.includes('quota') ||
-    normalized.includes('balance') ||
-    normalized.includes('insufficient') ||
-    normalized.includes('billing')
-  ) {
-    return 'quota';
-  }
-
-  if (
-    normalized.includes('protocol') ||
-    normalized.includes('not supported') ||
-    normalized.includes('unsupported') ||
-    normalized.includes('method not allowed')
-  ) {
-    return 'protocol';
-  }
-
-  return 'unknown';
-}
-
 interface ChannelFormProps {
   mode: 'create' | 'edit';
   initial?: ChannelDetail | null;
@@ -470,18 +362,6 @@ function ChannelForm({
   );
   const [isEnabled, setIsEnabled] = React.useState<boolean>(initial?.is_enabled ?? true);
   const [advancedOpen, setAdvancedOpen] = React.useState<boolean>(false);
-  const [draftTestResult, setDraftTestResult] = React.useState<ChannelModelTestResult | null>(
-    null
-  );
-  const [draftTestIntent, setDraftTestIntent] = React.useState<'default' | null>(null);
-  const draftTestRequestIdRef = React.useRef(0);
-  const [discoverRestriction, setDiscoverRestriction] =
-    React.useState<DiscoverModelRestriction>(DISCOVER_RESTRICTION_UNCHECKED);
-  const [discoverResult, setDiscoverResult] = React.useState<{
-    total: number;
-    provider: string;
-    listingSupported: boolean;
-  } | null>(null);
   const [setupStep, setSetupStep] = React.useState<'provider' | 'config'>(() =>
     mode === 'create' && !initialSetupOption && !lockChannelProvider ? 'provider' : 'config'
   );
@@ -532,17 +412,11 @@ function ChannelForm({
     setApiBaseUrl(option.defaultApiBaseUrl ?? providerOption?.defaultApiBaseUrl ?? '');
     setModelsSelected([]);
     setSelectedModelItems([]);
-    setDiscoverRestriction(DISCOVER_RESTRICTION_UNCHECKED);
-    setDiscoverResult(null);
-    setDraftTestResult(null);
     setSetupStep('config');
   }, []);
 
   const { createChannel, isCreating } = useCreateChannel();
   const { updateChannel, isUpdating } = useUpdateChannel();
-  const { testDraftChannelModel, isTestingDraft } = useTestDraftChannelModel();
-  const { discoverDraftChannelModels, isDiscoveringDraftModels } =
-    useDiscoverDraftChannelModels();
 
   const handleNumericInput = (
     value: string,
@@ -552,194 +426,14 @@ function ChannelForm({
     setter(sanitizeNonNegativeInt(value, max));
   };
 
-  const disabled = isCreating || isUpdating || isTestingDraft || isDiscoveringDraftModels;
-
-  const hasCheckedModelList =
-    mode !== 'create' || discoverRestriction.status !== 'unchecked';
-  const representativeModel = modelsSelected[0];
-  const canTestConnection =
-    mode === 'create' &&
-    hasCheckedModelList &&
-    Boolean(channelProvider.trim()) &&
-    Boolean(apiBaseUrl.trim()) &&
-    Boolean(representativeModel) &&
-    (!apiKeyRequired || Boolean(apiKey.trim()));
-  const canDiscoverModels =
-    mode === 'create' &&
-    Boolean(channelProvider.trim()) &&
-    Boolean(apiBaseUrl.trim()) &&
-    (!apiKeyRequired || Boolean(apiKey.trim()));
-  const connectionTestHint =
-    mode !== 'create'
-      ? null
-      : !apiBaseUrl.trim()
-        ? t('dialog.testConnection.apiBaseUrlHint')
-        : apiKeyRequired && !apiKey.trim()
-          ? t('dialog.testConnection.apiKeyHint')
-          : !hasCheckedModelList
-            ? t('dialog.testConnection.checkModelListHint')
-            : !representativeModel
-              ? t('dialog.testConnection.selectModelHint')
-              : null;
-  const draftTestFailureKind =
-    draftTestResult && !draftTestResult.success
-      ? classifyDraftTestFailure(draftTestResult.message)
-      : null;
-  const draftTestMessageKey = draftTestResult?.message
-    ? DRAFT_TEST_MESSAGE_TRANSLATION_KEYS[
-        draftTestResult.message as keyof typeof DRAFT_TEST_MESSAGE_TRANSLATION_KEYS
-      ]
-    : undefined;
-  const draftTestDisplayMessage = draftTestResult
-    ? draftTestMessageKey
-      ? t(draftTestMessageKey as never)
-      : draftTestResult.message ||
-        (draftTestResult.success
-          ? t('dialog.testConnection.messages.successFallback')
-          : t('dialog.testConnection.messages.failedFallback'))
-    : '';
-  const testConnectionDescription =
-    modelsSelected.length > 1
-      ? t('dialog.testConnection.descriptionWithModelCount', {
-          count: modelsSelected.length,
-        })
-      : representativeModel
-        ? t('dialog.testConnection.descriptionWithModel', {
-            model: representativeModel,
-          })
-        : t('dialog.testConnection.description');
-  const createReadiness =
-    mode !== 'create'
-      ? null
-      : draftTestResult?.success
-        ? 'verified'
-        : draftTestResult && !draftTestResult.success
-          ? 'failed'
-          : representativeModel
-            ? 'untested'
-            : 'missingModel';
-
-  React.useEffect(() => {
-    draftTestRequestIdRef.current += 1;
-    setDraftTestResult(null);
-  }, [apiKey, apiBaseUrl, channelProvider, representativeModel]);
+  const disabled = isCreating || isUpdating;
 
   React.useEffect(() => {
     if (mode !== 'create') return;
     setModelsSelected([]);
     setSelectedModelItems([]);
-    setDiscoverRestriction(DISCOVER_RESTRICTION_UNCHECKED);
-    setDiscoverResult(null);
-  }, [apiKey, apiBaseUrl, channelProvider, mode]);
+  }, [channelProvider, mode]);
 
-  const onTestConnection = async (): Promise<void> => {
-    if (!canTestConnection || !representativeModel) return;
-    const requestId = draftTestRequestIdRef.current + 1;
-    draftTestRequestIdRef.current = requestId;
-    setDraftTestResult(null);
-    setDraftTestIntent('default');
-
-    const testedProvider = channelProvider.trim();
-    const testedApiKey = apiKey.trim();
-    const testedApiBaseUrl = apiBaseUrl.trim();
-    const testedModel = representativeModel;
-
-    try {
-      const result = await testDraftChannelModel({
-        channel_provider: testedProvider,
-        api_key: testedApiKey,
-        api_base_url: testedApiBaseUrl,
-        model: testedModel,
-      });
-
-      const inputsStillMatch =
-        channelProvider.trim() === testedProvider &&
-        apiKey.trim() === testedApiKey &&
-        apiBaseUrl.trim() === testedApiBaseUrl &&
-        modelsSelected[0] === testedModel;
-
-      if (draftTestRequestIdRef.current === requestId && inputsStillMatch) {
-        setDraftTestResult(result);
-      }
-    } catch {
-      if (draftTestRequestIdRef.current === requestId) {
-        setDraftTestResult(null);
-      }
-    } finally {
-      if (draftTestRequestIdRef.current === requestId) {
-        setDraftTestIntent(null);
-      }
-    }
-  };
-
-  const onDiscoverModels = async (): Promise<void> => {
-    if (!canDiscoverModels) return;
-    setModelsSelected([]);
-    setSelectedModelItems([]);
-    setDiscoverRestriction(DISCOVER_RESTRICTION_UNCHECKED);
-    setDiscoverResult(null);
-
-    const fallbackProvider =
-      (effectiveProviderFilter && effectiveProviderFilter !== 'all'
-        ? effectiveProviderFilter
-        : undefined) ||
-      getMappedProvider(channelProvider) ||
-      channelProvider.trim();
-
-    try {
-      const result = await discoverDraftChannelModels({
-        channel_provider: channelProvider.trim(),
-        api_key: apiKey.trim(),
-        api_base_url: apiBaseUrl.trim(),
-      });
-      if (result.listing_supported === false) {
-        setDiscoverRestriction(DISCOVER_RESTRICTION_UNSUPPORTED);
-        setDiscoverResult({
-          total: 0,
-          provider: fallbackProvider,
-          listingSupported: false,
-        });
-        return;
-      }
-
-      const nextModelNames = Array.from(
-        new Set(
-          result.models
-            .map(model => {
-              const modelName = (model.id || model.name || '').trim();
-              if (!modelName) return '';
-              return modelName;
-            })
-            .filter(Boolean)
-        )
-      );
-      const shouldMatchByModelName =
-        channelProvider.trim().toLowerCase() === 'openai-compatible' ||
-        effectiveProviderFilter?.trim().toLowerCase() === 'all';
-
-      setDiscoverRestriction(
-        shouldMatchByModelName
-          ? {
-              status: 'limited',
-              modelNames: nextModelNames,
-            }
-          : {
-              status: 'limited',
-              modelKeys: nextModelNames.map(modelName =>
-                buildModelSelectionKey(fallbackProvider, modelName)
-              ),
-            }
-      );
-      setDiscoverResult({
-        total: typeof result.total === 'number' ? result.total : result.models.length,
-        provider: fallbackProvider,
-        listingSupported: true,
-      });
-    } catch {
-      setDiscoverRestriction(DISCOVER_RESTRICTION_UNCHECKED);
-      setDiscoverResult(null);
-    }
-  };
   const onSubmit = async (): Promise<void> => {
     if (compatibilityWarningKey) {
       toast.error(t(compatibilityWarningKey as never));
@@ -1067,107 +761,6 @@ function ChannelForm({
             />
           </div>
           {mode === 'create' && (
-            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{t('dialog.testConnection.title')}</div>
-                  <div className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {testConnectionDescription}
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void onTestConnection()}
-                  disabled={!canTestConnection || disabled}
-                  className="shrink-0"
-                >
-                  {isTestingDraft && draftTestIntent === 'default' && (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  )}
-                  {t('dialog.testConnection.button')}
-                </Button>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={onDiscoverModels}
-                  disabled={!canDiscoverModels || disabled}
-                >
-                  {isDiscoveringDraftModels ? (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                  )}
-                  {t('dialog.discoverModels.button')}
-                </Button>
-                {discoverResult && (
-                  <div className="text-xs text-muted-foreground">
-                    {discoverResult.listingSupported ? (
-                      <>
-                        <div>
-                          {t('dialog.discoverModels.messages.success', {
-                            count: discoverResult.total,
-                          })}
-                        </div>
-                        <div>{t('dialog.discoverModels.messages.supportedOnly')}</div>
-                      </>
-                    ) : (
-                      <div>{t('dialog.discoverModels.messages.unsupported')}</div>
-                    )}
-                  </div>
-                )}
-              </div>
-              {connectionTestHint && (
-                <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>{connectionTestHint}</span>
-                </div>
-              )}
-              {draftTestResult && (
-                <div
-                  className={cn(
-                    'flex items-start gap-2 rounded-md border px-3 py-2 text-xs',
-                    draftTestResult.success
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                      : 'border-destructive/20 bg-destructive/5 text-destructive'
-                  )}
-                >
-                  {draftTestResult.success ? (
-                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  ) : (
-                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  )}
-                  <div className="min-w-0">
-                    <div className="font-medium">
-                      {draftTestResult.success
-                        ? t('dialog.testConnection.messages.success')
-                        : t('dialog.testConnection.messages.failed')}
-                    </div>
-                    <div className="mt-0.5 break-words">{draftTestDisplayMessage}</div>
-                    <div className="mt-1 font-medium">
-                      {draftTestResult.success
-                        ? t('dialog.testConnection.nextSteps.success')
-                        : t(
-                            `dialog.testConnection.nextSteps.failures.${draftTestFailureKind ?? 'unknown'}` as never
-                          )}
-                    </div>
-                    {draftTestResult.response_time_ms > 0 && (
-                      <div className="mt-0.5">
-                        {t('dialog.testConnection.latency', {
-                          ms: draftTestResult.response_time_ms,
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-          {mode === 'create' && (
             <div className="space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-sm font-medium">
@@ -1285,50 +878,11 @@ function ChannelForm({
             autoCollapseOthers={(effectiveProviderFilter || mappedProvider) !== 'all'}
             providerFilter={effectiveProviderFilter}
             selectionPolicy="catalog"
-            selectableModelKeys={
-              mode !== 'create'
-                ? undefined
-                : discoverRestriction.status === 'limited'
-                  ? discoverRestriction.modelNames
-                    ? undefined
-                    : (discoverRestriction.modelKeys ?? EMPTY_MODEL_KEYS)
-                  : discoverRestriction.status === 'unsupported'
-                    ? undefined
-                    : EMPTY_MODEL_KEYS
-            }
-            selectableModelNames={
-              mode !== 'create'
-                ? undefined
-                : discoverRestriction.status === 'limited'
-                  ? discoverRestriction.modelNames
-                  : undefined
-            }
           />
         </div>
       </DialogBody>
 
-      <div className="pb-6 px-6 pt-4 border-t shrink-0 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {mode === 'create' && createReadiness && (
-          <div
-            className={cn(
-              'flex min-w-0 items-start gap-2 text-xs',
-              createReadiness === 'verified'
-                ? 'text-emerald-700'
-                : createReadiness === 'failed'
-                  ? 'text-destructive'
-                  : 'text-muted-foreground'
-            )}
-          >
-            {createReadiness === 'verified' ? (
-              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            ) : (
-              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            )}
-            <span className="min-w-0">
-              {t(`dialog.testConnection.readiness.${createReadiness}` as never)}
-            </span>
-          </div>
-        )}
+      <div className="pb-6 px-6 pt-4 border-t shrink-0 flex justify-end">
         <div className="flex shrink-0 items-center justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={disabled}>
             {t('dialog.buttons.cancel')}
@@ -1343,6 +897,7 @@ function ChannelForm({
               !hasValidInitialFunds ||
               Boolean(compatibilityWarningKey) ||
               (mode === 'create' && apiKeyRequired && !apiKey.trim()) ||
+              (mode === 'create' && modelsSelected.length === 0) ||
               (mode === 'edit' && updateApiKey && !apiKey.trim())
             }
           >

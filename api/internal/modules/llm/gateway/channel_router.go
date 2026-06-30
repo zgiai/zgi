@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -167,6 +168,19 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	isPassthroughMode := false
 	modelProvider := ""
 	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.ErrorContext(logCtx, "failed to resolve LLM model", err)
+			return nil, fmt.Errorf("failed to resolve LLM model %q: %w", modelName, err)
+		}
+		knownGlobalModel, knownErr := r.globalModelExists(ctx, providerHint, modelName)
+		if knownErr != nil {
+			logger.ErrorContext(logCtx, "failed to check LLM model lifecycle", knownErr)
+			return nil, fmt.Errorf("failed to check LLM model %q: %w", modelName, knownErr)
+		}
+		if knownGlobalModel {
+			logger.DebugContext(logCtx, "LLM model exists in global registry but is not active")
+			return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+		}
 		// Model not in local registries - enable passthrough mode
 		logger.DebugContext(logCtx, "LLM model not found in local registries, using passthrough mode")
 		isPassthroughMode = true
@@ -391,6 +405,22 @@ func (r *ChannelRouter) getModel(ctx context.Context, modelName string) (*llmmod
 		return nil, err
 	}
 	return &m, nil
+}
+
+func (r *ChannelRouter) globalModelExists(ctx context.Context, provider, modelName string) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, nil
+	}
+
+	var count int64
+	query := r.db.WithContext(ctx).Unscoped().Model(&llmmodel.LLMModel{})
+	if provider != "" {
+		query = query.Where("provider = ?", provider)
+	}
+	if err := query.Where("name = ?", modelName).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // filterRoutesForModel filters routes that support the given model

@@ -51,7 +51,7 @@ const messages: ChannelsMessages = {
     edit: '编辑',
     delete: '删除',
     batch: '批量操作',
-    testConnectivity: '连通性测试',
+    testConnectivity: '模型测试',
     testConnectivityShort: '测试',
     confirmDeleteTitle: '删除渠道',
     confirmDeleteDesc: '确定删除此渠道吗？该操作不可撤销。',
@@ -73,8 +73,8 @@ const messages: ChannelsMessages = {
     user: '可按需添加自定义渠道拓展模型使用范围，也可通过自备渠道降低模型调用成本。',
   },
   connectivityTest: {
-    title: '连通性测试',
-    description: '批量测试所选渠道的模型调用连通性与响应情况',
+    title: '模型测试',
+    description: '测试当前渠道已配置模型的真实调用结果；失败模型可从渠道移除。',
     testing: '测试进行中...',
     completed: '测试完成',
     summary: '共 {total} 项，成功 {success}，失败 {failure}',
@@ -94,11 +94,14 @@ const messages: ChannelsMessages = {
       testAll: '全部测试',
       testSelected: '测试选中',
       abort: '中止测试',
+      remove: '移除',
+      removeFailed: '移除失败模型（{count}）',
     },
     toast: {
-      start: '已启动连通性测试',
-      error: '连通性测试失败',
+      start: '已启动模型测试',
+      error: '模型测试失败',
       abort: '已中止测试',
+      removeAllBlocked: '渠道至少需要保留一个模型，请编辑渠道或删除渠道。',
     },
   },
   dialog: {
@@ -132,24 +135,24 @@ const messages: ChannelsMessages = {
       kinds: {
         direct: {
           label: '官方直连',
-          strategy: '使用服务商模型范围，可检查服务商可用模型',
+          strategy: '使用平台本地模型库中的服务商模型范围',
           headline: '按官方服务商接入',
           guidance:
             '系统会锁定对应协议和默认地址，只展示该服务商模型，适合 OpenAI、Qwen、DeepSeek 等官方账号。',
         },
         aggregator: {
           label: '聚合平台',
-          strategy: '先检查平台实际可用模型，再选择启用',
+          strategy: '使用平台本地模型库中的聚合平台模型范围',
           headline: '按聚合平台接入',
           guidance:
-            '聚合平台模型数量多、变化快，建议先检查服务商返回的可用模型，再选择需要开放给组织的模型。',
+            '聚合平台模型数量多、变化快。可选模型以平台本地模型库为准，创建时保存合法的渠道配置。',
         },
         compatible: {
           label: '兼容协议',
-          strategy: '按 OpenAI 兼容接口检查或手动选择模型',
+          strategy: '使用平台本地模型库或管理员手动确认的模型',
           headline: '按兼容接口接入',
           guidance:
-            '适合代理、自建网关或第三方兼容接口。请确认服务商支持 OpenAI 兼容协议，且能返回可用模型并完成模型调用。',
+            '适合代理、自建网关或第三方兼容接口。请确认服务商支持 OpenAI 兼容协议，并只选择平台已维护元数据的模型。',
         },
         local: {
           label: '本地服务',
@@ -266,15 +269,14 @@ const messages: ChannelsMessages = {
     testConnection: {
       title: '检测连接',
       description:
-        '检查模型列表只会向服务商读取可用模型；检测连接会验证一个代表模型，图片模型只做轻量检查，不会生成图片。',
+        '模型选择以平台本地模型库为准；检测连接会验证一个代表模型，图片模型只做轻量检查，不会生成图片。',
       descriptionWithModel:
         '检测连接会验证 {model}；文本、Embedding、Rerank 模型会发起一次小请求，图片模型只做轻量检查，不会生成图片。',
       descriptionWithModelCount:
-        '已选择 {count} 个模型；检测连接只验证第一个代表模型，创建时会尽量记录已选模型的列表检查结果。',
+        '已选择 {count} 个模型；检测连接只验证第一个代表模型，其他模型按平台本地模型元数据进入渠道。',
       button: '检测连接',
       apiBaseUrlHint: '请先填写 API 基础地址，再检测连接。',
       apiKeyHint: '请先填写 API 密钥，再检测连接。',
-      checkModelListHint: '请先检查模型列表；列表以平台本地模型库为准，只有当前服务商也返回的模型可以选择。',
       selectModelHint: '请先在右侧选择至少一个代表模型，再检测连接。',
       latency: '耗时：{ms} ms',
       messages: {
@@ -283,10 +285,7 @@ const messages: ChannelsMessages = {
         successFallback: '该模型已成功响应。',
         failedFallback: '请检查服务商、API 基础地址、API 密钥和模型是否匹配。',
         requestFailed: '连接检测请求失败',
-        imageModelFound: '已确认服务商账号中可以看到这个模型，本次没有生成图片。',
-        imageModelMetadataOnly:
-          '已确认平台中的模型配置，本次没有生成图片；该服务商暂不支持读取可用模型列表。',
-        imageModelMissing: '服务商返回的可用模型里没有这个模型，本次没有生成图片。',
+        imageModelMetadataOnly: '已确认平台本地模型配置，本次没有生成图片。',
         apiKeyInvalid: 'API 密钥无效或已过期，请更新后再试。',
         modelNotFound: '没有找到这个模型，或当前服务商接口不支持它。',
         rateLimited: '服务商返回限流，请稍后再试。',
@@ -306,8 +305,8 @@ const messages: ChannelsMessages = {
       },
       readiness: {
         verified: '已通过连接检测，可以创建渠道。',
-        failed: '检测未通过：非密钥类问题仍可先保存配置；如果是明确的密钥错误，请先修复。',
-        untested: '创建时会记录模型列表检查结果；如需确认真实调用能力，可检测连接。',
+        failed: '检测未通过，请修复密钥、地址、协议或模型配置后再创建。',
+        untested: '请先检测一个代表模型；检测通过后可以创建渠道。',
         missingModel: '请选择至少一个代表模型后检测连接。',
       },
     },
@@ -315,7 +314,7 @@ const messages: ChannelsMessages = {
       button: '检查模型列表',
       messages: {
         success: '服务商模型列表返回 {count} 个模型',
-        supportedOnly: '列表以平台本地模型库为准；只有当前服务商也返回的模型可以选择，其他本地模型不可选择。',
+        supportedOnly: '上游模型列表仅供参考；可选模型以平台本地模型库为准。',
         unsupported: '当前服务不支持列出模型；请从平台本地模型库选择已注册模型。',
         requestFailed: '检查模型列表失败；非密钥类问题不影响先保存配置',
       },
@@ -358,7 +357,7 @@ const messages: ChannelsMessages = {
   },
   empty: {
     title: '暂无渠道',
-    description: '添加您的模型调用渠道以进行路由管理与连通性测试。',
+    description: '添加您的模型调用渠道以进行路由管理与模型测试。',
   },
   messages: {
     updateSuccess: '渠道更新成功',

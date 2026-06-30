@@ -15,17 +15,19 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ModelIcon } from 'modelicons';
-import { Info } from 'lucide-react';
+import { Info, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useBatchTestChannelModels, useChannel } from '@/hooks';
+import { useBatchTestChannelModels, useChannel, useUpdateChannel } from '@/hooks';
 import type { BatchTestModelResult, ChannelDetail } from '@/services/types/channel';
 import {
   getChannelLatencies,
   getModelLatency,
+  removeModelLatencies,
   saveModelLatency,
   classifyFailure,
   type ModelLatencyRecord,
 } from '@/utils/channel-latency';
+import { toast } from 'sonner';
 
 interface ChannelConnectivityDialogProps {
   open: boolean;
@@ -54,6 +56,8 @@ export default function ChannelConnectivityDialog(
 
   const channelId = channel?.id;
   const { channel: detail, isLoading } = useChannel(channelId);
+  const { updateChannel, isUpdating } = useUpdateChannel();
+  const isOfficial = Boolean(detail?.is_official ?? channel?.is_official);
 
   const models = useMemo(() => {
     const source = detail?.models ?? channel?.models ?? [];
@@ -103,6 +107,19 @@ export default function ChannelConnectivityDialog(
   const { batchTest, abort, isRunning, results, completedResult } =
     useBatchTestChannelModels(batchTestOptions);
 
+  const currentResultsByModel = useMemo(() => {
+    const map: Record<string, BatchTestModelResult> = {};
+    results.forEach(result => {
+      map[result.model] = result;
+    });
+    return map;
+  }, [results]);
+
+  const failedModels = useMemo(
+    () => models.filter(model => currentResultsByModel[model]?.success === false),
+    [currentResultsByModel, models]
+  );
+
   const allChecked = useMemo(() => {
     if (!models.length) return false;
     return models.every(m => selected[m]);
@@ -131,6 +148,35 @@ export default function ChannelConnectivityDialog(
       batchTest(channelId, { models: targets });
     },
     [batchTest, channelId, models, selected]
+  );
+
+  const removeModels = useCallback(
+    async (targets: string[]) => {
+      if (!channelId || isOfficial || targets.length === 0) return;
+      const targetSet = new Set(targets);
+      const nextModels = models.filter(model => !targetSet.has(model));
+      if (nextModels.length === 0) {
+        toast.error(t('connectivityTest.toast.removeAllBlocked'));
+        return;
+      }
+      await updateChannel(channelId, { models: nextModels });
+      removeModelLatencies(channelId, targets);
+      setLatencyMap(prev => {
+        const next = { ...prev };
+        targets.forEach(model => {
+          delete next[model];
+        });
+        return next;
+      });
+      setSelected(prev => {
+        const next = { ...prev };
+        targets.forEach(model => {
+          delete next[model];
+        });
+        return next;
+      });
+    },
+    [channelId, isOfficial, models, t, updateChannel]
   );
 
   if (!open) return null;
@@ -210,6 +256,8 @@ export default function ChannelConnectivityDialog(
                   : models.map(model => {
                       const record =
                         getModelLatency(channelId || '', model) ?? latencyMap[model] ?? null;
+                      const failedInCurrentRun =
+                        currentResultsByModel[model]?.success === false;
                       const display = toDisplay(record);
                       const color =
                         display.kind === 'success'
@@ -265,6 +313,19 @@ export default function ChannelConnectivityDialog(
                                 </TooltipContent>
                               </Tooltip>
                             ) : null}
+                            {!isOfficial && failedInCurrentRun ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={isRunning || isUpdating}
+                                onClick={() => void removeModels([model])}
+                                className="h-7 px-2 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                {t('connectivityTest.buttons.remove')}
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
                       );
@@ -274,23 +335,38 @@ export default function ChannelConnectivityDialog(
           </div>
 
           {completedResult && (
-            <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100/50 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div className="p-2 bg-blue-100 rounded-lg">
-                <Info className="h-4 w-4 text-blue-600" />
+            <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100/50 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Info className="h-4 w-4 text-blue-600" />
+                </div>
+                <div className="text-xs font-medium text-blue-800 leading-relaxed">
+                  {t('connectivityTest.summary', {
+                    total: results.length || (completedResult.total_tests ?? 0),
+                    success:
+                      results.length > 0
+                        ? results.filter(r => r.success).length
+                        : (completedResult.success_count ?? 0),
+                    failure:
+                      results.length > 0
+                        ? results.filter(r => !r.success).length
+                        : (completedResult.failure_count ?? 0),
+                  })}
+                </div>
               </div>
-              <div className="text-xs font-medium text-blue-800 leading-relaxed">
-                {t('connectivityTest.summary', {
-                  total: results.length || (completedResult.total_tests ?? 0),
-                  success:
-                    results.length > 0
-                      ? results.filter(r => r.success).length
-                      : (completedResult.success_count ?? 0),
-                  failure:
-                    results.length > 0
-                      ? results.filter(r => !r.success).length
-                      : (completedResult.failure_count ?? 0),
-                })}
-              </div>
+              {!isOfficial && failedModels.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isRunning || isUpdating}
+                  onClick={() => void removeModels(failedModels)}
+                  className="h-8 shrink-0 border-red-200 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t('connectivityTest.buttons.removeFailed', { count: failedModels.length })}
+                </Button>
+              ) : null}
             </div>
           )}
         </DialogBody>
