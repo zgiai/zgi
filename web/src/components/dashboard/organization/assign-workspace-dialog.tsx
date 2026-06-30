@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Search, Users } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { Badge } from '@/components/ui/badge';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import {
@@ -25,13 +26,20 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useOrganizationRoles } from '@/hooks/organization/use-organization-roles';
 import { useWorkspaceMemberActions } from '@/hooks/workspace/use-workspace-member-actions';
 import { useWorkspaces } from '@/hooks/workspace/use-workspaces';
+import { useLocale } from '@/hooks/use-locale';
 import type { DepartmentMember } from '@/services/types/organization';
 import type { WorkspaceManagement } from '@/services/types/workspace';
 import { cn } from '@/lib/utils';
+import { pickLocale } from '@/utils/tool-helpers';
+import {
+  isAssignableWorkspaceAdminRole,
+  isSelectableWorkspacePermissionTemplate,
+} from '@/utils/workspace-role-templates';
 
 interface AssignWorkspaceDialogProps {
   open: boolean;
@@ -50,6 +58,7 @@ export function AssignWorkspaceDialog({
   const [searchKeyword, setSearchKeyword] = useState('');
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [selectedRoleId, setSelectedRoleId] = useState('');
+  const [shouldSetAdmin, setShouldSetAdmin] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const debouncedSearchKeyword = useDebouncedValue(searchKeyword, 400);
   const pageSize = 8;
@@ -66,6 +75,7 @@ export function AssignWorkspaceDialog({
   });
   const { roles, isLoading: isLoadingRoles } = useOrganizationRoles({ enabled: open });
   const { batchAddWorkspaceMembers, isBatchAddingWorkspaceMembers } = useWorkspaceMemberActions();
+  const { locale } = useLocale();
 
   const joinedWorkspaceIds = useMemo(
     () => new Set(member?.joined_workspaces?.map(workspace => workspace.workspace_id) ?? []),
@@ -77,15 +87,26 @@ export function AssignWorkspaceDialog({
     [joinedWorkspaceIds, workspaces]
   );
 
+  const workspaceAdminRole = useMemo(() => roles.find(isAssignableWorkspaceAdminRole), [roles]);
+
   const selectableRoles = useMemo(
-    () =>
-      roles.filter(
-        role =>
-          role.status === 'active' &&
-          role.id.toLowerCase() !== 'owner' &&
-          role.name.toLowerCase() !== 'owner'
-      ),
+    () => roles.filter(isSelectableWorkspacePermissionTemplate),
     [roles]
+  );
+
+  const defaultRoleId = useMemo(
+    () =>
+      selectableRoles.find(role => role.system_key === 'default_basic')?.id ||
+      selectableRoles.find(role => role.name.toLowerCase() === 'member')?.id ||
+      selectableRoles[0]?.id ||
+      '',
+    [selectableRoles]
+  );
+
+  const getRoleDisplayName = useCallback(
+    (role: (typeof selectableRoles)[number]) =>
+      role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name,
+    [locale]
   );
 
   const effectiveTotal = Math.max(
@@ -105,17 +126,25 @@ export function AssignWorkspaceDialog({
     if (!open) return;
     setSearchKeyword('');
     setSelectedWorkspaceId('');
+    setShouldSetAdmin(false);
     setCurrentPage(1);
   }, [open, member?.account_id]);
 
   useEffect(() => {
-    if (!open || selectedRoleId || selectableRoles.length === 0) return;
-    const memberRole =
-      selectableRoles.find(role => role.id.toLowerCase().includes('member')) ??
-      selectableRoles.find(role => role.name.toLowerCase() === 'member') ??
-      selectableRoles[0];
-    setSelectedRoleId(memberRole.id);
-  }, [open, selectableRoles, selectedRoleId]);
+    if (!open || shouldSetAdmin || selectedRoleId || !defaultRoleId) return;
+    setSelectedRoleId(defaultRoleId);
+  }, [defaultRoleId, open, selectedRoleId, shouldSetAdmin]);
+
+  useEffect(() => {
+    if (!open || shouldSetAdmin || !selectedRoleId) return;
+    if (selectableRoles.length === 0) {
+      setSelectedRoleId('');
+      return;
+    }
+    if (!selectableRoles.some(role => role.id === selectedRoleId)) {
+      setSelectedRoleId(defaultRoleId);
+    }
+  }, [defaultRoleId, open, selectableRoles, selectedRoleId, shouldSetAdmin]);
 
   useEffect(() => {
     if (!selectedWorkspaceId) return;
@@ -130,13 +159,14 @@ export function AssignWorkspaceDialog({
   };
 
   const handleSubmit = async () => {
-    if (!member || !selectedWorkspaceId || !selectedRoleId) return;
+    const roleId = shouldSetAdmin ? workspaceAdminRole?.id : selectedRoleId;
+    if (!member || !selectedWorkspaceId || !roleId) return;
 
     const result = await batchAddWorkspaceMembers({
       workspaceId: selectedWorkspaceId,
       data: {
         account_ids: [member.account_id],
-        role_id: selectedRoleId,
+        role_id: roleId,
       },
     });
 
@@ -227,22 +257,51 @@ export function AssignWorkspaceDialog({
                 className="h-10 pl-9"
               />
             </div>
-            <Select
-              value={selectedRoleId}
-              onValueChange={setSelectedRoleId}
-              disabled={isLoadingRoles || isBusy}
-            >
-              <SelectTrigger className="h-10">
-                <SelectValue placeholder={t('rolePlaceholder')} />
-              </SelectTrigger>
-              <SelectContent>
-                {selectableRoles.map(role => (
-                  <SelectItem key={role.id} value={role.id}>
-                    {role.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {shouldSetAdmin ? (
+              <div className="flex h-10 items-center justify-between gap-2 rounded-md border border-primary/20 bg-primary/5 px-3">
+                <span className="truncate text-sm font-medium text-text-primary">
+                  {t('assignAsAdmin')}
+                </span>
+                <Badge variant="secondary" className="shrink-0 rounded-md">
+                  {workspaceAdminRole ? getRoleDisplayName(workspaceAdminRole) : '-'}
+                </Badge>
+              </div>
+            ) : (
+              <Select
+                value={selectedRoleId}
+                onValueChange={setSelectedRoleId}
+                disabled={isLoadingRoles || isBusy}
+              >
+                <SelectTrigger className="h-10">
+                  <SelectValue placeholder={t('rolePlaceholder')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {selectableRoles.map(role => (
+                    <SelectItem key={role.id} value={role.id}>
+                      {getRoleDisplayName(role)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
+          <div className="rounded-md border border-border bg-bg-canvas/40 px-3 py-2">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-text-primary">
+                  {t('adminSwitchLabel')}
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {workspaceAdminRole ? t('adminSwitchDescription') : t('adminRoleMissing')}
+                </p>
+              </div>
+              <Switch
+                checked={shouldSetAdmin}
+                onCheckedChange={setShouldSetAdmin}
+                disabled={isLoadingRoles || isBusy || !workspaceAdminRole}
+              />
+            </div>
           </div>
 
           <div className="min-h-[260px] flex-1 overflow-y-auto rounded-md border border-border/80 p-2">
@@ -280,7 +339,12 @@ export function AssignWorkspaceDialog({
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={!member || !selectedWorkspaceId || !selectedRoleId || isBusy}
+            disabled={
+              !member ||
+              !selectedWorkspaceId ||
+              isBusy ||
+              (shouldSetAdmin ? !workspaceAdminRole : !selectedRoleId)
+            }
           >
             {isBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {t('confirm')}

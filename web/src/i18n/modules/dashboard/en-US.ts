@@ -1112,6 +1112,12 @@ const messages = {
       noMemberSearchResultsDescription: 'Try another keyword or switch departments',
       name: 'Name',
       email: 'Email',
+      organizationRole: 'Organization Role',
+      organizationRoles: {
+        owner: 'Organization Owner',
+        admin: 'Organization Admin',
+        normal: 'Member',
+      },
       workspaces: 'Joined Workspaces',
       allWorkspaces: 'All Workspaces',
       unassignedWorkspace: 'No workspace assigned',
@@ -1124,6 +1130,11 @@ const messages = {
         descriptionFallback: 'Choose a workspace and permission template.',
         searchPlaceholder: 'Search workspaces',
         rolePlaceholder: 'Select permission template',
+        adminSwitchLabel: 'Set as workspace admin',
+        adminSwitchDescription:
+          'Workspace admins can manage members, settings, and permissions in this workspace.',
+        adminRoleMissing: 'The workspace admin role is unavailable, so this member cannot be set as an admin.',
+        assignAsAdmin: 'Set as workspace admin',
         noLeader: 'No owner',
         memberCount: '{count} people',
         emptyTitle: 'No assignable workspaces',
@@ -1388,7 +1399,7 @@ const messages = {
         availableModels: 'Available Model Permissions',
         members: 'Members',
         addMember: 'Add Member',
-        workspaceRole: 'Permission Template',
+        workspaceRole: 'Workspace role / Template',
         operations: 'Operations',
         remove: 'Remove',
         removeConfirm: {
@@ -1438,26 +1449,42 @@ const messages = {
             template: 'From template',
             legacy: 'Migrated template',
           },
-          template: {
-            title: 'Apply permission template',
+          adminToggle: {
+            title: 'Workspace admin',
             description:
-              'Change this member permission template. The member can still be customized afterwards.',
+              'Workspace admins can manage members, settings, and permissions in this workspace.',
+            missing:
+              'The built-in workspace admin role is unavailable. Check the workspace role initialization.',
+            currentAdminTitle: 'This member is a workspace admin',
+            currentAdminDescription:
+              'Admin permissions come from the fixed workspace admin identity and cannot be edited directly.',
+            demote: 'Change to member template',
+          },
+          adminPermissionPlaceholder: {
+            title: 'Admin permissions are managed by identity',
+            description:
+              'Workspace admins automatically receive the governance permissions needed for this workspace. To narrow access, change this member to an ordinary permission template first.',
+          },
+          template: {
+            title: 'Permission template',
+            description:
+              'Apply an ordinary permission template to this member. The template becomes a permission snapshot and can be customized afterwards.',
             currentLabel: 'Current template',
             placeholder: 'No template selected',
-            change: 'Change template',
+            change: 'Change',
             chooseTitle: 'Choose permission template',
             chooseDescription:
-              'Click a template card to apply it to this member. Applying a template does not create a live link.',
+              'Click a card to apply it to this member. Applying an ordinary template does not create a live link.',
             searchPlaceholder: 'Search template name or description',
-            empty: 'No matching templates',
+            empty: 'No matching permission templates',
             current: 'Current',
             deprecatedTooltip:
               'This template has been deprecated or deleted. We recommend choosing another one.',
             currentMissingDescription:
               'The template currently linked to this member is no longer selectable. Choose a new permission template.',
-            apply: 'Apply template',
+            apply: 'Apply',
             applying: 'Applying...',
-            hint: 'Applying a template does not create a live link; later template edits will not change this member automatically.',
+            hint: 'Workspace admin is a fixed governance role. Ordinary templates do not create a live link; later template edits will not change this member automatically.',
           },
         },
         assignMemberBannerTitle: 'Adding {member} to this workspace',
@@ -1470,8 +1497,14 @@ const messages = {
           allDepartments: 'All Departments',
           selectAll: 'Select All ({count} people)',
           noAvailableMembers: 'No available members',
-          assignRole: 'Apply template to selected members',
+          assignRole: 'Choose permission template',
           selectRole: 'Select permission template',
+          adminSwitchLabel: 'Set as workspace admin',
+          adminSwitchDescription:
+            'Admins can manage workspace members, settings, and permission templates.',
+          adminRoleMissing: 'Workspace admin role is unavailable.',
+          assignAsAdmin: 'Selected members will become workspace admins',
+          permissionTemplateLabel: 'Permission template',
           cancel: 'Cancel',
           add: 'Add ({count})',
           addSummary: 'Added {added}, skipped {skipped}, failed {failed}',

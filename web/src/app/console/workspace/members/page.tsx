@@ -31,6 +31,8 @@ import { useLocale } from '@/hooks/use-locale';
 import { pickLocale } from '@/utils/tool-helpers';
 import type { Role } from '@/services/types/organization';
 import { PermissionDeniedState } from '@/components/common/permission-gate-state';
+import { workspaceMemberRoleForAssignableRole } from '@/utils/workspace-role-templates';
+import { normalizeWorkspaceMemberRole } from '@/utils/role-labels';
 
 export default function WorkspaceMembersPage() {
   const t = useT();
@@ -75,7 +77,10 @@ export default function WorkspaceMembersPage() {
   const canManagePermissions = canManageWorkspaceMembers;
   const showActionsColumn = canManageMembers || canManagePermissions;
   const queryClient = useQueryClient();
-  const isFixedGovernanceRole = (role?: string) => role === 'owner' || role === 'admin';
+  const isFixedGovernanceRole = (role?: string) => {
+    const normalizedRole = normalizeWorkspaceMemberRole(role);
+    return normalizedRole === 'owner' || normalizedRole === 'admin';
+  };
   const getRoleDisplayName = (role: Role) =>
     role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name;
 
@@ -101,9 +106,8 @@ export default function WorkspaceMembersPage() {
 
   // Get role display text
   const getRoleText = (role?: string) => {
-    const fallback = locale.toLowerCase().startsWith('zh') ? '成员' : 'Member';
-    if (!role) return t('workspace.members.roles.normal') || fallback;
-    return t(`workspace.members.roles.${role}` as WorkspaceKey) || fallback;
+    const normalizedRole = normalizeWorkspaceMemberRole(role) ?? 'normal';
+    return t(`workspace.members.roles.${normalizedRole}` as WorkspaceKey);
   };
 
   const getMemberPermissionDisplayName = (member: WorkspaceMemberAccount) => {
@@ -129,6 +133,17 @@ export default function WorkspaceMembersPage() {
     }
 
     return member.role_name || getRoleText(member.role);
+  };
+
+  const getPermissionSourceLabel = (member: WorkspaceMemberAccount) => {
+    if (isFixedGovernanceRole(member.role)) return '';
+    if (member.permission_source === 'role_template') {
+      return t('dashboard.organization.workspaceManagement.detail.memberPermissions.source.template');
+    }
+    if (member.permission_source === 'legacy_role') {
+      return t('dashboard.organization.workspaceManagement.detail.memberPermissions.source.legacy');
+    }
+    return '';
   };
 
   // Get status display text
@@ -178,6 +193,7 @@ export default function WorkspaceMembersPage() {
         prev && prev.id === memberId
           ? {
               ...prev,
+              role: appliedRole ? workspaceMemberRoleForAssignableRole(appliedRole) : prev.role,
               role_id: roleId,
               role_name: appliedRole ? getRoleDisplayName(appliedRole) : prev.role_name,
               permissions: appliedRole?.permissions ?? prev.permissions,
@@ -245,7 +261,7 @@ export default function WorkspaceMembersPage() {
               header: t('workspace.members.department'),
               className: 'w-[100px]',
             },
-            { key: 'role', header: t('workspace.members.role'), className: 'w-[150px]' },
+            { key: 'role', header: t('workspace.members.role'), className: 'w-[180px]' },
             { key: 'status', header: t('workspace.members.status'), className: 'w-[100px]' },
             ...(showActionsColumn
               ? [
@@ -305,9 +321,28 @@ export default function WorkspaceMembersPage() {
                 {member.department_name || '-'}
               </TableCell>
               <TableCell className="py-3.5">
-                <Badge variant="outline" className="max-w-[140px] truncate">
-                  {getMemberPermissionDisplayName(member)}
-                </Badge>
+                <div className="flex flex-col items-start gap-1">
+                  <Badge
+                    variant={
+                      member.role === 'owner'
+                        ? 'default'
+                        : member.role === 'admin'
+                          ? 'secondary'
+                          : 'outline'
+                    }
+                    className="max-w-[170px] truncate rounded-md"
+                  >
+                    {getMemberPermissionDisplayName(member)}
+                  </Badge>
+                  {getPermissionSourceLabel(member) ? (
+                    <Badge
+                      variant="outline"
+                      className="max-w-[170px] truncate rounded-md text-[10px] font-medium"
+                    >
+                      {getPermissionSourceLabel(member)}
+                    </Badge>
+                  ) : null}
+                </div>
               </TableCell>
               <TableCell className="py-3.5">
                 <Badge variant={getStatusVariant(member.status)}>
@@ -319,7 +354,7 @@ export default function WorkspaceMembersPage() {
                   <div className="flex items-center justify-end gap-1">
                     {canManagePermissions &&
                     member.id !== currentUser?.id &&
-                    !isFixedGovernanceRole(member.role) ? (
+                    member.role !== 'owner' ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button

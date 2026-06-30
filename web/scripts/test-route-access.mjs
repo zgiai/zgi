@@ -1822,14 +1822,54 @@ assert.match(
   'workspace role template helper should centralize selectable permission template detection'
 );
 assert.match(
+  workspaceRoleTemplatesSource,
+  /function isAssignableWorkspaceAdminRole/,
+  'workspace role template helper should expose assignable workspace admin detection'
+);
+assert.match(
+  workspaceRoleTemplatesSource,
+  /function isAssignableWorkspaceMemberRole/,
+  'workspace role template helper should expose assignable member roles including workspace admin'
+);
+assert.match(
+  addWorkspaceMemberModalSource,
+  /roles\.find\(isAssignableWorkspaceAdminRole\)/,
+  'workspace add-member dialog should resolve workspace admin separately from permission templates'
+);
+assert.match(
   addWorkspaceMemberModalSource,
   /roles\.filter\(isSelectableWorkspacePermissionTemplate\)/,
-  'workspace add-member dialog should use the shared selectable role-template helper'
+  'workspace add-member dialog should list only ordinary permission templates in the template selector'
+);
+assert.match(
+  workspaceMemberPermissionsDialogSource,
+  /roleTemplates\.find\(isAssignableWorkspaceAdminRole\)/,
+  'workspace member permission dialog should resolve workspace admin separately from permission templates'
 );
 assert.match(
   workspaceMemberPermissionsDialogSource,
   /roleTemplates\.filter\(isSelectableWorkspacePermissionTemplate\)/,
-  'workspace member permission dialog should use the shared selectable role-template helper'
+  'workspace member permission dialog should list only ordinary permission templates in the template picker'
+);
+assert.match(
+  workspaceMemberPermissionsDialogSource,
+  /const canChangeRole = Boolean\(member\) && !isOwner && Boolean\(onApplyTemplate\)/,
+  'workspace member permission dialog should allow workspace admins to be changed through the admin switch/template picker'
+);
+assert.match(
+  workspaceMemberPermissionsDialogSource,
+  /const canEditDirectPermissions = Boolean\(member\) && !isOwner && !isAdmin/,
+  'workspace member permission dialog should keep direct permission editing disabled for fixed governance roles'
+);
+assert.match(
+  workspaceMemberPermissionsDialogSource,
+  /isAdmin \? \([\s\S]*adminPermissionPlaceholder\.title[\s\S]*adminPermissionPlaceholder\.description[\s\S]*\) : \(/,
+  'workspace member permission dialog should show an explanatory placeholder instead of permission checkboxes for workspace admins'
+);
+assert.match(
+  workspaceMembersPageSource,
+  /member\.role !== 'owner'[\s\S]*?setMemberToEditPermissions\(member\)/,
+  'workspace members page should allow workspace admins to open role/template editing while protecting the owner'
 );
 assert.match(
   organizationPermissionsPageSource,
@@ -1843,18 +1883,23 @@ assert.match(
 );
 assert.match(
   organizationWorkspaceDetailPageSource,
-  /roles\.filter\(isSelectableWorkspacePermissionTemplate\)/,
-  'organization workspace detail page should use the shared selectable role-template helper'
+  /roleTemplates=\{roles\}/,
+  'organization workspace detail page should pass the complete role list so the dialog can split admin and templates'
 );
 assert.match(
   organizationWorkspaceDetailPageSource,
-  /const isFixedGovernanceRole = \(role\?: string\) => role === 'owner' \|\| role === 'admin'/,
+  /normalizeWorkspaceMemberRole/,
+  'organization workspace detail page should use the shared workspace role normalizer'
+);
+assert.match(
+  organizationWorkspaceDetailPageSource,
+  /const isFixedGovernanceRole = \(role\?: string\) => \{[\s\S]*?normalizeWorkspaceMemberRole\(role\)[\s\S]*?normalizedRole === 'owner' \|\| normalizedRole === 'admin'[\s\S]*?\}/,
   'organization workspace detail page should treat workspace owner/admin as fixed governance roles'
 );
 assert.match(
   organizationWorkspaceDetailPageSource,
-  /!\s*isFixedGovernanceRole\(member\.role\)[\s\S]*?setMemberToEditPermissions\(member\)/,
-  'organization workspace detail page should hide direct permission editing for fixed governance roles'
+  /member\.role !== 'owner'[\s\S]*?setMemberToEditPermissions\(member\)/,
+  'organization workspace detail page should allow workspace admins to open role/template editing while protecting the owner'
 );
 assert.match(
   organizationWorkspaceDetailPageSource,

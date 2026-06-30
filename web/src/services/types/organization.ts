@@ -260,6 +260,7 @@ export interface DepartmentMember {
   account_email: string;
   avatar: string | null;
   organization_status: 'active' | 'inactive';
+  organization_role?: OrganizationMemberRole;
   joined_workspaces: JoinedWorkspace[] | null;
   group_status?: 'active' | 'inactive';
   created_at: string;

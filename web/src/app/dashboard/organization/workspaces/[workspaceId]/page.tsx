@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import {
@@ -67,7 +67,10 @@ import { StickyDataTable } from '@/components/common/sticky-data-table';
 import { WorkspaceMemberPermissionsDialog } from '@/components/member/workspace-member-permissions-dialog';
 import { useLocale } from '@/hooks/use-locale';
 import { pickLocale } from '@/utils/tool-helpers';
-import { isSelectableWorkspacePermissionTemplate } from '@/utils/workspace-role-templates';
+import {
+  normalizeOrganizationRole,
+  normalizeWorkspaceMemberRole,
+} from '@/utils/role-labels';
 
 export default function WorkspaceDetailPage() {
   const params = useParams();
@@ -158,21 +161,22 @@ export default function WorkspaceDetailPage() {
   const [removeMemberDialogOpen, setRemoveMemberDialogOpen] = useState(false);
   const workspaceMembersTotalPages = Math.max(1, Math.ceil(workspaceMembersTotal / memberPageSize));
   const shouldShowMemberSkeleton = isLoadingMembers || isMemberPageChanging;
-  const selectableRoleTemplates = useMemo(
-    () => roles.filter(isSelectableWorkspacePermissionTemplate),
-    [roles]
-  );
-  const isFixedGovernanceRole = (role?: string) => role === 'owner' || role === 'admin';
+  const isFixedGovernanceRole = (role?: string) => {
+    const normalizedRole = normalizeWorkspaceMemberRole(role);
+    return normalizedRole === 'owner' || normalizedRole === 'admin';
+  };
   const getFixedRoleLabel = (role?: string) => {
-    if (role === 'owner') return t('detail.roleOwner');
-    if (role === 'admin') return t('detail.roleAdmin');
+    const normalizedRole = normalizeWorkspaceMemberRole(role);
+    if (normalizedRole === 'owner') return t('detail.roleOwner');
+    if (normalizedRole === 'admin') return t('detail.roleAdmin');
     return t('detail.roleMember');
   };
   const getRoleDisplayName = (role: (typeof roles)[number]) =>
     role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name;
   const getOrganizationRoleBadgeLabel = (role?: string) => {
-    if (role === 'owner') return t('detail.organizationOwner');
-    if (role === 'admin') return t('detail.organizationAdmin');
+    const normalizedRole = normalizeOrganizationRole(role);
+    if (normalizedRole === 'owner') return t('detail.organizationOwner');
+    if (normalizedRole === 'admin') return t('detail.organizationAdmin');
     return '';
   };
   const formatQuotaPoints = (value?: number | null) =>
@@ -624,7 +628,13 @@ export default function WorkspaceDetailPage() {
                       </TableCell>
                       <TableCell className="py-4">
                         <Badge
-                          variant={isFixedGovernanceRole(member.role) ? 'secondary' : 'outline'}
+                          variant={
+                            member.role === 'owner'
+                              ? 'default'
+                              : member.role === 'admin'
+                                ? 'secondary'
+                                : 'outline'
+                          }
                           className="max-w-[180px] truncate rounded-md"
                         >
                           {getMemberPermissionDisplayName(member)}
@@ -643,7 +653,7 @@ export default function WorkspaceDetailPage() {
                       </TableCell>
                       <TableCell className="py-4 pr-8 text-right">
                         <div className="flex justify-end gap-1">
-                          {!isFixedGovernanceRole(member.role) ? (
+                          {member.role !== 'owner' ? (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
@@ -746,7 +756,7 @@ export default function WorkspaceDetailPage() {
         }}
         member={memberToEditPermissions}
         onSave={handleSaveMemberPermissions}
-        roleTemplates={selectableRoleTemplates}
+        roleTemplates={roles}
         onApplyTemplate={handleApplyMemberTemplate}
         isSaving={isUpdatingPermissions}
         isApplyingTemplate={

@@ -34,6 +34,7 @@ import { useOrganizationActions } from '@/hooks/organization/use-organization-ac
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import type { Member } from '@/services/types/organization';
+import { normalizeOrganizationRole } from '@/utils/role-labels';
 
 const ORGANIZATION_NAME_MAX_LENGTH = 30;
 const ADMIN_CANDIDATE_PAGE_LIMIT = 20;
@@ -150,7 +151,7 @@ export default function OrganizationSettingsPage() {
   }, [canEdit, isDirty, isNameEmpty, isNameTooLong, isUpdatingOrganization, t]);
   const isSaveDisabled = Boolean(saveDisabledReason);
   const currentRoleLabel = useMemo(() => {
-    switch (currentOrganization?.organization_role) {
+    switch (normalizeOrganizationRole(currentOrganization?.organization_role)) {
       case 'owner':
         return t('organization.settings.roles.owner');
       case 'admin':

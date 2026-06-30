@@ -29,10 +29,16 @@ import { Pagination } from '@/components/ui/pagination';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
+import { useAuthStore } from '@/store/auth-store';
+import {
+  isPrivilegedOrganizationRole,
+  normalizeOrganizationRole,
+} from '@/utils/role-labels';
 
 export default function ContactsPage() {
   const t = useT('dashboard.organization.contacts');
   const tRoot = useT();
+  const currentUser = useAuthStore.use.user();
   const [searchKeyword, setSearchKeyword] = useState('');
   const [memberSearchKeyword, setMemberSearchKeyword] = useState('');
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
@@ -130,6 +136,8 @@ export default function ContactsPage() {
 
   // Get current organization
   const { currentOrganization } = useOrganizations();
+  const currentOrganizationRole =
+    currentOrganization?.organization_role ?? currentUser?.organization_role ?? null;
 
   // Fetch departments
   const { departments, isLoading: loadingDepartments } = useDepartments();
@@ -276,6 +284,33 @@ export default function ContactsPage() {
       : t('scopeDepartmentHint')
     : null;
   const hasMemberSearch = debouncedMemberSearchKeyword.trim().length > 0;
+
+  const getOrganizationRoleLabel = (role?: DepartmentMember['organization_role']) => {
+    const normalizedRole = normalizeOrganizationRole(role);
+    if (!normalizedRole) return '-';
+    return t(
+      `organizationRoles.${normalizedRole}` as
+        | 'organizationRoles.owner'
+        | 'organizationRoles.admin'
+        | 'organizationRoles.normal'
+    );
+  };
+
+  const canResetMemberPassword = (member: DepartmentMember) => {
+    if (IS_CLOUD || !currentUser?.id || !member.organization_role) {
+      return false;
+    }
+    if (member.account_id === currentUser.id) {
+      return false;
+    }
+    if (currentOrganizationRole === 'owner') {
+      return member.organization_role !== 'owner';
+    }
+    if (currentOrganizationRole === 'admin') {
+      return member.organization_role === 'normal';
+    }
+    return false;
+  };
 
   // Handle toggle member status
   const handleToggleStatus = (member: DepartmentMember) => {
@@ -559,6 +594,7 @@ export default function ContactsPage() {
             columns={[
               { key: 'name', header: t('name'), className: 'pl-6' },
               { key: 'email', header: t('email') },
+              { key: 'organizationRole', header: t('organizationRole') },
               { key: 'department', header: t('editDialog.department') },
               { key: 'workspaces', header: t('workspaces') },
               { key: 'status', header: t('status') },
@@ -571,7 +607,7 @@ export default function ContactsPage() {
             loadingRows={6}
             renderSkeletonRow={index => (
               <tr key={`member-skeleton-${index}`} className="border-b border-border/10">
-                <td colSpan={7} className="px-6 py-4">
+                <td colSpan={8} className="px-6 py-4">
                   <div className="flex items-center gap-4">
                     <Skeleton className="h-12 w-12 rounded-lg opacity-40" />
                     <div className="flex-1 space-y-2">
@@ -629,10 +665,32 @@ export default function ContactsPage() {
                     <span className="font-semibold text-text-primary text-[13px] group-hover:text-primary transition-colors truncate max-w-[150px]">
                       {member.member_name || member.account_name}
                     </span>
+                    {isPrivilegedOrganizationRole(member.organization_role) ? (
+                      <Badge
+                        variant={member.organization_role === 'owner' ? 'warning' : 'info'}
+                        className="rounded-md px-1.5 py-px text-[10px] font-semibold"
+                      >
+                        {getOrganizationRoleLabel(member.organization_role)}
+                      </Badge>
+                    ) : null}
                   </div>
                 </td>
                 <td className="py-4 text-[13px] text-text-secondary font-medium">
                   {member.account_email}
+                </td>
+                <td className="py-4">
+                  <Badge
+                    variant={
+                      member.organization_role === 'owner'
+                        ? 'warning'
+                        : member.organization_role === 'admin'
+                          ? 'info'
+                          : 'subtle'
+                    }
+                    className="rounded-md px-2 py-px text-[10px] font-medium"
+                  >
+                    {getOrganizationRoleLabel(member.organization_role)}
+                  </Badge>
                 </td>
                 <td className="py-4">
                   <div className="flex">
@@ -771,7 +829,7 @@ export default function ContactsPage() {
                       </Tooltip>
                     )}
 
-                    {!IS_CLOUD && (
+                    {canResetMemberPassword(member) && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button

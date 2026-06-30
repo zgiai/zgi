@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Search, Users } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { Badge } from '@/components/ui/badge';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -24,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import {
   DepartmentSelector,
   isDepartmentSelectorContent,
@@ -34,7 +36,10 @@ import { useDepartments } from '@/hooks/organization/use-departments';
 import { useOrganizationRoles } from '@/hooks/organization/use-organization-roles';
 import { useLocale } from '@/hooks/use-locale';
 import { pickLocale } from '@/utils/tool-helpers';
-import { isSelectableWorkspacePermissionTemplate } from '@/utils/workspace-role-templates';
+import {
+  isAssignableWorkspaceAdminRole,
+  isSelectableWorkspacePermissionTemplate,
+} from '@/utils/workspace-role-templates';
 import type { AvailableWorkspaceMember, BatchAddMembersResponse } from '@/services/types/workspace';
 
 interface AddWorkspaceMemberModalProps {
@@ -70,6 +75,7 @@ export function AddWorkspaceMemberModal({
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('all');
   const [selectedRoleId, setSelectedRoleId] = useState<string>('');
+  const [shouldSetAdmin, setShouldSetAdmin] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const debouncedSearchQuery = useDebouncedValue(searchQuery, 400);
@@ -103,19 +109,23 @@ export function AddWorkspaceMemberModal({
     return Array.from(deduped.values());
   }, [members]);
 
-  const selectableRoles = useMemo(
+  const workspaceAdminRole = useMemo(
+    () => roles.find(isAssignableWorkspaceAdminRole),
+    [roles]
+  );
+  const permissionTemplateRoles = useMemo(
     () => roles.filter(isSelectableWorkspacePermissionTemplate),
     [roles]
   );
   const defaultRoleId = useMemo(
     () =>
-      selectableRoles.find(role => role.system_key === 'default_basic')?.id ||
-      selectableRoles[0]?.id ||
+      permissionTemplateRoles.find(role => role.system_key === 'default_basic')?.id ||
+      permissionTemplateRoles[0]?.id ||
       '',
-    [selectableRoles]
+    [permissionTemplateRoles]
   );
   const getRoleDisplayName = useCallback(
-    (role: (typeof selectableRoles)[number]) =>
+    (role: (typeof permissionTemplateRoles)[number]) =>
       role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name,
     [locale]
   );
@@ -148,6 +158,7 @@ export function AddWorkspaceMemberModal({
     setSelectedMemberIds([]);
     setSelectedDepartmentId('all');
     setSelectedRoleId(defaultRoleId);
+    setShouldSetAdmin(false);
     setCurrentPage(1);
   }, [defaultRoleId, initialSearchQuery, open]);
 
@@ -223,7 +234,8 @@ export function AddWorkspaceMemberModal({
 
     setIsSubmitting(true);
     try {
-      const result = await onAdd(selectedMemberIds, selectedRoleId);
+      const roleId = shouldSetAdmin ? workspaceAdminRole?.id || '' : selectedRoleId;
+      const result = await onAdd(selectedMemberIds, roleId);
       showAddSummary(result);
       resetAndClose();
     } catch (_error) {
@@ -231,12 +243,23 @@ export function AddWorkspaceMemberModal({
     } finally {
       setIsSubmitting(false);
     }
-  }, [onAdd, resetAndClose, selectedMemberIds, selectedRoleId, showAddSummary]);
+  }, [
+    onAdd,
+    resetAndClose,
+    selectedMemberIds,
+    selectedRoleId,
+    shouldSetAdmin,
+    showAddSummary,
+    workspaceAdminRole?.id,
+  ]);
 
   const handleClose = useCallback(() => {
     if (isSubmitting) return;
     resetAndClose();
   }, [isSubmitting, resetAndClose]);
+
+  const disableSubmit =
+    selectedMemberIds.length === 0 || isBusy || (shouldSetAdmin && !workspaceAdminRole);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -365,30 +388,65 @@ export function AddWorkspaceMemberModal({
             className="flex-shrink-0 border-t pt-3"
           />
 
-          <div className="space-y-2 pt-4 border-t flex-shrink-0">
-            <label className="text-sm font-medium">
-              {t('organization.workspaceManagement.detail.addMemberModal.assignRole')}
-            </label>
-            <Select
-              value={selectedRoleId}
-              onValueChange={setSelectedRoleId}
-              disabled={isLoadingRoles}
-            >
-              <SelectTrigger>
-                <SelectValue
-                  placeholder={t(
-                    'organization.workspaceManagement.detail.addMemberModal.selectRole'
+          <div className="space-y-3 pt-4 border-t flex-shrink-0">
+            <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/20 px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">
+                  {t('organization.workspaceManagement.detail.addMemberModal.adminSwitchLabel')}
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {workspaceAdminRole
+                    ? t(
+                        'organization.workspaceManagement.detail.addMemberModal.adminSwitchDescription'
+                      )
+                    : t('organization.workspaceManagement.detail.addMemberModal.adminRoleMissing')}
+                </p>
+              </div>
+              <Switch
+                checked={shouldSetAdmin}
+                onCheckedChange={setShouldSetAdmin}
+                disabled={isLoadingRoles || !workspaceAdminRole}
+              />
+            </div>
+
+            {shouldSetAdmin ? (
+              <div className="flex items-center justify-between rounded-lg border bg-primary/5 px-3 py-2">
+                <span className="text-sm font-medium text-foreground">
+                  {t('organization.workspaceManagement.detail.addMemberModal.assignAsAdmin')}
+                </span>
+                <Badge variant="secondary" className="rounded-md">
+                  {workspaceAdminRole ? getRoleDisplayName(workspaceAdminRole) : '-'}
+                </Badge>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  {t(
+                    'organization.workspaceManagement.detail.addMemberModal.permissionTemplateLabel'
                   )}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {selectableRoles.map(role => (
-                  <SelectItem key={role.id} value={role.id}>
-                    {getRoleDisplayName(role)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                </label>
+                <Select
+                  value={selectedRoleId}
+                  onValueChange={setSelectedRoleId}
+                  disabled={isLoadingRoles}
+                >
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder={t(
+                        'organization.workspaceManagement.detail.addMemberModal.selectRole'
+                      )}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {permissionTemplateRoles.map(role => (
+                      <SelectItem key={role.id} value={role.id}>
+                        {getRoleDisplayName(role)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
         </DialogBody>
 
@@ -398,7 +456,7 @@ export function AddWorkspaceMemberModal({
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={selectedMemberIds.length === 0 || isBusy}
+            disabled={disableSubmit}
           >
             {isBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {t('organization.workspaceManagement.detail.addMemberModal.add', {
