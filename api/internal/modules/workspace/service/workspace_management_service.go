@@ -829,7 +829,12 @@ func (s *WorkspaceManagementServiceImpl) GetWorkspaceMembersPaginated(ctx contex
 		return nil, 0, err
 	}
 
-	if err := query.Order("wm.created_at DESC").Offset(offset).Limit(limit).Scan(&results).Error; err != nil {
+	if err := query.
+		Order("CASE wm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END ASC").
+		Order("wm.created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Scan(&results).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -1746,8 +1751,11 @@ func (s *WorkspaceManagementServiceImpl) UpdateMemberCustomRoleWithPermissionChe
 	if targetMemberJoin == nil {
 		return usererrors.NewMemberNotInWorkspaceError("Member not in workspace")
 	}
-	if model.WorkspaceMemberRoleHasGovernanceAuthority(targetMemberJoin.Role) {
-		return usererrors.NewNoPermissionError("governance role permissions are managed by workspace role")
+	if targetMemberJoin.Role == model.WorkspaceRoleOwner {
+		return usererrors.NewNoPermissionError("owner role can only be changed through ownership transfer")
+	}
+	if targetMemberJoin.Role == model.WorkspaceRoleAdmin {
+		targetMemberJoin.Role = model.WorkspaceRoleNormal
 	}
 
 	targetMemberJoin.RoleID = &roleID

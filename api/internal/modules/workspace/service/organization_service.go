@@ -3663,12 +3663,12 @@ func (s *organizationService) getOrganizationMembersPaginated(ctx context.Contex
 		)
 	}
 
-	err := baseQuery.Distinct("members.account_id").Count(&total).Error
+	err := baseQuery.Session(&gorm.Session{}).Distinct("members.account_id").Count(&total).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to count organization members: %w", err)
 	}
 
-	err = baseQuery.Order("members.created_at DESC, accounts.id ASC").
+	err = baseQuery.Order("CASE members.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END ASC, members.created_at DESC, accounts.id ASC").
 		Offset(offset).
 		Limit(limit).
 		Find(&accounts).Error

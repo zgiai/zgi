@@ -6,11 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/repository"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -99,6 +101,46 @@ CREATE TABLE workspace_members (
 
 	require.True(t, hasMobileByID["acc-with-mobile"])
 	require.False(t, hasMobileByID["acc-without-mobile"])
+}
+
+func TestGetWorkspaceMembersPaginatedOrdersGovernanceRolesFirst(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newWorkspaceManagementMockDB(t)
+	now := time.Now().UTC()
+
+	mock.ExpectQuery(`SELECT count\(\*\) FROM workspace_members wm JOIN accounts a ON wm.account_id = a.id WHERE wm.workspace_id = \$1`).
+		WithArgs("ws-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+	mock.ExpectQuery(`SELECT .* FROM workspace_members wm JOIN accounts a ON wm.account_id = a.id WHERE wm.workspace_id = \$1 ORDER BY CASE wm\.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END ASC,wm\.created_at DESC LIMIT \$2`).
+		WithArgs("ws-1", 20).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "account_name", "email", "avatar", "status", "last_login_at", "last_active_at",
+			"account_created_at", "mobile_e164", "role", "role_id", "permissions", "permission_source",
+			"permission_template_role_id",
+		}).
+			AddRow("owner-1", "Owner User", "owner-1@example.com", nil, "active", nil, nil, now, nil, string(model.WorkspaceRoleOwner), nil, "[]", model.WorkspaceMemberPermissionSourceRoleTemplate, nil).
+			AddRow("admin-1", "Admin User", "admin-1@example.com", nil, "active", nil, nil, now.Add(time.Second), nil, string(model.WorkspaceRoleAdmin), nil, "[]", model.WorkspaceMemberPermissionSourceRoleTemplate, nil).
+			AddRow("normal-1", "Normal User", "normal-1@example.com", nil, "active", nil, nil, now.Add(2*time.Second), nil, string(model.WorkspaceRoleNormal), nil, "[]", model.WorkspaceMemberPermissionSourceRoleTemplate, nil))
+
+	svc := &WorkspaceManagementServiceImpl{db: db}
+
+	members, total, err := svc.GetWorkspaceMembersPaginated(
+		context.Background(),
+		"ws-1",
+		1,
+		20,
+		"",
+		"",
+	)
+
+	require.NoError(t, err)
+	require.EqualValues(t, 3, total)
+	require.Len(t, members, 3)
+	require.Equal(t, "owner-1", members[0].ID)
+	require.Equal(t, "admin-1", members[1].ID)
+	require.Equal(t, "normal-1", members[2].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestGetWorkspaceMembersPaginatedReturnsOrganizationDepartment(t *testing.T) {
@@ -395,6 +437,74 @@ func TestCheckMemberPermissionAllowsAdminGovernanceEvenWithEmptySnapshot(t *test
 	svc := &WorkspaceManagementServiceImpl{workspaceMemberRepo: repo}
 
 	require.NoError(t, svc.CheckMemberPermission(context.Background(), workspace, operator, member, "remove"))
+}
+
+func TestUpdateMemberCustomRoleDemotesWorkspaceAdminToTemplateMember(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newWorkspaceManagementMockDB(t)
+
+	orgID := "org-1"
+	workspaceID := "ws-1"
+	roleID := "role-basic"
+	ownerID := "owner-1"
+	adminID := "admin-1"
+	now := time.Now()
+	mock.ExpectQuery(`SELECT \* FROM "roles" WHERE id = \$1 AND group_id = \$2 AND status = \$3 ORDER BY "roles"\."id" LIMIT \$4`).
+		WithArgs(roleID, orgID, model.WorkspaceCustomRoleStatusActive, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "group_id", "name", "description", "status", "permissions", "created_by", "created_at", "updated_at",
+		}).AddRow(
+			roleID,
+			orgID,
+			"Basic",
+			nil,
+			model.WorkspaceCustomRoleStatusActive,
+			[]byte(`["agent.create"]`),
+			ownerID,
+			now,
+			now,
+		))
+
+	svc := &WorkspaceManagementServiceImpl{
+		db:            db,
+		workspaceRepo: &workspaceManagementWorkspaceRepo{organizationID: orgID},
+		workspaceMemberRepo: &workspaceMemberDirectPermissionRepo{
+			joins: map[string]*model.WorkspaceMember{
+				"ws-1/owner-1": {
+					ID:          "join-owner",
+					WorkspaceID: workspaceID,
+					AccountID:   ownerID,
+					Role:        model.WorkspaceRoleOwner,
+				},
+				"ws-1/admin-1": {
+					ID:          "join-admin",
+					WorkspaceID: workspaceID,
+					AccountID:   adminID,
+					Role:        model.WorkspaceRoleAdmin,
+				},
+			},
+		},
+	}
+	memberRepo := svc.workspaceMemberRepo.(*workspaceMemberDirectPermissionRepo)
+
+	err := svc.UpdateMemberCustomRoleWithPermissionCheck(
+		context.Background(),
+		&model.Workspace{ID: workspaceID},
+		&auth_model.Account{ID: adminID},
+		roleID,
+		&auth_model.Account{ID: ownerID},
+	)
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+	require.NotNil(t, memberRepo.updated)
+	join := memberRepo.updated
+	require.Equal(t, model.WorkspaceRoleNormal, join.Role)
+	require.Equal(t, stringPtr(roleID), join.RoleID)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceRoleTemplate, join.PermissionSource)
+	require.Equal(t, stringPtr(roleID), join.PermissionTemplateRoleID)
+	require.Equal(t, []string{string(model.WorkspacePermissionAgentCreate)}, join.Permissions)
 }
 
 func TestCheckMemberPermissionRejectsPermissionManageFromDirectSnapshot(t *testing.T) {
@@ -747,7 +857,8 @@ func (r *workspaceMemberDirectPermissionRepo) Update(ctx context.Context, join *
 
 type workspaceManagementWorkspaceRepo struct {
 	repository.WorkspaceRepository
-	workspace *model.Workspace
+	workspace      *model.Workspace
+	organizationID string
 }
 
 func (r *workspaceManagementWorkspaceRepo) GetByID(context.Context, string) (*model.Workspace, error) {
@@ -757,8 +868,36 @@ func (r *workspaceManagementWorkspaceRepo) GetByID(context.Context, string) (*mo
 	return r.workspace, nil
 }
 
+func (r *workspaceManagementWorkspaceRepo) GetWorkspaceOrganizationID(context.Context, string) (string, error) {
+	if r.organizationID != "" {
+		return r.organizationID, nil
+	}
+	if r.workspace == nil || r.workspace.OrganizationID == nil {
+		return "", nil
+	}
+	return *r.workspace.OrganizationID, nil
+}
+
 func stringPtr(value string) *string {
 	return &value
+}
+
+func newWorkspaceManagementMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
+	t.Helper()
+
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		Conn:                 sqlDB,
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+	return db, mock
 }
 
 type workspaceManagementTestOrganizationService struct {

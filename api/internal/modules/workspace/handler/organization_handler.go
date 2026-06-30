@@ -2060,6 +2060,8 @@ func handleCurrentOrganizationMemberAdminError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, workspace_service.ErrOrganizationInvitePermissionDenied),
 		errors.Is(err, workspace_service.ErrOrganizationOwnerPasswordReset),
+		errors.Is(err, workspace_service.ErrOrganizationAdminPasswordReset),
+		errors.Is(err, workspace_service.ErrOrganizationSelfPasswordReset),
 		errors.Is(err, workspace_service.ErrSuperAdminPasswordReset):
 		response.Fail(c, response.ErrPermissionDenied)
 	case errors.Is(err, workspace_service.ErrOrganizationMemberNotFound):

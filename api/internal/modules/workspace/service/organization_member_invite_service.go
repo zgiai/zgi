@@ -20,6 +20,8 @@ var (
 	ErrOrganizationInvitePermissionDenied  = errors.New("organization invite permission denied")
 	ErrOrganizationMemberNotFound          = errors.New("organization member not found")
 	ErrOrganizationOwnerPasswordReset      = errors.New("organization owner password reset denied")
+	ErrOrganizationAdminPasswordReset      = errors.New("organization admin password reset denied")
+	ErrOrganizationSelfPasswordReset       = errors.New("organization self password reset denied")
 	ErrSuperAdminPasswordReset             = errors.New("super admin password reset denied")
 	ErrOrganizationInviteWorkspaceInvalid  = errors.New("organization invite workspace invalid")
 	ErrDirectAddWorkspaceNotFound          = errors.New("direct add workspace not found")
@@ -359,6 +361,9 @@ func (s *organizationService) ResetCurrentOrganizationMemberPassword(ctx context
 		if account.IsSuperAdmin {
 			return ErrSuperAdminPasswordReset
 		}
+		if account.ID == operatorAccountID {
+			return ErrOrganizationSelfPasswordReset
+		}
 
 		targetRole, err := getOrganizationMemberRoleTx(ctx, tx, organizationID, account.ID)
 		if err != nil {
@@ -367,8 +372,8 @@ func (s *organizationService) ResetCurrentOrganizationMemberPassword(ctx context
 			}
 			return err
 		}
-		if targetRole == model.OrganizationRoleOwner && operatorRole != model.OrganizationRoleOwner {
-			return ErrOrganizationOwnerPasswordReset
+		if err := validateOrganizationPasswordResetRole(operatorRole, targetRole); err != nil {
+			return err
 		}
 
 		account.Password = &hashedPassword
@@ -397,6 +402,25 @@ func normalizeAccountEmail(email string) string {
 
 func isOrganizationAdminRole(role model.OrganizationRole) bool {
 	return role == model.OrganizationRoleAdmin || role == model.OrganizationRoleOwner
+}
+
+func validateOrganizationPasswordResetRole(operatorRole, targetRole model.OrganizationRole) error {
+	if operatorRole == model.OrganizationRoleOwner {
+		if targetRole == model.OrganizationRoleOwner {
+			return ErrOrganizationOwnerPasswordReset
+		}
+		return nil
+	}
+	if operatorRole == model.OrganizationRoleAdmin {
+		if targetRole == model.OrganizationRoleNormal {
+			return nil
+		}
+		if targetRole == model.OrganizationRoleOwner {
+			return ErrOrganizationOwnerPasswordReset
+		}
+		return ErrOrganizationAdminPasswordReset
+	}
+	return ErrOrganizationInvitePermissionDenied
 }
 
 func getOrganizationMemberRoleTx(ctx context.Context, tx *gorm.DB, organizationID, accountID string) (model.OrganizationRole, error) {

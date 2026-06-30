@@ -70,6 +70,71 @@ func TestWorkspaceMemberDefaultsNormalizeRoleID(t *testing.T) {
 	require.Equal(t, customRoleID, *customJoin.RoleID)
 }
 
+func TestValidateOrganizationPasswordResetRole(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		operatorRole model.OrganizationRole
+		targetRole   model.OrganizationRole
+		wantErr      error
+	}{
+		{
+			name:         "owner can reset admin",
+			operatorRole: model.OrganizationRoleOwner,
+			targetRole:   model.OrganizationRoleAdmin,
+		},
+		{
+			name:         "owner can reset normal member",
+			operatorRole: model.OrganizationRoleOwner,
+			targetRole:   model.OrganizationRoleNormal,
+		},
+		{
+			name:         "owner cannot reset owner",
+			operatorRole: model.OrganizationRoleOwner,
+			targetRole:   model.OrganizationRoleOwner,
+			wantErr:      ErrOrganizationOwnerPasswordReset,
+		},
+		{
+			name:         "admin can reset normal member",
+			operatorRole: model.OrganizationRoleAdmin,
+			targetRole:   model.OrganizationRoleNormal,
+		},
+		{
+			name:         "admin cannot reset admin",
+			operatorRole: model.OrganizationRoleAdmin,
+			targetRole:   model.OrganizationRoleAdmin,
+			wantErr:      ErrOrganizationAdminPasswordReset,
+		},
+		{
+			name:         "admin cannot reset owner",
+			operatorRole: model.OrganizationRoleAdmin,
+			targetRole:   model.OrganizationRoleOwner,
+			wantErr:      ErrOrganizationOwnerPasswordReset,
+		},
+		{
+			name:         "normal member cannot reset password",
+			operatorRole: model.OrganizationRoleNormal,
+			targetRole:   model.OrganizationRoleNormal,
+			wantErr:      ErrOrganizationInvitePermissionDenied,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateOrganizationPasswordResetRole(tt.operatorRole, tt.targetRole)
+			if tt.wantErr == nil {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}
+
 func TestDirectAddOrganizationMemberRollsBackWhenWorkspaceAddFails(t *testing.T) {
 	t.Parallel()
 
