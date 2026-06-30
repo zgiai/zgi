@@ -12,7 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 )
 
-func TestGetWorkflowRunEventsRequiresWorkflowEventsViewPermission(t *testing.T) {
+func TestGetWorkflowRunEventsRequiresWorkflowRunDraftPermission(t *testing.T) {
 	runID := "run-1"
 	permissionChecker := &workflowRunEventPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
@@ -40,14 +40,14 @@ func TestGetWorkflowRunEventsRequiresWorkflowEventsViewPermission(t *testing.T) 
 		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
 	if !permissionChecker.checked {
-		t.Fatalf("expected workflow.events.view permission check")
+		t.Fatalf("expected workflow.run.draft permission check")
 	}
 	if permissionChecker.lastOrganizationID != "org-1" || permissionChecker.lastWorkspaceID != "workspace-1" || permissionChecker.lastAccountID != "account-1" {
 		t.Fatalf("permission scope = org:%q workspace:%q account:%q, want org-1/workspace-1/account-1",
 			permissionChecker.lastOrganizationID, permissionChecker.lastWorkspaceID, permissionChecker.lastAccountID)
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowEventsView {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowEventsView)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowRunDraft {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowRunDraft)
 	}
 }
 
@@ -79,7 +79,7 @@ func TestGetWorkflowRunEventsRequiresPermissionBeforeQueryValidation(t *testing.
 		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
 	}
 	if !permissionChecker.checked {
-		t.Fatalf("expected workflow.events.view permission check before query validation")
+		t.Fatalf("expected workflow.run.draft permission check before query validation")
 	}
 	if contentType := recorder.Header().Get("Content-Type"); contentType == "text/event-stream" {
 		t.Fatalf("SSE should not be opened before permission passes")

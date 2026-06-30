@@ -93,10 +93,36 @@ func canonicalWorkspaceAssignablePermissionJSON(raw string) (string, error) {
 		return "", err
 	}
 
+	permissions = expandLegacyAgentViewPermissionSnapshot(permissions)
 	sanitized := workspace_model.CanonicalAssignableWorkspacePermissionSnapshotStrings(permissions)
 	encoded, err := json.Marshal(sanitized)
 	if err != nil {
 		return "", err
 	}
 	return string(encoded), nil
+}
+
+func expandLegacyAgentViewPermissionSnapshot(permissions []string) []string {
+	if len(permissions) == 0 {
+		return permissions
+	}
+
+	hasWorkflowView := false
+	for _, permission := range permissions {
+		if workspace_model.WorkspacePermissionCode(permission) == workspace_model.WorkspacePermissionWorkflowView {
+			hasWorkflowView = true
+			break
+		}
+	}
+
+	expanded := make([]string, 0, len(permissions)+1)
+	for _, permission := range permissions {
+		expanded = append(expanded, permission)
+		if !hasWorkflowView &&
+			workspace_model.WorkspacePermissionCode(permission) == workspace_model.WorkspacePermissionAgentView {
+			expanded = append(expanded, string(workspace_model.WorkspacePermissionWorkflowView))
+			hasWorkflowView = true
+		}
+	}
+	return expanded
 }

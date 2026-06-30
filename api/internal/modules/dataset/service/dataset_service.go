@@ -240,9 +240,7 @@ func (s *datasetService) checkKnowledgeBaseWorkspacePermission(ctx context.Conte
 
 func knowledgeBaseReadPermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderView,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
-		workspace_model.WorkspacePermissionKnowledgeBaseSegmentView,
 		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
 		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
@@ -260,7 +258,18 @@ func knowledgeBaseReadPermissionCodes() []workspace_model.WorkspacePermissionCod
 
 func knowledgeBaseFolderReadPermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderView,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
+		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseMove,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseIndexManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphManage,
 		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
 	}
 }

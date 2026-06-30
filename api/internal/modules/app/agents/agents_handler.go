@@ -158,6 +158,7 @@ func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
 		"name":       req.Name,
 		"keyword":    req.Keyword,
 		"agent_type": req.AgentType,
+		"asset_kind": req.AssetKind,
 		"internal":   req.Internal,
 	})
 
@@ -170,6 +171,11 @@ func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
 		// Requirement 11.2: Handle tenant not found errors (404)
 		if err.Error() == "tenant not found" {
 			response.Fail(c, response.ErrWorkspaceNotFound)
+			return
+		}
+
+		if errors.Is(err, errInvalidAgentListAssetKind) {
+			response.Fail(c, response.ErrInvalidParam)
 			return
 		}
 

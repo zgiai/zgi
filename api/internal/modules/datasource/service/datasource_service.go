@@ -2799,7 +2799,7 @@ func (s *dataSourceService) GetTablePrompt(ctx context.Context, organizationID, 
 		}
 		return nil, err
 	}
-	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseTablePromptView); err != nil {
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseSchemaView); err != nil {
 		return nil, err
 	}
 
@@ -2852,7 +2852,7 @@ func (s *dataSourceService) UpsertTablePrompt(ctx context.Context, organizationI
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseTablePromptManage); err != nil {
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseSchemaManage); err != nil {
 		return nil, err
 	}
 
@@ -2898,7 +2898,7 @@ func (s *dataSourceService) DeleteTablePrompt(ctx context.Context, organizationI
 	if err != nil {
 		return err
 	}
-	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseTablePromptManage); err != nil {
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseSchemaManage); err != nil {
 		return err
 	}
 
@@ -3718,7 +3718,7 @@ func (s *dataSourceService) ensureExcelImportFileReadable(ctx context.Context, o
 	if s.organizationService == nil {
 		return fmt.Errorf("file permission service unavailable")
 	}
-	hasPermission, err := s.organizationService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionFileDownload)
+	hasPermission, err := s.organizationService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspace_model.WorkspacePermissionFilePreview)
 	if err != nil {
 		return fmt.Errorf("failed to check file permission: %w", err)
 	}

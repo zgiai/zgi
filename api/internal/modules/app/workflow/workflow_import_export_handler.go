@@ -45,7 +45,7 @@ func (h *WorkflowHandler) ExportWorkflow(c *gin.Context) {
 			organizationID,
 			appWorkspaceID,
 			accountID,
-			workspace_model.WorkspacePermissionWorkflowExport,
+			workspace_model.WorkspacePermissionWorkflowImport,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)

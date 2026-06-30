@@ -543,15 +543,15 @@ func getBuiltinOrganizationRoleDescription(roleID string) (*string, *shared_dto.
 	switch roleID {
 	case model.WorkspaceBuiltinRoleOwnerID:
 		descI18n := &shared_dto.LocalizedString{
-			EnUS:   "Has the highest permissions in the team and full control over all resources.",
-			ZhHans: "拥有团队内最高权限，全面管理团队和所有资源。",
+			EnUS:   "Has the highest permissions in the workspace and manages resource allocation and members.",
+			ZhHans: "拥有工作空间内最高权限，负责资源分配及成员管理。",
 		}
 		desc := descI18n.EnUS
 		return &desc, descI18n
 	case model.WorkspaceBuiltinRoleAdminID:
 		descI18n := &shared_dto.LocalizedString{
-			EnUS:   "Helps the owner manage daily operations without permission to delete the team.",
-			ZhHans: "协助拥有者进行日常运营，无权删除团队，适用于 Scrum Master。",
+			EnUS:   "Helps the workspace lead manage workspace members, with all basic permissions and team management permissions.",
+			ZhHans: "协助空间负责人管理空间成员，具备所有基础权限与团队管理权限。",
 		}
 		desc := descI18n.EnUS
 		return &desc, descI18n
@@ -577,9 +577,9 @@ func getBuiltinOrganizationRoleDescription(roleID string) (*string, *shared_dto.
 func getBuiltinOrganizationRoleName(roleID string) (string, *shared_dto.LocalizedString) {
 	switch roleID {
 	case model.WorkspaceBuiltinRoleOwnerID:
-		return "Owner", &shared_dto.LocalizedString{ZhHans: "所有者", EnUS: "Owner"}
+		return "Workspace Lead", &shared_dto.LocalizedString{ZhHans: "空间负责人", EnUS: "Workspace Lead"}
 	case model.WorkspaceBuiltinRoleAdminID:
-		return "Admin", &shared_dto.LocalizedString{ZhHans: "管理员", EnUS: "Admin"}
+		return "Workspace Admin", &shared_dto.LocalizedString{ZhHans: "空间管理员", EnUS: "Workspace Admin"}
 	case model.WorkspaceBuiltinRoleMemberID:
 		return "Member", &shared_dto.LocalizedString{ZhHans: "成员", EnUS: "Member"}
 	case model.WorkspaceBuiltinRoleViewerID:
@@ -4085,12 +4085,10 @@ func datasetViewPermissionCodes() []model.WorkspacePermissionCode {
 		model.WorkspacePermissionKnowledgeBaseUpdate,
 		model.WorkspacePermissionKnowledgeBaseDelete,
 		model.WorkspacePermissionKnowledgeBaseMove,
-		model.WorkspacePermissionKnowledgeBaseFolderView,
 		model.WorkspacePermissionKnowledgeBaseDocumentView,
 		model.WorkspacePermissionKnowledgeBaseDocumentCreate,
 		model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
 		model.WorkspacePermissionKnowledgeBaseDocumentDelete,
-		model.WorkspacePermissionKnowledgeBaseSegmentView,
 		model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
 		model.WorkspacePermissionKnowledgeBaseSegmentDelete,
 		model.WorkspacePermissionKnowledgeBaseIndexManage,

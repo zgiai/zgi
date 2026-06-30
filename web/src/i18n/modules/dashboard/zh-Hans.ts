@@ -774,8 +774,8 @@ const messages: DashboardMessages = {
             '拥有工作空间内最高权限,负责资源分配及成员管理,通常分配给项目负责人或部门主管。',
         },
         workspaceAdmin: {
-          name: 'Workspace Admin',
-          description: '协助拥有者进行日常运营,无权删除工作空间、运用于Scrum Master。',
+          name: '空间管理员',
+          description: '协助空间负责人管理空间成员，具备所有基础权限与团队管理权限。',
         },
         member: {
           name: 'Member',
@@ -918,6 +918,13 @@ const messages: DashboardMessages = {
           description: '当前页面还有未保存的权限变更，离开后这些修改将丢失。',
           confirm: '放弃修改',
           cancel: '继续编辑',
+        },
+        dependencyConfirm: {
+          title: '同时开启依赖权限？',
+          description:
+            '开启「{permission}」需要同时开启「{dependencies}」。确认后会一起开启这些权限。',
+          confirm: '同时开启',
+          cancel: '取消',
         },
         permissions: {
           modules: {
@@ -1402,8 +1409,7 @@ const messages: DashboardMessages = {
           },
           template: {
             title: '权限模板',
-            description:
-              '为该成员应用普通权限模板。应用后会形成权限快照，后续仍可继续个性化调整。',
+            description: '为该成员应用普通权限模板。应用后会形成权限快照，后续仍可继续个性化调整。',
             currentLabel: '当前模板',
             placeholder: '未选择模板',
             change: '更换',
@@ -1417,6 +1423,13 @@ const messages: DashboardMessages = {
             apply: '应用',
             applying: '应用中...',
             hint: '空间管理员是固定治理角色；普通模板不会建立实时绑定，后续修改模板不会自动改变该成员权限。',
+          },
+          dependencyConfirm: {
+            title: '同时开启依赖权限？',
+            description:
+              '开启「{permission}」需要同时开启「{dependencies}」。确认后会一起开启这些权限。',
+            confirm: '同时开启',
+            cancel: '取消',
           },
         },
         assignMemberBannerTitle: '正在将 {member} 加入当前工作空间',

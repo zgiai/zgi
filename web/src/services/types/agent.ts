@@ -7,6 +7,8 @@ export enum AgentType {
   CONVERSATIONAL_AGENT = 'CONVERSATIONAL_WORKFLOW',
 }
 
+export type AgentAssetKind = 'agent' | 'workflow';
+
 // Agent icon type (aligned with shared UI icon type)
 export type AgentIconType = IconType | undefined;
 
@@ -131,6 +133,7 @@ export interface AgentListParams {
   keyword?: string;
   workspace_id?: string;
   agent_type?: AgentType;
+  asset_kind?: AgentAssetKind;
   sort?: string;
   order?: 'asc' | 'desc';
 }

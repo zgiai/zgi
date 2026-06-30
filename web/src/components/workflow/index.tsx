@@ -215,14 +215,11 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   } = useAccountPermissions();
   const canEditWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update);
   const canRunWorkflowDraft = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
-  const canStopWorkflowRun = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop);
-  const canDebugWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
   const canPublishWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish);
   const canManageWorkflowRuntimeAccess = hasAnyPermission(
     WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
   );
   const canViewWorkflowRuntimeLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
-  const canViewWorkflowRuntimeEvents = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.eventsView);
   const canPublishCurrentDraft = canEditWorkflow && canPublishWorkflow;
 
   // Ensure store holds current agent type for downstream filtering
@@ -234,16 +231,13 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   useEffect(() => {
     setCanEdit(canEditWorkflow);
     setCanRunDraft(canRunWorkflowDraft);
-    setCanStopRun(canStopWorkflowRun);
-    setCanDebug(canDebugWorkflow);
+    setCanStopRun(canRunWorkflowDraft);
+    setCanDebug(canRunWorkflowDraft);
     setCanViewRuntimeLogs(canViewWorkflowRuntimeLogs);
-    setCanViewRuntimeEvents(canViewWorkflowRuntimeEvents);
+    setCanViewRuntimeEvents(canRunWorkflowDraft);
   }, [
-    canDebugWorkflow,
     canEditWorkflow,
     canRunWorkflowDraft,
-    canStopWorkflowRun,
-    canViewWorkflowRuntimeEvents,
     canViewWorkflowRuntimeLogs,
     setCanDebug,
     setCanEdit,

@@ -20,10 +20,7 @@ func workflowDraftReadPermissionCodes() []workspace_model.WorkspacePermissionCod
 		workspace_model.WorkspacePermissionWorkflowImport,
 		workspace_model.WorkspacePermissionWorkflowUpdate,
 		workspace_model.WorkspacePermissionWorkflowRunDraft,
-		workspace_model.WorkspacePermissionWorkflowRunStop,
-		workspace_model.WorkspacePermissionWorkflowDebug,
 		workspace_model.WorkspacePermissionWorkflowPublish,
-		workspace_model.WorkspacePermissionWorkflowRuntimeConfigManage,
 		workspace_model.WorkspacePermissionWorkflowRuntimeAccessManage,
 	}
 }
@@ -265,7 +262,7 @@ func (h *WorkflowHandler) ManualDiagnoseNode(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionWorkflowDebug); !ok {
+	if _, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionWorkflowRunDraft); !ok {
 		return
 	}
 	if err := h.workflowService.ValidateWorkflowRunNodeScope(c.Request.Context(), agentID, runID, nodeLogID); err != nil {

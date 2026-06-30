@@ -201,7 +201,14 @@ const dashboardParserSettingsPath = path.join(
   'parsers',
   'page.tsx'
 );
-const dashboardChannelPagePath = path.join(rootDir, 'src', 'app', 'dashboard', 'channel', 'page.tsx');
+const dashboardChannelPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'dashboard',
+  'channel',
+  'page.tsx'
+);
 const llmRouterPath = path.join(repoRootDir, 'api', 'internal', 'modules', 'llm', 'router.go');
 const llmDefaultModelRoutesPath = path.join(
   repoRootDir,
@@ -213,7 +220,12 @@ const llmDefaultModelRoutesPath = path.join(
   'handler',
   'routes.go'
 );
-const accountCapabilitiesHookPath = path.join(rootDir, 'src', 'hooks', 'use-account-capabilities.ts');
+const accountCapabilitiesHookPath = path.join(
+  rootDir,
+  'src',
+  'hooks',
+  'use-account-capabilities.ts'
+);
 const modelSelectorPath = path.join(
   rootDir,
   'src',
@@ -386,8 +398,26 @@ const dbImportExcelPath = path.join(
   'import-excel',
   'page.tsx'
 );
-const dbSearchPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'search', 'page.tsx');
-const dbRecordPath = path.join(rootDir, 'src', 'app', 'console', 'db', '[dbId]', 'record', 'page.tsx');
+const dbSearchPath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'db',
+  '[dbId]',
+  'search',
+  'page.tsx'
+);
+const dbRecordPath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'console',
+  'db',
+  '[dbId]',
+  'record',
+  'page.tsx'
+);
 const dbTablePagePath = path.join(
   rootDir,
   'src',
@@ -570,6 +600,14 @@ const agentRuntimeKnowledgeSectionPath = path.join(
   'knowledge-section.tsx'
 );
 const agentsPagePath = path.join(rootDir, 'src', 'app', 'console', 'agents', 'page.tsx');
+const workflowsPagePath = path.join(rootDir, 'src', 'app', 'console', 'workflows', 'page.tsx');
+const agentAssetListPagePath = path.join(
+  rootDir,
+  'src',
+  'components',
+  'agents',
+  'agent-asset-list-page.tsx'
+);
 const createAgentDialogPath = path.join(
   rootDir,
   'src',
@@ -591,21 +629,17 @@ const agentEntryPagePath = path.join(
 const agentRuntimePagePath = path.join(
   rootDir,
   'src',
-  'app',
-  'console',
+  'components',
   'agents',
-  '[agentId]',
-  'agent',
-  'page.tsx'
+  'agent-runtime',
+  'agent-runtime-page.tsx'
 );
 const agentLayoutPath = path.join(
   rootDir,
   'src',
-  'app',
-  'console',
+  'components',
   'agents',
-  '[agentId]',
-  'layout.tsx'
+  'agent-detail-layout.tsx'
 );
 const datasetPagePath = path.join(rootDir, 'src', 'app', 'console', 'dataset', 'page.tsx');
 const datasetCardPath = path.join(rootDir, 'src', 'components', 'datasets', 'dataset-card.tsx');
@@ -821,12 +855,9 @@ const agentBatchTestBatchItemPagePath = path.join(
 const workflowEditorPagePath = path.join(
   rootDir,
   'src',
-  'app',
-  'console',
-  'agents',
-  '[agentId]',
+  'components',
   'workflow',
-  'page.tsx'
+  'workflow-detail-page.tsx'
 );
 const workflowEditorPath = path.join(rootDir, 'src', 'components', 'workflow', 'index.tsx');
 const workflowStorePath = path.join(rootDir, 'src', 'components', 'workflow', 'store', 'store.ts');
@@ -1198,7 +1229,10 @@ function collectGoWorkspacePermissionHelperCodes(
   const end = sourceText.indexOf('\n}', bodyStart);
   assert.notEqual(end, -1, `missing workspace permission helper end: ${functionName}`);
   const helperSource = sourceText.slice(bodyStart, end);
-  const permissionRefPattern = new RegExp(`${packageName}\\.(WorkspacePermission[A-Za-z0-9]+)`, 'g');
+  const permissionRefPattern = new RegExp(
+    `${packageName}\\.(WorkspacePermission[A-Za-z0-9]+)`,
+    'g'
+  );
   return [...helperSource.matchAll(permissionRefPattern)]
     .map(match => permissionConstants.get(match[1]))
     .filter(Boolean);
@@ -1217,7 +1251,10 @@ function collectGoWorkspacePermissionSliceCodes(
   const end = sourceText.indexOf('\n}', bodyStart);
   assert.notEqual(end, -1, `missing workspace permission slice end: ${sliceName}`);
   const sliceSource = sourceText.slice(bodyStart, end);
-  const permissionRefPattern = new RegExp(`${packageName}\\.(WorkspacePermission[A-Za-z0-9]+)`, 'g');
+  const permissionRefPattern = new RegExp(
+    `${packageName}\\.(WorkspacePermission[A-Za-z0-9]+)`,
+    'g'
+  );
   return [...sliceSource.matchAll(permissionRefPattern)]
     .map(match => permissionConstants.get(match[1]))
     .filter(Boolean);
@@ -1238,7 +1275,10 @@ function collectGoFunctionWorkspacePermissionCodes(
   const end = sourceText.indexOf('\n}', bodyStart);
   assert.notEqual(end, -1, `missing go function end: ${functionName}`);
   const functionSource = sourceText.slice(bodyStart, end);
-  const permissionRefPattern = new RegExp(`${packageName}\\.(WorkspacePermission[A-Za-z0-9]+)`, 'g');
+  const permissionRefPattern = new RegExp(
+    `${packageName}\\.(WorkspacePermission[A-Za-z0-9]+)`,
+    'g'
+  );
   return [...functionSource.matchAll(permissionRefPattern)]
     .map(match => permissionConstants.get(match[1]))
     .filter(Boolean);
@@ -1357,6 +1397,15 @@ const expectedWorkspaceConsolePageRoutes = [
   '/console/prompts',
   '/console/prompts/:promptId',
   '/console/work/task',
+  '/console/workflows',
+  '/console/workflows/:agentId',
+  '/console/workflows/:agentId/api',
+  '/console/workflows/:agentId/batch-test',
+  '/console/workflows/:agentId/batch-test/:batchId',
+  '/console/workflows/:agentId/batch-test/:batchId/items/:itemId',
+  '/console/workflows/:agentId/batch-test/batches',
+  '/console/workflows/:agentId/batch-test/batches/new',
+  '/console/workflows/:agentId/logs',
   '/console/workspace',
   '/console/workspace/members',
   '/console/workspace/settings',
@@ -1537,10 +1586,7 @@ const workspaceMemberPermissionsDialogSource = fs.readFileSync(
   'utf8'
 );
 const assignWorkspaceDialogSource = fs.readFileSync(assignWorkspaceDialogPath, 'utf8');
-const organizationPermissionsPageSource = fs.readFileSync(
-  organizationPermissionsPagePath,
-  'utf8'
-);
+const organizationPermissionsPageSource = fs.readFileSync(organizationPermissionsPagePath, 'utf8');
 const organizationWorkspaceDetailPageSource = fs.readFileSync(
   organizationWorkspaceDetailPagePath,
   'utf8'
@@ -1621,10 +1667,7 @@ const workflowContainerNodeSource = fs.readFileSync(workflowContainerNodePath, '
 const workflowNodeResizeHandleSource = fs.readFileSync(workflowNodeResizeHandlePath, 'utf8');
 const workflowAutoDimensionsSyncSource = fs.readFileSync(workflowAutoDimensionsSyncPath, 'utf8');
 const workflowNoteNodeSource = fs.readFileSync(workflowNoteNodePath, 'utf8');
-const workflowCreateNodeModalHostSource = fs.readFileSync(
-  workflowCreateNodeModalHostPath,
-  'utf8'
-);
+const workflowCreateNodeModalHostSource = fs.readFileSync(workflowCreateNodeModalHostPath, 'utf8');
 const workflowContextMenuSource = fs.readFileSync(workflowContextMenuPath, 'utf8');
 const workflowBottomToolbarSource = fs.readFileSync(workflowBottomToolbarPath, 'utf8');
 const workflowKeyboardHookSource = fs.readFileSync(workflowKeyboardHookPath, 'utf8');
@@ -1978,18 +2021,23 @@ assert.match(
 );
 assert.match(
   promptDetailPageSource,
-  /AGENT_ASSET_VISIBLE_PERMISSION_CODES/,
-  'prompt detail related template shortcuts should reuse the shared agent/workflow visible permission group'
+  /WORKFLOW_VISIBLE_PERMISSION_CODES/,
+  'prompt detail related template shortcuts should use workflow visibility'
 );
 assert.match(
   promptDetailPageSource,
-  /const canOpenAgentAssets\s*=\s*hasAnyPermission\(AGENT_ASSET_VISIBLE_PERMISSION_CODES\)/,
-  'prompt detail should derive related-template navigation from agent/workflow visibility'
+  /const canOpenWorkflowAssets\s*=\s*hasAnyPermission\(WORKFLOW_VISIBLE_PERMISSION_CODES\)/,
+  'prompt detail should derive related-template navigation from workflow visibility'
 );
 assert.match(
   promptDetailPageSource,
-  /\{canOpenAgentAssets && relatedTemplates\.length > 0 \? \(/,
-  'prompt detail should hide agent template shortcuts when the target agent/workflow pages are not visible'
+  /\{canOpenWorkflowAssets && relatedTemplates\.length > 0 \? \(/,
+  'prompt detail should hide workflow template shortcuts when workflow pages are not visible'
+);
+assert.match(
+  promptDetailPageSource,
+  /href="\/console\/workflows"[\s\S]*href=\{`\/console\/workflows\?template=\$\{template\.id\}`\}/,
+  'prompt detail related templates should open the workflow template gallery'
 );
 assert.doesNotMatch(
   promptDetailPageSource,
@@ -2003,7 +2051,7 @@ assert.match(
 );
 assert.match(
   promptUsageSummarySource,
-  /const canOpenWorkflowReference\s*=[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.create[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.import[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
+  /const canOpenWorkflowReference\s*=[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.create[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.import[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
   'prompt usage workflow reference links should require an editor-compatible workflow permission'
 );
 assert.match(
@@ -2013,22 +2061,22 @@ assert.match(
 );
 assert.match(
   promptUsageSummarySource,
-  /canOpenWorkflowReference\s*\?\s*\([\s\S]*href=\{`\/console\/agents\/\$\{reference\.agent_id\}\?nodeId=\$\{reference\.node_id\}`\}/,
+  /canOpenWorkflowReference\s*\?\s*\([\s\S]*href=\{`\$\{getAgentDetailBaseHref\(reference\.agent_id,\s*'workflow'\)\}\?nodeId=\$\{reference\.node_id\}`\}/,
   'prompt usage references should gate workflow node deep links with target-page permissions'
 );
 assert.match(
   promptUsageSummarySource,
-  /href=\{`\/console\/agents\/\$\{reference\.agent_id\}\?nodeId=\$\{reference\.node_id\}`\}/,
-  'prompt usage references should route through the permission-aware agent detail root while preserving node focus'
+  /href=\{`\$\{getAgentDetailBaseHref\(reference\.agent_id,\s*'workflow'\)\}\?nodeId=\$\{reference\.node_id\}`\}/,
+  'prompt usage references should route through the workflow detail root while preserving node focus'
 );
 assert.doesNotMatch(
   promptUsageSummarySource,
   /\/console\/agents\/\$\{reference\.agent_id\}\/workflow\?nodeId=/,
-  'prompt usage references should not bypass agent detail root permissions'
+  'prompt usage references should not bypass the canonical workflow root'
 );
 assert.match(
   promptUsageSummarySource,
-  /run\.workflow_run_id && canOpenWorkflowRunLog\s*\?\s*\([\s\S]*href=\{`\/console\/agents\/\$\{run\.agent_id\}\/logs\?runId=\$\{run\.workflow_run_id\}&tab=execution`\}/,
+  /run\.workflow_run_id && canOpenWorkflowRunLog\s*\?\s*\([\s\S]*href=\{`\$\{getAgentDetailLogsHref\(run\.agent_id,\s*'workflow'\)\}\?runId=\$\{run\.workflow_run_id\}&tab=execution`\}/,
   'prompt usage recent-run logs should be hidden unless the workflow log direct page is available'
 );
 assert.match(
@@ -2248,13 +2296,13 @@ for (const handlerName of [
 }
 assert.match(
   filePageSource,
-  /hasAnyPermission\(FILE_VISIBLE_PERMISSION_CODES\)/,
-  'file list page should gate direct access by file visible permissions'
+  /const canViewFiles\s*=\s*hasWorkspaceAccess\(\)/,
+  'file list page should be available to members with workspace access'
 );
 assert.match(
   filePageSource,
   /<PermissionDeniedState \/>/,
-  'file list page should show the shared access-denied state when file permissions are absent'
+  'file list page should show the shared access-denied state when workspace access is absent'
 );
 assert.match(
   fileDetailPageSource,
@@ -2263,18 +2311,18 @@ assert.match(
 );
 assert.match(
   fileDetailShellSource,
-  /FILE_PERMISSION_ACTIONS\.metadataView[\s\S]*FILE_PERMISSION_ACTIONS\.preview[\s\S]*FILE_PERMISSION_ACTIONS\.download/,
-  'file detail access should be based on readable file action permissions'
+  /const canOpenFileDetail\s*=\s*hasWorkspaceAccess\(\)/,
+  'file detail access should be based on workspace membership'
 );
 assert.doesNotMatch(
-  fileDetailShellSource.match(/const canOpenFileDetail[\s\S]*?\n\s*\]\);/)?.[0] ?? '',
-  /FILE_PERMISSION_ACTIONS\.upload/,
-  'file detail access should not treat upload-only permission as existing-file view access'
+  fileDetailShellSource,
+  /FILE_PERMISSION_ACTIONS\.metadataView|file\.metadata\.view/,
+  'file detail access should not consume the retired file metadata permission'
 );
 assert.match(
   fileDetailShellSource,
   /const canDownload\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.download\)/,
-  'file detail download action should use the exact file.download action group'
+  'file detail download action should use the merged file preview/download action group'
 );
 assert.match(
   fileDetailShellSource,
@@ -2284,7 +2332,7 @@ assert.match(
 assert.doesNotMatch(
   fileDetailShellSource,
   /hasPermission\(['"]file\.download['"]\)/,
-  'file detail download action should not bypass the file action matrix with a raw permission literal'
+  'file detail download action should not bypass the file action matrix with a retired raw permission literal'
 );
 assert.match(
   fileDetailShellSource,
@@ -2348,18 +2396,18 @@ assert.match(
 );
 assert.match(
   fileListSource,
-  /const canOpenFileDetailByPermission\s*=\s*hasAnyPermission\(\[[\s\S]*FILE_PERMISSION_ACTIONS\.metadataView[\s\S]*FILE_PERMISSION_ACTIONS\.download[\s\S]*FILE_PERMISSION_ACTIONS\.update/,
-  'file list detail entry should use existing-file readable/action permissions'
+  /const canViewDetail\s*=\s*!selectionMode;/,
+  'file list detail entry should be visible by default outside selection mode'
 );
 assert.doesNotMatch(
-  fileListSource.match(/const canOpenFileDetailByPermission[\s\S]*?\n\s*\]\);/)?.[0] ?? '',
-  /FILE_PERMISSION_ACTIONS\.upload/,
-  'file list detail entry should not be visible for upload-only permission'
+  fileListSource,
+  /canOpenFileDetailByPermission|FILE_PERMISSION_ACTIONS\.metadataView|file\.metadata\.view/,
+  'file list detail entry should not consume the retired file metadata permission'
 );
 assert.match(
   fileListSource,
-  /const canViewDetail\s*=\s*!selectionMode && canOpenFileDetailByPermission/,
-  'file list detail link should combine mode and permission gate'
+  /const canViewRelatedResources\s*=\s*!selectionMode;/,
+  'file related resources entry should be visible by default outside selection mode'
 );
 assert.match(
   fileListSource,
@@ -2421,7 +2469,7 @@ assert.match(
 assert.match(
   fileHandlerSource,
   /func \(h \*FileHandler\) authorizePreviewDocumentFile[\s\S]*getAuthorizedFileForPreview/,
-  'file parsed-content reads should use the file.preview helper instead of file.download'
+  'file parsed-content reads should use the file preview/download helper'
 );
 for (const handlerName of [
   'ListFileChunks',
@@ -2444,7 +2492,7 @@ assert.match(
 assert.doesNotMatch(
   getGoHandlerMethodSource(fileHandlerSource, 'FileHandler', 'GetFileParsePreview'),
   /getAuthorizedFileForDownload/,
-  'file parse-preview endpoint should not require file.download'
+  'file parse-preview endpoint should not require the retired file download permission'
 );
 assert.match(
   fileHandlerSource,
@@ -2474,7 +2522,7 @@ assert.match(
 assert.doesNotMatch(
   imagePreviewHandlerSource.match(/} else \{[\s\S]*?if !ok \{/g)?.[0] ?? '',
   /authorizeFileDownloadAccess/,
-  'file image/original preview stream should not require file.download for JWT access'
+  'file image/original preview stream should not require the retired file download permission for JWT access'
 );
 assert.match(
   relatedResourcesPopoverSource,
@@ -2488,13 +2536,13 @@ assert.doesNotMatch(
 );
 assert.match(
   fileListSource,
-  /const canViewRelatedResources\s*=\s*hasAnyPermission\(FILE_PERMISSION_ACTIONS\.relatedView\)/,
-  'file list related-resource entry should derive visibility from the exact file.related.view action'
+  /const canViewRelatedResources\s*=\s*!selectionMode;/,
+  'file list related-resource entry should be visible by default outside selection mode'
 );
 assert.match(
   fileListSource,
   /canViewRelatedResources && file\.related_count > 0[\s\S]*<RelatedResourcesPopover/,
-  'file list should not render the related-resource popover unless file.related.view is granted'
+  'file list should not render the related-resource popover while related-resource visibility is disabled'
 );
 for (const handlerName of ['GetRelatedDocuments', 'GetRelatedDatasets', 'GetRelatedResources']) {
   const relatedHandlerSlice = sourceSliceBetween(
@@ -2507,7 +2555,7 @@ for (const handlerName of ['GetRelatedDocuments', 'GetRelatedDatasets', 'GetRela
   assert.match(
     relatedHandlerSlice,
     /authorizeFileRelatedAccess/,
-    `file ${handlerName} should require the exact file.related.view action`
+    `file ${handlerName} should require the related-resource access helper`
   );
   assert.doesNotMatch(
     relatedHandlerSlice,
@@ -2587,8 +2635,8 @@ assert.match(
 );
 assert.match(
   dbSearchSource,
-  /const canAiQuery\s*=\s*hasAnyPermission\(\[[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryWrite/,
-  'database BI search direct page should require AI query read or write permission'
+  /const canAiQuery\s*=\s*hasAnyPermission\(DATABASE_PERMISSION_ACTIONS\.aiQueryRead\)/,
+  'database BI search direct page should require AI query read permission'
 );
 assert.match(
   dbRecordSource,
@@ -2633,7 +2681,7 @@ assert.match(
 assert.match(
   excelImportShellSource,
   /useExcelImportErrors\([\s\S]*canViewImportErrors\s*&&[\s\S]*step === 'result'[\s\S]*importResult\.failed_rows > 0/,
-  'database Excel import shell should not fetch import-error details without database.import.errors.view'
+  'database Excel import shell should not fetch import-error details without import permissions'
 );
 assert.match(
   excelImportShellSource,
@@ -2767,8 +2815,8 @@ assert.match(
 );
 assert.match(
   consoleRecentWorkSource,
-  /type === 'agent' \|\| type === 'workflow'/,
-  'recent workflow links should use the canonical agent/workflow detail entry route'
+  /type === 'workflow'[\s\S]*return `\/console\/workflows\/\$\{resourceId\}`;/,
+  'recent workflow links should use the canonical workflow detail entry route'
 );
 assert.match(
   agentLogsPageSource,
@@ -2823,12 +2871,12 @@ const agentsWorkspacePermissionCodesSource = fs.readFileSync(
 const agentsRuntimeBindingsSource = fs.readFileSync(agentsRuntimeBindingsPath, 'utf8');
 assert.match(
   permissionConstantsSource,
-  /export const DATABASE_TABLE_METADATA_PERMISSION_CODES = \[[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaView[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView[\s\S]*DATABASE_PERMISSION_ACTIONS\.importAnalyze[\s\S]*DATABASE_PERMISSION_ACTIONS\.tablePromptView[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead/,
-  'database table metadata permission group should include schema, record, import, table prompt, and AI-query readers'
+  /export const DATABASE_TABLE_METADATA_PERMISSION_CODES = \[[\s\S]*DATABASE_PERMISSION_ACTIONS\.schemaView[\s\S]*DATABASE_PERMISSION_ACTIONS\.recordView[\s\S]*DATABASE_PERMISSION_ACTIONS\.importAnalyze[\s\S]*DATABASE_PERMISSION_ACTIONS\.aiQueryRead/,
+  'database table metadata permission group should include schema, record, import, and AI-query readers'
 );
 assert.match(
   permissionConstantsSource,
-  /export const KNOWLEDGE_BASE_READ_PERMISSION_CODES = \[[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.folderView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.documentView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.segmentView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.graphView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.indexManage/,
+  /export const KNOWLEDGE_BASE_READ_PERMISSION_CODES = \[[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.documentView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.graphView[\s\S]*KNOWLEDGE_BASE_PERMISSION_ACTIONS\.indexManage/,
   'knowledge base runtime binding read group should mirror backend readable knowledge permissions'
 );
 assert.doesNotMatch(
@@ -2860,7 +2908,6 @@ const dashboardVisiblePermissionPairs = [
     'dashboardKnowledgeBaseVisiblePermissionCodes',
   ],
   ['database', 'DATABASE_PERMISSION_ACTIONS', 'dashboardDatabaseVisiblePermissionCodes'],
-  ['file', 'FILE_PERMISSION_ACTIONS', 'dashboardFileVisiblePermissionCodes'],
 ];
 for (const [label, frontendActionName, backendHelperName] of dashboardVisiblePermissionPairs) {
   const frontendPageCodes = [
@@ -2882,39 +2929,80 @@ for (const [label, frontendActionName, backendHelperName] of dashboardVisiblePer
     `dashboard ${label} visible workspace scope should match frontend page-visible permission group`
   );
 }
+const fileDashboardVisibleBackendCodes = [
+  ...new Set(
+    collectGoWorkspacePermissionHelperCodes(
+      dashboardHandlerSource,
+      workspacePermissionConstants,
+      'dashboardFileVisiblePermissionCodes',
+      'workspacemodel'
+    )
+  ),
+].sort();
+assert.deepEqual(
+  fileDashboardVisibleBackendCodes,
+  ['workspace.view'],
+  'dashboard file visible workspace scope should use default workspace membership'
+);
+assert.deepEqual(
+  collectPermissionActionPageCodes(permissionConstantsSource, 'FILE_PERMISSION_ACTIONS'),
+  [],
+  'file page-visible permission group should stay empty because file visibility is held by default'
+);
 const agentAssetVisibleFrontendCodes = [
   ...new Set([
     ...collectPermissionActionPageCodes(permissionConstantsSource, 'AGENT_PERMISSION_ACTIONS'),
     ...collectPermissionActionPageCodes(permissionConstantsSource, 'WORKFLOW_PERMISSION_ACTIONS'),
   ]),
 ].sort();
-const agentAssetVisibleBackendCodes = [
+const agentVisibleFrontendCodes = [
+  ...new Set(
+    collectPermissionActionPageCodes(permissionConstantsSource, 'AGENT_PERMISSION_ACTIONS')
+  ),
+].sort();
+const workflowVisibleFrontendCodes = [
+  ...new Set(
+    collectPermissionActionPageCodes(permissionConstantsSource, 'WORKFLOW_PERMISSION_ACTIONS')
+  ),
+].sort();
+const agentVisibleBackendCodes = [
   ...new Set(
     collectGoWorkspacePermissionHelperCodes(
       agentsWorkspacePermissionCodesSource,
       workspacePermissionConstants,
-      'agentAssetVisiblePermissionCodes',
+      'agentVisiblePermissionCodes',
       'model'
     )
   ),
 ].sort();
+const workflowVisibleBackendCodes = [
+  ...new Set(
+    collectGoWorkspacePermissionHelperCodes(
+      agentsWorkspacePermissionCodesSource,
+      workspacePermissionConstants,
+      'workflowVisiblePermissionCodes',
+      'model'
+    )
+  ),
+].sort();
+const agentAssetVisibleBackendCodes = [
+  ...new Set([...agentVisibleBackendCodes, ...workflowVisibleBackendCodes]),
+].sort();
+assert.deepEqual(
+  agentVisibleBackendCodes,
+  agentVisibleFrontendCodes,
+  'agent backend visible scope should match frontend agent page-visible permission group'
+);
+assert.deepEqual(
+  workflowVisibleBackendCodes,
+  workflowVisibleFrontendCodes,
+  'workflow backend visible scope should match frontend workflow page-visible permission group'
+);
 assert.deepEqual(
   agentAssetVisibleBackendCodes,
   agentAssetVisibleFrontendCodes,
   'agent backend asset-visible scope should match frontend agent/workflow page-visible permission groups'
 );
-const fileDetailReadableFrontendCodes = [
-  ...new Set(
-    collectPermissionActionSpreadCodes(
-      sourceSliceBetween(
-        fileDetailShellSource,
-        'const canOpenFileDetail = hasAnyPermission([',
-        ']);'
-      ),
-      permissionConstantsSource
-    )
-  ),
-].sort();
 const fileReadableBackendCodes = [
   ...new Set(
     collectGoWorkspacePermissionHelperCodes(
@@ -2927,8 +3015,8 @@ const fileReadableBackendCodes = [
 ].sort();
 assert.deepEqual(
   fileReadableBackendCodes,
-  fileDetailReadableFrontendCodes,
-  'file detail readable frontend gate should match backend fileReadablePermissionCodes helper'
+  ['workspace.view'],
+  'file detail readable backend helper should use default workspace membership'
 );
 const databaseReadBindingFrontendCodes = [
   ...new Set(
@@ -2996,7 +3084,6 @@ const permissionActionAggregateNames = [
 ];
 const retiredPermissionPrefixes = ['workspace.', 'prompt.', 'content_parse.', 'dashboard.'];
 const legacyAggregatePermissionCodes = [
-  'agent.view',
   'agent.manage',
   'knowledge_base.view',
   'knowledge_base.manage',
@@ -3041,7 +3128,7 @@ assert.match(
 );
 assert.match(
   permissionConstantsSource,
-  /COMPATIBILITY_PERMISSION_EXPANSIONS[\s\S]*'database\.data_edit'[\s\S]*'database\.record\.create'[\s\S]*'database\.record\.update'[\s\S]*'database\.record\.delete'[\s\S]*'database\.import\.execute'[\s\S]*'database\.import\.errors\.view'/,
+  /COMPATIBILITY_PERMISSION_EXPANSIONS[\s\S]*'database\.data_edit'[\s\S]*'database\.record\.create'[\s\S]*'database\.record\.update'[\s\S]*'database\.record\.delete'[\s\S]*'database\.import\.execute'/,
   'role/member permission normalization should preserve database.data_edit by expanding it to exact action permissions'
 );
 assert.match(
@@ -3097,15 +3184,8 @@ const backendPermissionBusinessFiles = listFiles(path.join(repoRootDir, 'api', '
     filePath.endsWith('.go') &&
     !filePath.endsWith('_test.go') &&
     !filePath.includes(`${path.sep}migrations${path.sep}`) &&
-    filePath !== path.join(
-      repoRootDir,
-      'api',
-      'internal',
-      'modules',
-      'workspace',
-      'model',
-      'organization.go'
-    )
+    filePath !==
+      path.join(repoRootDir, 'api', 'internal', 'modules', 'workspace', 'model', 'organization.go')
 );
 const legacyAggregatePermissionConstantNames = [
   'WorkspacePermissionAgentManage',
@@ -3155,19 +3235,13 @@ const agentRuntimeOrchestrationPanelSource = fs.readFileSync(
   agentRuntimeOrchestrationPanelPath,
   'utf8'
 );
-const agentRuntimeDatabaseSectionSource = fs.readFileSync(
-  agentRuntimeDatabaseSectionPath,
-  'utf8'
-);
+const agentRuntimeDatabaseSectionSource = fs.readFileSync(agentRuntimeDatabaseSectionPath, 'utf8');
 const agentRuntimeKnowledgeSectionSource = fs.readFileSync(
   agentRuntimeKnowledgeSectionPath,
   'utf8'
 );
 const workflowDatabasePickerSource = fs.readFileSync(workflowDatabasePickerPath, 'utf8');
-const workflowCallDatabaseManagerSource = fs.readFileSync(
-  workflowCallDatabaseManagerPath,
-  'utf8'
-);
+const workflowCallDatabaseManagerSource = fs.readFileSync(workflowCallDatabaseManagerPath, 'utf8');
 const workflowCallDatabaseInsertMenusSource = fs.readFileSync(
   workflowCallDatabaseInsertMenusPath,
   'utf8'
@@ -3176,10 +3250,7 @@ const workflowCallDatabaseExpandedDialogSource = fs.readFileSync(
   workflowCallDatabaseExpandedDialogPath,
   'utf8'
 );
-const workflowSqlGeneratorManagerSource = fs.readFileSync(
-  workflowSqlGeneratorManagerPath,
-  'utf8'
-);
+const workflowSqlGeneratorManagerSource = fs.readFileSync(workflowSqlGeneratorManagerPath, 'utf8');
 const workflowKnowledgeRetrievalManagerSource = fs.readFileSync(
   workflowKnowledgeRetrievalManagerPath,
   'utf8'
@@ -3215,6 +3286,8 @@ assert.doesNotMatch(
   'console overview should not gate model readiness or parser/dashboard entry points with retired workspace permissions'
 );
 const agentsPageSource = fs.readFileSync(agentsPagePath, 'utf8');
+const workflowsPageSource = fs.readFileSync(workflowsPagePath, 'utf8');
+const agentAssetListPageSource = fs.readFileSync(agentAssetListPagePath, 'utf8');
 const createAgentDialogSource = fs.readFileSync(createAgentDialogPath, 'utf8');
 const agentCardSource = fs.readFileSync(agentCardPath, 'utf8');
 const agentEntryPageSource = fs.readFileSync(agentEntryPagePath, 'utf8');
@@ -3241,23 +3314,11 @@ const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
 const workflowEditorPageSource = fs.readFileSync(workflowEditorPagePath, 'utf8');
 const agentBatchTestPageSource = fs.readFileSync(agentBatchTestPagePath, 'utf8');
-const workflowBatchTestOverviewSource = fs.readFileSync(
-  workflowBatchTestOverviewPath,
-  'utf8'
-);
-const agentBatchTestBatchesPageSource = fs.readFileSync(
-  agentBatchTestBatchesPagePath,
-  'utf8'
-);
-const agentBatchTestNewBatchPageSource = fs.readFileSync(
-  agentBatchTestNewBatchPagePath,
-  'utf8'
-);
+const workflowBatchTestOverviewSource = fs.readFileSync(workflowBatchTestOverviewPath, 'utf8');
+const agentBatchTestBatchesPageSource = fs.readFileSync(agentBatchTestBatchesPagePath, 'utf8');
+const agentBatchTestNewBatchPageSource = fs.readFileSync(agentBatchTestNewBatchPagePath, 'utf8');
 const agentBatchTestBatchPageSource = fs.readFileSync(agentBatchTestBatchPagePath, 'utf8');
-const agentBatchTestBatchItemPageSource = fs.readFileSync(
-  agentBatchTestBatchItemPagePath,
-  'utf8'
-);
+const agentBatchTestBatchItemPageSource = fs.readFileSync(agentBatchTestBatchItemPagePath, 'utf8');
 
 const knowledgeBaseReadFrontendCodes = [
   ...new Set(
@@ -3903,23 +3964,48 @@ assert.match(
 );
 assert.match(
   agentsPageSource,
+  /<AgentAssetListPage assetKind="agent" \/>/,
+  'agent route should render the shared list in pure agent mode'
+);
+assert.match(
+  workflowsPageSource,
+  /<AgentAssetListPage assetKind="workflow" \/>/,
+  'workflow route should render the shared list in workflow mode'
+);
+assert.match(
+  agentAssetListPageSource,
+  /asset_kind:\s*assetKind/,
+  'agent/workflow lists should pass asset_kind to the backend list API'
+);
+assert.match(
+  agentAssetListPageSource,
+  /isWorkflowList \? WORKFLOW_PERMISSION_ACTIONS\.page : AGENT_PERMISSION_ACTIONS\.page/,
+  'agent/workflow list visibility should use the matching permission group'
+);
+assert.match(
+  agentAssetListPageSource,
   /const canCreateAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.create\)/,
   'agent list blank-create entry should check agent.create explicitly'
 );
 assert.match(
-  agentsPageSource,
+  agentAssetListPageSource,
   /const canCreateWorkflow\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.create\)/,
-  'agent list blank-create entry should check workflow.create explicitly'
+  'workflow list blank-create entry should check workflow.create explicitly'
 );
 assert.match(
-  agentsPageSource,
-  /const canImportWorkflow\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.import\)/,
-  'agent list import/template entry should use workflow.import because the dialog calls workflow import'
+  agentAssetListPageSource,
+  /const canImportWorkflow\s*=[\s\S]*isWorkflowList && hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.import\)/,
+  'workflow import/template entry should use workflow.import and only render on the workflow list'
 );
 assert.doesNotMatch(
-  agentsPageSource,
-  /hasPermission\(['"]agent\.import['"]\)/,
-  'agent list should not gate workflow import UI with agent.import'
+  agentAssetListPageSource,
+  /AGENT_PERMISSION_ACTIONS\.import/,
+  'agent/workflow lists should not gate workflow import UI with the agent import action'
+);
+assert.match(
+  agentAssetListPageSource,
+  /allowedAgentTypes=\{dialogAgentTypes\}[\s\S]*hideTypeSelector=\{!isWorkflowList\}/,
+  'agent list should force blank agent creation while workflow list keeps workflow type selection'
 );
 assert.match(
   templateGalleryDialogSource,
@@ -3943,28 +4029,28 @@ assert.match(
 );
 assert.match(
   createAgentDialogSource,
-  /router\.push\(`\/console\/agents\/\$\{newId\}`\)/,
-  'create dialog should route new agents through the permission-aware detail root'
+  /router\.push\(getAgentDetailBaseHref\(newId,\s*data\.agent_type\)\)/,
+  'create dialog should route new resources through the runtime-specific detail root'
 );
 assert.doesNotMatch(
   createAgentDialogSource,
   /\/console\/agents\/\$\{newId\}\/(?:agent|workflow)/,
-  'create dialog should not bypass permission-aware child routing after creation'
+  'create dialog should not bypass the canonical runtime root after creation'
 );
 assert.match(
   createFromTemplateHookSource,
-  /router\.push\(`\/console\/agents\/\$\{agentId\}`\)/,
-  'template-created workflows should route through the permission-aware detail root'
+  /router\.push\(getAgentDetailBaseHref\(agentId,\s*'workflow'\)\)/,
+  'template-created workflows should route through the workflow detail root'
 );
 assert.doesNotMatch(
   createFromTemplateHookSource,
   /\/console\/agents\/\$\{agentId\}\/workflow/,
-  'template-created workflows should not bypass permission-aware child routing'
+  'template-created workflows should not bypass the canonical workflow root'
 );
 assert.match(
   agentCardSource,
-  /const agentHref = `\/console\/agents\/\$\{agent\.id\}`/,
-  'agent cards should link to the permission-aware detail root instead of directly opening the editor'
+  /const agentHref = defaultAgentDetailHref \?\? getAgentDetailBaseHref\(agent\.id,\s*agent\.agent_type\)/,
+  'agent cards should link to the runtime-specific detail root instead of forcing the agents route'
 );
 assert.doesNotMatch(
   agentCardSource,
@@ -3974,12 +4060,12 @@ assert.doesNotMatch(
 assert.match(
   agentCardSource,
   /const exportPermissionCodes = isWorkflowRuntime[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.export[\s\S]*:\s*\[\];/,
-  'agent cards should expose YAML export only for workflow runtimes because the backend export endpoint requires workflow.export'
+  'agent cards should expose YAML export only for workflow runtimes because export shares the workflow import/export action'
 );
 assert.doesNotMatch(
   agentCardSource,
   /AGENT_PERMISSION_ACTIONS\.export/,
-  'agent cards should not wire agent.export to the workflow YAML export endpoint'
+  'agent cards should not wire the agent export action to the workflow YAML export endpoint'
 );
 assert.match(
   datasetPageSource,
@@ -4058,8 +4144,8 @@ assert.match(
 );
 assert.match(
   datasetDocumentsPageSource,
-  /const canOpenSourceFile\s*=\s*hasAnyPermission\(\[[\s\S]*FILE_PERMISSION_ACTIONS\.metadataView[\s\S]*FILE_PERMISSION_ACTIONS\.preview[\s\S]*FILE_PERMISSION_ACTIONS\.relatedView[\s\S]*FILE_PERMISSION_ACTIONS\.download[\s\S]*FILE_PERMISSION_ACTIONS\.update[\s\S]*FILE_PERMISSION_ACTIONS\.delete[\s\S]*FILE_PERMISSION_ACTIONS\.move[\s\S]*FILE_PERMISSION_ACTIONS\.archive[\s\S]*FILE_PERMISSION_ACTIONS\.shareManage[\s\S]*FILE_PERMISSION_ACTIONS\.favoriteManage/,
-  'dataset documents source-file links should use the same file-readable permission group as file detail'
+  /const canOpenSourceFile\s*=\s*hasWorkspaceAccess\(\)/,
+  'dataset documents source-file links should be based on workspace access'
 );
 assert.match(
   datasetDocumentsPageSource,
@@ -4245,7 +4331,11 @@ for (const [helperName, permissionPattern, message] of [
     'dataset segment delete helper should require knowledge_base.segment.delete',
   ],
 ]) {
-  assert.match(getGoFunctionSource(datasetAccessHandlerSource, helperName), permissionPattern, message);
+  assert.match(
+    getGoFunctionSource(datasetAccessHandlerSource, helperName),
+    permissionPattern,
+    message
+  );
 }
 for (const [handlerName, permissionPattern, message] of [
   [
@@ -4343,10 +4433,7 @@ for (const handlerName of [
     `dataset ${handlerName} should remain disabled in favor of file-management edits`
   );
 }
-for (const handlerName of [
-  'GetDocumentSegmentQuestion',
-  'ListDocumentSegmentQuestionsBySegment',
-]) {
+for (const handlerName of ['GetDocumentSegmentQuestion', 'ListDocumentSegmentQuestionsBySegment']) {
   assert.match(
     getGoHandlerMethodSource(datasetSegmentHandlerSource, 'SegmentHandler', handlerName),
     /authorizeDatasetSegmentViewAccess[\s\S]*segmentService\./,
@@ -4405,18 +4492,18 @@ for (const [handlerName, permissionPattern, message] of [
 }
 assert.doesNotMatch(
   agentEntryPageSource,
-  /function getAgentDefaultHref/,
-  'agent detail root should not keep a local type-only default redirect helper'
+  /getAgentDetailDefaultHref|router\.replace/,
+  'agent detail root should render the canonical agent editor instead of running a mixed default redirect'
 );
 assert.match(
   agentEntryPageSource,
-  /getAgentDetailDefaultHref\(agentId,[\s\S]*canOpenEditor:/,
-  'agent detail root should choose its default child page through the permission-aware route helper'
+  /<AgentRuntimePageContent agentId=\{agentId\} \/>/,
+  'agent detail root should render the agent runtime editor directly'
 );
 assert.match(
-  agentEntryPageSource,
-  /targetHrefWithSearch[\s\S]*searchParams\.toString\(\)[\s\S]*router\.replace\(targetHrefWithSearch\)/,
-  'agent detail root should replace to the first permission-compatible child page while preserving query params'
+  workflowEditorPageSource,
+  /<WorkflowEditor[\s\S]*focusNodeId=\{focusNodeId\}/,
+  'workflow detail root should render the workflow editor directly while preserving node focus query params'
 );
 assert.match(
   agentCardSource,
@@ -4425,7 +4512,7 @@ assert.match(
 );
 assert.match(
   agentCardSource,
-  /const canOpenAgentDetail\s*=\s*Boolean\([\s\S]*getAgentDetailDefaultHref/,
+  /const canOpenAgentDetail\s*=\s*Boolean\(defaultAgentDetailHref\)/,
   'agent cards should separate list action visibility from detail navigation'
 );
 assert.match(
@@ -4440,42 +4527,12 @@ assert.match(
 );
 assert.match(
   agentEntryPageSource,
-  /const canViewAnyAgentAsset\s*=\s*hasAnyPermission\(AGENT_ASSET_VISIBLE_PERMISSION_CODES\)[\s\S]*useAgent\(agentId,\s*canViewAnyAgentAsset\)/,
-  'agent detail root should gate metadata fetches by the shared agent/workflow visible permission group'
-);
-assert.match(
-  agentEntryPageSource,
-  /const canCreateAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.create\)[\s\S]*const canImportAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.import\)[\s\S]*const canUpdateAgent\s*=\s*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.update\)/,
-  'agent runtime root should derive create/import/update detail-entry permissions explicitly'
-);
-assert.match(
-  agentEntryPageSource,
-  /canOpenAgentRuntimeEditor[\s\S]*canCreateAgent[\s\S]*canImportAgent[\s\S]*canUpdateAgent[\s\S]*AGENT_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*AGENT_PERMISSION_ACTIONS\.publish[\s\S]*AGENT_PERMISSION_ACTIONS\.runtimeAccessManage/,
-  'agent runtime root should keep create/import/update users able to open the detail page'
-);
-assert.match(
-  agentEntryPageSource,
-  /const canCreateWorkflow\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.create\)[\s\S]*const canImportWorkflow\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.import\)/,
-  'workflow root should derive create/import detail-entry permissions explicitly'
-);
-assert.match(
-  agentEntryPageSource,
-  /canOpenWorkflowEditor[\s\S]*canCreateWorkflow[\s\S]*canImportWorkflow[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
-  'workflow root should keep create/import users able to open the detail page'
-);
-assert.match(
-  agentEntryPageSource,
-  /canViewBatchTest:\s*isWorkflowRuntime && \(canViewWorkflowTestLibrary \|\| canViewWorkflowLogs\)/,
-  'workflow root should expose batch-test child pages only through workflow.view or workflow.logs.view'
-);
-assert.doesNotMatch(
-  agentEntryPageSource,
-  /canViewBatchTest:\s*isWorkflowRuntime && \(canViewWorkflowTestLibrary \|\| canViewWorkflowLogs \|\| canRunWorkflowBatchTest\)/,
-  'workflow root should not treat workflow.debug as batch-test page visibility'
+  /AgentRuntimePageContent/,
+  'agent detail root should delegate runtime permission handling to the agent runtime page component'
 );
 assert.match(
   workflowEditorPageSource,
-  /const canOpenWorkflowEditor[\s\S]*canCreateWorkflow[\s\S]*canImportWorkflow[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runStop[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.debug[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
+  /const canOpenWorkflowEditor[\s\S]*canCreateWorkflow[\s\S]*canImportWorkflow[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.update[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runDraft[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.publish[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeConfigManage[\s\S]*WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage/,
   'workflow editor direct page should require an editor-related workflow permission'
 );
 assert.match(
@@ -4525,7 +4582,7 @@ assert.match(
 );
 assert.match(
   agentSidebarSource,
-  /batchTestHref\s*=\s*canViewWorkflowTestLibrary[\s\S]*batch-test[\s\S]*batch-test\/batches/,
+  /batchTestHref\s*=\s*canViewWorkflowTestLibrary[\s\S]*getAgentDetailBatchTestHref\(agentId,\s*effectiveRouteKind\)[\s\S]*getAgentDetailBatchTestHref\(agentId,\s*effectiveRouteKind,\s*'batches'\)/,
   'agent sidebar should route logs-only batch-test users to the batches/results view'
 );
 assert.match(
@@ -4535,8 +4592,8 @@ assert.match(
 );
 assert.doesNotMatch(
   agentSidebarSource,
-  /canViewBatchTest:\s*isWorkflowRuntime && \(canViewWorkflowTestLibrary \|\| canViewWorkflowTestBatches \|\| canRunWorkflowBatchTest\)/,
-  'agent sidebar should not treat workflow.debug as batch-test page visibility'
+  /canViewBatchTest:\s*isWorkflowRuntime && \(canViewWorkflowTestLibrary \|\| canViewWorkflowTestBatches \|\| canRunWorkflowDraft\)/,
+  'agent sidebar should not treat workflow run permission as batch-test page visibility'
 );
 assert.match(
   agentSidebarSource,
@@ -4675,7 +4732,7 @@ assert.match(
 );
 assert.match(
   agentBatchTestNewBatchPageSource,
-  /const canCreateAndRunBatch\s*=\s*canViewBatchTestLibrary && canViewBatchTestLogs && canUpdateBatchTest && canDebugBatchTest[\s\S]*useAgent\(agentId,\s*canCreateAndRunBatch\)/,
+  /const canCreateAndRunBatch\s*=\s*canViewBatchTestLibrary && canViewBatchTestLogs && canUpdateBatchTest && canRunBatchTest[\s\S]*useAgent\(agentId,\s*canCreateAndRunBatch\)/,
   'workflow batch-test new-batch direct page should require the full create-and-run permission set before fetching metadata'
 );
 assert.match(
@@ -4695,13 +4752,8 @@ assert.match(
 );
 assert.match(
   workflowEditorSource,
-  /const canViewWorkflowRuntimeEvents\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.eventsView\)/,
-  'workflow editor should derive persisted run event access from workflow.events.view'
-);
-assert.match(
-  workflowEditorSource,
-  /setCanViewRuntimeEvents\(canViewWorkflowRuntimeEvents\)/,
-  'workflow editor should sync workflow.events.view into the workflow store'
+  /setCanViewRuntimeEvents\(canRunWorkflowDraft\)/,
+  'workflow editor should treat persisted run events as part of workflow.run.draft'
 );
 assert.match(
   workflowStoreSource,
@@ -4716,7 +4768,7 @@ assert.match(
 assert.match(
   workflowRunPanelSource,
   /const startApprovalResumeEventStream = useCallback\([\s\S]*if \(!canViewRuntimeEvents\) return;[\s\S]*startWorkflowRunEvents/,
-  'workflow run panel should not call persisted event stream without workflow.events.view'
+  'workflow run panel should not call persisted event stream without workflow.run.draft'
 );
 assert.match(
   workflowChatPanelStateSource,
@@ -4726,7 +4778,7 @@ assert.match(
 assert.match(
   workflowChatPanelStateSource,
   /const startApprovalResumeEventStream = useCallback\([\s\S]*if \(!canViewRuntimeEvents\) return;[\s\S]*startWorkflowRunEvents/,
-  'workflow chat panel should not call persisted event stream without workflow.events.view'
+  'workflow chat panel should not call persisted event stream without workflow.run.draft'
 );
 assert.match(
   workflowEditorSource,
@@ -5143,7 +5195,11 @@ assert.equal(
   'Workflow batch-test area should be visible to read-only batch/result users'
 );
 assert.equal(
-  canShowAgentBatchTest('WORKFLOW', { canView: true, canViewBatchTest: false, canRunBatchTest: true }),
+  canShowAgentBatchTest('WORKFLOW', {
+    canView: true,
+    canViewBatchTest: false,
+    canRunBatchTest: true,
+  }),
   false,
   'Batch-test page visibility should not be widened by execution permission'
 );
@@ -5183,7 +5239,7 @@ assert.equal(
     canOpenEditor: false,
     canManageRuntimeAccess: true,
   }),
-  '/console/agents/agent-1/api',
+  '/console/workflows/agent-1/api',
   'Workflow root should fall back to API key/docs when runtime-access is available but the editor is not exposed'
 );
 assert.equal(
@@ -5193,7 +5249,7 @@ assert.equal(
     canViewBatchTest: true,
     preferBatchTestLibrary: true,
   }),
-  '/console/agents/agent-1/batch-test',
+  '/console/workflows/agent-1/batch-test',
   'Workflow root should prefer the case library when workflow.view is available'
 );
 assert.equal(
@@ -5203,7 +5259,7 @@ assert.equal(
     canViewBatchTest: true,
     preferBatchTestLibrary: false,
   }),
-  '/console/agents/agent-1/batch-test/batches',
+  '/console/workflows/agent-1/batch-test/batches',
   'Workflow root should fall back to batch results for logs-only batch-test access'
 );
 assert.equal(

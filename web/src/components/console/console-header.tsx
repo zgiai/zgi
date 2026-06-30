@@ -39,6 +39,7 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
   const pageTitle = useMemo(() => {
     const routeTitles: Array<{ match: (path: string) => boolean; title: string }> = [
       { match: path => path === '/console', title: tNav('personalSpace') },
+      { match: path => path.startsWith('/console/workflows'), title: tNav('workflows') },
       { match: path => path.startsWith('/console/agents'), title: tNav('agents') },
       { match: path => path.startsWith('/console/dataset'), title: tNav('datasets') },
       { match: path => path.startsWith('/console/files'), title: tNav('files') },

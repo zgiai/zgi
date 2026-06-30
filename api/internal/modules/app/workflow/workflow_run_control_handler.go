@@ -23,7 +23,7 @@ func (h *WorkflowHandler) StopWorkflowTask(c *gin.Context) {
 	appID := c.Param("agent_id")
 	taskID := c.Param("task_id")
 	accountID := c.GetString("account_id")
-	workspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunStop)
+	workspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunDraft)
 	if !ok {
 		return
 	}
@@ -58,7 +58,7 @@ func (h *WorkflowHandler) RunDraftWorkflowNode(c *gin.Context) {
 	nodeID := c.Param("node_id")
 	accountID := c.GetString("account_id")
 
-	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowDebug)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunDraft)
 	if !ok {
 		return
 	}

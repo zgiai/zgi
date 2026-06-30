@@ -27,8 +27,7 @@ export default function BatchTestPage({ params }: BatchTestPageProps) {
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canViewBatchTestLibrary = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.view);
   const canUpdateBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update);
-  const canDebugBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
-  const canStopBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop);
+  const canRunBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
   const canViewBatchTestLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
   const canOpenBatchTestOverview = canViewBatchTestLibrary;
   const { agent, isLoading, error, refetch } = useAgent(agentId, canOpenBatchTestOverview);
@@ -83,7 +82,7 @@ export default function BatchTestPage({ params }: BatchTestPageProps) {
   const canShowBatchTest = canShowAgentBatchTest(agent.data.agent_type, {
       canView: true,
       canViewBatchTest: canViewBatchTestLibrary,
-      canRunBatchTest: canDebugBatchTest,
+      canRunBatchTest,
   });
   if (!supportsBatchTest || !canShowBatchTest) {
     return (
@@ -112,8 +111,8 @@ export default function BatchTestPage({ params }: BatchTestPageProps) {
       agentDescription={agent.data.description}
       permissions={{
         canUpdate: canUpdateBatchTest,
-        canDebug: canDebugBatchTest,
-        canStop: canStopBatchTest,
+        canDebug: canRunBatchTest,
+        canStop: canRunBatchTest,
         canViewLogs: canViewBatchTestLogs,
       }}
     />

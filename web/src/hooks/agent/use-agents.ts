@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tansta
 import { agentService } from '@/services';
 import { toast } from 'sonner';
 import type {
+  AgentAssetKind,
   AgentList,
   CreateAgentRequest,
   UpdateAgentRequest,
@@ -37,6 +38,7 @@ export interface UseAgentsParams {
   limit?: number;
   keyword?: string;
   workspace_id?: string;
+  asset_kind?: AgentAssetKind;
 }
 
 export interface UseAgentsOptions {
@@ -81,8 +83,9 @@ export function useAgents(
       limit: params.limit,
       keyword: params.keyword,
       workspace_id: params.workspace_id,
+      asset_kind: params.asset_kind,
     }),
-    [params.limit, params.keyword, params.workspace_id]
+    [params.limit, params.keyword, params.workspace_id, params.asset_kind]
   );
 
   const {

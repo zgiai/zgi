@@ -7,38 +7,34 @@ import (
 )
 
 func agentAssetVisiblePermissionCodes() []model.WorkspacePermissionCode {
+	codes := agentVisiblePermissionCodes()
+	return append(codes, workflowVisiblePermissionCodes()...)
+}
+
+func agentVisiblePermissionCodes() []model.WorkspacePermissionCode {
 	return []model.WorkspacePermissionCode{
+		model.WorkspacePermissionAgentView,
 		model.WorkspacePermissionAgentCreate,
-		model.WorkspacePermissionAgentImport,
 		model.WorkspacePermissionAgentLogsView,
-		model.WorkspacePermissionAgentStatsView,
-		model.WorkspacePermissionAgentConversationView,
 		model.WorkspacePermissionAgentUpdate,
 		model.WorkspacePermissionAgentDelete,
-		model.WorkspacePermissionAgentLock,
 		model.WorkspacePermissionAgentMove,
-		model.WorkspacePermissionAgentCopy,
-		model.WorkspacePermissionAgentExport,
 		model.WorkspacePermissionAgentPublish,
-		model.WorkspacePermissionAgentRuntimeConfigManage,
 		model.WorkspacePermissionAgentRuntimeAccessManage,
-		model.WorkspacePermissionAgentConversationManage,
+	}
+}
+
+func workflowVisiblePermissionCodes() []model.WorkspacePermissionCode {
+	return []model.WorkspacePermissionCode{
 		model.WorkspacePermissionWorkflowCreate,
 		model.WorkspacePermissionWorkflowImport,
 		model.WorkspacePermissionWorkflowView,
 		model.WorkspacePermissionWorkflowLogsView,
-		model.WorkspacePermissionWorkflowStatsView,
-		model.WorkspacePermissionWorkflowEventsView,
 		model.WorkspacePermissionWorkflowUpdate,
 		model.WorkspacePermissionWorkflowDelete,
 		model.WorkspacePermissionWorkflowMove,
-		model.WorkspacePermissionWorkflowCopy,
-		model.WorkspacePermissionWorkflowExport,
 		model.WorkspacePermissionWorkflowRunDraft,
-		model.WorkspacePermissionWorkflowRunStop,
-		model.WorkspacePermissionWorkflowDebug,
 		model.WorkspacePermissionWorkflowPublish,
-		model.WorkspacePermissionWorkflowRuntimeConfigManage,
 		model.WorkspacePermissionWorkflowRuntimeAccessManage,
 	}
 }
@@ -49,13 +45,9 @@ func agentManageGatePermissionCodes(agentType string) []model.WorkspacePermissio
 			model.WorkspacePermissionWorkflowUpdate,
 			model.WorkspacePermissionWorkflowDelete,
 			model.WorkspacePermissionWorkflowMove,
-			model.WorkspacePermissionWorkflowCopy,
-			model.WorkspacePermissionWorkflowExport,
+			model.WorkspacePermissionWorkflowImport,
 			model.WorkspacePermissionWorkflowRunDraft,
-			model.WorkspacePermissionWorkflowRunStop,
-			model.WorkspacePermissionWorkflowDebug,
 			model.WorkspacePermissionWorkflowPublish,
-			model.WorkspacePermissionWorkflowRuntimeConfigManage,
 			model.WorkspacePermissionWorkflowRuntimeAccessManage,
 		}
 	}
@@ -63,14 +55,9 @@ func agentManageGatePermissionCodes(agentType string) []model.WorkspacePermissio
 	return []model.WorkspacePermissionCode{
 		model.WorkspacePermissionAgentUpdate,
 		model.WorkspacePermissionAgentDelete,
-		model.WorkspacePermissionAgentLock,
 		model.WorkspacePermissionAgentMove,
-		model.WorkspacePermissionAgentCopy,
-		model.WorkspacePermissionAgentExport,
 		model.WorkspacePermissionAgentPublish,
-		model.WorkspacePermissionAgentRuntimeConfigManage,
 		model.WorkspacePermissionAgentRuntimeAccessManage,
-		model.WorkspacePermissionAgentConversationManage,
 	}
 }
 
@@ -137,12 +124,12 @@ func agentPublishPermissionCodes(agentType string) []model.WorkspacePermissionCo
 func agentRuntimeConfigManagePermissionCodes(agentType string) []model.WorkspacePermissionCode {
 	if isWorkflowRuntimePermissionType(agentType) {
 		return []model.WorkspacePermissionCode{
-			model.WorkspacePermissionWorkflowRuntimeConfigManage,
+			model.WorkspacePermissionWorkflowUpdate,
 		}
 	}
 
 	return []model.WorkspacePermissionCode{
-		model.WorkspacePermissionAgentRuntimeConfigManage,
+		model.WorkspacePermissionAgentUpdate,
 	}
 }
 
@@ -153,20 +140,15 @@ func agentRuntimeConfigReadPermissionCodes(agentType string) []model.WorkspacePe
 			model.WorkspacePermissionWorkflowImport,
 			model.WorkspacePermissionWorkflowUpdate,
 			model.WorkspacePermissionWorkflowRunDraft,
-			model.WorkspacePermissionWorkflowRunStop,
-			model.WorkspacePermissionWorkflowDebug,
 			model.WorkspacePermissionWorkflowPublish,
-			model.WorkspacePermissionWorkflowRuntimeConfigManage,
 			model.WorkspacePermissionWorkflowRuntimeAccessManage,
 		}
 	}
 
 	return []model.WorkspacePermissionCode{
 		model.WorkspacePermissionAgentCreate,
-		model.WorkspacePermissionAgentImport,
 		model.WorkspacePermissionAgentUpdate,
 		model.WorkspacePermissionAgentPublish,
-		model.WorkspacePermissionAgentRuntimeConfigManage,
 		model.WorkspacePermissionAgentRuntimeAccessManage,
 	}
 }

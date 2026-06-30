@@ -156,7 +156,7 @@ func TestGetDraftWorkflowAllowsEditorReachabilityPermissions(t *testing.T) {
 	service := &workflowDraftPermissionService{workspaceID: "agent-workspace"}
 	permissionChecker := &workflowTaskStopPermissionChecker{
 		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
-			workspace_model.WorkspacePermissionWorkflowDebug: true,
+			workspace_model.WorkspacePermissionWorkflowRunDraft: true,
 		},
 	}
 	handler := &WorkflowHandler{

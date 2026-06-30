@@ -27,7 +27,7 @@ export default function BatchResultItemPage({ params }: BatchResultItemPageProps
   const tRoot = useT();
   const { agentId, batchId, itemId } = use(params);
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canDebugBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
+  const canRunBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
   const canViewBatchTestLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
   const canOpenBatchResult = canViewBatchTestLogs;
   const { agent, isLoading, error, refetch } = useAgent(agentId, canOpenBatchResult);
@@ -81,7 +81,7 @@ export default function BatchResultItemPage({ params }: BatchResultItemPageProps
   const canShowBatchTest = canShowAgentBatchTest(agent.data.agent_type, {
       canView: true,
       canViewBatchTest: canViewBatchTestLogs,
-      canRunBatchTest: canDebugBatchTest,
+      canRunBatchTest,
   });
   if (!supportsBatchTest || !canShowBatchTest) {
     return (

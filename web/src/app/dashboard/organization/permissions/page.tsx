@@ -24,14 +24,22 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { Role } from '@/services/types/organization';
 import {
   isSelectableWorkspacePermissionTemplate,
+  isWorkspaceAdminRole,
   isWorkspaceGovernanceRole,
+  isWorkspaceOwnerRole,
 } from '@/utils/workspace-role-templates';
+
+const getGovernanceRoleOrder = (role: Role) => {
+  if (isWorkspaceOwnerRole(role)) return 0;
+  if (isWorkspaceAdminRole(role)) return 1;
+  return 2;
+};
 
 export default function PermissionsPage() {
   const t = useT('dashboard.organization.permissions');
   const tCommon = useT('common');
   const router = useRouter();
-  const { roles, isLoading } = useOrganizationRoles();
+  const { roles, isLoading } = useOrganizationRoles({ includeOwner: true });
   const { locale } = useLocale();
   const { deleteRole, isDeleting, updateRoleInfo, isUpdatingInfo } = useRoleActions();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -95,7 +103,9 @@ export default function PermissionsPage() {
       ? pickLocale(role.description_i18n, locale, role.description || '')
       : role.description || '';
 
-  const governanceRoles = roles.filter(isWorkspaceGovernanceRole);
+  const governanceRoles = roles.filter(isWorkspaceGovernanceRole).sort((a, b) => {
+    return getGovernanceRoleOrder(a) - getGovernanceRoleOrder(b);
+  });
   const permissionTemplateRoles = roles.filter(isSelectableWorkspacePermissionTemplate);
   const canApplySelectedRoleTemplate =
     !!selectedRole && isSelectableWorkspacePermissionTemplate(selectedRole);

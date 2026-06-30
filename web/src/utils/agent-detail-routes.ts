@@ -1,6 +1,7 @@
 import { AgentType } from '@/services/types/agent';
 
 export type AgentDetailType = AgentType | string | null | undefined;
+export type AgentDetailRouteKind = 'agent' | 'workflow';
 
 export interface AgentDetailRoutePermissions {
   canView: boolean;
@@ -35,9 +36,44 @@ export function isWorkflowRuntimeType(agentType: AgentDetailType): boolean {
   );
 }
 
+export function getAgentDetailRouteKind(agentType: AgentDetailType): AgentDetailRouteKind | null {
+  if (isAgentRuntimeType(agentType)) {
+    return 'agent';
+  }
+  if (isWorkflowRuntimeType(agentType)) {
+    return 'workflow';
+  }
+  return null;
+}
+
+export function getAgentDetailBaseHref(
+  agentId: string,
+  agentTypeOrKind: AgentDetailType | AgentDetailRouteKind
+): string {
+  return getAgentDetailRouteKind(agentTypeOrKind) === 'workflow'
+    ? `/console/workflows/${agentId}`
+    : `/console/agents/${agentId}`;
+}
+
 export function getAgentDetailEditHref(agentId: string, agentType: AgentDetailType): string {
-  const editor = isAgentRuntimeType(agentType) ? 'agent' : 'workflow';
-  return `/console/agents/${agentId}/${editor}`;
+  return getAgentDetailBaseHref(agentId, agentType);
+}
+
+export function getAgentDetailLogsHref(agentId: string, agentType: AgentDetailType): string {
+  return `${getAgentDetailBaseHref(agentId, agentType)}/logs`;
+}
+
+export function getAgentDetailApiHref(agentId: string, agentType: AgentDetailType): string {
+  return `${getAgentDetailBaseHref(agentId, agentType)}/api`;
+}
+
+export function getAgentDetailBatchTestHref(
+  agentId: string,
+  agentType: AgentDetailType,
+  view: 'overview' | 'batches' = 'overview'
+): string {
+  const base = `${getAgentDetailBaseHref(agentId, agentType)}/batch-test`;
+  return view === 'batches' ? `${base}/batches` : base;
 }
 
 export function supportsWorkflowDetailPages(agentType: AgentDetailType): boolean {
@@ -149,17 +185,17 @@ export function getAgentDetailDefaultHref(
   }
 
   if (access.canShowApiKeys) {
-    return `/console/agents/${agentId}/api`;
+    return getAgentDetailApiHref(agentId, agentType);
   }
 
   if (access.canShowRuntimeLogs && permissions.isPublished) {
-    return `/console/agents/${agentId}/logs`;
+    return getAgentDetailLogsHref(agentId, agentType);
   }
 
   if (access.canShowBatchTest) {
     return permissions.preferBatchTestLibrary
-      ? `/console/agents/${agentId}/batch-test`
-      : `/console/agents/${agentId}/batch-test/batches`;
+      ? getAgentDetailBatchTestHref(agentId, agentType)
+      : getAgentDetailBatchTestHref(agentId, agentType, 'batches');
   }
 
   return null;

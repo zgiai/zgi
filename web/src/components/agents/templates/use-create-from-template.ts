@@ -10,6 +10,7 @@ import { useT } from '@/i18n';
 import { withBasePath } from '@/lib/config';
 import type { WorkflowImportResult } from '@/services/types/workflow';
 import type { AgentTemplate, AgentTemplateLocale, AgentTemplatePromptBinding } from './types';
+import { getAgentDetailBaseHref } from '@/utils/agent-detail-routes';
 
 function resolveTemplateLocale(locale: string): AgentTemplateLocale {
   return locale.startsWith('zh') ? 'zh-Hans' : 'en-US';
@@ -109,7 +110,7 @@ export function useCreateAgentFromTemplate() {
       const file = new File([hydratedYaml], `${template.id}.yml`, { type: 'application/x-yaml' });
       const response = await importWorkflow({ file, workspaceId });
       const agentId = response.data.agent_id;
-      router.push(`/console/agents/${agentId}`);
+      router.push(getAgentDetailBaseHref(agentId, 'workflow'));
       return response.data;
     },
     [importWorkflow, locale, router, t]

@@ -1,35 +1,10 @@
-'use client';
+import { redirect } from 'next/navigation';
 
-import { use } from 'react';
-import {
-  AgentRuntimeDialogs,
-  AgentRuntimeLoadingState,
-  AgentRuntimeWorkbench,
-  useAgentRuntimePageModel,
-} from '@/components/agents/agent-runtime';
-import { PermissionDeniedState } from '@/components/common/permission-gate-state';
-
-interface AgentRuntimePageProps {
+interface LegacyAgentRuntimePageProps {
   params: Promise<{ agentId: string }>;
 }
 
-export default function AgentRuntimePage({ params }: AgentRuntimePageProps) {
-  const { agentId } = use(params);
-  const model = useAgentRuntimePageModel(agentId);
-
-  if (model.isLoading) {
-    return <AgentRuntimeLoadingState />;
-  }
-
-  if (!model.canOpenAgentRuntimeEditor) {
-    return <PermissionDeniedState />;
-  }
-
-  return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
-      {model.leaveGuardNode}
-      <AgentRuntimeWorkbench model={model} />
-      <AgentRuntimeDialogs model={model} />
-    </div>
-  );
+export default async function LegacyAgentRuntimePage({ params }: LegacyAgentRuntimePageProps) {
+  const { agentId } = await params;
+  redirect(`/console/agents/${agentId}`);
 }

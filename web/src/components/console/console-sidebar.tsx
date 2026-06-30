@@ -18,6 +18,7 @@ import {
   AppWindow,
   Clock3,
   ChevronDown,
+  Workflow,
 } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
@@ -27,10 +28,11 @@ import { WorkspaceSwitcher } from './team-switcher';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import {
-  AGENT_ASSET_VISIBLE_PERMISSION_CODES,
+  AGENT_VISIBLE_PERMISSION_CODES,
   DATABASE_VISIBLE_PERMISSION_CODES,
   FILE_VISIBLE_PERMISSION_CODES,
   KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
+  WORKFLOW_VISIBLE_PERMISSION_CODES,
   type PermissionCode,
 } from '@/constants/permissions';
 import { ENABLE_THEME_SWITCH, withBasePathIfInternal } from '@/lib/config';
@@ -222,7 +224,13 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
             title: t('agents'),
             href: '/console/agents',
             icon: Atom,
-            permissions: AGENT_ASSET_VISIBLE_PERMISSION_CODES,
+            permissions: AGENT_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('workflows'),
+            href: '/console/workflows',
+            icon: Workflow,
+            permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
           },
           {
             title: t('datasets'),
@@ -571,7 +579,13 @@ export function ConsoleMobileSidebar({
             title: t('agents'),
             href: '/console/agents',
             icon: Atom,
-            permissions: AGENT_ASSET_VISIBLE_PERMISSION_CODES,
+            permissions: AGENT_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('workflows'),
+            href: '/console/workflows',
+            icon: Workflow,
+            permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
           },
           {
             title: t('datasets'),

@@ -5,12 +5,11 @@ import {
   PermissionLoadingState,
 } from '@/components/common/permission-gate-state';
 import FileManagementContent from '@/components/files/file-management-content';
-import { FILE_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 
 const FileManagementPage = () => {
-  const { hasAnyPermission, isLoading } = useAccountPermissions();
-  const canViewFiles = hasAnyPermission(FILE_VISIBLE_PERMISSION_CODES);
+  const { hasWorkspaceAccess, isLoading } = useAccountPermissions();
+  const canViewFiles = hasWorkspaceAccess();
 
   if (isLoading) {
     return <PermissionLoadingState />;

@@ -15,6 +15,7 @@ const messages: NavigationMessages = {
   products: '产品',
   datasets: '知识库',
   agents: '智能体',
+  workflows: '工作流',
   prompts: '提示词',
   dbs: '数据库',
   files: '文件管理',

@@ -47,7 +47,7 @@ import {
   getTemplateCopy,
   type TemplateTranslator,
 } from '@/components/agents/templates/template-labels';
-import { AGENT_ASSET_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
+import { WORKFLOW_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
 import type { PromptOptimizationRun } from '@/services/types/prompt';
 
 export default function PromptDetailPage() {
@@ -62,7 +62,7 @@ export default function PromptDetailPage() {
     isLoading: isPermissionsLoading,
   } = useAccountPermissions();
   const canUseWorkspaceTools = hasWorkspaceAccess();
-  const canOpenAgentAssets = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
+  const canOpenWorkflowAssets = hasAnyPermission(WORKFLOW_VISIBLE_PERMISSION_CODES);
   const canView = canUseWorkspaceTools;
   const canManage = canUseWorkspaceTools;
   const { prompt, isLoading } = usePrompt(promptId, canView);
@@ -207,11 +207,11 @@ export default function PromptDetailPage() {
             <div className="text-sm text-muted-foreground">{t('states.loading')}</div>
           ) : (
             <div className="space-y-6">
-              {canOpenAgentAssets && relatedTemplates.length > 0 ? (
+              {canOpenWorkflowAssets && relatedTemplates.length > 0 ? (
                 <div className="rounded-xl border p-4 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="text-lg font-semibold">{t('relatedTemplates.title')}</h2>
-                    <Link href="/console/agents" className="text-sm text-primary hover:underline">
+                    <Link href="/console/workflows" className="text-sm text-primary hover:underline">
                       {t('relatedTemplates.openInGallery')}
                     </Link>
                   </div>
@@ -221,7 +221,7 @@ export default function PromptDetailPage() {
                       return (
                         <Link
                           key={template.id}
-                          href={`/console/agents?template=${template.id}`}
+                          href={`/console/workflows?template=${template.id}`}
                           className="rounded-lg border p-3 hover:border-primary/40 hover:bg-muted/20 transition-colors"
                         >
                           <div className="font-medium">{copy.title}</div>

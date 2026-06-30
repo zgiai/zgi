@@ -16,7 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
-func TestExportWorkflowRequiresWorkflowExportPermission(t *testing.T) {
+func TestExportWorkflowRequiresWorkflowImportPermission(t *testing.T) {
 	service := &workflowImportExportService{workspaceID: "agent-workspace"}
 	permissionChecker := &workflowImportExportPermissionChecker{allowed: false}
 	handler := &WorkflowHandler{
@@ -33,13 +33,13 @@ func TestExportWorkflowRequiresWorkflowExportPermission(t *testing.T) {
 	}
 	requireWorkflowRunAccessCode(t, recorder, response.ErrPermissionDenied)
 	if !permissionChecker.checked {
-		t.Fatalf("expected workflow.export permission check")
+		t.Fatalf("expected workflow.import permission check")
 	}
 	if permissionChecker.lastWorkspaceID != "agent-workspace" {
 		t.Fatalf("workspace checked = %q, want agent-workspace", permissionChecker.lastWorkspaceID)
 	}
-	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowExport {
-		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowExport)
+	if permissionChecker.lastPermission != workspace_model.WorkspacePermissionWorkflowImport {
+		t.Fatalf("permission = %q, want %q", permissionChecker.lastPermission, workspace_model.WorkspacePermissionWorkflowImport)
 	}
 }
 

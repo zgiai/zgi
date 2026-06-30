@@ -53,8 +53,120 @@ func TestAgentsService_GetAgentsListWithPermissions_ReturnsEmptyWhenWorkspacePer
 	require.False(t, resp.HasMore)
 	require.False(t, repo.getPaginatedAgentsMultipleTenantsCalled)
 	require.Equal(t, agentAssetVisiblePermissionCodes(), orgService.lastPermissions)
-	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentView)
+	require.Contains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentView)
 	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentManage)
+}
+
+func TestAgentsService_GetAgentsListWithPermissions_FiltersAgentAssetKind(t *testing.T) {
+	ctx := t.Context()
+
+	repo := &stubAgentsListRepository{}
+	tenantService := &stubWorkspaceManagementServiceForAgentsList{
+		currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+			Role:           workspace_model.OrganizationRoleNormal,
+		},
+		workspaceIDsByOrganization: []string{"ws-alpha"},
+	}
+	orgService := &stubOrganizationServiceForAgentsList{
+		workspaces: []*workspace_model.Workspace{
+			{ID: "ws-alpha", Status: workspace_model.WorkspaceStatusNormal},
+		},
+		permissionsByWorkspaceID: map[string]bool{
+			"ws-alpha": true,
+		},
+	}
+
+	service := &agentsService{
+		agentsRepo:                repo,
+		tenantService:             tenantService,
+		enterpriseService:         orgService,
+		resourcePermissionService: &stubResourcePermissionService{},
+	}
+
+	resp, err := service.GetAgentsListWithPermissions(ctx, "account-1", dto.GetAgentsListRequest{
+		Page:      1,
+		Limit:     20,
+		AssetKind: "agent",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.True(t, repo.getPaginatedAgentsMultipleTenantsCalled)
+	require.Equal(t, agentVisiblePermissionCodes(), orgService.lastPermissions)
+	require.Equal(t, []string{"AGENT"}, repo.lastFilter.AgentTypes)
+}
+
+func TestAgentsService_GetAgentsListWithPermissions_FiltersWorkflowAssetKind(t *testing.T) {
+	ctx := t.Context()
+
+	repo := &stubAgentsListRepository{}
+	tenantService := &stubWorkspaceManagementServiceForAgentsList{
+		currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+			Role:           workspace_model.OrganizationRoleNormal,
+		},
+		workspaceIDsByOrganization: []string{"ws-alpha"},
+	}
+	orgService := &stubOrganizationServiceForAgentsList{
+		workspaces: []*workspace_model.Workspace{
+			{ID: "ws-alpha", Status: workspace_model.WorkspaceStatusNormal},
+		},
+		permissionsByWorkspaceID: map[string]bool{
+			"ws-alpha": true,
+		},
+	}
+
+	service := &agentsService{
+		agentsRepo:                repo,
+		tenantService:             tenantService,
+		enterpriseService:         orgService,
+		resourcePermissionService: &stubResourcePermissionService{},
+	}
+
+	resp, err := service.GetAgentsListWithPermissions(ctx, "account-1", dto.GetAgentsListRequest{
+		Page:      1,
+		Limit:     20,
+		AssetKind: "workflow",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.True(t, repo.getPaginatedAgentsMultipleTenantsCalled)
+	require.Equal(t, workflowVisiblePermissionCodes(), orgService.lastPermissions)
+	require.Equal(
+		t,
+		[]string{"WORKFLOW", "CONVERSATIONAL_WORKFLOW", "CONVERSATIONAL_AGENT"},
+		repo.lastFilter.AgentTypes,
+	)
+}
+
+func TestAgentsService_GetAgentsListWithPermissions_RejectsInvalidAssetKind(t *testing.T) {
+	ctx := t.Context()
+
+	repo := &stubAgentsListRepository{}
+	tenantService := &stubWorkspaceManagementServiceForAgentsList{
+		currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+			Role:           workspace_model.OrganizationRoleNormal,
+		},
+	}
+
+	service := &agentsService{
+		agentsRepo:                repo,
+		tenantService:             tenantService,
+		resourcePermissionService: &stubResourcePermissionService{},
+	}
+
+	resp, err := service.GetAgentsListWithPermissions(ctx, "account-1", dto.GetAgentsListRequest{
+		Page:      1,
+		Limit:     20,
+		AssetKind: "dataset",
+	})
+	require.ErrorIs(t, err, errInvalidAgentListAssetKind)
+	require.Nil(t, resp)
+	require.False(t, repo.getPaginatedAgentsMultipleTenantsCalled)
 }
 
 func TestAgentsServiceBuildPermissionContextOrgAdminUsesWorkspaceMemberships(t *testing.T) {
@@ -87,10 +199,12 @@ type stubAgentsListRepository struct {
 	AgentsRepository
 
 	getPaginatedAgentsMultipleTenantsCalled bool
+	lastFilter                              AgentsFilter
 }
 
-func (s *stubAgentsListRepository) GetPaginatedAgentsMultipleTenants(_ context.Context, _ []string, _ AgentsFilter, _ int, _ int) ([]Agent, int64, error) {
+func (s *stubAgentsListRepository) GetPaginatedAgentsMultipleTenants(_ context.Context, _ []string, filter AgentsFilter, _ int, _ int) ([]Agent, int64, error) {
 	s.getPaginatedAgentsMultipleTenantsCalled = true
+	s.lastFilter = filter
 	return []Agent{
 		{
 			ID:       uuid.MustParse("11111111-1111-1111-1111-111111111111"),
@@ -98,6 +212,14 @@ func (s *stubAgentsListRepository) GetPaginatedAgentsMultipleTenants(_ context.C
 			Name:     "agent-beta",
 		},
 	}, 1, nil
+}
+
+func (s *stubAgentsListRepository) HasPublishedAgentVersion(_ context.Context, _ string) (bool, error) {
+	return true, nil
+}
+
+func (s *stubAgentsListRepository) HasPublishedWorkflow(_ context.Context, _ string) (bool, error) {
+	return true, nil
 }
 
 type stubWorkspaceManagementServiceForAgentsList struct {

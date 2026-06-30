@@ -13,6 +13,7 @@ type AgentsFilter struct {
 	Name       string
 	Keyword    string
 	AgentsType string
+	AgentTypes []string
 	CreatedBy  string
 	Internal   *bool
 }
@@ -242,6 +243,9 @@ func (r *agentsRepository) applyFiltersMultipleTenants(query *gorm.DB, filter Ag
 	}
 	if filter.AgentsType != "" {
 		query = query.Where("agent_type = ?", filter.AgentsType)
+	}
+	if len(filter.AgentTypes) > 0 {
+		query = query.Where("agent_type IN ?", filter.AgentTypes)
 	}
 	if filter.CreatedBy != "" {
 		query = query.Where("created_by = ?", filter.CreatedBy)
@@ -571,6 +575,9 @@ func (r *agentsRepository) buildPermissionSubquery(
 	}
 	if filter.AgentsType != "" {
 		baseQuery = baseQuery.Where("agents.agent_type = ?", filter.AgentsType)
+	}
+	if len(filter.AgentTypes) > 0 {
+		baseQuery = baseQuery.Where("agents.agent_type IN ?", filter.AgentTypes)
 	}
 	if filter.Internal != nil {
 		baseQuery = baseQuery.Where("agents.internal = ?", *filter.Internal)

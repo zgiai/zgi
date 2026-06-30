@@ -394,21 +394,14 @@ func (h *DashboardHandler) listWorkspaceIDsByAnyPermission(ctx context.Context, 
 
 func dashboardAgentVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionAgentView,
 		workspacemodel.WorkspacePermissionAgentCreate,
-		workspacemodel.WorkspacePermissionAgentImport,
 		workspacemodel.WorkspacePermissionAgentLogsView,
-		workspacemodel.WorkspacePermissionAgentStatsView,
-		workspacemodel.WorkspacePermissionAgentConversationView,
 		workspacemodel.WorkspacePermissionAgentUpdate,
 		workspacemodel.WorkspacePermissionAgentDelete,
-		workspacemodel.WorkspacePermissionAgentLock,
 		workspacemodel.WorkspacePermissionAgentMove,
-		workspacemodel.WorkspacePermissionAgentCopy,
-		workspacemodel.WorkspacePermissionAgentExport,
 		workspacemodel.WorkspacePermissionAgentPublish,
-		workspacemodel.WorkspacePermissionAgentRuntimeConfigManage,
 		workspacemodel.WorkspacePermissionAgentRuntimeAccessManage,
-		workspacemodel.WorkspacePermissionAgentConversationManage,
 	}
 }
 
@@ -418,18 +411,11 @@ func dashboardWorkflowVisiblePermissionCodes() []workspacemodel.WorkspacePermiss
 		workspacemodel.WorkspacePermissionWorkflowCreate,
 		workspacemodel.WorkspacePermissionWorkflowImport,
 		workspacemodel.WorkspacePermissionWorkflowLogsView,
-		workspacemodel.WorkspacePermissionWorkflowStatsView,
-		workspacemodel.WorkspacePermissionWorkflowEventsView,
 		workspacemodel.WorkspacePermissionWorkflowUpdate,
 		workspacemodel.WorkspacePermissionWorkflowDelete,
 		workspacemodel.WorkspacePermissionWorkflowMove,
-		workspacemodel.WorkspacePermissionWorkflowCopy,
-		workspacemodel.WorkspacePermissionWorkflowExport,
 		workspacemodel.WorkspacePermissionWorkflowRunDraft,
-		workspacemodel.WorkspacePermissionWorkflowRunStop,
-		workspacemodel.WorkspacePermissionWorkflowDebug,
 		workspacemodel.WorkspacePermissionWorkflowPublish,
-		workspacemodel.WorkspacePermissionWorkflowRuntimeConfigManage,
 		workspacemodel.WorkspacePermissionWorkflowRuntimeAccessManage,
 	}
 }
@@ -437,9 +423,7 @@ func dashboardWorkflowVisiblePermissionCodes() []workspacemodel.WorkspacePermiss
 func dashboardKnowledgeBaseVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
 		workspacemodel.WorkspacePermissionKnowledgeBaseCreate,
-		workspacemodel.WorkspacePermissionKnowledgeBaseFolderView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView,
-		workspacemodel.WorkspacePermissionKnowledgeBaseSegmentView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseGraphView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseRetrievalTest,
 		workspacemodel.WorkspacePermissionKnowledgeBaseUpdate,
@@ -470,33 +454,15 @@ func dashboardDatabaseVisiblePermissionCodes() []workspacemodel.WorkspacePermiss
 		workspacemodel.WorkspacePermissionDatabaseRecordDelete,
 		workspacemodel.WorkspacePermissionDatabaseImportAnalyze,
 		workspacemodel.WorkspacePermissionDatabaseImportExecute,
-		workspacemodel.WorkspacePermissionDatabaseImportErrorsView,
-		workspacemodel.WorkspacePermissionDatabaseGuardPolicyManage,
-		workspacemodel.WorkspacePermissionDatabaseTablePromptView,
-		workspacemodel.WorkspacePermissionDatabaseTablePromptManage,
 		workspacemodel.WorkspacePermissionDatabaseOperationLogsView,
 		workspacemodel.WorkspacePermissionDatabaseSQLAuditView,
 		workspacemodel.WorkspacePermissionDatabaseAIQueryRead,
-		workspacemodel.WorkspacePermissionDatabaseAIQueryWrite,
 	}
 }
 
 func dashboardFileVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
-		workspacemodel.WorkspacePermissionFileMetadataView,
-		workspacemodel.WorkspacePermissionFilePreview,
-		workspacemodel.WorkspacePermissionFileFolderView,
-		workspacemodel.WorkspacePermissionFileRelatedView,
-		workspacemodel.WorkspacePermissionFileUpload,
-		workspacemodel.WorkspacePermissionFileTextCreate,
-		workspacemodel.WorkspacePermissionFileUpdate,
-		workspacemodel.WorkspacePermissionFileDelete,
-		workspacemodel.WorkspacePermissionFileMove,
-		workspacemodel.WorkspacePermissionFileArchive,
-		workspacemodel.WorkspacePermissionFileFolderManage,
-		workspacemodel.WorkspacePermissionFileShareManage,
-		workspacemodel.WorkspacePermissionFileFavoriteManage,
-		workspacemodel.WorkspacePermissionFileDownload,
+		workspacemodel.WorkspacePermissionWorkspaceView,
 	}
 }
 

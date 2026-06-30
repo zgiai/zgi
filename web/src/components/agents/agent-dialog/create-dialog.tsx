@@ -43,13 +43,23 @@ import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { getAgentDetailBaseHref } from '@/utils/agent-detail-routes';
 
 interface CreateAgentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  allowedAgentTypes?: AgentType[];
+  defaultAgentType?: AgentType;
+  hideTypeSelector?: boolean;
 }
 
-export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps) {
+export function CreateAgentDialog({
+  open,
+  onOpenChange,
+  allowedAgentTypes,
+  defaultAgentType,
+  hideTypeSelector = false,
+}: CreateAgentDialogProps) {
   const t = useT('agents');
   const tRoot = useT();
   const router = useRouter();
@@ -60,18 +70,37 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
   const { hasAnyPermission } = useAccountPermissions();
   const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
   const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
-  const defaultAgentType =
-    canCreateAgent || !canCreateWorkflow ? AgentType.AGENT : AgentType.CONVERSATIONAL_AGENT;
-  const canCreateAnyType = canCreateAgent || canCreateWorkflow;
+  const selectableAgentTypes = useMemo(
+    () =>
+      allowedAgentTypes?.length
+        ? allowedAgentTypes
+        : [AgentType.AGENT, AgentType.CONVERSATIONAL_AGENT, AgentType.WORKFLOW],
+    [allowedAgentTypes]
+  );
+  const selectableAgentTypeSet = useMemo(
+    () => new Set<AgentType>(selectableAgentTypes),
+    [selectableAgentTypes]
+  );
   const isAgentTypeAllowed = useCallback(
     (agentType: AgentType) => {
+      if (!selectableAgentTypeSet.has(agentType)) {
+        return false;
+      }
       if (agentType === AgentType.AGENT) {
         return canCreateAgent;
       }
       return canCreateWorkflow;
     },
-    [canCreateAgent, canCreateWorkflow]
+    [canCreateAgent, canCreateWorkflow, selectableAgentTypeSet]
   );
+  const resolvedDefaultAgentType = useMemo(
+    () =>
+      defaultAgentType && isAgentTypeAllowed(defaultAgentType)
+        ? defaultAgentType
+        : selectableAgentTypes.find(type => isAgentTypeAllowed(type)) ?? AgentType.AGENT,
+    [defaultAgentType, isAgentTypeAllowed, selectableAgentTypes]
+  );
+  const canCreateAnyType = selectableAgentTypes.some(type => isAgentTypeAllowed(type));
 
   const [iconValue, setIconValue] = useState<IconValue>(createTextIconValue('', ICON_BG));
 
@@ -121,7 +150,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       description: '',
       icon: '',
       icon_type: 'text',
-      agent_type: AgentType.AGENT,
+      agent_type: resolvedDefaultAgentType,
     },
   });
 
@@ -140,7 +169,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       description: '',
       icon: '',
       icon_type: 'text',
-      agent_type: defaultAgentType,
+      agent_type: resolvedDefaultAgentType,
     });
     setIconValue(createTextIconValue('', ICON_BG));
   };
@@ -183,7 +212,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       onSuccess: (res: ApiResponseData<AgentCreateResponse>) => {
         const newId = res.data?.id;
         if (newId) {
-          router.push(`/console/agents/${newId}`);
+          router.push(getAgentDetailBaseHref(newId, data.agent_type));
         }
         resetFormState();
         onOpenChange(false);
@@ -207,9 +236,9 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
     if (!open) return;
     const currentAgentType = form.getValues('agent_type');
     if (!isAgentTypeAllowed(currentAgentType)) {
-      form.setValue('agent_type', defaultAgentType, { shouldValidate: true });
+      form.setValue('agent_type', resolvedDefaultAgentType, { shouldValidate: true });
     }
-  }, [defaultAgentType, form, isAgentTypeAllowed, open]);
+  }, [form, isAgentTypeAllowed, open, resolvedDefaultAgentType]);
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
@@ -233,32 +262,32 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
             <DialogBody className="space-y-4">
-              <div className="flex gap-10">
-                <div className="space-y-2 w-full max-w-48">
-                  <FormField
-                    control={form.control}
-                    name="agent_type"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('form.mode')}</FormLabel>
-                        <FormControl>
-                          <RadioCardGroup
-                            value={field.value}
-                            onValueChange={field.onChange}
-                            className="gap-2"
-                          >
-                            {canCreateAgent && (
-                              <RadioCard
-                                value={AgentType.AGENT}
-                                title={t('modes.agent')}
-                                description={t('modes.agentDesc')}
-                                checked={field.value === AgentType.AGENT}
-                                hiddenRadio
-                                icon={<Bot className="w-6 h-6" />}
-                              />
-                            )}
-                            {canCreateWorkflow && (
-                              <>
+              <div className={hideTypeSelector ? 'space-y-4' : 'flex gap-10'}>
+                {!hideTypeSelector && (
+                  <div className="space-y-2 w-full max-w-48">
+                    <FormField
+                      control={form.control}
+                      name="agent_type"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('form.mode')}</FormLabel>
+                          <FormControl>
+                            <RadioCardGroup
+                              value={field.value}
+                              onValueChange={field.onChange}
+                              className="gap-2"
+                            >
+                              {isAgentTypeAllowed(AgentType.AGENT) && (
+                                <RadioCard
+                                  value={AgentType.AGENT}
+                                  title={t('modes.agent')}
+                                  description={t('modes.agentDesc')}
+                                  checked={field.value === AgentType.AGENT}
+                                  hiddenRadio
+                                  icon={<Bot className="w-6 h-6" />}
+                                />
+                              )}
+                              {isAgentTypeAllowed(AgentType.CONVERSATIONAL_AGENT) && (
                                 <RadioCard
                                   value={AgentType.CONVERSATIONAL_AGENT}
                                   title={t('modes.chatWorkflow')}
@@ -267,6 +296,8 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                                   hiddenRadio
                                   icon={<MessageSquareQuote className="w-6 h-6" />}
                                 />
+                              )}
+                              {isAgentTypeAllowed(AgentType.WORKFLOW) && (
                                 <RadioCard
                                   value={AgentType.WORKFLOW}
                                   title={t('modes.taskWorkflow')}
@@ -275,16 +306,16 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                                   hiddenRadio
                                   icon={<Workflow className="w-6 h-6" />}
                                 />
-                              </>
-                            )}
-                          </RadioCardGroup>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-                <div className="space-y-4 flex-1">
+                              )}
+                            </RadioCardGroup>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
+                <div className={hideTypeSelector ? 'space-y-4' : 'space-y-4 flex-1'}>
                   <FormField
                     control={form.control}
                     name="name"

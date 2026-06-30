@@ -10,7 +10,11 @@ export function getRecentWorkHref(
     return parentId ? `/console/agents/${parentId}/logs?${query}` : `/console/agents?${query}`;
   }
 
-  if (type === 'agent' || type === 'workflow') {
+  if (type === 'workflow') {
+    return `/console/workflows/${resourceId}`;
+  }
+
+  if (type === 'agent') {
     return `/console/agents/${resourceId}`;
   }
 

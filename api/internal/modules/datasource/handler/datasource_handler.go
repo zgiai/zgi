@@ -40,14 +40,9 @@ var databaseExistingAssetVisibilityPermissions = []workspace_model.WorkspacePerm
 	workspace_model.WorkspacePermissionDatabaseRecordDelete,
 	workspace_model.WorkspacePermissionDatabaseImportAnalyze,
 	workspace_model.WorkspacePermissionDatabaseImportExecute,
-	workspace_model.WorkspacePermissionDatabaseImportErrorsView,
-	workspace_model.WorkspacePermissionDatabaseGuardPolicyManage,
-	workspace_model.WorkspacePermissionDatabaseTablePromptView,
-	workspace_model.WorkspacePermissionDatabaseTablePromptManage,
 	workspace_model.WorkspacePermissionDatabaseOperationLogsView,
 	workspace_model.WorkspacePermissionDatabaseSQLAuditView,
 	workspace_model.WorkspacePermissionDatabaseAIQueryRead,
-	workspace_model.WorkspacePermissionDatabaseAIQueryWrite,
 }
 
 var databaseWorkspaceVisibilityPermissions = append(
@@ -64,11 +59,7 @@ var databaseTableMetadataPermissions = []workspace_model.WorkspacePermissionCode
 	workspace_model.WorkspacePermissionDatabaseRecordDelete,
 	workspace_model.WorkspacePermissionDatabaseImportAnalyze,
 	workspace_model.WorkspacePermissionDatabaseImportExecute,
-	workspace_model.WorkspacePermissionDatabaseImportErrorsView,
-	workspace_model.WorkspacePermissionDatabaseTablePromptView,
-	workspace_model.WorkspacePermissionDatabaseTablePromptManage,
 	workspace_model.WorkspacePermissionDatabaseAIQueryRead,
-	workspace_model.WorkspacePermissionDatabaseAIQueryWrite,
 }
 
 // NewDataSourceHandler creates a new DataSourceHandler
@@ -408,7 +399,7 @@ func (h *DataSourceHandler) UpdateGuardPolicy(c *gin.Context) {
 			return
 		}
 		if req.Policy.Mode == "enforce" || currentPolicy.Mode == "enforce" {
-			if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseGuardPolicyManage) {
+			if !h.ensureDatabasePermission(c, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseSchemaManage) {
 				return
 			}
 		}
@@ -458,7 +449,7 @@ func (h *DataSourceHandler) PreviewGuard(c *gin.Context) {
 }
 
 func (h *DataSourceHandler) ensureDatabaseManage(c *gin.Context, organizationID, dataSourceID, accountID string) bool {
-	return h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseGuardPolicyManage)
+	return h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseSchemaManage)
 }
 
 // CreateTable creates a new table in a data source
@@ -1544,7 +1535,7 @@ func (h *DataSourceHandler) GetTablePrompt(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseTablePromptView) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseSchemaView) {
 		return
 	}
 
@@ -1668,7 +1659,7 @@ func (h *DataSourceHandler) UpsertTablePrompt(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseTablePromptManage) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseSchemaManage) {
 		return
 	}
 
@@ -1726,7 +1717,7 @@ func (h *DataSourceHandler) DeleteTablePrompt(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseTablePromptManage) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, workspace_model.WorkspacePermissionDatabaseSchemaManage) {
 		return
 	}
 

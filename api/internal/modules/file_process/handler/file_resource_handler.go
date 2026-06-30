@@ -900,9 +900,7 @@ func filterRelatedDocumentsByDatasetIDs(documents []*dataset_model.Document, vis
 
 func fileRelatedKnowledgeBasePermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderView,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
-		workspace_model.WorkspacePermissionKnowledgeBaseSegmentView,
 		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
 		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDelete,

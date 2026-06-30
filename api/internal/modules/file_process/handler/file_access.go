@@ -31,7 +31,7 @@ func authorizeFileDownloadAccess(c *gin.Context, fileService fileMetadataReader,
 		fileService,
 		permissionChecker,
 		fileID,
-		workspace_model.WorkspacePermissionFileDownload,
+		workspace_model.WorkspacePermissionFilePreview,
 	)
 }
 
@@ -61,7 +61,7 @@ func authorizeFileRelatedAccess(c *gin.Context, fileService fileMetadataReader, 
 		fileService,
 		permissionChecker,
 		fileID,
-		workspace_model.WorkspacePermissionFileRelatedView,
+		fileReadablePermissionCodes()...,
 	)
 }
 
@@ -111,7 +111,7 @@ func authorizeFileArchiveAccess(c *gin.Context, fileService fileMetadataReader, 
 		fileService,
 		permissionChecker,
 		fileID,
-		workspace_model.WorkspacePermissionFileArchive,
+		workspace_model.WorkspacePermissionFileUpdate,
 	)
 }
 
@@ -258,10 +258,7 @@ func requiresFileWritePermission(permissions []workspace_model.WorkspacePermissi
 		case workspace_model.WorkspacePermissionFileUpdate,
 			workspace_model.WorkspacePermissionFileDelete,
 			workspace_model.WorkspacePermissionFileMove,
-			workspace_model.WorkspacePermissionFileArchive,
-			workspace_model.WorkspacePermissionFileFolderManage,
-			workspace_model.WorkspacePermissionFileShareManage,
-			workspace_model.WorkspacePermissionFileFavoriteManage:
+			workspace_model.WorkspacePermissionFileFolderManage:
 			return true
 		}
 	}
@@ -286,35 +283,13 @@ func fileFolderAllowsSharedView(folder *file_model.FileFolder) bool {
 
 func fileReadablePermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionFileMetadataView,
-		workspace_model.WorkspacePermissionFilePreview,
-		workspace_model.WorkspacePermissionFileRelatedView,
-		workspace_model.WorkspacePermissionFileDownload,
-		workspace_model.WorkspacePermissionFileUpdate,
-		workspace_model.WorkspacePermissionFileDelete,
-		workspace_model.WorkspacePermissionFileMove,
-		workspace_model.WorkspacePermissionFileArchive,
-		workspace_model.WorkspacePermissionFileShareManage,
-		workspace_model.WorkspacePermissionFileFavoriteManage,
+		workspace_model.WorkspacePermissionWorkspaceView,
 	}
 }
 
 func fileBrowsePermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionFileMetadataView,
-		workspace_model.WorkspacePermissionFilePreview,
-		workspace_model.WorkspacePermissionFileFolderView,
-		workspace_model.WorkspacePermissionFileRelatedView,
-		workspace_model.WorkspacePermissionFileDownload,
-		workspace_model.WorkspacePermissionFileUpload,
-		workspace_model.WorkspacePermissionFileTextCreate,
-		workspace_model.WorkspacePermissionFileUpdate,
-		workspace_model.WorkspacePermissionFileDelete,
-		workspace_model.WorkspacePermissionFileMove,
-		workspace_model.WorkspacePermissionFileArchive,
-		workspace_model.WorkspacePermissionFileFolderManage,
-		workspace_model.WorkspacePermissionFileShareManage,
-		workspace_model.WorkspacePermissionFileFavoriteManage,
+		workspace_model.WorkspacePermissionWorkspaceView,
 	}
 }
 
@@ -323,10 +298,7 @@ func fileManagePermissionCodes() []workspace_model.WorkspacePermissionCode {
 		workspace_model.WorkspacePermissionFileUpdate,
 		workspace_model.WorkspacePermissionFileDelete,
 		workspace_model.WorkspacePermissionFileMove,
-		workspace_model.WorkspacePermissionFileArchive,
 		workspace_model.WorkspacePermissionFileFolderManage,
-		workspace_model.WorkspacePermissionFileShareManage,
-		workspace_model.WorkspacePermissionFileFavoriteManage,
 	}
 }
 

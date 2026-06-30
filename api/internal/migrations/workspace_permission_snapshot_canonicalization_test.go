@@ -12,6 +12,7 @@ func TestCanonicalWorkspaceAssignablePermissionJSONRemovesRetiredAndCompatibilit
 		"dashboard.view",
 		"prompt.optimize",
 		"content_parse.chunk.preview",
+		"agent.view",
 		"agent.manage",
 		"database.data_edit",
 		"database.ai_query",
@@ -29,8 +30,13 @@ func TestCanonicalWorkspaceAssignablePermissionJSONRemovesRetiredAndCompatibilit
 	}
 
 	for _, want := range []string{
+		"agent.view",
 		"agent.create",
+		"agent.update",
+		"workflow.view",
 		"workflow.publish",
+		"workflow.update",
+		"workflow.run.draft",
 		"database.record.create",
 		"database.ai_query.read",
 		"file.upload",
@@ -60,7 +66,7 @@ func TestCanonicalWorkspaceAssignablePermissionJSONRemovesRetiredAndCompatibilit
 		"file.move_create",
 	} {
 		if containsString(permissions, retired) {
-			t.Fatalf("canonical permissions should not contain compatibility permission %q: %#v", retired, permissions)
+			t.Fatalf("canonical permissions should not contain retired or compatibility permission %q: %#v", retired, permissions)
 		}
 	}
 }
@@ -76,6 +82,16 @@ func TestCanonicalWorkspaceAssignablePermissionJSONIsIdempotent(t *testing.T) {
 	}
 	if second != first {
 		t.Fatalf("canonical permission JSON = %s, want idempotent %s", second, first)
+	}
+
+	permissions, err := decodeWorkspaceMemberPermissionSeedJSON(first)
+	if err != nil {
+		t.Fatalf("decode canonical permissions: %v", err)
+	}
+	for _, want := range []string{"agent.view", "workflow.view", "agent.create", "workflow.publish"} {
+		if !containsString(permissions, want) {
+			t.Fatalf("canonical permissions = %#v, want contain %q", permissions, want)
+		}
 	}
 }
 

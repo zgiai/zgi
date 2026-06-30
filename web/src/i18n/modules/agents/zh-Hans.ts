@@ -3,7 +3,9 @@ import type { AgentsMessages } from './en-US';
 const messages: AgentsMessages = {
   agent: '智能体',
   title: '智能体管理',
+  workflowListTitle: '工作流管理',
   create: '新建智能体',
+  createWorkflow: '新建工作流',
   createFolder: '新建文件夹',
   agentCreated: '智能体创建成功',
   empty: '暂无智能体',
@@ -40,6 +42,7 @@ const messages: AgentsMessages = {
   // Navigation
   backToList: '返回',
   backToAgentList: '智能体列表',
+  backToWorkflowList: '工作流列表',
   permission: '权限',
 
   // Tab management
@@ -58,6 +61,7 @@ const messages: AgentsMessages = {
 
   // Search and filters
   searchPlaceholder: '搜索智能体...',
+  workflowSearchPlaceholder: '搜索工作流...',
   filterAll: '全部',
   filterActive: '活跃',
   filterInactive: '未激活',
@@ -68,8 +72,13 @@ const messages: AgentsMessages = {
   clearSearch: '清除搜索',
   noAgentsYet: '暂无智能体',
   noAgentsDescription: '开始创建您的第一个智能体来自动化任务和对话。',
+  noWorkflowsYet: '暂无工作流',
+  noWorkflowsDescription: '创建第一个工作流，编排可重复执行的业务流程。',
+  workflowNoResultsDescription: '没有工作流匹配您的搜索 "{keyword}"。',
   createFirstAgent: '创建智能体',
+  createFirstWorkflow: '创建工作流',
   importAgent: '导入智能体',
+  importWorkflow: '导入工作流',
   importingAgent: '导入中...',
   importSelectFile: '请选择 YAML 文件',
   invalidImportFileType: '不支持的文件格式，请上传 .yml 或 .yaml 文件',

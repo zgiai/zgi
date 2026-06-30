@@ -71,6 +71,7 @@ import { workflowTestService } from '@/services/workflow-test.service';
 import type { WorkflowTestBatch } from '@/services/types/workflow-test';
 import type { WorkflowNode } from '@/components/workflow/store';
 import { QUESTION_TYPE_OPTIONS, formatQuestionTypeLabel } from './question-type';
+import { getAgentDetailBatchTestHref } from '@/utils/agent-detail-routes';
 
 interface BatchTestOverviewProps {
   agentId: string;
@@ -184,6 +185,9 @@ export function BatchTestOverview({
   const batchResultT = useT('agents.workflowTest.batchResult');
   const toastT = useT('agents.workflowTest.toasts');
   const queryClient = useQueryClient();
+  const batchTestHref = getAgentDetailBatchTestHref(agentId, 'workflow');
+  const newBatchHref = `${getAgentDetailBatchTestHref(agentId, 'workflow', 'batches')}/new`;
+  const getBatchResultHref = (batchId: string) => `${batchTestHref}/${batchId}`;
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [caseDialogOpen, setCaseDialogOpen] = React.useState(false);
   const [generateDialogOpen, setGenerateDialogOpen] = React.useState(false);
@@ -503,7 +507,7 @@ export function BatchTestOverview({
                   ) : null}
                   {canCreateAndRunBatch ? (
                     <Button className="bg-slate-950 text-white hover:bg-slate-800" asChild>
-                      <Link href={`/console/agents/${agentId}/batch-test/batches/new`}>
+                      <Link href={newBatchHref}>
                         <WandSparkles className="mr-2 size-4" />
                         {t('actions.createBatch')}
                       </Link>
@@ -514,7 +518,7 @@ export function BatchTestOverview({
                 <>
                   {canCreateAndRunBatch ? (
                     <Button className="bg-slate-950 text-white hover:bg-slate-800" asChild>
-                      <Link href={`/console/agents/${agentId}/batch-test/batches/new`}>
+                      <Link href={newBatchHref}>
                         <PlayCircle className="mr-2 size-4" />
                         {t('actions.goTest')}
                       </Link>
@@ -1118,7 +1122,7 @@ export function BatchTestOverview({
                       <div className="flex shrink-0 items-center gap-2">
                         {canViewBatchResults ? (
                           <Button variant="outline" size="sm" asChild>
-                            <Link href={`/console/agents/${agentId}/batch-test/${runningBatch.id}`}>
+                            <Link href={getBatchResultHref(runningBatch.id)}>
                               {t('batchActions.viewProgress')}
                             </Link>
                           </Button>
@@ -1195,14 +1199,14 @@ export function BatchTestOverview({
                             ) : null}
                             {canViewBatchResults && batch.status === 'queued' ? (
                               <Button variant="link" size="sm" className="h-8 px-2" asChild>
-                                <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
+                                <Link href={getBatchResultHref(batch.id)}>
                                   {t('batchActions.viewDetail')}
                                 </Link>
                               </Button>
                             ) : null}
                             {canViewBatchResults && batch.status === 'running' ? (
                               <Button variant="link" size="sm" className="h-8 px-2" asChild>
-                                <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
+                                <Link href={getBatchResultHref(batch.id)}>
                                   {t('batchActions.viewProgress')}
                                 </Link>
                               </Button>
@@ -1220,7 +1224,7 @@ export function BatchTestOverview({
                               </Button>
                             ) : canViewBatchResults && batch.status !== 'queued' ? (
                               <Button variant="link" size="sm" className="h-8 px-2" asChild>
-                                <Link href={`/console/agents/${agentId}/batch-test/${batch.id}`}>
+                                <Link href={getBatchResultHref(batch.id)}>
                                   {t('batchActions.viewResult')}
                                 </Link>
                               </Button>

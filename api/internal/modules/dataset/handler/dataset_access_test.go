@@ -202,7 +202,7 @@ func TestAuthorizeDatasetFolderViewAccessIgnoresLegacyOnlyMeForNonCreator(t *tes
 	}
 }
 
-func TestAuthorizeDatasetFolderViewAccessUsesFineKnowledgeBaseFolderViewPermissions(t *testing.T) {
+func TestAuthorizeDatasetFolderViewAccessUsesKnowledgeBaseReadPermissions(t *testing.T) {
 	c, _ := newDatasetAccessTestContext("account-1", "org-1")
 	folders := &datasetAccessFolderService{
 		folders: map[string]*dataset_model.DatasetFolder{
@@ -420,7 +420,7 @@ func TestAuthorizeDatasetChildChunkAccessRejectsChildOutsideSegment(t *testing.T
 		"document-1",
 		"segment-1",
 		"child-1",
-		workspace_model.WorkspacePermissionKnowledgeBaseSegmentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
 	)
 
 	if ok {

@@ -58,6 +58,7 @@ import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { ICON_BG, ICON_TEXT, WORKFLOW_AUTOSAVE_INTERVAL_MS } from '@/lib/config';
 import type { IconType } from '@/utils/icon-helpers';
 import { PublishSettingsDialog } from '@/components/agents/agent-runtime/publish-settings-dialog';
+import { getAgentDetailLogsHref } from '@/utils/agent-detail-routes';
 
 interface WorkflowHeaderProps {
   // Basic info
@@ -669,7 +670,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                       </DropdownMenuItem>
                       {canViewRuntimeLogs ? (
                         <DropdownMenuItem asChild>
-                          <Link href={`/console/agents/${agentId}/logs`}>
+                          <Link href={getAgentDetailLogsHref(agentId, 'workflow')}>
                             <History className="text-highlight" />
                             {t('workflow.webappLogs')}
                           </Link>

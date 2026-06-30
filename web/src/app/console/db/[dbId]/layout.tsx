@@ -69,10 +69,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
     ...DATABASE_PERMISSION_ACTIONS.schemaView,
     ...DATABASE_PERMISSION_ACTIONS.schemaManage,
   ]);
-  const canAiQuery = hasAnyPermission([
-    ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
-    ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
-  ]);
+  const canAiQuery = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.aiQueryRead);
   const canViewOperationLogs = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.operationLogsView);
   const canViewTableMetadata = hasAnyPermission(DATABASE_TABLE_METADATA_PERMISSION_CODES);
 

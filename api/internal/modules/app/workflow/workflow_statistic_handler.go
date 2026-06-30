@@ -149,7 +149,7 @@ func (sh *WorkflowStatisticHandler) requireAgentView(c *gin.Context, agentID str
 		util.GetOrganizationID(c),
 		workspaceID,
 		accountID,
-		workspace_model.WorkspacePermissionWorkflowStatsView,
+		workspace_model.WorkspacePermissionWorkflowView,
 	)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)

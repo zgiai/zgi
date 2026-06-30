@@ -13,6 +13,7 @@ import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
 
 interface UseOrganizationRolesOptions {
   enabled?: boolean;
+  includeOwner?: boolean;
 }
 
 /**
@@ -22,6 +23,7 @@ export function useOrganizationRoles(options: UseOrganizationRolesOptions = {}) 
   const t = useT('dashboard');
   const { currentOrganization } = useOrganizations();
   const enabled = options.enabled ?? true;
+  const includeOwner = options.includeOwner ?? false;
 
   const {
     data: responseData,
@@ -30,12 +32,12 @@ export function useOrganizationRoles(options: UseOrganizationRolesOptions = {}) 
     error,
     refetch,
   } = useQuery<{ roles: Role[] }>({
-    queryKey: ORGANIZATION_KEYS.roles(currentOrganization?.id || ''),
+    queryKey: ORGANIZATION_KEYS.roles(currentOrganization?.id || '', { includeOwner }),
     queryFn: async () => {
       if (!currentOrganization?.id) {
         throw new Error('No organization selected');
       }
-      return await organizationService.getRoles(currentOrganization.id);
+      return await organizationService.getRoles(currentOrganization.id, { includeOwner });
     },
     enabled: enabled && !!currentOrganization?.id,
     staleTime: 5 * 60 * 1000,

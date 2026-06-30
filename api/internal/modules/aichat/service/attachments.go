@@ -212,7 +212,7 @@ func (s *service) ensureAttachmentReadable(ctx context.Context, scope Scope, fil
 	if s.workspacePerms == nil {
 		return fmt.Errorf("%w: workspace permission service is unavailable", ErrPermissionDenied)
 	}
-	allowed, err := s.workspacePerms.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionFileDownload)
+	allowed, err := s.workspacePerms.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionFilePreview)
 	if err != nil {
 		return fmt.Errorf("failed to check workspace file permission: %w", err)
 	}

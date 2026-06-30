@@ -12,7 +12,9 @@ func TestExpandWorkspacePermissionCodesForCompatibility(t *testing.T) {
 
 	expected := []WorkspacePermissionCode{
 		WorkspacePermissionAgentManage,
+		WorkspacePermissionAgentView,
 		WorkspacePermissionAgentCreate,
+		WorkspacePermissionWorkflowView,
 		WorkspacePermissionWorkflowPublish,
 	}
 	for _, code := range expected {
@@ -20,6 +22,7 @@ func TestExpandWorkspacePermissionCodesForCompatibility(t *testing.T) {
 			t.Errorf("expanded permissions missing %s in %v", code, expanded)
 		}
 	}
+	assertNoRetiredWorkspacePermissionCodes(t, expanded)
 }
 
 func TestWorkspacePermissionCodesAllowDoesNotPromoteFineGrantToLegacyGrant(t *testing.T) {
@@ -157,6 +160,7 @@ func TestEffectiveWorkspaceMemberPermissionStringsExpandsLegacyCoarseGrant(t *te
 
 func TestCanonicalWorkspacePermissionSnapshotStringsReplacesDeprecatedAssetCoarseCodes(t *testing.T) {
 	permissions := CanonicalWorkspacePermissionSnapshotStrings([]string{
+		string(WorkspacePermissionAgentView),
 		string(WorkspacePermissionAgentManage),
 		string(WorkspacePermissionKnowledgeBaseView),
 		string(WorkspacePermissionDatabaseManage),
@@ -166,11 +170,13 @@ func TestCanonicalWorkspacePermissionSnapshotStringsReplacesDeprecatedAssetCoars
 	})
 
 	expected := []WorkspacePermissionCode{
+		WorkspacePermissionAgentView,
 		WorkspacePermissionAgentCreate,
+		WorkspacePermissionWorkflowView,
 		WorkspacePermissionWorkflowPublish,
 		WorkspacePermissionKnowledgeBaseDocumentView,
 		WorkspacePermissionDatabaseSchemaManage,
-		WorkspacePermissionFileMetadataView,
+		WorkspacePermissionFilePreview,
 		WorkspacePermissionFileUpload,
 		WorkspacePermissionFileTextCreate,
 	}
@@ -194,6 +200,19 @@ func TestCanonicalWorkspacePermissionSnapshotStringsReplacesDeprecatedAssetCoars
 	assertNoCompatibilityWorkspacePermissions(t, permissions)
 }
 
+func TestCanonicalAssignableWorkspacePermissionSnapshotStringsKeepsAgentViewStandalone(t *testing.T) {
+	permissions := CanonicalAssignableWorkspacePermissionSnapshotStrings([]string{
+		string(WorkspacePermissionAgentView),
+	})
+
+	if !containsWorkspacePermissionString(permissions, string(WorkspacePermissionAgentView)) {
+		t.Fatalf("assignable permissions should keep agent.view: %#v", permissions)
+	}
+	if containsWorkspacePermissionString(permissions, string(WorkspacePermissionWorkflowView)) {
+		t.Fatalf("assignable permissions should not expand new agent.view to workflow.view: %#v", permissions)
+	}
+}
+
 func TestCanonicalAssignableWorkspacePermissionSnapshotStringsExpandsCompatibilityPermissionsWithoutRetainingThem(t *testing.T) {
 	permissions := CanonicalAssignableWorkspacePermissionSnapshotStrings([]string{
 		string(WorkspacePermissionDatabaseDataEdit),
@@ -207,7 +226,6 @@ func TestCanonicalAssignableWorkspacePermissionSnapshotStringsExpandsCompatibili
 		WorkspacePermissionDatabaseRecordUpdate,
 		WorkspacePermissionDatabaseRecordDelete,
 		WorkspacePermissionDatabaseImportExecute,
-		WorkspacePermissionDatabaseImportErrorsView,
 		WorkspacePermissionDatabaseAIQueryRead,
 		WorkspacePermissionFileUpload,
 		WorkspacePermissionFileTextCreate,
@@ -347,10 +365,20 @@ func assertNoDashboardWorkspacePermissions(t *testing.T, permissions []string) {
 func assertNoRetiredWorkspacePermissions(t *testing.T, permissions []string) {
 	t.Helper()
 	for _, permission := range permissions {
-		if strings.HasPrefix(permission, "prompt.") ||
+		if isRetiredWorkspacePermission(WorkspacePermissionCode(permission)) ||
+			strings.HasPrefix(permission, "prompt.") ||
 			strings.HasPrefix(permission, "content_parse.") ||
 			strings.HasPrefix(permission, "dashboard.") ||
 			strings.HasPrefix(permission, "workspace.") {
+			t.Fatalf("permissions should not contain retired permission %s: %#v", permission, permissions)
+		}
+	}
+}
+
+func assertNoRetiredWorkspacePermissionCodes(t *testing.T, permissions []WorkspacePermissionCode) {
+	t.Helper()
+	for _, permission := range permissions {
+		if isRetiredWorkspacePermission(permission) {
 			t.Fatalf("permissions should not contain retired permission %s: %#v", permission, permissions)
 		}
 	}

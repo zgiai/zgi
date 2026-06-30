@@ -38,9 +38,7 @@ type datasetAccessAuthorizer interface {
 func knowledgeBaseViewPermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
 		workspace_model.WorkspacePermissionKnowledgeBaseCreate,
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderView,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
-		workspace_model.WorkspacePermissionKnowledgeBaseSegmentView,
 		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
 		workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
 		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
@@ -62,13 +60,15 @@ func knowledgeBaseDocumentViewPermissionCodes() []workspace_model.WorkspacePermi
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
 		workspace_model.WorkspacePermissionKnowledgeBaseIndexManage,
 	}
 }
 
 func knowledgeBaseSegmentViewPermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionKnowledgeBaseSegmentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
 		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
 		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
 	}
@@ -76,7 +76,19 @@ func knowledgeBaseSegmentViewPermissionCodes() []workspace_model.WorkspacePermis
 
 func knowledgeBaseFolderViewPermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionKnowledgeBaseFolderView,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
+		workspace_model.WorkspacePermissionKnowledgeBaseCreate,
+		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseMove,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		workspace_model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+		workspace_model.WorkspacePermissionKnowledgeBaseIndexManage,
+		workspace_model.WorkspacePermissionKnowledgeBaseGraphManage,
 		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
 	}
 }

@@ -172,10 +172,12 @@ class OrganizationService extends BaseService {
   // --- Role Management ---
 
   // Get roles for organization
-  async getRoles(organizationId: string) {
+  async getRoles(organizationId: string, params?: { includeOwner?: boolean }) {
     const response = await this.request<ApiResponseData<{ roles: Role[] }>>(
       'get',
-      `/organizations/${organizationId}/roles`
+      `/organizations/${organizationId}/roles`,
+      undefined,
+      params?.includeOwner ? { params: { include_owner: true } } : undefined
     );
     return response.data;
   }

@@ -17,6 +17,7 @@ import {
   PERMISSION_MODULES,
   formatPermissionFallbackDescription,
   formatPermissionFallbackLabel,
+  getMissingPermissionDependencies,
   normalizeSelectablePermissionCodes,
 } from '@/constants/permissions';
 import { useT } from '@/i18n';
@@ -50,6 +51,10 @@ export default function RoleConfigPage() {
   const [savedDescription, setSavedDescription] = useState('');
   const [savedPermissions, setSavedPermissions] = useState<Set<string>>(new Set());
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [pendingDependencyChange, setPendingDependencyChange] = useState<{
+    permissionCode: string;
+    dependencies: string[];
+  } | null>(null);
   const [newRoleInfoPrompted, setNewRoleInfoPrompted] = useState(false);
 
   const { role, isLoading: loading } = useRoleDetail(isNewRole ? null : roleId, !isNewRole);
@@ -109,17 +114,58 @@ export default function RoleConfigPage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges, isSaving]);
 
-  // Handle permission toggle
-  const handlePermissionToggle = (code: string) => {
+  const getPermissionLabel = (code: string) =>
+    translateOrFallback(`permissions.${code}.name`, formatPermissionFallbackLabel(code, locale));
+
+  const dependencySeparator = locale?.toLowerCase().startsWith('zh') ? '、' : ', ';
+  const dependencyConfirmDescription = pendingDependencyChange
+    ? t('dashboard.organization.permissions.config.dependencyConfirm.description', {
+        permission: getPermissionLabel(pendingDependencyChange.permissionCode),
+        dependencies: pendingDependencyChange.dependencies
+          .map(getPermissionLabel)
+          .join(dependencySeparator),
+      })
+    : '';
+
+  const addPermissionWithDependencies = (
+    permissionCode: string,
+    dependencies: readonly string[] = []
+  ) => {
     setSelectedPermissions(prev => {
       const next = new Set(prev);
-      if (next.has(code)) {
-        next.delete(code);
-      } else {
-        next.add(code);
-      }
+      next.add(permissionCode);
+      dependencies.forEach(dependency => next.add(dependency));
       return next;
     });
+  };
+
+  // Handle permission toggle
+  const handlePermissionToggle = (code: string) => {
+    if (selectedPermissions.has(code)) {
+      setSelectedPermissions(prev => {
+        const next = new Set(prev);
+        next.delete(code);
+        return next;
+      });
+      return;
+    }
+
+    const dependencies = getMissingPermissionDependencies(selectedPermissions, [code]);
+    if (dependencies.length > 0) {
+      setPendingDependencyChange({ permissionCode: code, dependencies });
+      return;
+    }
+
+    addPermissionWithDependencies(code);
+  };
+
+  const confirmDependencyChange = () => {
+    if (!pendingDependencyChange) return;
+    addPermissionWithDependencies(
+      pendingDependencyChange.permissionCode,
+      pendingDependencyChange.dependencies
+    );
+    setPendingDependencyChange(null);
   };
 
   // Get all permission codes
@@ -419,6 +465,18 @@ export default function RoleConfigPage() {
         cancelText={t('dashboard.organization.permissions.config.leaveConfirm.cancel')}
         onConfirm={() => router.push('/dashboard/organization/permissions')}
         variant="warning"
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingDependencyChange)}
+        onOpenChange={nextOpen => {
+          if (!nextOpen) setPendingDependencyChange(null);
+        }}
+        title={t('dashboard.organization.permissions.config.dependencyConfirm.title')}
+        description={dependencyConfirmDescription}
+        confirmText={t('dashboard.organization.permissions.config.dependencyConfirm.confirm')}
+        cancelText={t('dashboard.organization.permissions.config.dependencyConfirm.cancel')}
+        onConfirm={confirmDependencyChange}
       />
     </div>
   );

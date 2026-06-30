@@ -34,6 +34,7 @@ import { useExportWorkflow } from '@/hooks/workflow/use-workflow-import-export';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 import {
+  getAgentDetailBaseHref,
   getAgentDetailDefaultHref,
   isAgentRuntimeType,
   isWorkflowRuntimeType,
@@ -97,8 +98,6 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
   const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
   const canImportWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
   const canRunWorkflowDraft = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
-  const canStopWorkflowRun = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop);
-  const canDebugWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
   const canPublishWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish);
   const canConfigureWorkflowRuntime = hasAnyPermission(
     WORKFLOW_PERMISSION_ACTIONS.runtimeConfigManage
@@ -110,7 +109,6 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
   const canViewWorkflowTestLibrary = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.view);
   const canShowActions = canUpdateRuntime || canExportRuntime || canDeleteRuntime || canMoveAssets;
   const shouldPrefetchAgentDetail = canUpdateRuntime || canExportRuntime || canDeleteRuntime;
-  const agentHref = `/console/agents/${agent.id}`;
   const canOpenAgentRuntimeEditor =
     isAgentRuntime &&
     (canCreateAgent ||
@@ -125,24 +123,22 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
       canImportWorkflow ||
       canUpdateRuntime ||
       canRunWorkflowDraft ||
-      canStopWorkflowRun ||
-      canDebugWorkflow ||
       canPublishWorkflow ||
       canConfigureWorkflowRuntime ||
       canManageWorkflowRuntimeAccess);
-  const canOpenAgentDetail = Boolean(
-    getAgentDetailDefaultHref(agent.id, agent.agent_type, {
+  const defaultAgentDetailHref = getAgentDetailDefaultHref(agent.id, agent.agent_type, {
       canView: true,
       canOpenEditor: isAgentRuntime ? canOpenAgentRuntimeEditor : canOpenWorkflowEditor,
       canManageRuntimeAccess: isWorkflowRuntime && canManageWorkflowRuntimeAccess,
       canViewRuntimeLogs: isAgentRuntime ? canViewAgentLogs : canViewWorkflowLogs,
       canViewBatchTest:
         isWorkflowRuntime && (canViewWorkflowTestLibrary || canViewWorkflowLogs),
-      canRunBatchTest: isWorkflowRuntime && canDebugWorkflow,
+      canRunBatchTest: isWorkflowRuntime && canRunWorkflowDraft,
       isPublished: agent.is_published,
       preferBatchTestLibrary: canViewWorkflowTestLibrary,
-    })
-  );
+    });
+  const canOpenAgentDetail = Boolean(defaultAgentDetailHref);
+  const agentHref = defaultAgentDetailHref ?? getAgentDetailBaseHref(agent.id, agent.agent_type);
   const modeText =
     agent.agent_type === AgentType.AGENT
       ? t('modes.agent')

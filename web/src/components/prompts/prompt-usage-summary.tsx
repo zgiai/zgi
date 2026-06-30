@@ -16,6 +16,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { usePromptUsage } from '@/hooks/prompt/use-prompts';
 import { useT } from '@/i18n';
 import type { PromptVersion } from '@/services/types/prompt';
+import { getAgentDetailBaseHref, getAgentDetailLogsHref } from '@/utils/agent-detail-routes';
 
 interface PromptUsageSummaryProps {
   promptId: string;
@@ -77,8 +78,6 @@ export function PromptUsageSummary({
     hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import) ||
     hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update) ||
     hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft) ||
-    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runStop) ||
-    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug) ||
     hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish) ||
     hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeConfigManage) ||
     hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage);
@@ -413,7 +412,7 @@ export function PromptUsageSummary({
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   {canOpenWorkflowReference ? (
                     <Link
-                      href={`/console/agents/${reference.agent_id}?nodeId=${reference.node_id}`}
+                      href={`${getAgentDetailBaseHref(reference.agent_id, 'workflow')}?nodeId=${reference.node_id}`}
                       className="font-medium hover:text-primary"
                     >
                       {reference.agent_name}
@@ -487,7 +486,7 @@ export function PromptUsageSummary({
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   {run.workflow_run_id && canOpenWorkflowRunLog ? (
                     <Link
-                      href={`/console/agents/${run.agent_id}/logs?runId=${run.workflow_run_id}&tab=execution`}
+                      href={`${getAgentDetailLogsHref(run.agent_id, 'workflow')}?runId=${run.workflow_run_id}&tab=execution`}
                       className="font-medium hover:text-primary"
                     >
                       {run.agent_name}

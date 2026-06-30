@@ -29,10 +29,7 @@ export default function DbOverviewPage() {
     ...DATABASE_PERMISSION_ACTIONS.importAnalyze,
     ...DATABASE_PERMISSION_ACTIONS.importExecute,
   ]);
-  const canAiQuery = hasAnyPermission([
-    ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
-    ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
-  ]);
+  const canAiQuery = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.aiQueryRead);
   const canViewOperationLogs = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.operationLogsView);
   const canViewTableMetadata = hasAnyPermission(DATABASE_TABLE_METADATA_PERMISSION_CODES);
 

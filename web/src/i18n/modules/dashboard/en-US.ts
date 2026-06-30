@@ -809,7 +809,7 @@ const messages = {
         workspaceAdmin: {
           name: 'Workspace Admin',
           description:
-            'Assists owners with daily operations, no right to delete workspaces, applicable to Scrum Masters.',
+            'Helps the workspace lead manage workspace members, with all basic permissions and team management permissions.',
         },
         member: {
           name: 'Member',
@@ -960,6 +960,13 @@ const messages = {
             'You have unsaved permission changes on this page. Leaving now will discard them.',
           confirm: 'Discard changes',
           cancel: 'Keep editing',
+        },
+        dependencyConfirm: {
+          title: 'Enable required permissions too?',
+          description:
+            'Enabling "{permission}" also requires "{dependencies}". Confirm to enable them together.',
+          confirm: 'Enable together',
+          cancel: 'Cancel',
         },
         permissions: {
           modules: {
@@ -1133,7 +1140,8 @@ const messages = {
         adminSwitchLabel: 'Set as workspace admin',
         adminSwitchDescription:
           'Workspace admins can manage members, settings, and permissions in this workspace.',
-        adminRoleMissing: 'The workspace admin role is unavailable, so this member cannot be set as an admin.',
+        adminRoleMissing:
+          'The workspace admin role is unavailable, so this member cannot be set as an admin.',
         assignAsAdmin: 'Set as workspace admin',
         noLeader: 'No owner',
         memberCount: '{count} people',
@@ -1485,6 +1493,13 @@ const messages = {
             apply: 'Apply',
             applying: 'Applying...',
             hint: 'Workspace admin is a fixed governance role. Ordinary templates do not create a live link; later template edits will not change this member automatically.',
+          },
+          dependencyConfirm: {
+            title: 'Enable required permissions too?',
+            description:
+              'Enabling "{permission}" also requires "{dependencies}". Confirm to enable them together.',
+            confirm: 'Enable together',
+            cancel: 'Cancel',
           },
         },
         assignMemberBannerTitle: 'Adding {member} to this workspace',

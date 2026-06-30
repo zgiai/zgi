@@ -55,6 +55,7 @@ type GetAgentsListRequest struct {
 	Keyword       string `form:"keyword" json:"keyword"`
 	IsCreatedByMe bool   `form:"is_created_by_me" json:"is_created_by_me"`
 	AgentType     string `form:"agent_type" json:"agent_type"`
+	AssetKind     string `form:"asset_kind" json:"asset_kind"`
 	Internal      *bool  `form:"internal" json:"internal"`
 }
 

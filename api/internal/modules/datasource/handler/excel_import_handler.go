@@ -161,7 +161,14 @@ func (h *DataSourceHandler) ListExcelImportErrors(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportErrorsView) {
+	if !h.ensureDatabasePermission(
+		c,
+		organizationID,
+		dataSourceID,
+		accountID,
+		model.WorkspacePermissionDatabaseImportAnalyze,
+		model.WorkspacePermissionDatabaseImportExecute,
+	) {
 		return
 	}
 	limit := clampQueryInt(c.DefaultQuery("limit", "20"), 20, 1, 100)

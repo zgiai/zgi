@@ -14,6 +14,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogBody,
@@ -31,6 +32,7 @@ import {
   PERMISSION_MODULES,
   formatPermissionFallbackDescription,
   formatPermissionFallbackLabel,
+  getMissingPermissionDependencies,
   normalizeSelectablePermissionCodes,
 } from '@/constants/permissions';
 import type { PermissionModule } from '@/constants/permissions';
@@ -73,6 +75,10 @@ export function WorkspaceMemberPermissionsDialog({
   const [selectedPermissions, setSelectedPermissions] = useState<Set<string>>(new Set());
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [templateSearch, setTemplateSearch] = useState('');
+  const [pendingDependencyChange, setPendingDependencyChange] = useState<{
+    permissionCode: string;
+    dependencies: string[];
+  } | null>(null);
 
   const originalPermissions = useMemo(
     () => new Set(normalizeSelectablePermissionCodes(member?.permissions)),
@@ -170,7 +176,10 @@ export function WorkspaceMemberPermissionsDialog({
   }, [originalPermissions, selectedPermissions]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setPendingDependencyChange(null);
+      return;
+    }
     setSelectedPermissions(new Set(originalPermissions));
     setTemplateDialogOpen(false);
     setTemplateSearch('');
@@ -184,16 +193,57 @@ export function WorkspaceMemberPermissionsDialog({
     return rootT(fullKey as Parameters<typeof rootT>[0]);
   };
 
-  const togglePermission = (permissionCode: string) => {
+  const getPermissionLabel = (code: string) =>
+    translatePermission(`permissions.${code}.name`, formatPermissionFallbackLabel(code, locale));
+
+  const dependencySeparator = locale?.toLowerCase().startsWith('zh') ? '、' : ', ';
+  const dependencyConfirmDescription = pendingDependencyChange
+    ? t('dependencyConfirm.description', {
+        permission: getPermissionLabel(pendingDependencyChange.permissionCode),
+        dependencies: pendingDependencyChange.dependencies
+          .map(getPermissionLabel)
+          .join(dependencySeparator),
+      })
+    : '';
+
+  const addPermissionWithDependencies = (
+    permissionCode: string,
+    dependencies: readonly string[] = []
+  ) => {
     setSelectedPermissions(prev => {
       const next = new Set(prev);
-      if (next.has(permissionCode)) {
-        next.delete(permissionCode);
-      } else {
-        next.add(permissionCode);
-      }
+      next.add(permissionCode);
+      dependencies.forEach(dependency => next.add(dependency));
       return next;
     });
+  };
+
+  const togglePermission = (permissionCode: string) => {
+    if (selectedPermissions.has(permissionCode)) {
+      setSelectedPermissions(prev => {
+        const next = new Set(prev);
+        next.delete(permissionCode);
+        return next;
+      });
+      return;
+    }
+
+    const dependencies = getMissingPermissionDependencies(selectedPermissions, [permissionCode]);
+    if (dependencies.length > 0) {
+      setPendingDependencyChange({ permissionCode, dependencies });
+      return;
+    }
+
+    addPermissionWithDependencies(permissionCode);
+  };
+
+  const confirmDependencyChange = () => {
+    if (!pendingDependencyChange) return;
+    addPermissionWithDependencies(
+      pendingDependencyChange.permissionCode,
+      pendingDependencyChange.dependencies
+    );
+    setPendingDependencyChange(null);
   };
 
   const toggleModule = (module: PermissionModule, checked: boolean) => {
@@ -236,343 +286,358 @@ export function WorkspaceMemberPermissionsDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        size="xl"
-        className="h-[92vh] max-w-[min(1280px,calc(100vw-3rem))]"
-      >
-        <DialogHeader className="px-8 pb-3">
-          <DialogTitle className="flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-primary" />
-            {t('title')}
-          </DialogTitle>
-          <DialogDescription>
-            {member
-              ? t('description', { name: member.member_name || member.name })
-              : t('emptyDescription')}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent size="xl" className="h-[92vh] max-w-[min(1280px,calc(100vw-3rem))]">
+          <DialogHeader className="px-8 pb-3">
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-primary" />
+              {t('title')}
+            </DialogTitle>
+            <DialogDescription>
+              {member
+                ? t('description', { name: member.member_name || member.name })
+                : t('emptyDescription')}
+            </DialogDescription>
+          </DialogHeader>
 
-        <DialogBody className="flex min-h-0 flex-col gap-4 overflow-hidden px-8 py-2">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-semibold">{member?.member_name || member?.name}</span>
-                <Badge variant={isOwner ? 'default' : 'secondary'} className="rounded-md">
-                  {sourceLabel}
-                </Badge>
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {!canEditDirectPermissions
-                  ? isOwner
-                    ? t('ownerHint')
-                    : t('governanceHint')
-                  : t('selectedCount', { count: selectedCount })}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!canEditDirectPermissions || isBusy}
-                onClick={() => setSelectedPermissions(new Set(originalPermissions))}
-              >
-                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-                {t('reset')}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!canEditDirectPermissions || isBusy}
-                onClick={() => setSelectedPermissions(new Set(allPermissionCodes))}
-              >
-                {t('selectAll')}
-              </Button>
-            </div>
-          </div>
-
-          {canChangeRole ? (
-            <div className="rounded-lg border bg-background px-4 py-3">
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/20 px-3 py-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-foreground">
-                      {t('adminToggle.title')}
-                    </div>
-                    <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                      {workspaceAdminRole
-                        ? t('adminToggle.description')
-                        : t('adminToggle.missing')}
-                    </p>
-                  </div>
-                  <Switch
-                    checked={isAdmin}
-                    onCheckedChange={value => void handleAdminSwitchChange(value)}
-                    disabled={!canToggleAdmin || isBusy}
-                  />
+          <DialogBody className="flex min-h-0 flex-col gap-4 overflow-hidden px-8 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold">
+                    {member?.member_name || member?.name}
+                  </span>
+                  <Badge variant={isOwner ? 'default' : 'secondary'} className="rounded-md">
+                    {sourceLabel}
+                  </Badge>
                 </div>
-
-                <Dialog open={templateDialogOpen} onOpenChange={setTemplateDialogOpen}>
-                  {isAdmin ? (
-                    <div className="flex flex-col gap-3 rounded-lg border bg-primary/5 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-foreground">
-                          {t('adminToggle.currentAdminTitle')}
-                        </div>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          {t('adminToggle.currentAdminDescription')}
-                        </p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={isBusy}
-                        onClick={() => setTemplateDialogOpen(true)}
-                      >
-                        {t('adminToggle.demote')}
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                          <Layers3 className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold text-foreground">
-                            {t('template.title')}
-                          </div>
-                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                            {t('template.description')}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => setTemplateDialogOpen(true)}
-                        className={cn(
-                          'flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 lg:w-[360px]',
-                          isBusy &&
-                            'cursor-not-allowed opacity-70 hover:border-border hover:bg-muted/20'
-                        )}
-                      >
-                        <span className="min-w-0">
-                          <span className="block text-[11px] font-medium text-muted-foreground">
-                            {t('template.currentLabel')}
-                          </span>
-                          <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
-                            <span className="truncate text-sm font-semibold text-foreground">
-                              {currentTemplateName || t('template.placeholder')}
-                            </span>
-                            {shouldWarnCurrentTemplate ? (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="inline-flex shrink-0 text-destructive">
-                                    <AlertTriangle className="h-3.5 w-3.5" />
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent variant="destructive">
-                                  {t('template.deprecatedTooltip')}
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : null}
-                          </span>
-                          <span className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">
-                            {currentTemplateDescription || t('template.description')}
-                          </span>
-                        </span>
-                        <span className="shrink-0 rounded-md border bg-background px-2.5 py-1 text-xs font-medium text-foreground">
-                          {isApplyingTemplate ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            t('template.change')
-                          )}
-                        </span>
-                      </button>
-                    </div>
-                  )}
-
-                  <DialogContent size="lg" className="max-h-[78vh]">
-                    <DialogHeader>
-                      <DialogTitle>{t('template.chooseTitle')}</DialogTitle>
-                      <DialogDescription>{t('template.chooseDescription')}</DialogDescription>
-                    </DialogHeader>
-                    <DialogBody className="space-y-3">
-                      <Input
-                        value={templateSearch}
-                        onChange={event => setTemplateSearch(event.target.value)}
-                        placeholder={t('template.searchPlaceholder')}
-                        leftIcon={<Search className="h-4 w-4" />}
-                      />
-                      <ScrollArea className="h-[420px] pr-3">
-                        <div className="space-y-2">
-                          {filteredTemplates.length > 0 ? (
-                            filteredTemplates.map(role => {
-                              const isCurrent = currentTemplateId === role.id;
-                              return (
-                                <button
-                                  key={role.id}
-                                  type="button"
-                                  disabled={isBusy || isCurrent}
-                                  onClick={() => void handleApplyRoleOrTemplate(role)}
-                                  className={cn(
-                                    'flex w-full items-start justify-between gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5',
-                                    isCurrent
-                                      ? 'border-primary/30 bg-primary/5'
-                                      : 'border-border bg-background',
-                                    (isBusy || isCurrent) && 'cursor-default'
-                                  )}
-                                >
-                                  <span className="min-w-0">
-                                    <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                                      <span className="truncate">{getRoleDisplayName(role)}</span>
-                                      {isCurrent ? (
-                                        <Badge variant="secondary" className="shrink-0 rounded-md">
-                                          {t('template.current')}
-                                        </Badge>
-                                      ) : null}
-                                    </span>
-                                    {getRoleDescription(role) ? (
-                                      <span className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">
-                                        {getRoleDescription(role)}
-                                      </span>
-                                    ) : null}
-                                  </span>
-                                  {isCurrent ? (
-                                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                                  ) : null}
-                                </button>
-                              );
-                            })
-                          ) : (
-                            <div className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">
-                              {t('template.empty')}
-                            </div>
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </DialogBody>
-                    <DialogFooter>
-                      <Button
-                        variant="outline"
-                        onClick={() => setTemplateDialogOpen(false)}
-                        disabled={isBusy}
-                      >
-                        {t('cancel')}
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              </div>
-              <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
-                {t('template.hint')}
-              </p>
-            </div>
-          ) : null}
-
-          {isAdmin ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed bg-muted/20 px-8 py-10 text-center">
-              <div className="max-w-md">
-                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <ShieldCheck className="h-5 w-5" />
-                </div>
-                <h3 className="mt-4 text-sm font-semibold text-foreground">
-                  {t('adminPermissionPlaceholder.title')}
-                </h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  {t('adminPermissionPlaceholder.description')}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {!canEditDirectPermissions
+                    ? isOwner
+                      ? t('ownerHint')
+                      : t('governanceHint')
+                    : t('selectedCount', { count: selectedCount })}
                 </p>
               </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!canEditDirectPermissions || isBusy}
+                  onClick={() => setSelectedPermissions(new Set(originalPermissions))}
+                >
+                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                  {t('reset')}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!canEditDirectPermissions || isBusy}
+                  onClick={() => setSelectedPermissions(new Set(allPermissionCodes))}
+                >
+                  {t('selectAll')}
+                </Button>
+              </div>
             </div>
-          ) : (
-            <ScrollArea className="min-h-0 flex-1 pr-3">
-              <div className="space-y-4">
-                {permissionModules.map(module => {
-                  const checked = moduleChecked(module);
-                  return (
-                    <section key={module.key} className="rounded-lg border bg-background">
-                      <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-                        <div>
-                          <h3 className="text-sm font-semibold">
-                            {translatePermission(
-                              module.title,
-                              formatPermissionFallbackLabel(module.key, locale)
-                            )}
-                          </h3>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {t('moduleCount', { count: module.permissions.length })}
+
+            {canChangeRole ? (
+              <div className="rounded-lg border bg-background px-4 py-3">
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/20 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-foreground">
+                        {t('adminToggle.title')}
+                      </div>
+                      <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                        {workspaceAdminRole
+                          ? t('adminToggle.description')
+                          : t('adminToggle.missing')}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={isAdmin}
+                      onCheckedChange={value => void handleAdminSwitchChange(value)}
+                      disabled={!canToggleAdmin || isBusy}
+                    />
+                  </div>
+
+                  <Dialog open={templateDialogOpen} onOpenChange={setTemplateDialogOpen}>
+                    {isAdmin ? (
+                      <div className="flex flex-col gap-3 rounded-lg border bg-primary/5 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-foreground">
+                            {t('adminToggle.currentAdminTitle')}
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                            {t('adminToggle.currentAdminDescription')}
                           </p>
                         </div>
-                        <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                          <Checkbox
-                            checked={checked}
-                            disabled={!canEditDirectPermissions || isBusy}
-                            onCheckedChange={value => toggleModule(module, Boolean(value))}
-                          />
-                          {t('moduleAll')}
-                        </label>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isBusy}
+                          onClick={() => setTemplateDialogOpen(true)}
+                        >
+                          {t('adminToggle.demote')}
+                        </Button>
                       </div>
-                      <div className="grid grid-cols-1 gap-2 p-3 md:grid-cols-2 xl:grid-cols-3">
-                        {module.permissions.map(permission => {
-                          const permissionChecked = selectedPermissions.has(permission.code);
-                          return (
-                            <label
-                              key={permission.code}
-                              className={cn(
-                                'flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors',
-                                permissionChecked
-                                  ? 'border-primary/30 bg-primary/5'
-                                  : 'border-border bg-background hover:bg-muted/40',
-                                (!canEditDirectPermissions || isBusy) &&
-                                  'cursor-not-allowed opacity-70'
-                              )}
-                            >
-                              <Checkbox
-                                checked={permissionChecked}
-                                disabled={!canEditDirectPermissions || isBusy}
-                                onCheckedChange={() => togglePermission(permission.code)}
-                                className="mt-0.5"
-                              />
-                              <span className="min-w-0">
-                                <span className="block text-xs font-semibold text-foreground">
-                                  {translatePermission(
-                                    permission.name,
-                                    formatPermissionFallbackLabel(permission.code, locale)
-                                  )}
-                                </span>
-                                <span className="mt-1 block break-words text-[11px] leading-4 text-muted-foreground">
-                                  {translatePermission(
-                                    permission.description,
-                                    formatPermissionFallbackDescription(permission.code, locale)
-                                  )}
-                                </span>
+                    ) : (
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                            <Layers3 className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-foreground">
+                              {t('template.title')}
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                              {t('template.description')}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => setTemplateDialogOpen(true)}
+                          className={cn(
+                            'flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 lg:w-[360px]',
+                            isBusy &&
+                              'cursor-not-allowed opacity-70 hover:border-border hover:bg-muted/20'
+                          )}
+                        >
+                          <span className="min-w-0">
+                            <span className="block text-[11px] font-medium text-muted-foreground">
+                              {t('template.currentLabel')}
+                            </span>
+                            <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                              <span className="truncate text-sm font-semibold text-foreground">
+                                {currentTemplateName || t('template.placeholder')}
                               </span>
-                            </label>
-                          );
-                        })}
+                              {shouldWarnCurrentTemplate ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="inline-flex shrink-0 text-destructive">
+                                      <AlertTriangle className="h-3.5 w-3.5" />
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent variant="destructive">
+                                    {t('template.deprecatedTooltip')}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : null}
+                            </span>
+                            <span className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">
+                              {currentTemplateDescription || t('template.description')}
+                            </span>
+                          </span>
+                          <span className="shrink-0 rounded-md border bg-background px-2.5 py-1 text-xs font-medium text-foreground">
+                            {isApplyingTemplate ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              t('template.change')
+                            )}
+                          </span>
+                        </button>
                       </div>
-                    </section>
-                  );
-                })}
-              </div>
-            </ScrollArea>
-          )}
-        </DialogBody>
+                    )}
 
-        <DialogFooter className="border-t bg-background/95 px-8 py-4">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isBusy}>
-            {t('cancel')}
-          </Button>
-          <Button
-            onClick={handleSave}
-            disabled={!canEditDirectPermissions || isBusy || !hasChanges}
-          >
-            <Save className="mr-1.5 h-4 w-4" />
-            {isSaving ? t('saving') : t('save')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+                    <DialogContent size="lg" className="max-h-[78vh]">
+                      <DialogHeader>
+                        <DialogTitle>{t('template.chooseTitle')}</DialogTitle>
+                        <DialogDescription>{t('template.chooseDescription')}</DialogDescription>
+                      </DialogHeader>
+                      <DialogBody className="space-y-3">
+                        <Input
+                          value={templateSearch}
+                          onChange={event => setTemplateSearch(event.target.value)}
+                          placeholder={t('template.searchPlaceholder')}
+                          leftIcon={<Search className="h-4 w-4" />}
+                        />
+                        <ScrollArea className="h-[420px] pr-3">
+                          <div className="space-y-2">
+                            {filteredTemplates.length > 0 ? (
+                              filteredTemplates.map(role => {
+                                const isCurrent = currentTemplateId === role.id;
+                                return (
+                                  <button
+                                    key={role.id}
+                                    type="button"
+                                    disabled={isBusy || isCurrent}
+                                    onClick={() => void handleApplyRoleOrTemplate(role)}
+                                    className={cn(
+                                      'flex w-full items-start justify-between gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5',
+                                      isCurrent
+                                        ? 'border-primary/30 bg-primary/5'
+                                        : 'border-border bg-background',
+                                      (isBusy || isCurrent) && 'cursor-default'
+                                    )}
+                                  >
+                                    <span className="min-w-0">
+                                      <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                                        <span className="truncate">{getRoleDisplayName(role)}</span>
+                                        {isCurrent ? (
+                                          <Badge
+                                            variant="secondary"
+                                            className="shrink-0 rounded-md"
+                                          >
+                                            {t('template.current')}
+                                          </Badge>
+                                        ) : null}
+                                      </span>
+                                      {getRoleDescription(role) ? (
+                                        <span className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">
+                                          {getRoleDescription(role)}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                    {isCurrent ? (
+                                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                                    ) : null}
+                                  </button>
+                                );
+                              })
+                            ) : (
+                              <div className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">
+                                {t('template.empty')}
+                              </div>
+                            )}
+                          </div>
+                        </ScrollArea>
+                      </DialogBody>
+                      <DialogFooter>
+                        <Button
+                          variant="outline"
+                          onClick={() => setTemplateDialogOpen(false)}
+                          disabled={isBusy}
+                        >
+                          {t('cancel')}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+                <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
+                  {t('template.hint')}
+                </p>
+              </div>
+            ) : null}
+
+            {isAdmin ? (
+              <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed bg-muted/20 px-8 py-10 text-center">
+                <div className="max-w-md">
+                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <ShieldCheck className="h-5 w-5" />
+                  </div>
+                  <h3 className="mt-4 text-sm font-semibold text-foreground">
+                    {t('adminPermissionPlaceholder.title')}
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                    {t('adminPermissionPlaceholder.description')}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <ScrollArea className="min-h-0 flex-1 pr-3">
+                <div className="space-y-4">
+                  {permissionModules.map(module => {
+                    const checked = moduleChecked(module);
+                    return (
+                      <section key={module.key} className="rounded-lg border bg-background">
+                        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+                          <div>
+                            <h3 className="text-sm font-semibold">
+                              {translatePermission(
+                                module.title,
+                                formatPermissionFallbackLabel(module.key, locale)
+                              )}
+                            </h3>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {t('moduleCount', { count: module.permissions.length })}
+                            </p>
+                          </div>
+                          <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                            <Checkbox
+                              checked={checked}
+                              disabled={!canEditDirectPermissions || isBusy}
+                              onCheckedChange={value => toggleModule(module, Boolean(value))}
+                            />
+                            {t('moduleAll')}
+                          </label>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 p-3 md:grid-cols-2 xl:grid-cols-3">
+                          {module.permissions.map(permission => {
+                            const permissionChecked = selectedPermissions.has(permission.code);
+                            return (
+                              <label
+                                key={permission.code}
+                                className={cn(
+                                  'flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors',
+                                  permissionChecked
+                                    ? 'border-primary/30 bg-primary/5'
+                                    : 'border-border bg-background hover:bg-muted/40',
+                                  (!canEditDirectPermissions || isBusy) &&
+                                    'cursor-not-allowed opacity-70'
+                                )}
+                              >
+                                <Checkbox
+                                  checked={permissionChecked}
+                                  disabled={!canEditDirectPermissions || isBusy}
+                                  onCheckedChange={() => togglePermission(permission.code)}
+                                  className="mt-0.5"
+                                />
+                                <span className="min-w-0">
+                                  <span className="block text-xs font-semibold text-foreground">
+                                    {translatePermission(
+                                      permission.name,
+                                      formatPermissionFallbackLabel(permission.code, locale)
+                                    )}
+                                  </span>
+                                  <span className="mt-1 block break-words text-[11px] leading-4 text-muted-foreground">
+                                    {translatePermission(
+                                      permission.description,
+                                      formatPermissionFallbackDescription(permission.code, locale)
+                                    )}
+                                  </span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            )}
+          </DialogBody>
+
+          <DialogFooter className="border-t bg-background/95 px-8 py-4">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isBusy}>
+              {t('cancel')}
+            </Button>
+            <Button
+              onClick={handleSave}
+              disabled={!canEditDirectPermissions || isBusy || !hasChanges}
+            >
+              <Save className="mr-1.5 h-4 w-4" />
+              {isSaving ? t('saving') : t('save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        open={Boolean(pendingDependencyChange)}
+        onOpenChange={nextOpen => {
+          if (!nextOpen) setPendingDependencyChange(null);
+        }}
+        title={t('dependencyConfirm.title')}
+        description={dependencyConfirmDescription}
+        confirmText={t('dependencyConfirm.confirm')}
+        cancelText={t('dependencyConfirm.cancel')}
+        onConfirm={confirmDependencyChange}
+      />
+    </>
   );
 }

@@ -135,17 +135,6 @@ export default function WorkspaceMembersPage() {
     return member.role_name || getRoleText(member.role);
   };
 
-  const getPermissionSourceLabel = (member: WorkspaceMemberAccount) => {
-    if (isFixedGovernanceRole(member.role)) return '';
-    if (member.permission_source === 'role_template') {
-      return t('dashboard.organization.workspaceManagement.detail.memberPermissions.source.template');
-    }
-    if (member.permission_source === 'legacy_role') {
-      return t('dashboard.organization.workspaceManagement.detail.memberPermissions.source.legacy');
-    }
-    return '';
-  };
-
   // Get status display text
   const getStatusText = (status: string) => {
     const statusKey = status as 'active' | 'pending' | 'banned' | 'uninitialized' | 'closed';
@@ -334,14 +323,6 @@ export default function WorkspaceMembersPage() {
                   >
                     {getMemberPermissionDisplayName(member)}
                   </Badge>
-                  {getPermissionSourceLabel(member) ? (
-                    <Badge
-                      variant="outline"
-                      className="max-w-[170px] truncate rounded-md text-[10px] font-medium"
-                    >
-                      {getPermissionSourceLabel(member)}
-                    </Badge>
-                  ) : null}
                 </div>
               </TableCell>
               <TableCell className="py-3.5">

@@ -821,7 +821,7 @@ func TestGetTablePromptRejectsTableOutsideDataSource(t *testing.T) {
 	}
 }
 
-func TestUpsertTablePromptRequiresDatabaseTablePromptManagePermission(t *testing.T) {
+func TestUpsertTablePromptRequiresDatabaseSchemaManagePermission(t *testing.T) {
 	workspaceID := "workspace-1"
 	authorization := &fakeAuthorizationService{allow: true}
 	svc := newScopedDataSourceService(map[string]*model.DataSource{
@@ -856,8 +856,8 @@ func TestUpsertTablePromptRequiresDatabaseTablePromptManagePermission(t *testing
 	if req.WorkspaceID != "workspace-1" {
 		t.Fatalf("workspace_id = %s, want workspace-1", req.WorkspaceID)
 	}
-	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseTablePromptManage {
-		t.Fatalf("permission codes = %#v, want database.table_prompt.manage", req.PermissionCodes)
+	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseSchemaManage {
+		t.Fatalf("permission codes = %#v, want database.schema.manage", req.PermissionCodes)
 	}
 }
 

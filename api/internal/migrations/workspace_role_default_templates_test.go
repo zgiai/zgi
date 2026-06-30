@@ -125,6 +125,13 @@ func TestWorkspaceRoleDefaultTemplatesMigrationUpPostgres(t *testing.T) {
 }
 
 func TestDefaultWorkspaceRoleTemplateDefinitionsExcludeNonConfigurablePermissions(t *testing.T) {
+	assignablePermissions := make(map[string]struct{})
+	assignableCodes := workspace_model.CanonicalAssignableWorkspacePermissionSnapshotStrings(
+		workspace_model.WorkspacePermissionStringsFromCodes(workspace_model.AllWorkspacePermissionCodes()),
+	)
+	for _, permission := range assignableCodes {
+		assignablePermissions[permission] = struct{}{}
+	}
 	for _, definition := range workspace_model.DefaultWorkspaceRoleTemplateDefinitions() {
 		for _, permission := range definition.Permissions {
 			code := workspace_model.WorkspacePermissionCode(permission)
@@ -133,6 +140,9 @@ func TestDefaultWorkspaceRoleTemplateDefinitionsExcludeNonConfigurablePermission
 			}
 			if strings.HasPrefix(permission, "prompt.") || strings.HasPrefix(permission, "content_parse.") {
 				t.Fatalf("default template %s contains retired tool permission %s", definition.SystemKey, permission)
+			}
+			if _, ok := assignablePermissions[permission]; !ok {
+				t.Fatalf("default template %s contains non-configurable permission %s", definition.SystemKey, permission)
 			}
 		}
 	}

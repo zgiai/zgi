@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { formatWorkflowElapsedMs } from '@/utils/format';
 import type { WorkflowTestBatch, WorkflowTestBatchItem } from '@/services/types/workflow-test';
+import { getAgentDetailBatchTestHref } from '@/utils/agent-detail-routes';
 
 interface BatchResultDetailProps {
   agentId: string;
@@ -119,6 +120,9 @@ export function BatchResultDetail({
   const batchStatusT = useT('agents.workflowTest.batchStatus');
   const summaryT = useT('agents.workflowTest.detail.summary');
   const itemStatusT = useT('agents.workflowTest.detail.itemStatus');
+  const batchesHref = getAgentDetailBatchTestHref(agentId, 'workflow', 'batches');
+  const getBatchItemHref = (itemId: string) =>
+    `${getAgentDetailBatchTestHref(agentId, 'workflow')}/${batchId}/items/${itemId}`;
   const {
     data: batchesData,
     isLoading: batchesLoading,
@@ -216,7 +220,7 @@ export function BatchResultDetail({
         <Card className="rounded-2xl">
           <CardContent className="p-6">
             <Button variant="ghost" size="sm" asChild className="mb-4 px-0 text-slate-600">
-              <Link href={`/console/agents/${agentId}/batch-test/batches`}>
+              <Link href={batchesHref}>
                 <ArrowLeft className="mr-2 size-4" />
                 {t('back')}
               </Link>
@@ -403,7 +407,7 @@ export function BatchResultDetail({
                       </TableCell>
                       <TableCell className="py-4 pr-6 text-right align-middle">
                         <Button variant="ghost" size="sm" asChild>
-                          <Link href={`/console/agents/${agentId}/batch-test/${batchId}/items/${item.id}`}>
+                          <Link href={getBatchItemHref(item.id)}>
                             {t('viewDetail')}
                           </Link>
                         </Button>

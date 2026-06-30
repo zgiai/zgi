@@ -1,7 +1,9 @@
 const messages = {
   agent: 'Agent',
   title: 'Agent Management',
+  workflowListTitle: 'Workflow Management',
   create: 'Create Agent',
+  createWorkflow: 'Create Workflow',
   createFolder: 'Create Folder',
   agentCreated: 'Agent created successfully',
   empty: 'No agents',
@@ -37,6 +39,7 @@ const messages = {
   // Navigation
   backToList: 'Back to Agents',
   backToAgentList: 'Agent list',
+  backToWorkflowList: 'Workflow list',
   permission: 'Permission',
 
   // Tab management
@@ -55,6 +58,7 @@ const messages = {
 
   // Search and filters
   searchPlaceholder: 'Search agents...',
+  workflowSearchPlaceholder: 'Search workflows...',
   filterAll: 'All',
   filterActive: 'Active',
   filterInactive: 'Inactive',
@@ -67,8 +71,14 @@ const messages = {
   noAgentsYet: 'No agents yet',
   noAgentsDescription:
     'Get started by creating your first agent to automate tasks and conversations.',
+  noWorkflowsYet: 'No workflows yet',
+  noWorkflowsDescription:
+    'Get started by creating your first workflow to orchestrate repeatable processes.',
+  workflowNoResultsDescription: 'No workflows match your search for "{keyword}".',
   createFirstAgent: 'Create Agent',
+  createFirstWorkflow: 'Create Workflow',
   importAgent: 'Import Agent',
+  importWorkflow: 'Import Workflow',
   importingAgent: 'Importing...',
   importSelectFile: 'Please select a YAML file',
   invalidImportFileType: 'Unsupported file format, expected .yml or .yaml',

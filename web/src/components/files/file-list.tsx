@@ -250,20 +250,8 @@ function FileListBase({
   const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);
   const canDeleteFilePermission = hasAnyPermission(FILE_PERMISSION_ACTIONS.delete);
   const canUpload = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
-  const canViewRelatedResources = hasAnyPermission(FILE_PERMISSION_ACTIONS.relatedView);
-  const canOpenFileDetailByPermission = hasAnyPermission([
-    ...FILE_PERMISSION_ACTIONS.metadataView,
-    ...FILE_PERMISSION_ACTIONS.preview,
-    ...FILE_PERMISSION_ACTIONS.relatedView,
-    ...FILE_PERMISSION_ACTIONS.download,
-    ...FILE_PERMISSION_ACTIONS.update,
-    ...FILE_PERMISSION_ACTIONS.delete,
-    ...FILE_PERMISSION_ACTIONS.move,
-    ...FILE_PERMISSION_ACTIONS.archive,
-    ...FILE_PERMISSION_ACTIONS.shareManage,
-    ...FILE_PERMISSION_ACTIONS.favoriteManage,
-  ]);
-  const canViewDetail = !selectionMode && canOpenFileDetailByPermission;
+  const canViewRelatedResources = !selectionMode;
+  const canViewDetail = !selectionMode;
   const canRequestProcessing = !selectionMode && canUpdateFile;
   const hasAnyAction =
     canViewDetail || canRequestProcessing || canDownload || canPreview || canDeleteFilePermission;

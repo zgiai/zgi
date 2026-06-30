@@ -47,10 +47,7 @@ export function AgentRuntimeDatabaseSection({
     {},
     { enabled: open && canBindReadableDatabase }
   );
-  const canUseAiQuery = hasAnyPermission([
-    ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
-    ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
-  ]);
+  const canUseAiQuery = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.aiQueryRead);
   const canWriteDatabaseRecords = hasAnyPermission([
     ...DATABASE_PERMISSION_ACTIONS.recordCreate,
     ...DATABASE_PERMISSION_ACTIONS.recordUpdate,

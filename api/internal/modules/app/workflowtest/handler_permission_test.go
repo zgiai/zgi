@@ -124,7 +124,7 @@ func TestHandlerTaskReadRoutesRequireWorkflowLogsViewBeforeTaskLookup(t *testing
 	}
 }
 
-func TestHandlerTaskCancelRoutesRequireWorkflowRunStopBeforeTaskLookup(t *testing.T) {
+func TestHandlerTaskCancelRoutesRequireWorkflowRunDraftBeforeTaskLookup(t *testing.T) {
 	agentID := "11111111-1111-1111-1111-111111111111"
 	taskID := "44444444-4444-4444-4444-444444444444"
 	tests := []struct {
@@ -174,7 +174,7 @@ func TestHandlerTaskCancelRoutesRequireWorkflowRunStopBeforeTaskLookup(t *testin
 			require.Equal(t, "org-1", permissionChecker.lastOrganizationID)
 			require.Equal(t, "workspace-1", permissionChecker.lastWorkspaceID)
 			require.Equal(t, "account-1", permissionChecker.lastAccountID)
-			require.Equal(t, workspace_model.WorkspacePermissionWorkflowRunStop, permissionChecker.lastPermission)
+			require.Equal(t, workspace_model.WorkspacePermissionWorkflowRunDraft, permissionChecker.lastPermission)
 		})
 	}
 }
@@ -235,7 +235,7 @@ func TestHandlerMutationRoutesRequireFineWorkflowPermissionBeforeSubresourceIDVa
 			name:           "retest batch",
 			method:         http.MethodPost,
 			target:         "/agents/" + agentID + "/workflow-tests/batches/not-a-uuid/retest",
-			wantPermission: workspace_model.WorkspacePermissionWorkflowDebug,
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRunDraft,
 			params: gin.Params{
 				{Key: "agent_id", Value: agentID},
 				{Key: "batch_id", Value: "not-a-uuid"},
@@ -246,7 +246,7 @@ func TestHandlerMutationRoutesRequireFineWorkflowPermissionBeforeSubresourceIDVa
 			name:           "start batch",
 			method:         http.MethodPost,
 			target:         "/agents/" + agentID + "/workflow-tests/batches/not-a-uuid/start",
-			wantPermission: workspace_model.WorkspacePermissionWorkflowDebug,
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRunDraft,
 			params: gin.Params{
 				{Key: "agent_id", Value: agentID},
 				{Key: "batch_id", Value: "not-a-uuid"},
@@ -257,7 +257,7 @@ func TestHandlerMutationRoutesRequireFineWorkflowPermissionBeforeSubresourceIDVa
 			name:           "execute batch",
 			method:         http.MethodPost,
 			target:         "/agents/" + agentID + "/workflow-tests/batches/not-a-uuid/execute",
-			wantPermission: workspace_model.WorkspacePermissionWorkflowDebug,
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRunDraft,
 			params: gin.Params{
 				{Key: "agent_id", Value: agentID},
 				{Key: "batch_id", Value: "not-a-uuid"},
@@ -268,7 +268,7 @@ func TestHandlerMutationRoutesRequireFineWorkflowPermissionBeforeSubresourceIDVa
 			name:           "cancel batch",
 			method:         http.MethodPost,
 			target:         "/agents/" + agentID + "/workflow-tests/batches/not-a-uuid/cancel",
-			wantPermission: workspace_model.WorkspacePermissionWorkflowRunStop,
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRunDraft,
 			params: gin.Params{
 				{Key: "agent_id", Value: agentID},
 				{Key: "batch_id", Value: "not-a-uuid"},
@@ -336,7 +336,7 @@ func TestHandlerMutationRoutesRequireFineWorkflowPermissionBeforeBindingRequest(
 			target:         "/agents/" + agentID + "/workflow-tests/scenarios/recognize",
 			params:         gin.Params{{Key: "agent_id", Value: agentID}},
 			call:           (*Handler).RecognizeScenarios,
-			wantPermission: workspace_model.WorkspacePermissionWorkflowDebug,
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRunDraft,
 		},
 		{
 			name:           "create scenario recognition task",
@@ -344,7 +344,7 @@ func TestHandlerMutationRoutesRequireFineWorkflowPermissionBeforeBindingRequest(
 			target:         "/agents/" + agentID + "/workflow-tests/scenarios/recognition-tasks",
 			params:         gin.Params{{Key: "agent_id", Value: agentID}},
 			call:           (*Handler).CreateScenarioRecognitionTask,
-			wantPermission: workspace_model.WorkspacePermissionWorkflowDebug,
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRunDraft,
 		},
 		{
 			name:           "create case",
@@ -368,7 +368,7 @@ func TestHandlerMutationRoutesRequireFineWorkflowPermissionBeforeBindingRequest(
 			target:         "/agents/" + agentID + "/workflow-tests/cases/generate",
 			params:         gin.Params{{Key: "agent_id", Value: agentID}},
 			call:           (*Handler).GenerateCases,
-			wantPermission: workspace_model.WorkspacePermissionWorkflowDebug,
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRunDraft,
 		},
 		{
 			name:           "create generation task",
@@ -376,7 +376,7 @@ func TestHandlerMutationRoutesRequireFineWorkflowPermissionBeforeBindingRequest(
 			target:         "/agents/" + agentID + "/workflow-tests/cases/generation-tasks",
 			params:         gin.Params{{Key: "agent_id", Value: agentID}},
 			call:           (*Handler).CreateGenerationTask,
-			wantPermission: workspace_model.WorkspacePermissionWorkflowDebug,
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRunDraft,
 		},
 		{
 			name:           "create batch",
@@ -390,7 +390,7 @@ func TestHandlerMutationRoutesRequireFineWorkflowPermissionBeforeBindingRequest(
 			name:           "retest batch",
 			method:         http.MethodPost,
 			target:         "/agents/" + agentID + "/workflow-tests/batches/" + batchID + "/retest",
-			wantPermission: workspace_model.WorkspacePermissionWorkflowDebug,
+			wantPermission: workspace_model.WorkspacePermissionWorkflowRunDraft,
 			params: gin.Params{
 				{Key: "agent_id", Value: agentID},
 				{Key: "batch_id", Value: batchID},

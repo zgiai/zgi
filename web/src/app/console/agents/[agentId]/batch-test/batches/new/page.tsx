@@ -27,10 +27,10 @@ export default function NewBatchTestPage({ params }: NewBatchTestPageProps) {
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canViewBatchTestLibrary = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.view);
   const canUpdateBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update);
-  const canDebugBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.debug);
+  const canRunBatchTest = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
   const canViewBatchTestLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
   const canCreateAndRunBatch =
-    canViewBatchTestLibrary && canViewBatchTestLogs && canUpdateBatchTest && canDebugBatchTest;
+    canViewBatchTestLibrary && canViewBatchTestLogs && canUpdateBatchTest && canRunBatchTest;
   const { agent, isLoading, error, refetch } = useAgent(agentId, canCreateAndRunBatch);
 
   if (isPermissionsLoading || (canCreateAndRunBatch && isLoading)) {
@@ -82,7 +82,7 @@ export default function NewBatchTestPage({ params }: NewBatchTestPageProps) {
   const canShowBatchTest = canShowAgentBatchTest(agent.data.agent_type, {
       canView: true,
       canViewBatchTest: canCreateAndRunBatch,
-      canRunBatchTest: canDebugBatchTest,
+      canRunBatchTest,
   });
   if (!supportsBatchTest || !canShowBatchTest) {
     return (

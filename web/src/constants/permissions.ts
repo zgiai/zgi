@@ -179,57 +179,36 @@ const enSegmentLabels: Record<string, string> = {
 const isChineseLocale = (locale?: string) => locale?.toLowerCase().startsWith('zh');
 
 const permissionFallbackNames: Record<string, { zhHans: string; enUS: string }> = {
-  'agent.lock': { zhHans: '锁定智能体', enUS: 'Lock agents' },
   'agent.create': { zhHans: '新建智能体', enUS: 'Create agents' },
   'agent.update': { zhHans: '编辑智能体', enUS: 'Edit agents' },
   'agent.delete': { zhHans: '删除智能体', enUS: 'Delete agents' },
   'agent.move': { zhHans: '移动智能体', enUS: 'Move agents' },
-  'agent.copy': { zhHans: '复制智能体', enUS: 'Duplicate agents' },
-  'agent.import': { zhHans: '导入智能体', enUS: 'Import agents' },
-  'agent.export': { zhHans: '导出智能体', enUS: 'Export agents' },
   'agent.publish': { zhHans: '发布智能体', enUS: 'Publish agents' },
-  'agent.runtime_config.manage': { zhHans: '配置智能体运行能力', enUS: 'Configure agent runtime' },
   'agent.runtime_access.manage': { zhHans: '配置智能体访问范围', enUS: 'Configure agent access' },
   'agent.logs.view': { zhHans: '查看智能体运行日志', enUS: 'View agent logs' },
-  'agent.stats.view': { zhHans: '查看智能体统计', enUS: 'View agent analytics' },
-  'agent.conversation.view': { zhHans: '查看智能体会话', enUS: 'View agent conversations' },
-  'agent.conversation.manage': { zhHans: '管理智能体会话', enUS: 'Manage agent conversations' },
   'workflow.view': { zhHans: '查看工作流', enUS: 'View workflows' },
   'workflow.create': { zhHans: '新建工作流', enUS: 'Create workflows' },
   'workflow.update': { zhHans: '编辑工作流', enUS: 'Edit workflows' },
   'workflow.delete': { zhHans: '删除工作流', enUS: 'Delete workflows' },
   'workflow.move': { zhHans: '移动工作流', enUS: 'Move workflows' },
-  'workflow.copy': { zhHans: '复制工作流', enUS: 'Duplicate workflows' },
-  'workflow.import': { zhHans: '导入工作流', enUS: 'Import workflows' },
-  'workflow.export': { zhHans: '导出工作流', enUS: 'Export workflows' },
+  'workflow.import': { zhHans: '导入/导出工作流', enUS: 'Import/export workflows' },
   'workflow.run.draft': { zhHans: '调试运行工作流', enUS: 'Run workflow drafts' },
-  'workflow.run.stop': { zhHans: '停止工作流运行', enUS: 'Stop workflow runs' },
-  'workflow.debug': { zhHans: '调试工作流', enUS: 'Debug workflows' },
   'workflow.publish': { zhHans: '发布工作流', enUS: 'Publish workflows' },
-  'workflow.runtime_config.manage': {
-    zhHans: '配置工作流运行能力',
-    enUS: 'Configure workflow runtime',
-  },
   'workflow.runtime_access.manage': {
     zhHans: '配置工作流访问范围',
     enUS: 'Configure workflow access',
   },
   'workflow.logs.view': { zhHans: '查看工作流日志', enUS: 'View workflow logs' },
-  'workflow.stats.view': { zhHans: '查看工作流统计', enUS: 'View workflow analytics' },
-  'workflow.events.view': { zhHans: '查看工作流事件', enUS: 'View workflow events' },
   'knowledge_base.retrieval_test': { zhHans: '使用召回测试', enUS: 'Run retrieval tests' },
   'knowledge_base.folder_manage': { zhHans: '管理知识库文件夹', enUS: 'Manage knowledge folders' },
-  'knowledge_base.lock': { zhHans: '锁定知识库', enUS: 'Lock knowledge bases' },
   'knowledge_base.create': { zhHans: '新建知识库', enUS: 'Create knowledge bases' },
   'knowledge_base.update': { zhHans: '编辑知识库', enUS: 'Edit knowledge bases' },
   'knowledge_base.delete': { zhHans: '删除知识库', enUS: 'Delete knowledge bases' },
   'knowledge_base.move': { zhHans: '移动知识库', enUS: 'Move knowledge bases' },
-  'knowledge_base.folder.view': { zhHans: '查看知识库文件夹', enUS: 'View knowledge folders' },
   'knowledge_base.document.view': { zhHans: '查看知识文档', enUS: 'View knowledge documents' },
   'knowledge_base.document.create': { zhHans: '新增知识文档', enUS: 'Add knowledge documents' },
   'knowledge_base.document.update': { zhHans: '编辑知识文档', enUS: 'Edit knowledge documents' },
   'knowledge_base.document.delete': { zhHans: '删除知识文档', enUS: 'Delete knowledge documents' },
-  'knowledge_base.segment.view': { zhHans: '查看文档分段', enUS: 'View document chunks' },
   'knowledge_base.segment.update': { zhHans: '编辑文档分段', enUS: 'Edit document chunks' },
   'knowledge_base.segment.delete': { zhHans: '删除文档分段', enUS: 'Delete document chunks' },
   'knowledge_base.index.manage': { zhHans: '管理知识库索引', enUS: 'Manage knowledge indexes' },
@@ -237,7 +216,6 @@ const permissionFallbackNames: Record<string, { zhHans: string; enUS: string }> 
   'knowledge_base.graph.manage': { zhHans: '管理知识图谱', enUS: 'Manage knowledge graph' },
   'database.data_edit': { zhHans: '编辑数据表内容', enUS: 'Edit table data' },
   'database.ai_query': { zhHans: '使用 AI 查询数据', enUS: 'Use AI data query' },
-  'database.lock': { zhHans: '锁定数据库', enUS: 'Lock databases' },
   'database.create': { zhHans: '新建数据库', enUS: 'Create databases' },
   'database.update': { zhHans: '编辑数据库', enUS: 'Edit databases' },
   'database.delete': { zhHans: '删除数据库', enUS: 'Delete databases' },
@@ -250,33 +228,21 @@ const permissionFallbackNames: Record<string, { zhHans: string; enUS: string }> 
   'database.record.delete': { zhHans: '删除表数据', enUS: 'Delete table records' },
   'database.import.analyze': { zhHans: '分析导入文件', enUS: 'Analyze imports' },
   'database.import.execute': { zhHans: '执行数据导入', enUS: 'Run data imports' },
-  'database.import.errors.view': { zhHans: '查看导入错误', enUS: 'View import errors' },
   'database.ai_query.read': { zhHans: 'AI 查询读取数据', enUS: 'AI query read access' },
-  'database.ai_query.write': { zhHans: 'AI 查询写入数据', enUS: 'AI query write access' },
-  'database.guard_policy.manage': { zhHans: '管理数据安全策略', enUS: 'Manage data guardrails' },
-  'database.table_prompt.view': { zhHans: '查看数据表提示词', enUS: 'View table prompts' },
-  'database.table_prompt.manage': { zhHans: '管理数据表提示词', enUS: 'Manage table prompts' },
   'database.sql_audit.view': { zhHans: '查看 SQL 审计', enUS: 'View SQL audit' },
   'database.operation_logs.view': {
     zhHans: '查看数据库操作日志',
     enUS: 'View database operation logs',
   },
   'file.upload_create': { zhHans: '上传或新建文件', enUS: 'Upload or create files' },
-  'file.download': { zhHans: '下载文件', enUS: 'Download files' },
   'file.move_create': { zhHans: '新建或移动文件夹', enUS: 'Create or move folders' },
-  'file.metadata.view': { zhHans: '查看文件信息', enUS: 'View file details' },
-  'file.preview': { zhHans: '预览文件', enUS: 'Preview files' },
+  'file.preview': { zhHans: '预览/下载文件', enUS: 'Preview/download files' },
   'file.upload': { zhHans: '上传文件', enUS: 'Upload files' },
   'file.text.create': { zhHans: '新建文本文件', enUS: 'Create text files' },
   'file.update': { zhHans: '编辑文件', enUS: 'Edit files' },
   'file.delete': { zhHans: '删除文件', enUS: 'Delete files' },
   'file.move': { zhHans: '移动文件', enUS: 'Move files' },
-  'file.archive': { zhHans: '归档文件', enUS: 'Archive files' },
-  'file.folder.view': { zhHans: '查看文件夹', enUS: 'View folders' },
   'file.folder.manage': { zhHans: '管理文件夹', enUS: 'Manage folders' },
-  'file.share.manage': { zhHans: '管理文件共享', enUS: 'Manage file sharing' },
-  'file.favorite.manage': { zhHans: '管理文件收藏', enUS: 'Manage file favorites' },
-  'file.related.view': { zhHans: '查看文件关联', enUS: 'View file relations' },
 };
 
 const getPermissionFallbackName = (code: string, locale?: string) => {
@@ -309,55 +275,37 @@ export const ALL_PERMISSION_CODES = [
   // Agent permissions
   'agent.view',
   'agent.manage',
-  'agent.lock',
   'agent.create',
   'agent.update',
   'agent.delete',
   'agent.move',
-  'agent.copy',
-  'agent.import',
-  'agent.export',
   'agent.publish',
-  'agent.runtime_config.manage',
   'agent.runtime_access.manage',
   'agent.logs.view',
-  'agent.stats.view',
-  'agent.conversation.view',
-  'agent.conversation.manage',
   // Workflow permissions
   'workflow.view',
   'workflow.create',
   'workflow.update',
   'workflow.delete',
   'workflow.move',
-  'workflow.copy',
   'workflow.import',
-  'workflow.export',
   'workflow.run.draft',
-  'workflow.run.stop',
-  'workflow.debug',
   'workflow.publish',
-  'workflow.runtime_config.manage',
   'workflow.runtime_access.manage',
   'workflow.logs.view',
-  'workflow.stats.view',
-  'workflow.events.view',
   // Knowledge base permissions
   'knowledge_base.view',
   'knowledge_base.manage',
   'knowledge_base.retrieval_test',
   'knowledge_base.folder_manage',
-  'knowledge_base.lock',
   'knowledge_base.create',
   'knowledge_base.update',
   'knowledge_base.delete',
   'knowledge_base.move',
-  'knowledge_base.folder.view',
   'knowledge_base.document.view',
   'knowledge_base.document.create',
   'knowledge_base.document.update',
   'knowledge_base.document.delete',
-  'knowledge_base.segment.view',
   'knowledge_base.segment.update',
   'knowledge_base.segment.delete',
   'knowledge_base.index.manage',
@@ -368,7 +316,6 @@ export const ALL_PERMISSION_CODES = [
   'database.manage',
   'database.data_edit',
   'database.ai_query',
-  'database.lock',
   'database.create',
   'database.update',
   'database.delete',
@@ -381,33 +328,21 @@ export const ALL_PERMISSION_CODES = [
   'database.record.delete',
   'database.import.analyze',
   'database.import.execute',
-  'database.import.errors.view',
   'database.ai_query.read',
-  'database.ai_query.write',
-  'database.guard_policy.manage',
-  'database.table_prompt.view',
-  'database.table_prompt.manage',
   'database.sql_audit.view',
   'database.operation_logs.view',
   // File permissions
   'file.view',
   'file.manage',
   'file.upload_create',
-  'file.download',
   'file.move_create',
-  'file.metadata.view',
   'file.preview',
   'file.upload',
   'file.text.create',
   'file.update',
   'file.delete',
   'file.move',
-  'file.archive',
-  'file.folder.view',
   'file.folder.manage',
-  'file.share.manage',
-  'file.favorite.manage',
-  'file.related.view',
 ] as const;
 
 /**
@@ -415,8 +350,12 @@ export const ALL_PERMISSION_CODES = [
  */
 export type PermissionCode = (typeof ALL_PERMISSION_CODES)[number];
 
+const ALL_PERMISSION_CODE_VALUES = new Set<string>(ALL_PERMISSION_CODES);
+
+const isPermissionCode = (permission: string): permission is PermissionCode =>
+  ALL_PERMISSION_CODE_VALUES.has(permission);
+
 export const DEPRECATED_ASSET_PERMISSION_CODES = [
-  'agent.view',
   'agent.manage',
   'knowledge_base.view',
   'knowledge_base.manage',
@@ -447,7 +386,6 @@ const COMPATIBILITY_PERMISSION_EXPANSIONS = {
     'database.record.update',
     'database.record.delete',
     'database.import.execute',
-    'database.import.errors.view',
   ],
   'database.ai_query': ['database.ai_query.read'],
   'file.upload_create': ['file.upload', 'file.text.create'],
@@ -471,6 +409,69 @@ export const SELECTABLE_PERMISSION_CODES = ALL_PERMISSION_CODES.filter(
     !COMPATIBILITY_PERMISSION_CODE_VALUES.has(code) &&
     !GOVERNANCE_PERMISSION_CODE_VALUES.has(code)
 ) as Array<Exclude<PermissionCode, DeprecatedAssetPermissionCode | CompatibilityPermissionCode>>;
+
+const SELECTABLE_PERMISSION_CODE_VALUES = new Set<string>(SELECTABLE_PERMISSION_CODES);
+
+export const PERMISSION_DEPENDENCIES: Partial<Record<PermissionCode, readonly PermissionCode[]>> = {
+  'agent.update': ['agent.view'],
+  'agent.delete': ['agent.view'],
+  'agent.move': ['agent.view'],
+  'agent.publish': ['agent.view'],
+  'agent.runtime_access.manage': ['agent.view'],
+  'agent.logs.view': ['agent.view'],
+  'workflow.update': ['workflow.view'],
+  'workflow.delete': ['workflow.view'],
+  'workflow.move': ['workflow.view'],
+  'workflow.run.draft': ['workflow.view'],
+  'workflow.publish': ['workflow.view'],
+  'workflow.runtime_access.manage': ['workflow.view'],
+  'workflow.logs.view': ['workflow.view'],
+  'database.schema.manage': ['database.schema.view'],
+  'database.record.view': ['database.schema.view'],
+  'database.record.create': ['database.schema.view', 'database.record.view'],
+  'database.record.update': ['database.schema.view', 'database.record.view'],
+  'database.record.delete': ['database.schema.view', 'database.record.view'],
+  'database.import.execute': ['database.import.analyze'],
+  'knowledge_base.document.create': ['knowledge_base.document.view'],
+  'knowledge_base.document.update': ['knowledge_base.document.view'],
+  'knowledge_base.document.delete': ['knowledge_base.document.view'],
+  'knowledge_base.segment.update': ['knowledge_base.document.view'],
+  'knowledge_base.segment.delete': ['knowledge_base.document.view'],
+  'knowledge_base.graph.manage': ['knowledge_base.graph.view'],
+};
+
+export const getMissingPermissionDependencies = (
+  currentPermissions: Iterable<string>,
+  requestedPermissions: Iterable<string>
+): PermissionCode[] => {
+  const current = new Set(currentPermissions);
+  const missing: PermissionCode[] = [];
+  const queue: PermissionCode[] = [];
+  const queued = new Set<string>();
+
+  for (const permission of requestedPermissions) {
+    if (!isPermissionCode(permission) || queued.has(permission)) continue;
+    queue.push(permission);
+    queued.add(permission);
+  }
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const dependencies = PERMISSION_DEPENDENCIES[queue[index]] ?? [];
+    for (const dependency of dependencies) {
+      if (!SELECTABLE_PERMISSION_CODE_VALUES.has(dependency) || current.has(dependency)) continue;
+
+      current.add(dependency);
+      missing.push(dependency);
+
+      if (!queued.has(dependency)) {
+        queue.push(dependency);
+        queued.add(dependency);
+      }
+    }
+  }
+
+  return missing;
+};
 
 export const normalizeSelectablePermissionCodes = (
   permissions?: readonly string[] | null
@@ -510,37 +511,31 @@ export const normalizeSelectablePermissionCodes = (
 // buttons and direct routes should use the matching action instead of manage groups.
 export const AGENT_PERMISSION_ACTIONS = {
   page: [
+    'agent.view',
     'agent.create',
-    'agent.import',
     'agent.logs.view',
-    'agent.stats.view',
-    'agent.conversation.view',
     'agent.update',
     'agent.delete',
-    'agent.lock',
     'agent.move',
-    'agent.copy',
-    'agent.export',
     'agent.publish',
-    'agent.runtime_config.manage',
     'agent.runtime_access.manage',
-    'agent.conversation.manage',
   ],
+  view: ['agent.view'],
   create: ['agent.create'],
-  import: ['agent.import'],
+  import: [],
   update: ['agent.update'],
   delete: ['agent.delete'],
-  lock: ['agent.lock'],
+  lock: [],
   move: ['agent.move'],
-  copy: ['agent.copy'],
-  export: ['agent.export'],
+  copy: [],
+  export: [],
   publish: ['agent.publish'],
-  runtimeConfigManage: ['agent.runtime_config.manage'],
+  runtimeConfigManage: ['agent.update'],
   runtimeAccessManage: ['agent.runtime_access.manage'],
   logsView: ['agent.logs.view'],
-  statsView: ['agent.stats.view'],
-  conversationView: ['agent.conversation.view'],
-  conversationManage: ['agent.conversation.manage'],
+  statsView: [],
+  conversationView: [],
+  conversationManage: [],
 } as const satisfies Record<string, readonly PermissionCode[]>;
 
 export const WORKFLOW_PERMISSION_ACTIONS = {
@@ -549,18 +544,11 @@ export const WORKFLOW_PERMISSION_ACTIONS = {
     'workflow.import',
     'workflow.view',
     'workflow.logs.view',
-    'workflow.stats.view',
-    'workflow.events.view',
     'workflow.update',
     'workflow.delete',
     'workflow.move',
-    'workflow.copy',
-    'workflow.export',
     'workflow.run.draft',
-    'workflow.run.stop',
-    'workflow.debug',
     'workflow.publish',
-    'workflow.runtime_config.manage',
     'workflow.runtime_access.manage',
   ],
   create: ['workflow.create'],
@@ -569,27 +557,22 @@ export const WORKFLOW_PERMISSION_ACTIONS = {
   update: ['workflow.update'],
   delete: ['workflow.delete'],
   move: ['workflow.move'],
-  copy: ['workflow.copy'],
-  export: ['workflow.export'],
+  copy: [],
+  export: ['workflow.import'],
   runDraft: ['workflow.run.draft'],
-  runStop: ['workflow.run.stop'],
-  debug: ['workflow.debug'],
   publish: ['workflow.publish'],
-  runtimeConfigManage: ['workflow.runtime_config.manage'],
+  runtimeConfigManage: ['workflow.update'],
   runtimeAccessManage: ['workflow.runtime_access.manage'],
   logsView: ['workflow.logs.view'],
-  statsView: ['workflow.stats.view'],
-  eventsView: ['workflow.events.view'],
+  statsView: [],
 } as const satisfies Record<string, readonly PermissionCode[]>;
 
 export const KNOWLEDGE_BASE_PERMISSION_ACTIONS = {
   page: [
     'knowledge_base.create',
-    'knowledge_base.folder.view',
     'knowledge_base.folder_manage',
     'knowledge_base.retrieval_test',
     'knowledge_base.document.view',
-    'knowledge_base.segment.view',
     'knowledge_base.graph.view',
     'knowledge_base.update',
     'knowledge_base.delete',
@@ -606,14 +589,14 @@ export const KNOWLEDGE_BASE_PERMISSION_ACTIONS = {
   update: ['knowledge_base.update'],
   delete: ['knowledge_base.delete'],
   move: ['knowledge_base.move'],
-  folderView: ['knowledge_base.folder.view'],
+  folderView: ['knowledge_base.document.view'],
   folderManage: ['knowledge_base.folder_manage'],
   retrievalTest: ['knowledge_base.retrieval_test'],
   documentView: ['knowledge_base.document.view'],
   documentCreate: ['knowledge_base.document.create'],
   documentUpdate: ['knowledge_base.document.update'],
   documentDelete: ['knowledge_base.document.delete'],
-  segmentView: ['knowledge_base.segment.view'],
+  segmentView: ['knowledge_base.document.view'],
   segmentUpdate: ['knowledge_base.segment.update'],
   segmentDelete: ['knowledge_base.segment.delete'],
   indexManage: ['knowledge_base.index.manage'],
@@ -635,14 +618,9 @@ export const DATABASE_PERMISSION_ACTIONS = {
     'database.record.delete',
     'database.import.analyze',
     'database.import.execute',
-    'database.import.errors.view',
-    'database.guard_policy.manage',
-    'database.table_prompt.view',
-    'database.table_prompt.manage',
     'database.operation_logs.view',
     'database.sql_audit.view',
     'database.ai_query.read',
-    'database.ai_query.write',
   ],
   create: ['database.create'],
   update: ['database.update'],
@@ -656,53 +634,39 @@ export const DATABASE_PERMISSION_ACTIONS = {
   recordDelete: ['database.record.delete'],
   importAnalyze: ['database.import.analyze'],
   importExecute: ['database.import.execute'],
-  importErrorsView: ['database.import.errors.view'],
-  guardPolicyManage: ['database.guard_policy.manage'],
-  tablePromptView: ['database.table_prompt.view'],
-  tablePromptManage: ['database.table_prompt.manage'],
+  importErrorsView: ['database.import.analyze', 'database.import.execute'],
+  guardPolicyManage: ['database.schema.manage'],
+  tablePromptView: ['database.schema.view'],
+  tablePromptManage: ['database.schema.manage'],
   operationLogsView: ['database.operation_logs.view'],
   sqlAuditView: ['database.sql_audit.view'],
   aiQueryRead: ['database.ai_query.read'],
-  aiQueryWrite: ['database.ai_query.write'],
+  aiQueryWrite: [],
 } as const satisfies Record<string, readonly PermissionCode[]>;
 
 export const FILE_PERMISSION_ACTIONS = {
-  page: [
-    'file.metadata.view',
-    'file.preview',
-    'file.folder.view',
-    'file.related.view',
-    'file.download',
-    'file.upload',
-    'file.text.create',
-    'file.update',
-    'file.delete',
-    'file.move',
-    'file.archive',
-    'file.folder.manage',
-    'file.share.manage',
-    'file.favorite.manage',
-  ],
-  metadataView: ['file.metadata.view'],
+  page: [],
   preview: ['file.preview'],
-  folderView: ['file.folder.view'],
-  relatedView: ['file.related.view'],
-  download: ['file.download'],
+  folderView: [],
+  relatedView: [],
+  download: ['file.preview'],
   upload: ['file.upload'],
   textCreate: ['file.text.create'],
   update: ['file.update'],
   delete: ['file.delete'],
   move: ['file.move'],
-  archive: ['file.archive'],
+  archive: [],
   folderManage: ['file.folder.manage'],
-  shareManage: ['file.share.manage'],
-  favoriteManage: ['file.favorite.manage'],
+  shareManage: [],
+  favoriteManage: [],
 } as const satisfies Record<string, readonly PermissionCode[]>;
 
 export const AGENT_ASSET_VISIBLE_PERMISSION_CODES = [
   ...AGENT_PERMISSION_ACTIONS.page,
   ...WORKFLOW_PERMISSION_ACTIONS.page,
 ] as const satisfies readonly PermissionCode[];
+
+export const AGENT_VISIBLE_PERMISSION_CODES = AGENT_PERMISSION_ACTIONS.page;
 
 export const AGENT_MANAGE_PERMISSION_CODES = [
   ...AGENT_PERMISSION_ACTIONS.update,
@@ -728,8 +692,6 @@ export const WORKFLOW_MANAGE_PERMISSION_CODES = [
   ...WORKFLOW_PERMISSION_ACTIONS.import,
   ...WORKFLOW_PERMISSION_ACTIONS.export,
   ...WORKFLOW_PERMISSION_ACTIONS.runDraft,
-  ...WORKFLOW_PERMISSION_ACTIONS.runStop,
-  ...WORKFLOW_PERMISSION_ACTIONS.debug,
   ...WORKFLOW_PERMISSION_ACTIONS.publish,
   ...WORKFLOW_PERMISSION_ACTIONS.runtimeConfigManage,
   ...WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage,
@@ -738,9 +700,7 @@ export const WORKFLOW_MANAGE_PERMISSION_CODES = [
 export const KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES = KNOWLEDGE_BASE_PERMISSION_ACTIONS.page;
 
 export const KNOWLEDGE_BASE_READ_PERMISSION_CODES = [
-  ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.folderView,
   ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView,
-  ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.segmentView,
   ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphView,
   ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.update,
   ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.delete,
@@ -787,11 +747,7 @@ export const DATABASE_TABLE_METADATA_PERMISSION_CODES = [
   ...DATABASE_PERMISSION_ACTIONS.recordDelete,
   ...DATABASE_PERMISSION_ACTIONS.importAnalyze,
   ...DATABASE_PERMISSION_ACTIONS.importExecute,
-  ...DATABASE_PERMISSION_ACTIONS.importErrorsView,
-  ...DATABASE_PERMISSION_ACTIONS.tablePromptView,
-  ...DATABASE_PERMISSION_ACTIONS.tablePromptManage,
   ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
-  ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
 ] as const satisfies readonly PermissionCode[];
 
 export const DATABASE_MANAGE_PERMISSION_CODES = [
@@ -805,9 +761,7 @@ export const DATABASE_MANAGE_PERMISSION_CODES = [
   ...DATABASE_PERMISSION_ACTIONS.recordDelete,
   ...DATABASE_PERMISSION_ACTIONS.importAnalyze,
   ...DATABASE_PERMISSION_ACTIONS.importExecute,
-  ...DATABASE_PERMISSION_ACTIONS.guardPolicyManage,
   ...DATABASE_PERMISSION_ACTIONS.tablePromptManage,
-  ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
 ] as const satisfies readonly PermissionCode[];
 
 export const FILE_VISIBLE_PERMISSION_CODES = FILE_PERMISSION_ACTIONS.page;
@@ -818,10 +772,7 @@ export const FILE_MANAGE_PERMISSION_CODES = [
   ...FILE_PERMISSION_ACTIONS.update,
   ...FILE_PERMISSION_ACTIONS.delete,
   ...FILE_PERMISSION_ACTIONS.move,
-  ...FILE_PERMISSION_ACTIONS.archive,
   ...FILE_PERMISSION_ACTIONS.folderManage,
-  ...FILE_PERMISSION_ACTIONS.shareManage,
-  ...FILE_PERMISSION_ACTIONS.favoriteManage,
 ] as const satisfies readonly PermissionCode[];
 
 const permissionItem = (code: PermissionCode): PermissionItem => ({

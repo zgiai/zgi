@@ -116,8 +116,11 @@ func TestExcelImportReadRoutesRequireDatabasePermissionBeforeJobLookup(t *testin
 				{Key: "id", Value: "datasource-1"},
 				{Key: "job_id", Value: "job-1"},
 			},
-			call:            (*DataSourceHandler).ListExcelImportErrors,
-			wantPermissions: []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseImportErrorsView},
+			call: (*DataSourceHandler).ListExcelImportErrors,
+			wantPermissions: []workspace_model.WorkspacePermissionCode{
+				workspace_model.WorkspacePermissionDatabaseImportAnalyze,
+				workspace_model.WorkspacePermissionDatabaseImportExecute,
+			},
 		},
 	}
 
@@ -190,7 +193,7 @@ func TestDeleteDataSourceRequiresDatabaseDeleteBeforeMutation(t *testing.T) {
 	require.Zero(t, dataSourceService.deleteDataSourceCalls)
 }
 
-func TestGuardPolicyRoutesRequireDatabaseGuardPolicyManageBeforeServiceLookup(t *testing.T) {
+func TestGuardPolicyRoutesRequireDatabaseSchemaManageBeforeServiceLookup(t *testing.T) {
 	tests := []struct {
 		name       string
 		method     string
@@ -253,7 +256,7 @@ func TestGuardPolicyRoutesRequireDatabaseGuardPolicyManageBeforeServiceLookup(t 
 			requireResponseCode(t, recorder, response.ErrPermissionDenied)
 			require.Equal(t, 1, dataSourceService.getDataSourceCalls)
 			require.Equal(t, 1, permissionChecker.calls)
-			require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseGuardPolicyManage}, permissionChecker.lastPermissions)
+			require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseSchemaManage}, permissionChecker.lastPermissions)
 			tt.assertZero(t, dataSourceService)
 		})
 	}
@@ -639,7 +642,7 @@ func TestDeleteTableRecordsRequiresDatabaseRecordDeleteBeforeIDValidation(t *tes
 	require.Zero(t, dataSourceService.deleteTableRecordsCalls)
 }
 
-func TestGetTablePromptRequiresDatabaseTablePromptViewBeforeProfileLookup(t *testing.T) {
+func TestGetTablePromptRequiresDatabaseSchemaViewBeforeProfileLookup(t *testing.T) {
 	dataSourceService := &excelImportPermissionDataSourceService{workspaceID: "workspace-1"}
 	permissionChecker := &excelImportPermissionChecker{allowed: false}
 	handler := &DataSourceHandler{
@@ -661,10 +664,10 @@ func TestGetTablePromptRequiresDatabaseTablePromptViewBeforeProfileLookup(t *tes
 	requireResponseCode(t, recorder, response.ErrPermissionDenied)
 	require.Equal(t, 1, dataSourceService.getDataSourceCalls)
 	require.Equal(t, 1, permissionChecker.calls)
-	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseTablePromptView}, permissionChecker.lastPermissions)
+	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseSchemaView}, permissionChecker.lastPermissions)
 }
 
-func TestUpsertTablePromptRequiresDatabaseTablePromptManageBeforeBindingRequest(t *testing.T) {
+func TestUpsertTablePromptRequiresDatabaseSchemaManageBeforeBindingRequest(t *testing.T) {
 	dataSourceService := &excelImportPermissionDataSourceService{workspaceID: "workspace-1"}
 	permissionChecker := &excelImportPermissionChecker{allowed: false}
 	handler := &DataSourceHandler{
@@ -686,11 +689,11 @@ func TestUpsertTablePromptRequiresDatabaseTablePromptManageBeforeBindingRequest(
 	requireResponseCode(t, recorder, response.ErrPermissionDenied)
 	require.Equal(t, 1, dataSourceService.getDataSourceCalls)
 	require.Equal(t, 1, permissionChecker.calls)
-	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseTablePromptManage}, permissionChecker.lastPermissions)
+	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseSchemaManage}, permissionChecker.lastPermissions)
 	require.Zero(t, dataSourceService.upsertTablePromptCalls)
 }
 
-func TestDeleteTablePromptRequiresDatabaseTablePromptManageBeforeMutation(t *testing.T) {
+func TestDeleteTablePromptRequiresDatabaseSchemaManageBeforeMutation(t *testing.T) {
 	dataSourceService := &excelImportPermissionDataSourceService{workspaceID: "workspace-1"}
 	permissionChecker := &excelImportPermissionChecker{allowed: false}
 	handler := &DataSourceHandler{
@@ -712,7 +715,7 @@ func TestDeleteTablePromptRequiresDatabaseTablePromptManageBeforeMutation(t *tes
 	requireResponseCode(t, recorder, response.ErrPermissionDenied)
 	require.Equal(t, 1, dataSourceService.getDataSourceCalls)
 	require.Equal(t, 1, permissionChecker.calls)
-	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseTablePromptManage}, permissionChecker.lastPermissions)
+	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseSchemaManage}, permissionChecker.lastPermissions)
 }
 
 func TestListOperationLogsRequiresDatabaseOperationLogsViewBeforeLookup(t *testing.T) {

@@ -157,7 +157,7 @@ func TestAgentsService_UpdateWebAppStatus_RejectsRuntimeConfigWithoutRuntimeAcce
 	}
 	orgService := &stubWebAppStatusOrganizationService{
 		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
-			workspace_model.WorkspacePermissionAgentRuntimeConfigManage: true,
+			workspace_model.WorkspacePermissionAgentUpdate: true,
 		},
 	}
 	service := &agentsService{
@@ -521,7 +521,7 @@ func TestAgentsService_GetAgentConfig_AllowsRuntimeDetailReadPermissions(t *test
 	require.True(t, repo.createConfigCalled)
 }
 
-func TestAgentsService_GetAgentDraftRuntimeConfig_StillRequiresRuntimeConfigManage(t *testing.T) {
+func TestAgentsService_GetAgentDraftRuntimeConfig_StillRequiresAgentUpdate(t *testing.T) {
 	ctx := webAppStatusTestContext()
 	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	accountID := "99999999-9999-9999-9999-999999999999"
@@ -661,7 +661,7 @@ func TestAgentsService_GetAgent_RejectsMissingWorkspaceViewPermission(t *testing
 	require.EqualError(t, err, "permission denied")
 	require.True(t, orgService.checkCalled)
 	require.Equal(t, agentAssetVisiblePermissionCodes(), orgService.lastPermissions)
-	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentView)
+	require.Contains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentView)
 	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentManage)
 }
 
@@ -694,7 +694,7 @@ func TestAgentsService_GetAgentRuntimeSurfaces_UsesWorkspaceViewAndLegacyFallbac
 	require.Equal(t, "88888888-8888-8888-8888-888888888888", resp.OrganizationID)
 	require.True(t, orgService.checkCalled)
 	require.Equal(t, agentAssetVisiblePermissionCodes(), orgService.lastPermissions)
-	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentView)
+	require.Contains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentView)
 	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentManage)
 
 	surfaces := runtimeSurfaceTestMap(resp.Surfaces)
@@ -773,7 +773,7 @@ func TestAgentsService_UpdateAgentRuntimeSurfaces_RequiresRuntimeAccessPermissio
 	orgService := &stubWebAppStatusOrganizationService{
 		organizationID: "88888888-8888-8888-8888-888888888888",
 		allowedPermissions: map[workspace_model.WorkspacePermissionCode]bool{
-			workspace_model.WorkspacePermissionAgentRuntimeConfigManage: true,
+			workspace_model.WorkspacePermissionAgentUpdate: true,
 		},
 	}
 	service := &agentsService{

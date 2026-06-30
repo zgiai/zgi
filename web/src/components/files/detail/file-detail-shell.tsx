@@ -691,21 +691,11 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const { files: t, common } = useT();
   const {
     hasAnyPermission,
+    hasWorkspaceAccess,
     isLoading: isPermissionsLoading,
   } = useAccountPermissions();
   const { canManageModelConfig } = useAccountCapabilities();
-  const canOpenFileDetail = hasAnyPermission([
-    ...FILE_PERMISSION_ACTIONS.metadataView,
-    ...FILE_PERMISSION_ACTIONS.preview,
-    ...FILE_PERMISSION_ACTIONS.relatedView,
-    ...FILE_PERMISSION_ACTIONS.download,
-    ...FILE_PERMISSION_ACTIONS.update,
-    ...FILE_PERMISSION_ACTIONS.delete,
-    ...FILE_PERMISSION_ACTIONS.move,
-    ...FILE_PERMISSION_ACTIONS.archive,
-    ...FILE_PERMISSION_ACTIONS.shareManage,
-    ...FILE_PERMISSION_ACTIONS.favoriteManage,
-  ]);
+  const canOpenFileDetail = hasWorkspaceAccess();
   const canDownload = hasAnyPermission(FILE_PERMISSION_ACTIONS.download);
   const canPreviewFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.preview);
   const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);

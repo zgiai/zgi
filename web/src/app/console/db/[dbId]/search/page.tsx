@@ -54,10 +54,7 @@ export default function DbSearchPage() {
   const user = useCurrentUser();
   const { getWorkflowRunErrorText, notifyBillingError } = useWorkflowBillingFeedback('webapp');
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canAiQuery = hasAnyPermission([
-    ...DATABASE_PERMISSION_ACTIONS.aiQueryRead,
-    ...DATABASE_PERMISSION_ACTIONS.aiQueryWrite,
-  ]);
+  const canAiQuery = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.aiQueryRead);
 
   // Route param for current DB
   const params = useParams<{ dbId: string }>();

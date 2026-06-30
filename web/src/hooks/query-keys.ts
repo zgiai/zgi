@@ -15,7 +15,10 @@ export const ORGANIZATION_KEYS = {
     [...ORGANIZATION_KEYS.all, 'current-members', params].filter(Boolean),
   currentMember: (memberId: string | null) =>
     [...ORGANIZATION_KEYS.all, 'current-member', memberId].filter(Boolean),
-  roles: (orgId: string) => [...ORGANIZATION_KEYS.all, 'roles', orgId] as const,
+  roles: (orgId: string, params?: unknown) =>
+    params === undefined
+      ? ([...ORGANIZATION_KEYS.all, 'roles', orgId] as const)
+      : ([...ORGANIZATION_KEYS.all, 'roles', orgId, params] as const),
   roleDetail: (orgId: string, roleId: string) =>
     [...ORGANIZATION_KEYS.all, 'role-detail', orgId, roleId] as const,
   roleMembers: (orgId: string, roleId: string) =>

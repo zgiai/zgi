@@ -43,7 +43,7 @@ func TestAuthorizeFileAccessRejectsCrossOrganizationFile(t *testing.T) {
 	}
 }
 
-func TestAuthorizeFileViewAccessAllowsWorkspaceDownloadPermission(t *testing.T) {
+func TestAuthorizeFileViewAccessAllowsWorkspaceMembershipPermission(t *testing.T) {
 	c, _ := newFileAccessTestContext("account-1", "org-1")
 	workspaceID := "workspace-1"
 	fileService := &fileAccessFileService{
@@ -58,7 +58,7 @@ func TestAuthorizeFileViewAccessAllowsWorkspaceDownloadPermission(t *testing.T) 
 	}
 	permissionChecker := &fileAccessPermissionChecker{
 		allowed: map[workspace_model.WorkspacePermissionCode]bool{
-			workspace_model.WorkspacePermissionFileDownload: true,
+			workspace_model.WorkspacePermissionWorkspaceView: true,
 		},
 	}
 
@@ -110,8 +110,8 @@ func TestAuthorizeFileViewAccessRejectsWorkspaceUploadOnlyPermission(t *testing.
 	if containsWorkspacePermission(permissionChecker.lastPermissions, workspace_model.WorkspacePermissionFileUpload) {
 		t.Fatalf("permissions = %#v should not treat upload as file view access", permissionChecker.lastPermissions)
 	}
-	if !containsWorkspacePermission(fileBrowsePermissionCodes(), workspace_model.WorkspacePermissionFileUpload) {
-		t.Fatalf("fileBrowsePermissionCodes should retain file.upload for file page entry browsing")
+	if containsWorkspacePermission(fileBrowsePermissionCodes(), workspace_model.WorkspacePermissionFileUpload) {
+		t.Fatalf("fileBrowsePermissionCodes should not require file.upload for file page entry browsing")
 	}
 }
 
@@ -261,7 +261,7 @@ func TestAuthorizeFileActionAccessUsesFinePermissions(t *testing.T) {
 		{
 			name:           "archive",
 			authorize:      authorizeFileArchiveAccess,
-			permissionCode: workspace_model.WorkspacePermissionFileArchive,
+			permissionCode: workspace_model.WorkspacePermissionFileUpdate,
 		},
 	}
 
@@ -430,10 +430,10 @@ func TestAuthorizeFileFolderViewAllowsPartialTeamWorkspacePermission(t *testing.
 	permissionChecker := &fileAccessPermissionChecker{
 		allowedByWorkspace: map[string]map[workspace_model.WorkspacePermissionCode]bool{
 			workspaceID: {
-				workspace_model.WorkspacePermissionFileFolderView: true,
+				workspace_model.WorkspacePermissionWorkspaceView: true,
 			},
 			sharedWorkspaceID: {
-				workspace_model.WorkspacePermissionFileFolderView: true,
+				workspace_model.WorkspacePermissionWorkspaceView: true,
 			},
 		},
 	}
@@ -720,7 +720,7 @@ func TestGetFileStatisticsScopesServiceToVisibleWorkspaces(t *testing.T) {
 			checker: &fileAccessPermissionChecker{
 				allowedByWorkspace: map[string]map[workspace_model.WorkspacePermissionCode]bool{
 					"workspace-visible": {
-						workspace_model.WorkspacePermissionFileDownload: true,
+						workspace_model.WorkspacePermissionWorkspaceView: true,
 					},
 				},
 			},
@@ -758,7 +758,7 @@ func TestGetFileStatisticsScopesServiceToVisibleWorkspaces(t *testing.T) {
 	}
 }
 
-func TestGetRelatedResourcesRequiresFileRelatedPermissionBeforeServiceLookup(t *testing.T) {
+func TestGetRelatedResourcesRequiresFileReadablePermissionBeforeServiceLookup(t *testing.T) {
 	fileID := "11111111-1111-1111-1111-111111111111"
 	fileWorkspaceID := "file-workspace"
 	folderService := &fileResourcePermissionFolderService{}
@@ -775,7 +775,7 @@ func TestGetRelatedResourcesRequiresFileRelatedPermissionBeforeServiceLookup(t *
 	permissionChecker := &fileAccessPermissionChecker{
 		allowedByWorkspace: map[string]map[workspace_model.WorkspacePermissionCode]bool{
 			fileWorkspaceID: {
-				workspace_model.WorkspacePermissionFilePreview: true,
+				workspace_model.WorkspacePermissionFileUpload: true,
 			},
 		},
 	}
@@ -799,7 +799,7 @@ func TestGetRelatedResourcesRequiresFileRelatedPermissionBeforeServiceLookup(t *
 			folderService.getRelatedDatasetsCalls,
 		)
 	}
-	wantPermissions := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionFileRelatedView}
+	wantPermissions := fileReadablePermissionCodes()
 	if !reflect.DeepEqual(permissionChecker.lastPermissions, wantPermissions) {
 		t.Fatalf("permissions = %#v, want %#v", permissionChecker.lastPermissions, wantPermissions)
 	}
@@ -837,7 +837,7 @@ func TestGetRelatedResourcesFiltersKnowledgeBaseResourcesByReadPermission(t *tes
 			checker: &fileAccessPermissionChecker{
 				allowedByWorkspace: map[string]map[workspace_model.WorkspacePermissionCode]bool{
 					fileWorkspaceID: {
-						workspace_model.WorkspacePermissionFileRelatedView: true,
+						workspace_model.WorkspacePermissionWorkspaceView: true,
 					},
 					visibleDatasetWorkspaceID: {
 						workspace_model.WorkspacePermissionKnowledgeBaseDocumentView: true,

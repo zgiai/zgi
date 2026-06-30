@@ -294,19 +294,6 @@ export default function WorkspaceDetailPage() {
     }
   };
 
-  const getPermissionSourceLabel = (member: WorkspaceMemberAccount) => {
-    if (member.role === 'owner' || member.permission_source === 'owner') {
-      return t('detail.memberPermissions.source.owner');
-    }
-    if (member.permission_source === 'direct') {
-      return t('detail.memberPermissions.source.direct');
-    }
-    if (member.permission_source === 'legacy_role') {
-      return t('detail.memberPermissions.source.legacy');
-    }
-    return t('detail.memberPermissions.source.template');
-  };
-
   const getMemberPermissionDisplayName = (member: WorkspaceMemberAccount) => {
     if (isFixedGovernanceRole(member.role)) {
       return getFixedRoleLabel(member.role);
@@ -639,14 +626,6 @@ export default function WorkspaceDetailPage() {
                         >
                           {getMemberPermissionDisplayName(member)}
                         </Badge>
-                        {!isFixedGovernanceRole(member.role) ? (
-                          <Badge
-                            variant="outline"
-                            className="mt-2 block w-fit rounded-md text-[10px] font-medium"
-                          >
-                            {getPermissionSourceLabel(member)}
-                          </Badge>
-                        ) : null}
                       </TableCell>
                       <TableCell className="py-4 text-[13px] text-text-secondary font-medium">
                         {member.department_name || '-'}
@@ -662,7 +641,7 @@ export default function WorkspaceDetailPage() {
                                   isIcon
                                   aria-label={t('detail.memberPermissions.edit')}
                                   title={t('detail.memberPermissions.edit')}
-                                  className="h-8 w-8 rounded-lg text-text-placeholder hover:bg-primary/10 hover:text-primary transition-all shadow-none opacity-0 group-hover:opacity-100"
+                                  className="h-8 w-8 rounded-lg text-text-placeholder hover:bg-primary/10 hover:text-primary transition-all shadow-none"
                                   onClick={() => {
                                     setMemberToEditPermissions(member);
                                     setPermissionsDialogOpen(true);
@@ -685,7 +664,7 @@ export default function WorkspaceDetailPage() {
                                   isIcon
                                   aria-label={t('detail.remove')}
                                   title={t('detail.remove')}
-                                  className="h-8 w-8 rounded-lg text-text-placeholder hover:bg-destructive hover:text-destructive-foreground transition-all shadow-none opacity-0 group-hover:opacity-100"
+                                  className="h-8 w-8 rounded-lg text-text-placeholder hover:bg-destructive hover:text-destructive-foreground transition-all shadow-none"
                                   onClick={() => {
                                     setMemberToRemove(member.id);
                                     setRemoveMemberDialogOpen(true);

@@ -13,6 +13,7 @@ const messages = {
   products: 'Products',
   datasets: 'Datasets',
   agents: 'Agents',
+  workflows: 'Workflows',
   prompts: 'Prompts',
   dbs: 'Databases',
   files: 'Files',

@@ -93,55 +93,37 @@ const (
 
 	WorkspacePermissionAgentView                WorkspacePermissionCode = "agent.view"
 	WorkspacePermissionAgentManage              WorkspacePermissionCode = "agent.manage"
-	WorkspacePermissionAgentLock                WorkspacePermissionCode = "agent.lock"
 	WorkspacePermissionAgentCreate              WorkspacePermissionCode = "agent.create"
 	WorkspacePermissionAgentUpdate              WorkspacePermissionCode = "agent.update"
 	WorkspacePermissionAgentDelete              WorkspacePermissionCode = "agent.delete"
 	WorkspacePermissionAgentMove                WorkspacePermissionCode = "agent.move"
-	WorkspacePermissionAgentCopy                WorkspacePermissionCode = "agent.copy"
-	WorkspacePermissionAgentImport              WorkspacePermissionCode = "agent.import"
-	WorkspacePermissionAgentExport              WorkspacePermissionCode = "agent.export"
 	WorkspacePermissionAgentPublish             WorkspacePermissionCode = "agent.publish"
-	WorkspacePermissionAgentRuntimeConfigManage WorkspacePermissionCode = "agent.runtime_config.manage"
 	WorkspacePermissionAgentRuntimeAccessManage WorkspacePermissionCode = "agent.runtime_access.manage"
 	WorkspacePermissionAgentLogsView            WorkspacePermissionCode = "agent.logs.view"
-	WorkspacePermissionAgentStatsView           WorkspacePermissionCode = "agent.stats.view"
-	WorkspacePermissionAgentConversationView    WorkspacePermissionCode = "agent.conversation.view"
-	WorkspacePermissionAgentConversationManage  WorkspacePermissionCode = "agent.conversation.manage"
 
 	WorkspacePermissionWorkflowView                WorkspacePermissionCode = "workflow.view"
 	WorkspacePermissionWorkflowCreate              WorkspacePermissionCode = "workflow.create"
 	WorkspacePermissionWorkflowUpdate              WorkspacePermissionCode = "workflow.update"
 	WorkspacePermissionWorkflowDelete              WorkspacePermissionCode = "workflow.delete"
 	WorkspacePermissionWorkflowMove                WorkspacePermissionCode = "workflow.move"
-	WorkspacePermissionWorkflowCopy                WorkspacePermissionCode = "workflow.copy"
 	WorkspacePermissionWorkflowImport              WorkspacePermissionCode = "workflow.import"
-	WorkspacePermissionWorkflowExport              WorkspacePermissionCode = "workflow.export"
 	WorkspacePermissionWorkflowRunDraft            WorkspacePermissionCode = "workflow.run.draft"
-	WorkspacePermissionWorkflowRunStop             WorkspacePermissionCode = "workflow.run.stop"
-	WorkspacePermissionWorkflowDebug               WorkspacePermissionCode = "workflow.debug"
 	WorkspacePermissionWorkflowPublish             WorkspacePermissionCode = "workflow.publish"
-	WorkspacePermissionWorkflowRuntimeConfigManage WorkspacePermissionCode = "workflow.runtime_config.manage"
 	WorkspacePermissionWorkflowRuntimeAccessManage WorkspacePermissionCode = "workflow.runtime_access.manage"
 	WorkspacePermissionWorkflowLogsView            WorkspacePermissionCode = "workflow.logs.view"
-	WorkspacePermissionWorkflowStatsView           WorkspacePermissionCode = "workflow.stats.view"
-	WorkspacePermissionWorkflowEventsView          WorkspacePermissionCode = "workflow.events.view"
 
 	WorkspacePermissionKnowledgeBaseView           WorkspacePermissionCode = "knowledge_base.view"
 	WorkspacePermissionKnowledgeBaseManage         WorkspacePermissionCode = "knowledge_base.manage"
 	WorkspacePermissionKnowledgeBaseRetrievalTest  WorkspacePermissionCode = "knowledge_base.retrieval_test"
 	WorkspacePermissionKnowledgeBaseFolderManage   WorkspacePermissionCode = "knowledge_base.folder_manage"
-	WorkspacePermissionKnowledgeBaseLock           WorkspacePermissionCode = "knowledge_base.lock"
 	WorkspacePermissionKnowledgeBaseCreate         WorkspacePermissionCode = "knowledge_base.create"
 	WorkspacePermissionKnowledgeBaseUpdate         WorkspacePermissionCode = "knowledge_base.update"
 	WorkspacePermissionKnowledgeBaseDelete         WorkspacePermissionCode = "knowledge_base.delete"
 	WorkspacePermissionKnowledgeBaseMove           WorkspacePermissionCode = "knowledge_base.move"
-	WorkspacePermissionKnowledgeBaseFolderView     WorkspacePermissionCode = "knowledge_base.folder.view"
 	WorkspacePermissionKnowledgeBaseDocumentView   WorkspacePermissionCode = "knowledge_base.document.view"
 	WorkspacePermissionKnowledgeBaseDocumentCreate WorkspacePermissionCode = "knowledge_base.document.create"
 	WorkspacePermissionKnowledgeBaseDocumentUpdate WorkspacePermissionCode = "knowledge_base.document.update"
 	WorkspacePermissionKnowledgeBaseDocumentDelete WorkspacePermissionCode = "knowledge_base.document.delete"
-	WorkspacePermissionKnowledgeBaseSegmentView    WorkspacePermissionCode = "knowledge_base.segment.view"
 	WorkspacePermissionKnowledgeBaseSegmentUpdate  WorkspacePermissionCode = "knowledge_base.segment.update"
 	WorkspacePermissionKnowledgeBaseSegmentDelete  WorkspacePermissionCode = "knowledge_base.segment.delete"
 	WorkspacePermissionKnowledgeBaseIndexManage    WorkspacePermissionCode = "knowledge_base.index.manage"
@@ -152,7 +134,6 @@ const (
 	WorkspacePermissionDatabaseManage            WorkspacePermissionCode = "database.manage"
 	WorkspacePermissionDatabaseDataEdit          WorkspacePermissionCode = "database.data_edit"
 	WorkspacePermissionDatabaseAIQuery           WorkspacePermissionCode = "database.ai_query"
-	WorkspacePermissionDatabaseLock              WorkspacePermissionCode = "database.lock"
 	WorkspacePermissionDatabaseCreate            WorkspacePermissionCode = "database.create"
 	WorkspacePermissionDatabaseUpdate            WorkspacePermissionCode = "database.update"
 	WorkspacePermissionDatabaseDelete            WorkspacePermissionCode = "database.delete"
@@ -165,33 +146,21 @@ const (
 	WorkspacePermissionDatabaseRecordDelete      WorkspacePermissionCode = "database.record.delete"
 	WorkspacePermissionDatabaseImportAnalyze     WorkspacePermissionCode = "database.import.analyze"
 	WorkspacePermissionDatabaseImportExecute     WorkspacePermissionCode = "database.import.execute"
-	WorkspacePermissionDatabaseImportErrorsView  WorkspacePermissionCode = "database.import.errors.view"
 	WorkspacePermissionDatabaseAIQueryRead       WorkspacePermissionCode = "database.ai_query.read"
-	WorkspacePermissionDatabaseAIQueryWrite      WorkspacePermissionCode = "database.ai_query.write"
-	WorkspacePermissionDatabaseGuardPolicyManage WorkspacePermissionCode = "database.guard_policy.manage"
-	WorkspacePermissionDatabaseTablePromptView   WorkspacePermissionCode = "database.table_prompt.view"
-	WorkspacePermissionDatabaseTablePromptManage WorkspacePermissionCode = "database.table_prompt.manage"
 	WorkspacePermissionDatabaseSQLAuditView      WorkspacePermissionCode = "database.sql_audit.view"
 	WorkspacePermissionDatabaseOperationLogsView WorkspacePermissionCode = "database.operation_logs.view"
 
-	WorkspacePermissionFileView           WorkspacePermissionCode = "file.view"
-	WorkspacePermissionFileManage         WorkspacePermissionCode = "file.manage"
-	WorkspacePermissionFileUploadCreate   WorkspacePermissionCode = "file.upload_create"
-	WorkspacePermissionFileDownload       WorkspacePermissionCode = "file.download"
-	WorkspacePermissionFileMoveCreate     WorkspacePermissionCode = "file.move_create"
-	WorkspacePermissionFileMetadataView   WorkspacePermissionCode = "file.metadata.view"
-	WorkspacePermissionFilePreview        WorkspacePermissionCode = "file.preview"
-	WorkspacePermissionFileUpload         WorkspacePermissionCode = "file.upload"
-	WorkspacePermissionFileTextCreate     WorkspacePermissionCode = "file.text.create"
-	WorkspacePermissionFileUpdate         WorkspacePermissionCode = "file.update"
-	WorkspacePermissionFileDelete         WorkspacePermissionCode = "file.delete"
-	WorkspacePermissionFileMove           WorkspacePermissionCode = "file.move"
-	WorkspacePermissionFileArchive        WorkspacePermissionCode = "file.archive"
-	WorkspacePermissionFileFolderView     WorkspacePermissionCode = "file.folder.view"
-	WorkspacePermissionFileFolderManage   WorkspacePermissionCode = "file.folder.manage"
-	WorkspacePermissionFileShareManage    WorkspacePermissionCode = "file.share.manage"
-	WorkspacePermissionFileFavoriteManage WorkspacePermissionCode = "file.favorite.manage"
-	WorkspacePermissionFileRelatedView    WorkspacePermissionCode = "file.related.view"
+	WorkspacePermissionFileView         WorkspacePermissionCode = "file.view"
+	WorkspacePermissionFileManage       WorkspacePermissionCode = "file.manage"
+	WorkspacePermissionFileUploadCreate WorkspacePermissionCode = "file.upload_create"
+	WorkspacePermissionFileMoveCreate   WorkspacePermissionCode = "file.move_create"
+	WorkspacePermissionFilePreview      WorkspacePermissionCode = "file.preview"
+	WorkspacePermissionFileUpload       WorkspacePermissionCode = "file.upload"
+	WorkspacePermissionFileTextCreate   WorkspacePermissionCode = "file.text.create"
+	WorkspacePermissionFileUpdate       WorkspacePermissionCode = "file.update"
+	WorkspacePermissionFileDelete       WorkspacePermissionCode = "file.delete"
+	WorkspacePermissionFileMove         WorkspacePermissionCode = "file.move"
+	WorkspacePermissionFileFolderManage WorkspacePermissionCode = "file.folder.manage"
 )
 
 func IsBuiltinRole(roleID string) bool {
@@ -205,53 +174,35 @@ func AllWorkspacePermissionCodes() []WorkspacePermissionCode {
 	return uniqueWorkspacePermissionCodes([]WorkspacePermissionCode{
 		WorkspacePermissionAgentView,
 		WorkspacePermissionAgentManage,
-		WorkspacePermissionAgentLock,
 		WorkspacePermissionAgentCreate,
 		WorkspacePermissionAgentUpdate,
 		WorkspacePermissionAgentDelete,
 		WorkspacePermissionAgentMove,
-		WorkspacePermissionAgentCopy,
-		WorkspacePermissionAgentImport,
-		WorkspacePermissionAgentExport,
 		WorkspacePermissionAgentPublish,
-		WorkspacePermissionAgentRuntimeConfigManage,
 		WorkspacePermissionAgentRuntimeAccessManage,
 		WorkspacePermissionAgentLogsView,
-		WorkspacePermissionAgentStatsView,
-		WorkspacePermissionAgentConversationView,
-		WorkspacePermissionAgentConversationManage,
 		WorkspacePermissionWorkflowView,
 		WorkspacePermissionWorkflowCreate,
 		WorkspacePermissionWorkflowUpdate,
 		WorkspacePermissionWorkflowDelete,
 		WorkspacePermissionWorkflowMove,
-		WorkspacePermissionWorkflowCopy,
 		WorkspacePermissionWorkflowImport,
-		WorkspacePermissionWorkflowExport,
 		WorkspacePermissionWorkflowRunDraft,
-		WorkspacePermissionWorkflowRunStop,
-		WorkspacePermissionWorkflowDebug,
 		WorkspacePermissionWorkflowPublish,
-		WorkspacePermissionWorkflowRuntimeConfigManage,
 		WorkspacePermissionWorkflowRuntimeAccessManage,
 		WorkspacePermissionWorkflowLogsView,
-		WorkspacePermissionWorkflowStatsView,
-		WorkspacePermissionWorkflowEventsView,
 		WorkspacePermissionKnowledgeBaseView,
 		WorkspacePermissionKnowledgeBaseManage,
 		WorkspacePermissionKnowledgeBaseRetrievalTest,
 		WorkspacePermissionKnowledgeBaseFolderManage,
-		WorkspacePermissionKnowledgeBaseLock,
 		WorkspacePermissionKnowledgeBaseCreate,
 		WorkspacePermissionKnowledgeBaseUpdate,
 		WorkspacePermissionKnowledgeBaseDelete,
 		WorkspacePermissionKnowledgeBaseMove,
-		WorkspacePermissionKnowledgeBaseFolderView,
 		WorkspacePermissionKnowledgeBaseDocumentView,
 		WorkspacePermissionKnowledgeBaseDocumentCreate,
 		WorkspacePermissionKnowledgeBaseDocumentUpdate,
 		WorkspacePermissionKnowledgeBaseDocumentDelete,
-		WorkspacePermissionKnowledgeBaseSegmentView,
 		WorkspacePermissionKnowledgeBaseSegmentUpdate,
 		WorkspacePermissionKnowledgeBaseSegmentDelete,
 		WorkspacePermissionKnowledgeBaseIndexManage,
@@ -261,7 +212,6 @@ func AllWorkspacePermissionCodes() []WorkspacePermissionCode {
 		WorkspacePermissionDatabaseManage,
 		WorkspacePermissionDatabaseDataEdit,
 		WorkspacePermissionDatabaseAIQuery,
-		WorkspacePermissionDatabaseLock,
 		WorkspacePermissionDatabaseCreate,
 		WorkspacePermissionDatabaseUpdate,
 		WorkspacePermissionDatabaseDelete,
@@ -274,32 +224,20 @@ func AllWorkspacePermissionCodes() []WorkspacePermissionCode {
 		WorkspacePermissionDatabaseRecordDelete,
 		WorkspacePermissionDatabaseImportAnalyze,
 		WorkspacePermissionDatabaseImportExecute,
-		WorkspacePermissionDatabaseImportErrorsView,
 		WorkspacePermissionDatabaseAIQueryRead,
-		WorkspacePermissionDatabaseAIQueryWrite,
-		WorkspacePermissionDatabaseGuardPolicyManage,
-		WorkspacePermissionDatabaseTablePromptView,
-		WorkspacePermissionDatabaseTablePromptManage,
 		WorkspacePermissionDatabaseSQLAuditView,
 		WorkspacePermissionDatabaseOperationLogsView,
 		WorkspacePermissionFileView,
 		WorkspacePermissionFileManage,
 		WorkspacePermissionFileUploadCreate,
-		WorkspacePermissionFileDownload,
 		WorkspacePermissionFileMoveCreate,
-		WorkspacePermissionFileMetadataView,
 		WorkspacePermissionFilePreview,
 		WorkspacePermissionFileUpload,
 		WorkspacePermissionFileTextCreate,
 		WorkspacePermissionFileUpdate,
 		WorkspacePermissionFileDelete,
 		WorkspacePermissionFileMove,
-		WorkspacePermissionFileArchive,
-		WorkspacePermissionFileFolderView,
 		WorkspacePermissionFileFolderManage,
-		WorkspacePermissionFileShareManage,
-		WorkspacePermissionFileFavoriteManage,
-		WorkspacePermissionFileRelatedView,
 	})
 }
 
@@ -354,7 +292,6 @@ func ExpandWorkspacePermissionStringsForCompatibility(codes []string) []string {
 }
 
 var deprecatedWorkspacePermissionSnapshotExpansions = map[WorkspacePermissionCode][]WorkspacePermissionCode{
-	WorkspacePermissionAgentView:           legacyWorkspacePermissionExpansions[WorkspacePermissionAgentView],
 	WorkspacePermissionAgentManage:         legacyWorkspacePermissionExpansions[WorkspacePermissionAgentManage],
 	WorkspacePermissionKnowledgeBaseView:   legacyWorkspacePermissionExpansions[WorkspacePermissionKnowledgeBaseView],
 	WorkspacePermissionKnowledgeBaseManage: legacyWorkspacePermissionExpansions[WorkspacePermissionKnowledgeBaseManage],
@@ -556,38 +493,42 @@ func GetBuiltinGroupRolePermissionsByID(roleID string) []WorkspacePermissionCode
 	case WorkspaceBuiltinRoleAdminID:
 		return ExpandWorkspacePermissionCodesForCompatibility([]WorkspacePermissionCode{
 			WorkspacePermissionAgentView,
+			WorkspacePermissionAgentLogsView,
 			WorkspacePermissionAgentManage,
-			WorkspacePermissionAgentLock,
+			WorkspacePermissionWorkflowView,
+			WorkspacePermissionWorkflowLogsView,
 			WorkspacePermissionKnowledgeBaseView,
 			WorkspacePermissionKnowledgeBaseManage,
 			WorkspacePermissionKnowledgeBaseRetrievalTest,
 			WorkspacePermissionKnowledgeBaseFolderManage,
-			WorkspacePermissionKnowledgeBaseLock,
 			WorkspacePermissionDatabaseView,
 			WorkspacePermissionDatabaseManage,
 			WorkspacePermissionDatabaseDataEdit,
 			WorkspacePermissionDatabaseAIQuery,
-			WorkspacePermissionDatabaseLock,
 			WorkspacePermissionFileView,
 			WorkspacePermissionFileManage,
 			WorkspacePermissionFileUploadCreate,
-			WorkspacePermissionFileDownload,
 			WorkspacePermissionFileMoveCreate,
 		})
 	case WorkspaceBuiltinRoleMemberID:
 		return ExpandWorkspacePermissionCodesForCompatibility([]WorkspacePermissionCode{
 			WorkspacePermissionAgentView,
+			WorkspacePermissionAgentLogsView,
+			WorkspacePermissionWorkflowView,
+			WorkspacePermissionWorkflowLogsView,
 			WorkspacePermissionKnowledgeBaseView,
 			WorkspacePermissionKnowledgeBaseRetrievalTest,
 			WorkspacePermissionDatabaseView,
 			WorkspacePermissionDatabaseAIQuery,
 			WorkspacePermissionFileView,
 			WorkspacePermissionFileUploadCreate,
-			WorkspacePermissionFileDownload,
 		})
 	case WorkspaceBuiltinRoleViewerID:
 		return ExpandWorkspacePermissionCodesForCompatibility([]WorkspacePermissionCode{
 			WorkspacePermissionAgentView,
+			WorkspacePermissionAgentLogsView,
+			WorkspacePermissionWorkflowView,
+			WorkspacePermissionWorkflowLogsView,
 			WorkspacePermissionKnowledgeBaseView,
 			WorkspacePermissionDatabaseView,
 			WorkspacePermissionFileView,
@@ -615,45 +556,28 @@ func uniqueWorkspacePermissionCodes(codes []WorkspacePermissionCode) []Workspace
 }
 
 var legacyWorkspacePermissionExpansions = map[WorkspacePermissionCode][]WorkspacePermissionCode{
-	WorkspacePermissionAgentView: {
-		WorkspacePermissionWorkflowView,
-		WorkspacePermissionAgentLogsView,
-		WorkspacePermissionAgentStatsView,
-		WorkspacePermissionAgentConversationView,
-		WorkspacePermissionWorkflowLogsView,
-		WorkspacePermissionWorkflowStatsView,
-		WorkspacePermissionWorkflowEventsView,
-	},
 	WorkspacePermissionAgentManage: {
+		WorkspacePermissionAgentView,
 		WorkspacePermissionAgentCreate,
 		WorkspacePermissionAgentUpdate,
 		WorkspacePermissionAgentDelete,
 		WorkspacePermissionAgentMove,
-		WorkspacePermissionAgentCopy,
-		WorkspacePermissionAgentImport,
-		WorkspacePermissionAgentExport,
 		WorkspacePermissionAgentPublish,
-		WorkspacePermissionAgentRuntimeConfigManage,
 		WorkspacePermissionAgentRuntimeAccessManage,
-		WorkspacePermissionAgentConversationManage,
+		WorkspacePermissionAgentLogsView,
+		WorkspacePermissionWorkflowView,
 		WorkspacePermissionWorkflowCreate,
 		WorkspacePermissionWorkflowUpdate,
 		WorkspacePermissionWorkflowDelete,
 		WorkspacePermissionWorkflowMove,
-		WorkspacePermissionWorkflowCopy,
 		WorkspacePermissionWorkflowImport,
-		WorkspacePermissionWorkflowExport,
 		WorkspacePermissionWorkflowRunDraft,
-		WorkspacePermissionWorkflowRunStop,
-		WorkspacePermissionWorkflowDebug,
 		WorkspacePermissionWorkflowPublish,
-		WorkspacePermissionWorkflowRuntimeConfigManage,
 		WorkspacePermissionWorkflowRuntimeAccessManage,
+		WorkspacePermissionWorkflowLogsView,
 	},
 	WorkspacePermissionKnowledgeBaseView: {
-		WorkspacePermissionKnowledgeBaseFolderView,
 		WorkspacePermissionKnowledgeBaseDocumentView,
-		WorkspacePermissionKnowledgeBaseSegmentView,
 		WorkspacePermissionKnowledgeBaseGraphView,
 	},
 	WorkspacePermissionKnowledgeBaseManage: {
@@ -664,19 +588,18 @@ var legacyWorkspacePermissionExpansions = map[WorkspacePermissionCode][]Workspac
 		WorkspacePermissionKnowledgeBaseDocumentCreate,
 		WorkspacePermissionKnowledgeBaseDocumentUpdate,
 		WorkspacePermissionKnowledgeBaseDocumentDelete,
+		WorkspacePermissionKnowledgeBaseFolderManage,
 		WorkspacePermissionKnowledgeBaseSegmentUpdate,
 		WorkspacePermissionKnowledgeBaseSegmentDelete,
 		WorkspacePermissionKnowledgeBaseIndexManage,
 		WorkspacePermissionKnowledgeBaseGraphManage,
 	},
 	WorkspacePermissionKnowledgeBaseFolderManage: {
-		WorkspacePermissionKnowledgeBaseFolderView,
 		WorkspacePermissionKnowledgeBaseFolderManage,
 	},
 	WorkspacePermissionDatabaseView: {
 		WorkspacePermissionDatabaseSchemaView,
 		WorkspacePermissionDatabaseRecordView,
-		WorkspacePermissionDatabaseTablePromptView,
 		WorkspacePermissionDatabaseOperationLogsView,
 	},
 	WorkspacePermissionDatabaseManage: {
@@ -686,8 +609,6 @@ var legacyWorkspacePermissionExpansions = map[WorkspacePermissionCode][]Workspac
 		WorkspacePermissionDatabaseMove,
 		WorkspacePermissionDatabaseSchemaManage,
 		WorkspacePermissionDatabaseImportAnalyze,
-		WorkspacePermissionDatabaseGuardPolicyManage,
-		WorkspacePermissionDatabaseTablePromptManage,
 		WorkspacePermissionDatabaseSQLAuditView,
 	},
 	WorkspacePermissionDatabaseDataEdit: {
@@ -695,25 +616,18 @@ var legacyWorkspacePermissionExpansions = map[WorkspacePermissionCode][]Workspac
 		WorkspacePermissionDatabaseRecordUpdate,
 		WorkspacePermissionDatabaseRecordDelete,
 		WorkspacePermissionDatabaseImportExecute,
-		WorkspacePermissionDatabaseImportErrorsView,
 	},
 	WorkspacePermissionDatabaseAIQuery: {
 		WorkspacePermissionDatabaseAIQueryRead,
 	},
 	WorkspacePermissionFileView: {
-		WorkspacePermissionFileMetadataView,
 		WorkspacePermissionFilePreview,
-		WorkspacePermissionFileFolderView,
-		WorkspacePermissionFileRelatedView,
 	},
 	WorkspacePermissionFileManage: {
 		WorkspacePermissionFileUpdate,
 		WorkspacePermissionFileDelete,
 		WorkspacePermissionFileMove,
-		WorkspacePermissionFileArchive,
 		WorkspacePermissionFileFolderManage,
-		WorkspacePermissionFileShareManage,
-		WorkspacePermissionFileFavoriteManage,
 	},
 	WorkspacePermissionFileUploadCreate: {
 		WorkspacePermissionFileUpload,
@@ -816,44 +730,27 @@ func basicWorkspaceMemberPermissionStrings() []string {
 		string(WorkspacePermissionAgentView),
 		string(WorkspacePermissionAgentCreate),
 		string(WorkspacePermissionAgentUpdate),
-		string(WorkspacePermissionAgentCopy),
-		string(WorkspacePermissionAgentExport),
-		string(WorkspacePermissionAgentRuntimeConfigManage),
 		string(WorkspacePermissionAgentLogsView),
-		string(WorkspacePermissionAgentStatsView),
-		string(WorkspacePermissionAgentConversationView),
-		string(WorkspacePermissionAgentConversationManage),
 		string(WorkspacePermissionWorkflowView),
 		string(WorkspacePermissionWorkflowCreate),
 		string(WorkspacePermissionWorkflowUpdate),
-		string(WorkspacePermissionWorkflowCopy),
-		string(WorkspacePermissionWorkflowExport),
+		string(WorkspacePermissionWorkflowImport),
 		string(WorkspacePermissionWorkflowRunDraft),
-		string(WorkspacePermissionWorkflowRunStop),
-		string(WorkspacePermissionWorkflowDebug),
 		string(WorkspacePermissionWorkflowLogsView),
-		string(WorkspacePermissionWorkflowStatsView),
-		string(WorkspacePermissionWorkflowEventsView),
 		string(WorkspacePermissionKnowledgeBaseView),
 		string(WorkspacePermissionKnowledgeBaseRetrievalTest),
-		string(WorkspacePermissionKnowledgeBaseFolderView),
 		string(WorkspacePermissionKnowledgeBaseDocumentView),
-		string(WorkspacePermissionKnowledgeBaseSegmentView),
 		string(WorkspacePermissionKnowledgeBaseGraphView),
 		string(WorkspacePermissionDatabaseView),
 		string(WorkspacePermissionDatabaseSchemaView),
 		string(WorkspacePermissionDatabaseRecordView),
 		string(WorkspacePermissionDatabaseAIQuery),
 		string(WorkspacePermissionDatabaseAIQueryRead),
-		string(WorkspacePermissionDatabaseTablePromptView),
 		string(WorkspacePermissionFileView),
 		string(WorkspacePermissionFileUploadCreate),
-		string(WorkspacePermissionFileDownload),
-		string(WorkspacePermissionFileMetadataView),
 		string(WorkspacePermissionFilePreview),
 		string(WorkspacePermissionFileUpload),
 		string(WorkspacePermissionFileTextCreate),
-		string(WorkspacePermissionFileFolderView),
 	})
 }
 
@@ -861,31 +758,20 @@ func readonlyWorkspaceMemberPermissionStrings() []string {
 	return CanonicalAssignableWorkspacePermissionSnapshotStrings([]string{
 		string(WorkspacePermissionAgentView),
 		string(WorkspacePermissionAgentLogsView),
-		string(WorkspacePermissionAgentStatsView),
-		string(WorkspacePermissionAgentConversationView),
 		string(WorkspacePermissionWorkflowView),
 		string(WorkspacePermissionWorkflowRunDraft),
-		string(WorkspacePermissionWorkflowDebug),
 		string(WorkspacePermissionWorkflowLogsView),
-		string(WorkspacePermissionWorkflowStatsView),
-		string(WorkspacePermissionWorkflowEventsView),
 		string(WorkspacePermissionKnowledgeBaseView),
 		string(WorkspacePermissionKnowledgeBaseRetrievalTest),
-		string(WorkspacePermissionKnowledgeBaseFolderView),
 		string(WorkspacePermissionKnowledgeBaseDocumentView),
-		string(WorkspacePermissionKnowledgeBaseSegmentView),
 		string(WorkspacePermissionKnowledgeBaseGraphView),
 		string(WorkspacePermissionDatabaseView),
 		string(WorkspacePermissionDatabaseSchemaView),
 		string(WorkspacePermissionDatabaseRecordView),
 		string(WorkspacePermissionDatabaseAIQuery),
 		string(WorkspacePermissionDatabaseAIQueryRead),
-		string(WorkspacePermissionDatabaseTablePromptView),
 		string(WorkspacePermissionFileView),
-		string(WorkspacePermissionFileDownload),
-		string(WorkspacePermissionFileMetadataView),
 		string(WorkspacePermissionFilePreview),
-		string(WorkspacePermissionFileFolderView),
 	})
 }
 

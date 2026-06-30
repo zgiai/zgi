@@ -15,6 +15,7 @@ import {
   Settings,
   ShieldCheck,
   Users,
+  Workflow,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,10 +34,10 @@ import {
   normalizeWorkspaceMemberRole,
 } from '@/utils/role-labels';
 import {
-  AGENT_ASSET_VISIBLE_PERMISSION_CODES,
+  AGENT_VISIBLE_PERMISSION_CODES,
   DATABASE_VISIBLE_PERMISSION_CODES,
-  FILE_VISIBLE_PERMISSION_CODES,
   KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
+  WORKFLOW_VISIBLE_PERMISSION_CODES,
 } from '@/constants/permissions';
 
 interface WorkspaceActionEntry {
@@ -157,10 +158,11 @@ export default function WorkspacePage() {
 
   const canViewWorkspace = hasWorkspaceAccess();
   const canManageWorkspace = isWorkspaceManager();
-  const canViewAgents = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
+  const canViewAgents = hasAnyPermission(AGENT_VISIBLE_PERMISSION_CODES);
+  const canViewWorkflows = hasAnyPermission(WORKFLOW_VISIBLE_PERMISSION_CODES);
   const canViewDatasets = hasAnyPermission(KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES);
   const canViewDatabases = hasAnyPermission(DATABASE_VISIBLE_PERMISSION_CODES);
-  const canViewFiles = hasAnyPermission(FILE_VISIBLE_PERMISSION_CODES);
+  const canViewFiles = canViewWorkspace;
   const isOrganizationAdmin = isAdmin();
   const isPermissionsBusy = isPermissionsLoading || isPermissionsFetching;
   const isQuotaBusy = isQuotaLoading || isQuotaFetching;
@@ -253,6 +255,14 @@ export default function WorkspacePage() {
       enabled: canViewAgents,
     },
     {
+      key: 'workflows',
+      title: t('workspace.overview.management.workflowsTitle'),
+      description: t('workspace.overview.management.workflowsDescription'),
+      href: '/console/workflows',
+      icon: Workflow,
+      enabled: canViewWorkflows,
+    },
+    {
       key: 'datasets',
       title: t('workspace.overview.management.datasetsTitle'),
       description: t('workspace.overview.management.datasetsDescription'),
@@ -293,6 +303,11 @@ export default function WorkspacePage() {
       key: 'agent-view',
       label: t('workspace.overview.permissions.agentView'),
       enabled: canViewAgents,
+    },
+    {
+      key: 'workflow-view',
+      label: t('workspace.overview.permissions.workflowView'),
+      enabled: canViewWorkflows,
     },
     {
       key: 'knowledge-view',
