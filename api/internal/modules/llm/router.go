@@ -55,9 +55,10 @@ func RegisterConsoleRoutes(r *gin.RouterGroup, m *LLMModule) {
 
 		// Workspace quota management
 		if m.WorkspaceQuotaHandler != nil {
+			workspacequotahandler.RegisterWorkspaceQuotaReadRoutes(llmWithOrg, m.WorkspaceQuotaHandler)
 			workspaceQuotaAdmin := llmWithOrg.Group("")
 			workspaceQuotaAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
-			workspacequotahandler.RegisterWorkspaceQuotaRoutes(workspaceQuotaAdmin, m.WorkspaceQuotaHandler)
+			workspacequotahandler.RegisterWorkspaceQuotaAdminRoutes(workspaceQuotaAdmin, m.WorkspaceQuotaHandler)
 		}
 
 	}
@@ -210,8 +211,9 @@ func RegisterCommonRoutes(r *gin.RouterGroup, m *LLMModule) {
 
 	// Workspace quota management
 	if m.WorkspaceQuotaHandler != nil {
+		workspacequotahandler.RegisterWorkspaceQuotaReadRoutes(r, m.WorkspaceQuotaHandler)
 		workspaceQuotaAdmin := r.Group("")
 		workspaceQuotaAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
-		workspacequotahandler.RegisterWorkspaceQuotaRoutes(workspaceQuotaAdmin, m.WorkspaceQuotaHandler)
+		workspacequotahandler.RegisterWorkspaceQuotaAdminRoutes(workspaceQuotaAdmin, m.WorkspaceQuotaHandler)
 	}
 }

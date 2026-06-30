@@ -176,7 +176,7 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 	m.StatisticsHandler = m.StatisticsModule.Handler
 
 	// Initialize Workspace Quota Module
-	m.WorkspaceQuotaModule = workspacequota.NewModule(db)
+	m.WorkspaceQuotaModule = workspacequota.NewModule(db, enterpriseService)
 	m.WorkspaceQuotaHandler = m.WorkspaceQuotaModule.Handler
 
 	// Initialize Availability Module
