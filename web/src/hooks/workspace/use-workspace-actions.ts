@@ -1,15 +1,22 @@
 'use client';
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { workspaceService } from '@/services/workspace.service';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
+import { useWorkspaceStore } from '@/store/workspace-store';
 
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
 import { invalidateOrganizationMemberGraph } from '@/hooks/organization/invalidate-organization-member-graph';
 import type { CreateWorkspaceRequest, UpdateWorkspaceRequest } from '@/services/types/workspace';
+
+function isWorkspaceScopedQuery(queryKey: QueryKey, workspaceId: string): boolean {
+  if (!Array.isArray(queryKey)) return false;
+  if (queryKey[0] !== 'workspace') return false;
+  return queryKey.some(value => value === workspaceId);
+}
 
 /**
  * Hook for workspace actions
@@ -18,6 +25,10 @@ export function useWorkspaceActions() {
   const t = useT();
   const { currentOrganization } = useOrganizations();
   const queryClient = useQueryClient();
+  const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
+  const workspaces = useWorkspaceStore.use.workspaces();
+  const setWorkspaces = useWorkspaceStore.use.setWorkspaces();
+  const markWorkspaceRequired = useWorkspaceStore.use.markWorkspaceRequired();
 
   const organizationId = currentOrganization?.id || '';
 
@@ -149,12 +160,24 @@ export function useWorkspaceActions() {
       return await workspaceService.leaveWorkspace(organizationId, workspaceId);
     },
     onSuccess: (_, workspaceId) => {
+      const isLeavingCurrentWorkspace = currentWorkspace?.id === workspaceId;
+      setWorkspaces(workspaces.filter(workspace => workspace.id !== workspaceId));
+      if (isLeavingCurrentWorkspace) {
+        markWorkspaceRequired();
+      }
+
+      queryClient.cancelQueries({
+        predicate: query => isWorkspaceScopedQuery(query.queryKey, workspaceId),
+      });
+      queryClient.removeQueries({
+        predicate: query => isWorkspaceScopedQuery(query.queryKey, workspaceId),
+      });
       invalidateOrganizationMemberGraph(queryClient, organizationId);
       queryClient.invalidateQueries({
-        queryKey: WORKSPACE_KEYS.all,
+        queryKey: ['workspace', 'for-switcher', organizationId],
       });
       queryClient.invalidateQueries({
-        queryKey: WORKSPACE_KEYS.permissions(organizationId, workspaceId, 'current'),
+        queryKey: WORKSPACE_KEYS.managed(organizationId),
       });
       toast.success(t('workspace.messages.leaveWorkspaceSuccess'));
     },

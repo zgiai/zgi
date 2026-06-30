@@ -24,10 +24,14 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useWorkspaceQuota } from '@/hooks/workspace-quota/use-workspace-quota';
 import { useWorkspaceStatistics } from '@/hooks/workspace/use-workspace-statistics';
 import { useLocale } from '@/hooks/use-locale';
-import { useT } from '@/i18n';
+import { useT, type WorkspaceKey } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { formatAiCreditFiatEstimate, formatChannelCreditPoints } from '@/utils/ai-credits';
+import {
+  normalizeOrganizationRole,
+  normalizeWorkspaceMemberRole,
+} from '@/utils/role-labels';
 import {
   AGENT_ASSET_VISIBLE_PERMISSION_CODES,
   DATABASE_VISIBLE_PERMISSION_CODES,
@@ -164,12 +168,18 @@ export default function WorkspacePage() {
   const isQuotaUnlimited =
     hasQuotaData &&
     (workspaceQuota?.quota_limit === null || workspaceQuota?.quota_limit === undefined);
+  const normalizedWorkspaceRole = normalizeWorkspaceMemberRole(workspaceRole);
+  const normalizedOrganizationRole = normalizeOrganizationRole(organizationRole);
   const roleLabel =
-    workspaceRoleName ||
-    workspaceRole ||
-    t('workspace.overview.permissions.roleFallback');
-  const organizationRoleLabel =
-    organizationRole || t('workspace.overview.permissions.organizationRoleFallback');
+    normalizedWorkspaceRole === 'owner' || normalizedWorkspaceRole === 'admin'
+      ? t(`workspace.members.roles.${normalizedWorkspaceRole}` as WorkspaceKey)
+      : workspaceRoleName ||
+        (normalizedWorkspaceRole
+          ? t(`workspace.members.roles.${normalizedWorkspaceRole}` as WorkspaceKey)
+          : t('workspace.overview.permissions.roleFallback'));
+  const organizationRoleLabel = normalizedOrganizationRole
+    ? t(`workspace.overview.permissions.organizationRoles.${normalizedOrganizationRole}` as WorkspaceKey)
+    : t('workspace.overview.permissions.organizationRoleFallback');
   const workspaceQuotaBalance = workspaceQuota?.remain_quota ?? 0;
   const quotaBalanceValue = !hasQuotaData
     ? '-'
