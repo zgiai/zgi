@@ -87,6 +87,54 @@ func failDatasetRead(c *gin.Context, err error, fallback response.ErrorCode) {
 	}
 }
 
+func (h *DatasetHandler) getDatasetForRetrievalTest(c *gin.Context, datasetID string) (*model.Dataset, bool) {
+	accountID := c.GetString("account_id")
+	organizationID := c.GetString("group_id")
+	if organizationID == "" {
+		organizationID = util.GetOrganizationIDCompat(c)
+	}
+	if accountID == "" || organizationID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return nil, false
+	}
+	if h.datasetService == nil || h.organizationService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return nil, false
+	}
+
+	dataset, err := h.datasetService.GetDatasetByID(c.Request.Context(), datasetID)
+	if err != nil {
+		failDatasetRead(c, err, response.ErrDatasetGetFailed)
+		return nil, false
+	}
+	if dataset == nil {
+		response.Fail(c, response.ErrDatasetNotFound)
+		return nil, false
+	}
+	if dataset.OrganizationID != organizationID || dataset.WorkspaceID == "" {
+		response.Fail(c, response.ErrDatasetPermissionDenied)
+		return nil, false
+	}
+
+	hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
+		c.Request.Context(),
+		organizationID,
+		dataset.WorkspaceID,
+		accountID,
+		workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return nil, false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return nil, false
+	}
+
+	return dataset, true
+}
+
 // GetDatasets handles GET /datasets
 func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 	// Get account and tenant IDs from context (already validated by JWTWithTenant middleware)
@@ -724,38 +772,10 @@ func (h *DatasetHandler) handleHitTesting(c *gin.Context, forcedMode string) {
 
 	// Get account and tenant IDs from context (already validated by JWTWithTenant middleware)
 	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
 
-	// Get and validate dataset with permission check
-	dataset, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID.String(), accountID, tenantID)
-	if err != nil {
-		failDatasetRead(c, err, response.ErrDatasetGetFailed)
+	dataset, ok := h.getDatasetForRetrievalTest(c, datasetID.String())
+	if !ok {
 		return
-	}
-
-	groupID := c.GetString("group_id")
-	if groupID == "" {
-		groupID = tenantID
-	}
-
-	if h.organizationService != nil {
-		datasetTenantID := dataset.WorkspaceID
-
-		hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
-			c.Request.Context(),
-			groupID,
-			datasetTenantID,
-			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	// Validate hit testing arguments
@@ -873,38 +893,10 @@ func (h *DatasetHandler) BatchHitTesting(c *gin.Context) {
 
 	// Get account and tenant IDs from context (already validated by JWTWithTenant middleware)
 	accountID := c.GetString("account_id")
-	tenantID := c.GetString("tenant_id")
 
-	// Get and validate dataset with permission check
-	dataset, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID.String(), accountID, tenantID)
-	if err != nil {
-		failDatasetRead(c, err, response.ErrDatasetGetFailed)
+	dataset, ok := h.getDatasetForRetrievalTest(c, datasetID.String())
+	if !ok {
 		return
-	}
-
-	groupID := c.GetString("group_id")
-	if groupID == "" {
-		groupID = tenantID
-	}
-
-	if h.organizationService != nil {
-		datasetTenantID := dataset.WorkspaceID
-
-		hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
-			c.Request.Context(),
-			groupID,
-			datasetTenantID,
-			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	// Process each query and collect results
@@ -994,38 +986,11 @@ func (h *DatasetHandler) AsyncBatchHitTesting(c *gin.Context) {
 
 	// Get account and tenant IDs from context (already validated by JWTWithTenant middleware)
 	accountID := c.GetString("account_id")
-	organizationID := c.GetString("tenant_id")
 
-	// Get and validate dataset with permission check
-	dataset, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID.String(), accountID, organizationID)
-	if err != nil {
-		failDatasetRead(c, err, response.ErrDatasetGetFailed)
+	organizationID := util.GetOrganizationIDCompat(c)
+	dataset, ok := h.getDatasetForRetrievalTest(c, datasetID.String())
+	if !ok {
 		return
-	}
-
-	groupID := c.GetString("group_id")
-	if groupID == "" {
-		groupID = organizationID
-	}
-
-	if h.organizationService != nil {
-		datasetTenantID := dataset.WorkspaceID
-
-		hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
-			c.Request.Context(),
-			groupID,
-			datasetTenantID,
-			accountID,
-			workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	// Create async batch task

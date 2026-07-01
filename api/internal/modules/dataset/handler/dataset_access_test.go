@@ -158,6 +158,50 @@ func TestAuthorizeDatasetViewAccessUsesFineKnowledgeBaseViewPermissions(t *testi
 	}
 }
 
+func TestGetDatasetForRetrievalTestUsesDedicatedRetrievalPermission(t *testing.T) {
+	c, _ := newDatasetAccessTestContext("account-1", "org-1")
+	datasets := &datasetRetrievalTestDatasetService{
+		datasets: map[string]*dataset_model.Dataset{
+			"dataset-1": {
+				ID:             "dataset-1",
+				OrganizationID: "org-1",
+				WorkspaceID:    "workspace-1",
+			},
+		},
+	}
+	organizationService := &datasetRetrievalTestOrganizationService{allowed: true}
+	handler := &DatasetHandler{
+		datasetService:      datasets,
+		organizationService: organizationService,
+	}
+
+	dataset, ok := handler.getDatasetForRetrievalTest(c, "dataset-1")
+
+	if !ok {
+		t.Fatalf("getDatasetForRetrievalTest ok = false, want true")
+	}
+	if dataset == nil || dataset.ID != "dataset-1" {
+		t.Fatalf("dataset = %#v, want dataset-1", dataset)
+	}
+	if datasets.getByIDCalls != 1 {
+		t.Fatalf("GetDatasetByID calls = %d, want 1", datasets.getByIDCalls)
+	}
+	if datasets.permissionChecks != 0 {
+		t.Fatalf("GetDatasetWithPermissionCheck calls = %d, want 0", datasets.permissionChecks)
+	}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest}
+	if !reflect.DeepEqual(organizationService.permissions, want) {
+		t.Fatalf("permissions = %#v, want %#v", organizationService.permissions, want)
+	}
+	if organizationService.organizationID != "org-1" || organizationService.workspaceID != "workspace-1" || organizationService.accountID != "account-1" {
+		t.Fatalf("organization request = org:%s workspace:%s account:%s, want org-1/workspace-1/account-1",
+			organizationService.organizationID,
+			organizationService.workspaceID,
+			organizationService.accountID,
+		)
+	}
+}
+
 func TestAuthorizeDatasetFolderViewAccessRejectsCrossOrganizationFolder(t *testing.T) {
 	c, recorder := newDatasetAccessTestContext("account-1", "org-1")
 	folders := &datasetAccessFolderService{
@@ -1192,6 +1236,44 @@ type datasetAccessDatasetService struct {
 
 func (s *datasetAccessDatasetService) GetDatasetByID(ctx context.Context, id string) (*dataset_model.Dataset, error) {
 	return s.datasets[id], nil
+}
+
+type datasetRetrievalTestDatasetService struct {
+	datasetservice.DatasetService
+	datasets         map[string]*dataset_model.Dataset
+	getByIDCalls     int
+	permissionChecks int
+}
+
+func (s *datasetRetrievalTestDatasetService) GetDatasetByID(ctx context.Context, id string) (*dataset_model.Dataset, error) {
+	s.getByIDCalls++
+	return s.datasets[id], nil
+}
+
+func (s *datasetRetrievalTestDatasetService) GetDatasetWithPermissionCheck(ctx context.Context, datasetID, accountID, organizationID string) (*dataset_model.Dataset, error) {
+	s.permissionChecks++
+	return s.datasets[datasetID], nil
+}
+
+type datasetRetrievalTestOrganizationService struct {
+	interfaces.OrganizationService
+	allowed        bool
+	organizationID string
+	workspaceID    string
+	accountID      string
+	permissions    []workspace_model.WorkspacePermissionCode
+}
+
+func (s *datasetRetrievalTestOrganizationService) CheckWorkspaceOrganizationAnyPermission(
+	_ context.Context,
+	organizationID, workspaceID, accountID string,
+	permissions ...workspace_model.WorkspacePermissionCode,
+) (bool, error) {
+	s.organizationID = organizationID
+	s.workspaceID = workspaceID
+	s.accountID = accountID
+	s.permissions = append([]workspace_model.WorkspacePermissionCode(nil), permissions...)
+	return s.allowed, nil
 }
 
 type datasetAccessDocumentService struct {
