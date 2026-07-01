@@ -440,6 +440,29 @@ func TestCandidateRoutesForModel_FiltersNativeProtocolLikeRealSelection(t *testi
 	}
 }
 
+func TestCandidateRoutesForModelRejectsKnownInactiveGlobalModel(t *testing.T) {
+	db, mock := openGatewayModelLookupDB(t)
+	modelName := "qwen-coder"
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.status`).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
+		WithArgs(modelName).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	router := &ChannelRouter{db: db}
+
+	routes, err := router.CandidateRoutesForModel(context.Background(), uuid.New(), modelName, 1)
+	if err == nil {
+		t.Fatal("CandidateRoutesForModel returned nil error, want model not found")
+	}
+	if routes != nil {
+		t.Fatalf("routes = %+v, want nil", routes)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func TestBuildChannelSelection_OfficialRouteUsesRuntimeConsoleAPIURL(t *testing.T) {
 	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
 

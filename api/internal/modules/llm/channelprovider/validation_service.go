@@ -274,7 +274,7 @@ func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, cha
 	}
 
 	if useCase == testMethodImageGeneration && !explicitTestMethod {
-		return v.probeImageModelMetadata(capabilities[0]), nil
+		return v.probeImageModelListing(ctx, adapterInstance, apiKey, capabilities[0]), nil
 	}
 
 	return v.probeModel(ctx, adapterInstance, capabilities[0], stream), nil
@@ -446,16 +446,32 @@ func (v *Validator) probeModel(ctx context.Context, adapterInstance adapter.LLMP
 	return result
 }
 
-func (v *Validator) probeImageModelMetadata(capability modelCapability) *TestResult {
+func (v *Validator) probeImageModelListing(ctx context.Context, adapterInstance adapter.LLMProviderAdapter, apiKey string, capability modelCapability) *TestResult {
 	startTime := v.now()
-	return &TestResult{
-		Success:        true,
-		Message:        "validated local model metadata; real image generation was not run",
+	result := &TestResult{
 		ResponseTimeMs: v.now().Sub(startTime).Milliseconds(),
 		Model:          capability.Model,
 		UseCase:        capability.UseCase,
 		TestMethod:     testMethodMetadata,
 	}
+
+	upstreamModels, err := adapterInstance.ListModels(ctx, apiKey)
+	result.ResponseTimeMs = v.now().Sub(startTime).Milliseconds()
+	if err != nil {
+		result.Success = false
+		result.Message = fmt.Sprintf("failed to list upstream models: %s", normalizeValidationError(err))
+		return result
+	}
+
+	if !modelExistsInUpstreamSet(upstreamModelNameSet(upstreamModels), capability.Model) {
+		result.Success = false
+		result.Message = "model is not returned by upstream model list; real image generation was not run"
+		return result
+	}
+
+	result.Success = true
+	result.Message = "model is returned by upstream model list; real image generation was not run"
+	return result
 }
 
 func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID uuid.UUID, spec Spec, models []string) ([]modelCapability, error) {

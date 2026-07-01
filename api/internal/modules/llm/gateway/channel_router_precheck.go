@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 func (r *ChannelRouter) CandidateRoutesForModel(
@@ -30,6 +32,16 @@ func (r *ChannelRouter) CandidateRoutesForModel(
 	isPassthroughMode := false
 	modelProvider := ""
 	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("failed to resolve LLM model %q: %w", modelName, err)
+		}
+		knownGlobalModel, knownErr := r.globalModelExists(ctx, "", modelName)
+		if knownErr != nil {
+			return nil, fmt.Errorf("failed to check LLM model %q: %w", modelName, knownErr)
+		}
+		if knownGlobalModel {
+			return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+		}
 		logger.DebugContext(ctx, "candidate LLM route model not found in local registries, using passthrough mode",
 			zap.String("organization_id", organizationID.String()),
 			zap.String("model", modelName),

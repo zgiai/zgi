@@ -897,7 +897,7 @@ function ChannelForm({
               !hasValidInitialFunds ||
               Boolean(compatibilityWarningKey) ||
               (mode === 'create' && apiKeyRequired && !apiKey.trim()) ||
-              (mode === 'create' && modelsSelected.length === 0) ||
+              modelsSelected.length === 0 ||
               (mode === 'edit' && updateApiKey && !apiKey.trim())
             }
           >

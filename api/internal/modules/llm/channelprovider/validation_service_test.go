@@ -695,7 +695,7 @@ func TestValidatorTestModel_ImageProbeUsesDefaultSize(t *testing.T) {
 	require.Equal(t, "1024x1024", fakeAdapter.lastImageReq.Size)
 }
 
-func TestValidatorTestModel_ImageDefaultUsesLocalMetadataWithoutImageProbe(t *testing.T) {
+func TestValidatorTestModel_ImageDefaultUsesModelListingWithoutImageProbe(t *testing.T) {
 	validator := NewValidator(nil, nil)
 	validator.modelRepo = &fakeModelLookupRepo{
 		models: map[string]*llmmodelmodel.LLMModel{
@@ -704,7 +704,7 @@ func TestValidatorTestModel_ImageDefaultUsesLocalMetadataWithoutImageProbe(t *te
 	}
 
 	fakeAdapter := &fakeValidationAdapter{
-		listModelsErr: errors.New("image metadata check should not list upstream models"),
+		listModelsResult: []adapter.Model{{Name: "qwen-image-2.0"}},
 	}
 	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
 		return fakeAdapter, nil
@@ -717,8 +717,56 @@ func TestValidatorTestModel_ImageDefaultUsesLocalMetadataWithoutImageProbe(t *te
 	require.Equal(t, "qwen-image-2.0", result.Model)
 	require.Equal(t, testMethodImageGeneration, result.UseCase)
 	require.Equal(t, testMethodMetadata, result.TestMethod)
-	require.Equal(t, "validated local model metadata; real image generation was not run", result.Message)
-	require.Zero(t, fakeAdapter.listModelsCalls)
+	require.Equal(t, "model is returned by upstream model list; real image generation was not run", result.Message)
+	require.Equal(t, 1, fakeAdapter.listModelsCalls)
+	require.Zero(t, fakeAdapter.imageCalls)
+}
+
+func TestValidatorTestModel_ImageDefaultFailsWhenModelListingFails(t *testing.T) {
+	validator := NewValidator(nil, nil)
+	validator.modelRepo = &fakeModelLookupRepo{
+		models: map[string]*llmmodelmodel.LLMModel{
+			"qwen-image-2.0": {Model: "qwen-image-2.0", UseCases: llmmodelmodel.StringArray{"image-gen"}},
+		},
+	}
+
+	fakeAdapter := &fakeValidationAdapter{
+		listModelsErr: errors.New("invalid api key"),
+	}
+	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return fakeAdapter, nil
+	}
+
+	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai-compatible", "key", "https://example.com/v1", "qwen-image-2.0", "", false)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Success)
+	require.Contains(t, result.Message, "failed to list upstream models")
+	require.Equal(t, 1, fakeAdapter.listModelsCalls)
+	require.Zero(t, fakeAdapter.imageCalls)
+}
+
+func TestValidatorTestModel_ImageDefaultFailsWhenModelMissingFromListing(t *testing.T) {
+	validator := NewValidator(nil, nil)
+	validator.modelRepo = &fakeModelLookupRepo{
+		models: map[string]*llmmodelmodel.LLMModel{
+			"qwen-image-2.0": {Model: "qwen-image-2.0", UseCases: llmmodelmodel.StringArray{"image-gen"}},
+		},
+	}
+
+	fakeAdapter := &fakeValidationAdapter{
+		listModelsResult: []adapter.Model{{Name: "qwen-plus"}},
+	}
+	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return fakeAdapter, nil
+	}
+
+	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai-compatible", "key", "https://example.com/v1", "qwen-image-2.0", "", false)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Success)
+	require.Equal(t, "model is not returned by upstream model list; real image generation was not run", result.Message)
+	require.Equal(t, 1, fakeAdapter.listModelsCalls)
 	require.Zero(t, fakeAdapter.imageCalls)
 }
 

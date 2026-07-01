@@ -106,8 +106,12 @@ export default function ChannelConnectivityDialog(
     [handleTestResult]
   );
 
-  const { batchTest, abort, isRunning, results, completedResult } =
+  const { batchTest, abort, reset, isRunning, results, completedResult } =
     useBatchTestChannelModels(batchTestOptions);
+
+  useEffect(() => {
+    if (open) reset();
+  }, [channelId, open, reset]);
 
   const currentResultsByModel = useMemo(() => {
     const map: Record<string, BatchTestModelResult> = {};
