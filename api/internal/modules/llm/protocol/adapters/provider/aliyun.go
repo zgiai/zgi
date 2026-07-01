@@ -347,9 +347,6 @@ func (a *AliyunAdapter) buildAliyunChatPayload(request *adapter.ChatRequest, str
 		},
 		"parameters": parameters,
 	}
-	if stream {
-		payload["stream"] = true
-	}
 
 	endpointPath := "/services/aigc/text-generation/generation"
 	if useMultimodal {
@@ -602,12 +599,11 @@ func isAliyunMultimodalChatModel(model string) bool {
 }
 
 func isAliyunQwen36ChatModel(model string) bool {
-	switch strings.ToLower(strings.TrimSpace(model)) {
-	case "qwen3.6-plus", "qwen3.6-flash":
-		return true
-	default:
-		return false
-	}
+	model = strings.ToLower(strings.TrimSpace(model))
+	return model == "qwen3.6-plus" ||
+		strings.HasPrefix(model, "qwen3.6-plus-") ||
+		model == "qwen3.6-flash" ||
+		strings.HasPrefix(model, "qwen3.6-flash-")
 }
 
 type aliyunChatResponse struct {

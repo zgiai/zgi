@@ -132,7 +132,7 @@ func TestAliyunAdapterChatCompletion_UsesNativeMultimodalGeneration(t *testing.T
 }
 
 func TestAliyunAdapterChatCompletion_Qwen36UsesNativeMultimodalGeneration(t *testing.T) {
-	for _, model := range []string{"qwen3.6-plus", "qwen3.6-flash"} {
+	for _, model := range []string{"qwen3.6-plus", "qwen3.6-plus-2026-04-02", "qwen3.6-flash", "qwen3.6-flash-2026-04-16"} {
 		t.Run(model, func(t *testing.T) {
 			var (
 				gotPath    string
@@ -246,6 +246,7 @@ func TestAliyunAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
 
 	var (
 		gotAccept  string
+		gotSSE     string
 		gotPath    string
 		gotPayload map[string]any
 	)
@@ -256,6 +257,7 @@ func TestAliyunAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
 			t.Fatalf("decode request body: %v", err)
 		}
 		gotAccept = r.Header.Get("Accept")
+		gotSSE = r.Header.Get("X-DashScope-SSE")
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"request_id\":\"s1\",\"output\":{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"he\"}}]}}\n\n")
@@ -286,8 +288,11 @@ func TestAliyunAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
 	if gotAccept != "text/event-stream" {
 		t.Fatalf("Accept = %q, want text/event-stream", gotAccept)
 	}
-	if gotPayload["stream"] != true {
-		t.Fatalf("stream = %#v, want true", gotPayload["stream"])
+	if gotSSE != "enable" {
+		t.Fatalf("X-DashScope-SSE = %q, want enable", gotSSE)
+	}
+	if _, ok := gotPayload["stream"]; ok {
+		t.Fatalf("payload.stream = %#v, want omitted", gotPayload["stream"])
 	}
 	if len(chunks) != 3 {
 		t.Fatalf("chunk count = %d, want 3", len(chunks))
