@@ -395,7 +395,6 @@ func (h *DashboardHandler) listWorkspaceIDsByAnyPermission(ctx context.Context, 
 func dashboardAgentVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
 		workspacemodel.WorkspacePermissionAgentView,
-		workspacemodel.WorkspacePermissionAgentCreate,
 		workspacemodel.WorkspacePermissionAgentLogsView,
 		workspacemodel.WorkspacePermissionAgentUpdate,
 		workspacemodel.WorkspacePermissionAgentDelete,
@@ -408,8 +407,6 @@ func dashboardAgentVisiblePermissionCodes() []workspacemodel.WorkspacePermission
 func dashboardWorkflowVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
 		workspacemodel.WorkspacePermissionWorkflowView,
-		workspacemodel.WorkspacePermissionWorkflowCreate,
-		workspacemodel.WorkspacePermissionWorkflowImport,
 		workspacemodel.WorkspacePermissionWorkflowLogsView,
 		workspacemodel.WorkspacePermissionWorkflowUpdate,
 		workspacemodel.WorkspacePermissionWorkflowDelete,
@@ -422,14 +419,12 @@ func dashboardWorkflowVisiblePermissionCodes() []workspacemodel.WorkspacePermiss
 
 func dashboardKnowledgeBaseVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
-		workspacemodel.WorkspacePermissionKnowledgeBaseCreate,
 		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseGraphView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseRetrievalTest,
 		workspacemodel.WorkspacePermissionKnowledgeBaseUpdate,
 		workspacemodel.WorkspacePermissionKnowledgeBaseDelete,
 		workspacemodel.WorkspacePermissionKnowledgeBaseMove,
-		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentCreate,
 		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate,
 		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentDelete,
 		workspacemodel.WorkspacePermissionKnowledgeBaseSegmentUpdate,
@@ -442,7 +437,6 @@ func dashboardKnowledgeBaseVisiblePermissionCodes() []workspacemodel.WorkspacePe
 
 func dashboardDatabaseVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
-		workspacemodel.WorkspacePermissionDatabaseCreate,
 		workspacemodel.WorkspacePermissionDatabaseUpdate,
 		workspacemodel.WorkspacePermissionDatabaseDelete,
 		workspacemodel.WorkspacePermissionDatabaseMove,

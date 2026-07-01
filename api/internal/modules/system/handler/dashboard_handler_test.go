@@ -36,13 +36,19 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
 		userWorkspaceIDs: []string{"ws-1", "ws-2"},
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
+			workspacemodel.WorkspacePermissionAgentCreate:                 {"ws-agent-create"},
 			workspacemodel.WorkspacePermissionAgentLogsView:               {"ws-agent-logs"},
 			workspacemodel.WorkspacePermissionAgentUpdate:                 {"ws-agent"},
+			workspacemodel.WorkspacePermissionWorkflowCreate:              {"ws-workflow-create"},
+			workspacemodel.WorkspacePermissionWorkflowImport:              {"ws-workflow-import"},
 			workspacemodel.WorkspacePermissionWorkflowView:                {"ws-workflow"},
 			workspacemodel.WorkspacePermissionWorkflowLogsView:            {"ws-workflow-logs"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseCreate:         {"ws-knowledge-create"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView:   {"ws-knowledge-view", "ws-knowledge-shared"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentCreate: {"ws-knowledge-document-create"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: {"ws-knowledge-manage"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage:   {"ws-knowledge-shared", "ws-knowledge-folder"},
+			workspacemodel.WorkspacePermissionDatabaseCreate:              {"ws-db-create"},
 			workspacemodel.WorkspacePermissionDatabaseRecordView:          {"ws-db"},
 			workspacemodel.WorkspacePermissionWorkspaceView:               {"ws-file"},
 		},
@@ -71,6 +77,12 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 	require.Equal(t, []string{"ws-knowledge-view", "ws-knowledge-shared", "ws-knowledge-manage", "ws-knowledge-folder"}, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs)
 	require.Equal(t, []string{"ws-db"}, dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs)
 	require.Equal(t, []string{"ws-file"}, dashboardSvc.recentWorkReq.FileWorkspaceIDs)
+	require.NotContains(t, dashboardSvc.recentWorkReq.AgentWorkspaceIDs, "ws-agent-create")
+	require.NotContains(t, dashboardSvc.recentWorkReq.WorkflowWorkspaceIDs, "ws-workflow-create")
+	require.NotContains(t, dashboardSvc.recentWorkReq.WorkflowWorkspaceIDs, "ws-workflow-import")
+	require.NotContains(t, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs, "ws-knowledge-create")
+	require.NotContains(t, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs, "ws-knowledge-document-create")
+	require.NotContains(t, dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs, "ws-db-create")
 }
 
 func TestDashboardRecentWorkWorkspaceScopeUsesResourcePermissions(t *testing.T) {
@@ -166,12 +178,18 @@ func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
 	permissionSvc := &dashboardHandlerWorkspacePermissionService{
 		userWorkspaceIDs: []string{"ws-1", "ws-2"},
 		workspaceIDsByPermission: map[workspacemodel.WorkspacePermissionCode][]string{
+			workspacemodel.WorkspacePermissionAgentCreate:                 {"ws-agent-create"},
 			workspacemodel.WorkspacePermissionAgentLogsView:               {"ws-agent"},
 			workspacemodel.WorkspacePermissionAgentUpdate:                 {"ws-agent-update"},
+			workspacemodel.WorkspacePermissionWorkflowCreate:              {"ws-workflow-create"},
+			workspacemodel.WorkspacePermissionWorkflowImport:              {"ws-workflow-import"},
 			workspacemodel.WorkspacePermissionWorkflowView:                {"ws-workflow"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseCreate:         {"ws-knowledge-create"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView:   {"ws-knowledge"},
+			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentCreate: {"ws-knowledge-document-create"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseDocumentUpdate: {"ws-knowledge-manage"},
 			workspacemodel.WorkspacePermissionKnowledgeBaseFolderManage:   {"ws-knowledge-folder"},
+			workspacemodel.WorkspacePermissionDatabaseCreate:              {"ws-db-create"},
 			workspacemodel.WorkspacePermissionDatabaseRecordView:          {"ws-db"},
 			workspacemodel.WorkspacePermissionWorkspaceView:               {"ws-file"},
 		},
@@ -194,6 +212,12 @@ func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
 	require.Equal(t, []string{"ws-knowledge", "ws-knowledge-manage", "ws-knowledge-folder"}, dashboardSvc.statsScopes.DatasetWorkspaceIDs)
 	require.Equal(t, []string{"ws-db"}, dashboardSvc.statsScopes.DataSourceWorkspaceIDs)
 	require.Equal(t, []string{"ws-file"}, dashboardSvc.statsScopes.FileWorkspaceIDs)
+	require.NotContains(t, dashboardSvc.statsScopes.AgentWorkspaceIDs, "ws-agent-create")
+	require.NotContains(t, dashboardSvc.statsScopes.WorkflowWorkspaceIDs, "ws-workflow-create")
+	require.NotContains(t, dashboardSvc.statsScopes.WorkflowWorkspaceIDs, "ws-workflow-import")
+	require.NotContains(t, dashboardSvc.statsScopes.DatasetWorkspaceIDs, "ws-knowledge-create")
+	require.NotContains(t, dashboardSvc.statsScopes.DatasetWorkspaceIDs, "ws-knowledge-document-create")
+	require.NotContains(t, dashboardSvc.statsScopes.DataSourceWorkspaceIDs, "ws-db-create")
 
 	var payload struct {
 		Data systemmodel.DashboardStatsResponse `json:"data"`

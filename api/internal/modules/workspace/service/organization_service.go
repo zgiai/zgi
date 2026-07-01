@@ -4086,7 +4086,6 @@ func datasetViewPermissionCodes() []model.WorkspacePermissionCode {
 		model.WorkspacePermissionKnowledgeBaseDelete,
 		model.WorkspacePermissionKnowledgeBaseMove,
 		model.WorkspacePermissionKnowledgeBaseDocumentView,
-		model.WorkspacePermissionKnowledgeBaseDocumentCreate,
 		model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
 		model.WorkspacePermissionKnowledgeBaseDocumentDelete,
 		model.WorkspacePermissionKnowledgeBaseSegmentUpdate,

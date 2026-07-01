@@ -2900,19 +2900,27 @@ const permissionActionMatrixSource = sourceSliceBetween(
 );
 const workspacePermissionConstants = collectGoPermissionConstants(workspacePermissionModelSource);
 const dashboardVisiblePermissionPairs = [
-  ['agent', 'AGENT_PERMISSION_ACTIONS', 'dashboardAgentVisiblePermissionCodes'],
-  ['workflow', 'WORKFLOW_PERMISSION_ACTIONS', 'dashboardWorkflowVisiblePermissionCodes'],
+  ['agent', 'AGENT_PERMISSION_ACTIONS', 'dashboardAgentVisiblePermissionCodes', ['agent.create']],
+  [
+    'workflow',
+    'WORKFLOW_PERMISSION_ACTIONS',
+    'dashboardWorkflowVisiblePermissionCodes',
+    ['workflow.create', 'workflow.import'],
+  ],
   [
     'knowledge base',
     'KNOWLEDGE_BASE_PERMISSION_ACTIONS',
     'dashboardKnowledgeBaseVisiblePermissionCodes',
+    ['knowledge_base.create', 'knowledge_base.document.create'],
   ],
-  ['database', 'DATABASE_PERMISSION_ACTIONS', 'dashboardDatabaseVisiblePermissionCodes'],
+  ['database', 'DATABASE_PERMISSION_ACTIONS', 'dashboardDatabaseVisiblePermissionCodes', ['database.create']],
 ];
-for (const [label, frontendActionName, backendHelperName] of dashboardVisiblePermissionPairs) {
+for (const [label, frontendActionName, backendHelperName, excludedResourceOnlyCodes] of dashboardVisiblePermissionPairs) {
   const frontendPageCodes = [
     ...new Set(collectPermissionActionPageCodes(permissionConstantsSource, frontendActionName)),
-  ].sort();
+  ]
+    .filter(code => !excludedResourceOnlyCodes.includes(code))
+    .sort();
   const backendDashboardCodes = [
     ...new Set(
       collectGoWorkspacePermissionHelperCodes(
@@ -2926,7 +2934,7 @@ for (const [label, frontendActionName, backendHelperName] of dashboardVisiblePer
   assert.deepEqual(
     backendDashboardCodes,
     frontendPageCodes,
-    `dashboard ${label} visible workspace scope should match frontend page-visible permission group`
+    `dashboard ${label} resource-visible workspace scope should match frontend page-visible group without create-only permissions`
   );
 }
 const fileDashboardVisibleBackendCodes = [

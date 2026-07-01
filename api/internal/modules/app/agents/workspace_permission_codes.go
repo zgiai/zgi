@@ -133,8 +133,7 @@ func agentRuntimeConfigManagePermissionCodes(agentType string) []model.Workspace
 func agentRuntimeConfigReadPermissionCodes(agentType string) []model.WorkspacePermissionCode {
 	if isWorkflowRuntimePermissionType(agentType) {
 		return []model.WorkspacePermissionCode{
-			model.WorkspacePermissionWorkflowCreate,
-			model.WorkspacePermissionWorkflowImport,
+			model.WorkspacePermissionWorkflowView,
 			model.WorkspacePermissionWorkflowUpdate,
 			model.WorkspacePermissionWorkflowRunDraft,
 			model.WorkspacePermissionWorkflowPublish,
@@ -143,7 +142,7 @@ func agentRuntimeConfigReadPermissionCodes(agentType string) []model.WorkspacePe
 	}
 
 	return []model.WorkspacePermissionCode{
-		model.WorkspacePermissionAgentCreate,
+		model.WorkspacePermissionAgentView,
 		model.WorkspacePermissionAgentUpdate,
 		model.WorkspacePermissionAgentPublish,
 		model.WorkspacePermissionAgentRuntimeAccessManage,
