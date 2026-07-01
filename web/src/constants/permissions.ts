@@ -413,12 +413,15 @@ export const SELECTABLE_PERMISSION_CODES = ALL_PERMISSION_CODES.filter(
 const SELECTABLE_PERMISSION_CODE_VALUES = new Set<string>(SELECTABLE_PERMISSION_CODES);
 
 export const PERMISSION_DEPENDENCIES: Partial<Record<PermissionCode, readonly PermissionCode[]>> = {
+  'agent.create': ['agent.view'],
   'agent.update': ['agent.view'],
   'agent.delete': ['agent.view'],
   'agent.move': ['agent.view'],
   'agent.publish': ['agent.view'],
   'agent.runtime_access.manage': ['agent.view'],
   'agent.logs.view': ['agent.view'],
+  'workflow.create': ['workflow.view'],
+  'workflow.import': ['workflow.view'],
   'workflow.update': ['workflow.view'],
   'workflow.delete': ['workflow.view'],
   'workflow.move': ['workflow.view'],
@@ -427,11 +430,13 @@ export const PERMISSION_DEPENDENCIES: Partial<Record<PermissionCode, readonly Pe
   'workflow.runtime_access.manage': ['workflow.view'],
   'workflow.logs.view': ['workflow.view'],
   'database.schema.manage': ['database.schema.view'],
+  'database.create': ['database.schema.view'],
   'database.record.view': ['database.schema.view'],
   'database.record.create': ['database.schema.view', 'database.record.view'],
   'database.record.update': ['database.schema.view', 'database.record.view'],
   'database.record.delete': ['database.schema.view', 'database.record.view'],
   'database.import.execute': ['database.import.analyze'],
+  'knowledge_base.create': ['knowledge_base.document.view'],
   'knowledge_base.document.create': ['knowledge_base.document.view'],
   'knowledge_base.document.update': ['knowledge_base.document.view'],
   'knowledge_base.document.delete': ['knowledge_base.document.view'],
@@ -453,6 +458,7 @@ export const getMissingPermissionDependencies = (
     if (!isPermissionCode(permission) || queued.has(permission)) continue;
     queue.push(permission);
     queued.add(permission);
+    current.add(permission);
   }
 
   for (let index = 0; index < queue.length; index += 1) {

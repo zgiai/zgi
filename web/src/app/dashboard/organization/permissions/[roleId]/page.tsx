@@ -52,7 +52,8 @@ export default function RoleConfigPage() {
   const [savedPermissions, setSavedPermissions] = useState<Set<string>>(new Set());
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [pendingDependencyChange, setPendingDependencyChange] = useState<{
-    permissionCode: string;
+    label: string;
+    permissionCodes: string[];
     dependencies: string[];
   } | null>(null);
   const [newRoleInfoPrompted, setNewRoleInfoPrompted] = useState(false);
@@ -117,23 +118,26 @@ export default function RoleConfigPage() {
   const getPermissionLabel = (code: string) =>
     translateOrFallback(`permissions.${code}.name`, formatPermissionFallbackLabel(code, locale));
 
+  const getModuleLabel = (module: (typeof PERMISSION_MODULES)[0]) =>
+    translateOrFallback(module.title, formatPermissionFallbackLabel(module.key, locale));
+
   const dependencySeparator = locale?.toLowerCase().startsWith('zh') ? '、' : ', ';
   const dependencyConfirmDescription = pendingDependencyChange
     ? t('dashboard.organization.permissions.config.dependencyConfirm.description', {
-        permission: getPermissionLabel(pendingDependencyChange.permissionCode),
+        permission: pendingDependencyChange.label,
         dependencies: pendingDependencyChange.dependencies
           .map(getPermissionLabel)
           .join(dependencySeparator),
       })
     : '';
 
-  const addPermissionWithDependencies = (
-    permissionCode: string,
+  const addPermissionsWithDependencies = (
+    permissionCodes: readonly string[],
     dependencies: readonly string[] = []
   ) => {
     setSelectedPermissions(prev => {
       const next = new Set(prev);
-      next.add(permissionCode);
+      permissionCodes.forEach(permissionCode => next.add(permissionCode));
       dependencies.forEach(dependency => next.add(dependency));
       return next;
     });
@@ -152,17 +156,21 @@ export default function RoleConfigPage() {
 
     const dependencies = getMissingPermissionDependencies(selectedPermissions, [code]);
     if (dependencies.length > 0) {
-      setPendingDependencyChange({ permissionCode: code, dependencies });
+      setPendingDependencyChange({
+        label: getPermissionLabel(code),
+        permissionCodes: [code],
+        dependencies,
+      });
       return;
     }
 
-    addPermissionWithDependencies(code);
+    addPermissionsWithDependencies([code]);
   };
 
   const confirmDependencyChange = () => {
     if (!pendingDependencyChange) return;
-    addPermissionWithDependencies(
-      pendingDependencyChange.permissionCode,
+    addPermissionsWithDependencies(
+      pendingDependencyChange.permissionCodes,
       pendingDependencyChange.dependencies
     );
     setPendingDependencyChange(null);
@@ -192,19 +200,33 @@ export default function RoleConfigPage() {
 
   // Handle toggle all permissions for a module
   const handleToggleModule = (module: (typeof PERMISSION_MODULES)[0], checked: boolean) => {
-    setSelectedPermissions(prev => {
-      const next = new Set(prev);
-      if (checked) {
-        module.permissions.forEach(permission => {
-          next.add(permission.code);
-        });
-      } else {
+    if (!checked) {
+      setSelectedPermissions(prev => {
+        const next = new Set(prev);
         module.permissions.forEach(permission => {
           next.delete(permission.code);
         });
-      }
-      return next;
-    });
+        return next;
+      });
+      return;
+    }
+
+    const permissionCodes = module.permissions
+      .map(permission => permission.code)
+      .filter(permissionCode => !selectedPermissions.has(permissionCode));
+    if (permissionCodes.length === 0) return;
+
+    const dependencies = getMissingPermissionDependencies(selectedPermissions, permissionCodes);
+    if (dependencies.length > 0) {
+      setPendingDependencyChange({
+        label: getModuleLabel(module),
+        permissionCodes,
+        dependencies,
+      });
+      return;
+    }
+
+    addPermissionsWithDependencies(permissionCodes);
   };
 
   // Handle save role info

@@ -76,7 +76,8 @@ export function WorkspaceMemberPermissionsDialog({
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [templateSearch, setTemplateSearch] = useState('');
   const [pendingDependencyChange, setPendingDependencyChange] = useState<{
-    permissionCode: string;
+    label: string;
+    permissionCodes: string[];
     dependencies: string[];
   } | null>(null);
 
@@ -196,23 +197,26 @@ export function WorkspaceMemberPermissionsDialog({
   const getPermissionLabel = (code: string) =>
     translatePermission(`permissions.${code}.name`, formatPermissionFallbackLabel(code, locale));
 
+  const getModuleLabel = (module: PermissionModule) =>
+    translatePermission(module.title, formatPermissionFallbackLabel(module.key, locale));
+
   const dependencySeparator = locale?.toLowerCase().startsWith('zh') ? '、' : ', ';
   const dependencyConfirmDescription = pendingDependencyChange
     ? t('dependencyConfirm.description', {
-        permission: getPermissionLabel(pendingDependencyChange.permissionCode),
+        permission: pendingDependencyChange.label,
         dependencies: pendingDependencyChange.dependencies
           .map(getPermissionLabel)
           .join(dependencySeparator),
       })
     : '';
 
-  const addPermissionWithDependencies = (
-    permissionCode: string,
+  const addPermissionsWithDependencies = (
+    permissionCodes: readonly string[],
     dependencies: readonly string[] = []
   ) => {
     setSelectedPermissions(prev => {
       const next = new Set(prev);
-      next.add(permissionCode);
+      permissionCodes.forEach(permissionCode => next.add(permissionCode));
       dependencies.forEach(dependency => next.add(dependency));
       return next;
     });
@@ -230,34 +234,54 @@ export function WorkspaceMemberPermissionsDialog({
 
     const dependencies = getMissingPermissionDependencies(selectedPermissions, [permissionCode]);
     if (dependencies.length > 0) {
-      setPendingDependencyChange({ permissionCode, dependencies });
+      setPendingDependencyChange({
+        label: getPermissionLabel(permissionCode),
+        permissionCodes: [permissionCode],
+        dependencies,
+      });
       return;
     }
 
-    addPermissionWithDependencies(permissionCode);
+    addPermissionsWithDependencies([permissionCode]);
   };
 
   const confirmDependencyChange = () => {
     if (!pendingDependencyChange) return;
-    addPermissionWithDependencies(
-      pendingDependencyChange.permissionCode,
+    addPermissionsWithDependencies(
+      pendingDependencyChange.permissionCodes,
       pendingDependencyChange.dependencies
     );
     setPendingDependencyChange(null);
   };
 
   const toggleModule = (module: PermissionModule, checked: boolean) => {
-    setSelectedPermissions(prev => {
-      const next = new Set(prev);
-      for (const permission of module.permissions) {
-        if (checked) {
-          next.add(permission.code);
-        } else {
+    if (!checked) {
+      setSelectedPermissions(prev => {
+        const next = new Set(prev);
+        for (const permission of module.permissions) {
           next.delete(permission.code);
         }
-      }
-      return next;
-    });
+        return next;
+      });
+      return;
+    }
+
+    const permissionCodes = module.permissions
+      .map(permission => permission.code)
+      .filter(permissionCode => !selectedPermissions.has(permissionCode));
+    if (permissionCodes.length === 0) return;
+
+    const dependencies = getMissingPermissionDependencies(selectedPermissions, permissionCodes);
+    if (dependencies.length > 0) {
+      setPendingDependencyChange({
+        label: getModuleLabel(module),
+        permissionCodes,
+        dependencies,
+      });
+      return;
+    }
+
+    addPermissionsWithDependencies(permissionCodes);
   };
 
   const moduleChecked = (module: PermissionModule) =>

@@ -120,6 +120,16 @@ const organizationPermissionsPagePath = path.join(
   'permissions',
   'page.tsx'
 );
+const organizationPermissionDetailPagePath = path.join(
+  rootDir,
+  'src',
+  'app',
+  'dashboard',
+  'organization',
+  'permissions',
+  '[roleId]',
+  'page.tsx'
+);
 const organizationWorkspaceDetailPagePath = path.join(
   rootDir,
   'src',
@@ -1587,6 +1597,10 @@ const workspaceMemberPermissionsDialogSource = fs.readFileSync(
 );
 const assignWorkspaceDialogSource = fs.readFileSync(assignWorkspaceDialogPath, 'utf8');
 const organizationPermissionsPageSource = fs.readFileSync(organizationPermissionsPagePath, 'utf8');
+const organizationPermissionDetailPageSource = fs.readFileSync(
+  organizationPermissionDetailPagePath,
+  'utf8'
+);
 const organizationWorkspaceDetailPageSource = fs.readFileSync(
   organizationWorkspaceDetailPagePath,
   'utf8'
@@ -1908,6 +1922,16 @@ assert.match(
   workspaceMemberPermissionsDialogSource,
   /isAdmin \? \([\s\S]*adminPermissionPlaceholder\.title[\s\S]*adminPermissionPlaceholder\.description[\s\S]*\) : \(/,
   'workspace member permission dialog should show an explanatory placeholder instead of permission checkboxes for workspace admins'
+);
+assert.match(
+  workspaceMemberPermissionsDialogSource,
+  /const toggleModule[\s\S]*getMissingPermissionDependencies\(selectedPermissions,\s*permissionCodes\)/,
+  'workspace member permission dialog module toggle should honor permission dependencies'
+);
+assert.match(
+  organizationPermissionDetailPageSource,
+  /const handleToggleModule[\s\S]*getMissingPermissionDependencies\(selectedPermissions,\s*permissionCodes\)/,
+  'organization permission template module toggle should honor permission dependencies'
 );
 assert.match(
   workspaceMembersPageSource,
@@ -3154,6 +3178,36 @@ assert.doesNotMatch(
   permissionConstantsSource,
   /legacyDataEdit|legacyAiQuery|uploadCreate|moveCreate/,
   'frontend action matrix should not expose compatibility-only aggregate permissions as action groups'
+);
+assert.match(
+  permissionConstantsSource,
+  /'agent\.create':\s*\[\s*'agent\.view'\s*\]/,
+  'agent.create should auto-enable agent.view in frontend permission editors'
+);
+assert.match(
+  permissionConstantsSource,
+  /'workflow\.create':\s*\[\s*'workflow\.view'\s*\]/,
+  'workflow.create should auto-enable workflow.view in frontend permission editors'
+);
+assert.match(
+  permissionConstantsSource,
+  /'workflow\.import':\s*\[\s*'workflow\.view'\s*\]/,
+  'workflow.import should auto-enable workflow.view in frontend permission editors'
+);
+assert.match(
+  permissionConstantsSource,
+  /'database\.create':\s*\[\s*'database\.schema\.view'\s*\]/,
+  'database.create should auto-enable schema view in frontend permission editors'
+);
+assert.match(
+  permissionConstantsSource,
+  /'knowledge_base\.create':\s*\[\s*'knowledge_base\.document\.view'\s*\]/,
+  'knowledge_base.create should auto-enable document view in frontend permission editors'
+);
+assert.match(
+  permissionConstantsSource,
+  /for \(const permission of requestedPermissions\)[\s\S]*current\.add\(permission\)/,
+  'permission dependency resolver should treat permissions toggled in the same action as already granted'
 );
 for (const code of collectStringLiterals(permissionAllCodesSource)) {
   assert.ok(
