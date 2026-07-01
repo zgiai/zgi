@@ -1403,12 +1403,7 @@ func (h *DatasetHandler) authorizeBatchHitTestingTaskAccess(c *gin.Context) (str
 		return "", nil, false
 	}
 
-	if h.datasetService == nil {
-		response.Fail(c, response.ErrSystemError)
-		return "", nil, false
-	}
-	if _, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID, accountID, organizationID); err != nil {
-		failDatasetRead(c, err, response.ErrDatasetGetFailed)
+	if _, ok := h.getDatasetForRetrievalTest(c, datasetID); !ok {
 		return "", nil, false
 	}
 

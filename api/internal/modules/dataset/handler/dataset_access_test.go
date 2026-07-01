@@ -1129,6 +1129,143 @@ func TestGetBatchHitTestingTaskReportRejectsForeignAccountBeforeReport(t *testin
 	}
 }
 
+func TestGetBatchHitTestingTaskStatusAllowsRetrievalTestOnlyPermission(t *testing.T) {
+	datasetID := "11111111-1111-1111-1111-111111111111"
+	datasetService := &datasetBatchTaskDatasetService{
+		datasets: map[string]*dataset_model.Dataset{
+			datasetID: {ID: datasetID, OrganizationID: "org-1", WorkspaceID: "workspace-1"},
+		},
+	}
+	organizationService := &datasetRetrievalTestOrganizationService{allowed: true}
+	manager, taskID := newDatasetBatchTaskManager(t, datasetID, "account-1", "org-1", "pending")
+	handler := &DatasetHandler{
+		datasetService:      datasetService,
+		organizationService: organizationService,
+		batchTaskManager:    manager,
+	}
+	c, recorder := newDatasetBatchTaskContext(http.MethodGet, datasetID, taskID, "account-1", "org-1", "")
+
+	handler.GetBatchHitTestingTaskStatus(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if datasetService.getByIDCalls != 1 {
+		t.Fatalf("GetDatasetByID calls = %d, want 1", datasetService.getByIDCalls)
+	}
+	if datasetService.permissionChecks != 0 {
+		t.Fatalf("GetDatasetWithPermissionCheck calls = %d, want 0", datasetService.permissionChecks)
+	}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest}
+	if !reflect.DeepEqual(organizationService.permissions, want) {
+		t.Fatalf("permissions = %#v, want %#v", organizationService.permissions, want)
+	}
+}
+
+func TestGetBatchHitTestingTaskReportAllowsRetrievalTestOnlyPermission(t *testing.T) {
+	datasetID := "11111111-1111-1111-1111-111111111111"
+	datasetService := &datasetBatchTaskDatasetService{
+		datasets: map[string]*dataset_model.Dataset{
+			datasetID: {ID: datasetID, OrganizationID: "org-1", WorkspaceID: "workspace-1"},
+		},
+	}
+	organizationService := &datasetRetrievalTestOrganizationService{allowed: true}
+	manager, taskID := newDatasetBatchTaskManager(t, datasetID, "account-1", "org-1", "completed")
+	handler := &DatasetHandler{
+		datasetService:      datasetService,
+		organizationService: organizationService,
+		batchTaskManager:    manager,
+	}
+	c, recorder := newDatasetBatchTaskContext(http.MethodGet, datasetID, taskID, "account-1", "org-1", "")
+
+	handler.GetBatchHitTestingTaskReport(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if datasetService.getByIDCalls != 1 {
+		t.Fatalf("GetDatasetByID calls = %d, want 1", datasetService.getByIDCalls)
+	}
+	if datasetService.permissionChecks != 0 {
+		t.Fatalf("GetDatasetWithPermissionCheck calls = %d, want 0", datasetService.permissionChecks)
+	}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest}
+	if !reflect.DeepEqual(organizationService.permissions, want) {
+		t.Fatalf("permissions = %#v, want %#v", organizationService.permissions, want)
+	}
+}
+
+func TestStopBatchHitTestingTaskAllowsRetrievalTestOnlyPermission(t *testing.T) {
+	datasetID := "11111111-1111-1111-1111-111111111111"
+	datasetService := &datasetBatchTaskDatasetService{
+		datasets: map[string]*dataset_model.Dataset{
+			datasetID: {ID: datasetID, OrganizationID: "org-1", WorkspaceID: "workspace-1"},
+		},
+	}
+	organizationService := &datasetRetrievalTestOrganizationService{allowed: true}
+	manager, taskID := newDatasetBatchTaskManager(t, datasetID, "account-1", "org-1", "processing")
+	handler := &DatasetHandler{
+		datasetService:      datasetService,
+		organizationService: organizationService,
+		batchTaskManager:    manager,
+	}
+	c, recorder := newDatasetBatchTaskContext(http.MethodPost, datasetID, taskID, "account-1", "org-1", "")
+
+	handler.StopBatchHitTestingTask(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if datasetService.getByIDCalls != 1 {
+		t.Fatalf("GetDatasetByID calls = %d, want 1", datasetService.getByIDCalls)
+	}
+	if datasetService.permissionChecks != 0 {
+		t.Fatalf("GetDatasetWithPermissionCheck calls = %d, want 0", datasetService.permissionChecks)
+	}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest}
+	if !reflect.DeepEqual(organizationService.permissions, want) {
+		t.Fatalf("permissions = %#v, want %#v", organizationService.permissions, want)
+	}
+}
+
+func TestSaveBatchHitTestingResultsAllowsRetrievalTestOnlyPermission(t *testing.T) {
+	datasetID := "11111111-1111-1111-1111-111111111111"
+	datasetService := &datasetBatchTaskDatasetService{
+		datasets: map[string]*dataset_model.Dataset{
+			datasetID: {ID: datasetID, OrganizationID: "org-1", WorkspaceID: "workspace-1"},
+		},
+	}
+	organizationService := &datasetRetrievalTestOrganizationService{allowed: true}
+	manager, taskID := newDatasetBatchTaskManager(t, datasetID, "account-1", "org-1", "completed")
+	queryService := &datasetBatchTaskQueryService{}
+	handler := &DatasetHandler{
+		datasetService:      datasetService,
+		organizationService: organizationService,
+		datasetQueryService: queryService,
+		batchTaskManager:    manager,
+	}
+	c, recorder := newDatasetBatchTaskContext(http.MethodPost, datasetID, taskID, "account-1", "org-1", `{"batch_name":"Regression"}`)
+
+	handler.SaveBatchHitTestingResults(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if queryService.saveCalls != 1 {
+		t.Fatalf("SaveBatchHitTestingResults calls = %d, want 1", queryService.saveCalls)
+	}
+	if datasetService.getByIDCalls != 1 {
+		t.Fatalf("GetDatasetByID calls = %d, want 1", datasetService.getByIDCalls)
+	}
+	if datasetService.permissionChecks != 0 {
+		t.Fatalf("GetDatasetWithPermissionCheck calls = %d, want 0", datasetService.permissionChecks)
+	}
+	want := []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest}
+	if !reflect.DeepEqual(organizationService.permissions, want) {
+		t.Fatalf("permissions = %#v, want %#v", organizationService.permissions, want)
+	}
+}
+
 func TestStopBatchHitTestingTaskRejectsTaskOutsideRouteDatasetBeforeStop(t *testing.T) {
 	datasetID := "11111111-1111-1111-1111-111111111111"
 	otherDatasetID := "22222222-2222-2222-2222-222222222222"
@@ -1393,7 +1530,17 @@ func (s *datasetSegmentQuestionService) DeleteDocumentSegmentQuestion(ctx contex
 type datasetBatchTaskDatasetService struct {
 	datasetservice.DatasetService
 	datasets         map[string]*dataset_model.Dataset
+	getByIDCalls     int
 	permissionChecks int
+}
+
+func (s *datasetBatchTaskDatasetService) GetDatasetByID(ctx context.Context, id string) (*dataset_model.Dataset, error) {
+	s.getByIDCalls++
+	dataset := s.datasets[id]
+	if dataset == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return dataset, nil
 }
 
 func (s *datasetBatchTaskDatasetService) GetDatasetWithPermissionCheck(ctx context.Context, datasetID, accountID, organizationID string) (*dataset_model.Dataset, error) {
