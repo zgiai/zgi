@@ -37,14 +37,12 @@ type datasetAccessAuthorizer interface {
 
 func knowledgeBaseViewPermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionKnowledgeBaseCreate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
 		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
 		workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
 		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
 		workspace_model.WorkspacePermissionKnowledgeBaseMove,
-		workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
 		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
@@ -78,11 +76,9 @@ func knowledgeBaseFolderViewPermissionCodes() []workspace_model.WorkspacePermiss
 	return []workspace_model.WorkspacePermissionCode{
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
 		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
-		workspace_model.WorkspacePermissionKnowledgeBaseCreate,
 		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
 		workspace_model.WorkspacePermissionKnowledgeBaseMove,
-		workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
 		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,

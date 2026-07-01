@@ -152,6 +152,10 @@ func TestAuthorizeDatasetViewAccessUsesFineKnowledgeBaseViewPermissions(t *testi
 		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
 	}
 	assertNoCoarseKnowledgeBasePermissions(t, auth.lastRequest.PermissionCodes)
+	if containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseCreate) ||
+		containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate) {
+		t.Fatalf("dataset view permissions should not include create permissions: %#v", auth.lastRequest.PermissionCodes)
+	}
 }
 
 func TestAuthorizeDatasetFolderViewAccessRejectsCrossOrganizationFolder(t *testing.T) {
@@ -232,6 +236,10 @@ func TestAuthorizeDatasetFolderViewAccessUsesKnowledgeBaseReadPermissions(t *tes
 	if containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseView) ||
 		containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseManage) {
 		t.Fatalf("folder view permissions should not include coarse knowledge base view/manage: %#v", auth.lastRequest.PermissionCodes)
+	}
+	if containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseCreate) ||
+		containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate) {
+		t.Fatalf("folder view permissions should not include create permissions: %#v", auth.lastRequest.PermissionCodes)
 	}
 }
 

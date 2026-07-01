@@ -662,6 +662,9 @@ func TestAgentsService_GetAgent_RejectsMissingWorkspaceViewPermission(t *testing
 	require.True(t, orgService.checkCalled)
 	require.Equal(t, agentAssetVisiblePermissionCodes(), orgService.lastPermissions)
 	require.Contains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentView)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentCreate)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionWorkflowCreate)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionWorkflowImport)
 	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentManage)
 }
 
@@ -695,6 +698,9 @@ func TestAgentsService_GetAgentRuntimeSurfaces_UsesWorkspaceViewAndLegacyFallbac
 	require.True(t, orgService.checkCalled)
 	require.Equal(t, agentAssetVisiblePermissionCodes(), orgService.lastPermissions)
 	require.Contains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentView)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentCreate)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionWorkflowCreate)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionWorkflowImport)
 	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentManage)
 
 	surfaces := runtimeSurfaceTestMap(resp.Surfaces)

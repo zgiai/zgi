@@ -16,8 +16,6 @@ import (
 func workflowDraftReadPermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
 		workspace_model.WorkspacePermissionWorkflowView,
-		workspace_model.WorkspacePermissionWorkflowCreate,
-		workspace_model.WorkspacePermissionWorkflowImport,
 		workspace_model.WorkspacePermissionWorkflowUpdate,
 		workspace_model.WorkspacePermissionWorkflowRunDraft,
 		workspace_model.WorkspacePermissionWorkflowPublish,

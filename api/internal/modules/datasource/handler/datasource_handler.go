@@ -45,11 +45,6 @@ var databaseExistingAssetVisibilityPermissions = []workspace_model.WorkspacePerm
 	workspace_model.WorkspacePermissionDatabaseAIQueryRead,
 }
 
-var databaseWorkspaceVisibilityPermissions = append(
-	[]workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionDatabaseCreate},
-	databaseExistingAssetVisibilityPermissions...,
-)
-
 var databaseTableMetadataPermissions = []workspace_model.WorkspacePermissionCode{
 	workspace_model.WorkspacePermissionDatabaseSchemaView,
 	workspace_model.WorkspacePermissionDatabaseSchemaManage,
@@ -228,7 +223,7 @@ func (h *DataSourceHandler) ListDataSources(c *gin.Context) {
 			organizationID,
 			accountID,
 			filterWorkspaceID,
-			databaseWorkspaceVisibilityPermissions...,
+			databaseExistingAssetVisibilityPermissions...,
 		)
 		if err != nil {
 			response.Fail(c, response.ErrSystemError)

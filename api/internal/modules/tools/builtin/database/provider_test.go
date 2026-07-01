@@ -174,8 +174,81 @@ func TestInsertTableRecordsRequiresWritePermission(t *testing.T) {
 		"table_id":       "table-1",
 		"records":        []map[string]interface{}{{"name": "Ada"}},
 	}, nil, nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "record mutation") {
+	if err == nil || !strings.Contains(err.Error(), "database.record.create") {
 		t.Fatalf("Invoke() error = %v, want write permission rejection", err)
+	}
+}
+
+func TestDatabaseMutationToolsRequireExactRecordPermission(t *testing.T) {
+	tests := []struct {
+		name       string
+		toolID     string
+		grant      workspacemodel.WorkspacePermissionCode
+		wantDenied string
+	}{
+		{
+			name:   "insert accepts create permission",
+			toolID: ToolInsertTableRecords,
+			grant:  workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+		},
+		{
+			name:       "update rejects create-only permission",
+			toolID:     ToolUpdateTableRecords,
+			grant:      workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+			wantDenied: string(workspacemodel.WorkspacePermissionDatabaseRecordUpdate),
+		},
+		{
+			name:   "update accepts update permission",
+			toolID: ToolUpdateTableRecords,
+			grant:  workspacemodel.WorkspacePermissionDatabaseRecordUpdate,
+		},
+		{
+			name:       "delete rejects create-only permission",
+			toolID:     ToolDeleteTableRecords,
+			grant:      workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+			wantDenied: string(workspacemodel.WorkspacePermissionDatabaseRecordDelete),
+		},
+		{
+			name:   "delete accepts delete permission",
+			toolID: ToolDeleteTableRecords,
+			grant:  workspacemodel.WorkspacePermissionDatabaseRecordDelete,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := NewProvider(newDatabaseFakeDataSourceService(), &databaseFakeOrganizationService{
+				aiQuery:          true,
+				view:             true,
+				recordPermission: tt.grant,
+			})
+			tool, err := provider.GetTool(tt.toolID)
+			if err != nil {
+				t.Fatalf("GetTool() error = %v", err)
+			}
+			runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+				TenantID:   "org-1",
+				InvokeFrom: tools.ToolInvokeFromAIChat,
+				RuntimeParameters: map[string]interface{}{
+					"organization_id": "org-1",
+				},
+			})
+
+			_, err = runtimeTool.Invoke(context.Background(), "acct-1", map[string]interface{}{
+				"data_source_id": "db-1",
+				"table_id":       "table-1",
+				"records":        []map[string]interface{}{{"id": 1, "name": "Ada"}},
+			}, nil, nil, nil)
+			if tt.wantDenied != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantDenied) {
+					t.Fatalf("Invoke() error = %v, want missing %s", err, tt.wantDenied)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Invoke() error = %v", err)
+			}
+		})
 	}
 }
 
@@ -289,10 +362,11 @@ func (s *databaseFakeDataSourceService) DeleteTableRecords(context.Context, stri
 }
 
 type databaseFakeOrganizationService struct {
-	aiQuery       bool
-	view          bool
-	dataEdit      bool
-	lastAccountID string
+	aiQuery          bool
+	view             bool
+	dataEdit         bool
+	recordPermission workspacemodel.WorkspacePermissionCode
+	lastAccountID    string
 }
 
 func (s *databaseFakeOrganizationService) CheckWorkspacePermission(_ context.Context, _, _, accountID string, permission workspacemodel.WorkspacePermissionCode) (bool, error) {
@@ -302,6 +376,10 @@ func (s *databaseFakeOrganizationService) CheckWorkspacePermission(_ context.Con
 		return s.aiQuery, nil
 	case workspacemodel.WorkspacePermissionDatabaseRecordView:
 		return s.view, nil
+	case workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+		workspacemodel.WorkspacePermissionDatabaseRecordUpdate,
+		workspacemodel.WorkspacePermissionDatabaseRecordDelete:
+		return s.dataEdit || s.recordPermission == permission, nil
 	default:
 		return false, nil
 	}

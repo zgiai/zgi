@@ -54,6 +54,9 @@ func TestAgentsService_GetAgentsListWithPermissions_ReturnsEmptyWhenWorkspacePer
 	require.False(t, repo.getPaginatedAgentsMultipleTenantsCalled)
 	require.Equal(t, agentAssetVisiblePermissionCodes(), orgService.lastPermissions)
 	require.Contains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentView)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentCreate)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionWorkflowCreate)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionWorkflowImport)
 	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentManage)
 }
 
@@ -94,6 +97,7 @@ func TestAgentsService_GetAgentsListWithPermissions_FiltersAgentAssetKind(t *tes
 	require.NotNil(t, resp)
 	require.True(t, repo.getPaginatedAgentsMultipleTenantsCalled)
 	require.Equal(t, agentVisiblePermissionCodes(), orgService.lastPermissions)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionAgentCreate)
 	require.Equal(t, []string{"AGENT"}, repo.lastFilter.AgentTypes)
 }
 
@@ -134,6 +138,8 @@ func TestAgentsService_GetAgentsListWithPermissions_FiltersWorkflowAssetKind(t *
 	require.NotNil(t, resp)
 	require.True(t, repo.getPaginatedAgentsMultipleTenantsCalled)
 	require.Equal(t, workflowVisiblePermissionCodes(), orgService.lastPermissions)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionWorkflowCreate)
+	require.NotContains(t, orgService.lastPermissions, workspace_model.WorkspacePermissionWorkflowImport)
 	require.Equal(
 		t,
 		[]string{"WORKFLOW", "CONVERSATIONAL_WORKFLOW", "CONVERSATIONAL_AGENT"},

@@ -2949,12 +2949,6 @@ assert.deepEqual(
   [],
   'file page-visible permission group should stay empty because file visibility is held by default'
 );
-const agentAssetVisibleFrontendCodes = [
-  ...new Set([
-    ...collectPermissionActionPageCodes(permissionConstantsSource, 'AGENT_PERMISSION_ACTIONS'),
-    ...collectPermissionActionPageCodes(permissionConstantsSource, 'WORKFLOW_PERMISSION_ACTIONS'),
-  ]),
-].sort();
 const agentVisibleFrontendCodes = [
   ...new Set(
     collectPermissionActionPageCodes(permissionConstantsSource, 'AGENT_PERMISSION_ACTIONS')
@@ -2964,6 +2958,18 @@ const workflowVisibleFrontendCodes = [
   ...new Set(
     collectPermissionActionPageCodes(permissionConstantsSource, 'WORKFLOW_PERMISSION_ACTIONS')
   ),
+].sort();
+const agentExistingAssetVisibleFrontendCodes = agentVisibleFrontendCodes
+  .filter(code => code !== 'agent.create')
+  .sort();
+const workflowExistingAssetVisibleFrontendCodes = workflowVisibleFrontendCodes
+  .filter(code => code !== 'workflow.create' && code !== 'workflow.import')
+  .sort();
+const agentAssetExistingVisibleFrontendCodes = [
+  ...new Set([
+    ...agentExistingAssetVisibleFrontendCodes,
+    ...workflowExistingAssetVisibleFrontendCodes,
+  ]),
 ].sort();
 const agentVisibleBackendCodes = [
   ...new Set(
@@ -2990,18 +2996,18 @@ const agentAssetVisibleBackendCodes = [
 ].sort();
 assert.deepEqual(
   agentVisibleBackendCodes,
-  agentVisibleFrontendCodes,
-  'agent backend visible scope should match frontend agent page-visible permission group'
+  agentExistingAssetVisibleFrontendCodes,
+  'agent backend visible scope should match frontend agent existing-asset permission group'
 );
 assert.deepEqual(
   workflowVisibleBackendCodes,
-  workflowVisibleFrontendCodes,
-  'workflow backend visible scope should match frontend workflow page-visible permission group'
+  workflowExistingAssetVisibleFrontendCodes,
+  'workflow backend visible scope should match frontend workflow existing-asset permission group'
 );
 assert.deepEqual(
   agentAssetVisibleBackendCodes,
-  agentAssetVisibleFrontendCodes,
-  'agent backend asset-visible scope should match frontend agent/workflow page-visible permission groups'
+  agentAssetExistingVisibleFrontendCodes,
+  'agent backend asset-visible scope should match frontend agent/workflow existing-asset permission groups'
 );
 const fileReadableBackendCodes = [
   ...new Set(

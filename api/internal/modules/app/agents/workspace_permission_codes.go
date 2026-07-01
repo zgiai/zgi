@@ -14,7 +14,6 @@ func agentAssetVisiblePermissionCodes() []model.WorkspacePermissionCode {
 func agentVisiblePermissionCodes() []model.WorkspacePermissionCode {
 	return []model.WorkspacePermissionCode{
 		model.WorkspacePermissionAgentView,
-		model.WorkspacePermissionAgentCreate,
 		model.WorkspacePermissionAgentLogsView,
 		model.WorkspacePermissionAgentUpdate,
 		model.WorkspacePermissionAgentDelete,
@@ -26,8 +25,6 @@ func agentVisiblePermissionCodes() []model.WorkspacePermissionCode {
 
 func workflowVisiblePermissionCodes() []model.WorkspacePermissionCode {
 	return []model.WorkspacePermissionCode{
-		model.WorkspacePermissionWorkflowCreate,
-		model.WorkspacePermissionWorkflowImport,
 		model.WorkspacePermissionWorkflowView,
 		model.WorkspacePermissionWorkflowLogsView,
 		model.WorkspacePermissionWorkflowUpdate,

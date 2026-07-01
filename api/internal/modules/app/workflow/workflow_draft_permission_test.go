@@ -181,6 +181,10 @@ func TestGetDraftWorkflowAllowsEditorReachabilityPermissions(t *testing.T) {
 	if got, want := permissionChecker.lastPermissions, workflowDraftReadPermissionCodes(); !sameWorkspacePermissions(got, want) {
 		t.Fatalf("permissions = %v, want %v", got, want)
 	}
+	if containsWorkspacePermission(permissionChecker.lastPermissions, workspace_model.WorkspacePermissionWorkflowCreate) ||
+		containsWorkspacePermission(permissionChecker.lastPermissions, workspace_model.WorkspacePermissionWorkflowImport) {
+		t.Fatalf("draft read permissions should not include create/import permissions: %v", permissionChecker.lastPermissions)
+	}
 	if !service.getDraftCalled {
 		t.Fatalf("GetDraftWorkflow should be called when one editor reachability permission is allowed")
 	}
@@ -339,4 +343,13 @@ func sameWorkspacePermissions(left, right []workspace_model.WorkspacePermissionC
 		}
 	}
 	return true
+}
+
+func containsWorkspacePermission(codes []workspace_model.WorkspacePermissionCode, target workspace_model.WorkspacePermissionCode) bool {
+	for _, code := range codes {
+		if code == target {
+			return true
+		}
+	}
+	return false
 }
