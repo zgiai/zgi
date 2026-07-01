@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -57,6 +58,7 @@ func TestDatasetFolderServiceCheckFolderPermissionUsesKnowledgeBaseViewPermissio
 			t.Fatalf("permissions = %v, want %v", orgService.permissions, want)
 		}
 	}
+	require.NotContains(t, orgService.permissions, workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate)
 }
 
 func TestDatasetFolderServiceCheckFolderEditorPermissionUsesFolderManagePermission(t *testing.T) {

@@ -842,6 +842,9 @@ func TestGetRelatedResourcesFiltersKnowledgeBaseResourcesByReadPermission(t *tes
 					visibleDatasetWorkspaceID: {
 						workspace_model.WorkspacePermissionKnowledgeBaseDocumentView: true,
 					},
+					hiddenDatasetWorkspaceID: {
+						workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate: true,
+					},
 				},
 			},
 		},

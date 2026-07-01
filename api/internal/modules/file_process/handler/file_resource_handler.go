@@ -905,7 +905,6 @@ func fileRelatedKnowledgeBasePermissionCodes() []workspace_model.WorkspacePermis
 		workspace_model.WorkspacePermissionKnowledgeBaseUpdate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
 		workspace_model.WorkspacePermissionKnowledgeBaseMove,
-		workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentDelete,
 		workspace_model.WorkspacePermissionKnowledgeBaseSegmentUpdate,

@@ -33,6 +33,7 @@ func TestDocumentServiceCheckDatasetPermissionUsesWorkspaceKnowledgePermissions(
 	require.Equal(t, knowledgeBaseReadPermissionCodes(), organizationService.permissions)
 	require.NotContains(t, organizationService.permissions, workspace_model.WorkspacePermissionKnowledgeBaseView)
 	require.NotContains(t, organizationService.permissions, workspace_model.WorkspacePermissionKnowledgeBaseManage)
+	require.NotContains(t, organizationService.permissions, workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate)
 	require.Contains(t, organizationService.permissions, workspace_model.WorkspacePermissionKnowledgeBaseDocumentView)
 }
 
