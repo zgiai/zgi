@@ -199,6 +199,11 @@ export default function ModelDiffDialog({
               <Badge variant="default" className="bg-blue-600">
                 {summary.updated_models} {t('diff.updated') || 'Updated'}
               </Badge>
+              {summary.deprecated_models > 0 ? (
+                <Badge variant="outline">
+                  {summary.deprecated_models} {t('diff.deleted') || 'Pending deprecation'}
+                </Badge>
+              ) : null}
             </div>
 
             <Separator />
@@ -311,6 +316,34 @@ export default function ModelDiffDialog({
                             <Eye className="h-4 w-4 mr-1" />
                             {t('diff.viewDetails') || 'Details'}
                           </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {changes.deprecated.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-sm flex items-center gap-2">
+                        <Badge variant="outline">{t('diff.deleted') || 'Pending deprecation'}</Badge>
+                        <span>
+                          {changes.deprecated.length} {t('diff.deleted') || 'Pending deprecation'}
+                        </span>
+                      </h3>
+                    </div>
+                    <div className="rounded-lg border border-dashed bg-muted/20 p-3 text-xs text-muted-foreground">
+                      {t('diff.deletedNote')}
+                      <div className="mt-1">{t('diff.fullSyncForDeleted')}</div>
+                    </div>
+                    <div className="space-y-2">
+                      {changes.deprecated.map(model => (
+                        <div key={model.model} className="flex items-center gap-3 p-3 rounded-lg border">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm">{model.model_name || model.model}</div>
+                            <div className="text-xs text-muted-foreground">{model.model}</div>
+                          </div>
+                          <Badge variant="outline">{t('diff.deleted') || 'Pending deprecation'}</Badge>
                         </div>
                       ))}
                     </div>

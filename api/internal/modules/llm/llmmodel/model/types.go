@@ -15,6 +15,11 @@ type StringArray = types.StringArray
 // Common Types and Constants
 // ============================================================================
 
+const (
+	ModelStatusActive     = "active"
+	ModelStatusDeprecated = "deprecated"
+)
+
 // ModelType defines the type of model
 type ModelType string
 

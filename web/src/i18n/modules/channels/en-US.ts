@@ -75,6 +75,7 @@ const messages = {
   connectivityTest: {
     title: 'Model Test',
     description: 'Test real calls for configured channel models. Failed models can be removed.',
+    stream: 'Streaming test',
     testing: 'Testing...',
     completed: 'Test Completed',
     summary: '{total} total, {success} success, {failure} failed',

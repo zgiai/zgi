@@ -221,6 +221,7 @@ type fakeChannelValidator struct {
 	lastTestBaseURL    string
 	lastTestModel      string
 	lastTestMethod     string
+	lastTestStream     bool
 	createCalls        int
 	validateCalls      int
 	report             map[string]interface{}
@@ -287,13 +288,14 @@ func (f *fakeChannelValidator) ValidateModelsForCreation(_ context.Context, orga
 	}, nil
 }
 
-func (f *fakeChannelValidator) TestModel(_ context.Context, organizationID uuid.UUID, channelProvider, apiKey string, apiBaseURL, modelName, testMethod string) (*channelprovider.TestResult, error) {
+func (f *fakeChannelValidator) TestModel(_ context.Context, organizationID uuid.UUID, channelProvider, apiKey string, apiBaseURL, modelName, testMethod string, stream bool) (*channelprovider.TestResult, error) {
 	f.lastOrganizationID = organizationID
 	f.lastTestProvider = channelProvider
 	f.lastTestAPIKey = apiKey
 	f.lastTestBaseURL = apiBaseURL
 	f.lastTestModel = modelName
 	f.lastTestMethod = testMethod
+	f.lastTestStream = stream
 	if f.testErr != nil {
 		return nil, f.testErr
 	}
@@ -1350,7 +1352,7 @@ func TestTestChannelModel_ReusesValidatorResultShape(t *testing.T) {
 		modelRepo:         &fakeModelRepo{},
 	}
 
-	result, err := svc.TestChannelModel(context.Background(), routeID, repo.routeByID.OrganizationID, "gpt-4o", "")
+	result, err := svc.TestChannelModel(context.Background(), routeID, repo.routeByID.OrganizationID, "gpt-4o", "", true)
 
 	require.NoError(t, err)
 	require.Equal(t, true, result.Success)
@@ -1359,4 +1361,5 @@ func TestTestChannelModel_ReusesValidatorResultShape(t *testing.T) {
 	require.Equal(t, "chat", result.TestMethod)
 	require.Equal(t, int64(56), result.ResponseTimeMs)
 	require.Equal(t, "openai-compatible", validator.lastTestProvider)
+	require.True(t, validator.lastTestStream)
 }

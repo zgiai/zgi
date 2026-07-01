@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { ModelIcon } from 'modelicons';
 import { Info, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -65,6 +66,7 @@ export default function ChannelConnectivityDialog(
   }, [detail?.models, channel?.models]);
 
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [stream, setStream] = useState(false);
 
   useEffect(() => {
     // Initialize selection to all when list changes
@@ -145,9 +147,9 @@ export default function ChannelConnectivityDialog(
       if (!channelId) return;
       const targets = scope === 'all' ? models : models.filter(m => selected[m]);
       if (!targets.length) return;
-      batchTest(channelId, { models: targets });
+      batchTest(channelId, { models: targets, stream });
     },
-    [batchTest, channelId, models, selected]
+    [batchTest, channelId, models, selected, stream]
   );
 
   const removeModels = useCallback(
@@ -203,6 +205,10 @@ export default function ChannelConnectivityDialog(
                   : ''}
             </div>
             <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-sm font-medium text-neutral-600">
+                <Switch checked={stream} disabled={isRunning} onCheckedChange={setStream} />
+                <span>{t('connectivityTest.stream')}</span>
+              </label>
               <Button
                 variant="outline"
                 onClick={() => runTest('selected')}

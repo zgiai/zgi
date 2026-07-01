@@ -167,6 +167,7 @@ export interface ModelMetaModelUpdateProviderItem {
   name: string;
   new_models: number;
   updated_models: number;
+  deprecated_models: number;
   total_remote: number;
   total_local: number;
 }
@@ -185,6 +186,7 @@ export interface ModelMetaSyncResult {
   failed_models: number;
   new_models: number;
   updated_models: number;
+  deprecated_models: number;
   skipped_models: number;
   errors?: string[];
   duration_ms: number;
@@ -201,7 +203,7 @@ export interface DiffField {
 export interface ModelChange {
   model: string;
   model_name: string;
-  change_type: 'new' | 'updated';
+  change_type: 'new' | 'updated' | 'deprecated';
   remote_data?: unknown;
   local_data?: unknown;
   diff_fields?: DiffField[];
@@ -216,10 +218,12 @@ export interface ModelMetaDiffResponse {
     total_local: number;
     new_models: number;
     updated_models: number;
+    deprecated_models: number;
     unchanged_models: number;
   };
   changes: {
     new: ModelChange[];
     updated: ModelChange[];
+    deprecated: ModelChange[];
   };
 }

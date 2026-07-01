@@ -139,6 +139,7 @@ export interface DraftTestChannelModelRequest {
   api_base_url?: string;
   model: string;
   test_method?: ChannelTestMethod;
+  stream?: boolean;
 }
 
 export interface ChannelModelTestResult {
@@ -178,6 +179,7 @@ export interface BatchTestChannelModelsRequest {
   models: string[];
   test_message?: string;
   test_method?: ChannelTestMethod;
+  stream?: boolean;
 }
 
 // SSE event for individual model test result (Aligned with documentation 3.6)

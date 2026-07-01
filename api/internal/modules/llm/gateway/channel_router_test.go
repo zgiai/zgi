@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

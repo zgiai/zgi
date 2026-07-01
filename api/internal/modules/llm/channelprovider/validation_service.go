@@ -229,7 +229,7 @@ func modelExistsInUpstreamSet(upstreamSet map[string]struct{}, modelName string)
 }
 
 // TestModel validates a single model using the model library as the source of truth.
-func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string) (*TestResult, error) {
+func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string, stream bool) (*TestResult, error) {
 	spec, err := Resolve(channelProvider)
 	if err != nil {
 		return nil, err
@@ -277,7 +277,7 @@ func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, cha
 		return v.probeImageModelMetadata(capabilities[0]), nil
 	}
 
-	return v.probeModel(ctx, adapterInstance, capabilities[0]), nil
+	return v.probeModel(ctx, adapterInstance, capabilities[0], stream), nil
 }
 
 func (v *Validator) validateWithModelListing(
@@ -389,7 +389,7 @@ func (v *Validator) probeModels(ctx context.Context, adapterInstance adapter.LLM
 	failures := make([]validationFailure, 0)
 
 	for _, capability := range capabilities {
-		result := v.probeModel(ctx, adapterInstance, capability)
+		result := v.probeModel(ctx, adapterInstance, capability, false)
 		items = append(items, map[string]any{
 			keyModel:          capability.Model,
 			keyUseCase:        capability.UseCase,
@@ -409,7 +409,7 @@ func (v *Validator) probeModels(ctx context.Context, adapterInstance adapter.LLM
 	return items, failures
 }
 
-func (v *Validator) probeModel(ctx context.Context, adapterInstance adapter.LLMProviderAdapter, capability modelCapability) *TestResult {
+func (v *Validator) probeModel(ctx context.Context, adapterInstance adapter.LLMProviderAdapter, capability modelCapability, stream bool) *TestResult {
 	startTime := v.now()
 	result := &TestResult{
 		Model:      capability.Model,
@@ -430,7 +430,7 @@ func (v *Validator) probeModel(ctx context.Context, adapterInstance adapter.LLMP
 	case testMethodRerank:
 		err = runRerankProbe(ctx, adapterInstance, capability.Model)
 	default:
-		responseContent, err = runChatProbe(ctx, adapterInstance, capability.Model)
+		responseContent, err = runChatProbe(ctx, adapterInstance, capability.Model, stream)
 	}
 
 	result.ResponseTimeMs = v.now().Sub(startTime).Milliseconds()
@@ -903,7 +903,7 @@ func buildWarnings(validationMode string, normalizedModels []string, probeTarget
 	return warnings
 }
 
-func runChatProbe(ctx context.Context, chatAdapter adapter.ChatCapable, modelName string) (string, error) {
+func runChatProbe(ctx context.Context, chatAdapter adapter.ChatCapable, modelName string, stream bool) (string, error) {
 	maxTokens := defaultMaxTokens
 	request := &adapter.ChatRequest{
 		Model: modelName,
@@ -914,7 +914,11 @@ func runChatProbe(ctx context.Context, chatAdapter adapter.ChatCapable, modelNam
 			},
 		},
 		MaxTokens: &maxTokens,
-		Stream:    false,
+		Stream:    stream,
+	}
+
+	if stream {
+		return runChatStreamProbe(ctx, chatAdapter, request)
 	}
 
 	response, err := chatAdapter.ChatCompletion(ctx, request)
@@ -929,6 +933,29 @@ func runChatProbe(ctx context.Context, chatAdapter adapter.ChatCapable, modelNam
 		return content, nil
 	}
 	return "", nil
+}
+
+func runChatStreamProbe(ctx context.Context, chatAdapter adapter.ChatCapable, request *adapter.ChatRequest) (string, error) {
+	stream, err := chatAdapter.ChatCompletionStream(ctx, request)
+	if err != nil {
+		return "", err
+	}
+
+	var firstContent string
+	for chunk := range stream {
+		if chunk.Error != nil {
+			return "", chunk.Error
+		}
+		for _, choice := range chunk.Choices {
+			if content, ok := choice.Delta.Content.(string); ok && content != "" && firstContent == "" {
+				firstContent = content
+			}
+			if choice.Delta.ReasoningContent != "" && firstContent == "" {
+				firstContent = choice.Delta.ReasoningContent
+			}
+		}
+	}
+	return firstContent, nil
 }
 
 func runEmbeddingProbe(ctx context.Context, embeddingAdapter adapter.EmbeddingCapable, modelName string) error {

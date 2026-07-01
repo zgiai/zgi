@@ -176,6 +176,7 @@ func containsString(values []string, target string) bool {
 type fakeValidationAdapter struct {
 	listModelsCalls int
 	chatCalls       int
+	streamCalls     int
 	embeddingCalls  int
 	imageCalls      int
 	rerankCalls     int
@@ -185,6 +186,7 @@ type fakeValidationAdapter struct {
 	listModelsErr    error
 
 	chatFailures      map[string]error
+	streamFailures    map[string]error
 	embeddingFailures map[string]error
 	imageFailures     map[string]error
 	rerankFailures    map[string]error
@@ -202,8 +204,19 @@ func (f *fakeValidationAdapter) ChatCompletion(_ context.Context, request *adapt
 	}, nil
 }
 
-func (f *fakeValidationAdapter) ChatCompletionStream(context.Context, *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
-	return nil, fmt.Errorf("%w: streaming", adapter.ErrCapabilityUnsupported)
+func (f *fakeValidationAdapter) ChatCompletionStream(_ context.Context, request *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
+	f.streamCalls++
+	if err := f.streamFailures[request.Model]; err != nil {
+		return nil, err
+	}
+	ch := make(chan adapter.StreamResponse, 1)
+	ch <- adapter.StreamResponse{
+		Choices: []adapter.StreamChoice{
+			{Delta: adapter.Message{Content: "ok"}},
+		},
+	}
+	close(ch)
+	return ch, nil
 }
 
 func (f *fakeValidationAdapter) CreateResponse(context.Context, *adapter.CreateResponseRequest) (*adapter.CreateResponseResponse, error) {
@@ -630,10 +643,30 @@ func TestValidatorTestModel_RejectsConflictingTestMethod(t *testing.T) {
 		}, nil
 	}
 
-	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai", "key", "", "embed-a", "chatCompletions")
+	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai", "key", "", "embed-a", "chatCompletions", false)
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.Contains(t, err.Error(), "conflicts")
+}
+
+func TestValidatorTestModel_StreamUsesChatCompletionStream(t *testing.T) {
+	validator := NewValidator(nil, nil)
+	validator.modelRepo = &fakeModelLookupRepo{
+		models: map[string]*llmmodelmodel.LLMModel{
+			"qwen-plus": {Model: "qwen-plus", UseCases: llmmodelmodel.StringArray{"text-chat"}},
+		},
+	}
+
+	fakeAdapter := &fakeValidationAdapter{}
+	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return fakeAdapter, nil
+	}
+
+	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai-compatible", "key", "https://example.com/v1", "qwen-plus", "", true)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Equal(t, 0, fakeAdapter.chatCalls)
+	require.Equal(t, 1, fakeAdapter.streamCalls)
 }
 
 func TestValidatorTestModel_ImageProbeUsesDefaultSize(t *testing.T) {
@@ -654,7 +687,7 @@ func TestValidatorTestModel_ImageProbeUsesDefaultSize(t *testing.T) {
 		return fakeAdapter, nil
 	}
 
-	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai-compatible", "key", "https://example.com/v1", "qwen-image-2.0", "image-gen")
+	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai-compatible", "key", "https://example.com/v1", "qwen-image-2.0", "image-gen", false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.Success)
@@ -677,7 +710,7 @@ func TestValidatorTestModel_ImageDefaultUsesLocalMetadataWithoutImageProbe(t *te
 		return fakeAdapter, nil
 	}
 
-	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai-compatible", "key", "https://example.com/v1", "qwen-image-2.0", "")
+	result, err := validator.TestModel(context.Background(), uuid.Nil, "openai-compatible", "key", "https://example.com/v1", "qwen-image-2.0", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.Success)

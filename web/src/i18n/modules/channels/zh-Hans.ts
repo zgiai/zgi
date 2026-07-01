@@ -75,6 +75,7 @@ const messages: ChannelsMessages = {
   connectivityTest: {
     title: '模型测试',
     description: '测试当前渠道已配置模型的真实调用结果；失败模型可从渠道移除。',
+    stream: '流式测试',
     testing: '测试进行中...',
     completed: '测试完成',
     summary: '共 {total} 项，成功 {success}，失败 {failure}',

@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/types"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/modelmeta"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
@@ -61,7 +62,7 @@ func NewConfigCache(redis *redis.Client, db *gorm.DB, config *ConfigCacheConfig)
 	if config == nil {
 		config = DefaultConfigCacheConfig()
 	}
-	return &ConfigCache{
+	cache := &ConfigCache{
 		redis:           redis,
 		db:              db,
 		prefix:          "llm:config:",
@@ -69,6 +70,8 @@ func NewConfigCache(redis *redis.Client, db *gorm.DB, config *ConfigCacheConfig)
 		providerTTL:     config.ProviderTTL,
 		shadowTenantTTL: config.ShadowTenantTTL,
 	}
+	modelmeta.SetModelCacheInvalidator(cache)
+	return cache
 }
 
 // ===== LLMModel Cache =====
@@ -82,7 +85,7 @@ func (c *ConfigCache) GetModelByName(ctx context.Context, name string) (*llmmode
 	data, err := c.redis.Get(ctx, key).Bytes()
 	if err == nil {
 		var m llmmodel.LLMModel
-		if unmarshalCachedModel(data, &m) == nil {
+		if unmarshalCachedModel(data, &m) == nil && cachedModelIsActive(&m) {
 			// Verify provider is still active before returning cached model
 			provider, provErr := c.GetProviderByName(ctx, m.Provider)
 			if provErr == nil && provider != nil && provider.IsActive {
@@ -100,7 +103,7 @@ func (c *ConfigCache) GetModelByName(ctx context.Context, name string) (*llmmode
 	if err := c.db.WithContext(ctx).
 		Model(&llmmodel.LLMModel{}).
 		Joins("JOIN llm_providers ON llm_models.provider = llm_providers.provider").
-		Where("llm_models.name = ? AND llm_models.is_active = ? AND llm_models.deleted_at IS NULL", name, true).
+		Where("llm_models.name = ? AND llm_models.is_active = ? AND llm_models.status = ? AND llm_models.deleted_at IS NULL", name, true, llmmodel.ModelStatusActive).
 		Where("llm_providers.is_active = ? AND llm_providers.deleted_at IS NULL", true).
 		First(&m).Error; err != nil {
 		return nil, err
@@ -120,7 +123,7 @@ func (c *ConfigCache) GetModelByID(ctx context.Context, id uuid.UUID) (*llmmodel
 	data, err := c.redis.Get(ctx, key).Bytes()
 	if err == nil {
 		var m llmmodel.LLMModel
-		if unmarshalCachedModel(data, &m) == nil {
+		if unmarshalCachedModel(data, &m) == nil && cachedModelIsActive(&m) {
 			c.hits++
 			return &m, nil
 		}
@@ -130,7 +133,7 @@ func (c *ConfigCache) GetModelByID(ctx context.Context, id uuid.UUID) (*llmmodel
 	c.misses++
 	var m llmmodel.LLMModel
 	if err := c.db.WithContext(ctx).
-		Where("id = ? AND deleted_at IS NULL", id).
+		Where("id = ? AND is_active = ? AND status = ? AND deleted_at IS NULL", id, true, llmmodel.ModelStatusActive).
 		First(&m).Error; err != nil {
 		return nil, err
 	}
@@ -139,6 +142,10 @@ func (c *ConfigCache) GetModelByID(ctx context.Context, id uuid.UUID) (*llmmodel
 	go c.cacheModel(context.Background(), key, &m)
 
 	return &m, nil
+}
+
+func cachedModelIsActive(m *llmmodel.LLMModel) bool {
+	return m != nil && m.IsActive && m.Status == llmmodel.ModelStatusActive
 }
 
 func (c *ConfigCache) cacheModel(ctx context.Context, key string, m *llmmodel.LLMModel) {
@@ -319,6 +326,32 @@ func (c *ConfigCache) InvalidateModel(ctx context.Context, id uuid.UUID, name st
 		c.prefix + "model:name:" + name,
 	}
 	c.redis.Del(ctx, keys...)
+}
+
+func (c *ConfigCache) InvalidateModelCache(ctx context.Context) {
+	if c == nil || c.redis == nil {
+		return
+	}
+
+	var cursor uint64
+	match := c.prefix + "model:*"
+	for {
+		keys, nextCursor, err := c.redis.Scan(ctx, cursor, match, 100).Result()
+		if err != nil {
+			logger.WarnContext(ctx, "failed to scan LLM model cache keys", err)
+			return
+		}
+		if len(keys) > 0 {
+			if err := c.redis.Del(ctx, keys...).Err(); err != nil {
+				logger.WarnContext(ctx, "failed to invalidate LLM model cache", err)
+				return
+			}
+		}
+		if nextCursor == 0 {
+			return
+		}
+		cursor = nextCursor
+	}
 }
 
 // ===== LLMProvider Cache =====
