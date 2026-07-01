@@ -94,6 +94,7 @@ func canonicalWorkspaceAssignablePermissionJSON(raw string) (string, error) {
 	}
 
 	permissions = expandLegacyAgentViewPermissionSnapshot(permissions)
+	permissions = expandLegacyAssetViewPermissionSnapshot(permissions)
 	sanitized := workspace_model.CanonicalAssignableWorkspacePermissionSnapshotStrings(permissions)
 	encoded, err := json.Marshal(sanitized)
 	if err != nil {
@@ -122,6 +123,36 @@ func expandLegacyAgentViewPermissionSnapshot(permissions []string) []string {
 			workspace_model.WorkspacePermissionCode(permission) == workspace_model.WorkspacePermissionAgentView {
 			expanded = append(expanded, string(workspace_model.WorkspacePermissionWorkflowView))
 			hasWorkflowView = true
+		}
+	}
+	return expanded
+}
+
+func expandLegacyAssetViewPermissionSnapshot(permissions []string) []string {
+	if len(permissions) == 0 {
+		return permissions
+	}
+
+	expanded := make([]string, 0, len(permissions)+5)
+	add := func(permission string) {
+		for _, existing := range expanded {
+			if existing == permission {
+				return
+			}
+		}
+		expanded = append(expanded, permission)
+	}
+
+	for _, permission := range permissions {
+		add(permission)
+		switch workspace_model.WorkspacePermissionCode(permission) {
+		case workspace_model.WorkspacePermissionKnowledgeBaseView:
+			add(string(workspace_model.WorkspacePermissionKnowledgeBaseDocumentView))
+			add(string(workspace_model.WorkspacePermissionKnowledgeBaseGraphView))
+		case workspace_model.WorkspacePermissionDatabaseView:
+			add(string(workspace_model.WorkspacePermissionDatabaseSchemaView))
+			add(string(workspace_model.WorkspacePermissionDatabaseRecordView))
+			add(string(workspace_model.WorkspacePermissionDatabaseOperationLogsView))
 		}
 	}
 	return expanded

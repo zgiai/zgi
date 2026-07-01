@@ -151,7 +151,12 @@ func TestAuthorizeDatasetViewAccessUsesFineKnowledgeBaseViewPermissions(t *testi
 	if !reflect.DeepEqual(auth.lastRequest.PermissionCodes, want) {
 		t.Fatalf("permissions = %#v, want %#v", auth.lastRequest.PermissionCodes, want)
 	}
-	assertNoCoarseKnowledgeBasePermissions(t, auth.lastRequest.PermissionCodes)
+	if !containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseView) {
+		t.Fatalf("dataset view permissions should include asset view permission: %#v", auth.lastRequest.PermissionCodes)
+	}
+	if containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseManage) {
+		t.Fatalf("dataset view permissions should not include coarse knowledge base manage permission: %#v", auth.lastRequest.PermissionCodes)
+	}
 	if containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseCreate) ||
 		containsWorkspacePermission(auth.lastRequest.PermissionCodes, workspace_model.WorkspacePermissionKnowledgeBaseDocumentCreate) {
 		t.Fatalf("dataset view permissions should not include create permissions: %#v", auth.lastRequest.PermissionCodes)

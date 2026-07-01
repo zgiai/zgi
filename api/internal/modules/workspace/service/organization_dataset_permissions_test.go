@@ -10,6 +10,7 @@ import (
 func TestDatasetViewPermissionCodesExcludeCreateOnlyPermissions(t *testing.T) {
 	codes := datasetViewPermissionCodes()
 
+	require.Contains(t, codes, model.WorkspacePermissionKnowledgeBaseView)
 	require.Contains(t, codes, model.WorkspacePermissionKnowledgeBaseDocumentView)
 	require.NotContains(t, codes, model.WorkspacePermissionKnowledgeBaseCreate)
 	require.NotContains(t, codes, model.WorkspacePermissionKnowledgeBaseDocumentCreate)

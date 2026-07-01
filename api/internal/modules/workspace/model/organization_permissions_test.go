@@ -163,6 +163,7 @@ func TestCanonicalWorkspacePermissionSnapshotStringsReplacesDeprecatedAssetCoars
 		string(WorkspacePermissionAgentView),
 		string(WorkspacePermissionAgentManage),
 		string(WorkspacePermissionKnowledgeBaseView),
+		string(WorkspacePermissionDatabaseView),
 		string(WorkspacePermissionDatabaseManage),
 		string(WorkspacePermissionFileView),
 		string(WorkspacePermissionFileUploadCreate),
@@ -174,7 +175,8 @@ func TestCanonicalWorkspacePermissionSnapshotStringsReplacesDeprecatedAssetCoars
 		WorkspacePermissionAgentCreate,
 		WorkspacePermissionWorkflowView,
 		WorkspacePermissionWorkflowPublish,
-		WorkspacePermissionKnowledgeBaseDocumentView,
+		WorkspacePermissionKnowledgeBaseView,
+		WorkspacePermissionDatabaseView,
 		WorkspacePermissionDatabaseSchemaManage,
 		WorkspacePermissionFilePreview,
 		WorkspacePermissionFileUpload,
@@ -188,7 +190,6 @@ func TestCanonicalWorkspacePermissionSnapshotStringsReplacesDeprecatedAssetCoars
 
 	deprecated := []WorkspacePermissionCode{
 		WorkspacePermissionAgentManage,
-		WorkspacePermissionKnowledgeBaseView,
 		WorkspacePermissionDatabaseManage,
 		WorkspacePermissionFileView,
 	}

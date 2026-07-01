@@ -419,6 +419,7 @@ func dashboardWorkflowVisiblePermissionCodes() []workspacemodel.WorkspacePermiss
 
 func dashboardKnowledgeBaseVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionKnowledgeBaseView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseDocumentView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseGraphView,
 		workspacemodel.WorkspacePermissionKnowledgeBaseRetrievalTest,
@@ -437,6 +438,7 @@ func dashboardKnowledgeBaseVisiblePermissionCodes() []workspacemodel.WorkspacePe
 
 func dashboardDatabaseVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
 	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionDatabaseView,
 		workspacemodel.WorkspacePermissionDatabaseUpdate,
 		workspacemodel.WorkspacePermissionDatabaseDelete,
 		workspacemodel.WorkspacePermissionDatabaseMove,

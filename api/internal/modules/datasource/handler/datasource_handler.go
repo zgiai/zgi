@@ -29,6 +29,7 @@ type DataSourceHandler struct {
 }
 
 var databaseExistingAssetVisibilityPermissions = []workspace_model.WorkspacePermissionCode{
+	workspace_model.WorkspacePermissionDatabaseView,
 	workspace_model.WorkspacePermissionDatabaseUpdate,
 	workspace_model.WorkspacePermissionDatabaseDelete,
 	workspace_model.WorkspacePermissionDatabaseMove,

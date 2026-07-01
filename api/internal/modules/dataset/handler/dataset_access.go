@@ -37,6 +37,7 @@ type datasetAccessAuthorizer interface {
 
 func knowledgeBaseViewPermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseView,
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
 		workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
 		workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,

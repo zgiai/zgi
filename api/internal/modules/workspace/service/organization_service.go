@@ -4081,6 +4081,7 @@ func datasetCreatePermissionCodes() []model.WorkspacePermissionCode {
 
 func datasetViewPermissionCodes() []model.WorkspacePermissionCode {
 	return []model.WorkspacePermissionCode{
+		model.WorkspacePermissionKnowledgeBaseView,
 		model.WorkspacePermissionKnowledgeBaseFolderManage,
 		model.WorkspacePermissionKnowledgeBaseUpdate,
 		model.WorkspacePermissionKnowledgeBaseDelete,

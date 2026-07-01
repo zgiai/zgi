@@ -327,7 +327,7 @@ func TestGetDataSourceByIDUsesFineDatabaseVisibilityPermissions(t *testing.T) {
 	requireResponseCode(t, recorder, response.ErrPermissionDenied)
 	require.Equal(t, 1, dataSourceService.getDataSourceCalls)
 	require.Equal(t, 1, permissionChecker.calls)
-	require.NotContains(t, permissionChecker.lastPermissions, workspace_model.WorkspacePermissionDatabaseView)
+	require.Contains(t, permissionChecker.lastPermissions, workspace_model.WorkspacePermissionDatabaseView)
 	require.NotContains(t, permissionChecker.lastPermissions, workspace_model.WorkspacePermissionDatabaseManage)
 	require.NotContains(t, permissionChecker.lastPermissions, workspace_model.WorkspacePermissionDatabaseDataEdit)
 	require.Contains(t, permissionChecker.lastPermissions, workspace_model.WorkspacePermissionDatabaseSchemaView)

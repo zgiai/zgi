@@ -293,9 +293,7 @@ func ExpandWorkspacePermissionStringsForCompatibility(codes []string) []string {
 
 var deprecatedWorkspacePermissionSnapshotExpansions = map[WorkspacePermissionCode][]WorkspacePermissionCode{
 	WorkspacePermissionAgentManage:         legacyWorkspacePermissionExpansions[WorkspacePermissionAgentManage],
-	WorkspacePermissionKnowledgeBaseView:   legacyWorkspacePermissionExpansions[WorkspacePermissionKnowledgeBaseView],
 	WorkspacePermissionKnowledgeBaseManage: legacyWorkspacePermissionExpansions[WorkspacePermissionKnowledgeBaseManage],
-	WorkspacePermissionDatabaseView:        legacyWorkspacePermissionExpansions[WorkspacePermissionDatabaseView],
 	WorkspacePermissionDatabaseManage:      legacyWorkspacePermissionExpansions[WorkspacePermissionDatabaseManage],
 	WorkspacePermissionFileView:            legacyWorkspacePermissionExpansions[WorkspacePermissionFileView],
 	WorkspacePermissionFileManage:          legacyWorkspacePermissionExpansions[WorkspacePermissionFileManage],
@@ -498,10 +496,15 @@ func GetBuiltinGroupRolePermissionsByID(roleID string) []WorkspacePermissionCode
 			WorkspacePermissionWorkflowView,
 			WorkspacePermissionWorkflowLogsView,
 			WorkspacePermissionKnowledgeBaseView,
+			WorkspacePermissionKnowledgeBaseDocumentView,
+			WorkspacePermissionKnowledgeBaseGraphView,
 			WorkspacePermissionKnowledgeBaseManage,
 			WorkspacePermissionKnowledgeBaseRetrievalTest,
 			WorkspacePermissionKnowledgeBaseFolderManage,
 			WorkspacePermissionDatabaseView,
+			WorkspacePermissionDatabaseSchemaView,
+			WorkspacePermissionDatabaseRecordView,
+			WorkspacePermissionDatabaseOperationLogsView,
 			WorkspacePermissionDatabaseManage,
 			WorkspacePermissionDatabaseDataEdit,
 			WorkspacePermissionDatabaseAIQuery,
@@ -517,8 +520,12 @@ func GetBuiltinGroupRolePermissionsByID(roleID string) []WorkspacePermissionCode
 			WorkspacePermissionWorkflowView,
 			WorkspacePermissionWorkflowLogsView,
 			WorkspacePermissionKnowledgeBaseView,
+			WorkspacePermissionKnowledgeBaseDocumentView,
+			WorkspacePermissionKnowledgeBaseGraphView,
 			WorkspacePermissionKnowledgeBaseRetrievalTest,
 			WorkspacePermissionDatabaseView,
+			WorkspacePermissionDatabaseSchemaView,
+			WorkspacePermissionDatabaseRecordView,
 			WorkspacePermissionDatabaseAIQuery,
 			WorkspacePermissionFileView,
 			WorkspacePermissionFileUploadCreate,
@@ -530,7 +537,11 @@ func GetBuiltinGroupRolePermissionsByID(roleID string) []WorkspacePermissionCode
 			WorkspacePermissionWorkflowView,
 			WorkspacePermissionWorkflowLogsView,
 			WorkspacePermissionKnowledgeBaseView,
+			WorkspacePermissionKnowledgeBaseDocumentView,
+			WorkspacePermissionKnowledgeBaseGraphView,
 			WorkspacePermissionDatabaseView,
+			WorkspacePermissionDatabaseSchemaView,
+			WorkspacePermissionDatabaseRecordView,
 			WorkspacePermissionFileView,
 		})
 	default:
@@ -576,10 +587,7 @@ var legacyWorkspacePermissionExpansions = map[WorkspacePermissionCode][]Workspac
 		WorkspacePermissionWorkflowRuntimeAccessManage,
 		WorkspacePermissionWorkflowLogsView,
 	},
-	WorkspacePermissionKnowledgeBaseView: {
-		WorkspacePermissionKnowledgeBaseDocumentView,
-		WorkspacePermissionKnowledgeBaseGraphView,
-	},
+	WorkspacePermissionKnowledgeBaseView: {},
 	WorkspacePermissionKnowledgeBaseManage: {
 		WorkspacePermissionKnowledgeBaseCreate,
 		WorkspacePermissionKnowledgeBaseUpdate,
@@ -597,11 +605,7 @@ var legacyWorkspacePermissionExpansions = map[WorkspacePermissionCode][]Workspac
 	WorkspacePermissionKnowledgeBaseFolderManage: {
 		WorkspacePermissionKnowledgeBaseFolderManage,
 	},
-	WorkspacePermissionDatabaseView: {
-		WorkspacePermissionDatabaseSchemaView,
-		WorkspacePermissionDatabaseRecordView,
-		WorkspacePermissionDatabaseOperationLogsView,
-	},
+	WorkspacePermissionDatabaseView: {},
 	WorkspacePermissionDatabaseManage: {
 		WorkspacePermissionDatabaseCreate,
 		WorkspacePermissionDatabaseUpdate,

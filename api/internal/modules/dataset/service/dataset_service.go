@@ -255,6 +255,13 @@ func knowledgeBaseReadPermissionCodes() []workspace_model.WorkspacePermissionCod
 	}
 }
 
+func knowledgeBaseAssetVisibilityPermissionCodes() []workspace_model.WorkspacePermissionCode {
+	return append(
+		[]workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionKnowledgeBaseView},
+		knowledgeBaseReadPermissionCodes()...,
+	)
+}
+
 func knowledgeBaseFolderReadPermissionCodes() []workspace_model.WorkspacePermissionCode {
 	return []workspace_model.WorkspacePermissionCode{
 		workspace_model.WorkspacePermissionKnowledgeBaseDocumentView,
@@ -834,7 +841,7 @@ func (s *datasetService) GetDatasetsByAccountAndTenant(ctx context.Context, acco
 		"",
 		tenantID,
 		accountID,
-		knowledgeBaseReadPermissionCodes()...,
+		knowledgeBaseAssetVisibilityPermissionCodes()...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check dataset workspace permission: %w", err)
@@ -1045,7 +1052,7 @@ func (s *datasetService) canReadDataset(ctx context.Context, dataset *model.Data
 		dataset.OrganizationID,
 		dataset.WorkspaceID,
 		accountID,
-		knowledgeBaseReadPermissionCodes()...,
+		knowledgeBaseAssetVisibilityPermissionCodes()...,
 	)
 }
 

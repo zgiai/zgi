@@ -64,7 +64,7 @@ func TestSetOrganizationServiceAllowsDatasetReadByKnowledgeBasePermission(t *tes
 	if !canRead {
 		t.Fatal("dataset should be readable when organization service grants knowledge-base permission")
 	}
-	want := knowledgeBaseReadPermissionCodes()
+	want := knowledgeBaseAssetVisibilityPermissionCodes()
 	if len(orgService.permission) != len(want) {
 		t.Fatalf("permissions = %v, want %v", orgService.permission, want)
 	}

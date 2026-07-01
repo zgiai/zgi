@@ -3123,9 +3123,7 @@ const permissionActionAggregateNames = [
 const retiredPermissionPrefixes = ['workspace.', 'prompt.', 'content_parse.', 'dashboard.'];
 const legacyAggregatePermissionCodes = [
   'agent.manage',
-  'knowledge_base.view',
   'knowledge_base.manage',
-  'database.view',
   'database.manage',
   'database.data_edit',
   'database.ai_query',
@@ -3196,13 +3194,23 @@ assert.match(
 );
 assert.match(
   permissionConstantsSource,
-  /'database\.create':\s*\[\s*'database\.schema\.view'\s*\]/,
-  'database.create should auto-enable schema view in frontend permission editors'
+  /'database\.create':\s*\[\s*'database\.view'\s*\]/,
+  'database.create should auto-enable database.view in frontend permission editors'
 );
 assert.match(
   permissionConstantsSource,
-  /'knowledge_base\.create':\s*\[\s*'knowledge_base\.document\.view'\s*\]/,
-  'knowledge_base.create should auto-enable document view in frontend permission editors'
+  /'database\.schema\.view':\s*\[\s*'database\.view'\s*\]/,
+  'database schema view should auto-enable database.view in frontend permission editors'
+);
+assert.match(
+  permissionConstantsSource,
+  /'knowledge_base\.create':\s*\[\s*'knowledge_base\.view'\s*\]/,
+  'knowledge_base.create should auto-enable knowledge_base.view in frontend permission editors'
+);
+assert.match(
+  permissionConstantsSource,
+  /'knowledge_base\.document\.view':\s*\[\s*'knowledge_base\.view'\s*\]/,
+  'knowledge base document view should auto-enable knowledge_base.view in frontend permission editors'
 );
 assert.match(
   permissionConstantsSource,

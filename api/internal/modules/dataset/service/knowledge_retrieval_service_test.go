@@ -325,7 +325,7 @@ func newKnowledgeMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 func expectAccessibleKnowledgeWorkspaces(mock sqlmock.Sqlmock, workspaceIDs ...string) {
 	rows := sqlmock.NewRows([]string{"id", "role", "role_id", "permissions", "permission_source"})
 	for _, workspaceID := range workspaceIDs {
-		rows.AddRow(workspaceID, workspace_model.WorkspaceRoleMember, workspace_model.WorkspaceBuiltinRoleMemberID, `["knowledge_base.view"]`, workspace_model.WorkspaceMemberPermissionSourceDirect)
+		rows.AddRow(workspaceID, workspace_model.WorkspaceRoleMember, workspace_model.WorkspaceBuiltinRoleMemberID, `["knowledge_base.document.view"]`, workspace_model.WorkspaceMemberPermissionSourceDirect)
 	}
 	mock.ExpectQuery(`SELECT workspaces\.id, workspace_members\.role, workspace_members\.role_id, COALESCE\(workspace_members\.permissions::text, ''\) AS permissions, workspace_members\.permission_source FROM "workspaces" JOIN workspace_members ON workspace_members\.workspace_id = workspaces\.id WHERE workspaces\.organization_id = \$1 AND workspace_members\.account_id = \$2`).
 		WillReturnRows(rows)
