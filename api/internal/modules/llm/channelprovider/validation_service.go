@@ -257,24 +257,21 @@ func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, cha
 		}
 	}
 
+	if useCase == testMethodImageGeneration && !explicitTestMethod {
+		return v.skipImageModelTest(capabilities[0]), nil
+	}
+
 	adapterInstance, err := v.newAdapterForProvider(spec.AdapterKey, apiBaseURL, apiKey)
 	if err != nil {
-		resultTestMethod := useCase
-		if useCase == testMethodImageGeneration && !explicitTestMethod {
-			resultTestMethod = testMethodMetadata
-		}
 		return &TestResult{
 			Success:        false,
+			Status:         TestStatusFailed,
 			Message:        fmt.Sprintf("failed to create adapter: %v", err),
 			ResponseTimeMs: 0,
 			Model:          normalizedModel,
 			UseCase:        useCase,
-			TestMethod:     resultTestMethod,
+			TestMethod:     useCase,
 		}, nil
-	}
-
-	if useCase == testMethodImageGeneration && !explicitTestMethod {
-		return v.probeImageModelListing(ctx, adapterInstance, apiKey, capabilities[0]), nil
 	}
 
 	return v.probeModel(ctx, adapterInstance, capabilities[0], stream), nil
@@ -436,42 +433,28 @@ func (v *Validator) probeModel(ctx context.Context, adapterInstance adapter.LLMP
 	result.ResponseTimeMs = v.now().Sub(startTime).Milliseconds()
 	if err != nil {
 		result.Success = false
+		result.Status = TestStatusFailed
 		result.Message = normalizeValidationError(err)
 		return result
 	}
 
 	result.Success = true
+	result.Status = TestStatusSuccess
 	result.Message = "ok"
 	result.Response = responseContent
 	return result
 }
 
-func (v *Validator) probeImageModelListing(ctx context.Context, adapterInstance adapter.LLMProviderAdapter, apiKey string, capability modelCapability) *TestResult {
-	startTime := v.now()
-	result := &TestResult{
-		ResponseTimeMs: v.now().Sub(startTime).Milliseconds(),
+func (v *Validator) skipImageModelTest(capability modelCapability) *TestResult {
+	return &TestResult{
+		Success:        false,
+		Status:         TestStatusSkipped,
+		Message:        "image generation models require a real image generation test in the image workspace",
+		ResponseTimeMs: 0,
 		Model:          capability.Model,
 		UseCase:        capability.UseCase,
-		TestMethod:     testMethodMetadata,
+		TestMethod:     testMethodImageGeneration,
 	}
-
-	upstreamModels, err := adapterInstance.ListModels(ctx, apiKey)
-	result.ResponseTimeMs = v.now().Sub(startTime).Milliseconds()
-	if err != nil {
-		result.Success = false
-		result.Message = fmt.Sprintf("failed to list upstream models: %s", normalizeValidationError(err))
-		return result
-	}
-
-	if !modelExistsInUpstreamSet(upstreamModelNameSet(upstreamModels), capability.Model) {
-		result.Success = false
-		result.Message = "model is not returned by upstream model list; real image generation was not run"
-		return result
-	}
-
-	result.Success = true
-	result.Message = "model is returned by upstream model list; real image generation was not run"
-	return result
 }
 
 func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID uuid.UUID, spec Spec, models []string) ([]modelCapability, error) {

@@ -635,14 +635,17 @@ export function useBatchTestChannelModels(
   const [results, setResults] = useState<BatchTestModelResult[]>([]);
   const [completedResult, setCompletedResult] = useState<BatchTestCompletedResult | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const runIdRef = useRef(0);
 
   const abort = useCallback(() => {
+    runIdRef.current += 1;
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     setIsRunning(false);
   }, []);
 
   const reset = useCallback(() => {
+    runIdRef.current += 1;
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     setIsRunning(false);
@@ -654,6 +657,8 @@ export function useBatchTestChannelModels(
     (id: string, request: BatchTestChannelModelsRequest) => {
       // Abort any existing test
       abortControllerRef.current?.abort();
+      const runId = runIdRef.current + 1;
+      runIdRef.current = runId;
 
       // Reset state
       setResults([]);
@@ -665,6 +670,7 @@ export function useBatchTestChannelModels(
 
       channelService.batchTestChannelModels(id, request, {
         onMessage: (event: BatchTestChannelModelsEvent) => {
+          if (runId !== runIdRef.current) return;
           if ('completed' in event && event.completed) {
             setCompletedResult(event);
             setIsRunning(false);
@@ -676,6 +682,7 @@ export function useBatchTestChannelModels(
           }
         },
         onError: (error: Error) => {
+          if (runId !== runIdRef.current) return;
           setIsRunning(false);
           const title = t('connectivityTest.toast.error');
           toast.error(title, {

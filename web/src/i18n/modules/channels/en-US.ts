@@ -74,11 +74,14 @@ const messages = {
   },
   connectivityTest: {
     title: 'Model Test',
-    description: 'Test real calls for configured channel models. Failed models can be removed.',
+    description:
+      'Test real calls for configured channel models. Image generation models are skipped here and should be verified in the image workspace.',
     stream: 'Streaming test',
     testing: 'Testing...',
     completed: 'Test Completed',
-    summary: '{total} total, {success} success, {failure} failed',
+    summary: '{total} total, {success} success, {failure} failed, {skipped} skipped',
+    imageSkippedHint:
+      'Image generation models require a real image generation test. Use the image workspace to verify them.',
     columns: {
       model: 'Model',
       status: 'Status',
@@ -90,6 +93,7 @@ const messages = {
       connectionFailed: 'Connection Failed',
       connectionTimeout: 'Connection Timeout',
       notTested: 'Not Tested',
+      skipped: 'Not Tested',
     },
     buttons: {
       testAll: 'Test All',
@@ -97,6 +101,7 @@ const messages = {
       abort: 'Abort',
       remove: 'Remove',
       removeFailed: 'Remove failed models ({count})',
+      testImage: 'Test in Image',
     },
     toast: {
       start: 'Model test started',
@@ -286,9 +291,9 @@ const messages = {
     testConnection: {
       title: 'Test Connection',
       description:
-        'Model selection uses the local model catalog. Testing verifies one representative model; image models use a lightweight check and do not generate images.',
+        'Model selection uses the local model catalog. Testing verifies one representative model. Image generation models must be verified by generating an image in the image workspace.',
       descriptionWithModel:
-        'Testing verifies {model}. Text, embedding, and rerank models make one small request; image models use a lightweight check and do not generate images.',
+        'Testing verifies {model}. Text, embedding, and rerank models make one small request. Image generation models must be verified by generating an image in the image workspace.',
       descriptionWithModelCount:
         'Selected {count} models. Testing verifies the first representative model; other models are saved from local model metadata.',
       button: 'Test',
@@ -303,7 +308,7 @@ const messages = {
         failedFallback: 'Check that the provider, API base URL, API key, and model match.',
         requestFailed: 'Connection test request failed',
         imageModelMetadataOnly:
-          'Local model configuration was verified. No image was generated during this test.',
+          'Image generation models are not included in this test. Generate an image in the image workspace to verify them.',
         apiKeyInvalid: 'The API key is invalid or expired. Update it and try again.',
         modelNotFound: 'The model was not found, or this provider endpoint does not support it.',
         rateLimited: 'The provider returned a rate limit. Retry later.',

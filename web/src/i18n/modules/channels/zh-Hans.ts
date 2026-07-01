@@ -74,11 +74,12 @@ const messages: ChannelsMessages = {
   },
   connectivityTest: {
     title: '模型测试',
-    description: '测试当前渠道已配置模型的真实调用结果；失败模型可从渠道移除。',
+    description: '测试当前渠道已配置模型的真实调用结果；生图模型不参与本次批量测试，请到绘图工作区真实验证。',
     stream: '流式测试',
     testing: '测试进行中...',
     completed: '测试完成',
-    summary: '共 {total} 项，成功 {success}，失败 {failure}',
+    summary: '共 {total} 项，成功 {success}，失败 {failure}，跳过 {skipped}',
+    imageSkippedHint: '生图模型需要真实生成图片验证，请前往绘图工作区测试。',
     columns: {
       model: '模型',
       status: '状态',
@@ -90,6 +91,7 @@ const messages: ChannelsMessages = {
       connectionFailed: '连接失败',
       connectionTimeout: '连接超时',
       notTested: '未测试',
+      skipped: '未测试',
     },
     buttons: {
       testAll: '全部测试',
@@ -97,6 +99,7 @@ const messages: ChannelsMessages = {
       abort: '中止测试',
       remove: '移除',
       removeFailed: '移除失败模型（{count}）',
+      testImage: '去绘图测试',
     },
     toast: {
       start: '已启动模型测试',
@@ -270,9 +273,9 @@ const messages: ChannelsMessages = {
     testConnection: {
       title: '检测连接',
       description:
-        '模型选择以平台本地模型库为准；检测连接会验证一个代表模型，图片模型只做轻量检查，不会生成图片。',
+        '模型选择以平台本地模型库为准；检测连接会验证一个代表模型，生图模型需要到绘图工作区真实生成图片验证。',
       descriptionWithModel:
-        '检测连接会验证 {model}；文本、Embedding、Rerank 模型会发起一次小请求，图片模型只做轻量检查，不会生成图片。',
+        '检测连接会验证 {model}；文本、Embedding、Rerank 模型会发起一次小请求，生图模型需要到绘图工作区真实生成图片验证。',
       descriptionWithModelCount:
         '已选择 {count} 个模型；检测连接只验证第一个代表模型，其他模型按平台本地模型元数据进入渠道。',
       button: '检测连接',
@@ -286,7 +289,7 @@ const messages: ChannelsMessages = {
         successFallback: '该模型已成功响应。',
         failedFallback: '请检查服务商、API 基础地址、API 密钥和模型是否匹配。',
         requestFailed: '连接检测请求失败',
-        imageModelMetadataOnly: '已确认平台本地模型配置，本次没有生成图片。',
+        imageModelMetadataOnly: '生图模型未参与本次测试，请前往绘图工作区真实生成图片验证。',
         apiKeyInvalid: 'API 密钥无效或已过期，请更新后再试。',
         modelNotFound: '没有找到这个模型，或当前服务商接口不支持它。',
         rateLimited: '服务商返回限流，请稍后再试。',

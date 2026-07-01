@@ -16,10 +16,14 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { ModelIcon } from 'modelicons';
-import { Info, Trash2 } from 'lucide-react';
+import { ExternalLink, Info, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useBatchTestChannelModels, useChannel, useUpdateChannel } from '@/hooks';
-import type { BatchTestModelResult, ChannelDetail } from '@/services/types/channel';
+import type {
+  BatchTestModelResult,
+  ChannelDetail,
+  ChannelModelTestStatus,
+} from '@/services/types/channel';
 import {
   getChannelLatencies,
   getModelLatency,
@@ -29,6 +33,7 @@ import {
   type ModelLatencyRecord,
 } from '@/utils/channel-latency';
 import { toast } from 'sonner';
+import { useRouter } from 'next/navigation';
 
 interface ChannelConnectivityDialogProps {
   open: boolean;
@@ -40,6 +45,7 @@ type DisplayStatus =
   | { kind: 'success'; ms: number }
   | { kind: 'connectionFailed' }
   | { kind: 'connectionTimeout' }
+  | { kind: 'skipped' }
   | { kind: 'notTested' };
 
 function toDisplay(record: ModelLatencyRecord | null): DisplayStatus {
@@ -49,11 +55,20 @@ function toDisplay(record: ModelLatencyRecord | null): DisplayStatus {
   return { kind: 'connectionFailed' };
 }
 
+function getResultStatus(result: BatchTestModelResult | undefined): ChannelModelTestStatus | null {
+  if (!result) return null;
+  if (result.status === 'success' || result.status === 'failed' || result.status === 'skipped') {
+    return result.status;
+  }
+  return result.success ? 'success' : 'failed';
+}
+
 export default function ChannelConnectivityDialog(
   props: ChannelConnectivityDialogProps
 ): JSX.Element | null {
   const { open, onOpenChange, channel } = props;
   const t = useT('channels');
+  const router = useRouter();
 
   const channelId = channel?.id;
   const { channel: detail, isLoading } = useChannel(channelId);
@@ -86,7 +101,17 @@ export default function ChannelConnectivityDialog(
   const handleTestResult = useCallback(
     (result: BatchTestModelResult) => {
       if (!channelId) return;
-      const status = result.success ? 'success' : classifyFailure(result.message);
+      const resultStatus = getResultStatus(result);
+      if (resultStatus === 'skipped') {
+        removeModelLatencies(channelId, [result.model]);
+        setLatencyMap(prev => {
+          const next = { ...prev };
+          delete next[result.model];
+          return next;
+        });
+        return;
+      }
+      const status = resultStatus === 'success' ? 'success' : classifyFailure(result.message);
       const payload: ModelLatencyRecord = {
         lastMs: result.response_time_ms,
         at: Date.now(),
@@ -122,7 +147,7 @@ export default function ChannelConnectivityDialog(
   }, [results]);
 
   const failedModels = useMemo(
-    () => models.filter(model => currentResultsByModel[model]?.success === false),
+    () => models.filter(model => getResultStatus(currentResultsByModel[model]) === 'failed'),
     [currentResultsByModel, models]
   );
 
@@ -264,28 +289,38 @@ export default function ChannelConnectivityDialog(
                       </div>
                     ))
                   : models.map(model => {
+                      const currentResult = currentResultsByModel[model];
+                      const currentStatus = getResultStatus(currentResult);
                       const record =
                         getModelLatency(channelId || '', model) ?? latencyMap[model] ?? null;
-                      const failedInCurrentRun =
-                        currentResultsByModel[model]?.success === false;
-                      const display = toDisplay(record);
+                      const failedInCurrentRun = currentStatus === 'failed';
+                      const skippedInCurrentRun = currentStatus === 'skipped';
+                      const display = skippedInCurrentRun
+                        ? { kind: 'skipped' as const }
+                        : toDisplay(record);
                       const color =
                         display.kind === 'success'
                           ? 'text-emerald-600'
-                          : display.kind === 'connectionTimeout'
-                            ? 'text-amber-600'
-                            : display.kind === 'connectionFailed'
-                              ? 'text-red-600'
-                              : 'text-neutral-400';
+                          : display.kind === 'skipped'
+                            ? 'text-neutral-500'
+                            : display.kind === 'connectionTimeout'
+                              ? 'text-amber-600'
+                              : display.kind === 'connectionFailed'
+                                ? 'text-red-600'
+                                : 'text-neutral-400';
                       const text =
                         display.kind === 'success'
                           ? `${display.ms} ms`
-                          : display.kind === 'connectionTimeout'
-                            ? t('connectivityTest.status.connectionTimeout')
-                            : display.kind === 'connectionFailed'
-                              ? t('connectivityTest.status.connectionFailed')
-                              : t('connectivityTest.status.notTested');
-                      const errText = record?.error || record?.message || '';
+                          : display.kind === 'skipped'
+                            ? t('connectivityTest.status.skipped')
+                            : display.kind === 'connectionTimeout'
+                              ? t('connectivityTest.status.connectionTimeout')
+                              : display.kind === 'connectionFailed'
+                                ? t('connectivityTest.status.connectionFailed')
+                                : t('connectivityTest.status.notTested');
+                      const errText = skippedInCurrentRun
+                        ? t('connectivityTest.imageSkippedHint')
+                        : currentResult?.message || record?.error || record?.message || '';
                       return (
                         <div
                           key={model}
@@ -336,6 +371,22 @@ export default function ChannelConnectivityDialog(
                                 {t('connectivityTest.buttons.remove')}
                               </Button>
                             ) : null}
+                            {skippedInCurrentRun ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={isRunning}
+                                onClick={() => {
+                                  onOpenChange(false);
+                                  router.push('/console/work/image');
+                                }}
+                                className="h-7 px-2 text-xs text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                {t('connectivityTest.buttons.testImage')}
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
                       );
@@ -355,12 +406,16 @@ export default function ChannelConnectivityDialog(
                     total: results.length || (completedResult.total_tests ?? 0),
                     success:
                       results.length > 0
-                        ? results.filter(r => r.success).length
+                        ? results.filter(r => getResultStatus(r) === 'success').length
                         : (completedResult.success_count ?? 0),
                     failure:
                       results.length > 0
-                        ? results.filter(r => !r.success).length
+                        ? results.filter(r => getResultStatus(r) === 'failed').length
                         : (completedResult.failure_count ?? 0),
+                    skipped:
+                      results.length > 0
+                        ? results.filter(r => getResultStatus(r) === 'skipped').length
+                        : (completedResult.skipped_count ?? 0),
                   })}
                 </div>
               </div>

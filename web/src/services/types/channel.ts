@@ -142,8 +142,11 @@ export interface DraftTestChannelModelRequest {
   stream?: boolean;
 }
 
+export type ChannelModelTestStatus = 'success' | 'failed' | 'skipped';
+
 export interface ChannelModelTestResult {
   success: boolean;
+  status?: ChannelModelTestStatus;
   message: string;
   model: string;
   use_case?: string;
@@ -186,6 +189,7 @@ export interface BatchTestChannelModelsRequest {
 export interface BatchTestModelResult {
   model: string;
   success: boolean;
+  status?: ChannelModelTestStatus;
   message: string;
   response_time_ms: number;
   completed: false;
@@ -205,6 +209,7 @@ export interface BatchTestCompletedResult {
   total_tests?: number;
   success_count?: number;
   failure_count?: number;
+  skipped_count?: number;
 }
 
 // Union type for batch test SSE events
