@@ -103,6 +103,19 @@ replace_env_value_if_current() {
   fi
 }
 
+remove_env_key() {
+  local target_path="$1"
+  local key="$2"
+
+  if [ ! -f "$target_path" ] || ! grep -q "^${key}=" "$target_path"; then
+    return 0
+  fi
+
+  sed -i.bak "/^${key}=.*/d" "$target_path"
+  rm -f "${target_path}.bak"
+  echo "[bootstrap] removed $(display_path "$target_path") ${key}"
+}
+
 get_env_value() {
   local target_path="$1"
   local key="$2"
@@ -125,7 +138,6 @@ api_secret="$(generate_secret_32)"
 api_docker_secret="$(generate_secret_32)"
 postgres_password="$(generate_secret_32)"
 redis_password="$(generate_secret_32)"
-neo4j_password="$(generate_secret_32)"
 runner_api_key="$(generate_secret_32)"
 sandbox_postgres_password="$(generate_secret_32)"
 ensure_env_value "$ROOT/api/.env" "SECRET_KEY" "$(generate_secret_32)"
@@ -133,22 +145,33 @@ ensure_env_value "$ROOT/api/.env" "API_KEY_ENCRYPTION_KEY" "$api_secret"
 ensure_env_value "$ROOT/api/.env.docker" "SECRET_KEY" "$(generate_secret_32)"
 ensure_env_value "$ROOT/api/.env.docker" "API_KEY_ENCRYPTION_KEY" "$api_docker_secret"
 replace_env_value_if_current "$ROOT/api/.env.docker" "SQL_BASE_INTERNAL_DB" "zgi" "zgi_sql_base"
+replace_env_value_if_current "$ROOT/api/.env" "NEO4J_URI" "bolt://localhost:7687" ""
+replace_env_value_if_current "$ROOT/api/.env.docker" "NEO4J_URI" "bolt://neo4j:7687" ""
+replace_env_value_if_current "$ROOT/docker/.env" "NEO4J_URI" "bolt://neo4j:7687" ""
+remove_env_key "$ROOT/api/.env" "NEO4J_URI"
+remove_env_key "$ROOT/api/.env" "NEO4J_USERNAME"
+remove_env_key "$ROOT/api/.env" "NEO4J_PASSWORD"
+remove_env_key "$ROOT/api/.env" "NEO4J_DATABASE"
+remove_env_key "$ROOT/api/.env.docker" "NEO4J_URI"
+remove_env_key "$ROOT/api/.env.docker" "NEO4J_USERNAME"
+remove_env_key "$ROOT/api/.env.docker" "NEO4J_PASSWORD"
+remove_env_key "$ROOT/api/.env.docker" "NEO4J_DATABASE"
+remove_env_key "$ROOT/docker/.env" "NEO4J_URI"
+remove_env_key "$ROOT/docker/.env" "NEO4J_USERNAME"
+remove_env_key "$ROOT/docker/.env" "NEO4J_PASSWORD"
+remove_env_key "$ROOT/docker/.env" "NEO4J_DATABASE"
 ensure_env_value "$ROOT/docker/.env" "PUBLIC_PORT" "2679"
 public_port="$(get_env_value "$ROOT/docker/.env" "PUBLIC_PORT" || printf '%s' "2679")"
 ensure_env_value "$ROOT/docker/.env" "PUBLIC_URL" "http://localhost:${public_port}"
 ensure_env_value "$ROOT/docker/.env" "POSTGRES_PASSWORD" "$postgres_password"
 ensure_env_value "$ROOT/docker/.env" "REDIS_PASSWORD" "$redis_password"
-ensure_env_value "$ROOT/docker/.env" "NEO4J_PASSWORD" "$neo4j_password"
 
 postgres_password="$(get_env_value "$ROOT/docker/.env" "POSTGRES_PASSWORD" || printf '%s' "$postgres_password")"
 redis_password="$(get_env_value "$ROOT/docker/.env" "REDIS_PASSWORD" || printf '%s' "$redis_password")"
-neo4j_password="$(get_env_value "$ROOT/docker/.env" "NEO4J_PASSWORD" || printf '%s' "$neo4j_password")"
 ensure_env_value "$ROOT/api/.env" "DB_PASSWORD" "$postgres_password"
 ensure_env_value "$ROOT/api/.env" "REDIS_PASSWORD" "$redis_password"
-ensure_env_value "$ROOT/api/.env" "NEO4J_PASSWORD" "$neo4j_password"
 ensure_env_value "$ROOT/api/.env.docker" "DB_PASSWORD" "$postgres_password"
 ensure_env_value "$ROOT/api/.env.docker" "REDIS_PASSWORD" "$redis_password"
-ensure_env_value "$ROOT/api/.env.docker" "NEO4J_PASSWORD" "$neo4j_password"
 
 ensure_env_value "$ROOT/runner/.env" "EXECUTOR_API_KEY" "$runner_api_key"
 runner_api_key="$(get_env_value "$ROOT/runner/.env" "EXECUTOR_API_KEY" || printf '%s' "$runner_api_key")"

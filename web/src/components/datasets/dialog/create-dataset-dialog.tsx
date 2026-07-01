@@ -15,7 +15,6 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { IconInput } from '@/components/common/icon-input';
@@ -33,7 +32,6 @@ import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import {
   EmbeddingSettings,
-  GraphModelSettings,
   RetrievalSettings as RetrievalConfigCard,
   type RetrievalConfig,
 } from '@/components/datasets/indexing-config';
@@ -117,19 +115,15 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     DEFAULT_CREATE_RETRIEVAL_CONFIG
   );
 
-  const [hasManuallySetSearchMethod, setHasManuallySetSearchMethod] = useState(false);
   // Track if form has been submitted to show validation errors only after submit
   const [hasSubmitted, setHasSubmitted] = useState(false);
-  const graphFlowEnabled = isEditMode
-    ? Boolean(dataset?.enable_graph_flow)
-    : formData.enable_graph_flow;
+  const graphFlowEnabled = false;
 
   // Reset icon and form when dataset changes or dialog opens
   useEffect(() => {
     if (!open) return;
     // Reset submitted state when dialog opens
     setHasSubmitted(false);
-    setHasManuallySetSearchMethod(false);
     if (isEditMode && dataset) {
       setFormData({
         name: dataset.name || '',
@@ -182,23 +176,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     },
   });
 
-  // Default graph model when graph flow is enabled
-  useInitializeDefaultModelByUseCase({
-    useCase: 'text-chat',
-    currentModel: {
-      provider: formData.entity_model_provider,
-      model: formData.entity_model,
-    },
-    enabled: open && graphFlowEnabled,
-    onInitialize: v => {
-      setFormData(prev => ({
-        ...prev,
-        entity_model_provider: v.provider,
-        entity_model: v.model,
-      }));
-    },
-  });
-
   // Typed change handler
   function handleInputChange<K extends keyof typeof formData>(
     field: K,
@@ -206,31 +183,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
   ) {
     setFormData(prev => ({ ...prev, [field]: value }));
   }
-
-  const handleGraphFlowChange = useCallback(
-    (checked: boolean) => {
-      setFormData(prev => ({
-        ...prev,
-        enable_graph_flow: checked,
-      }));
-
-      if (!checked) {
-        setRetrievalConfig(prev => ({
-          ...prev,
-          search_method: 'semantic_search',
-        }));
-        return;
-      }
-
-      if (!isEditMode && !hasManuallySetSearchMethod) {
-        setRetrievalConfig(prev => ({
-          ...prev,
-          search_method: 'graph_search',
-        }));
-      }
-    },
-    [hasManuallySetSearchMethod, isEditMode]
-  );
 
   // Validate name: 2-32 Unicode chars; letters, numbers, underscore, hyphen, optional spaces
   const isNameValid = useMemo(
@@ -245,14 +197,10 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     () => isEditMode || Boolean(formData.embedding_model_provider && formData.embedding_model),
     [isEditMode, formData.embedding_model_provider, formData.embedding_model]
   );
-  const isGraphModelValid = useMemo(
-    () => !graphFlowEnabled || Boolean(formData.entity_model_provider && formData.entity_model),
-    [graphFlowEnabled, formData.entity_model_provider, formData.entity_model]
-  );
-
   // Validate form and show toast for errors
   const validateForm = useCallback((): boolean => {
-    const workspaceId = currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
+    const workspaceId =
+      currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
 
     // Check name validation
     if (!isNameValid) {
@@ -267,11 +215,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
       return false;
     }
 
-    if (!isGraphModelValid) {
-      toast.error(t('datasets.validation.graphModel.required'));
-      return false;
-    }
-
     // Check workspace
     if (!workspaceId) {
       toast.error(t('datasets.validation.workspace.required'));
@@ -283,7 +226,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     isNameValid,
     nameErrors,
     isEmbeddingModelValid,
-    isGraphModelValid,
     currentWorkspace?.id,
     dataset?.workspace_id,
     dataset?.workspace?.id,
@@ -301,7 +243,8 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
       return;
     }
 
-    const workspaceId = currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
+    const workspaceId =
+      currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
 
     const iconPayload = iconValueToDatasetPayload(iconValue, {
       existing: isEditMode ? dataset : undefined,
@@ -438,27 +381,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                 />
               </div>
 
-              {!isEditMode ? (
-                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/20 p-4 transition-colors hover:bg-muted/30">
-                  <div className="space-y-0.5">
-                    <Label
-                      className="cursor-pointer text-sm font-semibold"
-                      htmlFor="enable-graph-flow"
-                    >
-                      {t('datasets.createModal.enableGraphFlowLabel')}
-                    </Label>
-                    <p className="max-w-[320px] text-xs text-muted-foreground">
-                      {t('datasets.createModal.enableGraphFlowDescription')}
-                    </p>
-                  </div>
-                  <Switch
-                    id="enable-graph-flow"
-                    checked={formData.enable_graph_flow}
-                    onCheckedChange={handleGraphFlowChange}
-                  />
-                </div>
-              ) : null}
-
               {isEditMode && graphFlowEnabled ? (
                 <div className="rounded-xl border border-border/50 bg-muted/20 p-4">
                   <div className="flex items-center gap-2">
@@ -473,32 +395,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                     {t('datasets.settings.graphFlowEnabledDescription')}
                   </p>
                 </div>
-              ) : null}
-
-              {graphFlowEnabled ? (
-                <GraphModelSettings
-                  graphModel={{
-                    provider: formData.entity_model_provider || '',
-                    model: formData.entity_model || '',
-                  }}
-                  onChange={graphModel => {
-                    setFormData(prev => ({
-                      ...prev,
-                      entity_model_provider: graphModel.provider,
-                      entity_model: graphModel.model,
-                    }));
-                  }}
-                  required
-                  title={t('datasets.createModal.graphModelLabel')}
-                  description={t('datasets.createModal.graphModelDescription')}
-                  placeholder={t('datasets.createModal.graphModelPlaceholder')}
-                  hasError={hasSubmitted && !isGraphModelValid}
-                  errorMessage={
-                    hasSubmitted && !isGraphModelValid
-                      ? t('datasets.validation.graphModel.required')
-                      : undefined
-                  }
-                />
               ) : null}
 
               {/* Embedding Model Selector */}
@@ -574,9 +470,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                           retrieval={retrievalConfig}
                           isGraphEnabled={graphFlowEnabled}
                           onChange={(config: RetrievalConfig) => {
-                            if (config.search_method !== retrievalConfig.search_method) {
-                              setHasManuallySetSearchMethod(true);
-                            }
                             setRetrievalConfig(config);
                           }}
                         />

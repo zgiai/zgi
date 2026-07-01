@@ -97,32 +97,6 @@ services:
       - "${WEAVIATE_PORT:-18080}:8080"
     restart: unless-stopped
 
-  neo4j:
-    profiles:
-      - knowledge
-    image: neo4j:5.15-community
-    environment:
-      NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in docker/.env or your environment}
-      NEO4J_PLUGINS: '["apoc"]'
-      NEO4J_dbms_security_procedures_unrestricted: apoc.*
-      NEO4J_dbms_security_procedures_allowlist: apoc.*
-      NEO4J_apoc_export_file_enabled: "true"
-      NEO4J_apoc_import_file_enabled: "true"
-      NEO4J_dbms_memory_heap_initial__size: 512m
-      NEO4J_dbms_memory_heap_max__size: 2G
-    volumes:
-      - neo4j-data:/data
-      - neo4j-logs:/logs
-    ports:
-      - "${NEO4J_HTTP_PORT:-7474}:7474"
-      - "${NEO4J_BOLT_PORT:-7687}:7687"
-    healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USERNAME:-neo4j}", "-p", "${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in docker/.env or your environment}", "RETURN 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
   sandbox:
     profiles:
       - runtime
@@ -186,7 +160,6 @@ services:
       WEB_API_CORS_ALLOW_ORIGINS: ${WEB_API_CORS_ALLOW_ORIGINS:-http://localhost:2679}
       VECTOR_STORE: ${VECTOR_STORE:-weaviate}
       WEAVIATE_ENDPOINT: ${WEAVIATE_ENDPOINT:-http://weaviate:8080}
-      NEO4J_URI: ${NEO4J_URI:-bolt://neo4j:7687}
       CODE_EXECUTION_ENDPOINT: ${CODE_EXECUTION_ENDPOINT:-http://zgi-sandbox:2660}
       PLUGIN_RUNNER_ENABLED: ${PLUGIN_RUNNER_ENABLED:-true}
       PLUGIN_RUNNER_URL: ${PLUGIN_RUNNER_URL:-http://runner:2665}
@@ -298,8 +271,6 @@ volumes:
   postgres-data:
   redis-data:
   weaviate-data:
-  neo4j-data:
-  neo4j-logs:
   sandbox-data:
   runner-data:
   runner-workspace:
