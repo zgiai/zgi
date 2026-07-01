@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuthStore } from '@/store/auth-store';
 import { useCurrentWorkspace } from '@/store/workspace-store';
-import { dashboardService } from '@/services';
+import { contentParseService, dashboardService } from '@/services';
 import { AlertCircle, ArrowRight, CheckCircle2, Circle, RefreshCw } from 'lucide-react';
 
 type ModelType = 'text-chat' | 'embedding' | 'rerank' | 'vision' | 'image-gen';
@@ -129,6 +129,12 @@ export default function ConsolePage() {
     staleTime: 60 * 1000,
     retry: false,
   });
+  const { data: parserSettingsData, isSuccess: isParserSettingsSuccess } = useQuery({
+    queryKey: ['content-parse', 'parser-settings'],
+    queryFn: () => contentParseService.listParserSettings(),
+    staleTime: 60 * 1000,
+    retry: false,
+  });
   const stats = statsData?.data;
   const isAdminOrOwner = ['owner', 'admin'].includes(user?.organization_role || '');
   const workspaceLabel = currentWorkspace?.name || t('navigation.switchWorkspace');
@@ -190,6 +196,14 @@ export default function ConsolePage() {
       capability.priority === 'required' && getModelCount(statsData, capability.type) === 0
   );
   const isReady = requiredMissing.length === 0;
+  const hasAvailableThirdPartyParser = (parserSettingsData?.data.items ?? []).some(
+    item =>
+      (item.provider_key === 'reducto' || item.provider_key === 'mineru') &&
+      item.enabled &&
+      item.configured &&
+      item.status === 'available'
+  );
+  const showParserAttention = isParserSettingsSuccess && !hasAvailableThirdPartyParser;
 
   const resourceRows: ResourceRow[] = [
     {
@@ -603,7 +617,7 @@ export default function ConsolePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {isReady ? (
+                {isReady && !showParserAttention ? (
                   <p className="text-sm leading-6 text-muted-foreground">
                     {t('dashboard.stats.consoleHome.noCriticalIssues')}
                   </p>
@@ -623,6 +637,19 @@ export default function ConsolePage() {
                         </span>
                       </Link>
                     ))}
+                    {showParserAttention ? (
+                      <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-3">
+                        <div className="flex items-start gap-2 text-sm text-foreground">
+                          <AlertCircle className="mt-0.5 size-4 shrink-0 text-warning" />
+                          <span>{t('dashboard.stats.consoleHome.parserServiceMissing')}</span>
+                        </div>
+                        <Button asChild size="sm" variant="outline" className="mt-3 w-full">
+                          <Link href="/dashboard/settings/parsers">
+                            {t('dashboard.stats.consoleHome.actions.configureParserService')}
+                          </Link>
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </CardContent>

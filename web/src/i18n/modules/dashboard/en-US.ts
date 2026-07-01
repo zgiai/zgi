@@ -190,10 +190,14 @@ const messages = {
       actions: {
         returnToReparse: 'Back to reparse',
         save: 'Save',
+        check: 'Check availability',
       },
       messages: {
         saved: 'Parser settings saved',
+        savedAndValidated: 'Parser settings saved and validated',
         saveFailed: 'Failed to save parser settings',
+        checked: 'Parser availability check passed',
+        checkFailed: 'Parser availability check failed',
       },
       reducto: {
         description:
@@ -221,6 +225,10 @@ const messages = {
       placeholders: {
         secretConfigured: 'Configured. Leave blank to keep unchanged.',
         secretRequired: 'Required before enabling',
+      },
+      hints: {
+        baseUrl:
+          'Enter the service root URL. The system automatically appends the endpoint path.',
       },
       status: {
         not_configured: 'Not configured',
@@ -439,8 +447,11 @@ const messages = {
       },
       noCriticalIssues: 'No critical setup issues are blocking core workflows.',
       missingItem: '{label} is missing',
+      parserServiceMissing:
+        'No available third-party parser is configured. Upload-and-parse will use local parsing, which may perform worse on complex layouts, tables, and scanned files.',
       actions: {
         configureModels: 'Configure models',
+        configureParserService: 'Configure parser service',
         contactAdmin: 'Contact admin',
         createKnowledge: 'Create knowledge base',
         createAgent: 'Create agent',

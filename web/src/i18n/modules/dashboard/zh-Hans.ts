@@ -342,10 +342,14 @@ const messages: DashboardMessages = {
       actions: {
         returnToReparse: '返回重新解析',
         save: '保存',
+        check: '检查可用性',
       },
       messages: {
         saved: '解析器配置已保存',
+        savedAndValidated: '解析器配置已保存并验证通过',
         saveFailed: '解析器配置保存失败',
+        checked: '解析器可用性检查通过',
+        checkFailed: '解析器可用性检查失败',
       },
       reducto: {
         description: 'Reducto 官方解析服务。启用前需要先配置 API Key。',
@@ -371,6 +375,9 @@ const messages: DashboardMessages = {
       placeholders: {
         secretConfigured: '已配置，留空则保持不变',
         secretRequired: '启用前必填',
+      },
+      hints: {
+        baseUrl: '填写服务根地址，系统会自动拼接具体接口路径。',
       },
       status: {
         not_configured: '未配置',
@@ -432,8 +439,11 @@ const messages: DashboardMessages = {
       },
       noCriticalIssues: '当前没有阻塞核心流程的配置问题。',
       missingItem: '{label} 未配置',
+      parserServiceMissing:
+        '当前未配置可用的三方解析服务。上传并解析时会使用本地解析服务，复杂版式、表格和扫描件效果可能较差。',
       actions: {
         configureModels: '配置模型',
+        configureParserService: '去配置解析服务',
         contactAdmin: '联系管理员',
         createKnowledge: '创建知识库',
         createAgent: '创建智能体',

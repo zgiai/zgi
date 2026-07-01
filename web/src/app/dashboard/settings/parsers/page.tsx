@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, FileSearch, Loader2, Save, Settings2, XCircle } from 'lucide-react';
+import { CheckCircle2, FileSearch, Loader2, RefreshCw, Save, Settings2, XCircle } from 'lucide-react';
 import { useT, type AllTranslationKeys } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -106,6 +106,7 @@ export default function ParserSettingsPage() {
 
   const [reducto, setReducto] = useState<ReductoFormState>(() => initialReducto());
   const [mineru, setMineru] = useState<MineruFormState>(() => initialMineru());
+  const [checkingProvider, setCheckingProvider] = useState<ParserSettingsProviderKey | null>(null);
 
   useEffect(() => {
     if (isLoading) return;
@@ -130,13 +131,38 @@ export default function ParserSettingsPage() {
       provider: ParserSettingsProviderKey;
       payload: UpsertParserSettingsRequest;
     }) => contentParseService.upsertParserSettings(provider, payload),
-    onSuccess: async () => {
-      toast.success(t('dashboard.configuration.parserSettings.messages.saved'));
+    onSuccess: async response => {
+      toast.success(
+        response.data.status === 'available'
+          ? t('dashboard.configuration.parserSettings.messages.savedAndValidated')
+          : t('dashboard.configuration.parserSettings.messages.saved')
+      );
       await queryClient.invalidateQueries({ queryKey: PARSER_SETTINGS_QUERY_KEY });
       await queryClient.invalidateQueries({ queryKey: ['content-parse', 'file-route-providers'] });
     },
     onError: error => {
       toast.error((error as { message?: string }).message || t('dashboard.configuration.parserSettings.messages.saveFailed'));
+    },
+  });
+
+  const checkMutation = useMutation({
+    mutationFn: (provider: ParserSettingsProviderKey) =>
+      contentParseService.checkParserSettings(provider),
+    onMutate: provider => {
+      setCheckingProvider(provider);
+    },
+    onSuccess: async () => {
+      toast.success(t('dashboard.configuration.parserSettings.messages.checked'));
+      await queryClient.invalidateQueries({ queryKey: PARSER_SETTINGS_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ['content-parse', 'file-route-providers'] });
+    },
+    onError: async error => {
+      toast.error((error as { message?: string }).message || t('dashboard.configuration.parserSettings.messages.checkFailed'));
+      await queryClient.invalidateQueries({ queryKey: PARSER_SETTINGS_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ['content-parse', 'file-route-providers'] });
+    },
+    onSettled: () => {
+      setCheckingProvider(null);
     },
   });
 
@@ -172,6 +198,8 @@ export default function ParserSettingsPage() {
   const savingProvider = saveMutation.variables?.provider;
   const isSavingReducto = saveMutation.isPending && savingProvider === 'reducto';
   const isSavingMineru = saveMutation.isPending && savingProvider === 'mineru';
+  const isCheckingReducto = checkMutation.isPending && checkingProvider === 'reducto';
+  const isCheckingMineru = checkMutation.isPending && checkingProvider === 'mineru';
 
   return (
     <div className="container max-w-5xl space-y-5 py-6">
@@ -223,6 +251,9 @@ export default function ParserSettingsPage() {
                   value={reducto.base_url}
                   onChange={event => setReducto(prev => ({ ...prev, base_url: event.target.value }))}
                 />
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {t('dashboard.configuration.parserSettings.hints.baseUrl')}
+                </p>
               </Field>
               <Field label={t('dashboard.configuration.parserSettings.fields.timeout')}>
                 <Input
@@ -234,7 +265,13 @@ export default function ParserSettingsPage() {
                   }
                 />
               </Field>
-              <SaveRow loading={isSavingReducto} onSave={saveReducto} />
+              <SaveRow
+                loading={isSavingReducto}
+                checking={isCheckingReducto}
+                checkDisabled={!reductoSettings?.configured}
+                onSave={saveReducto}
+                onCheck={() => checkMutation.mutate('reducto')}
+              />
             </div>
           </ParserCardShell>
         </div>
@@ -294,7 +331,13 @@ export default function ParserSettingsPage() {
               ) : (
                 <SidecarMineruFields value={mineru} onChange={setMineru} />
               )}
-              <SaveRow loading={isSavingMineru} onSave={saveMineru} />
+              <SaveRow
+                loading={isSavingMineru}
+                checking={isCheckingMineru}
+                checkDisabled={!mineruSettings?.configured}
+                onSave={saveMineru}
+                onCheck={() => checkMutation.mutate('mineru')}
+              />
             </div>
           </ParserCardShell>
         </div>
@@ -334,7 +377,14 @@ function ParserCardShell({
           <StatusBadge status={status} />
         </div>
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent>
+        {status?.validation_message && status.status === 'failed' ? (
+          <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm leading-5 text-destructive">
+            {status.validation_message}
+          </div>
+        ) : null}
+        {children}
+      </CardContent>
     </Card>
   );
 }
@@ -377,10 +427,32 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function SaveRow({ loading, onSave }: { loading: boolean; onSave: () => void }) {
+function SaveRow({
+  loading,
+  checking,
+  checkDisabled,
+  onSave,
+  onCheck,
+}: {
+  loading: boolean;
+  checking: boolean;
+  checkDisabled: boolean;
+  onSave: () => void;
+  onCheck: () => void;
+}) {
   const t = useT();
   return (
-    <div className="flex justify-end border-t pt-4">
+    <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+      <Button
+        type="button"
+        variant="outline"
+        onClick={onCheck}
+        disabled={loading || checking || checkDisabled}
+        className="gap-2"
+      >
+        {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+        {t('dashboard.configuration.parserSettings.actions.check')}
+      </Button>
       <Button onClick={onSave} disabled={loading} className="gap-2">
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         {t('dashboard.configuration.parserSettings.actions.save')}
@@ -404,6 +476,9 @@ function SidecarMineruFields({
           value={value.base_url}
           onChange={event => onChange(prev => ({ ...prev, base_url: event.target.value }))}
         />
+        <p className="text-xs leading-5 text-muted-foreground">
+          {t('dashboard.configuration.parserSettings.hints.baseUrl')}
+        </p>
       </Field>
       <Field label={t('dashboard.configuration.parserSettings.fields.timeout')}>
         <Input
@@ -446,6 +521,9 @@ function OfficialMineruFields({
           value={value.base_url}
           onChange={event => onChange(prev => ({ ...prev, base_url: event.target.value }))}
         />
+        <p className="text-xs leading-5 text-muted-foreground">
+          {t('dashboard.configuration.parserSettings.hints.baseUrl')}
+        </p>
       </Field>
       <div className="grid gap-4 md:grid-cols-3">
         <Field label={t('dashboard.configuration.parserSettings.fields.modelVersion')}>
