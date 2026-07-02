@@ -15,9 +15,11 @@ func TestAliyunAdapterChatCompletion_UsesNativeTextGeneration(t *testing.T) {
 	t.Helper()
 
 	var (
-		gotPath    string
-		gotAuth    string
-		gotPayload map[string]any
+		gotPath      string
+		gotAuth      string
+		gotAccept    string
+		gotWorkspace string
+		gotPayload   map[string]any
 	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +30,8 @@ func TestAliyunAdapterChatCompletion_UsesNativeTextGeneration(t *testing.T) {
 		}
 		gotPath = r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
+		gotAccept = r.Header.Get("Accept")
+		gotWorkspace = r.Header.Get("X-DashScope-Workspace")
 
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{
@@ -38,7 +42,14 @@ func TestAliyunAdapterChatCompletion_UsesNativeTextGeneration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v1",
+		Headers: map[string]string{
+			"Accept":                "application/problem+json",
+			"X-DashScope-Workspace": "workspace-1",
+		},
+	})
 	if err != nil {
 		t.Fatalf("NewAliyunAdapter() error = %v", err)
 	}
@@ -56,6 +67,12 @@ func TestAliyunAdapterChatCompletion_UsesNativeTextGeneration(t *testing.T) {
 	}
 	if gotAuth != "Bearer test-key" {
 		t.Fatalf("Authorization = %q, want %q", gotAuth, "Bearer test-key")
+	}
+	if gotAccept != "application/json" {
+		t.Fatalf("Accept = %q, want application/json", gotAccept)
+	}
+	if gotWorkspace != "workspace-1" {
+		t.Fatalf("X-DashScope-Workspace = %q, want workspace-1", gotWorkspace)
 	}
 	input, ok := gotPayload["input"].(map[string]any)
 	if !ok {
@@ -245,10 +262,11 @@ func TestAliyunAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
 	t.Helper()
 
 	var (
-		gotAccept  string
-		gotSSE     string
-		gotPath    string
-		gotPayload map[string]any
+		gotAccept    string
+		gotSSE       string
+		gotPath      string
+		gotWorkspace string
+		gotPayload   map[string]any
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
@@ -259,13 +277,22 @@ func TestAliyunAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
 		gotAccept = r.Header.Get("Accept")
 		gotSSE = r.Header.Get("X-DashScope-SSE")
 		gotPath = r.URL.Path
+		gotWorkspace = r.Header.Get("X-DashScope-Workspace")
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"request_id\":\"s1\",\"output\":{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"he\"}}]}}\n\n")
 		fmt.Fprint(w, "data: {\"request_id\":\"s1\",\"output\":{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"llo\"}}]},\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}\n\n")
 	}))
 	defer server.Close()
 
-	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: server.URL + "/api/v1"})
+	a, err := NewAliyunAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v1",
+		Headers: map[string]string{
+			"Accept":                "application/problem+json",
+			"X-DashScope-SSE":       "disable",
+			"X-DashScope-Workspace": "workspace-1",
+		},
+	})
 	if err != nil {
 		t.Fatalf("NewAliyunAdapter() error = %v", err)
 	}
@@ -290,6 +317,9 @@ func TestAliyunAdapterChatCompletionStream_UsesNativeSSE(t *testing.T) {
 	}
 	if gotSSE != "enable" {
 		t.Fatalf("X-DashScope-SSE = %q, want enable", gotSSE)
+	}
+	if gotWorkspace != "workspace-1" {
+		t.Fatalf("X-DashScope-Workspace = %q, want workspace-1", gotWorkspace)
 	}
 	if _, ok := gotPayload["stream"]; ok {
 		t.Fatalf("payload.stream = %#v, want omitted", gotPayload["stream"])

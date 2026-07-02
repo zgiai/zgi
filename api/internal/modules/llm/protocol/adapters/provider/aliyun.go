@@ -221,11 +221,15 @@ func (a *AliyunAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 }
 
 func (a *AliyunAdapter) aliyunJSONHeaders() map[string]string {
-	return map[string]string{
-		"Authorization": fmt.Sprintf("Bearer %s", a.config.APIKey),
-		"Content-Type":  "application/json",
-		"Accept":        "application/json",
+	headers := make(map[string]string, len(a.config.Headers)+3)
+	for k, v := range a.config.Headers {
+		headers[k] = v
 	}
+
+	headers["Authorization"] = fmt.Sprintf("Bearer %s", a.config.APIKey)
+	headers["Content-Type"] = "application/json"
+	headers["Accept"] = "application/json"
+	return headers
 }
 
 func (a *AliyunAdapter) aliyunSSEHeaders() map[string]string {
