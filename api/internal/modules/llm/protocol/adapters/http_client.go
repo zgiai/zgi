@@ -265,7 +265,7 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		resp, err = c.client.Do(req)
 		if err != nil {
 			lastErr = err
-			continue // Network error → retry
+			continue // Network error, retry
 		}
 
 		// Read body inside the loop so read failures can be retried
@@ -276,14 +276,14 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
 			lastStatusCode = resp.StatusCode
 			lastHeader = resp.Header.Clone()
-			continue // Body read failure → retry
+			continue // Body read failure, retry
 		}
 
 		lastStatusCode = resp.StatusCode
 		lastBody = respBody
 		lastHeader = resp.Header.Clone()
 
-		// 5xx server errors → retry
+		// 5xx server errors, retry
 		if resp.StatusCode >= 500 {
 			bodySnippet := string(respBody)
 			if len(bodySnippet) > 500 {
@@ -396,8 +396,11 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 		}
 
 		// Parse SSE format
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
+		name, data, ok := strings.Cut(line, ":")
+		if ok && name == "data" {
+			if strings.HasPrefix(data, " ") {
+				data = strings.TrimPrefix(data, " ")
+			}
 
 			// [DONE] indicates stream end
 			if data == "[DONE]" {
