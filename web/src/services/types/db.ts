@@ -119,6 +119,8 @@ export interface UpdateDbTableColumnsResponse {
 export interface DbTableColumnUpdateInput {
   id?: string;
   name: string;
+  display_name?: string;
+  source_column_name?: string;
   description: string;
   type: Type;
   is_required: boolean;
