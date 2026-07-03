@@ -19,6 +19,7 @@ import { upsertAIChatMessage } from '@/components/chat/utils/aichat-message';
 import {
   getErrorMessage,
   isAbortError,
+  isContinuationLikelyStartedError,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 
 import type { UseChatRuntimeMessageActionsArgs } from './types';
@@ -30,6 +31,8 @@ export function useWorkflowContinuationActions({
   streamingMessageRef,
   setControllerState,
   markSelectionTarget,
+  refreshConversationSilently,
+  refreshMessagesSilently,
   refreshAccountMemoryAfterMemoryMutation,
   eventAppliers,
 }: UseChatRuntimeMessageActionsArgs) {
@@ -143,6 +146,13 @@ export function useWorkflowContinuationActions({
       const sourceConversation: AIChatConversation = conversation;
       let streamStarted = false;
       let startError: Error | null = null;
+      const shouldSyncContinuationOnClose =
+        Boolean(toolGovernanceDecision) || Boolean(clientActionResult);
+      const syncContinuationState = () => {
+        if (!shouldSyncContinuationOnClose) return;
+        refreshConversationSilently(conversationId);
+        refreshMessagesSilently(conversationId);
+      };
 
       const restoreWorkflowApprovalContinuation = (errorMessage?: string) => {
         setControllerState(current => {
@@ -375,8 +385,16 @@ export function useWorkflowContinuationActions({
           onRequestError: error => {
             if (isAbortError(error)) return;
             if (!streamStarted) {
-              startError = error;
-              restoreWorkflowApprovalContinuation(error.message);
+              const suppressError =
+                (toolGovernanceDecision || clientActionResult) &&
+                isContinuationLikelyStartedError(error);
+              if (!suppressError) {
+                startError = error;
+              }
+              restoreWorkflowApprovalContinuation(suppressError ? undefined : error.message);
+              if (suppressError) {
+                syncContinuationState();
+              }
               return;
             }
             setControllerState(current => ({
@@ -396,12 +414,14 @@ export function useWorkflowContinuationActions({
             if (!abortController.signal.aborted) {
               if (!streamStarted) {
                 restoreWorkflowApprovalContinuation();
+                syncContinuationState();
                 return;
               }
               setControllerState(current => ({
                 ...current,
                 isSending: getNextActiveSendingState(current, conversationId, false),
               }));
+              syncContinuationState();
             }
           },
         };
@@ -450,7 +470,14 @@ export function useWorkflowContinuationActions({
         if (!isAbortError(error)) {
           if (!streamStarted) {
             const errorMessage = getErrorMessage(error);
-            restoreWorkflowApprovalContinuation(errorMessage);
+            const suppressError =
+              (toolGovernanceDecision || clientActionResult) &&
+              isContinuationLikelyStartedError(error);
+            restoreWorkflowApprovalContinuation(suppressError ? undefined : errorMessage);
+            if (suppressError) {
+              syncContinuationState();
+              return;
+            }
             if (clientActionResult || toolGovernanceDecision) {
               throw error instanceof Error ? error : new Error(errorMessage);
             }
@@ -493,6 +520,8 @@ export function useWorkflowContinuationActions({
       eventAppliers,
       markSelectionTarget,
       refreshAccountMemoryAfterMemoryMutation,
+      refreshConversationSilently,
+      refreshMessagesSilently,
       setControllerState,
       stateRef,
       streamAbortByConversationRef,

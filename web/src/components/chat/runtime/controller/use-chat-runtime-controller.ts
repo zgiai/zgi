@@ -219,6 +219,9 @@ export function useChatRuntimeController(options?: {
     streamingMessageRef,
     setControllerState,
     markSelectionTarget,
+    isLatestSelection,
+    refreshConversationSilently,
+    refreshMessagesSilently,
     refreshAccountMemoryAfterMemoryMutation,
     eventAppliers,
   });

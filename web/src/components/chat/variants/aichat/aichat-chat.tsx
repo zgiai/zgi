@@ -92,6 +92,7 @@ import {
 import { useAIChatScroll } from '@/components/chat/variants/aichat/use-aichat-scroll';
 import {
   getAIChatMessageErrorInput,
+  isAIChatContinuationLikelyStarted,
   resolveAIChatErrorMessage,
 } from '@/components/chat/variants/aichat/error-utils';
 import {
@@ -168,6 +169,14 @@ const TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY = 'zgi:aichat:tool-governance-
 
 function normalizeToolGovernancePermissionTier(value: unknown): AIChatToolGovernancePermissionTier {
   return value === 'advanced' || value === 'full' ? value : 'basic';
+}
+
+function toolGovernanceDecisionKey(
+  conversationId?: string | null,
+  messageId?: string | null,
+  correlationId?: string | null
+) {
+  return [conversationId, messageId, correlationId].map(value => value?.trim() ?? '').join(':');
 }
 
 function normalizeSkillIds(skillIds: string[]) {
@@ -270,6 +279,12 @@ export function AIChatShell({
   const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
   const [skillPreferenceOpen, setSkillPreferenceOpen] = useState(false);
   const [draftSkillPreferenceIds, setDraftSkillPreferenceIds] = useState<string[]>([]);
+  const [submittedToolGovernanceDecisionKeys, setSubmittedToolGovernanceDecisionKeys] = useState<
+    Set<string>
+  >(() => new Set());
+  const [approvedToolGovernanceDecisionKeys, setApprovedToolGovernanceDecisionKeys] = useState<
+    Set<string>
+  >(() => new Set());
   const [inputAreaHeight, setInputAreaHeight] = useState(160);
   const [toolGovernancePermissionTier, setToolGovernancePermissionTier] =
     useState<AIChatToolGovernancePermissionTier>('basic');
@@ -295,6 +310,8 @@ export function AIChatShell({
   const isBillingAdmin = organizationRole === 'owner' || organizationRole === 'admin';
   const enableAIChatSkillPreference =
     surface === 'aichat' && (!isEmbedded || runtimeSurface === 'contextual_sidebar');
+  const effectiveRuntimeSurface: AIChatRuntimeSurface =
+    surface === 'agent-draft' || surface === 'agent-webapp' ? 'external_page_chat' : runtimeSurface;
   const { data: availableSkills = [] } = useAIChatSkills({ enabled: enableAIChatSkillPreference });
   const { data: skillPreference, isLoading: isLoadingSkillPreference } = useAIChatSkillPreference({
     enabled: enableAIChatSkillPreference,
@@ -319,9 +336,12 @@ export function AIChatShell({
     if (!enableAIChatSkillPreference || !skillPreference) return;
     setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
   }, [enableAIChatSkillPreference, skillPreference]);
-  const enableToolGovernanceApprovals = Boolean(controller.continueToolGovernanceDecision);
+  const enableToolGovernanceApprovals =
+    surface === 'aichat' && Boolean(controller.continueToolGovernanceDecision);
   const showToolGovernancePermissionControl =
-    surface === 'aichat' && (runtimeSurface === 'work_chat' || enableToolGovernance);
+    surface === 'aichat' &&
+    (effectiveRuntimeSurface === 'work_chat' ||
+      (effectiveRuntimeSurface === 'contextual_sidebar' && enableToolGovernance));
   useEffect(() => {
     if (!showToolGovernancePermissionControl) {
       setToolGovernancePermissionTierLoaded(false);
@@ -564,17 +584,18 @@ export function AIChatShell({
     () =>
       [
         'aichat-runtime',
-        runtimeSurface,
+        effectiveRuntimeSurface,
         uploadScope?.type === 'webapp' ? uploadScope.webAppId : 'console',
         'conversations',
         'search',
       ] as const,
-    [runtimeSurface, uploadScope]
+    [effectiveRuntimeSurface, uploadScope]
   );
   const searchConversations = useCallback<ConversationSearchFn>(
     (query, limit) =>
-      controller.search?.(query, limit, { surface: runtimeSurface }) ?? Promise.resolve([]),
-    [controller, runtimeSurface]
+      controller.search?.(query, limit, { surface: effectiveRuntimeSurface }) ??
+      Promise.resolve([]),
+    [controller, effectiveRuntimeSurface]
   );
 
   const suggestions = useMemo<AIChatSuggestion[]>(() => {
@@ -647,7 +668,7 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: forcedUseMemory ?? useMemory,
-        runtimeSurface,
+        runtimeSurface: effectiveRuntimeSurface,
         operationContext: toolGovernanceOperationContext,
       });
       return true;
@@ -661,7 +682,7 @@ export function AIChatShell({
       isSending,
       modelSelectorValue,
       requireModel,
-      runtimeSurface,
+      effectiveRuntimeSurface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -697,7 +718,7 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: forcedUseMemory ?? useMemory,
-        runtimeSurface,
+        runtimeSurface: effectiveRuntimeSurface,
         operationContext: toolGovernanceOperationContext,
       });
     },
@@ -708,7 +729,7 @@ export function AIChatShell({
       isSending,
       modelSelectorValue,
       requireModel,
-      runtimeSurface,
+      effectiveRuntimeSurface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -734,7 +755,7 @@ export function AIChatShell({
         },
         {
           operationContext: toolGovernanceOperationContext,
-          runtimeSurface,
+          runtimeSurface: effectiveRuntimeSurface,
         }
       );
     },
@@ -745,7 +766,7 @@ export function AIChatShell({
       messageActionsLocked,
       modelSelectorValue,
       requireModel,
-      runtimeSurface,
+      effectiveRuntimeSurface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -797,7 +818,7 @@ export function AIChatShell({
             model: modelSelectorValue.model,
             parameters: modelSelectorValue.params,
           },
-          runtimeSurface,
+          runtimeSurface: effectiveRuntimeSurface,
           operationContext: toolGovernanceOperationContext,
         });
         return;
@@ -813,7 +834,7 @@ export function AIChatShell({
         },
         useMemory: Boolean(message.metadata?.use_memory),
         forceAdvanceLeaf: true,
-        runtimeSurface,
+        runtimeSurface: effectiveRuntimeSurface,
         operationContext: toolGovernanceOperationContext,
       });
     },
@@ -826,7 +847,7 @@ export function AIChatShell({
       messageActionsLocked,
       modelSelectorValue,
       requireModel,
-      runtimeSurface,
+      effectiveRuntimeSurface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -856,19 +877,58 @@ export function AIChatShell({
   const handleToolGovernanceDecision = useCallback(
     (payload: AIChatToolGovernanceDecisionSubmitPayload) => {
       if (!controller.continueToolGovernanceDecision) return;
-      return controller.continueToolGovernanceDecision(
+      const decisionKey = toolGovernanceDecisionKey(
         payload.conversationId,
         payload.messageId,
-        payload.correlationId,
-        {
-          action: payload.action,
-          reason: payload.reason,
-          remember_for_session: payload.rememberForSession,
-        }
+        payload.correlationId
       );
+      setSubmittedToolGovernanceDecisionKeys(current => {
+        const next = new Set(current);
+        next.add(decisionKey);
+        return next;
+      });
+      if (payload.action === 'approve') {
+        setApprovedToolGovernanceDecisionKeys(current => {
+          const next = new Set(current);
+          next.add(decisionKey);
+          return next;
+        });
+      }
+      return controller
+        .continueToolGovernanceDecision(
+          payload.conversationId,
+          payload.messageId,
+          payload.correlationId,
+          {
+            action: payload.action,
+            reason: payload.reason,
+            remember_for_session: payload.rememberForSession,
+          }
+        )
+        .catch(error => {
+          if (isAIChatContinuationLikelyStarted(error)) {
+            return;
+          }
+          setSubmittedToolGovernanceDecisionKeys(current => {
+            const next = new Set(current);
+            next.delete(decisionKey);
+            return next;
+          });
+          setApprovedToolGovernanceDecisionKeys(current => {
+            const next = new Set(current);
+            next.delete(decisionKey);
+            return next;
+          });
+          throw error;
+        });
     },
     [controller]
   );
+  useEffect(() => {
+    setSubmittedToolGovernanceDecisionKeys(new Set());
+    setApprovedToolGovernanceDecisionKeys(new Set());
+  }, [activeConversation?.id]);
+
   const activeToolGovernanceApprovalFallback = useMemo<ToolGovernancePendingApproval | null>(() => {
     if (
       !enableToolGovernanceApprovals ||
@@ -898,7 +958,8 @@ export function AIChatShell({
     );
     if (
       approval &&
-      isToolGovernancePendingApprovalDismissed(approval.id, toolGovernanceApprovalScopeId)
+      (isToolGovernancePendingApprovalDismissed(approval.id, toolGovernanceApprovalScopeId) ||
+        submittedToolGovernanceDecisionKeys.has(approval.id))
     ) {
       return null;
     }
@@ -913,6 +974,7 @@ export function AIChatShell({
     locale,
     skillDisplayById,
     streamingByMessageId,
+    submittedToolGovernanceDecisionKeys,
     t,
     toolGovernanceApprovalScopeId,
   ]);
@@ -1150,6 +1212,7 @@ export function AIChatShell({
             layout={isEmbedded ? 'embedded' : 'full'}
             showMemoryKey={surface !== 'agent-webapp'}
             showSkillEventDetails={surface !== 'agent-webapp'}
+            approvedToolGovernanceDecisionKeys={approvedToolGovernanceDecisionKeys}
           />
 
           <AIChatHomeView

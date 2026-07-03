@@ -150,6 +150,13 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
     return false;
   }
   if (
+    invocation.kind === 'tool_call' &&
+    (status === 'approved' || status === 'allowed') &&
+    Object.keys(result).length === 0
+  ) {
+    return false;
+  }
+  if (
     invocation.kind === 'skill_load' &&
     invocation.skill_id === 'console-navigator'
   ) {

@@ -65,8 +65,10 @@ import type {
   AIChatWorkflowApprovalSubmitPayload,
 } from '@/components/chat/variants/aichat/types';
 import {
+  isToolGovernancePendingApprovalDismissed,
   ToolGovernanceApprovalPanel,
   useActiveToolGovernancePendingApproval,
+  useToolGovernancePendingApprovalScope,
   type ToolGovernancePendingApproval,
 } from '@/components/chat/variants/aichat/tool-governance-decision-card';
 
@@ -323,6 +325,7 @@ export function AIChatInputArea({
   const [submittedApprovalAction, setSubmittedApprovalAction] = useState<string | null>(null);
   const [activeToolGovernanceApproval, setActiveToolGovernanceApproval] =
     useState<ToolGovernancePendingApproval | null>(null);
+  const toolGovernancePendingApprovalScopeId = useToolGovernancePendingApprovalScope();
   const activeApprovalForm = activeWorkflowApprovalRequest?.approvalForm ?? null;
   const approvalFormQuery = useApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken,
@@ -412,11 +415,26 @@ export function AIChatInputArea({
     },
     [activeConversationId, activeToolGovernanceMessageId]
   );
+  const visibleActiveToolGovernanceApproval =
+    activeToolGovernanceApproval &&
+    isCurrentToolGovernanceApproval(activeToolGovernanceApproval) &&
+    !isToolGovernancePendingApprovalDismissed(
+      activeToolGovernanceApproval.id,
+      toolGovernancePendingApprovalScopeId
+    )
+      ? activeToolGovernanceApproval
+      : null;
+  const visibleFallbackToolGovernanceApproval =
+    activeToolGovernanceApprovalFallback &&
+    isCurrentToolGovernanceApproval(activeToolGovernanceApprovalFallback) &&
+    !isToolGovernancePendingApprovalDismissed(
+      activeToolGovernanceApprovalFallback.id,
+      toolGovernancePendingApprovalScopeId
+    )
+      ? activeToolGovernanceApprovalFallback
+      : null;
   const effectiveToolGovernanceApproval = enableToolGovernanceApprovals
-    ? (activeToolGovernanceApprovalFallback ??
-      (isCurrentToolGovernanceApproval(activeToolGovernanceApproval)
-        ? activeToolGovernanceApproval
-        : null))
+    ? (visibleFallbackToolGovernanceApproval ?? visibleActiveToolGovernanceApproval)
     : null;
   const hasActiveToolGovernanceApproval = Boolean(effectiveToolGovernanceApproval);
   const hasBlockingApproval = hasActiveWorkflowApprovalRequest || hasActiveToolGovernanceApproval;

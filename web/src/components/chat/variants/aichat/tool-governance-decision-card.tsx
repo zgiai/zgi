@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
+import { isAIChatContinuationLikelyStarted } from '@/components/chat/variants/aichat/error-utils';
 
 export type ToolGovernanceDecisionAction = 'approve' | 'reject';
 
@@ -153,18 +154,6 @@ export function isToolGovernancePendingApprovalDismissed(
   return dismissedPendingApprovalKeys.has(pendingApprovalEntryKey(scopeId, approvalId));
 }
 
-function toolGovernanceContinuationLikelyStarted(error: unknown): boolean {
-  const message =
-    error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes('invalid current leaf message status') ||
-    normalized.includes('continuation is already running') ||
-    normalized.includes('continuation has already resolved') ||
-    normalized.includes('conversation is already streaming')
-  );
-}
-
 export function useActiveToolGovernancePendingApproval() {
   const scopeId = useToolGovernancePendingApprovalScope();
   return useSyncExternalStore(
@@ -270,6 +259,10 @@ export function ToolGovernanceDecisionCard({
           : t('consoleChat.governance.rejectSucceeded')
       );
     } catch (error) {
+      if (isAIChatContinuationLikelyStarted(error)) {
+        setResolvedAction(action);
+        return;
+      }
       const message =
         error instanceof Error && error.message
           ? error.message
@@ -548,7 +541,7 @@ export function ToolGovernanceApprovalPanel({
       );
       await approval.onSubmitDecision(action, action === 'approve' ? rememberForSession : false);
     } catch (error) {
-      if (toolGovernanceContinuationLikelyStarted(error)) {
+      if (isAIChatContinuationLikelyStarted(error)) {
         return;
       }
       restoreDismissedApproval?.();

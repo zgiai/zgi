@@ -55,6 +55,13 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
     return false;
   }
   if (
+    invocation.kind === 'tool_call' &&
+    (status === 'approved' || status === 'allowed') &&
+    Object.keys(result).length === 0
+  ) {
+    return false;
+  }
+  if (
     invocation.kind === 'skill_load' &&
     invocation.skill_id === 'console-navigator'
   ) {
@@ -85,6 +92,21 @@ function isTerminalGovernedSkillInvocation(invocation: AIChatSkillInvocation): b
     status === 'error' ||
     status === 'blocked' ||
     status === 'denied'
+  );
+}
+
+function isTerminalGovernedToolExecutionInvocation(invocation: AIChatSkillInvocation): boolean {
+  return invocation.kind === 'tool_call' && isTerminalGovernedSkillInvocation(invocation);
+}
+
+function isSuccessfulToolGovernanceAuditInvocation(invocation: AIChatSkillInvocation): boolean {
+  if (invocation.kind !== 'tool_governance') return false;
+  const status = String(invocation.status ?? '').toLowerCase();
+  return (
+    status === 'success' ||
+    status === 'succeeded' ||
+    status === 'completed' ||
+    status === 'allowed'
   );
 }
 
@@ -386,9 +408,20 @@ export function mergeSelectedMessagesWithStreamingState(
 }
 
 export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgenticTimelineItem[] {
-  const invocations = (message.metadata?.skill_invocations ?? [])
+  const normalizedInvocations = (message.metadata?.skill_invocations ?? [])
     .filter(isVisibleSkillInvocation)
     .map(normalizeSkillInvocation);
+  const terminalGovernedToolCorrelationIds = new Set(
+    normalizedInvocations
+      .filter(isTerminalGovernedToolExecutionInvocation)
+      .map(governanceCorrelationIdFromInvocation)
+      .filter((correlationId): correlationId is string => Boolean(correlationId))
+  );
+  const invocations = normalizedInvocations.filter(invocation => {
+    if (!isSuccessfulToolGovernanceAuditInvocation(invocation)) return true;
+    const correlationId = governanceCorrelationIdFromInvocation(invocation);
+    return !correlationId || !terminalGovernedToolCorrelationIds.has(correlationId);
+  });
   const governanceCorrelationIds = new Set(
     invocations
       .filter(invocation => invocation.kind === 'tool_governance')
@@ -401,7 +434,8 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     const hasGovernance = Boolean(invocation.governance);
     const shouldRenderAsGovernanceDecision =
       invocation.kind === 'tool_governance' ||
-      isTerminalGovernedSkillInvocation(invocation) ||
+      (!isTerminalGovernedToolExecutionInvocation(invocation) &&
+        isTerminalGovernedSkillInvocation(invocation)) ||
       (hasGovernance && !governanceCorrelationIds.has(correlationId)) ||
       (isPendingToolGovernanceInvocation(invocation) &&
         !governanceCorrelationIds.has(correlationId));

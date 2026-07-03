@@ -186,6 +186,13 @@ function visibleSkillInvocations(
       return false;
     }
     if (
+      invocation.kind === 'tool_call' &&
+      (status === 'approved' || status === 'allowed') &&
+      Object.keys(result).length === 0
+    ) {
+      return false;
+    }
+    if (
       invocation.kind === 'client_action' &&
       (actionType === 'asset_observation' || actionType === 'route_navigation') &&
       (status === 'success' || status === 'succeeded')

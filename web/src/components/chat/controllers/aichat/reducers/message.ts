@@ -46,11 +46,46 @@ export function mergeAIChatMessages(
 ): AIChatMessage[] {
   const byId = new Map<string, AIChatMessage>();
   currentMessages.forEach(message => byId.set(message.id, message));
-  incomingMessages.forEach(message => byId.set(message.id, message));
+  incomingMessages.forEach(message => {
+    const existing = byId.get(message.id);
+    byId.set(message.id, existing ? mergeAIChatMessage(existing, message) : message);
+  });
 
   return Array.from(byId.values()).sort(
     (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id)
   );
+}
+
+function mergeAIChatMessage(existing: AIChatMessage, incoming: AIChatMessage): AIChatMessage {
+  const metadata = mergeTerminalMessageMetadata(
+    mergeMessageMetadata(existing.metadata, incoming.metadata),
+    incoming.status
+  );
+  return {
+    ...existing,
+    ...incoming,
+    metadata,
+  };
+}
+
+function mergeTerminalMessageMetadata(
+  metadata: AIChatMessageMetadata | undefined,
+  status: AIChatMessage['status']
+): AIChatMessageMetadata | undefined {
+  if (!metadata) return undefined;
+  if (
+    status === 'waiting_approval' ||
+    status === 'waiting_client_action' ||
+    status === 'waiting_question' ||
+    status === 'pending' ||
+    status === 'streaming'
+  ) {
+    return metadata;
+  }
+
+  const next = { ...metadata };
+  delete next.user_input_request;
+  return next;
 }
 
 export function removeStreamingStateByConversation(
@@ -673,6 +708,8 @@ export function applyStreamErrorState(
       : undefined;
   const messages = conversationId ? (current.messagesByConversation[conversationId] ?? []) : [];
   const erroredMessage = messageId ? messages.find(item => item.id === messageId) : undefined;
+  const previousStreaming = messageId ? current.streamingByMessageId[messageId] : undefined;
+  const preservedTimeline = removeTransientProgressItems(previousStreaming?.timeline);
   const nextStreamingByMessageId = { ...current.streamingByMessageId };
   if (messageId) {
     delete nextStreamingByMessageId[messageId];
@@ -713,12 +750,11 @@ export function applyStreamErrorState(
                         ...item,
                         status: 'error' as const,
                         error: message,
-                        metadata: errorMetadata
-                          ? {
-                              ...(item.metadata ?? {}),
-                              ...errorMetadata,
-                            }
-                          : item.metadata,
+                        metadata: mergeRuntimeTimelineMetadata(
+                          item.metadata,
+                          errorMetadata,
+                          preservedTimeline
+                        ),
                         updated_at: Math.floor(Date.now() / 1000),
                       }
                     : item

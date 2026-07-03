@@ -114,13 +114,22 @@ const UUID_DISPLAY_PATTERN =
 const OPAQUE_INLINE_ID_PATTERN =
   /\b(?:file|upload[-_]?file|asset|workspace|ws)[-_](?=[a-z0-9_-]*\d)[a-z0-9][a-z0-9_-]*\b/gi;
 
-interface AgentBindingDisplaySummary {
+interface AgentBindingDisplayChange {
   action: string;
   kind: string;
   count: number;
   names: string[];
+}
+
+interface AgentBindingDisplaySummary extends AgentBindingDisplayChange {
   agentName: string | null;
   changeCount: number;
+  changes: AgentBindingDisplayChange[];
+}
+
+interface AgentConfigFieldDescriptor {
+  key: string;
+  labelKey: Parameters<WebappTranslator>[0];
 }
 
 interface AIChatAgenticTimelineProps {
@@ -286,28 +295,136 @@ function stringListFromUnknown(value: unknown): string[] {
   return single && !looksLikeOpaqueAssetID(single) ? [single] : [];
 }
 
-function firstRecordFromUnknown(value: unknown): Record<string, unknown> | null {
-  if (Array.isArray(value)) {
-    return (
-      value
-        .map(item => governanceRecord(item))
-        .find((item): item is Record<string, unknown> => Boolean(item)) ?? null
-    );
+function recordListFromUnknown(value: unknown): Record<string, unknown>[] {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      try {
+        return recordListFromUnknown(JSON.parse(trimmed));
+      } catch {
+        return [];
+      }
+    }
   }
-  return governanceRecord(value);
+  if (!Array.isArray(value)) {
+    const record = governanceRecord(value);
+    return record ? [record] : [];
+  }
+  return value
+    .map(item => governanceRecord(item))
+    .filter((item): item is Record<string, unknown> => Boolean(item));
+}
+
+function firstRecordFromUnknown(value: unknown): Record<string, unknown> | null {
+  return recordListFromUnknown(value)[0] ?? null;
+}
+
+function hasAgentBindingDisplayEvidence(result: Record<string, unknown> | null): boolean {
+  if (!result) return false;
+  return (
+    Boolean(governanceRecordString(result, ['binding_kind'])) ||
+    Boolean(governanceRecordString(result, ['change_action'])) ||
+    recordListFromUnknown(result.binding_changes).length > 0 ||
+    recordListFromUnknown(result.config_changes).length > 0 ||
+    recordListFromUnknown(result.binding_final_states).length > 0
+  );
+}
+
+function agentBindingDisplayResultRoot(
+  result: Record<string, unknown>
+): Record<string, unknown> {
+  if (hasAgentBindingDisplayEvidence(result)) return result;
+  const nestedSummary = governanceRecord(result.result_summary);
+  if (nestedSummary && hasAgentBindingDisplayEvidence(nestedSummary)) return nestedSummary;
+  return result;
 }
 
 function agentBindingDisplaySummaryFromRecord(
   result: Record<string, unknown>,
-  toolName?: string | null
+  toolName?: string | null,
+  skillDisplayById?: AIChatSkillDisplayMap,
+  locale?: string
 ): AgentBindingDisplaySummary | null {
   const normalizedTool = normalizeGovernanceToolName(toolName);
+  const root = agentBindingDisplayResultRoot(result);
+  const bindingChanges = recordListFromUnknown(root.binding_changes);
+  const configChanges = recordListFromUnknown(root.config_changes);
+  const finalStates = recordListFromUnknown(root.binding_final_states);
+  const changeRecords =
+    bindingChanges.length > 0
+      ? bindingChanges
+      : configChanges.length > 0
+        ? configChanges
+        : finalStates;
   const primaryChange =
-    firstRecordFromUnknown(result.config_changes) ?? firstRecordFromUnknown(result.binding_changes);
+    firstRecordFromUnknown(root.binding_changes) ??
+    firstRecordFromUnknown(root.config_changes) ??
+    firstRecordFromUnknown(root.binding_final_states);
   const hasTopLevelSummary =
-    Boolean(governanceRecordString(result, ['binding_kind'])) ||
-    Boolean(governanceRecordString(result, ['change_action']));
-  const source = hasTopLevelSummary ? result : primaryChange ?? result;
+    Boolean(governanceRecordString(root, ['binding_kind'])) ||
+    Boolean(governanceRecordString(root, ['change_action']));
+  const source = hasTopLevelSummary ? root : primaryChange ?? root;
+  const primarySummary = agentBindingDisplayChangeFromRecord(
+    source,
+    normalizedTool,
+    skillDisplayById,
+    locale
+  );
+  if (!primarySummary) return null;
+  const changes = changeRecords
+    .map(change =>
+      agentBindingDisplayChangeFromRecord(change, normalizedTool, skillDisplayById, locale)
+    )
+    .filter((change): change is AgentBindingDisplayChange => Boolean(change));
+  const agent = governanceRecord(root.agent);
+  const agentName =
+    governanceRecordString(root, ['agent_name']) ??
+    governanceRecordString(agent, ['name', 'agent_name']);
+  const changeCount = changes.length || changeRecords.length || 1;
+  const derivedMultiSummary =
+    !hasTopLevelSummary && changes.length > 1
+      ? agentBindingMultipleDisplaySummary(changes)
+      : null;
+  return {
+    ...primarySummary,
+    ...(derivedMultiSummary ?? {}),
+    agentName,
+    changeCount: Math.max(changeCount, 1),
+    changes,
+  };
+}
+
+function agentBindingMultipleDisplaySummary(
+  changes: AgentBindingDisplayChange[]
+): Pick<AgentBindingDisplayChange, 'action' | 'kind' | 'count' | 'names'> {
+  const actions = new Set(changes.map(change => change.action));
+  let action = 'update';
+  if (actions.size === 1) {
+    const [onlyAction] = Array.from(actions);
+    action = onlyAction === 'satisfied' ? 'update' : onlyAction;
+  } else if (actions.has('bind') && !actions.has('unbind')) {
+    action = 'bind';
+  } else if (actions.has('unbind') && !actions.has('bind')) {
+    action = 'unbind';
+  } else if (actions.has('bind') && actions.has('unbind')) {
+    action = 'replace';
+  }
+  const names = changes.flatMap(change => change.names);
+  const count = changes.reduce((sum, change) => sum + Math.max(change.count, 0), 0);
+  return {
+    action,
+    kind: 'multiple',
+    count: Math.max(count, names.length, changes.length, 1),
+    names,
+  };
+}
+
+function agentBindingDisplayChangeFromRecord(
+  source: Record<string, unknown>,
+  normalizedTool: string,
+  skillDisplayById?: AIChatSkillDisplayMap,
+  locale?: string
+): AgentBindingDisplayChange | null {
   const kind =
     governanceRecordString(source, ['binding_kind']) ??
     agentBindingKindFromToolName(normalizedTool);
@@ -321,38 +438,57 @@ function agentBindingDisplaySummaryFromRecord(
     governanceRecordNumber(source, ['removed_resource_count', 'removed_count']) ?? 0;
   const finalCount = governanceRecordNumber(source, ['final_resource_count', 'final_count']) ?? 0;
   const explicitCount = governanceRecordNumber(source, ['resource_count', 'asset_count']);
-  const resolvedAction = action || (removedCount > 0 && addedCount === 0 ? 'unbind' : 'bind');
+  const resolvedAction =
+    action === 'satisfied'
+      ? 'update'
+      : action || (removedCount > 0 && addedCount === 0 ? 'unbind' : addedCount > 0 ? 'bind' : 'update');
   const names =
     resolvedAction === 'unbind'
       ? stringListFromUnknown(source.removed_resource_names)
       : resolvedAction === 'bind'
         ? stringListFromUnknown(source.added_resource_names)
         : stringListFromUnknown(source.resource_names);
+  const ids =
+    resolvedAction === 'unbind'
+      ? stringListFromUnknown(source.removed_resource_ids)
+      : resolvedAction === 'bind'
+        ? stringListFromUnknown(source.added_resource_ids)
+        : stringListFromUnknown(source.resource_ids);
   const fallbackNames = stringListFromUnknown(source.resource_names);
+  const skillNames =
+    kind === 'agent_skill' ? agentSkillDisplayNamesFromIDs(ids, skillDisplayById, locale) : [];
+  const resolvedNames = names.length > 0 ? names : skillNames.length > 0 ? skillNames : fallbackNames;
   const count =
     explicitCount ??
     (resolvedAction === 'unbind'
       ? removedCount
       : resolvedAction === 'bind'
         ? addedCount
-        : Math.max(addedCount + removedCount, finalCount, fallbackNames.length));
-  const agent = governanceRecord(result.agent);
-  const agentName =
-    governanceRecordString(result, ['agent_name']) ??
-    governanceRecordString(agent, ['name', 'agent_name']);
-  const changeCount = Array.isArray(result.config_changes)
-    ? result.config_changes.length
-    : Array.isArray(result.binding_changes)
-      ? result.binding_changes.length
-      : 1;
+        : Math.max(addedCount + removedCount, finalCount, resolvedNames.length));
   return {
     action: resolvedAction,
     kind,
-    count: Math.max(count, names.length, fallbackNames.length, 1),
-    names: names.length > 0 ? names : fallbackNames,
-    agentName,
-    changeCount: Math.max(changeCount, 1),
+    count: Math.max(count, resolvedNames.length, 1),
+    names: resolvedNames,
   };
+}
+
+function agentSkillDisplayNamesFromIDs(
+  ids: string[],
+  skillDisplayById?: AIChatSkillDisplayMap,
+  locale?: string
+): string[] {
+  if (!skillDisplayById || ids.length === 0) return [];
+  return ids
+    .map(id => {
+      const skillId = id.trim().toLowerCase();
+      if (!skillId) return null;
+      const display =
+        skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale ?? 'zh-Hans');
+      const label = sanitizeDisplayString(display.label);
+      return label && !looksLikeOpaqueAssetID(label) ? label : null;
+    })
+    .filter((name): name is string => Boolean(name));
 }
 
 function agentBindingKindFromToolName(toolName: string): string | null {
@@ -409,6 +545,58 @@ function formatAgentBindingNames(
     : t('consoleChat.governance.approvalPanel.targetCountFallback', { count });
 }
 
+function agentBindingDetailTranslationKey(kind: string) {
+  switch (kind) {
+    case 'agent_skill':
+      return 'consoleChat.governance.approvalPanel.agentBindingDetailSkills' as const;
+    case 'knowledge_base':
+      return 'consoleChat.governance.approvalPanel.agentBindingDetailKnowledge' as const;
+    case 'database_table':
+      return 'consoleChat.governance.approvalPanel.agentBindingDetailDatabaseTables' as const;
+    case 'workflow':
+      return 'consoleChat.governance.approvalPanel.agentBindingDetailWorkflows' as const;
+    default:
+      return null;
+  }
+}
+
+function agentBindingDetailActionTranslationKey(action: string) {
+  switch (action) {
+    case 'bind':
+      return 'consoleChat.governance.approvalPanel.agentBindingDetailBindAction' as const;
+    case 'unbind':
+      return 'consoleChat.governance.approvalPanel.agentBindingDetailUnbindAction' as const;
+    default:
+      return 'consoleChat.governance.approvalPanel.agentBindingDetailUpdateAction' as const;
+  }
+}
+
+function formatAgentBindingChangeDetails(
+  changes: AgentBindingDisplayChange[],
+  locale: string,
+  t: WebappTranslator,
+  includeActions = false
+): string | null {
+  const parts = changes
+    .map(change => {
+      const key = agentBindingDetailTranslationKey(change.kind);
+      if (!key) return null;
+      const label = t(key, { count: Math.max(change.count, 1) });
+      const names = formatAgentBindingNames(change.names, change.count, locale, t);
+      const hasSpecificNames = change.names.length > 0;
+      const detail = hasSpecificNames
+        ? locale === 'en-US'
+          ? `${label} (${names})`
+          : `${label}（${names}）`
+        : label;
+      if (!includeActions) return detail;
+      return t(agentBindingDetailActionTranslationKey(change.action), { detail });
+    })
+    .filter((part): part is string => Boolean(part));
+  if (parts.length === 0) return null;
+  return parts.join(locale === 'en-US' ? ', ' : '、');
+}
+
 function agentBindingDisplayText(
   summary: AgentBindingDisplaySummary,
   fallbackAgentName: string,
@@ -419,6 +607,30 @@ function agentBindingDisplayText(
   const count = Math.max(summary.count, 1);
   const names = formatAgentBindingNames(summary.names, count, locale, t);
   if (summary.kind === 'multiple') {
+    const details = formatAgentBindingChangeDetails(
+      summary.changes,
+      locale,
+      t,
+      summary.action !== 'bind' && summary.action !== 'unbind'
+    );
+    if (details && summary.action === 'unbind') {
+      return t('consoleChat.governance.approvalPanel.agentUnbindResourcesDetailed', {
+        agent,
+        details,
+      });
+    }
+    if (details && summary.action === 'bind') {
+      return t('consoleChat.governance.approvalPanel.agentBindResourcesDetailed', {
+        agent,
+        details,
+      });
+    }
+    if (details) {
+      return t('consoleChat.governance.approvalPanel.agentUpdateResourcesDetailed', {
+        agent,
+        details,
+      });
+    }
     if (summary.action === 'unbind') {
       return t('consoleChat.governance.approvalPanel.agentUnbindResources', {
         agent,
@@ -431,7 +643,7 @@ function agentBindingDisplayText(
         count,
       });
     }
-    return t('consoleChat.governance.approvalPanel.agentUpdateConfigChanges', {
+    return t('consoleChat.governance.approvalPanel.agentUpdateBindings', {
       agent,
       count: summary.changeCount,
     });
@@ -464,10 +676,16 @@ function agentOwnerNameFromSkillInvocation(invocation: AIChatSkillInvocation): s
   const governance = invocation.governance;
   const audit = governanceRecord(invocation.asset_operation_audit ?? governance?.asset_operation_audit);
   const approvalEvent = governanceRecord(governance?.approval_event);
+  const args = governanceRecord(invocation.arguments);
+  const result = invocationRecord(invocation.result);
+  const resultAgent = governanceRecord(result.agent);
   return (
+    governanceRecordString(result, ['agent_name', 'name']) ??
+    governanceRecordString(resultAgent, ['name', 'agent_name']) ??
     agentOwnerNameFromAssets(audit?.assets) ??
     agentOwnerNameFromAssets(approvalEvent?.assets) ??
-    agentOwnerNameFromAssets(governance?.assets)
+    agentOwnerNameFromAssets(governance?.assets) ??
+    governanceRecordString(args, ['agent_name', 'name'])
   );
 }
 
@@ -534,7 +752,8 @@ function buildSkillTitle(
   skill: AIChatSkillDisplayInfo,
   tone: TimelineTone,
   locale: string,
-  t: WebappTranslator
+  t: WebappTranslator,
+  skillDisplayById?: AIChatSkillDisplayMap
 ): string {
   const routeTarget = routeNavigationDisplayTarget(invocation, locale);
   if (routeTarget) {
@@ -577,7 +796,12 @@ function buildSkillTitle(
 
   if (tone === 'success' && normalizeGovernanceToolName(invocation.skill_id) === 'agent-management') {
     const result = invocationRecord(invocation.result);
-    const summary = agentBindingDisplaySummaryFromRecord(result, invocation.tool_name);
+    const summary = agentBindingDisplaySummaryFromRecord(
+      result,
+      invocation.tool_name,
+      skillDisplayById,
+      locale
+    );
     const fallbackAgentName =
       agentOwnerNameFromSkillInvocation(invocation) ??
       t('consoleChat.governance.approvalPanel.currentAgent');
@@ -811,6 +1035,19 @@ function isToolGovernanceNeedsApproval(item: GovernanceTimelineItem): boolean {
   );
 }
 
+function isToolGovernanceTerminal(item: GovernanceTimelineItem): boolean {
+  if (governanceApprovalStatus(item)) return true;
+  const status = governanceDecisionStatus(item);
+  return (
+    status === 'allowed' ||
+    status === 'denied' ||
+    status === 'blocked' ||
+    status === 'error' ||
+    item.event.requires_approval === false ||
+    item.event.governance?.requires_approval === false
+  );
+}
+
 function canPublishPendingGovernanceApproval(messageStatus?: AIChatMessage['status']) {
   return (
     messageStatus === 'pending' ||
@@ -1006,6 +1243,7 @@ const AGENT_BINDING_TOOL_NAMES = new Set([
 ]);
 
 const AGENT_CONFIG_TOOL_NAMES = new Set(['update_agent_config', 'agent.update_config']);
+const AGENT_IDENTITY_TOOL_NAMES = new Set(['update_agent_identity', 'agent.update_identity']);
 
 const AGENT_BINDING_ASSET_TYPES = new Set([
   'agent_skill',
@@ -1017,6 +1255,22 @@ const AGENT_BINDING_ASSET_TYPES = new Set([
   'table',
   'workflow',
 ]);
+
+const AGENT_CONFIG_BINDING_ARGUMENT_KEYS = [
+	'enabled_skill_ids',
+	'add_enabled_skill_ids',
+	'remove_enabled_skill_ids',
+	'knowledge_dataset_ids',
+	'add_knowledge_dataset_ids',
+	'remove_knowledge_dataset_ids',
+	'dataset_ids',
+	'database_bindings',
+	'add_database_bindings',
+	'remove_database_bindings',
+	'workflow_bindings',
+	'add_workflow_bindings',
+	'remove_workflow_bindings',
+] as const;
 
 function normalizeGovernanceAssetType(value: unknown): string {
   return governanceStringValue(value)?.toLowerCase().replace(/-/g, '_') ?? '';
@@ -1040,6 +1294,9 @@ function isAgentBindingGovernance(item: GovernanceTimelineItem): boolean {
   if (!isAgentManagementGovernanceTool(skillId, toolName)) return false;
   if (AGENT_BINDING_TOOL_NAMES.has(toolName)) return true;
   if (!AGENT_CONFIG_TOOL_NAMES.has(toolName)) return false;
+
+  const frozenArgs = governanceFrozenInvocationArguments(item);
+  if (frozenArgs && hasAgentConfigBindingArguments(frozenArgs)) return true;
 
   const executionSummary = agentBindingDisplaySummaryFromRecord(
     governanceExecutionResult(item) ?? {},
@@ -1104,11 +1361,589 @@ function governanceAssetGroups(
   };
 }
 
+function agentNameFromGovernanceAssets(
+  assets: AIChatToolGovernanceAssetRef[],
+  fallback?: string | null
+): string | null {
+  return (
+    assets
+      .filter(asset => isBindingOwnerAsset(asset) || normalizeGovernanceAssetType(asset.type) === 'agent')
+      .map(asset => governanceAssetSpecificDisplayName(asset))
+      .find((name): name is string => Boolean(name)) ??
+    (fallback ? sanitizeDisplayString(fallback) : null)
+  );
+}
+
+function governanceFrozenInvocation(item: GovernanceTimelineItem): Record<string, unknown> | null {
+  const approvalEvent = governanceApprovalEvent(item);
+  const governance = item.event.governance;
+  return (
+    governanceRecord(item.event.frozen_invocation) ??
+    governanceRecord(approvalEvent?.frozen_invocation) ??
+    governanceRecord(governance?.frozen_invocation) ??
+    governanceRecord(governance?.approval_event?.frozen_invocation)
+  );
+}
+
+function governanceFrozenInvocationArguments(
+  item: GovernanceTimelineItem
+): Record<string, unknown> | null {
+  return governanceRecord(governanceFrozenInvocation(item)?.arguments);
+}
+
+function agentNameFromExecutionResult(item: GovernanceTimelineItem): string | null {
+  const result = governanceExecutionResult(item);
+  const agent = governanceRecord(result?.agent);
+  return (
+    governanceRecordString(result, ['agent_name', 'name']) ??
+    governanceRecordString(agent, ['name', 'agent_name'])
+  );
+}
+
+function hasArgumentKey(args: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(args, key);
+}
+
+function argumentArrayLength(value: unknown): number | null {
+  if (Array.isArray(value)) return value.length;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('[')) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed.length : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function firstPresentArgumentArrayLength(args: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    if (!hasArgumentKey(args, key)) continue;
+    return argumentArrayLength(args[key]);
+  }
+  return null;
+}
+
+function agentConfigArgumentFields(args: Record<string, unknown>): Record<string, unknown> {
+  const config = governanceRecord(args.config);
+  if (!config) return args;
+  return { ...config, ...args };
+}
+
+function hasAgentConfigBindingArguments(args: Record<string, unknown>): boolean {
+  const fields = agentConfigArgumentFields(args);
+  return AGENT_CONFIG_BINDING_ARGUMENT_KEYS.some(key => hasArgumentKey(fields, key));
+}
+
+function displayNameValuesFromMap(value: unknown): string[] {
+  const record = governanceRecord(value);
+  if (!record) return stringListFromUnknown(value);
+  return Object.values(record)
+    .flatMap(item => stringListFromUnknown(item))
+    .filter(name => !looksLikeOpaqueAssetID(name));
+}
+
+function displayNamesForBindingKind(args: Record<string, unknown>, kind: string): string[] {
+  const displayNames = governanceRecord(args.display_names);
+  if (!displayNames) return [];
+  switch (kind) {
+    case 'agent_skill':
+      return displayNameValuesFromMap(displayNames.skills ?? displayNames.agent_skills);
+    case 'knowledge_base':
+      return displayNameValuesFromMap(
+        displayNames.knowledge_bases ?? displayNames.datasets ?? displayNames.knowledge
+      );
+    case 'database_table':
+      return displayNameValuesFromMap(displayNames.database_tables ?? displayNames.tables);
+    case 'workflow':
+      return displayNameValuesFromMap(displayNames.workflows);
+    default:
+      return [];
+  }
+}
+
+function frozenBindingIDsFromArguments(
+	args: Record<string, unknown>,
+	keys: readonly string[]
+): string[] {
+  for (const key of keys) {
+    if (!hasArgumentKey(args, key)) continue;
+    return stringListFromUnknown(args[key]);
+  }
+	return [];
+}
+
+function firstPresentArgumentValue(args: Record<string, unknown>, keys: readonly string[]): unknown {
+	for (const key of keys) {
+		if (hasArgumentKey(args, key)) return args[key];
+	}
+	return undefined;
+}
+
+function frozenBindingRecordNames(value: unknown, nameKeys: readonly string[]): string[] {
+  return recordListFromUnknown(value)
+    .flatMap(record => {
+      const nestedNames = [
+        ...recordListFromUnknown(record.tables),
+        ...recordListFromUnknown(record.database_tables),
+        ...recordListFromUnknown(record.table_bindings),
+      ].flatMap(nested =>
+        nameKeys
+          .map(key => governanceStringValue(nested[key]))
+          .filter((name): name is string => Boolean(name))
+      );
+      const ownNames = nameKeys
+        .map(key => governanceStringValue(record[key]))
+        .filter((name): name is string => Boolean(name));
+      return [...ownNames, ...nestedNames];
+    })
+    .filter(name => !looksLikeOpaqueAssetID(name));
+}
+
+function agentConfigBindingSummaryFromFrozenArguments(
+  args: Record<string, unknown>,
+  fallbackAgentName: string | null,
+  skillDisplayById?: AIChatSkillDisplayMap,
+  locale?: string
+): AgentBindingDisplaySummary | null {
+  const fields = agentConfigArgumentFields(args);
+  const previewChanges = recordListFromUnknown(
+    fields.binding_changes_preview ?? fields.config_changes_preview
+  );
+  if (previewChanges.length > 0) {
+    const previewRoot = {
+      ...fields,
+      ...(governanceRecord(fields.binding_change_preview) ?? {}),
+      binding_changes: previewChanges,
+      config_changes: previewChanges,
+      agent_name:
+        governanceRecordString(fields, ['agent_name', 'name']) ??
+        governanceRecordString(args, ['agent_name', 'name']) ??
+        fallbackAgentName,
+    };
+    const previewSummary = agentBindingDisplaySummaryFromRecord(
+      previewRoot,
+      'update_agent_config',
+      skillDisplayById,
+      locale
+    );
+    if (previewSummary) return previewSummary;
+  }
+  const summaries: AgentBindingDisplaySummary[] = [];
+  const hasNonSkillBindingArgs =
+    hasArgumentKey(fields, 'knowledge_dataset_ids') ||
+    hasArgumentKey(fields, 'add_knowledge_dataset_ids') ||
+    hasArgumentKey(fields, 'remove_knowledge_dataset_ids') ||
+    hasArgumentKey(fields, 'dataset_ids') ||
+    hasArgumentKey(fields, 'database_bindings') ||
+    hasArgumentKey(fields, 'add_database_bindings') ||
+    hasArgumentKey(fields, 'remove_database_bindings') ||
+    hasArgumentKey(fields, 'add_workflow_bindings') ||
+    hasArgumentKey(fields, 'remove_workflow_bindings') ||
+    hasArgumentKey(fields, 'workflow_bindings');
+  const addSummary = (
+    kind: string,
+    action: string,
+    ids: string[],
+    names: string[],
+    countHint = 0
+  ) => {
+    const count = Math.max(countHint, ids.length, names.length);
+    if (count === 0) return;
+    const resolvedNames =
+      names.length > 0
+        ? names
+        : kind === 'agent_skill'
+          ? agentSkillDisplayNamesFromIDs(ids, skillDisplayById, locale)
+          : [];
+    summaries.push({
+      action,
+      kind,
+      count: Math.max(count, 1),
+      names: resolvedNames,
+      agentName:
+        governanceRecordString(fields, ['agent_name', 'name']) ??
+        governanceRecordString(args, ['agent_name', 'name']) ??
+        fallbackAgentName,
+      changeCount: 1,
+      changes: [],
+    });
+  };
+  const addDirectionalSummary = (
+    kind: string,
+    action: 'bind' | 'unbind',
+    keys: readonly string[],
+    nameKeys: readonly string[] = []
+  ) => {
+    const value = firstPresentArgumentValue(fields, keys);
+    if (value === undefined) return;
+    const ids = frozenBindingIDsFromArguments(fields, keys);
+    const directNames = displayNamesForBindingKind(fields, kind);
+    const recordNames = nameKeys.length > 0 ? frozenBindingRecordNames(value, nameKeys) : [];
+    const names = directNames.length > 0 ? directNames : recordNames;
+    addSummary(kind, action, ids, names, argumentArrayLength(value) ?? 0);
+  };
+
+  addDirectionalSummary('agent_skill', 'bind', ['add_enabled_skill_ids']);
+  addDirectionalSummary('agent_skill', 'unbind', ['remove_enabled_skill_ids']);
+  addDirectionalSummary('knowledge_base', 'bind', ['add_knowledge_dataset_ids']);
+  addDirectionalSummary('knowledge_base', 'unbind', ['remove_knowledge_dataset_ids']);
+  addDirectionalSummary('database_table', 'bind', ['add_database_bindings'], [
+    'table_name',
+    'database_table_name',
+    'name',
+  ]);
+  addDirectionalSummary('database_table', 'unbind', ['remove_database_bindings'], [
+    'table_name',
+    'database_table_name',
+    'name',
+  ]);
+  addDirectionalSummary('workflow', 'bind', ['add_workflow_bindings'], [
+    'binding_name',
+    'workflow_name',
+    'name',
+    'label',
+  ]);
+  addDirectionalSummary('workflow', 'unbind', ['remove_workflow_bindings'], [
+    'binding_name',
+    'workflow_name',
+    'name',
+    'label',
+  ]);
+
+  if (hasArgumentKey(fields, 'enabled_skill_ids') && !hasNonSkillBindingArgs) {
+    const ids = frozenBindingIDsFromArguments(fields, ['enabled_skill_ids']);
+    addSummary(
+      'agent_skill',
+      ids.length === 0 ? 'unbind' : 'bind',
+      ids,
+      displayNamesForBindingKind(fields, 'agent_skill'),
+      argumentArrayLength(fields.enabled_skill_ids) ?? 0
+    );
+  }
+
+  if (hasArgumentKey(fields, 'knowledge_dataset_ids') || hasArgumentKey(fields, 'dataset_ids')) {
+    const value = firstPresentArgumentValue(fields, ['knowledge_dataset_ids', 'dataset_ids']);
+    const ids = frozenBindingIDsFromArguments(fields, ['knowledge_dataset_ids', 'dataset_ids']);
+    addSummary(
+      'knowledge_base',
+      ids.length === 0 ? 'unbind' : 'bind',
+      ids,
+      displayNamesForBindingKind(fields, 'knowledge_base'),
+      argumentArrayLength(value) ?? 0
+    );
+  }
+
+  if (hasArgumentKey(fields, 'database_bindings')) {
+    const names =
+      displayNamesForBindingKind(fields, 'database_table').length > 0
+        ? displayNamesForBindingKind(fields, 'database_table')
+        : frozenBindingRecordNames(fields.database_bindings, ['table_name', 'database_table_name', 'name']);
+    const ids = frozenBindingIDsFromArguments(fields, ['table_ids', 'writable_table_ids']);
+    const count = Math.max(recordListFromUnknown(fields.database_bindings).length, ids.length, names.length);
+    addSummary('database_table', count === 0 ? 'unbind' : 'bind', ids, names, count);
+  }
+
+  if (hasArgumentKey(fields, 'workflow_bindings')) {
+    const names =
+      displayNamesForBindingKind(fields, 'workflow').length > 0
+        ? displayNamesForBindingKind(fields, 'workflow')
+        : frozenBindingRecordNames(fields.workflow_bindings, [
+            'binding_name',
+            'workflow_name',
+            'name',
+            'label',
+    ]);
+    const ids = frozenBindingIDsFromArguments(fields, ['binding_ids', 'workflow_binding_ids']);
+    const count = Math.max(recordListFromUnknown(fields.workflow_bindings).length, ids.length, names.length);
+    addSummary('workflow', count === 0 ? 'unbind' : 'bind', ids, names, count);
+  }
+
+  if (summaries.length === 0) return null;
+  if (summaries.length === 1) return summaries[0];
+  const bindCount = summaries.filter(summary => summary.action === 'bind').length;
+  const unbindCount = summaries.filter(summary => summary.action === 'unbind').length;
+  return {
+    action: bindCount === summaries.length ? 'bind' : unbindCount === summaries.length ? 'unbind' : 'update',
+    kind: 'multiple',
+    count: summaries.reduce((total, summary) => total + Math.max(summary.count, 1), 0),
+    names: summaries.flatMap(summary => summary.names).slice(0, 6),
+    agentName: summaries.map(summary => summary.agentName).find(Boolean) ?? fallbackAgentName,
+    changeCount: summaries.length,
+    changes: summaries,
+  };
+}
+
+function compactConfigFieldDescriptors(
+  descriptors: AgentConfigFieldDescriptor[]
+): AgentConfigFieldDescriptor[] {
+  const seen = new Set<string>();
+  const out: AgentConfigFieldDescriptor[] = [];
+  for (const descriptor of descriptors) {
+    if (seen.has(descriptor.key)) continue;
+    seen.add(descriptor.key);
+    out.push(descriptor);
+  }
+  return out;
+}
+
+function agentConfigDescriptorMatchesChangedFields(
+  descriptor: AgentConfigFieldDescriptor,
+  changedFields: Set<string>
+): boolean {
+  if (descriptor.key === 'model') {
+    return changedFields.has('model') || changedFields.has('model_provider');
+  }
+  return changedFields.has(descriptor.key);
+}
+
+function agentConfigFieldDescriptorsFromArguments(
+  args: Record<string, unknown>
+): AgentConfigFieldDescriptor[] {
+  args = agentConfigArgumentFields(args);
+  const descriptors: AgentConfigFieldDescriptor[] = [];
+  const add = (key: string, labelKey: AgentConfigFieldDescriptor['labelKey']) => {
+    descriptors.push({ key, labelKey });
+  };
+
+  if (hasArgumentKey(args, 'system_prompt')) {
+    add('system_prompt', 'consoleChat.governance.approvalPanel.agentConfigFieldSystemPrompt');
+  }
+  if (hasArgumentKey(args, 'model') || hasArgumentKey(args, 'model_provider')) {
+    add('model', 'consoleChat.governance.approvalPanel.agentConfigFieldModel');
+  }
+  if (hasArgumentKey(args, 'model_parameters')) {
+    add('model_parameters', 'consoleChat.governance.approvalPanel.agentConfigFieldModelParameters');
+  }
+  if (hasArgumentKey(args, 'enabled_skill_ids')) {
+    const count = argumentArrayLength(args.enabled_skill_ids);
+    add(
+      'enabled_skill_ids',
+      count === 0
+        ? 'consoleChat.governance.approvalPanel.agentConfigFieldSkillsDisable'
+        : 'consoleChat.governance.approvalPanel.agentConfigFieldSkillsEnable'
+    );
+  }
+  if (hasArgumentKey(args, 'add_enabled_skill_ids')) {
+    add('add_enabled_skill_ids', 'consoleChat.governance.approvalPanel.agentConfigFieldSkillsEnable');
+  }
+  if (hasArgumentKey(args, 'remove_enabled_skill_ids')) {
+    add(
+      'remove_enabled_skill_ids',
+      'consoleChat.governance.approvalPanel.agentConfigFieldSkillsDisable'
+    );
+  }
+  if (hasArgumentKey(args, 'agent_memory_enabled')) {
+    add('agent_memory_enabled', 'consoleChat.governance.approvalPanel.agentConfigFieldMemory');
+  }
+  if (hasArgumentKey(args, 'file_upload_enabled')) {
+    add('file_upload_enabled', 'consoleChat.governance.approvalPanel.agentConfigFieldFileUpload');
+  }
+  if (hasArgumentKey(args, 'home_title')) {
+    add('home_title', 'consoleChat.governance.approvalPanel.agentConfigFieldHomeTitle');
+  }
+  if (hasArgumentKey(args, 'input_placeholder')) {
+    add('input_placeholder', 'consoleChat.governance.approvalPanel.agentConfigFieldInputPlaceholder');
+  }
+  if (hasArgumentKey(args, 'theme_color')) {
+    add('theme_color', 'consoleChat.governance.approvalPanel.agentConfigFieldThemeColor');
+  }
+  if (hasArgumentKey(args, 'suggested_questions')) {
+    add('suggested_questions', 'consoleChat.governance.approvalPanel.agentConfigFieldSuggestedQuestions');
+  }
+  const knowledgeCount = firstPresentArgumentArrayLength(args, [
+    'knowledge_dataset_ids',
+    'dataset_ids',
+  ]);
+  if (knowledgeCount !== null) {
+    add(
+      'knowledge_dataset_ids',
+      knowledgeCount === 0
+        ? 'consoleChat.governance.approvalPanel.agentConfigFieldKnowledgeUnbind'
+        : 'consoleChat.governance.approvalPanel.agentConfigFieldKnowledgeBind'
+    );
+  }
+  if (hasArgumentKey(args, 'add_knowledge_dataset_ids')) {
+    add(
+      'add_knowledge_dataset_ids',
+      'consoleChat.governance.approvalPanel.agentConfigFieldKnowledgeBind'
+    );
+  }
+  if (hasArgumentKey(args, 'remove_knowledge_dataset_ids')) {
+    add(
+      'remove_knowledge_dataset_ids',
+      'consoleChat.governance.approvalPanel.agentConfigFieldKnowledgeUnbind'
+    );
+  }
+  if (hasArgumentKey(args, 'knowledge_retrieval_config')) {
+    add(
+      'knowledge_retrieval_config',
+      'consoleChat.governance.approvalPanel.agentConfigFieldKnowledgeRetrieval'
+    );
+  }
+  const databaseCount = firstPresentArgumentArrayLength(args, ['database_bindings']);
+  if (databaseCount !== null) {
+    add(
+      'database_bindings',
+      databaseCount === 0
+        ? 'consoleChat.governance.approvalPanel.agentConfigFieldDatabaseTablesUnbind'
+        : 'consoleChat.governance.approvalPanel.agentConfigFieldDatabaseTablesBind'
+    );
+  }
+  if (hasArgumentKey(args, 'add_database_bindings')) {
+    add(
+      'add_database_bindings',
+      'consoleChat.governance.approvalPanel.agentConfigFieldDatabaseTablesBind'
+    );
+  }
+  if (hasArgumentKey(args, 'remove_database_bindings')) {
+    add(
+      'remove_database_bindings',
+      'consoleChat.governance.approvalPanel.agentConfigFieldDatabaseTablesUnbind'
+    );
+  }
+  const workflowCount = firstPresentArgumentArrayLength(args, ['workflow_bindings']);
+  if (workflowCount !== null) {
+    add(
+      'workflow_bindings',
+      workflowCount === 0
+        ? 'consoleChat.governance.approvalPanel.agentConfigFieldWorkflowsUnbind'
+        : 'consoleChat.governance.approvalPanel.agentConfigFieldWorkflowsBind'
+    );
+  }
+  if (hasArgumentKey(args, 'add_workflow_bindings')) {
+    add(
+      'add_workflow_bindings',
+      'consoleChat.governance.approvalPanel.agentConfigFieldWorkflowsBind'
+    );
+  }
+  if (hasArgumentKey(args, 'remove_workflow_bindings')) {
+    add(
+      'remove_workflow_bindings',
+      'consoleChat.governance.approvalPanel.agentConfigFieldWorkflowsUnbind'
+    );
+  }
+
+  const compacted = compactConfigFieldDescriptors(descriptors);
+  if (hasArgumentKey(args, 'changed_fields_preview')) {
+    const changedFields = new Set(stringListFromUnknown(args.changed_fields_preview));
+    return compacted.filter(descriptor =>
+      agentConfigDescriptorMatchesChangedFields(descriptor, changedFields)
+    );
+  }
+  return compacted;
+}
+
+function agentIdentityFieldDescriptorsFromArguments(
+  args: Record<string, unknown>
+): AgentConfigFieldDescriptor[] {
+  const descriptors: AgentConfigFieldDescriptor[] = [];
+  if (hasArgumentKey(args, 'name')) {
+    descriptors.push({
+      key: 'name',
+      labelKey: 'consoleChat.governance.approvalPanel.agentIdentityFieldName',
+    });
+  }
+  if (hasArgumentKey(args, 'description')) {
+    descriptors.push({
+      key: 'description',
+      labelKey: 'consoleChat.governance.approvalPanel.agentIdentityFieldDescription',
+    });
+  }
+  if (hasArgumentKey(args, 'icon') || hasArgumentKey(args, 'icon_type')) {
+    descriptors.push({
+      key: 'icon',
+      labelKey: 'consoleChat.governance.approvalPanel.agentIdentityFieldIcon',
+    });
+  }
+  if (hasArgumentKey(args, 'icon_background')) {
+    descriptors.push({
+      key: 'icon_background',
+      labelKey: 'consoleChat.governance.approvalPanel.agentIdentityFieldIconBackground',
+    });
+  }
+  return compactConfigFieldDescriptors(descriptors);
+}
+
+function formatAgentConfigFieldList(
+  descriptors: AgentConfigFieldDescriptor[],
+  locale: string,
+  t: WebappTranslator
+): string {
+  const labels = descriptors.map(descriptor => t(descriptor.labelKey));
+  return labels.join(locale === 'en-US' ? ', ' : '、');
+}
+
+function agentConfigFrozenActionSentence(
+  item: GovernanceTimelineItem,
+  allAssets: AIChatToolGovernanceAssetRef[],
+  t: WebappTranslator,
+  locale: string,
+  skillDisplayById?: AIChatSkillDisplayMap
+): string | null {
+  const args = governanceFrozenInvocationArguments(item);
+  if (!args) return null;
+  const fallbackAgentName =
+    agentNameFromExecutionResult(item) ??
+    governanceEventString(item, ['agent_name']) ??
+    agentNameFromGovernanceAssets(allAssets, governanceRecordString(args, ['agent_name', 'name'])) ??
+    t('consoleChat.governance.approvalPanel.currentAgent');
+  const bindingSummary = agentConfigBindingSummaryFromFrozenArguments(
+    args,
+    fallbackAgentName,
+    skillDisplayById,
+    locale
+  );
+  if (bindingSummary) {
+    const bindingText = agentBindingDisplayText(bindingSummary, fallbackAgentName, locale, t);
+    if (bindingText) return bindingText;
+  }
+  const descriptors = agentConfigFieldDescriptorsFromArguments(args);
+  if (descriptors.length === 0) return null;
+  return t('consoleChat.governance.approvalPanel.agentUpdateConfigFields', {
+    agent: fallbackAgentName,
+    fields: formatAgentConfigFieldList(descriptors, locale, t),
+  });
+}
+
+function agentIdentityFrozenActionSentence(
+  item: GovernanceTimelineItem,
+  allAssets: AIChatToolGovernanceAssetRef[],
+  t: WebappTranslator,
+  locale: string
+): string | null {
+  const args = governanceFrozenInvocationArguments(item);
+  if (!args) return null;
+  const descriptors = agentIdentityFieldDescriptorsFromArguments(args);
+  if (descriptors.length === 0) return null;
+  const agent =
+    agentNameFromExecutionResult(item) ??
+    governanceEventString(item, ['agent_name']) ??
+    agentNameFromGovernanceAssets(allAssets, governanceRecordString(args, ['agent_name', 'name'])) ??
+    t('consoleChat.governance.approvalPanel.currentAgent');
+  return t('consoleChat.governance.approvalPanel.agentUpdateIdentityFields', {
+    agent,
+    fields: formatAgentConfigFieldList(descriptors, locale, t),
+  });
+}
+
 function governanceDisplayAssets(
   item: GovernanceTimelineItem,
   assets: AIChatToolGovernanceAssetRef[]
 ): AIChatToolGovernanceAssetRef[] {
   return governanceAssetGroups(item, assets).display;
+}
+
+function governanceDecisionDisplayAssets(
+  item: GovernanceTimelineItem,
+  assets: AIChatToolGovernanceAssetRef[]
+): AIChatToolGovernanceAssetRef[] {
+  const displayAssets = governanceDisplayAssets(item, assets);
+  if (!isAgentBindingGovernance(item)) return displayAssets;
+  return displayAssets.filter(asset => Boolean(governanceAssetSpecificDisplayName(asset)));
 }
 
 function governanceAssetCount(
@@ -1524,7 +2359,8 @@ function governanceActionSentence(
   assets: AIChatToolGovernanceAssetRef[],
   assetCount: number,
   t: WebappTranslator,
-  locale: string
+  locale: string,
+  skillDisplayById: AIChatSkillDisplayMap
 ): string {
   const effect = governanceEventString(item, ['effect'])?.toLowerCase();
   const assetType = governanceEventString(item, ['asset_type'])?.toLowerCase();
@@ -1558,12 +2394,34 @@ function governanceActionSentence(
   }
 
   if (toolName && isAgentBindingGovernance(item)) {
-    const resultSummary = governanceExecutionResult(item)
-      ? agentBindingDisplaySummaryFromRecord(governanceExecutionResult(item) ?? {}, toolName)
+    const executionResult = governanceExecutionResult(item);
+    const resultSummary = executionResult
+      ? agentBindingDisplaySummaryFromRecord(executionResult, toolName, skillDisplayById, locale)
       : null;
+    if (
+      (AGENT_CONFIG_TOOL_NAMES.has(toolName) || AGENT_BINDING_TOOL_NAMES.has(toolName)) &&
+      !resultSummary
+    ) {
+      const frozenSentence = agentConfigFrozenActionSentence(
+        item,
+        assets,
+        t,
+        locale,
+        skillDisplayById
+      );
+      if (frozenSentence) return frozenSentence;
+      const ownerName =
+        governanceEventString(item, ['agent_name']) ??
+        agentNameFromGovernanceAssets(assets) ??
+        t('consoleChat.governance.approvalPanel.currentAgent');
+      return t('consoleChat.governance.approvalPanel.agentUpdateConfigGeneric', {
+        agent: ownerName,
+      });
+    }
     const ownerName =
-      governanceEventString(item, ['agent_name']) ??
       resultSummary?.agentName ??
+      agentNameFromExecutionResult(item) ??
+      governanceEventString(item, ['agent_name']) ??
       assetGroups.owners.map(asset => governanceAssetSpecificDisplayName(asset)).find(Boolean) ??
       t('consoleChat.governance.approvalPanel.currentAgent');
     if (resultSummary) {
@@ -1632,6 +2490,31 @@ function governanceActionSentence(
       agent: ownerName,
       count,
     });
+  }
+
+  if (toolName && AGENT_CONFIG_TOOL_NAMES.has(toolName)) {
+    const frozenSentence = agentConfigFrozenActionSentence(
+      item,
+      assets,
+      t,
+      locale,
+      skillDisplayById
+    );
+    if (frozenSentence) return frozenSentence;
+    const ownerName =
+      agentNameFromExecutionResult(item) ??
+      governanceEventString(item, ['agent_name']) ??
+      agentNameFromGovernanceAssets(assets) ??
+      singleAssetName ??
+      t('consoleChat.governance.approvalPanel.currentAgent');
+    return t('consoleChat.governance.approvalPanel.agentUpdateConfigGeneric', {
+      agent: ownerName,
+    });
+  }
+
+  if (toolName && AGENT_IDENTITY_TOOL_NAMES.has(toolName)) {
+    const frozenSentence = agentIdentityFrozenActionSentence(item, assets, t, locale);
+    if (frozenSentence) return frozenSentence;
   }
 
   if (effect === 'delete' && assetType === 'file') {
@@ -1703,7 +2586,7 @@ function buildToolGovernanceDecisionViewModel(
   const toolLabel = governanceToolLabel(item, skillDisplayById, locale, t);
   const reason = governanceReason(item);
   const approvalAssets = governanceApprovalAssets(item);
-  const displayAssets = governanceDisplayAssets(item, approvalAssets);
+  const displayAssets = governanceDecisionDisplayAssets(item, approvalAssets);
   const assetCount = governanceAssetCount(item, approvalAssets);
   const notice = governanceNoticeText(item, assetCount, t);
   const summaryRows: ToolGovernanceDisplayRow[] = governanceSummaryRows(
@@ -1773,7 +2656,14 @@ function buildToolGovernanceDecisionViewModel(
     });
   };
 
-  const actionSentence = governanceActionSentence(item, approvalAssets, assetCount, t, locale);
+  const actionSentence = governanceActionSentence(
+    item,
+    approvalAssets,
+    assetCount,
+    t,
+    locale,
+    skillDisplayById
+  );
 
   return {
     title: actionSentence || title,
@@ -2076,7 +2966,33 @@ function invocationRecord(value: unknown): Record<string, unknown> {
 
 function invocationStatusIsSuccessful(invocation: AIChatSkillInvocation): boolean {
   const status = String(invocation.status ?? '').trim().toLowerCase();
-  return status === 'success' || status === 'succeeded' || status === 'allowed';
+  return status === 'success' || status === 'succeeded' || status === 'completed' || status === 'allowed';
+}
+
+function invocationIsGovernanceApprovalPlaceholder(
+  invocation: AIChatSkillInvocation
+): boolean {
+  if (invocation.kind !== 'tool_call') return false;
+  const status = String(invocation.status ?? '').trim().toLowerCase();
+  if (status !== 'approved' && status !== 'allowed') return false;
+  return Object.keys(invocationRecord(invocation.result)).length === 0;
+}
+
+function invocationActionType(invocation: AIChatSkillInvocation): string {
+  const result = invocationRecord(invocation.result);
+  const args = invocationRecord(invocation.arguments);
+  return (
+    invocationString(invocation.action_type) ||
+    invocationString(result.action_type) ||
+    invocationString(args.action_type)
+  ).toLowerCase();
+}
+
+function invocationIsRouteNavigation(invocation: AIChatSkillInvocation): boolean {
+  if (invocation.skill_id === 'console-navigator' && invocation.tool_name === 'navigate') {
+    return true;
+  }
+  return invocation.kind === 'client_action' && invocationActionType(invocation) === 'route_navigation';
 }
 
 function invocationNavigationTarget(invocation: AIChatSkillInvocation): string {
@@ -2100,7 +3016,7 @@ function routeNavigationDisplayTarget(
   invocation: AIChatSkillInvocation,
   locale: string
 ): string | null {
-  if (invocation.skill_id !== 'console-navigator' || invocation.tool_name !== 'navigate') {
+  if (!invocationIsRouteNavigation(invocation)) {
     return null;
   }
   const href = invocationNavigationTarget(invocation);
@@ -2135,7 +3051,7 @@ function routeNavigationEventKey(
 ): string | null {
   if (!('item' in item)) return null;
   const invocation = item.item.invocation;
-  if (invocation.skill_id !== 'console-navigator' || invocation.tool_name !== 'navigate') {
+  if (!invocationIsRouteNavigation(invocation)) {
     return null;
   }
   const href = invocationNavigationTarget(invocation);
@@ -2164,7 +3080,7 @@ function compactAdjacentDuplicateRouteNavigationEvents<
 
 function completedClientActionKey(invocation: AIChatSkillInvocation): string | null {
   if (invocation.kind !== 'client_action') return null;
-  if (invocation.action_type !== 'route_navigation') return null;
+  if (invocationActionType(invocation) !== 'route_navigation') return null;
   if (!invocationStatusIsSuccessful(invocation)) return null;
   const href = invocationNavigationTarget(invocation);
   if (!href) return null;
@@ -2229,12 +3145,62 @@ function governedSkillInvocationCorrelationId(invocation: AIChatSkillInvocation)
   );
 }
 
+function governedSkillInvocationApprovedByCorrelationId(
+  invocation: AIChatSkillInvocation
+): string | null {
+  const modelFeedback = governanceRecord(invocation.governance?.model_feedback);
+  const audit =
+    governanceRecord(invocation.asset_operation_audit) ??
+    governanceRecord(invocation.governance?.asset_operation_audit) ??
+    governanceRecord(modelFeedback?.asset_operation_audit);
+  const matchedGrant = governanceRecord(invocation.governance?.matched_grant);
+  return (
+    governanceStringValue(invocation.governance?.approved_by_correlation_id) ??
+    governanceRecordString(audit, ['approved_by_correlation_id']) ??
+    governanceRecordString(matchedGrant, ['approval_correlation_id'])
+  );
+}
+
+function isTerminalGovernedToolExecution(invocation: AIChatSkillInvocation): boolean {
+  if (invocation.kind !== 'tool_call') return false;
+  if (!governedSkillInvocationCorrelationId(invocation)) return false;
+  const status = String(invocation.status ?? '').trim().toLowerCase();
+  return (
+    status === 'success' ||
+    status === 'succeeded' ||
+    status === 'completed' ||
+    status === 'error' ||
+    status === 'blocked' ||
+    status === 'denied'
+  );
+}
+
+function isSupersededToolGovernanceSkillEvent(
+  item: AIChatAgenticTimelineItem,
+  terminalGovernedToolCorrelationIds: ReadonlySet<string>
+): boolean {
+  if (item.type !== 'skill_event' || item.invocation.kind !== 'tool_governance') return false;
+  const status = String(item.invocation.status ?? '').trim().toLowerCase();
+  if (
+    status !== 'success' &&
+    status !== 'succeeded' &&
+    status !== 'completed' &&
+    status !== 'allowed'
+  ) {
+    return false;
+  }
+  const correlationId = governedSkillInvocationCorrelationId(item.invocation);
+  return Boolean(correlationId && terminalGovernedToolCorrelationIds.has(correlationId));
+}
+
 function isGovernedSkillEvent(
   item: AIChatAgenticTimelineItem,
   governanceCorrelationIds: ReadonlySet<string>
 ): boolean {
   if (item.type !== 'skill_event') return false;
+  if (invocationIsGovernanceApprovalPlaceholder(item.invocation)) return true;
   if (isPendingToolGovernanceInvocation(item.invocation)) return true;
+  if (isTerminalGovernedToolExecution(item.invocation)) return false;
   const correlationId = governedSkillInvocationCorrelationId(item.invocation);
   return Boolean(
     correlationId &&
@@ -2384,8 +3350,23 @@ export function AIChatAgenticTimeline({
   const pendingGovernanceApprovals = useMemo(() => {
     if (!enableToolGovernanceApprovals) return [];
     if (!canPublishPendingGovernanceApproval(messageStatus)) return [];
+    const terminalCorrelationIds = new Set(
+      timeline
+        .flatMap(item => {
+          if (item.type !== 'tool_governance_decision' || !isToolGovernanceTerminal(item)) {
+            return [];
+          }
+          const correlationId = governanceItemCorrelationId(item);
+          return correlationId ? [correlationId] : [];
+        })
+        .filter((correlationId): correlationId is string => Boolean(correlationId))
+    );
     return timeline.flatMap(item => {
       if (item.type !== 'tool_governance_decision' || !isToolGovernanceNeedsApproval(item)) {
+        return [];
+      }
+      const correlationId = governanceItemCorrelationId(item);
+      if (correlationId && terminalCorrelationIds.has(correlationId)) {
         return [];
       }
       const view = buildToolGovernanceDecisionViewModel(
@@ -2429,6 +3410,17 @@ export function AIChatAgenticTimeline({
   );
 
   const events = useMemo(() => {
+    const terminalGovernedToolCorrelationIds = new Set(
+      timeline.flatMap(item => {
+        if (item.type !== 'skill_event' || !isTerminalGovernedToolExecution(item.invocation)) {
+          return [];
+        }
+        return [
+          governedSkillInvocationCorrelationId(item.invocation),
+          governedSkillInvocationApprovedByCorrelationId(item.invocation),
+        ].filter((correlationId): correlationId is string => Boolean(correlationId));
+      })
+    );
     const finalGovernanceOperationKeys = new Set(
       timeline
         .filter(
@@ -2454,8 +3446,14 @@ export function AIChatAgenticTimeline({
       .filter(
         item =>
           !isGovernedSkillEvent(item, governanceCorrelationIds) &&
+          !isSupersededToolGovernanceSkillEvent(item, terminalGovernedToolCorrelationIds) &&
           !isSupersededByClientActionSkillEvent(item, completedClientActionKeys) &&
           !isCompletedSuccessfulSkillLoad(item, messageStatus) &&
+          !(
+            item.type === 'tool_governance_decision' &&
+            governanceItemCorrelationId(item) &&
+            terminalGovernedToolCorrelationIds.has(governanceItemCorrelationId(item) ?? '')
+          ) &&
           !(
             item.type === 'tool_governance_decision' &&
             isSupersededResolvedApprovalGovernanceItem(item, finalGovernanceOperationKeys)
@@ -2481,7 +3479,7 @@ export function AIChatAgenticTimeline({
           item,
           skill,
           tone,
-          title: buildSkillTitle(item.invocation, skill, tone, locale, t),
+          title: buildSkillTitle(item.invocation, skill, tone, locale, t, skillDisplayById),
           detail:
             getAIChatSkillResultDisplay(item.invocation, locale) ||
             item.invocation.message ||

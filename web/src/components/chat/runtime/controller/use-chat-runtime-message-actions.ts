@@ -9,9 +9,11 @@ import {
   canReplaceRootMessage,
   getNextActiveSendingState,
 } from '@/components/chat/controllers/aichat/selectors';
+import { mergeAIChatMessages } from '@/components/chat/controllers/aichat/state-reducers';
 import {
   createDraftAIChatConversation,
   createStreamingAIChatMessage,
+  isDraftAIChatConversationId,
   replaceAIChatConversation,
   upsertAIChatMessage,
 } from '@/components/chat/utils/aichat-message';
@@ -35,6 +37,9 @@ export function useChatRuntimeMessageActions({
   streamingMessageRef,
   setControllerState,
   markSelectionTarget,
+  isLatestSelection,
+  refreshConversationSilently,
+  refreshMessagesSilently,
   refreshAccountMemoryAfterMemoryMutation,
   eventAppliers,
 }: UseChatRuntimeMessageActionsArgs) {
@@ -179,7 +184,87 @@ export function useChatRuntimeMessageActions({
       if (draftConversationId) {
         streamConversationId = draftConversationId;
       }
-      markSelectionTarget(draftConversationId ?? activeConversationId);
+      const selectionSeq = markSelectionTarget(draftConversationId ?? activeConversationId);
+
+      const recoverDetachedDraftConversation = async (conversationId?: string | null) => {
+        if (!draftConversationId || !conversationId) return;
+        if (!isLatestSelection(selectionSeq, conversationId)) return;
+
+        const currentState = stateRef.current;
+        const activeId = currentState.activeConversationId;
+        const hasVisibleConversation =
+          activeId === conversationId &&
+          (currentState.messagesByConversation[conversationId]?.length ?? 0) > 0;
+        if (hasVisibleConversation) return;
+        if (activeId && activeId !== conversationId && !isDraftAIChatConversationId(activeId)) {
+          return;
+        }
+
+        try {
+          const { conversation, messages, messagePagination } =
+            await transportRef.current.getConversation(conversationId);
+          if (!isLatestSelection(selectionSeq, conversationId)) return;
+
+          setControllerState(current => {
+            const currentActiveId = current.activeConversationId;
+            if (
+              currentActiveId &&
+              currentActiveId !== conversationId &&
+              !isDraftAIChatConversationId(currentActiveId)
+            ) {
+              return current;
+            }
+
+            const nextMessagesByConversation = { ...current.messagesByConversation };
+            delete nextMessagesByConversation[draftConversationId];
+            nextMessagesByConversation[conversationId] = mergeAIChatMessages(
+              current.messagesByConversation[conversationId] ?? [],
+              messages
+            );
+
+            const nextMessagePaginationByConversation = {
+              ...current.messagePaginationByConversation,
+              [conversationId]: messagePagination,
+            };
+            delete nextMessagePaginationByConversation[draftConversationId];
+
+            const nextLoadingOlderByConversation = { ...current.loadingOlderByConversation };
+            delete nextLoadingOlderByConversation[draftConversationId];
+            const nextRecoveringByConversation = { ...current.recoveringByConversation };
+            delete nextRecoveringByConversation[draftConversationId];
+            const nextStoppingByConversation = { ...current.stoppingByConversation };
+            delete nextStoppingByConversation[draftConversationId];
+
+            return {
+              ...current,
+              activeConversationId: conversationId,
+              conversations: replaceAIChatConversation(
+                current.conversations.filter(item => item.id !== draftConversationId),
+                conversation
+              ),
+              messagesByConversation: nextMessagesByConversation,
+              messagePaginationByConversation: nextMessagePaginationByConversation,
+              loadingOlderByConversation: nextLoadingOlderByConversation,
+              recoveringByConversation: {
+                ...nextRecoveringByConversation,
+                [conversationId]: false,
+              },
+              stoppingByConversation: {
+                ...nextStoppingByConversation,
+                [conversationId]: false,
+              },
+              isLoadingMessages: false,
+              isSending: false,
+              error: null,
+            };
+          });
+        } catch (error) {
+          console.warn('Failed to recover detached AIChat conversation after send', {
+            conversationId,
+            error: getErrorMessage(error),
+          });
+        }
+      };
 
       setControllerState(current => {
         if (!draftConversationId || !draftMessageId) {
@@ -385,6 +470,9 @@ export function useChatRuntimeMessageActions({
                 payload.conversation_id || forceAdvanceLeafConversationId || undefined,
                 payload.message_id || forceAdvanceLeafMessageId || undefined
               );
+              void recoverDetachedDraftConversation(
+                payload.conversation_id || forceAdvanceLeafConversationId || streamConversationId
+              );
             },
             onErrorEvent: (payload, eventId) => {
               if (abortController.signal.aborted) return;
@@ -481,6 +569,7 @@ export function useChatRuntimeMessageActions({
       applySkillReferenceRead,
       applyStreamError,
       eventAppliers,
+      isLatestSelection,
       markSelectionTarget,
       pendingStreamAbortRef,
       requireModel,
@@ -826,6 +915,7 @@ export function useChatRuntimeMessageActions({
       applySkillReferenceRead,
       applyStreamError,
       eventAppliers,
+      isLatestSelection,
       markSelectionTarget,
       refreshAccountMemoryAfterMemoryMutation,
       setControllerState,
@@ -842,17 +932,20 @@ export function useChatRuntimeMessageActions({
     continueToolGovernanceDecision,
     continueClientAction,
   } = useWorkflowContinuationActions({
-      stateRef,
-      transportRef,
-      requireModel,
-      pendingStreamAbortRef,
-      streamAbortByConversationRef,
-      streamingMessageRef,
-      setControllerState,
-      markSelectionTarget,
-      refreshAccountMemoryAfterMemoryMutation,
-      eventAppliers,
-    });
+    stateRef,
+    transportRef,
+    requireModel,
+    pendingStreamAbortRef,
+    streamAbortByConversationRef,
+    streamingMessageRef,
+    setControllerState,
+    markSelectionTarget,
+    isLatestSelection,
+    refreshConversationSilently,
+    refreshMessagesSilently,
+    refreshAccountMemoryAfterMemoryMutation,
+    eventAppliers,
+  });
   const regenerate = useCallback(
     async (
       messageId: string,

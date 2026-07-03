@@ -42,6 +42,7 @@ interface AIChatMessageListProps {
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
   enableToolGovernanceApprovals?: boolean;
+  approvedToolGovernanceDecisionKeys?: ReadonlySet<string>;
 }
 
 function isReplaceableRootStatus(status: AIChatMessage['status']): boolean {
@@ -102,7 +103,19 @@ export function AIChatMessageList({
   showMemoryKey = true,
   showSkillEventDetails = true,
   enableToolGovernanceApprovals = false,
+  approvedToolGovernanceDecisionKeys,
 }: AIChatMessageListProps) {
+  const hasApprovedToolGovernanceDecision = (message: AIChatMessage) => {
+    if (!approvedToolGovernanceDecisionKeys || approvedToolGovernanceDecisionKeys.size === 0) {
+      return false;
+    }
+    const prefix = `${message.conversation_id}:${message.id}:`;
+    for (const key of approvedToolGovernanceDecisionKeys) {
+      if (key.startsWith(prefix)) return true;
+    }
+    return false;
+  };
+
   return (
     <ScrollArea
       className="min-h-0 flex-1"
@@ -161,6 +174,7 @@ export function AIChatMessageList({
                 showMemoryKey={showMemoryKey}
                 showSkillEventDetails={showSkillEventDetails}
                 enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+                hasApprovedToolGovernanceDecision={hasApprovedToolGovernanceDecision(message)}
               />
             ))}
             <div ref={bottomRef} className="shrink-0" style={{ height: bottomSpacerHeight }} />

@@ -299,10 +299,6 @@ function pickPresentationHint(
   return items.find(item => item.hints?.presentation)?.hints?.presentation;
 }
 
-function hasToolGovernanceHint(items: AIChatContextItem[]) {
-  return items.some(item => item.hints?.toolGovernance?.enabled === true);
-}
-
 function getContextTypeLabel(type: AIChatContextItem['type'], t: ContextualDockTranslator) {
   switch (type) {
     case 'agent':
@@ -1571,7 +1567,7 @@ export function ContextualAIChatDock() {
     [user?.id]
   );
 
-  const enableToolGovernance = useMemo(() => hasToolGovernanceHint(items), [items]);
+  const enableToolGovernance = true;
   const suggestions = useMemo(() => buildSuggestions(items, t), [items, t]);
   useEffect(() => {
     if (!isDesktopPanelViewport) return;

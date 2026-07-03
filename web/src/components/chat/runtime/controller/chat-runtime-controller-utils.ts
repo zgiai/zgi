@@ -11,6 +11,16 @@ export function isAbortError(error: unknown): boolean {
   return error.name === 'AbortError' || error.message.toLowerCase().includes('abort');
 }
 
+export function isContinuationLikelyStartedError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes('continuation is already running') ||
+    message.includes('continuation has already resolved') ||
+    message.includes('conversation is already streaming') ||
+    message.includes('invalid current leaf message status')
+  );
+}
+
 export const AICHAT_RECOVERY_RETRY_DELAYS = [800, 1600, 3200] as const;
 export const AICHAT_STREAM_EVENTS_EXPIRED = 'stream events expired';
 

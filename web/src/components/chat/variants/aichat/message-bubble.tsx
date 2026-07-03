@@ -79,6 +79,7 @@ interface AIChatMessageBubbleProps {
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
   enableToolGovernanceApprovals?: boolean;
+  hasApprovedToolGovernanceDecision?: boolean;
 }
 
 const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
@@ -218,6 +219,10 @@ type StreamingOperationStatusKey =
   | 'assetUpdated'
   | 'assetDeleted'
   | 'bindingUpdated'
+  | 'bindingBound'
+  | 'bindingUnbound'
+  | 'agentConfigUpdated'
+  | 'approvalContinuing'
   | 'toolCompleted'
   | 'operationFailed'
   | 'pageActionFailed';
@@ -320,6 +325,56 @@ function timelineFirstNumber(...values: unknown[]): number | undefined {
   return undefined;
 }
 
+function streamingAgentConfigChangeCount(result: Record<string, unknown>): number | undefined {
+  return timelineFirstNumber(
+    result.config_changes,
+    result.binding_changes,
+    result.updated_fields,
+    result.change_count
+  );
+}
+
+function timelineFirstRecord(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const record = timelineRecord(item);
+      if (Object.keys(record).length > 0) return record;
+    }
+    return {};
+  }
+  return timelineRecord(value);
+}
+
+function streamingAgentConfigBindingAction(
+  result: Record<string, unknown>
+): { key?: StreamingOperationStatusKey; assetType?: string } {
+  const change = timelineFirstRecord(result.binding_changes);
+  const action = timelineFirstString(
+    result.change_action,
+    change.change_action
+  ).toLowerCase();
+  const assetType = timelineFirstString(
+    result.binding_kind,
+    change.binding_kind,
+    result.asset_type
+  );
+
+  if (action === 'bind') return { key: 'bindingBound', assetType };
+  if (action === 'unbind') return { key: 'bindingUnbound', assetType };
+  return { assetType };
+}
+
+function streamingIsAgentConfigUpdateInvocation(invocation: Record<string, unknown>): boolean {
+  const result = timelineRecord(invocation.result);
+  const skillId = timelineString(invocation.skill_id);
+  const toolName = timelineString(invocation.tool_name);
+  return (
+    skillId === 'agent-management' &&
+    (toolName === 'update_agent_config' || toolName === 'agent.update_config') &&
+    streamingAgentConfigChangeCount(result) !== undefined
+  );
+}
+
 function streamingOperationCount(invocation: Record<string, unknown>): number | undefined {
   const result = timelineRecord(invocation.result);
   const args = timelineRecord(invocation.arguments);
@@ -349,6 +404,23 @@ function streamingOperationCount(invocation: Record<string, unknown>): number | 
 function streamingOperationStatusFromInvocation(
   invocation: Record<string, unknown>
 ): StreamingOperationStatus {
+  const result = timelineRecord(invocation.result);
+  if (streamingIsAgentConfigUpdateInvocation(invocation)) {
+    const bindingAction = streamingAgentConfigBindingAction(result);
+    if (bindingAction.key) {
+      return {
+        key: bindingAction.key,
+        count: streamingAgentConfigChangeCount(result),
+        assetType: bindingAction.assetType || 'asset',
+      };
+    }
+    return {
+      key: 'agentConfigUpdated',
+      count: streamingAgentConfigChangeCount(result),
+      assetType: 'agent_config',
+    };
+  }
+
   const key = streamingStatusFromAssetOperation(invocation);
   return {
     key,
@@ -411,14 +483,118 @@ function streamingOperationStatusFromProgress(
   });
 }
 
+function streamingOperationStatusFromGovernanceDecision(
+  item: Extract<AIChatAgenticTimelineItem, { type: 'tool_governance_decision' }>,
+  pendingMeansContinuation: boolean
+): StreamingOperationStatus | null {
+  const event = item.event;
+  const governance = timelineRecord(event.governance);
+  const governanceApprovalResult = timelineRecord(governance.approval_result);
+  const eventApprovalResult = timelineRecord(event.approval_result);
+  const executionResult = timelineRecord(event.execution_result);
+  const manifest = timelineRecord(governance.manifest);
+  const audit = event.asset_operation_audit || governance.asset_operation_audit;
+  const executionStatus = timelineFirstString(
+    event.execution_status,
+    executionResult.status
+  ).toLowerCase();
+  const approvalStatus = timelineFirstString(
+    event.approval_status,
+    governance.approval_status,
+    eventApprovalResult.approval_status,
+    governanceApprovalResult.approval_status
+  ).toLowerCase();
+  const decisionStatus = timelineFirstString(
+    event.decision,
+    event.status,
+    governance.status
+  ).toLowerCase();
+  const invocation: Record<string, unknown> = {
+    kind: 'tool_governance',
+    status: executionStatus || approvalStatus || decisionStatus,
+    skill_id: event.skill_id,
+    tool_name: event.tool_name || event.approval_event?.tool_id || manifest.tool_id,
+    asset_operation_audit: audit,
+    governance,
+    result: {
+      ...executionResult,
+      asset_operation_audit: executionResult.asset_operation_audit || audit,
+      effect: timelineFirstString(executionResult.effect, event.effect, manifest.effect),
+      asset_type: timelineFirstString(
+        executionResult.asset_type,
+        event.asset_type,
+        manifest.asset_type
+      ),
+    },
+  };
+
+  if (
+    isFailedTimelineStatus(executionStatus) ||
+    isFailedTimelineStatus(approvalStatus) ||
+    isFailedTimelineStatus(decisionStatus) ||
+    event.execution_error
+  ) {
+    const failedStatus = hasAssetOperationEvidence(invocation)
+      ? streamingOperationStatusFromInvocation(invocation)
+      : {
+          key: 'operationFailed' as const,
+          count: streamingOperationCount(invocation),
+          assetType: timelineInvocationAssetType(invocation),
+        };
+    return { ...failedStatus, key: 'operationFailed' };
+  }
+
+  const hasExecutionResult = Boolean(event.execution_result);
+  const executionSucceeded =
+    hasExecutionResult || (executionStatus && isSuccessfulTimelineStatus(executionStatus));
+  if (executionSucceeded) {
+    if (hasAssetOperationEvidence(invocation)) {
+      return streamingOperationStatusFromInvocation(invocation);
+    }
+    return { key: 'toolCompleted', count: streamingOperationCount(invocation) };
+  }
+
+  const approved = approvalStatus === 'approved' || decisionStatus === 'allowed';
+  const requiresApproval =
+    governance.requires_approval === true ||
+    decisionStatus === 'needs_approval' ||
+    approvalStatus === 'pending';
+  const pendingDuringContinuation =
+    pendingMeansContinuation &&
+    (decisionStatus === 'needs_approval' ||
+      approvalStatus === 'pending' ||
+      governance.requires_approval === true);
+  if (!approved && !pendingDuringContinuation) {
+    return null;
+  }
+  if (decisionStatus === 'allowed' && !requiresApproval && !approvalStatus) {
+    return null;
+  }
+
+  return {
+    key: 'approvalContinuing',
+    count: streamingOperationCount(invocation),
+    assetType: timelineInvocationAssetType(invocation),
+  };
+}
+
 function streamingOperationStatus(
-  timeline: AIChatAgenticTimelineItem[]
+  timeline: AIChatAgenticTimelineItem[],
+  pendingGovernanceMeansContinuation: boolean
 ): StreamingOperationStatus | null {
   for (let index = timeline.length - 1; index >= 0; index -= 1) {
     const item = timeline[index];
     if (item.type === 'progress_text') {
       const progressStatus = streamingOperationStatusFromProgress(item);
       if (progressStatus) return progressStatus;
+      continue;
+    }
+    if (item.type === 'tool_governance_decision') {
+      const governanceStatus = streamingOperationStatusFromGovernanceDecision(
+        item,
+        pendingGovernanceMeansContinuation
+      );
+      if (governanceStatus) return governanceStatus;
       continue;
     }
     if (item.type !== 'skill_event') continue;
@@ -471,17 +647,25 @@ function streamingOperationAssetLabel(
   switch ((assetType ?? '').trim().toLowerCase()) {
     case 'agent':
       return t('consoleChat.operationStatus.assetLabels.agent');
+    case 'agent_skill':
+    case 'skill':
+    case 'skills':
+    case 'enabled_skill_ids':
+      return t('consoleChat.operationStatus.assetLabels.skill');
     case 'file':
       return t('consoleChat.operationStatus.assetLabels.file');
     case 'knowledge_base':
     case 'knowledge':
     case 'dataset':
+    case 'knowledge_dataset_ids':
       return t('consoleChat.operationStatus.assetLabels.knowledgeBase');
     case 'database_table':
     case 'database':
     case 'table':
+    case 'database_bindings':
       return t('consoleChat.operationStatus.assetLabels.databaseTable');
     case 'workflow':
+    case 'workflow_bindings':
       return t('consoleChat.operationStatus.assetLabels.workflow');
     default:
       return t('consoleChat.operationStatus.assetLabels.asset');
@@ -508,6 +692,12 @@ function streamingOperationStatusText(
       return t('consoleChat.operationStatus.assetDeletedDetailed', { count, asset });
     case 'bindingUpdated':
       return t('consoleChat.operationStatus.bindingUpdatedDetailed', { count, asset });
+    case 'bindingBound':
+      return t('consoleChat.operationStatus.bindingBoundDetailed', { count, asset });
+    case 'bindingUnbound':
+      return t('consoleChat.operationStatus.bindingUnboundDetailed', { count, asset });
+    case 'agentConfigUpdated':
+      return t('consoleChat.operationStatus.agentConfigUpdatedDetailed', { count });
     case 'toolCompleted':
       return t('consoleChat.operationStatus.toolCompletedDetailed', { count, asset });
     case 'operationFailed':
@@ -978,6 +1168,7 @@ export function AIChatMessageBubble({
   showMemoryKey = true,
   showSkillEventDetails = true,
   enableToolGovernanceApprovals = false,
+  hasApprovedToolGovernanceDecision = false,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
   const tGlobal = useT();
@@ -1044,11 +1235,20 @@ export function AIChatMessageBubble({
   );
   const hasTimeline = displayTimeline.length > 0;
   const streamingStatus = useMemo(
-    () =>
-      isStreaming || isWaitingForClientAction
-        ? streamingOperationStatus(displayTimeline)
-        : null,
-    [displayTimeline, isStreaming, isWaitingForClientAction]
+    () => {
+      if (isStreaming || isWaitingForClientAction) {
+        return streamingOperationStatus(displayTimeline, isStreaming);
+      }
+      if (message.status === 'waiting_approval' && hasApprovedToolGovernanceDecision) {
+        return (
+          streamingOperationStatus(displayTimeline, true) ?? {
+            key: 'approvalContinuing' as const,
+          }
+        );
+      }
+      return null;
+    },
+    [displayTimeline, hasApprovedToolGovernanceDecision, isStreaming, isWaitingForClientAction, message.status]
   );
   const streamingStatusLabel = useMemo(
     () =>
