@@ -4590,6 +4590,9 @@ func agentManagementCreateRequested(query string) bool {
 	if strings.Contains(raw, "create_agent") {
 		return true
 	}
+	if agentManagementCreateMentionIsExistingReferenceOnly(raw) {
+		return false
+	}
 	text := agentManagementCreateIntentText(raw)
 	if text == "" || !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) {
 		return false
@@ -4606,6 +4609,59 @@ func agentManagementCreateRequested(query string) bool {
 	}
 	for _, marker := range []string{"\u521b\u5efa", "\u65b0\u5efa", "\u65b0\u589e"} {
 		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementCreateMentionIsExistingReferenceOnly(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(stripQuotedIntentPayloads(query)))
+	if text == "" || !agentManagementCreateMentionHasExistingReference(text) {
+		return false
+	}
+	return !agentManagementExplicitCreateCommandRequested(text)
+}
+
+func agentManagementCreateMentionHasExistingReference(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"just created", "newly created", "already created", "previously created", "created agent", "created agents",
+		"\u521a\u521a\u521b\u5efa", "\u521a\u521b\u5efa", "\u521a\u624d\u521b\u5efa",
+		"\u65b0\u521b\u5efa\u7684", "\u5df2\u521b\u5efa", "\u5df2\u7ecf\u521b\u5efa", "\u4e4b\u524d\u521b\u5efa", "\u524d\u9762\u521b\u5efa",
+		"\u521a\u521a\u65b0\u5efa", "\u521a\u65b0\u5efa", "\u521a\u624d\u65b0\u5efa",
+		"\u65b0\u5efa\u7684", "\u5df2\u65b0\u5efa", "\u5df2\u7ecf\u65b0\u5efa", "\u4e4b\u524d\u65b0\u5efa", "\u524d\u9762\u65b0\u5efa",
+		"\u521b\u5efa\u7684\u8fd9", "\u521b\u5efa\u7684\u4e24", "\u521b\u5efa\u7684\u51e0", "\u521b\u5efa\u7684\u667a\u80fd\u4f53",
+	})
+}
+
+func agentManagementExplicitCreateCommandRequested(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return false
+	}
+	if containsAnySubstring(text, []string{
+		"please create", "help me create", "create agent", "create an agent", "create a new agent",
+		"create one agent", "create two agents", "create three agents", "new agent", "add agent",
+		"then create", "and create", "create another", "recreate",
+		"\u8bf7\u521b\u5efa", "\u5e2e\u6211\u521b\u5efa", "\u5e2e\u5fd9\u521b\u5efa",
+		"\u521b\u5efa\u4e00", "\u521b\u5efa\u4e24", "\u521b\u5efa 2", "\u521b\u5efa2", "\u521b\u5efa\u65b0", "\u521b\u5efa\u667a\u80fd\u4f53",
+		"\u8bf7\u65b0\u5efa", "\u5e2e\u6211\u65b0\u5efa", "\u65b0\u5efa\u4e00", "\u65b0\u5efa\u4e24", "\u65b0\u5efa\u667a\u80fd\u4f53",
+		"\u65b0\u589e\u4e00", "\u65b0\u589e\u667a\u80fd\u4f53",
+		"\u7136\u540e\u521b\u5efa", "\u7136\u540e\u518d\u521b\u5efa", "\u518d\u521b\u5efa", "\u5e76\u521b\u5efa", "\u540c\u65f6\u521b\u5efa", "\u53e6\u5916\u521b\u5efa", "\u91cd\u65b0\u521b\u5efa",
+		"\u7136\u540e\u65b0\u5efa", "\u7136\u540e\u518d\u65b0\u5efa", "\u518d\u65b0\u5efa", "\u5e76\u65b0\u5efa", "\u540c\u65f6\u65b0\u5efa", "\u53e6\u5916\u65b0\u5efa", "\u91cd\u65b0\u65b0\u5efa",
+		"\u521b\u5efa\u6210\u529f\u540e", "\u521b\u5efa\u540e", "\u65b0\u5efa\u6210\u529f\u540e", "\u65b0\u5efa\u540e",
+	}) {
+		return true
+	}
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(?:create|add|new)\s+(?:a\s+|an\s+|one\s+|[0-9]+\s+|two\s+|three\s+|four\s+|five\s+)?(?:temporary\s+|draft\s+|test\s+|new\s+)*agents?\b`),
+		regexp.MustCompile("(?:\u521b\u5efa|\u65b0\u5efa|\u65b0\u589e)\\s*[0-9]+\\s*(?:\u4e2a|\u4f4d|\\s)*(?:agent|agents|\u667a\u80fd\u4f53)"),
+	} {
+		if pattern.MatchString(text) {
 			return true
 		}
 	}
@@ -4634,22 +4690,13 @@ func agentManagementCreateMentionIsDeleteTargetReference(query string) bool {
 	if text == "" {
 		return false
 	}
-	if !agentManagementDeleteRequested(text) || !agentManagementCreateRequested(text) {
+	if !agentManagementDeleteRequested(text) || !agentManagementCreateMentionHasExistingReference(text) {
 		return false
 	}
-	if containsAnySubstring(text, []string{
-		"then create", "and create", "create another", "create a new", "recreate",
-		"\u7136\u540e\u521b\u5efa", "\u518d\u521b\u5efa", "\u5e76\u521b\u5efa", "\u53e6\u5916\u521b\u5efa", "\u91cd\u65b0\u521b\u5efa",
-		"\u7136\u540e\u65b0\u5efa", "\u518d\u65b0\u5efa", "\u5e76\u65b0\u5efa", "\u53e6\u5916\u65b0\u5efa", "\u91cd\u65b0\u65b0\u5efa",
-	}) {
+	if agentManagementExplicitCreateCommandRequested(text) {
 		return false
 	}
-	return containsAnySubstring(text, []string{
-		"just created", "newly created", "already created", "previously created", "created agent", "created agents",
-		"\u521a\u521a\u521b\u5efa", "\u521a\u521b\u5efa", "\u521a\u624d\u521b\u5efa", "\u65b0\u521b\u5efa", "\u5df2\u521b\u5efa", "\u5df2\u7ecf\u521b\u5efa",
-		"\u521a\u521a\u65b0\u5efa", "\u521a\u65b0\u5efa", "\u521a\u624d\u65b0\u5efa", "\u65b0\u5efa\u7684", "\u5df2\u65b0\u5efa", "\u5df2\u7ecf\u65b0\u5efa",
-		"\u521b\u5efa\u7684\u8fd9", "\u521b\u5efa\u7684\u4e24", "\u521b\u5efa\u7684\u51e0", "\u521b\u5efa\u7684\u667a\u80fd\u4f53",
-	})
+	return true
 }
 
 func agentManagementDeleteRequested(query string) bool {

@@ -6856,8 +6856,8 @@ func TestAgentManagementDeleteIntentDoesNotPlanEditsFromTargetNames(t *testing.T
 
 func TestAgentManagementDeleteCreatedReferenceDoesNotPlanCreate(t *testing.T) {
 	query := "\u5220\u9664\u521a\u521a\u521b\u5efa\u7684\u8fd9\u4e24\u4e2a\u6d4b\u8bd5 Agent\uff1aAICHAT-BATCH-SMOKE-A \u548c AICHAT-BATCH-SMOKE-B\u3002\u8bf7\u4e00\u6b21\u6027\u6279\u91cf\u5220\u9664\uff0c\u5b8c\u6210\u540e\u505c\u7559\u5728\u667a\u80fd\u4f53\u5217\u8868\u9875\uff0c\u5e76\u544a\u8bc9\u6211\u6bcf\u4e2a\u5220\u9664\u7ed3\u679c\u3002"
-	if !agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = false before reference filter, want raw marker detected", query)
+	if agentManagementCreateRequested(query) {
+		t.Fatalf("agentManagementCreateRequested(%q) = true, want false for existing Agent delete target reference", query)
 	}
 	if !agentManagementCreateMentionIsDeleteTargetReference(query) {
 		t.Fatalf("agentManagementCreateMentionIsDeleteTargetReference(%q) = false, want true", query)
@@ -6888,8 +6888,8 @@ func TestAgentManagementDeleteCreatedReferenceDoesNotPlanCreate(t *testing.T) {
 
 func TestAgentManagementDeleteJustNowCreatedReferenceDoesNotPlanCreate(t *testing.T) {
 	query := "\u8bf7\u5220\u9664\u521a\u624d\u521b\u5efa\u7684\u6d4b\u8bd5\u667a\u80fd\u4f53 AICHAT-GOAL-SMOKE-1782754487710\u3002\u53ea\u5220\u9664\u8fd9\u4e2a\u540d\u5b57\u5b8c\u5168\u5339\u914d\u7684\u667a\u80fd\u4f53\uff0c\u5220\u9664\u540e\u786e\u8ba4\u5217\u8868\u4e2d\u5df2\u7ecf\u4e0d\u53ef\u89c1\u3002"
-	if !agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = false before reference filter, want raw marker detected", query)
+	if agentManagementCreateRequested(query) {
+		t.Fatalf("agentManagementCreateRequested(%q) = true, want false for existing Agent reference", query)
 	}
 	if !agentManagementCreateMentionIsDeleteTargetReference(query) {
 		t.Fatalf("agentManagementCreateMentionIsDeleteTargetReference(%q) = false, want true for just-now-created delete target", query)
@@ -6918,6 +6918,59 @@ func TestAgentManagementDeleteJustNowCreatedReferenceDoesNotPlanCreate(t *testin
 	}
 	if got := stringFromAny(plan["pending_next_action"]); strings.Contains(got, "create_agent") {
 		t.Fatalf("pending_next_action = %q, want no stale create_agent", got)
+	}
+}
+
+func TestAgentManagementConfigEditCreatedReferenceDoesNotPlanCreate(t *testing.T) {
+	query := "\u8bf7\u5bf9\u521a\u521b\u5efa\u7684 GOAL-BIND-SMOKE-1783069834712 \u505a\u914d\u7f6e\u53d8\u66f4\uff1a\u5148\u67e5\u770b\u5f53\u524d\u914d\u7f6e\u548c\u53ef\u7ed1\u5b9a\u7684 Skill\u3001\u77e5\u8bc6\u5e93\u3001\u6570\u636e\u5e93\u8868\u3001\u5de5\u4f5c\u6d41\u5019\u9009\uff1b\u82e5\u6bcf\u7c7b\u6709\u53ef\u7528\u5019\u9009\uff0c\u8bf7\u5404\u7ed1\u5b9a 1 \u4e2a\u5230\u8fd9\u4e2a\u667a\u80fd\u4f53\u3002\u8bf7\u4f18\u5148\u7528 update_agent_config \u4e00\u6b21\u63d0\u4ea4\u8fd9\u4e9b\u7ed1\u5b9a\u3002"
+	if agentManagementCreateRequested(query) {
+		t.Fatalf("agentManagementCreateRequested(%q) = true, want false for existing Agent config edit reference", query)
+	}
+	if !agentManagementCreateMentionIsExistingReferenceOnly(query) {
+		t.Fatalf("agentManagementCreateMentionIsExistingReferenceOnly(%q) = false, want true", query)
+	}
+
+	parts := &chatRequestParts{
+		Query:     query,
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs: []string{
+			skills.SkillAgentManagement,
+			skills.SkillConsoleNavigator,
+		},
+	}
+	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
+		Intent: "manage_agent_asset",
+		PlannedTools: []AIChatTurnStrategyTool{
+			{SkillID: skills.SkillAgentManagement, ToolName: "create_agent"},
+		},
+	})
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "create_agent") {
+		t.Fatalf("planned_tools = %#v, want stale create_agent removed for existing Agent config edit reference", strategy.PlannedTools)
+	}
+	for _, want := range []string{
+		"get_agent_config",
+		"list_agent_knowledge_candidates",
+		"list_agent_database_candidates",
+		"list_agent_database_tables",
+		"list_agent_workflow_binding_candidates",
+		"update_agent_config",
+	} {
+		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, want) {
+			t.Fatalf("planned_tools = %#v, missing %s", strategy.PlannedTools, want)
+		}
+	}
+
+	plan := operationPlanFromTurnStrategy("task-agent-config-created-reference", parts, strategy)
+	if _, ok := mapFromOperationContext(plan["step_status"])[operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")]; ok {
+		t.Fatalf("plan = %#v, want no create_agent step", plan)
+	}
+	message := &runtimemodel.Message{
+		Query:    query,
+		Metadata: map[string]interface{}{"operation_plan": plan},
+	}
+	if progress := clientActionAgentCreateProgress(message); len(progress) > 0 {
+		t.Fatalf("clientActionAgentCreateProgress() = %#v, want nil for existing Agent config edit reference", progress)
 	}
 }
 
