@@ -976,13 +976,27 @@ func (a *AliyunAdapter) CreateAnthropicMessageStream(ctx context.Context, reques
 	return rawAnthropicMessageStream(ctx, a.httpClient, a.anthropicMessagesBaseURL(), buildAnthropicRawHeaders(a.config, request.Headers), request)
 }
 
-// CreateEmbeddings executes embeddings creation request
+// CreateEmbeddings executes embeddings creation request.
 func (a *AliyunAdapter) CreateEmbeddings(ctx context.Context, request *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
-	openaiAdapter, err := a.openAICompatibleAdapter()
+	payload, err := buildAliyunEmbeddingsPayload(request)
 	if err != nil {
 		return nil, err
 	}
-	return openaiAdapter.CreateEmbeddings(ctx, request)
+
+	endpointPath := "/services/embeddings/text-embedding/text-embedding"
+	if isAliyunMultimodalEmbeddingModel(request.Model) {
+		endpointPath = "/services/embeddings/multimodal-embedding/multimodal-embedding"
+	}
+	url := fmt.Sprintf("%s%s", a.nativeBaseURL(), endpointPath)
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, a.aliyunJSONHeaders(), payload)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if statusCode != 200 {
+		return nil, a.handleError(statusCode, respBody)
+	}
+
+	return parseAliyunEmbeddingsResponse(respBody, request.Model)
 }
 
 // CreateImage executes image generation request (Wanx)
