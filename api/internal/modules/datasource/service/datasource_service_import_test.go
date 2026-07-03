@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -156,32 +157,69 @@ func TestParseExcelFileRequiredColumnCanMatchSourceColumnName(t *testing.T) {
 	}
 }
 
-func TestWithSourceColumnNamesAppliesOriginalHeaders(t *testing.T) {
+func TestParseExcelFileTrimsHeadersBeforeSourceColumnMatch(t *testing.T) {
+	file := buildImportWorkbook(t, []string{" 用户ID "}, []string{"u_001"})
+	userIDSource := "用户ID"
 	columns := []dto.TableColumn{
-		{Name: "user_id", Type: "integer", IsRequired: true},
-		{Name: "mobile_phone", Type: "text", IsRequired: true},
+		{Name: "user_id", SourceColumnName: &userIDSource, Type: "text", IsRequired: true},
 	}
 
-	got := withSourceColumnNames(columns, []string{"用户ID", "手机号"})
-
-	if got[0].SourceColumnName == nil || *got[0].SourceColumnName != "用户ID" {
-		t.Fatalf("got[0].SourceColumnName = %v, want 用户ID", got[0].SourceColumnName)
+	svc := &dataSourceService{}
+	records, err := svc.parseExcelFile(bytes.NewReader(file), "records.xlsx", columns, false)
+	if err != nil {
+		t.Fatalf("parseExcelFile() error = %v", err)
 	}
-	if got[1].SourceColumnName == nil || *got[1].SourceColumnName != "手机号" {
-		t.Fatalf("got[1].SourceColumnName = %v, want 手机号", got[1].SourceColumnName)
-	}
-	if got[1].DisplayName == nil || *got[1].DisplayName != "手机号" {
-		t.Fatalf("got[1].DisplayName = %v, want 手机号", got[1].DisplayName)
+	if got := records[0]["user_id"]; got != "u_001" {
+		t.Fatalf("records[0][user_id] = %v, want u_001", got)
 	}
 }
 
-func TestWithSourceColumnNamesSkipsMismatchedHeaderCount(t *testing.T) {
-	columns := []dto.TableColumn{{Name: "user_id", Type: "integer"}}
+func TestParseExcelFileRejectsHeadersMatchingSameField(t *testing.T) {
+	file := buildImportWorkbook(t, []string{"user_id", "用户ID"}, []string{"u_001", "u_002"})
+	userIDSource := "用户ID"
+	columns := []dto.TableColumn{
+		{Name: "user_id", SourceColumnName: &userIDSource, Type: "text"},
+	}
+
+	svc := &dataSourceService{}
+	_, err := svc.parseExcelFile(bytes.NewReader(file), "records.xlsx", columns, false)
+	if err == nil {
+		t.Fatal("parseExcelFile() error = nil, want duplicate field match error")
+	}
+	if !strings.Contains(err.Error(), "同时匹配字段「user_id」") {
+		t.Fatalf("parseExcelFile() error = %q, want duplicate field match error", err.Error())
+	}
+}
+func TestWithSourceColumnNamesMatchesHeadersByDisplayName(t *testing.T) {
+	userIDDisplay := "用户ID"
+	phoneDisplay := "手机号"
+	columns := []dto.TableColumn{
+		{Name: "phone_number", DisplayName: &phoneDisplay, Type: "text", IsRequired: true},
+		{Name: "user_id", DisplayName: &userIDDisplay, Type: "integer", IsRequired: true},
+	}
 
 	got := withSourceColumnNames(columns, []string{"用户ID", "手机号"})
 
-	if got[0].SourceColumnName != nil {
-		t.Fatalf("got[0].SourceColumnName = %v, want nil", got[0].SourceColumnName)
+	if got[0].SourceColumnName == nil || *got[0].SourceColumnName != "手机号" {
+		t.Fatalf("got[0].SourceColumnName = %v, want 手机号", got[0].SourceColumnName)
+	}
+	if got[1].SourceColumnName == nil || *got[1].SourceColumnName != "用户ID" {
+		t.Fatalf("got[1].SourceColumnName = %v, want 用户ID", got[1].SourceColumnName)
+	}
+}
+
+func TestWithSourceColumnNamesSkipsUnclearHeaderMatch(t *testing.T) {
+	columns := []dto.TableColumn{
+		{Name: "user_id", Type: "integer"},
+		{Name: "mobile_phone", Type: "text"},
+	}
+
+	got := withSourceColumnNames(columns, []string{"用户ID", "手机号"})
+
+	for index, column := range got {
+		if column.SourceColumnName != nil {
+			t.Fatalf("got[%d].SourceColumnName = %v, want nil", index, column.SourceColumnName)
+		}
 	}
 }
 
@@ -203,6 +241,27 @@ func TestTableColumnSourceSchemaUsesSourceColumnName(t *testing.T) {
 		t.Fatalf("schema[0] = %#v, want source 用户ID and name user_id", schema[0])
 	}
 }
+func TestIsSQLMetaTableMissingRecognizesInternalAndExternalMissingTable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "internal", err: errors.New("sqlmeta: table not found"), want: true},
+		{name: "external delete", err: errors.New("failed to delete table: 404 Not Found"), want: true},
+		{name: "other", err: errors.New("failed to delete table: 500 Internal Server Error"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isSQLMetaTableMissing(tt.err); got != tt.want {
+				t.Fatalf("isSQLMetaTableMissing() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExcelSourceHeadersReadsOriginalHeaders(t *testing.T) {
 	file := buildImportWorkbook(t, []string{"用户ID", "手机号"}, []string{"1001", "13800138000"})
 

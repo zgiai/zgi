@@ -1419,7 +1419,12 @@ func (s *dataSourceService) UpdateTable(ctx context.Context, organizationID, dat
 }
 
 func isSQLMetaTableMissing(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "sqlmeta: table not found")
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "sqlmeta: table not found") ||
+		strings.Contains(message, "failed to delete table: 404 Not Found")
 }
 
 // UpdateTableColumns updates the columns of a specific table
@@ -2563,14 +2568,22 @@ func excelSourceHeaders(fileName string, content []byte) ([]string, error) {
 }
 
 func withSourceColumnNames(columns []dto.TableColumn, sourceHeaders []string) []dto.TableColumn {
-	if len(sourceHeaders) == 0 || len(sourceHeaders) != len(columns) {
+	if len(sourceHeaders) == 0 {
 		return columns
+	}
+	sourceHeaderCounts := make(map[string]int, len(sourceHeaders))
+	for _, header := range sourceHeaders {
+		header = strings.TrimSpace(header)
+		if header == "" {
+			continue
+		}
+		sourceHeaderCounts[header]++
 	}
 	out := make([]dto.TableColumn, len(columns))
 	copy(out, columns)
 	for i := range out {
-		sourceHeader := strings.TrimSpace(sourceHeaders[i])
-		if sourceHeader == "" {
+		sourceHeader, ok := matchingSourceHeader(out[i], sourceHeaderCounts)
+		if !ok {
 			continue
 		}
 		out[i].SourceColumnName = &sourceHeader
@@ -2579,6 +2592,21 @@ func withSourceColumnNames(columns []dto.TableColumn, sourceHeaders []string) []
 		}
 	}
 	return out
+}
+
+func matchingSourceHeader(column dto.TableColumn, sourceHeaderCounts map[string]int) (string, bool) {
+	candidates := []string{column.Name}
+	if column.DisplayName != nil {
+		candidates = append(candidates, *column.DisplayName)
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || sourceHeaderCounts[candidate] != 1 {
+			continue
+		}
+		return candidate, true
+	}
+	return "", false
 }
 
 // inferTableStructureFromFile infers table structure from file content or user prompt
@@ -4355,12 +4383,16 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 	matchedColumns := make([]matchedColumn, 0, len(header))
 	matchedColumnNames := make(map[string]struct{})
 	for colIndex, headerName := range header {
+		headerName = strings.TrimSpace(headerName)
 		columnInfo, exists := columnMap[headerName]
 		if !exists {
 			if skipUnmatchedColumns {
 				continue
 			}
 			return nil, fmt.Errorf("column '%s' does not exist in table", headerName)
+		}
+		if _, exists := matchedColumnNames[columnInfo.Name]; exists {
+			return nil, fmt.Errorf("Excel 表头「%s」和其他表头同时匹配字段「%s」，请删除重复列后重试", headerName, columnInfo.Name)
 		}
 		matchedColumns = append(matchedColumns, matchedColumn{index: colIndex, name: columnInfo.Name, info: columnInfo})
 		matchedColumnNames[columnInfo.Name] = struct{}{}
